@@ -1,0 +1,97 @@
+---
+name: tax-generate
+description: Generate PDF summary of tax return from result.json
+---
+
+# /tax-generate
+
+Generate a formatted PDF summary of the computed tax return.
+
+## Usage
+```
+/tax-generate
+```
+
+## Prerequisites
+- `result.json` must exist with computed values (run `/tax-compute` first)
+- `generate_tax_pdf.py` must exist in the workspace
+- Python package: reportlab
+
+## Steps
+
+### 1. Verify Prerequisites
+
+Check that `result.json` exists and has non-zero values in key fields:
+- `form_1040.line_9_total_income` > 0
+- `form_1040.line_15_taxable_income` > 0
+- `balance_due_summary` exists
+
+If result.json looks empty/template-like, warn the user and suggest running `/tax-compute` first.
+
+### 1.5. Pre-Generation Completeness Check
+
+Before generating the PDF, verify result.json internal consistency:
+
+1. **Income sum check:**
+   - Verify `line_9_total_income` = `line_1z_total_wages` + 2b + 3b + 4b + 5b + `line_6b_taxable_ss` + 7 + 8
+   - Note: `line_1z_total_wages` = `line_1a_wages` when no OBBBA sub-line adjustments apply; `line_6b_taxable_ss` may be $0
+   - If mismatch > $1: warn and show expected vs actual
+
+2. **Tax computation check:**
+   - Verify `line_16_tax` is reasonable for `line_15_taxable_income` (within expected bracket range)
+   - Verify `line_24_total_tax` = line_16 - credits + other taxes
+
+3. **Payments check:**
+   - Verify `line_25d_total_withholding` = sum of withholding components
+   - Verify refund/owed = total payments - total tax
+
+4. **State return check:**
+   - If taxpayer is in an income-tax state: verify state return section is populated
+   - If state return is empty: warn "State return not computed — run /tax-compute first?"
+
+5. **Missing sections check:**
+   - If `has_self_employment=true` in profile but no Schedule C in result.json: warn
+   - If `has_hsa=true` but no Form 8889 section: warn
+   - If `has_capital_gains=true` but no Schedule D: warn
+
+If ANY check fails: print warnings and ask "Proceed with PDF generation anyway, or fix first?"
+
+### 2. Check PDF Generator
+
+If `generate_tax_pdf.py` does not exist, create one that:
+- Reads `result.json`
+- Uses reportlab to produce a multi-page PDF
+- Includes all sections present in result.json
+- Skips sections that are absent or have `_include_if` markers
+- Follows the same format as the existing generator (if one exists)
+
+If `generate_tax_pdf.py` already exists, verify it references all current sections in result.json.
+If result.json has new sections the PDF generator doesn't handle, update the generator.
+
+### 3. Generate PDF
+
+Run:
+```bash
+python3 generate_tax_pdf.py
+```
+
+### 4. Verify Output
+
+Check that the output PDF was created and set restrictive permissions:
+```bash
+ls -la Tax_Return_*_Summary.pdf
+chmod 600 Tax_Return_*_Summary.pdf
+```
+
+Report:
+- Output file path
+- File size
+- Page count (use pdfplumber to count pages if desired)
+
+### 5. Summary
+
+Print:
+- PDF generated successfully at {path}
+- {N} pages
+- Sections included: {list of forms/sections in the PDF}
+- Suggested next step: `/tax-verify <software-return.pdf>` to cross-check against tax software

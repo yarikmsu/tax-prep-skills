@@ -1,0 +1,225 @@
+---
+name: tax-fbar
+description: Prepare FBAR (FinCEN 114) filing document for foreign bank accounts
+---
+
+# /tax-fbar
+
+Prepare FBAR (Report of Foreign Bank and Financial Accounts) filing documentation.
+
+## Usage
+```
+/tax-fbar
+```
+
+## Prerequisites
+- `result.json` must exist with foreign account data
+- `taxpayer_profile.json` must exist (for has_foreign_accounts flag)
+- `summaries/*.md` should have detailed foreign account information
+
+## Steps
+
+### 0.5. Tax Law Freshness Verification
+
+FBAR values depend on exchange rates from `tax_law_{year}.json`. Verify data is current:
+
+1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
+2. Run: `python3 agents/lib/tax_law_fetcher.py freshness {year}`
+2. Act on the result:
+   - **FRESH:** Proceed. Print the exchange rates being used (e.g., `EUR: 1.08`).
+   - **STALE:** WebSearch for updated IRS yearly average exchange rates. Re-fetch if changed.
+   - **INCOMPLETE:** Check if `exchange_rates` section is populated. If empty, fetch via WebSearch: `"IRS yearly average exchange rate {year} {currency}"`.
+   - **NOT_FOUND:** **STOP.** Tell user to run `/tax-setup` first.
+3. Print exchange rates being used so user can verify:
+   ```
+   Exchange Rates — TY{year}
+   {currency}: {rate} per USD (IRS yearly average)
+   ```
+
+### 1. Check FBAR Requirement
+
+Read foreign account data from `result.json` sections:
+- `form_8938_fatca.accounts` — account details
+- `fbar_fincen_114` — FBAR status
+- `interest_detail` — foreign interest sources
+- `dividend_detail` — foreign dividend sources
+
+Sum maximum balances across ALL foreign financial accounts.
+If aggregate maximum value > `fbar_threshold` (from `tax_law JSON`) at any point during the year: FBAR is required.
+
+### 1.5. Account Completeness Probe
+
+Before computing FBAR values, verify the account list is complete. **First check `answers.md` — if foreign accounts were already confirmed complete, skip to Step 2.** Otherwise, ask via **AskUserQuestion**:
+
+1. Present found foreign accounts:
+   ```
+   Foreign accounts found in documents:
+   1. {institution} — {country} — {account_type}
+   2. ...
+   ```
+   Ask: "Is this the COMPLETE list of foreign financial accounts you had at ANY point during {year}?"
+
+2. Remind about commonly forgotten accounts:
+   - Accounts closed during the year (still reportable for FBAR)
+   - Accounts where you have signature authority but aren't the owner (e.g., business accounts, elderly parent's account)
+   - Crypto exchanges with foreign domicile (Binance, Kraken non-US entities — conservative: include)
+   - Insurance policies with cash value held by foreign companies
+   - Foreign pension accounts
+
+3. For each account, confirm:
+   - Joint account or sole ownership?
+   - Transit/pass-through account? (money passes through briefly — affects max value calculation)
+   - Account opened or closed during the year?
+
+4. If user identifies new accounts not in documents:
+   - Ask for institution name, country, account type, approximate max balance
+   - Add to the account list for processing
+
+### 2. Gather Account Details
+
+For each foreign account, collect:
+
+| Field | Source |
+|-------|--------|
+| Institution name (English) | summaries/*.md |
+| Institution address | summaries/*.md or WebSearch |
+| Country | result.json |
+| Account number | result.json |
+| Account type | Checking, Savings, Brokerage, Other |
+| Maximum value during year (USD) | Computed from summaries |
+| Currency | Original currency |
+| Joint account? | taxpayer_profile.json |
+
+**For institution addresses not in the data:**
+Use **WebSearch** to find:
+- Search: `"{institution name} headquarters address"`
+- Need: full mailing address for FBAR filing
+
+### 3. Compute FBAR Maximum Values (Conservative)
+
+For each account, determine the **FBAR maximum value** during the year. These are FBAR-specific conservative values — Form 8938 uses different methodology (see Step 4).
+
+**Bank accounts:** Use the highest balance from any statement during the year.
+Convert to USD using the IRS yearly average exchange rate from `tax_law_{year}.json`.
+
+**Brokerage accounts:** Use the highest portfolio value (securities + cash).
+For transit accounts (money passes through briefly): use the conservative maximum
+(highest balance at any point, even if temporary).
+
+**FBAR valuation rule:** Use the HIGHEST value at ANY point during the year (conservative). This will typically be ≥ the Form 8938 realistic simultaneous peak because FBAR counts each account's independent maximum, even if they didn't all peak simultaneously.
+
+### 3.5. Value Reconciliation
+
+Present computed maximum values with confidence levels for user review:
+
+```
+## FBAR Maximum Value Review (Conservative — for FinCEN 114 only)
+
+| # | Account | Max Value (USD) | Confidence | Source |
+|---|---------|-----------------|------------|--------|
+| 1 | {name}  | ${amount}       | HIGH       | Year-end statement |
+| 2 | {name}  | ${amount}       | MEDIUM     | Estimated from quarterly statements |
+| 3 | {name}  | ${amount}       | LOW        | Single data point only |
+```
+
+**Confidence levels:**
+- **HIGH:** Have monthly/daily statements covering the full year, or a clear year-end max balance
+- **MEDIUM:** Have quarterly or semi-annual statements; max is interpolated
+- **LOW:** Only have year-end balance or single data point; actual max during year could be higher
+
+For **LOW** confidence accounts:
+- Ask user: "For {account}, we only have {data}. Do you have additional statements that would help determine the maximum balance during the year?"
+- If no additional data: use conservative (higher) estimate and note it
+
+For **MEDIUM** confidence:
+- State the assumption and ask if it's reasonable
+- e.g., "We estimated max balance between Q2 and Q3 statements. Does this seem right?"
+
+**Aggregate check:** Sum all FBAR max values. Confirm the aggregate maximum with the user. Note: these are FBAR conservative values — do NOT use them for Form 8938 threshold analysis (Step 4 computes 8938 values separately).
+
+### 4. Also Check Form 8938
+
+While preparing FBAR, separately evaluate Form 8938:
+- Use `check_form_8938_required()` from `agents/lib/tax_computations.py`, passing `form_8938_thresholds` from `tax_law JSON`
+- ⚠️ Do NOT reuse the max values computed in Step 3. Compute separate REALISTIC simultaneous peak values for 8938 analysis.
+- FBAR uses conservative maximums; 8938 uses realistic simultaneous peak — these are different numbers.
+- Thresholds from `tax_law JSON` `federal.form_8938_thresholds` (e.g., MFJ in US = $200K year-end / $300K any time)
+
+Report whether Form 8938 is required separately from FBAR.
+
+### 5. Generate FBAR Preparation Document
+
+⚠️ **SECURITY:** The generated file contains sensitive account numbers. Verify `FBAR_*.md` is in `.gitignore` (install.sh adds it by default). Warn the user: "This file contains full account numbers — securely delete it after FBAR filing is complete."
+
+After creating the file, set restrictive permissions:
+```bash
+chmod 600 FBAR_{year}_Preparation.md
+```
+
+Create `FBAR_{year}_Preparation.md`:
+
+```markdown
+# FBAR (FinCEN 114) — Tax Year {year}
+
+**Filing status:** Required / Not Required
+**Filer:** {primary taxpayer name}
+**Spouse filing jointly?** Yes/No
+
+## Filing Information
+- **Due date:** April 15, {year+1} (automatic extension to October 15, {year+1})
+- **Filing method:** BSA E-Filing System (https://bsaefiling.fincen.treas.gov)
+- **Cannot be filed with tax return** — separate electronic filing
+
+## Account Summary
+
+| # | Institution | Country | Account Number | Type | Max Value (USD) | Currency |
+|---|------------|---------|----------------|------|-----------------|----------|
+| 1 | {name}     | {country} | {number}     | {type} | ${max}        | {curr}   |
+...
+
+**Aggregate maximum value:** ${total}
+
+## Account Details
+
+### Account 1: {Institution Name}
+- **Full institution name:** {name}
+- **Institution address:** {full address}
+- **Account number:** {number}
+- **Account type:** {type}
+- **Currency:** {currency}
+- **Maximum value:** {amount in original currency} = ${USD amount}
+- **Year-end value:** {amount}
+- **Exchange rate used:** {rate} (IRS {year} yearly average)
+- **Income earned:** ${amount} ({interest/dividends/gains})
+
+### Account 2: ...
+...
+
+## Form 8938 (FATCA) — Separate Analysis
+- **Required?** {Yes/No}
+- **Year-end aggregate:** ${amount} (threshold: ${threshold})
+- **Peak aggregate (realistic):** ${amount} (threshold: ${threshold})
+- **Note:** {explanation of why 8938 differs from FBAR}
+
+## Filing Checklist
+- [ ] Go to https://bsaefiling.fincen.treas.gov
+- [ ] Select "File FBAR (FinCEN 114)"
+- [ ] Enter filer information
+- [ ] Enter each account above
+- [ ] Review and submit
+- [ ] Save confirmation number
+```
+
+### 6. Update result.json
+
+Ensure `fbar_fincen_114` and `form_8938_fatca` sections in result.json are accurate.
+
+### 7. Summary
+
+Print:
+- FBAR required: Yes/No
+- Number of foreign accounts: {N}
+- Aggregate maximum value: ${amount}
+- Form 8938 required: Yes/No (separate from FBAR)
+- FBAR preparation document saved to: FBAR_{year}_Preparation.md
+- Filing deadline: {date}

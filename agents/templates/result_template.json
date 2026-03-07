@@ -1,0 +1,334 @@
+{
+  "_comment": "Tax return result template. Only sections relevant to the taxpayer's situation are included. Field names MUST match what generate_tax_pdf.py expects.",
+
+  "meta": {
+    "tax_year": null,
+    "prepared": null,
+    "filing_status": null,
+    "standard_deduction": null,
+    "exchange_rates": {},
+    "_note_exchange_rates": "Keys are currency codes, e.g. {\"EUR\": 1.08}. generate_tax_pdf.py reads this first, falls back to exchange_rate_* keys.",
+    "_last_modified_by": null,
+    "_last_modified_at": null,
+    "_note_integrity": "Skills should update _last_modified_by (skill name) and _last_modified_at (ISO timestamp) on every write. Subsequent skills should verify these fields to detect unexpected modifications."
+  },
+
+  "taxpayers": {
+    "primary": {
+      "name": null,
+      "ssn_last4": null,
+      "dob": null,
+      "occupation": null
+    },
+    "spouse": {
+      "name": null,
+      "ssn_last4": null,
+      "dob": null,
+      "occupation": null
+    },
+    "address": null
+  },
+
+  "dependents": [],
+
+  "form_1040": {
+    "line_1a_wages": 0,
+    "line_1z_total_wages": 0,
+    "line_2a_tax_exempt_interest": 0,
+    "line_2b_taxable_interest": 0,
+    "line_3a_qualified_dividends": 0,
+    "line_3b_ordinary_dividends": 0,
+    "line_4a_ira_distributions": 0,
+    "line_4b_taxable_ira": 0,
+    "line_5a_pensions": 0,
+    "line_5b_taxable_pensions": 0,
+    "line_6a_social_security": 0,
+    "line_6b_taxable_ss": 0,
+    "line_7_capital_gain": 0,
+    "line_8_schedule1_other": 0,
+    "line_9_total_income": 0,
+    "line_10_adjustments": 0,
+    "line_11_agi": 0,
+    "line_12_standard_deduction": 0,
+    "line_13a_qbi_deduction": 0,
+    "line_14_total_deductions": 0,
+    "line_15_taxable_income": 0,
+    "line_16_tax": 0,
+    "line_19_ctc": 0,
+    "line_20_schedule3_line8": 0,
+    "line_21_total_credits": 0,
+    "line_22_tax_minus_credits": 0,
+    "line_23_other_taxes": 0,
+    "line_24_total_tax": 0,
+    "line_25a_w2_withholding": 0,
+    "line_25b_1099_withholding": 0,
+    "line_25c_other_withholding": 0,
+    "line_25d_total_withholding": 0,
+    "line_26_estimated_payments": 0,
+    "line_33_total_payments": 0,
+    "line_34_overpayment": 0,
+    "line_35a_refund": 0,
+    "line_37_amount_owed": 0
+  },
+
+  "_optional_sections_below": "Include only if applicable to this taxpayer. Remove sections that don't apply.",
+
+  "interest_detail": {
+    "_include_if": "taxable interest > $0",
+    "note": "Schedule B Part I",
+    "items": [],
+    "total": 0,
+    "foreign_accounts_yes": false,
+    "fbar_required": false
+  },
+
+  "dividend_detail": {
+    "_include_if": "ordinary dividends > $0",
+    "note": "Schedule B Part II",
+    "items": [],
+    "total_ordinary": 0,
+    "total_qualified": 0,
+    "total_cap_gain_dist": 0,
+    "total_sec_199a": 0
+  },
+
+  "schedule_c": {
+    "_include_if": "has_self_employment flag is true",
+    "name": null,
+    "business": null,
+    "naics_code": null,
+    "naics_description": null,
+    "ein": null,
+    "accounting_method": "Cash",
+    "started_this_year": false,
+    "line_1_gross_receipts": 0,
+    "line_7_gross_income": 0,
+    "other_expenses_detail": [],
+    "line_27a_other_expenses": 0,
+    "line_28_total_expenses": 0,
+    "line_29_tentative_profit": 0,
+    "line_30_home_office": 0,
+    "line_31_net": 0,
+    "_note_line_31": "Positive = profit, negative = loss. Single field replaces dual profit/loss fields.",
+    "se_tax": 0
+  },
+
+  "schedule_d": {
+    "_include_if": "has_capital_gains flag is true",
+    "part_i_short_term": {
+      "line_1a_1099b_box_a": {"proceeds": 0, "cost": 0, "gain": 0, "source": null},
+      "line_1c_1099b_box_f": {"proceeds": 0, "cost": 0, "gain": 0, "source": null},
+      "line_7_net_short_term": 0
+    },
+    "part_ii_long_term": {
+      "line_11_1099b": 0,
+      "line_12_not_reported": 0,
+      "line_13_cap_gain_dist": 0,
+      "line_15_net_long_term": 0
+    },
+    "line_16_combined": 0
+  },
+
+  "form_8949": {
+    "_include_if": "has individual capital asset transactions",
+    "part_i_short_term": [],
+    "part_ii_long_term": []
+  },
+
+  "form_8889_hsa": {
+    "_include_if": "has_hsa flag is true",
+    "line_1_coverage_type": null,
+    "line_2_contributions": 0,
+    "line_9_employer_contributions": 0,
+    "line_13_hsa_deduction": 0,
+    "line_14a_distributions": 0,
+    "line_14c_qualified_medical": 0,
+    "line_15_taxable_distributions": 0
+  },
+
+  "form_1116_ftc": {
+    "_include_if": "has_foreign_tax_paid flag is true",
+    "category": "General category income (passive)",
+    "foreign_tax_paid_local_currency": 0,
+    "foreign_tax_paid_usd": 0,
+    "foreign_source_income": {
+      "_note": "Add named sub-keys per income source, e.g. bank_deposit_interest, savings_interest",
+      "total": 0
+    },
+    "worldwide_income": 0,
+    "us_tax_before_ftc": 0,
+    "ftc_limitation": 0,
+    "ftc_allowed": 0,
+    "note": null
+  },
+
+  "form_8938_fatca": {
+    "_include_if": "has_foreign_accounts flag is true — include even if not required (to document threshold analysis)",
+    "required": false,
+    "threshold": null,
+    "not_required_reason": null,
+    "accounts": []
+  },
+
+  "fbar_fincen_114": {
+    "_include_if": "has_foreign_accounts flag is true AND aggregate > $10K",
+    "required": false,
+    "due_date": null,
+    "filed_separately": true,
+    "note": "Filed electronically at BSA E-Filing, not with tax return",
+    "accounts": []
+  },
+
+  "form_1099r_401k_rollover": {
+    "_include_if": "has_1099r flag is true",
+    "payer": null,
+    "payer_tin": null, "_note_payer_tin": "Payer TINs (EINs) are full numbers from the original 1099-R. Only INDIVIDUAL SSNs use last-4-only policy.",
+    "box_1_gross_distribution": 0,
+    "box_2a_taxable_amount": 0,
+    "box_4_fed_tax_withheld": 0,
+    "box_5_employee_roth_contributions": 0,
+    "box_7_distribution_code": null,
+    "box_7_description": null,
+    "box_14_state_tax_withheld": 0,
+    "box_15_state": null,
+    "taxable_on_return": 0,
+    "1040_line_5a": 0,
+    "1040_line_5b": 0
+  },
+
+  "form_8959_additional_medicare": {
+    "_include_if": "Medicare wages > $200K (employer withholding threshold)",
+    "line_1_medicare_wages": 0,
+    "line_5_mfj_threshold": 0,
+    "line_7_additional_tax": 0,
+    "line_18_total_additional_tax": 0,
+    "line_19_medicare_withheld_w2_box6": 0,
+    "line_21_regular_medicare": 0,
+    "line_22_additional_withholding": 0,
+    "note": null
+  },
+
+  "form_8995_qbi": {
+    "_include_if": "has QBI income or REIT dividends",
+    "line_2_total_qbi": 0,
+    "line_5_qbi_component": 0,
+    "line_6_reit_dividends": 0,
+    "line_9_reit_component": 0,
+    "line_15_qbi_deduction": 0,
+    "line_16_qbi_loss_carryforward": 0,
+    "note": null
+  },
+
+  "w2_summary": {
+    "employer": null,
+    "employer_ein": null,
+    "employer_address": null,
+    "box_1_wages": 0,
+    "box_2_fed_withheld": 0,
+    "box_3_ss_wages": 0,
+    "box_4_ss_tax": 0,
+    "box_5_medicare_wages": 0,
+    "box_6_medicare_tax": 0,
+    "box_12_AA_roth_401k": 0,
+    "box_12_C_life_ins": 0,
+    "box_12_D_401k": 0,
+    "box_12_DD_health": 0,
+    "box_12_W_hsa": 0,
+    "box_14_casdi": 0,
+    "box_16_state_wages": 0,
+    "box_17_state_tax": 0
+  },
+
+  "federal_tax_computation": {
+    "taxable_income": 0,
+    "ordinary_income": 0,
+    "qualified_dividends_ltcg": 0,
+    "qdcg_detail": null,
+    "tax_on_ordinary": {},
+    "tax_on_ordinary_total": 0,
+    "tax_on_qdiv_ltcg_at_15pct": 0,
+    "total_tax_before_credits": 0,
+    "child_tax_credit": 0,
+    "foreign_tax_credit": 0,
+    "total_credits": 0,
+    "tax_after_credits": 0,
+    "additional_medicare_tax": 0,
+    "niit": 0,
+    "total_tax": 0,
+    "note": null
+  },
+
+  "california_540": {
+    "_include_if": "state is CA",
+    "ca_filing_status": null,
+    "ca_standard_deduction": 0,
+    "federal_agi": 0,
+    "schedule_ca_adjustments": {
+      "hsa_employer_addback": 0,
+      "hsa_interest_addback": 0,
+      "hsa_dividend_addback": 0,
+      "total_additions": 0,
+      "total_subtractions": 0
+    },
+    "ca_agi": 0,
+    "ca_taxable_income": 0,
+    "ca_tax_from_table": 0,
+    "ca_exemption_credits": {
+      "personal": {"count": 0, "per_person": 0, "total": 0},
+      "dependent": {"count": 0, "per_dependent": 0, "total": 0},
+      "total": 0
+    },
+    "ca_tax_after_credits": 0,
+    "ca_mental_health_surcharge": 0,
+    "ca_total_tax": 0,
+    "ca_withholding_box17": 0,
+    "ca_sdi_box14": 0,
+    "ca_refund": 0,
+    "note": null
+  },
+
+  "income_summary_by_person": {
+    "_include_if": "always — helps with review",
+    "_note": "IMPORTANT: Replace 'primary'/'spouse' keys with actual lowercase first names (e.g., 'john'/'jane'). generate_tax_pdf.py reads DATA['income_summary_by_person']['john'] — keys MUST match. Sub-fields are taxpayer-specific: add only income types that apply (e.g., 'interest_foreign' for foreign interest, 'consulting_gross' for Schedule C). The PDF generator uses .get(key, 0) so missing sub-fields default to $0.",
+    "primary": {
+      "w2_wages": 0,
+      "interest_us": 0,
+      "interest_foreign": 0,
+      "dividends_us": 0,
+      "dividends_foreign": 0,
+      "capital_gains_us": 0,
+      "capital_gains_foreign": 0,
+      "capital_gain_distributions": 0,
+      "total_income": 0
+    },
+    "spouse": {
+      "consulting_gross": 0,
+      "home_office_deduction": 0,
+      "net_schedule_c": 0,
+      "total_income": 0
+    }
+  },
+
+  "ira_contribution": {
+    "_include_if": "has_ira_contributions flag is true",
+    "status": null,
+    "type": null,
+    "amount": 0,
+    "account": null,
+    "beneficiary": null,
+    "deductible": false,
+    "magi": 0,
+    "phaseout_start": 0,
+    "federal_savings": 0,
+    "ca_savings": 0,
+    "total_savings": 0,
+    "note": null
+  },
+
+  "balance_due_summary": {
+    "federal_refund": 0,
+    "california_refund": 0,
+    "net_refund": 0,
+    "note": null
+  }
+}

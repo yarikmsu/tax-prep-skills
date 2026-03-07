@@ -1,0 +1,35 @@
+# Sensitive tax data — never commit
+taxpayer_profile.json
+tax_law_*.json
+result.json
+answers.md
+summaries/
+FBAR_*.md
+*.pdf
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# Environment files (may contain API keys)
+.env
+.env.*
+.env.local
+
+# Editor swap/backup files (may contain partial copies of sensitive data)
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
