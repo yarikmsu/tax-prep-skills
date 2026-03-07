@@ -246,9 +246,12 @@ Note: Foreign tax paid in Box 7 → feeds Form 1116
 
 ### 1099-B Extraction
 Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss
-Note Box type: A (basis reported, short-term), B (basis reported, long-term),
-C (basis not reported, short-term), D-F (same but various)
-Foreign brokerages: typically Box C or F
+Note Box type (Form 8949 checkboxes):
+A (short-term, basis reported to IRS), B (short-term, basis NOT reported to IRS),
+C (short-term, no 1099-B received),
+D (long-term, basis reported to IRS), E (long-term, basis NOT reported to IRS),
+F (long-term, no 1099-B received)
+Foreign brokerages: typically Box B or E (basis not reported to IRS)
 
 ### 1099-R Extraction
 Must capture: Boxes 1, 2a, 4, 5, 7 (distribution code)

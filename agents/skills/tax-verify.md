@@ -129,22 +129,29 @@ Read `result.json` and the extracted software return. Compare every line.
 | 2b | Taxable interest | form_1040.line_2b_taxable_interest |
 | 3a | Qualified dividends | form_1040.line_3a_qualified_dividends |
 | 3b | Ordinary dividends | form_1040.line_3b_ordinary_dividends |
+| 4a | IRA distributions | form_1040.line_4a_ira_distributions |
+| 4b | Taxable IRA | form_1040.line_4b_taxable_ira |
 | 5a | Pensions | form_1040.line_5a_pensions |
 | 5b | Taxable pensions | form_1040.line_5b_taxable_pensions |
 | 7 | Capital gain | form_1040.line_7_capital_gain |
 | 8 | Other income | form_1040.line_8_schedule1_other |
 | 9 | Total income | form_1040.line_9_total_income |
 | 11 | AGI | form_1040.line_11_agi |
+| 10 | Adjustments | form_1040.line_10_adjustments |
 | 12 | Standard deduction | form_1040.line_12_standard_deduction |
+| 13a | QBI deduction | form_1040.line_13a_qbi_deduction |
 | 15 | Taxable income | form_1040.line_15_taxable_income |
 | 16 | Tax | form_1040.line_16_tax |
 | 19 | CTC | form_1040.line_19_ctc |
 | 24 | Total tax | form_1040.line_24_total_tax |
 | 25a | W-2 withholding | form_1040.line_25a_w2_withholding |
 | 25b | 1099 withholding | form_1040.line_25b_1099_withholding |
+| 25c | Other withholding | form_1040.line_25c_other_withholding |
 | 25d | Total withholding | form_1040.line_25d_total_withholding |
 | 26 | Estimated payments | form_1040.line_26_estimated_payments |
+| 33 | Total payments | form_1040.line_33_total_payments |
 | 35a | Refund | form_1040.line_35a_refund |
+| 37 | Amount owed | form_1040.line_37_amount_owed |
 
 **Also verify supplemental forms:**
 - Schedule B: interest/dividend totals
