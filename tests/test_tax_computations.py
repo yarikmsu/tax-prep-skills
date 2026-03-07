@@ -380,3 +380,349 @@ class TestComputeAdditionalMedicare:
             compute_additional_medicare(
                 medicare_wages=-5000, se_income=0, threshold=250_000, withheld=0,
             )
+
+
+class TestComputeFtcLimitation:
+    """Tests for compute_ftc_limitation — FTC limitation and credit scenarios."""
+
+    def test_basic_ftc(self):
+        """Foreign=5K, worldwide=200K, us_tax=30K, paid=800. Limited by limitation."""
+        result = compute_ftc_limitation(5000, 200000, 30000, 800)
+        assert result["limitation"] == 750.00
+        assert result["ftc_allowed"] == 750.00
+        assert result["limited_by"] == "limitation"
+
+    def test_ftc_limited_by_tax_paid(self):
+        """Foreign=50K, worldwide=200K, us_tax=30K, paid=500. Limited by tax paid."""
+        result = compute_ftc_limitation(50000, 200000, 30000, 500)
+        assert result["limitation"] == 7500.00
+        assert result["ftc_allowed"] == 500.00
+        assert result["limited_by"] == "tax_paid"
+
+    def test_foreign_income_exceeds_worldwide(self):
+        """Foreign=300K > worldwide=200K. Ratio capped at 1.0."""
+        result = compute_ftc_limitation(300000, 200000, 50000, 10000)
+        assert result["limitation"] == 50000.00
+        assert result["ftc_allowed"] == 10000.00
+
+    def test_zero_worldwide_income(self):
+        """Worldwide=0 → limitation=0, FTC=0."""
+        result = compute_ftc_limitation(1000, 0, 0, 100)
+        assert result["limitation"] == 0.00
+        assert result["ftc_allowed"] == 0.00
+
+    def test_negative_foreign_income(self):
+        """Negative foreign income → ratio floored at 0, limitation=0."""
+        result = compute_ftc_limitation(-5000, 200000, 30000, 0)
+        assert result["limitation"] == 0.00
+
+    def test_none_inputs_raise(self):
+        """Each None param raises ValueError."""
+        with pytest.raises(ValueError):
+            compute_ftc_limitation(None, 200000, 30000, 800)
+        with pytest.raises(ValueError):
+            compute_ftc_limitation(5000, None, 30000, 800)
+        with pytest.raises(ValueError):
+            compute_ftc_limitation(5000, 200000, None, 800)
+        with pytest.raises(ValueError):
+            compute_ftc_limitation(5000, 200000, 30000, None)
+
+
+class TestComputeChildTaxCredit:
+    """Tests for compute_child_tax_credit — CTC computation with phaseout."""
+
+    def test_two_children_below_phaseout(self):
+        """2 kids, AGI well below phaseout. Full credit."""
+        result = compute_child_tax_credit(2, 2000, 200000, 400000)
+        assert result["credit_allowed"] == 4000.00
+        assert result["phase_out_reduction"] == 0.00
+
+    def test_phaseout_exact_1000_increments(self):
+        """2 kids, AGI $20K over phaseout (exact $1K multiple)."""
+        result = compute_child_tax_credit(2, 2000, 420000, 400000)
+        # excess=20000, reduction=ceil(20000/1000)*50=1000
+        assert result["phase_out_reduction"] == 1000.00
+        assert result["credit_allowed"] == 3000.00
+
+    def test_phaseout_fraction_of_1000(self):
+        """2 kids, AGI $500 over phaseout (fraction of $1K)."""
+        result = compute_child_tax_credit(2, 2000, 400500, 400000)
+        # excess=500, reduction=ceil(500/1000)*50=50
+        assert result["phase_out_reduction"] == 50.00
+        assert result["credit_allowed"] == 3950.00
+
+    def test_phaseout_to_zero(self):
+        """2 kids, AGI $100K over phaseout. Credit fully phased out."""
+        result = compute_child_tax_credit(2, 2000, 500000, 400000)
+        # excess=100000, reduction=ceil(100000/1000)*50=5000 > 4000
+        assert result["credit_allowed"] == 0.00
+
+    def test_exactly_at_phaseout_start(self):
+        """1 kid, AGI exactly at phaseout. Full credit (no excess)."""
+        result = compute_child_tax_credit(1, 2000, 400000, 400000)
+        assert result["credit_allowed"] == 2000.00
+
+    def test_zero_children(self):
+        """0 children → 0 credit."""
+        result = compute_child_tax_credit(0, 2000, 200000, 400000)
+        assert result["credit_allowed"] == 0.00
+
+    def test_obbba_enhanced_credit(self):
+        """3 kids at $2200/child (OBBBA enhanced rate)."""
+        result = compute_child_tax_credit(3, 2200, 200000, 400000)
+        assert result["credit_allowed"] == 6600.00
+
+    def test_none_inputs_raise(self):
+        """Each None param raises ValueError."""
+        with pytest.raises(ValueError):
+            compute_child_tax_credit(None, 2000, 200000, 400000)
+        with pytest.raises(ValueError):
+            compute_child_tax_credit(2, None, 200000, 400000)
+        with pytest.raises(ValueError):
+            compute_child_tax_credit(2, 2000, None, 400000)
+        with pytest.raises(ValueError):
+            compute_child_tax_credit(2, 2000, 200000, None)
+
+
+class TestComputeQbiDeduction:
+    """Tests for compute_qbi_deduction — QBI deduction computation."""
+
+    def test_positive_qbi_with_reit(self):
+        """Positive QBI + REIT dividends."""
+        result = compute_qbi_deduction(50000, 1000)
+        assert result["qbi_component"] == 10000.00
+        assert result["reit_component"] == 200.00
+        assert result["total_deduction"] == 10200.00
+        assert result["loss_carryforward"] == 0.00
+
+    def test_negative_qbi_carryforward(self):
+        """Negative QBI → loss carryforward, only REIT component."""
+        result = compute_qbi_deduction(-10000, 500)
+        assert result["qbi_component"] == 0.00
+        assert result["reit_component"] == 100.00
+        assert result["total_deduction"] == 100.00
+        assert result["loss_carryforward"] == -10000.00
+
+    def test_zero_qbi_zero_reit(self):
+        """Zero QBI + zero REIT → zero deduction."""
+        result = compute_qbi_deduction(0, 0)
+        assert result["total_deduction"] == 0.00
+
+    def test_reit_only(self):
+        """QBI=0, REIT=2000 → only REIT component."""
+        result = compute_qbi_deduction(0, 2000)
+        assert result["total_deduction"] == 400.00
+
+    def test_negative_reit_raises(self):
+        """Negative REIT dividends raises ValueError."""
+        with pytest.raises(ValueError, match="cannot be negative"):
+            compute_qbi_deduction(50000, -100)
+
+    def test_none_qbi_raises(self):
+        """None QBI raises ValueError."""
+        with pytest.raises(ValueError):
+            compute_qbi_deduction(None, 500)
+
+
+class TestCheckForm8938Required:
+    """Tests for check_form_8938_required — FATCA threshold analysis."""
+
+    THRESHOLDS = {
+        "mfj_us": {"year_end": 200000, "any_time": 300000},
+        "single_us": {"year_end": 50000, "any_time": 75000},
+        "mfj_foreign": {"year_end": 400000, "any_time": 600000},
+        "single_foreign": {"year_end": 200000, "any_time": 300000},
+    }
+
+    def test_mfj_us_below_threshold(self):
+        """MFJ US, totals below thresholds → not required."""
+        accts = [{"year_end_value_usd": 100000, "max_value_usd": 150000}]
+        result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
+        assert result["required"] is False
+
+    def test_mfj_us_year_end_triggers(self):
+        """MFJ US, year-end exceeds threshold → required."""
+        accts = [
+            {"year_end_value_usd": 110000, "max_value_usd": 120000},
+            {"year_end_value_usd": 100000, "max_value_usd": 130000},
+        ]
+        result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
+        assert result["required"] is True  # total_ye=210K > 200K
+
+    def test_mfj_us_any_time_triggers(self):
+        """MFJ US, any-time max exceeds threshold → required."""
+        accts = [{"year_end_value_usd": 100000, "max_value_usd": 310000}]
+        result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
+        assert result["required"] is True  # max=310K > 300K
+
+    def test_single_us_threshold(self):
+        """Single US, year-end exceeds single threshold → required."""
+        accts = [{"year_end_value_usd": 55000, "max_value_usd": 60000}]
+        result = check_form_8938_required(accts, "single", False, self.THRESHOLDS)
+        assert result["required"] is True
+
+    def test_hoh_uses_single_thresholds(self):
+        """HoH uses single thresholds."""
+        accts = [{"year_end_value_usd": 55000, "max_value_usd": 60000}]
+        result = check_form_8938_required(accts, "hoh", False, self.THRESHOLDS)
+        assert result["required"] is True
+        assert result["threshold_year_end"] == 50000
+
+    def test_mfs_uses_single_thresholds(self):
+        """MFS uses single thresholds."""
+        accts = [{"year_end_value_usd": 55000, "max_value_usd": 60000}]
+        result = check_form_8938_required(accts, "mfs", False, self.THRESHOLDS)
+        assert result["required"] is True
+        assert result["threshold_year_end"] == 50000
+
+    def test_foreign_resident_higher_thresholds(self):
+        """Single abroad, below higher foreign thresholds → not required."""
+        accts = [{"year_end_value_usd": 150000, "max_value_usd": 250000}]
+        result = check_form_8938_required(accts, "single", True, self.THRESHOLDS)
+        assert result["required"] is False
+
+    def test_string_values_coerced(self):
+        """String values like '$55,000' are coerced to float."""
+        accts = [{"year_end_value_usd": "$55,000", "max_value_usd": "60000"}]
+        result = check_form_8938_required(accts, "single", False, self.THRESHOLDS)
+        assert result["required"] is True
+        assert result["total_year_end"] == 55000.00
+
+    def test_empty_accounts_not_required(self):
+        """Empty accounts list → not required."""
+        result = check_form_8938_required([], "mfj", False, self.THRESHOLDS)
+        assert result["required"] is False
+
+    def test_exactly_at_threshold_not_required(self):
+        """Exactly at threshold (not exceeding) → NOT required."""
+        accts = [{"year_end_value_usd": 200000, "max_value_usd": 300000}]
+        result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
+        assert result["required"] is False
+
+    def test_invalid_filing_status_raises(self):
+        """Invalid filing status raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid filing_status"):
+            check_form_8938_required([], "married", False, self.THRESHOLDS)
+
+    def test_none_accounts_raises(self):
+        """None accounts raises ValueError."""
+        with pytest.raises(ValueError, match="cannot be None"):
+            check_form_8938_required(None, "mfj", False, self.THRESHOLDS)
+
+    def test_non_numeric_account_raises(self):
+        """Non-numeric account value raises ValueError."""
+        accts = [{"year_end_value_usd": "abc", "max_value_usd": 5000}]
+        with pytest.raises(ValueError, match="non-numeric"):
+            check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
+
+
+class TestCoerceNumeric:
+    """Tests for _coerce_numeric — type coercion utility."""
+
+    def test_int(self):
+        assert _coerce_numeric(42) == 42.0
+
+    def test_float(self):
+        assert _coerce_numeric(3.14) == 3.14
+
+    def test_string_plain(self):
+        assert _coerce_numeric("5000") == 5000.0
+
+    def test_string_with_dollar_and_commas(self):
+        assert _coerce_numeric("$5,000.50") == 5000.50
+
+    def test_string_with_spaces(self):
+        assert _coerce_numeric("  1234  ") == 1234.0
+
+    def test_unparseable_returns_default(self):
+        assert _coerce_numeric("abc") is None
+        assert _coerce_numeric("abc", default=0) == 0
+
+    def test_none_returns_default(self):
+        assert _coerce_numeric(None) is None
+        assert _coerce_numeric(None, default=0) == 0
+
+    def test_bool_raises(self):
+        with pytest.raises(TypeError, match="got bool"):
+            _coerce_numeric(True)
+        with pytest.raises(TypeError, match="got bool"):
+            _coerce_numeric(False)
+
+    def test_empty_string_returns_default(self):
+        assert _coerce_numeric("") is None
+
+
+class TestFullPipeline:
+    """Integration test — full MFJ computation pipeline."""
+
+    def test_full_computation(self):
+        """MFJ scenario: W-2 $180K, interest, dividends, LTCG, foreign tax, 2 kids."""
+        # Income components
+        wages = 180000
+        taxable_interest = 2000
+        ordinary_dividends = 15000
+        qualified_dividends = 12000
+        net_ltcg = 30000
+        cap_gain_distributions = 3000  # included in ordinary dividends on 1099-DIV
+        foreign_tax_paid = 400
+        foreign_source_income = 3000
+
+        # Step 1: Total income (line 9)
+        # 1099-B net LTCG + cap gain dist = 33000 reported on Schedule D
+        total_capital = net_ltcg + cap_gain_distributions  # 33000
+        line_9 = wages + taxable_interest + ordinary_dividends + total_capital
+        assert line_9 == 230000
+
+        # Step 2: AGI (line 11) — no adjustments in this scenario
+        line_11 = line_9
+        assert line_11 == 230000
+
+        # Step 3: Deductions
+        qbi_result = compute_qbi_deduction(0, 0)
+        assert qbi_result["total_deduction"] == 0.00
+        standard_deduction = 30000
+        line_14 = standard_deduction + qbi_result["total_deduction"]
+        line_15 = max(0, line_11 - line_14)  # taxable income
+        assert line_15 == 200000
+
+        # Step 4: QDCG tax (line 16)
+        # net_ltcg for QDCG worksheet = Schedule D line 15 (net LTCG after losses)
+        # cap gain distributions are part of LTCG, so total QDCG-eligible LTCG = 33000
+        qdcg_result = compute_qdcg_tax(
+            taxable_income=line_15,
+            qualified_dividends=qualified_dividends,
+            net_ltcg=total_capital,  # 33000 (net LTCG including cap gain dist)
+            brackets=MFJ_BRACKETS_2025,
+            cg_zero_limit=CG_ZERO_LIMIT_MFJ,
+            cg_fifteen_limit=CG_FIFTEEN_LIMIT_MFJ,
+        )
+        line_16 = qdcg_result["final_tax"]
+        assert line_16 > 0
+
+        # Step 5: CTC
+        ctc_result = compute_child_tax_credit(2, 2000, line_11, 400000)
+        assert ctc_result["credit_allowed"] == 4000.00
+
+        # Step 6: FTC
+        ftc_result = compute_ftc_limitation(
+            foreign_source_income=foreign_source_income,
+            worldwide_income=line_11,
+            us_tax=line_16,
+            foreign_tax_paid=foreign_tax_paid,
+        )
+        assert ftc_result["ftc_allowed"] == 400.00
+        assert ftc_result["limited_by"] == "tax_paid"
+
+        # Step 7: Additional Medicare
+        medicare_result = compute_additional_medicare(
+            medicare_wages=wages,
+            se_income=0,
+            threshold=250000,
+            withheld=wages * 0.0145,  # standard withholding
+        )
+        assert medicare_result["additional_tax"] == 0  # 180K < 250K
+
+        # Step 8: Final tax
+        total_credits = ctc_result["credit_allowed"] + ftc_result["ftc_allowed"]
+        line_24 = max(0, line_16 - total_credits) + medicare_result["additional_tax"]
+        assert line_24 > 0
