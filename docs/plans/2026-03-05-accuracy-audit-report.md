@@ -19,7 +19,7 @@
 | 9 | `_coerce_numeric` | 9 | PASS | None — bool rejection, None default behavior all correct |
 | 10 | Integration pipeline | 1 | PASS | None — full W-2 + investments scenario produces consistent results |
 
-**Total: 78 tests, 78 passed, 0 failed. No computation bugs found.**
+**Total: 90 tests, 90 passed, 0 failed. No computation bugs found.**
 
 ## Skill Instruction Audit Results
 
@@ -66,17 +66,17 @@ These lines were present in `result_template.json` but not in the verify compari
 
 | Category | Tests |
 |----------|-------|
-| Bracket tax (normal + errors) | 11 |
-| QDCG worksheet | 7 |
-| SE tax | 10 |
+| Bracket tax (normal + errors) | 12 |
+| QDCG worksheet | 8 |
+| SE tax | 11 |
 | Additional Medicare | 7 |
-| FTC limitation | 6 |
-| Child Tax Credit | 8 |
+| FTC limitation | 9 |
+| Child Tax Credit | 12 |
 | QBI deduction | 6 |
-| Form 8938 FATCA | 13 |
+| Form 8938 FATCA | 15 |
 | _coerce_numeric helper | 9 |
 | Integration pipeline | 1 |
-| **Total** | **78** |
+| **Total** | **90** |
 
 ## Recommendations
 
