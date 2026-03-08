@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Install test dependencies
+        run: pip install pytest
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+  pii-scan:
+    name: PII file scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check for blocked file types
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BLOCKED_EXTENSIONS="pdf|xlsx|xls|csv|doc|docx|png|jpg|jpeg|gif|bmp|tiff|heic|zip|tar|gz"
+          VIOLATIONS_FILE=$(mktemp)
+
+          git diff --name-only --diff-filter=ACMR "${BASE_SHA}...HEAD" | while IFS= read -r file; do
+            filename=$(basename "$file")
+
+            # Check blocked extensions
+            if echo "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
+              echo "  BLOCKED FILE TYPE: $file" >> "$VIOLATIONS_FILE"
+              continue
+            fi
+
+            # Check blocked filenames
+            if [ "$filename" = "taxpayer_profile.json" ] || [ "$filename" = "result.json" ] || [ "$filename" = "answers.md" ]; then
+              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
+              continue
+            fi
+
+            # Check tax_law_*.json pattern
+            if echo "$filename" | grep -qE '^tax_law_.*\.json$'; then
+              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
+              continue
+            fi
+
+            # Check FBAR_*.md pattern
+            if echo "$filename" | grep -qE '^FBAR_.*\.md$'; then
+              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
+              continue
+            fi
+          done
+
+          if [ -s "$VIOLATIONS_FILE" ]; then
+            echo ""
+            echo "=========================================="
+            echo "  CI BLOCKED — Sensitive files found"
+            echo "=========================================="
+            echo ""
+            cat "$VIOLATIONS_FILE"
+            rm -f "$VIOLATIONS_FILE"
+            exit 1
+          fi
+
+          rm -f "$VIOLATIONS_FILE"
+          echo "No blocked file types found."
+
+  security:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit dependencies
+        run: pip-audit -r requirements.txt

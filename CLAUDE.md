@@ -79,6 +79,19 @@ This symlinks all `tax-*.md` skills into `.claude/skills/` and creates a `.gitig
 
 ## Development Guidelines
 
+### Git Workflow
+- NEVER run `git push` — print the command for the user to run manually
+- After user confirms push, create PR via `gh pr create`
+- Pre-commit hook blocks PII and sensitive file types automatically
+- To bypass hooks in emergencies: `git commit --no-verify` (use with caution)
+- User pushes with: `git push --no-verify -u origin <branch>`
+
+### CI (GitHub Actions)
+- Runs on every PR to `main`: pytest, PII file scan, pip-audit
+- All three checks must pass before merging (enforced by convention)
+- Dependabot opens PRs weekly for outdated pip dependencies
+- CI config: `.github/workflows/ci.yml`
+
 ### Modifying tax_computations.py
 - All functions take rates/brackets as parameters — never hardcode bracket values
 - The only hardcoded constants are structural (SE threshold = $400, SE factor = 92.35%)
@@ -93,6 +106,12 @@ This symlinks all `tax-*.md` skills into `.claude/skills/` and creates a `.gitig
 - Skills are Markdown files that instruct Claude Code (they are NOT executed directly)
 - Each skill should specify prerequisites (which files must exist first)
 - Parsing skills should dispatch parallel subagents for independent document groups
+
+### Testing
+- Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
+- 90 tests covering all 8 computation functions + integration pipeline
+- Expected values are hand-computed from IRS worksheets — update comments when changing assertions
+- When adding tests, update ALL test count references in `docs/plans/2026-03-05-accuracy-audit-report.md` (two tables)
 
 ### Security
 - **NEVER store full SSNs** — only last 4 digits in `ssn_last4` fields
@@ -112,3 +131,5 @@ This symlinks all `tax-*.md` skills into `.claude/skills/` and creates a `.gitig
 - State HSA non-conformity (CA, NJ, AL): HSA contributions and earnings are state-taxable
 - FTC simplified: ≤$600 MFJ ($300 single) from qualified passive sources — no Form 1116 needed
 - QBI deduction (Sec 199A) applies even with standard deduction
+- Form 8949 boxes: A/B/C = short-term (basis reported/not reported/no 1099-B), D/E/F = long-term (same pattern). Foreign brokerages = Box B or E (basis not reported)
+- Schedule D Part I line 1c field is `line_1c_1099b_box_c` (not `box_f` — was renamed during accuracy audit)

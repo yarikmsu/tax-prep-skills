@@ -56,6 +56,49 @@ else
     done
 fi
 
+# Install git hooks for PII protection
+HOOKS_DIR="$WORKSPACE_ROOT/.git/hooks"
+if [ -d "$HOOKS_DIR" ]; then
+    cat > "$HOOKS_DIR/pre-commit" << 'HOOK_EOF'
+#!/bin/bash
+# Git pre-commit hook — runs PII guard.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -x "$REPO_ROOT/scripts/pre-commit-pii-scan.sh" ]; then
+    "$REPO_ROOT/scripts/pre-commit-pii-scan.sh"
+else
+    echo "WARNING: PII scan script not found at $REPO_ROOT/scripts/pre-commit-pii-scan.sh"
+    echo "Commit is proceeding WITHOUT PII protection."
+    echo "Run 'bash agents/install.sh' to fix."
+fi
+HOOK_EOF
+    chmod +x "$HOOKS_DIR/pre-commit"
+    echo "  Installed pre-commit hook (PII guard)"
+
+    cat > "$HOOKS_DIR/pre-push" << 'HOOK_EOF'
+#!/bin/bash
+# Git pre-push hook — blocks automated pushes.
+echo ""
+echo "=========================================="
+echo "  PUSH BLOCKED"
+echo "=========================================="
+echo ""
+echo "  Push blocked by pre-push hook."
+echo "  To push after reviewing your commit:"
+echo ""
+BRANCH=$(git branch --show-current 2>/dev/null || echo "HEAD")
+echo "    git push --no-verify -u origin $BRANCH"
+echo ""
+exit 1
+HOOK_EOF
+    chmod +x "$HOOKS_DIR/pre-push"
+    echo "  Installed pre-push hook (push blocker)"
+else
+    echo "  WARNING: .git/hooks directory not found at $HOOKS_DIR"
+    echo "  Git hooks were NOT installed. PII protection is not active."
+    echo "  Ensure this is a git repository and re-run install.sh."
+fi
+
 echo ""
 echo "Installed ${#skill_files[@]} tax skills to $SKILLS_DIR"
 echo "Available commands: /tax-setup, /tax-parse, /tax-compute, /tax-generate, /tax-verify, /tax-review, /tax-fbar"

@@ -1,0 +1,15 @@
+# PII Allowlist — patterns listed here are excluded from PII scanning.
+# One pattern per line. Lines starting with # are comments.
+# Used by: grep -vFf .pii-allowlist
+# Masked SSN format (last 4 only — this is the ALLOWED format)
+XXX-XX-
+# Test/example SSNs used in documentation
+000-00-0000
+# Example emails used in docs and comments
+example@example.com
+user@example.com
+# Common false positives in code
+password=None
+secret=None
+token=None
+api_key=None
