@@ -42,14 +42,16 @@ tax_law_*.json
 result.json
 answers.md
 summaries/
+documents/*
+!documents/.gitkeep
 FBAR_*.md
 *.pdf
 EOF
     echo "  Created .gitignore (excludes sensitive tax data)"
 else
     # Append sensitive patterns not already present
-    for pattern in "taxpayer_profile.json" "tax_law_*.json" "result.json" "answers.md" "summaries/" "FBAR_*.md" "*.pdf" ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"; do
-        if ! grep -qF "$pattern" "$GITIGNORE" 2>/dev/null; then
+    for pattern in "taxpayer_profile.json" "tax_law_*.json" "result.json" "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "FBAR_*.md" "*.pdf" ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"; do
+        if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
             echo "$pattern" >> "$GITIGNORE"
             echo "  Added $pattern to .gitignore"
         fi
@@ -61,7 +63,27 @@ HOOKS_DIR="$WORKSPACE_ROOT/.git/hooks"
 if [ -d "$HOOKS_DIR" ]; then
     cat > "$HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 #!/bin/bash
-# Git pre-commit hook — runs PII guard.
+# Git pre-commit hook — blocks commits to main and runs PII guard.
+
+# Block direct commits to main/master
+BRANCH=$(git branch --show-current 2>/dev/null)
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+    echo ""
+    echo "=========================================="
+    echo "  COMMIT BLOCKED — Direct commit to $BRANCH"
+    echo "=========================================="
+    echo ""
+    echo "  All changes must go through feature branches and PRs."
+    echo "  Create a branch first:"
+    echo ""
+    echo "    git checkout -b feature/<name>"
+    echo ""
+    echo "  If this is intentional, use: git commit --no-verify"
+    echo ""
+    exit 1
+fi
+
+# Run PII guard
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 if [ -x "$REPO_ROOT/scripts/pre-commit-pii-scan.sh" ]; then
@@ -73,7 +95,7 @@ else
 fi
 HOOK_EOF
     chmod +x "$HOOKS_DIR/pre-commit"
-    echo "  Installed pre-commit hook (PII guard)"
+    echo "  Installed pre-commit hook (branch guard + PII guard)"
 
     cat > "$HOOKS_DIR/pre-push" << 'HOOK_EOF'
 #!/bin/bash

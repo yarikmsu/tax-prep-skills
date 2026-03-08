@@ -4,6 +4,8 @@ tax_law_*.json
 result.json
 answers.md
 summaries/
+documents/*
+!documents/.gitkeep
 FBAR_*.md
 *.pdf
 

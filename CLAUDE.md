@@ -57,13 +57,14 @@ agents/
 ```bash
 bash agents/install.sh
 ```
-This symlinks all `tax-*.md` skills into `.claude/skills/` and creates a `.gitignore` for sensitive output files.
+This symlinks all `tax-*.md` skills into `.claude/skills/`, creates/updates `.gitignore` for sensitive output files, and installs git hooks (branch guard, PII scan, push blocker).
 
 ## Runtime Files (created per-taxpayer, gitignored)
 - `taxpayer_profile.json` — Taxpayer identity, filing status, flags (only last 4 of SSN)
 - `tax_law_<year>.json` — Cached rates/brackets fetched from IRS.gov
 - `result.json` — Computed form line values (source of truth)
 - `answers.md` — Persistent Q&A and resolved questions
+- `documents/` — Source tax documents (PDFs, XLSX, CSV) — place files here for parsing
 - `summaries/` — Per-document parsed data as markdown
 
 ## Tooling
@@ -82,6 +83,7 @@ This symlinks all `tax-*.md` skills into `.claude/skills/` and creates a `.gitig
 ### Git Workflow
 - NEVER run `git push` — print the command for the user to run manually
 - After user confirms push, create PR via `gh pr create`
+- Pre-commit hook blocks direct commits to `main`/`master` — always use a feature branch
 - Pre-commit hook blocks PII and sensitive file types automatically
 - To bypass hooks in emergencies: `git commit --no-verify` (use with caution)
 - User pushes with: `git push --no-verify -u origin <branch>`

@@ -71,10 +71,12 @@ The toolkit follows a 7-step pipeline. Each step is a separate skill that can be
 | `/tax-compute` | Compute federal 1040 + state return line values, write to `result.json` | `/tax-setup`, `/tax-parse` |
 | `/tax-generate` | Generate a formatted PDF summary of the return | `/tax-compute` |
 | `/tax-verify <software.pdf>` | Compare computed values against a tax software return (FreeTaxUSA, TurboTax, etc.) line by line | `/tax-compute`, software PDF |
-| `/tax-review` | Dual-perspective review: Enrolled Agent (missed deductions, optimization) + IRS officer (audit risk, red flags) | `/tax-compute` |
+| `/tax-review` | Dual-perspective review: Enrolled Agent (missed deductions, optimization) + IRS officer (audit risk, red flags) | `/tax-compute` (recommended: `/tax-verify` first) |
 | `/tax-fbar` | Prepare FBAR (FinCEN 114) filing document for foreign bank accounts | `/tax-compute`, foreign account data |
 
 ### Useful Options
+
+These are natural-language instructions interpreted by Claude, not parsed CLI flags. You can also express the same intent conversationally (e.g., "only parse the foreign documents").
 
 ```
 /tax-parse --group foreign     # Parse only foreign-language documents
@@ -109,7 +111,7 @@ Gather these documents before starting `/tax-parse`:
 - Foreign bank/brokerage statements (for FBAR)
 - Tax software return PDF (for `/tax-verify`)
 
-**Supported formats:** PDF, XLSX, XLS, CSV. Place files directly in the workspace directory.
+**Supported formats:** PDF, XLSX, CSV. Place files in the `documents/` directory.
 
 ## Security & Privacy
 
@@ -123,10 +125,14 @@ This toolkit is designed to handle sensitive tax data safely.
 - Output files are set to owner-only permissions (`chmod 600`)
 
 **Pre-commit hooks (installed by `agents/install.sh`):**
-- Block commits containing sensitive file types: PDF, XLSX, CSV, images, archives
-- Block commits of sensitive filenames: `taxpayer_profile.json`, `result.json`, `tax_law_*.json`, `answers.md`, `FBAR_*.md`
-- Claude Code PII scanner checks staged diffs for SSN patterns, email addresses, phone numbers, API keys, and secrets
-- Allowlist (`.pii-allowlist`) suppresses known false positives
+
+Three layers run on every commit:
+
+1. **Branch guard** — blocks direct commits to `main`/`master`. Hard block — commit is rejected with instructions to create a feature branch.
+
+2. **File type blocker** (`scripts/pre-commit-pii-scan.sh`) — blocks commits containing sensitive file types (PDF, XLSX, CSV, images, archives) and sensitive filenames (`taxpayer_profile.json`, `result.json`, `tax_law_*.json`, `answers.md`, `FBAR_*.md`). Hard block — commit is rejected.
+
+3. **Regex content scanner** (`.claude/hooks.json` PreCommit hook) — scans staged diffs for SSN patterns, email addresses, phone numbers, API keys, and secrets. Advisory — output is shown to Claude, who warns you if PII is detected. Allowlist (`.pii-allowlist`) suppresses known false positives.
 
 **Pre-push hook:**
 - Blocks all automated pushes — Claude prints the push command for you to run manually after reviewing
@@ -179,6 +185,12 @@ scripts/
 └── pre-commit-pii-scan.sh   # File type blocker (called by pre-commit hook)
 tests/
 └── test_tax_computations.py  # 90 tests for tax math functions
+.claude/
+└── hooks.json        # Claude Code PreCommit hook (regex PII scanner)
+.github/
+├── workflows/ci.yml  # CI pipeline (pytest + PII scan + pip-audit)
+└── dependabot.yml    # Weekly pip dependency monitoring
+.pii-allowlist        # False positive suppression for PII scanning
 ```
 
 ### Key Design Principles
@@ -192,7 +204,7 @@ tests/
 
 1. Create a feature branch
 2. Make changes and commit (pre-commit hooks run automatically)
-3. Push manually: `git push --no-verify -u origin <branch>`
+3. Push manually: `git push --no-verify -u origin <branch>` (`--no-verify` bypasses the pre-push hook, which intentionally blocks all pushes to force manual review)
 4. Open a PR — CI runs pytest + PII scan + pip-audit
 5. All checks must pass before merging
 

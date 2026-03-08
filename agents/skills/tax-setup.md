@@ -20,6 +20,7 @@ If no year is provided, default to the current calendar year minus 1 (e.g., in 2
 ### 1. Create Directory Structure
 
 Ensure these directories exist in the workspace:
+- `documents/` — source tax documents (PDFs, XLSX, CSV)
 - `summaries/` — parsed document summaries
 - `agents/` — if not already present (should exist from install)
 
@@ -172,7 +173,7 @@ Print a summary of what was created:
 - result.json initialized with {N} applicable sections
 - answers.md initialized
 - Dependencies verified
-- Ready for `/tax-parse` to parse source documents
+- Ready for `/tax-parse` — place source documents in `documents/` first
 
 ## Notes
 - **SECURITY: Store ONLY the last 4 digits of SSN in taxpayer_profile.json. Never store full 9-digit SSNs in any file.** The `ssn_last4` field name in the template enforces this.

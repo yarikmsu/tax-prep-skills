@@ -16,7 +16,7 @@ Parse all source tax documents in the workspace and extract structured data.
 
 ## Prerequisites
 - `taxpayer_profile.json` must exist (run `/tax-setup` first)
-- Source documents (PDFs, XLSX, CSV) must be in the workspace directory
+- Source documents (PDFs, XLSX, CSV) must be in the `documents/` directory
 - Python packages: pdfplumber, openpyxl
 
 ## Steps
@@ -38,7 +38,7 @@ Foreign documents require exchange rates from `tax_law_{year}.json`. Verify data
 
 Run the document scanner:
 ```bash
-python3 agents/lib/parse_utils.py scan .
+python3 agents/lib/parse_utils.py scan documents/
 ```
 
 This returns a JSON list of all parseable files with auto-detected types.
