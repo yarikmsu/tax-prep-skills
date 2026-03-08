@@ -54,7 +54,7 @@ CG_FIFTEEN_LIMIT_SINGLE = 533800
 class TestComputeBracketTax:
     """Tests for compute_bracket_tax — normal scenarios and error handling."""
 
-    # --- Normal scenarios (6 tests) ---
+    # --- Normal scenarios (7 tests) ---
 
     def test_mfj_150k(self):
         """$150K MFJ: 10% on 23850 + 12% on 73100 + 22% on 53050 = 22828.00"""
@@ -103,6 +103,19 @@ class TestComputeBracketTax:
         tax, breakdown = compute_bracket_tax(100_000, flat_bracket)
         assert tax == 10000.00
         assert len(breakdown) == 1
+
+    def test_top_unbounded_bracket_800k(self):
+        """$800K MFJ: spans all 7 brackets including unbounded 37% tier."""
+        tax, breakdown = compute_bracket_tax(800_000, MFJ_BRACKETS_2025)
+        # 10%: 23850*0.10=2385 + 12%: 73100*0.12=8772 + 22%: 109750*0.22=24145
+        # 24%: 187900*0.24=45096 + 32%: 106450*0.32=34064 + 35%: 250550*0.35=87692.50
+        # 37%: (800000-751600)*0.37 = 48400*0.37 = 17908
+        # Total: 2385 + 8772 + 24145 + 45096 + 34064 + 87692.50 + 17908 = 220062.50
+        assert tax == 220062.50
+        assert len(breakdown) == 7
+        assert breakdown[6]["rate"] == 0.37
+        assert breakdown[6]["taxable_in_bracket"] == 48400.0
+        assert breakdown[6]["tax"] == 17908.00
 
     # --- Error handling (5 tests) ---
 
@@ -216,9 +229,29 @@ class TestComputeQdcgTax:
         )
         assert result["qdcg_total"] == 5000.00
 
+    def test_high_income_20pct_tier(self):
+        """$700K MFJ with $100K qdiv + $50K LTCG — hits 20% capital gains tier."""
+        result = compute_qdcg_tax(
+            taxable_income=700_000,
+            qualified_dividends=100_000,
+            net_ltcg=50_000,
+            brackets=MFJ_BRACKETS_2025,
+            cg_zero_limit=CG_ZERO_LIMIT_MFJ,
+            cg_fifteen_limit=CG_FIFTEEN_LIMIT_MFJ,
+        )
+        # QDCG = 150000, Ordinary = 550000
+        # 0% room = 96700 - 550000 = negative → 0
+        assert result["qdcg_at_0_pct"] == 0
+        # 15% room = 600050 - 550000 - 0 = 50050
+        assert result["qdcg_at_15_pct"] == 50050
+        # 20% remainder = 150000 - 0 - 50050 = 99950
+        assert result["qdcg_at_20_pct"] == 99950
+        assert result["qdcg_tax"] == round(50050 * 0.15 + 99950 * 0.20, 2)
+        assert result["used_qdcg_worksheet"] is True
+
     def test_none_taxable_income_raises(self):
         """None taxable_income raises ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot be None"):
             compute_qdcg_tax(
                 taxable_income=None,
                 qualified_dividends=5000,
@@ -293,14 +326,24 @@ class TestComputeSeTax:
         assert result["se_earnings"] == 369.40
         assert result["se_tax"] == expected_tax
 
+    def test_legacy_flat_rate_no_wage_base(self):
+        """No ss_wage_base → legacy flat rate (ss_rate + medicare_rate) on SE earnings."""
+        result = compute_se_tax(80_000, ss_wage_base=None, w2_ss_wages=0)
+        se_earnings = 80_000 * 0.9235  # 73880.0
+        expected_tax = round(se_earnings * (0.124 + 0.029), 2)
+        assert result["se_earnings"] == 73880.00
+        assert result["se_tax"] == expected_tax
+        assert "ss_tax" not in result  # no component breakdown in legacy path
+        assert "Legacy flat rate" in result.get("note", "")
+
     def test_none_profit_raises(self):
         """None net_profit raises ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot be None"):
             compute_se_tax(None, ss_wage_base=self.SS_WAGE_BASE_2025)
 
     def test_negative_w2_wages_raises(self):
         """Negative w2_ss_wages raises ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot be negative"):
             compute_se_tax(50_000, ss_wage_base=self.SS_WAGE_BASE_2025, w2_ss_wages=-1000)
 
     def test_zero_wage_base_raises(self):
@@ -369,14 +412,14 @@ class TestComputeAdditionalMedicare:
 
     def test_none_threshold_raises(self):
         """None threshold raises ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot be None"):
             compute_additional_medicare(
                 medicare_wages=200_000, se_income=0, threshold=None, withheld=2900,
             )
 
     def test_negative_wages_raises(self):
         """Negative wages raises ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot be negative"):
             compute_additional_medicare(
                 medicare_wages=-5000, se_income=0, threshold=250_000, withheld=0,
             )
@@ -416,15 +459,24 @@ class TestComputeFtcLimitation:
         result = compute_ftc_limitation(-5000, 200000, 30000, 0)
         assert result["limitation"] == 0.00
 
-    def test_none_inputs_raise(self):
-        """Each None param raises ValueError."""
-        with pytest.raises(ValueError):
+    def test_none_foreign_income_raises(self):
+        """None foreign_source_income raises ValueError."""
+        with pytest.raises(ValueError, match="foreign_source_income cannot be None"):
             compute_ftc_limitation(None, 200000, 30000, 800)
-        with pytest.raises(ValueError):
+
+    def test_none_worldwide_income_raises(self):
+        """None worldwide_income raises ValueError."""
+        with pytest.raises(ValueError, match="worldwide_income cannot be None"):
             compute_ftc_limitation(5000, None, 30000, 800)
-        with pytest.raises(ValueError):
+
+    def test_none_us_tax_raises(self):
+        """None us_tax raises ValueError."""
+        with pytest.raises(ValueError, match="us_tax cannot be None"):
             compute_ftc_limitation(5000, 200000, None, 800)
-        with pytest.raises(ValueError):
+
+    def test_none_foreign_tax_paid_raises(self):
+        """None foreign_tax_paid raises ValueError."""
+        with pytest.raises(ValueError, match="foreign_tax_paid cannot be None"):
             compute_ftc_limitation(5000, 200000, 30000, None)
 
 
@@ -472,15 +524,30 @@ class TestComputeChildTaxCredit:
         result = compute_child_tax_credit(3, 2200, 200000, 400000)
         assert result["credit_allowed"] == 6600.00
 
-    def test_none_inputs_raise(self):
-        """Each None param raises ValueError."""
-        with pytest.raises(ValueError):
+    def test_one_dollar_over_phaseout(self):
+        """AGI $1 over phaseout → ceil(1/1000)=1 → $50 reduction."""
+        result = compute_child_tax_credit(1, 2000, 400001, 400000)
+        assert result["phase_out_reduction"] == 50.00
+        assert result["credit_allowed"] == 1950.00
+
+    def test_none_children_raises(self):
+        """None num_qualifying_children raises ValueError."""
+        with pytest.raises(ValueError, match="num_qualifying_children cannot be None"):
             compute_child_tax_credit(None, 2000, 200000, 400000)
-        with pytest.raises(ValueError):
+
+    def test_none_credit_per_child_raises(self):
+        """None credit_per_child raises ValueError."""
+        with pytest.raises(ValueError, match="credit_per_child cannot be None"):
             compute_child_tax_credit(2, None, 200000, 400000)
-        with pytest.raises(ValueError):
+
+    def test_none_agi_raises(self):
+        """None agi raises ValueError."""
+        with pytest.raises(ValueError, match="agi cannot be None"):
             compute_child_tax_credit(2, 2000, None, 400000)
-        with pytest.raises(ValueError):
+
+    def test_none_phaseout_start_raises(self):
+        """None phase_out_start raises ValueError."""
+        with pytest.raises(ValueError, match="phase_out_start cannot be None"):
             compute_child_tax_credit(2, 2000, 200000, None)
 
 
@@ -520,7 +587,7 @@ class TestComputeQbiDeduction:
 
     def test_none_qbi_raises(self):
         """None QBI raises ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot be None"):
             compute_qbi_deduction(None, 500)
 
 
@@ -608,6 +675,22 @@ class TestCheckForm8938Required:
         """None accounts raises ValueError."""
         with pytest.raises(ValueError, match="cannot be None"):
             check_form_8938_required(None, "mfj", False, self.THRESHOLDS)
+
+    def test_fallback_defaults_no_thresholds(self):
+        """When form_8938_thresholds=None, uses IRS default thresholds."""
+        accts = [{"year_end_value_usd": 55000, "max_value_usd": 60000}]
+        result = check_form_8938_required(accts, "single", False, form_8938_thresholds=None)
+        assert result["threshold_year_end"] == 50000  # IRS default single US
+        assert result["threshold_any_time"] == 75000
+        assert result["required"] is True  # 55K > 50K
+
+    def test_fallback_defaults_mfj_abroad(self):
+        """Fallback defaults for MFJ abroad use higher foreign thresholds."""
+        accts = [{"year_end_value_usd": 300000, "max_value_usd": 500000}]
+        result = check_form_8938_required(accts, "mfj", True, form_8938_thresholds=None)
+        assert result["threshold_year_end"] == 400000  # MFJ abroad
+        assert result["threshold_any_time"] == 600000
+        assert result["required"] is False  # 300K < 400K and 500K < 600K
 
     def test_non_numeric_account_raises(self):
         """Non-numeric account value raises ValueError."""
@@ -697,7 +780,7 @@ class TestFullPipeline:
             cg_fifteen_limit=CG_FIFTEEN_LIMIT_MFJ,
         )
         line_16 = qdcg_result["final_tax"]
-        assert line_16 > 0
+        assert line_16 == 30678.00
 
         # Step 5: CTC
         ctc_result = compute_child_tax_credit(2, 2000, line_11, 400000)
@@ -725,4 +808,5 @@ class TestFullPipeline:
         # Step 8: Final tax
         total_credits = ctc_result["credit_allowed"] + ftc_result["ftc_allowed"]
         line_24 = max(0, line_16 - total_credits) + medicare_result["additional_tax"]
-        assert line_24 > 0
+        # 30678 - (4000 + 400) + 0 = 26278
+        assert line_24 == 26278.00

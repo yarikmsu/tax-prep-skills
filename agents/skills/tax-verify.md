@@ -136,8 +136,8 @@ Read `result.json` and the extracted software return. Compare every line.
 | 7 | Capital gain | form_1040.line_7_capital_gain |
 | 8 | Other income | form_1040.line_8_schedule1_other |
 | 9 | Total income | form_1040.line_9_total_income |
-| 11 | AGI | form_1040.line_11_agi |
 | 10 | Adjustments | form_1040.line_10_adjustments |
+| 11 | AGI | form_1040.line_11_agi |
 | 12 | Standard deduction | form_1040.line_12_standard_deduction |
 | 13a | QBI deduction | form_1040.line_13a_qbi_deduction |
 | 15 | Taxable income | form_1040.line_15_taxable_income |
@@ -156,7 +156,7 @@ Read `result.json` and the extracted software return. Compare every line.
 **Also verify supplemental forms:**
 - Schedule B: interest/dividend totals
 - Schedule C: gross income, expenses, net profit/loss
-- Schedule D: short-term, long-term, combined
+- Schedule D: short-term, long-term, combined (note: Part I line 1c field was renamed from `line_1c_1099b_box_f` to `line_1c_1099b_box_c` — flag if software uses old name)
 - Form 8949: individual transactions
 - Form 8889: HSA contributions, distributions
 - Form 8959: Additional Medicare Tax
