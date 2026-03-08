@@ -8,14 +8,14 @@
 
 | # | Function | Tests | Status | Bugs Found |
 |---|----------|-------|--------|------------|
-| 1 | `compute_bracket_tax` | 11 | PASS | None — all hand-computed MFJ TY2025 values match |
-| 2 | `compute_qdcg_tax` | 7 | PASS | None — QDCG worksheet correctly uses `max(0, net_ltcg)` and compares with regular tax |
-| 3 | `compute_se_tax` | 10 | PASS | None — SS wage base cap, W-2 interaction, and $400 threshold all correct |
+| 1 | `compute_bracket_tax` | 12 | PASS | None — all hand-computed MFJ TY2025 values match |
+| 2 | `compute_qdcg_tax` | 8 | PASS | None — QDCG worksheet correctly uses `max(0, net_ltcg)` and compares with regular tax |
+| 3 | `compute_se_tax` | 11 | PASS | None — SS wage base cap, W-2 interaction, and $400 threshold all correct |
 | 4 | `compute_additional_medicare` | 7 | PASS | None — over-withholding credit logic correct (employer $200K vs MFJ $250K threshold) |
-| 5 | `compute_ftc_limitation` | 6 | PASS | None — ratio capped at 1.0 (upper) and 0.0 (lower) correctly |
-| 6 | `compute_child_tax_credit` | 8 | PASS | None — `math.ceil` correctly implements "fraction thereof" rule |
+| 5 | `compute_ftc_limitation` | 9 | PASS | None — ratio capped at 1.0 (upper) and 0.0 (lower) correctly |
+| 6 | `compute_child_tax_credit` | 12 | PASS | None — `math.ceil` correctly implements "fraction thereof" rule |
 | 7 | `compute_qbi_deduction` | 6 | PASS | None — negative QBI carryforward handled correctly |
-| 8 | `check_form_8938_required` | 13 | PASS | None — strict `>` (not `>=`) correct per IRS; HoH/MFS correctly map to single thresholds |
+| 8 | `check_form_8938_required` | 15 | PASS | None — strict `>` (not `>=`) correct per IRS; HoH/MFS correctly map to single thresholds |
 | 9 | `_coerce_numeric` | 9 | PASS | None — bool rejection, None default behavior all correct |
 | 10 | Integration pipeline | 1 | PASS | None — full W-2 + investments scenario produces consistent results |
 

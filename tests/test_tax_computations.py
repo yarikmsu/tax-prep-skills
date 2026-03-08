@@ -54,7 +54,7 @@ CG_FIFTEEN_LIMIT_SINGLE = 533800
 class TestComputeBracketTax:
     """Tests for compute_bracket_tax — normal scenarios and error handling."""
 
-    # --- Normal scenarios (6 tests) ---
+    # --- Normal scenarios (7 tests) ---
 
     def test_mfj_150k(self):
         """$150K MFJ: 10% on 23850 + 12% on 73100 + 22% on 53050 = 22828.00"""
@@ -110,6 +110,7 @@ class TestComputeBracketTax:
         # 10%: 23850*0.10=2385 + 12%: 73100*0.12=8772 + 22%: 109750*0.22=24145
         # 24%: 187900*0.24=45096 + 32%: 106450*0.32=34064 + 35%: 250550*0.35=87692.50
         # 37%: (800000-751600)*0.37 = 48400*0.37 = 17908
+        # Total: 2385 + 8772 + 24145 + 45096 + 34064 + 87692.50 + 17908 = 220062.50
         assert tax == 220062.50
         assert len(breakdown) == 7
         assert breakdown[6]["rate"] == 0.37
