@@ -33,7 +33,7 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
 
 ```
 agents/
-├── skills/           # Skill markdown files (symlinked to .claude/skills/)
+├── skills/           # Skill markdown files (symlinked to ~/.claude/skills/<name>/SKILL.md by install.sh)
 │   ├── tax-setup.md
 │   ├── tax-parse.md
 │   ├── tax-compute.md
@@ -49,7 +49,7 @@ agents/
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction + document classification
 │   ├── tax_law_fetcher.py    # Tax law cache structure + load/save
 │   └── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, etc.)
-└── install.sh        # Symlink skills to .claude/skills/
+└── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
 ## Installation
@@ -57,7 +57,7 @@ agents/
 ```bash
 bash agents/install.sh
 ```
-This symlinks all `tax-*.md` skills into `.claude/skills/`, creates/updates `.gitignore` for sensitive output files, and installs git hooks (branch guard, PII scan, push blocker).
+This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the subdirectory-per-skill format Claude Code requires), creates/updates `.gitignore` for sensitive output files, and installs git hooks (branch guard, PII scan, push blocker).
 
 ## Runtime Files (created per-taxpayer, gitignored)
 - `taxpayer_profile.json` — Taxpayer identity, filing status, flags (only last 4 of SSN)
@@ -87,6 +87,8 @@ This symlinks all `tax-*.md` skills into `.claude/skills/`, creates/updates `.gi
 - Pre-commit hook blocks PII and sensitive file types automatically
 - To bypass hooks in emergencies: `git commit --no-verify` (use with caution)
 - User pushes with: `git push --no-verify -u origin <branch>`
+- Delete remote branches with: `git push origin --no-verify --delete <branch>` (pre-push hook blocks otherwise)
+- After a squash merge, sync local main: `git reset --hard origin/main` (ensure no uncommitted changes first)
 
 ### CI (GitHub Actions)
 - Runs on every PR to `main`: pytest, PII file scan, pip-audit

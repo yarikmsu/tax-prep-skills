@@ -35,3 +35,6 @@ Thumbs.db
 # IDE files
 .vscode/
 .idea/
+
+# Hookify local rules (machine-specific, not for sharing)
+.claude/*.local.md

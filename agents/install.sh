@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install tax preparation skills to .claude/skills/
+# Install tax preparation skills to ~/.claude/skills/<name>/SKILL.md
 # Can be run from any directory — uses script location to find source files.
 
 set -euo pipefail
@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE_DIR="$SCRIPT_DIR/skills"
 WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"
-SKILLS_DIR="$WORKSPACE_ROOT/.claude/skills"
+SKILLS_DIR="$HOME/.claude/skills"
 
 if [ ! -d "$SOURCE_DIR" ]; then
     echo "Error: skills directory not found at $SOURCE_DIR"
@@ -27,9 +27,10 @@ if [ ${#skill_files[@]} -eq 0 ]; then
 fi
 
 for skill in "${skill_files[@]}"; do
-    name=$(basename "$skill")
-    ln -sf "$skill" "$SKILLS_DIR/$name"
-    echo "  Linked: $name"
+    name=$(basename "$skill" .md)   # e.g. tax-setup
+    mkdir -p "$SKILLS_DIR/$name"
+    ln -sf "$skill" "$SKILLS_DIR/$name/SKILL.md"
+    echo "  Linked: $name/SKILL.md"
 done
 
 # Create .gitignore for sensitive files if it doesn't exist
