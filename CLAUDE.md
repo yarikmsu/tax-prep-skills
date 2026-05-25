@@ -88,6 +88,11 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 
 ## Development Guidelines
 
+### Feature design docs
+- New feature specs go under `docs/superpowers/specs/YYYY-MM-DD-<feature>-design.md`
+- Implementation plans go under `docs/superpowers/plans/YYYY-MM-DD-<feature>.md`
+- Use `/tax-rollover` (PR #8) as the precedent for spec + plan structure
+
 ### Git Workflow
 - NEVER run `git push` — print the command for the user to run manually
 - After user confirms push, create PR via `gh pr create`
@@ -124,6 +129,7 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - 132 tests covering all 8 computation functions + archive/rollover modules + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
+- Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path
 
 ### Security
 - **NEVER store full SSNs** — only last 4 digits in `ssn_last4` fields
@@ -133,6 +139,7 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - **Encryption at rest:** Users should enable full-disk encryption (FileVault on macOS, BitLocker on Windows)
 - **Subagent security:** Parsing subagents must NOT have network access (no WebFetch/WebSearch) and must NOT write outside `summaries/`. All subagent prompts must include untrusted-content warnings.
 - **SSN redaction:** When parsing source documents, NEVER extract full SSNs — record only last 4 digits as `XXX-XX-{last4}`
+- **PII scan rules are duplicated** between `scripts/pre-commit-pii-scan.sh` and `.github/workflows/ci.yml` — when modifying rules, update both
 
 ## Common Tax Gotchas
 - QDCG worksheet: use NET LTCG from Schedule D line 15 (after losses), not gross cap gain distributions
