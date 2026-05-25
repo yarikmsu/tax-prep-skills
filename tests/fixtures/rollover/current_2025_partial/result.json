@@ -1,0 +1,4 @@
+{
+  "meta": {"tax_year": 2025, "filing_status": "MFJ", "standard_deduction": 31500},
+  "taxpayers": {"primary": {"name": null, "ssn_last4": null, "dob": null, "occupation": null}, "spouse": {"name": null, "ssn_last4": null, "dob": null, "occupation": null}, "address": null}
+}

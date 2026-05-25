@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "tax_year": 2024,
+    "prepared": "2025-04-01",
+    "filing_status": "MFJ",
+    "standard_deduction": 29200
+  },
+  "taxpayers": {
+    "primary": {"name": "Test User", "ssn_last4": "1234", "dob": "1980-01-01", "occupation": "Engineer"},
+    "spouse": {"name": "Test Spouse", "ssn_last4": "5678", "dob": "1982-05-15", "occupation": "Teacher"},
+    "address": "100 Main St, Anytown, CA 94000"
+  },
+  "form_1040": {"line_34_overpayment": 0, "line_35a_refund": 0},
+  "schedule_d": {
+    "line_16_combined": -4000
+  },
+  "form_1116_ftc": {
+    "category": "General category income (passive)",
+    "foreign_tax_paid_usd": 1200,
+    "ftc_limitation": 900,
+    "ftc_allowed": 900
+  },
+  "w2_summary": {"employer": "Acme Corp", "employer_ein": "12-3456789"},
+  "interest_detail": {"items": [{"payer": "Chase Bank"}, {"payer": "Foreign Bank EU", "country": "DE"}]},
+  "dividend_detail": {"items": [{"payer": "Vanguard"}]},
+  "form_8938_fatca": {"accounts": [{"institution": "Foreign Bank EU", "country_code": "DE", "account_last4": "9999"}]},
+  "fbar_fincen_114": {"accounts": [{"institution": "Foreign Bank EU", "country_code": "DE", "account_last4": "9999"}]}
+}

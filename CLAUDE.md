@@ -8,7 +8,11 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
 ## Architecture
 
 ```
+/tax-archive  → Move prior year's files into archive/{year}/ (run at year-end cutover)
+      ↓
 /tax-setup    → Interview taxpayer, fetch current tax law, create workspace
+      ↓        (auto-invokes /tax-rollover if archive/{year-1}/ exists)
+/tax-rollover → Pull prior-year carryforwards, identity, dependents, payers from archive/
       ↓
 /tax-parse    → Parse source documents (PDFs, XLSX, CSV) via parallel subagents
       ↓
@@ -35,6 +39,8 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
 agents/
 ├── skills/           # Skill markdown files (symlinked to ~/.claude/skills/<name>/SKILL.md by install.sh)
 │   ├── tax-setup.md
+│   ├── tax-archive.md
+│   ├── tax-rollover.md
 │   ├── tax-parse.md
 │   ├── tax-compute.md
 │   ├── tax-generate.md
@@ -48,7 +54,9 @@ agents/
 ├── lib/              # Shared Python utilities
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction + document classification
 │   ├── tax_law_fetcher.py    # Tax law cache structure + load/save
-│   └── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, etc.)
+│   ├── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, etc.)
+│   ├── archive.py            # Move year files into archive/{year}/ for /tax-archive
+│   └── rollover.py           # Diff/merge engine for /tax-rollover
 └── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
@@ -113,9 +121,9 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 90 tests covering all 8 computation functions + integration pipeline
+- 132 tests covering all 8 computation functions + archive/rollover modules + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
-- When adding tests, update ALL test count references in `docs/plans/2026-03-05-accuracy-audit-report.md` (two tables)
+- When adding tests, update the test count reference on the line above
 
 ### Security
 - **NEVER store full SSNs** — only last 4 digits in `ssn_last4` fields

@@ -1,0 +1,11 @@
+{
+  "tax_year": 2025,
+  "filing_status": "MFJ",
+  "primary": {"first_name": null, "middle_name": null, "last_name": null, "ssn_last4": null, "dob": null, "occupation": null},
+  "spouse": {"first_name": null, "middle_name": null, "last_name": null, "ssn_last4": null, "dob": null, "occupation": null},
+  "address": {"street": null, "city": null, "state": null, "zip": null},
+  "dependents": [],
+  "flags": {},
+  "prior_year": {"capital_loss_carryforward": 3000, "qbi_loss_carryforward": 0, "unused_ftc_carryforward": 0, "estimated_payments_applied": 0},
+  "expected_sources": {"w2_employers": [], "interest_payers": [], "dividend_payers": [], "brokerages": [], "foreign_accounts": []}
+}

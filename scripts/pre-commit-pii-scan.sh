@@ -15,6 +15,13 @@ BLOCKED_EXTENSIONS="pdf|xlsx|xls|csv|doc|docx|png|jpg|jpeg|gif|bmp|tiff|heic|zip
 
 while IFS= read -r file; do
   filename=$(basename "$file")
+  # Allowlist: synthetic test fixtures need to share filenames with real workspace
+  # files because the code under test reads result.json / taxpayer_profile.json /
+  # tax_law_*.json from a workspace directory. Anything under tests/fixtures/ is
+  # reviewed at PR time to confirm it contains only synthetic data.
+  case "$file" in
+    tests/fixtures/*) continue ;;
+  esac
   # Check extension (case-insensitive)
   if echo "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
     ext=$(echo "$filename" | grep -oiE "\.($BLOCKED_EXTENSIONS)$" | tr '[:upper:]' '[:lower:]')

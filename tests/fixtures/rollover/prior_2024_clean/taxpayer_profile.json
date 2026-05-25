@@ -1,0 +1,13 @@
+{
+  "tax_year": 2024,
+  "filing_status": "MFJ",
+  "primary": {"first_name": "Test", "middle_name": null, "last_name": "User", "ssn_last4": "1234", "dob": "1980-01-01", "occupation": "Engineer"},
+  "spouse": {"first_name": "Test", "middle_name": null, "last_name": "Spouse", "ssn_last4": "5678", "dob": "1982-05-15", "occupation": "Teacher"},
+  "address": {"street": "100 Main St", "city": "Anytown", "state": "CA", "zip": "94000"},
+  "dependents": [
+    {"first_name": "Alice", "last_name": "User", "ssn_last4": "1111", "dob": "2008-03-15", "relationship": "Daughter", "months_lived_with_you": 12, "ctc_eligible": true},
+    {"first_name": "Bob", "last_name": "User", "ssn_last4": "2222", "dob": "2003-07-01", "relationship": "Son", "months_lived_with_you": 12, "ctc_eligible": false}
+  ],
+  "flags": {"has_foreign_accounts": true, "has_capital_gains": true, "has_foreign_tax_paid": true},
+  "prior_year": {}
+}

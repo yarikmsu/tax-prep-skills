@@ -1,0 +1,4 @@
+{
+  "year": 2024,
+  "dependent_age_thresholds": {"ctc_age": 17, "qualifying_child_general": 19, "qualifying_child_student": 24}
+}

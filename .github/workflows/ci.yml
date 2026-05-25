@@ -37,6 +37,15 @@ jobs:
           git diff --name-only --diff-filter=ACMR "${BASE_SHA}...HEAD" | while IFS= read -r file; do
             filename=$(basename "$file")
 
+            # Allowlist: synthetic test fixtures share filenames with real workspace
+            # files (the code under test reads result.json / taxpayer_profile.json
+            # / tax_law_*.json from a workspace directory). Anything under
+            # tests/fixtures/ is reviewed at PR time to confirm synthetic content.
+            # Keep in sync with scripts/pre-commit-pii-scan.sh.
+            case "$file" in
+              tests/fixtures/*) continue ;;
+            esac
+
             # Check blocked extensions
             if echo "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
               echo "  BLOCKED FILE TYPE: $file" >> "$VIOLATIONS_FILE"

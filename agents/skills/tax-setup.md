@@ -17,6 +17,17 @@ If no year is provided, default to the current calendar year minus 1 (e.g., in 2
 
 ## Steps
 
+### 0. Refuse if prior-year files exist at root
+
+Before doing anything else, check if there's an existing `result.json` at the workspace root. If yes, read its `meta.tax_year`:
+
+- If `meta.tax_year == {requested year}`: the workspace is already initialized for this year — ask the user whether to overwrite (the existing behavior for re-setup).
+- If `meta.tax_year != {requested year}`: refuse with:
+
+  > Prior-year files detected at root (TY{X}). Run `/tax-archive {X}` first, then re-run `/tax-setup {requested year}`.
+
+  Do **not** proceed past this point. This refusal exists to prevent accidentally losing the prior year's data — `/tax-rollover` later depends on archived files being present.
+
 ### 1. Create Directory Structure
 
 Ensure these directories exist in the workspace:
@@ -87,6 +98,18 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 - QBI (qualified business income) loss carryforward?
 - Unused foreign tax credit carryforward?
 - Net operating loss (NOL) carryforward?
+
+### 9.5. Auto-invoke /tax-rollover if archive exists
+
+After the carryforward questions in Group 9, check whether `archive/{year - 1}/` exists. If yes:
+
+> Detected prior-year archive at `archive/{year - 1}/`. Running `/tax-rollover {year - 1}` to pre-fill carryforwards, identity, dependents (with age tick), and recurring payer list.
+
+Invoke `/tax-rollover {year - 1}` inline. The rollover skill handles its own AskUserQuestion prompts per category.
+
+After rollover completes, treat the Group 9 carryforward questions as "verify these pre-filled values" rather than "type these from memory."
+
+If `archive/{year - 1}/` does not exist, skip silently — fall back to manual carryforward entry from Group 9.
 
 **Group 10 — Estimated taxes:**
 - Federal estimated tax payments made? Amounts and dates (1040-ES)?

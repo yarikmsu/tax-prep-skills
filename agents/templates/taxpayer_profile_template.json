@@ -88,5 +88,13 @@
     "federal": [],
     "state": []
   },
-  "foreign_currencies": []
+  "foreign_currencies": [],
+  "expected_sources": {
+    "_comment": "Payers/institutions seen in prior year. Informs /tax-parse to flag missing documents. EINs are public business identifiers — full values stored (not last-4-only like individual SSNs).",
+    "w2_employers": [],
+    "interest_payers": [],
+    "dividend_payers": [],
+    "brokerages": [],
+    "foreign_accounts": []
+  }
 }
