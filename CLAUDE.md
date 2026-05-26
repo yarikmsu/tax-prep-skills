@@ -134,7 +134,7 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 170 tests covering all 8 computation functions + archive/rollover modules + mid-year projection + integration pipeline
+- 199 tests covering all 8 computation functions + archive/rollover modules + YoY diff + mid-year projection + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path

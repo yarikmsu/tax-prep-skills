@@ -172,6 +172,24 @@ _(Covered by checklist rows 9-22 above. Additionally check:)_
 - Which documents are critical to retain (especially for carryforward items)
 - QBI loss carryforward documentation
 
+### 3.5. YoY What-Changed
+
+Produce a deterministic year-over-year diff against the prior return. This step is read-only — `yoy_diff.py` never writes workspace files.
+
+1. Compute `prior_year = {year} - 1`.
+2. If `archive/{prior_year}/` does NOT exist (or is missing `result.json` / `taxpayer_profile.json` — `/tax-archive` writes both together):
+   - Record this note for the report: `_YoY diff skipped: no archive/{prior_year}/ found._`
+   - Proceed to Step 4.
+3. Else run:
+   ```bash
+   python3 agents/lib/yoy_diff.py --prior archive/{prior_year} --current . \
+       --year {year} --threshold 1000
+   ```
+4. **Exit code 0:** embed stdout verbatim as the "YoY What-Changed" block in the Step 4 report.
+5. **Exit code non-zero:** record `_YoY diff skipped: {stderr message}_` and proceed to Step 4.
+
+A power user can run the same command with `--threshold 500` for a finer-grained diff or `--json` for machine-readable output.
+
 ### 4. Generate Review Report
 
 Format the review as:
@@ -223,6 +241,11 @@ Format the review as:
 ### Document Retention
 - Keep {year} return for {N} years
 - Critical carryforward items: {list}
+
+---
+
+## 📅 YoY What-Changed
+{embed Step 3.5 output here, or the skip note}
 ```
 
 ### 5. Summary
