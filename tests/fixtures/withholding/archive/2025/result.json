@@ -1,0 +1,4 @@
+{
+  "meta": {"tax_year": 2025, "filing_status": "single"},
+  "form_1040": {"line_24_total_tax": 30000, "line_11_agi": 120000}
+}

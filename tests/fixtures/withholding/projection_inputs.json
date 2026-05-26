@@ -1,0 +1,7 @@
+{
+  "tax_year": 2026,
+  "as_of_date": "06-30",
+  "pay_frequency": "biweekly",
+  "ytd": {"federal_withholding": 10000},
+  "estimated_payments_made": {"federal": 0}
+}
