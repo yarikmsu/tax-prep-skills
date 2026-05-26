@@ -27,6 +27,12 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
 /tax-fbar     → Prepare FBAR filing document (if applicable)
 ```
 
+**Optional planning branch (off `/tax-setup`, not part of the linear flow):**
+- **`/tax-project`** — mid-year projection: run any time after `/tax-setup` to project
+  full-year tax, safe-harbor estimates, and W-4 4(c)/1040-ES guidance from YTD figures.
+  Read-only (never mutates `result.json`); re-runnable quarterly. Uses `archive/{year-1}/`
+  for the prior-year safe harbor when present, else degrades to the 90%-of-current test.
+
 ## Key Design Principles
 - **No hardcoded personal data** — taxpayer info lives in `taxpayer_profile.json`, not skill code
 - **No hardcoded tax law** — skills fetch current rates/brackets from IRS.gov via WebSearch at runtime, cached in `tax_law_<year>.json`
@@ -46,7 +52,8 @@ agents/
 │   ├── tax-generate.md
 │   ├── tax-verify.md
 │   ├── tax-review.md
-│   └── tax-fbar.md
+│   ├── tax-fbar.md
+│   └── tax-project.md
 ├── templates/        # JSON/MD templates for workspace initialization
 │   ├── result_template.json
 │   ├── answers_template.md
@@ -56,7 +63,8 @@ agents/
 │   ├── tax_law_fetcher.py    # Tax law cache structure + load/save
 │   ├── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, etc.)
 │   ├── archive.py            # Move year files into archive/{year}/ for /tax-archive
-│   └── rollover.py           # Diff/merge engine for /tax-rollover
+│   ├── rollover.py           # Diff/merge engine for /tax-rollover
+│   └── projection.py         # Mid-year projection compute + renderer for /tax-project
 └── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
@@ -126,7 +134,7 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 132 tests covering all 8 computation functions + archive/rollover modules + integration pipeline
+- 170 tests covering all 8 computation functions + archive/rollover modules + mid-year projection + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path

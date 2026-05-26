@@ -1,0 +1,30 @@
+{
+  "_comment": "YTD actuals + full-year forecast overrides for /tax-project. Read-only input; never holds computed results.",
+  "tax_year": null,
+  "as_of_date": null,
+  "pay_frequency": "biweekly",
+  "ytd": {
+    "wages": null,
+    "federal_withholding": null,
+    "state_withholding": null,
+    "ss_wages": null,
+    "medicare_wages": null,
+    "medicare_withheld": null
+  },
+  "forecast_overrides": {
+    "_comment": "Lumpy/known items entered as FULL-YEAR amounts; NOT annualized.",
+    "year_end_bonus": 0,
+    "rsu_vesting": 0,
+    "capital_gains": 0,
+    "self_employment_net": 0,
+    "other_income": 0
+  },
+  "recurring_from_prior": {
+    "_comment": "Defaults pulled from archive/{year-1}/ by the skill; user-editable. Treated as full-year.",
+    "taxable_interest": null,
+    "ordinary_dividends": null,
+    "qualified_dividends": null
+  },
+  "estimated_payments_made": { "federal": 0, "state": 0 },
+  "_paystub_parser_hook": "Future: a /tax-parse-paystub feature may populate the ytd block automatically. Keep ytd as the stable interface."
+}

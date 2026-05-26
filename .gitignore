@@ -8,6 +8,8 @@ documents/*
 !documents/.gitkeep
 FBAR_*.md
 *.pdf
+projections/
+projection_inputs.json
 
 # Python bytecode
 __pycache__/
