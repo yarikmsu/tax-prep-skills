@@ -123,6 +123,11 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - Always round output to 2 decimal places
 - Run `python3 agents/lib/tax_computations.py` after changes — self-test must pass
 
+### Reading tax_law_<year>.json
+- Schema is defined in `agents/lib/tax_law_fetcher.py` (`create_empty_tax_law` / `create_state_template`) — read it before writing accessors.
+- Key paths: `federal.filing_statuses.<single|mfj|mfs|hoh>.{brackets,standard_deduction}`, `federal.capital_gains_rates.{zero_pct_limit,fifteen_pct_limit}`, `federal.child_tax_credit.phase_out_start`, `federal.additional_medicare_tax.threshold`, `state.{brackets,standard_deduction}`.
+- Gotcha: `capital_gains_rates` and `child_tax_credit.phase_out_start` are keyed ONLY `single`/`mfj` (map MFJ/QSS→mfj, else→single); `additional_medicare_tax.threshold` adds `mfs`; `filing_statuses` has all four. Statutory-fixed thresholds (e.g. safe-harbor $150k/$75k) are hardcoded constants, not in tax_law.
+
 ### Modifying templates
 - `result_template.json` field names must match what `generate_tax_pdf.py` reads
 - Sections in result_template.json should be conditional — /tax-setup removes inapplicable ones
@@ -132,12 +137,17 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - Each skill should specify prerequisites (which files must exist first)
 - Parsing skills should dispatch parallel subagents for independent document groups
 
+### Read-only planning skills
+- `/tax-project` and the YoY diff in `/tax-review` share one pattern: a pure-compute lib module (frozen dataclasses + markdown renderer + CLI `_main`) that reuses `rollover.load_prior` for the prior-year baseline and NEVER mutates `result.json`/`taxpayer_profile.json`. Follow `agents/lib/projection.py` / `yoy_diff.py` for future planning features (backlog #3/#5/#6).
+- "Section present" for diff/presence logic = holds a non-zero number or non-empty list; template scaffolding (strings, booleans, `_`-prefixed keys) never counts.
+
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
 - 199 tests covering all 8 computation functions + archive/rollover modules + YoY diff + mid-year projection + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path
+- Fixture files sharing a runtime filename (`result.json`, `taxpayer_profile.json`, `tax_law_*.json`, `projection_inputs.json`) match `.gitignore`'s unanchored rules — add new ones with `git add -f` (existing fixtures are already tracked)
 
 ### Security
 - **NEVER store full SSNs** — only last 4 digits in `ssn_last4` fields
