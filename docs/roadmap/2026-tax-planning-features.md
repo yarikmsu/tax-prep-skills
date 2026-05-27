@@ -19,7 +19,7 @@ These unlock most of the features below and should land before or alongside the 
 |---|---------|-----------|----------------|--------|--------|
 | 1 | **Roll-forward last year's return** | `/tax-rollover <prior_year>` | Reads prior `result.json`, copies carryforwards into new `taxpayer_profile.json` and `result.json`. Eliminates the #1 source of "I forgot I had a $3K cap loss carryover" errors. Foundation for every multi-year feature below. | S | ✅ Done (PR #8) |
 | 2 | **Mid-year projection** | `/tax-project [--as-of MM-DD]` | Takes YTD paystubs + last year's pattern, projects full-year tax, computes safe-harbor estimates, suggests W-4 step 4(c) adjustment. Rerunnable quarterly. | M | ✅ Done (PR #11) |
-| 3 | **Scenario modeling** | `/tax-scenario <name>` | Forks `result.json` → `scenarios/<name>.json`, applies one delta (e.g. `+roth_conversion=40000`), recomputes, diffs against baseline. Stackable. | M | Planned |
+| 3 | **Scenario modeling** | `/tax-scenario <name>` | Forks `result.json` → `scenarios/<name>.json`, applies one delta (e.g. `+roth_conversion=40000`), recomputes, diffs against baseline. Stackable. | M | ✅ Done (PR #15) |
 | 4 | **Tax-loss harvesting scanner** | `/tax-harvest` | Reads brokerage lot data, ranks losing positions by harvestable loss, checks 30-day wash-sale window against your own buys, outputs sell list with $ federal+state savings. | M | Planned |
 | 5 | **Withholding true-up** | `/tax-withholding` | Compares YTD federal withholding vs projected liability; outputs revised W-4 step 4(c) amount or 1040-ES voucher schedule. | S | ✅ Done (PR #13) |
 | 6 | **Roth conversion ladder modeler** | `/tax-roth-convert` | Sweeps conversion amounts $0–$100K in $5K steps; charts marginal cost per $; flags IRMAA, NIIT, LTCG bracket-bumping thresholds. | M | Planned |
@@ -39,7 +39,9 @@ These unlock most of the features below and should land before or alongside the 
 
 Brainstorming started with **#1 `/tax-rollover`** — the foundation that unlocks #2, #3, #6, #7, and #12.
 
-**Progress (2026-05-26):** #1, #12, #2, and #5 are shipped (read-only planning modules under
-`agents/lib/` reusing `rollover.load_prior`). Recommended next: **#3 scenario modeling** — it
-introduces the deferred versioned-artifacts + `compute_scenario(baseline, delta)` foundation
-that #6 (Roth ladder) also depends on; or **#7 Form 8606 basis tracker** (S) for a smaller lift.
+**Progress (2026-05-26):** #1, #12, #2, #5, and #3 are shipped. #3 introduced the
+`compute_scenario(baseline, delta)` keystone in `tax_computations.py` (architectural prereq #3)
+plus `agents/lib/scenario.py`, which writes derived `scenarios/<name>.json` siblings without
+ever mutating `result.json`. Recommended next: **#6 Roth conversion ladder** — it sweeps the
+new `compute_scenario` keystone across conversion amounts and layers on NIIT/IRMAA/LTCG
+threshold flags; or **#7 Form 8606 basis tracker** (S) for a smaller lift.

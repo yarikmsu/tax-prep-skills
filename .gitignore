@@ -10,6 +10,7 @@ FBAR_*.md
 *.pdf
 projections/
 projection_inputs.json
+scenarios/
 
 # Python bytecode
 __pycache__/

@@ -19,6 +19,11 @@ import sys
 # SE tax filing threshold per IRS rules
 SE_TAX_THRESHOLD = 400
 
+# Max net capital loss deductible against ordinary income per year (IRC §1211(b));
+# excess carries forward. Structural statutory constants.
+CAPITAL_LOSS_LIMIT = 3000
+CAPITAL_LOSS_LIMIT_MFS = 1500
+
 
 def _coerce_numeric(value, default=None):
     """Coerce a value to float, handling string amounts like '$5,000'.
@@ -152,12 +157,17 @@ def compute_qdcg_tax(
     qdcg = qualified_dividends + max(0, net_ltcg)
     ordinary_income = max(0, taxable_income - qdcg)
 
+    # Preferential income is capped at taxable income (QDCG worksheet line 1): the
+    # standard deduction can shield part of the gain, and dollars eliminated by
+    # deductions must not be taxed. When qdcg <= taxable_income this is a no-op.
+    qdcg_taxed = min(qdcg, max(0.0, taxable_income))
+
     # Tax on ordinary income
     ordinary_tax, ordinary_breakdown = compute_bracket_tax(ordinary_income, brackets)
 
-    # Tax on QDCG at preferential rates
-    qdcg_in_zero = max(0, min(qdcg, cg_zero_limit - ordinary_income))
-    remaining_qdcg = qdcg - qdcg_in_zero
+    # Tax on QDCG at preferential rates (on the capped amount)
+    qdcg_in_zero = max(0, min(qdcg_taxed, cg_zero_limit - ordinary_income))
+    remaining_qdcg = qdcg_taxed - qdcg_in_zero
     qdcg_in_fifteen = max(0, min(remaining_qdcg, cg_fifteen_limit - ordinary_income - qdcg_in_zero))
     qdcg_in_twenty = max(0, remaining_qdcg - qdcg_in_fifteen)
 
@@ -634,6 +644,162 @@ def check_form_8938_required(
     }
 
 
+# Normalized income inputs a scenario operates on. Keys map 1:1 to baseline
+# extraction in scenario.py. "capital_gains" is net LTCG (preferential); the
+# qualified-dividend portion is also preferential. Everything else is ordinary.
+# Payments (withholding/estimates) are intentionally absent — they shift the
+# balance due, not the tax, and v1 reports only the tax effect.
+SCENARIO_INPUT_KEYS = (
+    "wages", "taxable_interest", "ordinary_dividends", "qualified_dividends",
+    "capital_gains", "ira_distribution", "self_employment_net", "other_income",
+)
+
+
+def compute_scenario(
+    baseline: dict,
+    delta: dict,
+    *,
+    brackets: list[dict],
+    standard_deduction: float,
+    cg_zero_limit: float = None,
+    cg_fifteen_limit: float = None,
+    ss_wage_base: float = None,
+    qbi_rate: float = 0.20,
+    num_ctc_children: int = 0,
+    ctc_per_child: float = None,
+    ctc_phase_out_start: float = None,
+    addl_medicare_threshold: float = None,
+    addl_medicare_rate: float = 0.009,
+    capital_loss_limit: float = CAPITAL_LOSS_LIMIT,
+) -> dict:
+    """Recompute the federal tax outcome for a normalized income set + a signed delta.
+
+    Pure and rates-parameterized — the keystone shared by /tax-scenario (#3) and the
+    Roth conversion ladder (#6). It is a SIMPLIFIED federal recompute (it does not
+    reproduce every credit/schedule of a filed return); callers anchor the absolute
+    figure to the real result.json line 24 and use only the *difference* between two
+    compute_scenario calls. Mirrors projection.project_federal_tax so scenario numbers
+    stay consistent with the rest of the toolkit.
+
+    Args:
+        baseline: Normalized income inputs (keys in SCENARIO_INPUT_KEYS). Missing keys
+                  default to 0.
+        delta: Signed additive adjustments (same key space). Applied on top of baseline.
+        brackets: Ordinary-income brackets for the filing status.
+        standard_deduction: Standard deduction for the filing status.
+        cg_zero_limit, cg_fifteen_limit: QDCG 0%/15% thresholds (binary status key). When
+                  either is None, preferential income is taxed at ordinary rates instead.
+        ss_wage_base: SS wage base for SE tax; None falls back to the flat SE rate.
+        qbi_rate: Sec 199A rate.
+        num_ctc_children, ctc_per_child, ctc_phase_out_start: CTC params; credit is 0
+                  unless num_ctc_children and ctc_per_child are both set.
+        addl_medicare_threshold, addl_medicare_rate: Form 8959 params; skipped when
+                  threshold is None.
+        capital_loss_limit: Max net capital loss deductible against ordinary income
+                  ($3,000; pass $1,500 for MFS).
+
+    Returns:
+        Dict with the federal outcome (all rounded to 2 dp):
+        gross_income, adjustments, agi, taxable_income, tax_before_credits, ctc,
+        se_tax, additional_medicare, total_federal_tax, used_qdcg.
+
+    Raises:
+        ValueError: If any present baseline/delta value is non-numeric (including
+            bool), or if brackets are empty (propagated from compute_bracket_tax).
+    """
+    def merged(key):
+        # Missing keys default to 0, but a PRESENT non-numeric value (e.g. a
+        # hand-edited/corrupted stacked scenario inputs block) is a hard error —
+        # silently coercing it to 0 would compute a materially wrong tax. Consistent
+        # with the anchor-numeric validation in scenario.resolve_base.
+        try:
+            b = _coerce_numeric(baseline.get(key, 0), default=None)
+            d = _coerce_numeric(delta.get(key, 0), default=None)
+        except TypeError:  # bool is never a valid amount
+            raise ValueError(f"scenario input {key!r} must be numeric, got bool")
+        if b is None or d is None:
+            raise ValueError(f"scenario input {key!r} is not numeric")
+        return b + d
+
+    wages = merged("wages")
+    taxable_interest = merged("taxable_interest")
+    ordinary_dividends = merged("ordinary_dividends")
+    qualified_dividends = merged("qualified_dividends")
+    capital_gains = merged("capital_gains")
+    ira_distribution = merged("ira_distribution")
+    se_net = merged("self_employment_net")
+    other_income = merged("other_income")
+
+    if se_net > 0:
+        # W-2 wages already consume the Social Security wage base via payroll, so the
+        # SS portion of SE tax only applies to the remaining room. Pass wages as the
+        # W-2 SS-wage figure (a planning proxy for Box 3) — matches projection.py and
+        # prevents overstating SE SS tax for high-wage taxpayers.
+        se = compute_se_tax(se_net, ss_wage_base=ss_wage_base, w2_ss_wages=max(0.0, wages))
+        qbi = compute_qbi_deduction(se_net, 0.0, rate=qbi_rate)["total_deduction"]
+    else:
+        se = {"se_tax": 0.0, "deductible_half": 0.0, "se_earnings": 0.0}
+        qbi = 0.0
+
+    # A net capital LOSS offsets ordinary income only up to the annual limit
+    # ($3,000; $1,500 MFS); the excess carries forward (not modeled here). A net GAIN
+    # flows in full and also feeds the preferential QDCG bucket below.
+    cap_gain_in_gross = (capital_gains if capital_gains >= 0
+                         else max(capital_gains, -capital_loss_limit))
+    gross = (wages + taxable_interest + ordinary_dividends + cap_gain_in_gross
+             + ira_distribution + other_income + se_net)
+    adjustments = se["deductible_half"]
+    agi = max(0.0, gross - adjustments)
+    taxable_income = max(0.0, agi - standard_deduction - qbi)
+
+    net_ltcg = max(0.0, capital_gains)
+    # Qualified dividends are a subset of ordinary dividends (which are already in
+    # gross), so they can never exceed them. Clamp defensively: a malformed input
+    # with qualified > ordinary must not move income into the preferential bucket
+    # that does not exist in gross income (which would lower tax for free).
+    eff_qualified = min(max(0.0, qualified_dividends), max(0.0, ordinary_dividends))
+    if (eff_qualified or net_ltcg) and cg_zero_limit is not None and cg_fifteen_limit is not None:
+        qd = compute_qdcg_tax(taxable_income, eff_qualified, net_ltcg,
+                              brackets, cg_zero_limit, cg_fifteen_limit)
+        tax_before_credits = qd["final_tax"]
+        used_qdcg = qd["used_qdcg_worksheet"]
+    else:
+        tax_before_credits, _ = compute_bracket_tax(taxable_income, brackets)
+        used_qdcg = False
+
+    if num_ctc_children and ctc_per_child:
+        ctc = compute_child_tax_credit(
+            num_ctc_children, ctc_per_child, agi, ctc_phase_out_start or 0
+        )["credit_allowed"]
+    else:
+        ctc = 0.0
+
+    if addl_medicare_threshold is not None:
+        # Floor wages at 0 (mirrors the SE-tax call): a wage-reducing delta can drive
+        # merged wages negative, and compute_additional_medicare rejects negative wages.
+        addl = compute_additional_medicare(
+            max(0.0, wages), se["se_earnings"], addl_medicare_threshold, 0,
+            rate=addl_medicare_rate,
+        )["additional_tax"]
+    else:
+        addl = 0.0
+
+    total = max(0.0, tax_before_credits - ctc) + se["se_tax"] + addl
+
+    return {
+        "gross_income": round(gross, 2),
+        "adjustments": round(adjustments, 2),
+        "agi": round(agi, 2),
+        "taxable_income": round(taxable_income, 2),
+        "tax_before_credits": round(tax_before_credits, 2),
+        "ctc": round(ctc, 2),
+        "se_tax": round(se["se_tax"], 2),
+        "additional_medicare": round(addl, 2),
+        "total_federal_tax": round(total, 2),
+        "used_qdcg": used_qdcg,
+    }
+
+
 if __name__ == "__main__":
     # Quick self-test with sample data
     print("=== Bracket Tax Test (MFJ 2025 OBBBA) ===")
@@ -687,3 +853,15 @@ if __name__ == "__main__":
     print("\n=== FTC Limitation Test ===")
     ftc = compute_ftc_limitation(300000, 200000, 50000, 10000)
     print(f"FTC with foreign > worldwide: ratio capped at 1.0, limitation=${ftc['limitation']:,.2f}")
+
+    print("\n=== Scenario Test (MFJ, +$40K Roth conversion as ordinary income) ===")
+    base_inputs = {"wages": 150000, "qualified_dividends": 5000, "ordinary_dividends": 5000}
+    base = compute_scenario(base_inputs, {}, brackets=brackets_2025, standard_deduction=30000,
+                            cg_zero_limit=96700, cg_fifteen_limit=600050)
+    scen = compute_scenario(base_inputs, {"ira_distribution": 40000},
+                            brackets=brackets_2025, standard_deduction=30000,
+                            cg_zero_limit=96700, cg_fifteen_limit=600050)
+    delta_tax = scen["total_federal_tax"] - base["total_federal_tax"]
+    print(f"Baseline tax: ${base['total_federal_tax']:,.2f}; +$40K → ${scen['total_federal_tax']:,.2f}")
+    print(f"Marginal cost of $40K conversion: ${delta_tax:,.2f} "
+          f"({delta_tax / 40000:.1%} marginal rate)")

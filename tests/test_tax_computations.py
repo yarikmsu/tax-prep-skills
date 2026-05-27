@@ -217,6 +217,22 @@ class TestComputeQdcgTax:
         assert result["qdcg_at_0_pct"] == 50000
         assert result["final_tax"] == 0.0
 
+    def test_qdcg_capped_at_taxable_income(self):
+        """Preferential income exceeding taxable income (standard deduction shielded
+        part of the gain) must not be taxed. $100K LTCG with only $70K taxable income,
+        all under the MFJ 0% threshold → $0, not $1,500 on the un-shielded $100K."""
+        result = compute_qdcg_tax(
+            taxable_income=70_000,
+            qualified_dividends=0,
+            net_ltcg=100_000,
+            brackets=MFJ_BRACKETS_2025,
+            cg_zero_limit=CG_ZERO_LIMIT_MFJ,
+            cg_fifteen_limit=CG_FIFTEEN_LIMIT_MFJ,
+        )
+        assert result["final_tax"] == 0.0
+        # Only the $70K that survives into taxable income is bucketed.
+        assert result["qdcg_at_0_pct"] + result["qdcg_at_15_pct"] + result["qdcg_at_20_pct"] == 70000
+
     def test_net_ltcg_negative_treated_as_zero(self):
         """Negative net_ltcg is treated as 0 in QDCG total."""
         result = compute_qdcg_tax(

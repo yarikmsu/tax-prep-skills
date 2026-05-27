@@ -37,6 +37,12 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
   in `result.json`, and recommends a W-4 4(c) and/or 1040-ES schedule to hit the
   safe-harbor and zero-balance targets. Read-only; federal only. Uses `archive/{year-1}/`
   for the prior-year safe harbor when present, else degrades to the 90%-of-current test.
+- **`/tax-scenario`** — what-if scenario modeling: after `/tax-compute`, forks the computed
+  baseline, applies one or more signed income deltas (e.g. `roth_conversion=40000`), and
+  reports the marginal cost + AGI/taxable-income/effective-rate movement. The absolute
+  scenario tax is *anchored* to the real `result.json` line 24 (only the marginal effect is
+  modeled). Writes derived `scenarios/<name>.json` siblings (stackable via `--base`); never
+  mutates `result.json`/`taxpayer_profile.json`. Federal only (v1).
 
 ## Key Design Principles
 - **No hardcoded personal data** — taxpayer info lives in `taxpayer_profile.json`, not skill code
@@ -59,7 +65,8 @@ agents/
 │   ├── tax-review.md
 │   ├── tax-fbar.md
 │   ├── tax-project.md
-│   └── tax-withholding.md
+│   ├── tax-withholding.md
+│   └── tax-scenario.md
 ├── templates/        # JSON/MD templates for workspace initialization
 │   ├── result_template.json
 │   ├── answers_template.md
@@ -67,12 +74,13 @@ agents/
 ├── lib/              # Shared Python utilities
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction + document classification
 │   ├── tax_law_fetcher.py    # Tax law cache structure + load/save
-│   ├── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, etc.)
+│   ├── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, compute_scenario, etc.)
 │   ├── archive.py            # Move year files into archive/{year}/ for /tax-archive
 │   ├── rollover.py           # Diff/merge engine for /tax-rollover
 │   ├── projection.py         # Mid-year projection compute + renderer for /tax-project
 │   ├── yoy_diff.py           # YoY What-Changed diff for /tax-review (read-only)
-│   └── withholding.py        # Federal withholding true-up for /tax-withholding (read-only)
+│   ├── withholding.py        # Federal withholding true-up for /tax-withholding (read-only)
+│   └── scenario.py           # What-if scenario modeling for /tax-scenario (writes scenarios/ only)
 └── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
@@ -146,12 +154,13 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - Parsing skills should dispatch parallel subagents for independent document groups
 
 ### Read-only planning skills
-- `/tax-project` and the YoY diff in `/tax-review` share one pattern: a pure-compute lib module (frozen dataclasses + markdown renderer + CLI `_main`) that reuses `rollover.load_prior` for the prior-year baseline and NEVER mutates `result.json`/`taxpayer_profile.json`. Follow `agents/lib/projection.py` / `yoy_diff.py` / `withholding.py` for future planning features (backlog #3/#6).
+- `/tax-project` and the YoY diff in `/tax-review` share one pattern: a pure-compute lib module (frozen dataclasses + markdown renderer + CLI `_main`) that reuses `rollover.load_prior` for the prior-year baseline and NEVER mutates `result.json`/`taxpayer_profile.json`. Follow `agents/lib/projection.py` / `yoy_diff.py` / `withholding.py` for future planning features (backlog #6).
+- `/tax-scenario` (`agents/lib/scenario.py`) extends the pattern: it still never mutates the baseline, but it *does* write derived `scenarios/<name>.json` siblings via a guarded `save_scenario` (forces the target under `workspace/scenarios/`, validates the name is a single path segment, refuses `result.json`/`taxpayer_profile.json`, `chmod 600`). It anchors the absolute scenario tax to the real `result.json` line 24 and models only the marginal effect of the delta via the `compute_scenario` keystone in `tax_computations.py`. The keystone is rates-parameterized like every other function there — backlog #6 (Roth ladder) sweeps it.
 - "Section present" for diff/presence logic = holds a non-zero number or non-empty list; template scaffolding (strings, booleans, `_`-prefixed keys) never counts.
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 219 tests covering all 8 computation functions + archive/rollover modules + YoY diff + mid-year projection + withholding true-up + integration pipeline
+- 309 tests covering all computation functions (incl. compute_scenario) + archive/rollover modules + YoY diff + mid-year projection + withholding true-up + scenario modeling + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path
