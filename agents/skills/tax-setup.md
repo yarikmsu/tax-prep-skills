@@ -144,6 +144,10 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
 - Search: `"IRS {year} IRA contribution limit phase out"`
 - Search: `"IRS {year} social security wage base"`
 - Search: `"IRS {year} capital gains tax brackets"`
+- Search: `"Medicare IRMAA {year} income brackets Part B Part D"` — populate `federal.irmaa.tiers`
+  (`single`/`mfj` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
+  monthly Part B + Part D surcharge above the standard premium). Optional but unlocks IRMAA
+  flags in `/tax-roth-convert`; leave as `[]` if not relevant to the taxpayer.
 
 **State (based on taxpayer's state):**
 - For CA: Search `"FTB California {year} tax brackets"`, `"California {year} standard deduction"`

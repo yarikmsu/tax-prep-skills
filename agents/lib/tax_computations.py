@@ -382,6 +382,55 @@ def compute_additional_medicare(
     }
 
 
+def compute_niit(
+    magi: float,
+    net_investment_income: float,
+    threshold: float,
+    *,
+    rate: float = 0.038,
+) -> float:
+    """Net Investment Income Tax (Form 8960) — the 3.8% surtax.
+
+    NIIT is 3.8% of the LESSER of net investment income and the amount by which MAGI
+    exceeds the filing-status threshold. The keystone compute_scenario deliberately
+    omits NIIT; the Roth-ladder layers it on top, because a conversion raises MAGI and
+    can newly subject existing investment income to the surtax.
+
+    Args:
+        magi: Modified AGI (the toolkit approximates this as AGI for planning).
+        net_investment_income: Interest + dividends + net capital gains, etc. A Roth
+                  conversion / IRA distribution is NOT investment income — exclude it.
+        threshold: Filing-status MAGI threshold (single 200K / MFJ 250K / MFS 125K).
+                  When None (not fetched into tax_law), NIIT is treated as not modeled
+                  and 0.0 is returned rather than raising — callers degrade gracefully.
+        rate: NIIT rate (0.038).
+
+    Returns:
+        NIIT owed, rounded to 2 dp. 0.0 when threshold is None, NII <= 0, or MAGI is
+        below the threshold.
+
+    Raises:
+        ValueError: If magi, net_investment_income, threshold (when not None), or rate
+            is non-numeric/bool.
+    """
+    if threshold is None:
+        return 0.0
+    try:
+        magi_n = _coerce_numeric(magi, default=None)
+        nii_n = _coerce_numeric(net_investment_income, default=None)
+        thr_n = _coerce_numeric(threshold, default=None)
+        rate_n = _coerce_numeric(rate, default=None)
+    except TypeError:
+        raise ValueError("compute_niit arguments must be numeric, got bool")
+    if None in (magi_n, nii_n, thr_n, rate_n):
+        raise ValueError("compute_niit arguments must be numeric")
+    if nii_n <= 0:
+        return 0.0
+    excess = max(0.0, magi_n - thr_n)
+    base = min(nii_n, excess)
+    return round(base * rate_n, 2)
+
+
 def compute_ftc_limitation(
     foreign_source_income: float,
     worldwide_income: float,
@@ -838,6 +887,12 @@ if __name__ == "__main__":
     print("\n=== Additional Medicare Test ===")
     med = compute_additional_medicare(260000, 0, 250000, 4000)
     print(json.dumps(med, indent=2))
+
+    print("\n=== NIIT Test (MFJ, MAGI $300K, NII $20K, threshold $250K) ===")
+    # excess = 300K-250K = 50K; min(20K, 50K) = 20K; 3.8% = $760
+    print(f"NIIT owed: ${compute_niit(300000, 20000, 250000):,.2f}")
+    print(f"NIIT below threshold: ${compute_niit(240000, 20000, 250000):,.2f}")
+    print(f"NIIT no threshold (not modeled): ${compute_niit(300000, 20000, None):,.2f}")
 
     print("\n=== QBI Test ===")
     qbi = compute_qbi_deduction(-1000, 50)

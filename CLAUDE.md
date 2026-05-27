@@ -43,6 +43,16 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
   scenario tax is *anchored* to the real `result.json` line 24 (only the marginal effect is
   modeled). Writes derived `scenarios/<name>.json` siblings (stackable via `--base`); never
   mutates `result.json`/`taxpayer_profile.json`. Federal only (v1).
+- **`/tax-roth-convert`** — Roth conversion ladder: after `/tax-compute`, sweeps conversion
+  amounts `$0..--max` in `--step` increments (default $100K / $5K) via the `compute_scenario`
+  keystone, charts the marginal cost per dollar, and flags exactly which rung first trips the
+  LTCG 0/15/20% breakpoints, the NIIT threshold, and each IRMAA tier. Tax is *anchored* to
+  `result.json` line 24; NIIT (the one federal component the keystone omits that a conversion
+  can trigger) is layered on outside the keystone via `compute_niit`; IRMAA is a flagged
+  Medicare-premium side cost, never folded into the tax total. Writes one
+  `scenarios/<name>.json` via the reused scenario `save_scenario` guard; never mutates the
+  baseline. Federal only (v1). Degrades to "IRMAA not modeled" when `federal.irmaa.tiers`
+  is unfetched.
 
 ## Key Design Principles
 - **No hardcoded personal data** — taxpayer info lives in `taxpayer_profile.json`, not skill code
@@ -66,7 +76,8 @@ agents/
 │   ├── tax-fbar.md
 │   ├── tax-project.md
 │   ├── tax-withholding.md
-│   └── tax-scenario.md
+│   ├── tax-scenario.md
+│   └── tax-roth-convert.md
 ├── templates/        # JSON/MD templates for workspace initialization
 │   ├── result_template.json
 │   ├── answers_template.md
@@ -80,7 +91,8 @@ agents/
 │   ├── projection.py         # Mid-year projection compute + renderer for /tax-project
 │   ├── yoy_diff.py           # YoY What-Changed diff for /tax-review (read-only)
 │   ├── withholding.py        # Federal withholding true-up for /tax-withholding (read-only)
-│   └── scenario.py           # What-if scenario modeling for /tax-scenario (writes scenarios/ only)
+│   ├── scenario.py           # What-if scenario modeling for /tax-scenario (writes scenarios/ only)
+│   └── roth_ladder.py        # Roth conversion ladder for /tax-roth-convert (writes scenarios/ only)
 └── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
@@ -141,8 +153,8 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 
 ### Reading tax_law_<year>.json
 - Schema is defined in `agents/lib/tax_law_fetcher.py` (`create_empty_tax_law` / `create_state_template`) — read it before writing accessors.
-- Key paths: `federal.filing_statuses.<single|mfj|mfs|hoh>.{brackets,standard_deduction}`, `federal.capital_gains_rates.{zero_pct_limit,fifteen_pct_limit}`, `federal.child_tax_credit.phase_out_start`, `federal.additional_medicare_tax.threshold`, `state.{brackets,standard_deduction}`.
-- Gotcha: `capital_gains_rates` and `child_tax_credit.phase_out_start` are keyed ONLY `single`/`mfj` (map MFJ/QSS→mfj, else→single); `additional_medicare_tax.threshold` adds `mfs`; `filing_statuses` has all four. Statutory-fixed thresholds (e.g. safe-harbor $150k/$75k) are hardcoded constants, not in tax_law.
+- Key paths: `federal.filing_statuses.<single|mfj|mfs|hoh>.{brackets,standard_deduction}`, `federal.capital_gains_rates.{zero_pct_limit,fifteen_pct_limit}`, `federal.child_tax_credit.phase_out_start`, `federal.additional_medicare_tax.threshold`, `federal.niit.threshold`, `federal.irmaa.tiers.<single|mfj>` (list of `{magi_threshold, annual_surcharge_per_person}`), `state.{brackets,standard_deduction}`.
+- Gotcha: `capital_gains_rates` and `child_tax_credit.phase_out_start` are keyed ONLY `single`/`mfj` (map MFJ/QSS→mfj, else→single); `additional_medicare_tax.threshold` and `niit.threshold` add `mfs`; `filing_statuses` has all four. `irmaa.tiers` is keyed `single`/`mfj` only and ships EMPTY (`[]`) — `/tax-setup` must fetch it, and `/tax-roth-convert` degrades to "IRMAA not modeled" when it's empty. Statutory-fixed thresholds (e.g. safe-harbor $150k/$75k) are hardcoded constants, not in tax_law.
 
 ### Modifying templates
 - `result_template.json` field names must match what `generate_tax_pdf.py` reads
@@ -156,11 +168,12 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 ### Read-only planning skills
 - `/tax-project` and the YoY diff in `/tax-review` share one pattern: a pure-compute lib module (frozen dataclasses + markdown renderer + CLI `_main`) that reuses `rollover.load_prior` for the prior-year baseline and NEVER mutates `result.json`/`taxpayer_profile.json`. Follow `agents/lib/projection.py` / `yoy_diff.py` / `withholding.py` for future planning features (backlog #6).
 - `/tax-scenario` (`agents/lib/scenario.py`) extends the pattern: it still never mutates the baseline, but it *does* write derived `scenarios/<name>.json` siblings via a guarded `save_scenario` (forces the target under `workspace/scenarios/`, validates the name is a single path segment, refuses `result.json`/`taxpayer_profile.json`, `chmod 600`). It anchors the absolute scenario tax to the real `result.json` line 24 and models only the marginal effect of the delta via the `compute_scenario` keystone in `tax_computations.py`. The keystone is rates-parameterized like every other function there — backlog #6 (Roth ladder) sweeps it.
+- `/tax-roth-convert` (`agents/lib/roth_ladder.py`, backlog #6) reuses scenario.py wholesale (`extract_baseline_inputs`, `_rate_kwargs`, `read_tax_year`, `save_scenario`, `_validate_name`) and SWEEPS the `compute_scenario` keystone across `ira_distribution` deltas $0..--max. Two things the keystone can't express are layered on in the ladder: (1) **NIIT** via the new `compute_niit` in `tax_computations.py` (rates-parameterized; threshold None → 0.0 so it degrades), added OUTSIDE the keystone because the keystone deliberately omits it and the baseline NIIT is already inside line 24 — so only the *increment* is added and the $0 rung still equals line 24 exactly; (2) **IRMAA** tier flags from `federal.irmaa.tiers` (new schema block), which is a Medicare *premium* surcharge, NOT income tax, so it is flagged as a side cost and never folded into the tax total. LTCG bracket bumping needs no extra code — the QDCG worksheet inside the keystone already prices it into the marginal-rate column; the ladder only *names* where it happens. MAGI≈AGI. Federal-only v1; Form 8606 basis (full conversion taxable) deferred to #7.
 - "Section present" for diff/presence logic = holds a non-zero number or non-empty list; template scaffolding (strings, booleans, `_`-prefixed keys) never counts.
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 309 tests covering all computation functions (incl. compute_scenario) + archive/rollover modules + YoY diff + mid-year projection + withholding true-up + scenario modeling + integration pipeline
+- 364 tests covering all computation functions (incl. compute_scenario + compute_niit) + archive/rollover modules + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path

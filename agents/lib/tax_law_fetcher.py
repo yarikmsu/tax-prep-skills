@@ -153,6 +153,15 @@ def create_empty_tax_law(year: int) -> dict:
                 "rate": 0.038,
                 "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000},
             },
+            # IRMAA = Medicare Part B/D premium surcharge driven by MAGI from 2 years
+            # prior. Tiers are MAGI lower-bounds with the per-beneficiary ANNUAL surcharge
+            # (Part B + Part D) above the standard premium. Empty until /tax-setup fetches;
+            # /tax-roth-convert degrades to "IRMAA not modeled" when tiers are empty.
+            # Each tier: {"magi_threshold": <lower bound>, "annual_surcharge_per_person": <$>}.
+            "irmaa": {
+                "lookback_years": 2,
+                "tiers": {"single": [], "mfj": []},
+            },
             "capital_gains_rates": {
                 "zero_pct_limit": {"single": None, "mfj": None},
                 "fifteen_pct_limit": {"single": None, "mfj": None},

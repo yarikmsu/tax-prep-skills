@@ -1,0 +1,23 @@
+{
+  "meta": {"tax_year": 2026, "filing_status": "MFJ"},
+  "form_1040": {
+    "line_1a_wages": 165000,
+    "line_1z_total_wages": 165000,
+    "line_2b_taxable_interest": 5000,
+    "line_3a_qualified_dividends": 8000,
+    "line_3b_ordinary_dividends": 10000,
+    "line_4b_taxable_ira": 0,
+    "line_5b_taxable_pensions": 0,
+    "line_6b_taxable_ss": 0,
+    "line_7_capital_gain": 20000,
+    "line_8_schedule1_other": 0,
+    "line_11_agi": 200000,
+    "line_24_total_tax": 30000,
+    "line_25d_total_withholding": 28000,
+    "line_26_estimated_payments": 0
+  },
+  "schedule_d": {
+    "part_ii_long_term": {"line_15_net_long_term": 20000},
+    "line_16_combined": 20000
+  }
+}

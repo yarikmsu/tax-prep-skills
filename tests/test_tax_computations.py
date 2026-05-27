@@ -20,6 +20,7 @@ from agents.lib.tax_computations import (
     compute_ftc_limitation,
     compute_child_tax_credit,
     compute_qbi_deduction,
+    compute_niit,
     check_form_8938_required,
     SE_TAX_THRESHOLD,
 )
@@ -605,6 +606,46 @@ class TestComputeQbiDeduction:
         """None QBI raises ValueError."""
         with pytest.raises(ValueError, match="cannot be None"):
             compute_qbi_deduction(None, 500)
+
+
+class TestComputeNiit:
+    """Tests for compute_niit — Form 8960 net investment income tax (3.8%)."""
+
+    def test_excess_caps_the_base(self):
+        # MAGI 300K, NII 20K, thr 250K → min(20K, 50K)=20K × 3.8% = 760
+        assert compute_niit(300000, 20000, 250000) == 760.00
+
+    def test_nii_caps_the_base(self):
+        # MAGI 300K, NII 10K, thr 250K → min(10K, 50K)=10K × 3.8% = 380
+        assert compute_niit(300000, 10000, 250000) == 380.00
+
+    def test_below_threshold_is_zero(self):
+        assert compute_niit(240000, 20000, 250000) == 0.00
+
+    def test_exactly_at_threshold_is_zero(self):
+        # excess = 0 at the threshold
+        assert compute_niit(250000, 20000, 250000) == 0.00
+
+    def test_none_threshold_not_modeled(self):
+        # Degrade gracefully rather than raise — caller has no fetched threshold.
+        assert compute_niit(300000, 20000, None) == 0.00
+
+    def test_zero_nii_is_zero(self):
+        assert compute_niit(500000, 0, 250000) == 0.00
+
+    def test_negative_nii_is_zero(self):
+        assert compute_niit(500000, -5000, 250000) == 0.00
+
+    def test_custom_rate(self):
+        assert compute_niit(300000, 20000, 250000, rate=0.05) == 1000.00
+
+    def test_bool_raises(self):
+        with pytest.raises(ValueError, match="numeric"):
+            compute_niit(True, 20000, 250000)
+
+    def test_non_numeric_raises(self):
+        with pytest.raises(ValueError, match="numeric"):
+            compute_niit("lots", 20000, 250000)
 
 
 class TestCheckForm8938Required:
