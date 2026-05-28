@@ -30,6 +30,10 @@ Read-only with respect to the baseline: never modifies `result.json` or
 - **For IRMAA flags:** `tax_law_{year}.json` must have `federal.irmaa.tiers.{single|mfj}`
   populated (MAGI thresholds + per-beneficiary annual surcharge). If empty, the ladder
   still runs but reports "IRMAA not modeled" — re-run `/tax-setup` to fetch the tiers.
+- **For Form 8606 basis pro-rata (optional):** pass `--ira-value` (total beginning-of-year
+  traditional/SEP/SIMPLE IRA balance) to dilute each rung's taxable conversion by the basis
+  ratio. `--ira-basis` defaults to `taxpayer_profile.json prior_year.ira_basis`. Without
+  `--ira-value` the ladder treats the full conversion as taxable (v1 default).
 
 ## Steps
 
@@ -45,8 +49,10 @@ Read-only with respect to the baseline: never modifies `result.json` or
 3. **Compute.** Run:
    ```bash
    python3 -m agents.lib.roth_ladder --result result.json --workspace . --year {year} \
-       --name {name} --max {max} --step {step} --json
+       --name {name} --max {max} --step {step} [--ira-value {balance} --ira-basis {basis}] --json
    ```
+   Add `--ira-value` (and optionally `--ira-basis`) to apply the Form 8606 pro-rata rule so
+   each rung's *taxable* conversion is diluted by the after-tax basis fraction.
    This writes `scenarios/{name}.json` (chmod 600, default name `roth-ladder`) and emits
    the JSON report.
 
@@ -72,8 +78,9 @@ Read-only with respect to the baseline: never modifies `result.json` or
 
 ## Caveats (v1)
 - Federal only — state tax on the conversion is not modeled.
-- Full conversion treated as taxable; non-deductible IRA **basis** (Form 8606 pro-rata) is
-  not applied (backlog #7).
+- Non-deductible IRA **basis** (Form 8606 pro-rata) is applied when `--ira-value` (and
+  `--ira-basis`/profile basis) are supplied; otherwise the full conversion is taxable. Basis
+  aggregates all traditional/SEP/SIMPLE IRAs (per IRS rules) and is per-individual.
 - MAGI approximated as AGI (no tax-exempt-interest / foreign-EI add-backs).
 - Second-order Social Security taxability is not re-computed.
 - MFS/HOH use single-status capital-gains and IRMAA schedules (toolkit-wide simplification).

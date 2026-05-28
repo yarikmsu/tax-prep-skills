@@ -309,6 +309,31 @@
     }
   },
 
+  "form_8606": {
+    "_include_if": "has_backdoor_roth or has_roth_conversion is true, OR taxpayer has nondeductible traditional-IRA basis (prior_year.ira_basis > 0 or a nondeductible contribution this year)",
+    "_note": "Form 8606 Part I — nondeductible IRA basis and the pro-rata rule. Computed by compute_form_8606. taxable_to_1040 (line 15 + line 18) flows to Form 1040 line 4b. basis_remaining (line 14) is the carryforward /tax-rollover pulls into next year's prior_year.ira_basis.",
+    "line_1_nondeductible_current": 0,
+    "line_2_prior_basis": 0,
+    "line_3_total_basis": 0,
+    "line_6_year_end_value": 0,
+    "line_7_distributions": 0,
+    "line_8_converted": 0,
+    "line_9_total_value": 0,
+    "line_10_ratio": 0,
+    "line_11_nontaxable_conversion": 0,
+    "line_14_basis_remaining": 0,
+    "line_15a_taxable_pre_disaster": 0,
+    "line_15b_disaster_repayable": 0,
+    "line_15c_taxable_to_1040": 0,
+    "line_15_taxable_distributions": 0,
+    "line_18_taxable_conversion": 0,
+    "basis_remaining": 0,
+    "taxable_conversion": 0,
+    "taxable_to_1040": 0,
+    "pro_rata_triggered": false,
+    "note": null
+  },
+
   "ira_contribution": {
     "_include_if": "has_ira_contributions flag is true",
     "status": null,

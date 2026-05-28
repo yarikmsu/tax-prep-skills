@@ -46,6 +46,13 @@ FIELD_MAP: dict[str, dict] = {
         "target_path": "prior_year.unused_ftc_carryforward",
         "transform": "ftc_unused",
     },
+    "ira_basis": {
+        "category": "carryforwards",
+        "source_path": "form_8606.basis_remaining",  # Form 8606 line 14
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.ira_basis",
+        "transform": "ira_basis",
+    },
     # Category 2: Static identity
     "primary_first_name": {
         "category": "identity",
@@ -192,10 +199,16 @@ def _transform_ftc_unused(raw):
     return max(paid - allowed, 0)
 
 
+def _transform_ira_basis(raw):
+    """Form 8606 line 14 basis remaining → next-year line 2. Non-negative; 0 if absent."""
+    return raw if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0 else 0
+
+
 TRANSFORMS = {
     "capital_loss_to_carryforward": _transform_capital_loss,
     "abs": _transform_abs,
     "ftc_unused": _transform_ftc_unused,
+    "ira_basis": _transform_ira_basis,
 }
 
 

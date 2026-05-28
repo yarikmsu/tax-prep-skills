@@ -23,7 +23,7 @@ These unlock most of the features below and should land before or alongside the 
 | 4 | **Tax-loss harvesting scanner** | `/tax-harvest` | Reads brokerage lot data, ranks losing positions by harvestable loss, checks 30-day wash-sale window against your own buys, outputs sell list with $ federal+state savings. | M | Planned |
 | 5 | **Withholding true-up** | `/tax-withholding` | Compares YTD federal withholding vs projected liability; outputs revised W-4 step 4(c) amount or 1040-ES voucher schedule. | S | ✅ Done (PR #13) |
 | 6 | **Roth conversion ladder modeler** | `/tax-roth-convert` | Sweeps conversion amounts $0–$100K in $5K steps; charts marginal cost per $; flags IRMAA, NIIT, LTCG bracket-bumping thresholds. | M | ✅ Done (PR #16) |
-| 7 | **Form 8606 basis tracker** | (template + compute path) | Persists non-deductible IRA basis across years; auto-applies pro-rata formula on conversions. Closes the backdoor-Roth pro-rata trap. | S | Planned |
+| 7 | **Form 8606 basis tracker** | (template + compute path) | Persists non-deductible IRA basis across years; auto-applies pro-rata formula on conversions. Closes the backdoor-Roth pro-rata trap. | S | ✅ Done (PR #17) |
 | 8 | **Crypto importer** | `/tax-parse-crypto` | Parses Coinbase/Kraken/Gemini CSVs into Form 8949 rows; flags any digital-asset activity for the 1040 page-1 question. | M | Planned |
 | 9 | **PTET election analyzer** (CA/NY/NJ) | section in `/tax-review` + new check in `/tax-project` | Detects K-1 from passthrough; estimates SALT-cap workaround savings; reminds of state election deadlines (CA is March 15 prior-year). | S | Planned |
 | 10 | **Quarterly reminder calendar** | output of `/tax-setup` | Generates `.ics` file with 1040-ES due dates, FBAR (Apr 15 → auto-extended Oct 15), state PTET windows, RMD deadlines. | XS | Planned |
@@ -44,6 +44,12 @@ Brainstorming started with **#1 `/tax-rollover`** — the foundation that unlock
 plus `agents/lib/scenario.py`, which writes derived `scenarios/<name>.json` siblings without
 ever mutating `result.json`. #6 (`/tax-roth-convert`, `agents/lib/roth_ladder.py`) sweeps that
 keystone across conversion amounts, added a `compute_niit` helper + an `irmaa` tax_law block,
-and layers NIIT/IRMAA/LTCG threshold flags onto the anchored ladder. Recommended next:
-**#7 Form 8606 basis tracker** (S) — it closes the "full conversion is taxable" simplification
-that #6 deferred, and the backdoor-Roth pro-rata trap; or **#4 tax-loss harvesting scanner** (M).
+and layers NIIT/IRMAA/LTCG threshold flags onto the anchored ladder.
+
+**Progress (2026-05-27):** #7 (Form 8606 basis tracker) is shipped. Added the
+`compute_form_8606` pro-rata keystone, a `form_8606` result block + `prior_year.ira_basis`
+profile field, a `/tax-rollover` carryforward of basis, a `/tax-compute` Form 8606 step, and
+`--ira-basis`/`--ira-value` on `/tax-roth-convert` (each rung's taxable conversion diluted by
+the basis ratio). This closes the "full conversion is taxable" simplification #6 deferred and
+the backdoor-Roth pro-rata trap. Recommended next: **#4 tax-loss harvesting scanner** (M), or
+**#11 retirement contribution dashboard** (S).

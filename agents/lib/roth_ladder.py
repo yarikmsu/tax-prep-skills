@@ -48,6 +48,7 @@ from agents.lib.scenario import (  # noqa: E402
 )
 from agents.lib.tax_computations import (  # noqa: E402
     _coerce_numeric,
+    compute_form_8606,
     compute_niit,
     compute_scenario,
 )
@@ -62,7 +63,8 @@ class RothLadderError(Exception):
 
 @dataclass(frozen=True)
 class LadderRung:
-    amount: float           # conversion modeled at this rung
+    amount: float           # gross conversion modeled at this rung
+    taxable_conversion: float  # taxable portion after Form 8606 pro-rata (== amount when no basis)
     agi: float              # scenario AGI (== MAGI proxy)
     taxable_income: float
     fed_tax_anchored: float  # line 24 + keystone marginal effect (ex-NIIT)
@@ -92,6 +94,9 @@ class LadderReport:
     max_amount: float
     step: float
     anchor: dict             # {"line_24", "baseline_recompute_total"}
+    basis_modeled: bool      # True → Form 8606 pro-rata diluted each rung's taxable conversion
+    ira_basis: "float | None"  # after-tax basis used; None when not modeled
+    ira_value: "float | None"  # total beginning-of-year traditional IRA balance B; None when not modeled
     baseline_nii: float
     niit_threshold: "float | None"
     niit_modeled: bool       # False → no NIIT threshold in tax_law; surtax EXCLUDED
@@ -192,13 +197,50 @@ def _irmaa_surcharge(magi: float, tiers: "list[dict]") -> float:
     return surcharge
 
 
+def _resolve_basis(profile: dict, ira_basis, ira_value) -> "tuple[bool, float | None, float | None]":
+    """Resolve (basis_modeled, basis, value) for the pro-rata sweep.
+
+    `ira_basis` defaults to taxpayer_profile.json prior_year.ira_basis when not passed
+    explicitly. Pro-rata is modeled only when a positive total IRA value B is known
+    (the ratio denominator); without it the ladder degrades to full-conversion-taxable.
+    A negative basis/value is rejected as a data error. basis > value is NOT rejected:
+    after investment losses a taxpayer can legitimately have Form 8606 basis exceeding the
+    current IRA value, and the keystone caps the line-10 ratio at 1.0 (the conversion is
+    then fully nontaxable up to the balance, with leftover basis carried forward).
+    """
+    if ira_basis is None:
+        prior = profile.get("prior_year", {}) or {}
+        ira_basis = prior.get("ira_basis")
+    try:
+        basis = _coerce_numeric(ira_basis, default=None) if ira_basis is not None else None
+        value = _coerce_numeric(ira_value, default=None) if ira_value is not None else None
+    except TypeError:  # bool is never a valid amount (mirrors the keystones)
+        raise RothLadderError("--ira-basis/--ira-value must be numeric, got bool.")
+    if ira_basis is not None and basis is None:
+        raise RothLadderError(f"--ira-basis is not numeric: {ira_basis!r}")
+    if ira_value is not None and value is None:
+        raise RothLadderError(f"--ira-value is not numeric: {ira_value!r}")
+    if basis is not None and basis < 0:
+        raise RothLadderError(f"--ira-basis cannot be negative (got {basis}).")
+    if value is not None and value < 0:
+        raise RothLadderError(f"--ira-value cannot be negative (got {value}).")
+    if value is None or value <= 0:
+        return False, None, None  # no denominator → degrade to full-taxable v1
+    basis = basis or 0.0
+    # basis > value is allowed (post-loss IRA): the keystone caps the ratio at 1.0, so the
+    # conversion is fully nontaxable up to the balance and leftover basis carries forward.
+    return True, round(basis, 2), round(value, 2)
+
+
 def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
                  max_amount: float, step: float, name: str,
-                 today: datetime.date) -> LadderReport:
+                 today: datetime.date,
+                 ira_basis=None, ira_value=None) -> LadderReport:
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
     rate_kwargs = _rate_kwargs(profile, tax_law, filing_status)
     base_inputs = extract_baseline_inputs(result)
+    basis_modeled, basis, value = _resolve_basis(profile, ira_basis, ira_value)
 
     line24 = round(_num(((result.get("form_1040", {}) or {})
                          .get("line_24_total_tax")), "line_24"), 2)
@@ -221,6 +263,15 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
     base_irmaa_idx = sum(1 for t in irmaa_tiers if base_out["agi"] >= t["magi_threshold"])
 
     amounts = parse_sweep(max_amount, step)
+    # When pro-rata is modeled, truncate the sweep at the IRA balance so every rung is an
+    # ACHIEVABLE conversion. Without this, rungs past B would carry a gross `amount`
+    # exceeding the real maximum convertible (wrong threshold-crossing labels) and a
+    # marginal-rate denominator using the full step instead of the real B − prev_amount
+    # (understated rate). Both bugs vanish by construction once amounts <= B.
+    truncated_at_balance = False
+    if basis_modeled and value is not None and value < amounts[-1]:
+        amounts = [a for a in amounts if a < value] + [round(value, 2)]
+        truncated_at_balance = True
     rungs: "list[LadderRung]" = []
     crossings: "list[ThresholdCrossing]" = []
     _ltcg_zero_ceiling = cg_zero if cg_zero is not None else float("inf")
@@ -237,7 +288,17 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
     prev_amount = None
 
     for amt in amounts:
-        scen = compute_scenario(base_inputs, {"ira_distribution": amt}, **rate_kwargs)
+        # Form 8606 pro-rata: only the taxable fraction of the conversion is ordinary
+        # income. A conversion of `amt` out of beginning balance B leaves year-end FMV
+        # B - amt, so the keystone's line 9 recovers B and the taxable portion is
+        # amt * (1 - basis/B). Amounts are clamped to <= B by the truncation above, so
+        # we never need to cap converted here. Without basis/B we feed the full amount.
+        if basis_modeled:
+            f8606 = compute_form_8606(0.0, basis, max(0.0, value - amt), 0.0, amt)
+            taxable_conv = f8606["taxable_conversion"]
+        else:
+            taxable_conv = amt
+        scen = compute_scenario(base_inputs, {"ira_distribution": taxable_conv}, **rate_kwargs)
         fed_anchored = round(line24 + (scen["total_federal_tax"] - baseline_recompute), 2)
         niit_here = compute_niit(scen["agi"], nii, niit_threshold, rate=niit_rate)
         niit_addon = round(niit_here - base_niit, 2)
@@ -295,8 +356,14 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
                 label=f"Medicare IRMAA surcharge tier (MAGI ≥ {_money(tier['magi_threshold'])})",
                 at_amount=amt, magi=scen["agi"], est_annual_cost=incremental))
 
+        # When the sweep was truncated at the IRA balance (--max ran past B), flag the
+        # final rung so the user sees the sweep stopped at their balance, not at --max.
+        if truncated_at_balance and amt == amounts[-1]:
+            flags.append(f"Full IRA balance reached (max convertible {_money(value)})")
+
         rungs.append(LadderRung(
-            amount=amt, agi=scen["agi"], taxable_income=scen["taxable_income"],
+            amount=amt, taxable_conversion=round(taxable_conv, 2),
+            agi=scen["agi"], taxable_income=scen["taxable_income"],
             fed_tax_anchored=fed_anchored, niit_addon=niit_addon, total_tax=total,
             cumulative_cost=round(total - line24, 2), marginal_rate=marginal, flags=flags))
         prev_total = total
@@ -305,7 +372,9 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
     return LadderReport(
         schema=SCHEMA, name=name, tax_year=year, created=today.isoformat(),
         filing_status=filing_status, max_amount=round(float(amounts[-1]), 2),
-        step=round(float(step), 2), anchor=anchor, baseline_nii=nii,
+        step=round(float(step), 2), anchor=anchor,
+        basis_modeled=basis_modeled, ira_basis=basis, ira_value=value,
+        baseline_nii=nii,
         niit_threshold=niit_threshold, niit_modeled=(niit_threshold is not None),
         irmaa_modeled=bool(irmaa_tiers), rungs=rungs, crossings=crossings)
 
@@ -314,7 +383,9 @@ def _report_to_dict(r: LadderReport) -> dict:
     return {
         "schema": r.schema, "name": r.name, "tax_year": r.tax_year, "created": r.created,
         "filing_status": r.filing_status, "max_amount": r.max_amount, "step": r.step,
-        "anchor": r.anchor, "baseline_nii": r.baseline_nii, "niit_threshold": r.niit_threshold,
+        "anchor": r.anchor, "basis_modeled": r.basis_modeled, "ira_basis": r.ira_basis,
+        "ira_value": r.ira_value, "baseline_nii": r.baseline_nii,
+        "niit_threshold": r.niit_threshold,
         "niit_modeled": r.niit_modeled, "irmaa_modeled": r.irmaa_modeled,
         "rungs": [vars(x) for x in r.rungs],
         "crossings": [vars(x) for x in r.crossings],
@@ -339,6 +410,20 @@ def render_markdown(r: LadderReport) -> str:
               + ("" if not r.niit_modeled
                  else f"; NIIT threshold **{_money(r.niit_threshold)}**"), ""]
 
+    if r.basis_modeled:
+        # Floor at 0: when basis >= value (post-loss IRA) the taxable fraction is 0%,
+        # never negative — the conversion is fully nontaxable up to the balance.
+        taxable_frac = max(0.0, 1 - (r.ira_basis / r.ira_value)) if r.ira_value else 1.0
+        lines += ["- **Form 8606 pro-rata applied:** after-tax basis "
+                  f"**{_money(r.ira_basis)}** of a **{_money(r.ira_value)}** total traditional "
+                  f"IRA balance, so only **{taxable_frac:.1%}** of each conversion is taxable "
+                  "(the rest is return of basis). The *Taxable convert* column shows the taxed "
+                  "portion.", ""]
+    else:
+        lines += ["- **Basis not modeled** — the full conversion is treated as taxable. Pass "
+                  "`--ira-basis` and `--ira-value` (or set `prior_year.ira_basis` and provide "
+                  "`--ira-value`) to apply the Form 8606 pro-rata rule.", ""]
+
     # Loud, unmissable banners when a threshold concern could not be checked — a $0
     # NIIT column or "none tripped" must never be read as "no impact" when the truth
     # is "no data". An empty IRMAA list is a legitimate not-on-Medicare state, so its
@@ -354,12 +439,15 @@ def render_markdown(r: LadderReport) -> str:
                   "**not checked**. Run `/tax-setup` to fetch them, or ignore if not on "
                   "Medicare.", ""]
 
+    tx_hdr = " Taxable convert |" if r.basis_modeled else ""
+    tx_sep = "---:|" if r.basis_modeled else ""
     lines += ["## Ladder", "",
-              "| Convert | Taxable income | Fed tax | NIIT add | Total tax | Cumulative cost | Marginal rate | Flags |",
-              "|---:|---:|---:|---:|---:|---:|---:|---|"]
+              f"| Convert |{tx_hdr} Taxable income | Fed tax | NIIT add | Total tax | Cumulative cost | Marginal rate | Flags |",
+              f"|---:|{tx_sep}---:|---:|---:|---:|---:|---:|---|"]
     for rung in r.rungs:
+        tx_cell = f" {_money(rung.taxable_conversion)} |" if r.basis_modeled else ""
         lines.append(
-            f"| {_money(rung.amount)} | {_money(rung.taxable_income)} | "
+            f"| {_money(rung.amount)} |{tx_cell} {_money(rung.taxable_income)} | "
             f"{_money(rung.fed_tax_anchored)} | {_money(rung.niit_addon)} | "
             f"{_money(rung.total_tax)} | {_money(rung.cumulative_cost)} | "
             f"{_pct(rung.marginal_rate)} | {', '.join(rung.flags) or '—'} |")
@@ -381,8 +469,11 @@ def render_markdown(r: LadderReport) -> str:
 
     lines += ["## Caveats",
               "- Federal only — state tax on the conversion is not modeled in v1.",
-              "- Full conversion is treated as taxable; non-deductible IRA **basis** "
-              "(Form 8606 pro-rata) is not applied (backlog #7).",
+              "- Non-deductible IRA **basis** (Form 8606 pro-rata) is applied when "
+              "`--ira-basis`/`--ira-value` are supplied; otherwise the full conversion is "
+              "treated as taxable. Basis is aggregated across all traditional/SEP/SIMPLE "
+              "IRAs (per IRS rules) and is per-individual — a couple each converting needs "
+              "separate runs.",
               "- MAGI is approximated as AGI; tax-exempt-interest / foreign-EI add-backs "
               "are not modeled.",
               "- NIIT add-on uses baseline net investment income held fixed (a conversion "
@@ -411,6 +502,11 @@ def _main(argv: list) -> int:
     parser.add_argument("--max", default=100000, help="maximum conversion to sweep (default 100000)")
     parser.add_argument("--step", default=5000, help="sweep increment (default 5000)")
     parser.add_argument("--today", default=None, help="override today's date YYYY-MM-DD (testing)")
+    parser.add_argument("--ira-basis", default=None,
+                        help="after-tax (nondeductible) basis; default: profile prior_year.ira_basis")
+    parser.add_argument("--ira-value", default=None,
+                        help="total beginning-of-year traditional/SEP/SIMPLE IRA balance; "
+                             "required to apply Form 8606 pro-rata")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of markdown")
     parser.add_argument("--no-save", action="store_true",
                         help="do not write scenarios/<name>.json")
@@ -438,7 +534,7 @@ def _main(argv: list) -> int:
     try:
         report = build_ladder(result, profile, tax_law, year, max_amount=amounts[-1],
                               step=_coerce_numeric(args.step, default=5000), name=name,
-                              today=today)
+                              today=today, ira_basis=args.ira_basis, ira_value=args.ira_value)
     except (RothLadderError, ScenarioError, ProjectionError, ValueError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

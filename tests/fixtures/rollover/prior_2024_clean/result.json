@@ -15,6 +15,7 @@
     "line_16_combined": -4000
   },
   "form_8995_qbi": {"line_16_qbi_loss_carryforward": -800},
+  "form_8606": {"line_14_basis_remaining": 6140.35, "basis_remaining": 6140.35},
   "form_1116_ftc": {
     "category": "General category income (passive)",
     "foreign_tax_paid_usd": 1200,

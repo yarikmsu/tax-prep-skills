@@ -52,7 +52,20 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
   Medicare-premium side cost, never folded into the tax total. Writes one
   `scenarios/<name>.json` via the reused scenario `save_scenario` guard; never mutates the
   baseline. Federal only (v1). Degrades to "IRMAA not modeled" when `federal.irmaa.tiers`
-  is unfetched.
+  is unfetched. Applies the **Form 8606 pro-rata rule** when `--ira-value` (+ `--ira-basis`,
+  default from `prior_year.ira_basis`) are supplied: each rung's taxable conversion is diluted
+  by the basis fraction via `compute_form_8606`; degrades to full-taxable otherwise.
+
+**Form 8606 basis tracking (item #7, not a standalone skill):** `compute_form_8606` in
+`tax_computations.py` is the pro-rata keystone (Part I worksheet — basis ratio capped at 1.0,
+`basis_remaining` line-14 carryforward, `taxable_to_1040` = line 15 + line 18, a
+`pro_rata_triggered` trap flag). Basis persists in `taxpayer_profile.json prior_year.ira_basis`;
+the computed Form 8606 lives in `result.json form_8606`. `/tax-rollover` carries
+`form_8606.basis_remaining` → next year's `prior_year.ira_basis` (FIELD_MAP `ira_basis` entry).
+`/tax-compute` computes it (routing the taxable portion to 1040 line 4b) and `/tax-roth-convert`
+sweeps it. MAGI≈AGI; basis aggregates all traditional/SEP/SIMPLE IRAs; per-individual; ratio
+kept at full precision (the IRS 3-dp form rule injects error — matches tax software for
+`/tax-verify`). Federal-only v1.
 
 ## Key Design Principles
 - **No hardcoded personal data** — taxpayer info lives in `taxpayer_profile.json`, not skill code
@@ -85,7 +98,7 @@ agents/
 ├── lib/              # Shared Python utilities
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction + document classification
 │   ├── tax_law_fetcher.py    # Tax law cache structure + load/save
-│   ├── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, compute_scenario, etc.)
+│   ├── tax_computations.py   # Parameterized tax math (brackets, QDCG, SE, FTC, CTC, compute_scenario, compute_niit, compute_form_8606, etc.)
 │   ├── archive.py            # Move year files into archive/{year}/ for /tax-archive
 │   ├── rollover.py           # Diff/merge engine for /tax-rollover
 │   ├── projection.py         # Mid-year projection compute + renderer for /tax-project
@@ -168,12 +181,12 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 ### Read-only planning skills
 - `/tax-project` and the YoY diff in `/tax-review` share one pattern: a pure-compute lib module (frozen dataclasses + markdown renderer + CLI `_main`) that reuses `rollover.load_prior` for the prior-year baseline and NEVER mutates `result.json`/`taxpayer_profile.json`. Follow `agents/lib/projection.py` / `yoy_diff.py` / `withholding.py` for future planning features (backlog #6).
 - `/tax-scenario` (`agents/lib/scenario.py`) extends the pattern: it still never mutates the baseline, but it *does* write derived `scenarios/<name>.json` siblings via a guarded `save_scenario` (forces the target under `workspace/scenarios/`, validates the name is a single path segment, refuses `result.json`/`taxpayer_profile.json`, `chmod 600`). It anchors the absolute scenario tax to the real `result.json` line 24 and models only the marginal effect of the delta via the `compute_scenario` keystone in `tax_computations.py`. The keystone is rates-parameterized like every other function there — backlog #6 (Roth ladder) sweeps it.
-- `/tax-roth-convert` (`agents/lib/roth_ladder.py`, backlog #6) reuses scenario.py wholesale (`extract_baseline_inputs`, `_rate_kwargs`, `read_tax_year`, `save_scenario`, `_validate_name`) and SWEEPS the `compute_scenario` keystone across `ira_distribution` deltas $0..--max. Two things the keystone can't express are layered on in the ladder: (1) **NIIT** via the new `compute_niit` in `tax_computations.py` (rates-parameterized; threshold None → 0.0 so it degrades), added OUTSIDE the keystone because the keystone deliberately omits it and the baseline NIIT is already inside line 24 — so only the *increment* is added and the $0 rung still equals line 24 exactly; (2) **IRMAA** tier flags from `federal.irmaa.tiers` (new schema block), which is a Medicare *premium* surcharge, NOT income tax, so it is flagged as a side cost and never folded into the tax total. LTCG bracket bumping needs no extra code — the QDCG worksheet inside the keystone already prices it into the marginal-rate column; the ladder only *names* where it happens. MAGI≈AGI. Federal-only v1; Form 8606 basis (full conversion taxable) deferred to #7.
+- `/tax-roth-convert` (`agents/lib/roth_ladder.py`, backlog #6) reuses scenario.py wholesale (`extract_baseline_inputs`, `_rate_kwargs`, `read_tax_year`, `save_scenario`, `_validate_name`) and SWEEPS the `compute_scenario` keystone across `ira_distribution` deltas $0..--max. Two things the keystone can't express are layered on in the ladder: (1) **NIIT** via the new `compute_niit` in `tax_computations.py` (rates-parameterized; threshold None → 0.0 so it degrades), added OUTSIDE the keystone because the keystone deliberately omits it and the baseline NIIT is already inside line 24 — so only the *increment* is added and the $0 rung still equals line 24 exactly; (2) **IRMAA** tier flags from `federal.irmaa.tiers` (new schema block), which is a Medicare *premium* surcharge, NOT income tax, so it is flagged as a side cost and never folded into the tax total. LTCG bracket bumping needs no extra code — the QDCG worksheet inside the keystone already prices it into the marginal-rate column; the ladder only *names* where it happens. MAGI≈AGI. Federal-only v1. **Form 8606 basis (item #7) is now wired in**: when `--ira-value` (+ `--ira-basis`, default from `prior_year.ira_basis`) are supplied, each rung calls `compute_form_8606(year_end_value=B−C, amount_converted=C)` and feeds only the taxable portion (line 18) into the keystone — the taxable fraction `1−basis/B` is constant across the sweep, the $0 rung still equals line 24 (taxable conversion at C=0 is 0), and a conversion exceeding the balance B is capped at B and flagged once. Degrades to full-taxable when basis/value are absent (backward compatible — all 45 prior ladder tests unchanged).
 - "Section present" for diff/presence logic = holds a non-zero number or non-empty list; template scaffolding (strings, booleans, `_`-prefixed keys) never counts.
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 364 tests covering all computation functions (incl. compute_scenario + compute_niit) + archive/rollover modules + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder + integration pipeline
+- 402 tests covering all computation functions (incl. compute_scenario + compute_niit + compute_form_8606) + archive/rollover modules (incl. IRA-basis carryforward) + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder (incl. Form 8606 pro-rata) + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path

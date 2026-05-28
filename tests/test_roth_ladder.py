@@ -352,6 +352,127 @@ def test_save_rejects_traversal_name(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Form 8606 basis pro-rata (#7)
+# --------------------------------------------------------------------------
+
+def _build_basis(ira_basis=20000, ira_value=100000, max_amount=100000, step=10000):
+    return rl.build_ladder(
+        _load("result.json"), _load("taxpayer_profile.json"), _load("tax_law_2026.json"),
+        2026, max_amount=max_amount, step=step, name="roth-ladder", today=TODAY,
+        ira_basis=ira_basis, ira_value=ira_value)
+
+
+def test_basis_not_modeled_without_value():
+    # Profile has prior_year.ira_basis=20000, but no --ira-value → cannot pro-rate.
+    r = _build_basis(ira_basis=None, ira_value=None)
+    assert r.basis_modeled is False
+    # Full conversion is taxable: taxable_conversion mirrors the gross amount.
+    assert all(x.taxable_conversion == x.amount for x in r.rungs)
+
+
+def test_basis_pro_rata_dilutes_taxable_conversion():
+    # basis 20000 of a 100000 balance → 80% of each conversion is taxable.
+    r = _build_basis(ira_basis=20000, ira_value=100000)
+    assert r.basis_modeled is True
+    assert r.ira_basis == 20000 and r.ira_value == 100000
+    by_amt = {x.amount: x for x in r.rungs}
+    assert by_amt[10000].taxable_conversion == 8000.00
+    assert by_amt[50000].taxable_conversion == 40000.00
+    # Every non-zero rung's taxable portion is strictly below the gross conversion.
+    assert all(x.taxable_conversion < x.amount for x in r.rungs if x.amount > 0)
+
+
+def test_basis_zero_rung_still_equals_line_24():
+    # Anchoring invariant must survive basis modeling: $0 conversion → line 24 exactly.
+    r = _build_basis()
+    assert r.rungs[0].amount == 0
+    assert r.rungs[0].taxable_conversion == 0.00
+    assert r.rungs[0].total_tax == 30000.00
+
+
+def test_basis_defaults_from_profile():
+    # ira_basis omitted → pulled from profile prior_year.ira_basis (20000).
+    r = _build_basis(ira_basis=None, ira_value=100000)
+    assert r.basis_modeled is True
+    assert r.ira_basis == 20000
+
+
+def test_sweep_truncates_at_ira_balance():
+    # --max past the $100K balance: the sweep is truncated AT the balance so every rung
+    # is an achievable conversion. No rung exceeds B; final rung is flagged.
+    r = _build_basis(ira_value=100000, max_amount=150000, step=50000)
+    amounts = [x.amount for x in r.rungs]
+    assert amounts == [0, 50000, 100000]  # 150000 dropped, no impossible conversion
+    assert all(x.amount <= 100000 for x in r.rungs)
+    flagged = [x for x in r.rungs if any("Full IRA balance" in f for f in x.flags)]
+    assert len(flagged) == 1 and flagged[0].amount == 100000
+
+
+def test_truncated_rung_marginal_rate_uses_real_delta():
+    # $75K IRA swept in $50K steps to --max $100K → amounts truncated to [0, 50000, 75000].
+    # The $50K→$75K rung must divide by the REAL $25K conversion, not the full $50K step
+    # (the exact bug Codex flagged: capped rungs reporting halved marginal rate).
+    r = _build_basis(ira_basis=0, ira_value=75000, max_amount=100000, step=50000)
+    amounts = [x.amount for x in r.rungs]
+    assert amounts == [0, 50000, 75000]
+    rung_75k, rung_50k = r.rungs[-1], r.rungs[-2]
+    real_delta = rung_75k.amount - rung_50k.amount  # 25000
+    tax_delta = rung_75k.total_tax - rung_50k.total_tax
+    assert rung_75k.marginal_rate == round(tax_delta / real_delta, 4)
+
+
+def test_no_truncation_when_max_within_balance():
+    # value (100K) >= max (50K): sweep doesn't reach balance, no truncation, no flag.
+    r = _build_basis(ira_value=100000, max_amount=50000, step=25000)
+    assert [x.amount for x in r.rungs] == [0, 25000, 50000]
+    assert not any("Full IRA balance" in f for x in r.rungs for f in x.flags)
+
+
+def test_basis_exceeds_value_is_fully_nontaxable():
+    # Post-loss IRA: $30K basis in an IRA now worth $20K. basis > value is legitimate —
+    # the ratio caps at 1.0, so every conversion (up to the $20K balance) is tax-free.
+    r = _build_basis(ira_basis=30000, ira_value=20000, max_amount=20000, step=10000)
+    assert r.basis_modeled is True
+    assert all(x.taxable_conversion == 0.00 for x in r.rungs)
+    # Tax-free → every rung stays at the baseline line 24.
+    assert all(x.total_tax == 30000.00 for x in r.rungs)
+
+
+def test_basis_exceeds_value_render_no_negative_fraction():
+    # The "% taxable" note must floor at 0%, never show a negative fraction.
+    md = rl.render_markdown(_build_basis(ira_basis=30000, ira_value=20000))
+    assert "**0.0%** of each conversion is taxable" in md
+    assert "-40" not in md and "−40" not in md
+
+
+def test_negative_basis_raises():
+    with pytest.raises(rl.RothLadderError, match="negative"):
+        _build_basis(ira_basis=-5000, ira_value=100000)
+
+
+def test_bool_basis_raises():
+    with pytest.raises(rl.RothLadderError, match="bool"):
+        _build_basis(ira_basis=True, ira_value=100000)
+
+
+def test_non_numeric_value_raises():
+    with pytest.raises(rl.RothLadderError, match="not numeric"):
+        _build_basis(ira_basis=20000, ira_value="lots")
+
+
+def test_render_shows_taxable_column_with_basis():
+    md = rl.render_markdown(_build_basis())
+    assert "Taxable convert" in md
+    assert "Form 8606 pro-rata applied" in md
+
+
+def test_render_notes_basis_not_modeled():
+    md = rl.render_markdown(_build_basis(ira_basis=None, ira_value=None))
+    assert "Basis not modeled" in md
+    assert "Taxable convert" not in md  # column hidden when not modeled
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -392,3 +513,16 @@ def test_cli_bad_step_errors(tmp_path):
               "--max", "1000", "--step", "5000"], REPO)
     assert p.returncode == 1
     assert "exceed" in p.stderr
+
+
+def test_cli_basis_args(tmp_path):
+    ws = _ws(tmp_path)
+    p = _cli(["--result", "result.json", "--workspace", str(ws), "--year", "2026",
+              "--max", "20000", "--step", "10000", "--ira-basis", "20000",
+              "--ira-value", "100000", "--no-save", "--json"], REPO)
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert out["basis_modeled"] is True
+    assert out["ira_basis"] == 20000 and out["ira_value"] == 100000
+    by_amt = {x["amount"]: x for x in out["rungs"]}
+    assert by_amt[10000]["taxable_conversion"] == 8000.00

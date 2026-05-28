@@ -81,7 +81,9 @@
     "unused_ftc_carryforward": 0,
     "unused_business_credit_carryforward": 0,
     "nol_carryforward": 0,
-    "estimated_payments_applied": 0
+    "estimated_payments_applied": 0,
+    "ira_basis": 0,
+    "_comment_ira_basis": "Form 8606 line 14 nondeductible traditional-IRA basis carried from the prior year. Rolled forward by /tax-rollover from prior result.json form_8606.basis_remaining."
   },
   "estimated_payments": {
     "_comment": "Current-year 1040-ES and state estimated payments",

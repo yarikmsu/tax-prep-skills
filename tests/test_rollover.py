@@ -108,6 +108,55 @@ def test_compute_diff_ftc_unused():
     assert ftc[0].prior_value == 300
 
 
+def test_compute_diff_ira_basis_carryforward():
+    """Form 8606 line 14 basis_remaining rolls into prior_year.ira_basis."""
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    basis = [c for c in diff["carryforwards"] if c.json_path == "prior_year.ira_basis"]
+    assert len(basis) == 1
+    assert basis[0].prior_value == 6140.35
+    assert basis[0].action_suggested == "apply"
+
+
+def test_compute_diff_ira_basis_zero_skipped():
+    """A prior return with no Form 8606 basis produces no ira_basis diff entry."""
+    prior = PriorReturn(
+        year=2024,
+        result={"meta": {"tax_year": 2024}, "form_8606": {"basis_remaining": 0}},
+        profile=json.loads((FIXTURES / "prior_2024_clean" / "taxpayer_profile.json").read_text()),
+    )
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    basis = [c for c in diff["carryforwards"] if c.json_path == "prior_year.ira_basis"]
+    assert basis == []
+
+
+def test_compute_diff_ira_basis_missing_section_skipped():
+    """No form_8606 section at all (forward-compatible prior) → no entry, no crash."""
+    prior = PriorReturn(
+        year=2024,
+        result={"meta": {"tax_year": 2024}},
+        profile=json.loads((FIXTURES / "prior_2024_clean" / "taxpayer_profile.json").read_text()),
+    )
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    basis = [c for c in diff["carryforwards"] if c.json_path == "prior_year.ira_basis"]
+    assert basis == []
+
+
+def test_compute_diff_ira_basis_conflict_asks():
+    """A differing current ira_basis surfaces as 'ask', like other carryforwards."""
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    current = _load_current("current_2025_empty")
+    current.profile["prior_year"]["ira_basis"] = 999
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    basis = [c for c in diff["carryforwards"] if c.json_path == "prior_year.ira_basis"]
+    assert len(basis) == 1
+    assert basis[0].current_value == 999
+    assert basis[0].action_suggested == "ask"
+
+
 def test_compute_diff_skips_zero_prior_values():
     """Prior with no capital loss → no diff entry for capital_loss_carryforward."""
     prior_dir = FIXTURES / "prior_2024_drift_backward"

@@ -21,6 +21,7 @@ from agents.lib.tax_computations import (
     compute_child_tax_credit,
     compute_qbi_deduction,
     compute_niit,
+    compute_form_8606,
     check_form_8938_required,
     SE_TAX_THRESHOLD,
 )
@@ -646,6 +647,184 @@ class TestComputeNiit:
     def test_non_numeric_raises(self):
         with pytest.raises(ValueError, match="numeric"):
             compute_niit("lots", 20000, 250000)
+
+
+class TestComputeForm8606:
+    """Tests for compute_form_8606 — Part I nondeductible basis pro-rata rule.
+
+    Expected taxable amounts hand-computed from the Form 8606 worksheet, with the
+    basis ratio kept at full precision (matching tax software, not the 3-dp form rule).
+    """
+
+    def test_clean_backdoor_no_pretax_is_tax_free(self):
+        # $7K nondeductible basis, no other pre-tax IRA, convert all $7K.
+        # ratio = 7000/7000 = 1.0 → conversion is fully return of basis → $0 taxable.
+        r = compute_form_8606(0, 7000, 0, 0, 7000)
+        assert r["line_10_ratio"] == 1.0
+        assert r["taxable_conversion"] == 0.00
+        assert r["basis_remaining"] == 0.00
+        assert r["pro_rata_triggered"] is False  # no pre-tax money → not the trap
+
+    def test_pro_rata_trap(self):
+        # $7K basis sitting alongside a $50K pre-tax IRA, convert $7K.
+        # ratio = 7000/57000 = 0.122807...; nontaxable = 7000*ratio = 859.65;
+        # taxable = 7000 - 859.65 = 6140.35; basis remaining = 7000 - 859.65 = 6140.35.
+        r = compute_form_8606(0, 7000, 50000, 0, 7000)
+        assert r["line_9_total_value"] == 57000.00
+        assert r["line_10_ratio"] == 0.12281
+        assert r["line_11_nontaxable_conversion"] == 859.65
+        assert r["taxable_conversion"] == 6140.35
+        assert r["basis_remaining"] == 6140.35
+        assert r["taxable_to_1040"] == 6140.35
+        assert r["pro_rata_triggered"] is True
+
+    def test_full_balance_conversion_with_basis_triggers_trap(self):
+        # Convert the ENTIRE $57K IRA ($7K basis + $50K pre-tax) → year-end FMV is $0,
+        # but the conversion is still pro-rated: $50K taxable. The trap flag must fire
+        # even though year_end_value == 0 (the old line_6 > 0 proxy missed this).
+        r = compute_form_8606(0, 7000, 0, 0, 57000)
+        assert r["line_6_year_end_value"] == 0.00
+        assert r["taxable_conversion"] == 50000.00
+        assert r["line_11_nontaxable_conversion"] == 7000.00
+        assert r["pro_rata_triggered"] is True
+
+    def test_all_pretax_no_basis_fully_taxable(self):
+        # No basis at all, convert $10K from a $50K pre-tax IRA → fully taxable.
+        r = compute_form_8606(0, 0, 50000, 0, 10000)
+        assert r["line_10_ratio"] == 0.0
+        assert r["taxable_conversion"] == 10000.00
+        assert r["basis_remaining"] == 0.00
+        # basis=0 → no "trap" (fully taxable is expected, not a surprise)
+        assert r["pro_rata_triggered"] is False
+
+    def test_nothing_happened_basis_carries(self):
+        # Basis present but no distribution/conversion and no year-end balance entered.
+        # line 9 == 0 → ratio 0, basis carries forward unchanged.
+        r = compute_form_8606(0, 5000, 0, 0, 0)
+        assert r["line_10_ratio"] == 0.0
+        assert r["basis_remaining"] == 5000.00
+        assert r["taxable_to_1040"] == 0.00
+        assert r["pro_rata_triggered"] is False
+
+    def test_ratio_capped_at_one(self):
+        # More basis than total value (degenerate) → ratio cannot exceed 1.0.
+        r = compute_form_8606(0, 100, 0, 0, 50)
+        assert r["line_10_ratio"] == 1.0
+        assert r["taxable_conversion"] == 0.00
+        assert r["basis_remaining"] == 50.00  # leftover basis after a tax-free conversion
+
+    def test_current_year_nondeductible_adds_to_basis(self):
+        # $4K new nondeductible contribution + $3K prior basis = $7K line 3.
+        r = compute_form_8606(4000, 3000, 0, 0, 7000)
+        assert r["line_3_total_basis"] == 7000.00
+        assert r["line_10_ratio"] == 1.0
+        assert r["taxable_conversion"] == 0.00
+
+    def test_distribution_pro_rata(self):
+        # $10K basis, $90K pre-tax, take a $20K distribution (no conversion).
+        # ratio = 10000/110000 = 0.090909...; nontaxable dist = 20000*ratio = 1818.18;
+        # taxable distribution = 20000 - 1818.18 = 18181.82.
+        r = compute_form_8606(0, 10000, 90000, 20000, 0)
+        assert r["line_12_nontaxable_distributions"] == 1818.18
+        assert r["taxable_distributions"] == 18181.82
+        assert r["taxable_to_1040"] == 18181.82
+        assert r["basis_remaining"] == 8181.82
+        assert r["pro_rata_triggered"] is False  # no conversion
+
+    def test_contrib_by_deadline_reduces_line_5(self):
+        # line 4 (next-year contributions counted on line 1) reduces line 5 but
+        # NOT line 14: line 14 = line 3 - line 13, so basis still reflects line 1.
+        r = compute_form_8606(2000, 3000, 0, 0, 0, contrib_made_by_deadline=2000)
+        assert r["line_3_total_basis"] == 5000.00
+        assert r["line_5_basis_net_of_deadline"] == 3000.00
+        assert r["basis_remaining"] == 5000.00
+
+    def test_negative_input_raises(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            compute_form_8606(0, -100, 0, 0, 0)
+
+    def test_bool_input_raises(self):
+        with pytest.raises(ValueError, match="must be numeric"):
+            compute_form_8606(0, 7000, True, 0, 7000)
+
+    def test_string_amount_coerced(self):
+        # Money-formatted strings are coerced like the other keystones.
+        r = compute_form_8606(0, "$7,000", "$50,000", 0, "7000")
+        assert r["taxable_conversion"] == 6140.35
+
+    def test_non_numeric_string_raises(self):
+        with pytest.raises(ValueError, match="not numeric"):
+            compute_form_8606(0, "lots", 0, 0, 7000)
+
+    def test_disaster_distribution_carves_out_from_1040(self):
+        # $10K basis, $90K pre-tax, $20K distribution of which $5K is allocable to a
+        # qualified disaster distribution (Form 8915-F line 15b). Pro-rata still applies
+        # to the full $20K on line 12, but only the non-disaster taxable portion
+        # (line 15c = 15a - 15b) flows to 1040 4b.
+        r = compute_form_8606(0, 10000, 90000, 20000, 0,
+                              disaster_repayable_amount=5000)
+        # Line 12 unchanged: pro-rata on the full $20K → $1,818.18 nontaxable
+        assert r["line_12_nontaxable_distributions"] == 1818.18
+        # 15a pre-carve-out: 20000 - 1818.18 = 18181.82
+        assert r["line_15a_taxable_pre_disaster"] == 18181.82
+        assert r["line_15b_disaster_repayable"] == 5000.00
+        # 15c → 1040 4b: 18181.82 - 5000 = 13181.82
+        assert r["line_15c_taxable_to_1040"] == 13181.82
+        assert r["taxable_distributions"] == 13181.82
+        assert r["taxable_to_1040"] == 13181.82
+        # Basis carryforward unaffected by the 15b carve-out.
+        assert r["basis_remaining"] == 8181.82
+
+    def test_disaster_amount_default_zero_keeps_old_behavior(self):
+        # When 15b is not passed, line_15_taxable_distributions == 15a (pre-existing).
+        r = compute_form_8606(0, 10000, 90000, 20000, 0)
+        assert r["line_15a_taxable_pre_disaster"] == 18181.82
+        assert r["line_15c_taxable_to_1040"] == 18181.82
+        assert r["taxable_distributions"] == 18181.82
+
+    def test_contrib_by_deadline_exceeding_line_1_raises(self):
+        # Codex's example: line 4 must not exceed line 1. Passing 5000 when line 1 is
+        # only 1000 would silently shrink line 5 and over-tax $4K of legitimate basis;
+        # the keystone surfaces it as a data error instead.
+        with pytest.raises(ValueError, match="cannot exceed"):
+            compute_form_8606(1000, 10000, 0, 0, 10000,
+                              contrib_made_by_deadline=5000)
+
+    def test_contrib_by_deadline_equal_to_line_1_allowed(self):
+        # Boundary: line 4 == line 1 is the IRS-allowed extreme (the WHOLE current-year
+        # contribution was made by the April-15 deadline of the following year).
+        r = compute_form_8606(2000, 3000, 0, 0, 0, contrib_made_by_deadline=2000)
+        assert r["line_5_basis_net_of_deadline"] == 3000.00
+        assert r["basis_remaining"] == 5000.00
+
+    def test_disaster_irs_example_all_line7_is_disaster(self):
+        # IRS-style example (per Form 8606 instructions for line 15b): a single $35K
+        # distribution that is ENTIRELY a qualified disaster distribution, alongside
+        # $5,500 of basis and a $3,500 year-end FMV.
+        #   line 9 = 35000 + 3500 = 38500; ratio = 5500/38500 ≈ 0.14286
+        #   line 12 = 35000 × 0.14286 ≈ 5000.00 (nontaxable)
+        #   line 15a = 35000 - 5000 = 30000.00 (TAXABLE portion — Codex's "$30,000")
+        # When ALL of line 7 is disaster, line 15b == line 15a → line 15c = 0
+        # (nothing flows to 1040 4b this year; the full $30K taxable amount is reported on
+        # Form 8915-F and amortized over 3 years instead).
+        # First pass with no disaster carve-out to read line 15a:
+        probe = compute_form_8606(0, 5500, 3500, 35000, 0)
+        assert probe["line_15a_taxable_pre_disaster"] == 30000.00
+        # Now pass that as line 15b (the correct post-pro-rata taxable amount):
+        r = compute_form_8606(0, 5500, 3500, 35000, 0,
+                              disaster_repayable_amount=30000)
+        assert r["line_15b_disaster_repayable"] == 30000.00
+        assert r["line_15c_taxable_to_1040"] == 0.00
+        assert r["taxable_to_1040"] == 0.00
+        # Basis carryforward is the line-3 minus nontaxable share; unaffected by 15b.
+        assert r["basis_remaining"] == 500.00  # 5500 prior basis - 5000 returned
+
+    def test_disaster_amount_exceeding_15a_clamps_to_zero(self):
+        # Defensive: if 15b is misreported larger than 15a, 15c floors at $0
+        # (cannot send negative tax to 1040 4b).
+        r = compute_form_8606(0, 10000, 90000, 20000, 0,
+                              disaster_repayable_amount=50000)
+        assert r["line_15c_taxable_to_1040"] == 0.00
 
 
 class TestCheckForm8938Required:

@@ -1,3 +1,4 @@
 {"tax_year": 2026, "filing_status": "MFJ",
  "primary": {"first_name": "Test", "last_name": "Retiree", "ssn_last4": "1234"},
- "dependents": []}
+ "dependents": [],
+ "prior_year": {"ira_basis": 20000}}

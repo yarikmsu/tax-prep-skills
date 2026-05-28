@@ -431,6 +431,168 @@ def compute_niit(
     return round(base * rate_n, 2)
 
 
+def compute_form_8606(
+    nondeductible_contrib_current: float,
+    prior_basis: float,
+    year_end_value: float,
+    distributions_not_converted: float,
+    amount_converted: float,
+    contrib_made_by_deadline: float = 0.0,
+    disaster_repayable_amount: float = 0.0,
+) -> dict:
+    """Form 8606 Part I — nondeductible IRA basis and the pro-rata rule.
+
+    When a traditional IRA holds after-tax basis (nondeductible contributions)
+    alongside pre-tax money, the IRS does not let you withdraw or convert the
+    after-tax dollars selectively. Every distribution and Roth conversion is a
+    blended withdrawal, with the nontaxable fraction set by the basis ratio
+    (line 10 = basis / total IRA value). This closes the backdoor-Roth pro-rata
+    trap and the "full conversion is taxable" simplification deferred by the
+    Roth ladder (#6).
+
+    Pure and structural — Form 8606 carries no tax rates, only arithmetic.
+
+    Args:
+        nondeductible_contrib_current: Line 1 — nondeductible contributions for
+            the current year.
+        prior_basis: Line 2 — total basis in traditional IRAs from prior years
+            (last year's line 14 carryforward).
+        year_end_value: Line 6 — Dec 31 FMV of ALL traditional/SEP/SIMPLE IRAs.
+            On a conversion of C out of a beginning balance B, this is B - C, so
+            line 9 (= line 6 + line 7 + line 8) recovers the beginning balance B.
+        distributions_not_converted: Line 7 — distributions taken (not converted).
+        amount_converted: Line 8 — amount converted to a Roth IRA.
+        contrib_made_by_deadline: Line 4 — contributions made Jan 1-Apr 15 of the
+            following year that are **included on line 1** (usually 0). Per the IRS
+            instruction this is a SUBSET of line 1, so the function rejects
+            contrib_made_by_deadline > nondeductible_contrib_current.
+        disaster_repayable_amount: Line 15b — per the IRS instruction, "the amount on
+            line 15a allocable to qualified disaster distributions reported on Form
+            8915-F." Note this is the **post-pro-rata TAXABLE portion** of the disaster
+            distribution, NOT the gross disaster amount from line 7 (pro-rata strips out
+            the basis-recovery share before any of it reaches line 15b). If line 7 is
+            entirely disaster, line 15b equals `line_15a_taxable_pre_disaster`. Disaster
+            amounts are amortized separately on Form 8915-F over 3 years rather than
+            taxed immediately on 1040 4b; the toolkit does NOT model that amortization.
+
+    Returns:
+        Dict of Form 8606 Part I lines plus:
+          basis_remaining: line 14 (next-year carryforward).
+          taxable_conversion: line 18 (taxable part of the conversion).
+          taxable_distributions: line 15c (taxable distributions flowing to 1040 4b,
+              after disaster-allocable carve-out). Equals line 15a when disaster_repayable_amount=0.
+          taxable_to_1040: line 15c + line 18 (flows to 1040 line 4b).
+          ratio: line 10, rounded to 5 dp for display.
+          pro_rata_triggered: True when basis, pre-tax money, and a conversion
+            all coexist — the conversion is only partly tax-free (the trap).
+
+    Raises:
+        ValueError: If any input is non-numeric/bool or negative. amount_converted
+            exceeding the available balance is NOT rejected here (this function is
+            pure arithmetic); the caller caps and flags that.
+    """
+    fields = {
+        "nondeductible_contrib_current": nondeductible_contrib_current,
+        "prior_basis": prior_basis,
+        "year_end_value": year_end_value,
+        "distributions_not_converted": distributions_not_converted,
+        "amount_converted": amount_converted,
+        "contrib_made_by_deadline": contrib_made_by_deadline,
+        "disaster_repayable_amount": disaster_repayable_amount,
+    }
+    coerced = {}
+    for name, value in fields.items():
+        try:
+            num = _coerce_numeric(value, default=None)
+        except TypeError as e:
+            raise ValueError(f"Form 8606 input {name!r} must be numeric, got bool.") from e
+        if num is None:
+            raise ValueError(f"Form 8606 input {name!r} is not numeric: {value!r}")
+        if num < 0:
+            raise ValueError(f"Form 8606 input {name!r} cannot be negative (got {num}).")
+        coerced[name] = num
+
+    line_1 = coerced["nondeductible_contrib_current"]
+    line_2 = coerced["prior_basis"]
+    line_4 = coerced["contrib_made_by_deadline"]
+    line_6 = coerced["year_end_value"]
+    line_7 = coerced["distributions_not_converted"]
+    line_8 = coerced["amount_converted"]
+    line_15b = coerced["disaster_repayable_amount"]
+
+    # Line 4 is, per Form 8606, the portion of line 1 made Jan 1-Apr 15 of the next year
+    # — definitionally a subset of line 1. Allowing line_4 > line_1 silently shrinks the
+    # numerator (line 5 = line 3 - line 4) and over-taxes the conversion. Surface the
+    # data error like the other strict input checks rather than auto-clamping.
+    if line_4 > line_1:
+        raise ValueError(
+            f"Form 8606 contrib_made_by_deadline ({line_4}) cannot exceed "
+            f"nondeductible_contrib_current ({line_1}) — line 4 is a subset of line 1."
+        )
+
+    line_3 = line_1 + line_2
+    line_5 = line_3 - line_4
+    line_9 = line_6 + line_7 + line_8
+
+    # Line 10: basis ratio, capped at 1.0; 0.0 when nothing was distributed and no
+    # balance remains (line 9 == 0). Kept at FULL float precision for the dollar
+    # lines below — the IRS "round to >=3 places" rule injects error, and tax
+    # software (which /tax-verify cross-references) carries full precision. Only
+    # the reported `ratio` is rounded, for display.
+    ratio = 0.0 if line_9 == 0 else min(line_5 / line_9, 1.0)
+
+    line_11 = line_8 * ratio   # nontaxable portion of conversion
+    line_12 = line_7 * ratio   # nontaxable portion of distributions
+    line_13 = line_11 + line_12
+    line_14 = line_3 - line_13          # basis remaining (carryforward)
+    line_15a = line_7 - line_12         # taxable distributions, before disaster carve-out
+    # Line 15c = 15a − 15b: only the non-disaster taxable portion flows to 1040 4b. The
+    # disaster-allocable amount is reported separately on Form 8915-F and amortized over
+    # 3 years (not modeled by this toolkit; 15b ≥ 15a is clamped to 15c = 0 defensively).
+    line_15c = max(0.0, line_15a - line_15b)
+    line_18 = line_8 - line_11          # taxable conversion
+
+    # The trap = a conversion split into BOTH a tax-free (basis) and a taxable (pre-tax)
+    # portion. Detect it from the two portions directly, NOT from year-end FMV: a
+    # FULL-balance conversion leaves FMV $0 yet is still pro-rated (e.g. $7k basis in a
+    # $57k IRA, all converted → $50k taxable). Use the rounded line values so float dust
+    # near ratio==1.0 (a clean backdoor) cannot spuriously trip the flag.
+    pro_rata_triggered = round(line_11, 2) > 0 and round(line_18, 2) > 0
+    # Form 15b carve-out doesn't affect the trap flag — basis still pro-rates across the
+    # full line 7, including the disaster portion (which consumes basis on line 12).
+
+    return {
+        "line_1_nondeductible_current": round(line_1, 2),
+        "line_2_prior_basis": round(line_2, 2),
+        "line_3_total_basis": round(line_3, 2),
+        "line_5_basis_net_of_deadline": round(line_5, 2),
+        "line_6_year_end_value": round(line_6, 2),
+        "line_7_distributions": round(line_7, 2),
+        "line_8_converted": round(line_8, 2),
+        "line_9_total_value": round(line_9, 2),
+        "line_10_ratio": round(ratio, 5),
+        "line_11_nontaxable_conversion": round(line_11, 2),
+        "line_12_nontaxable_distributions": round(line_12, 2),
+        "line_13_nontaxable_total": round(line_13, 2),
+        "line_14_basis_remaining": round(line_14, 2),
+        # 15a = pre-disaster-carve-out (line 7 - line 12); 15b = disaster-allocable
+        # (input, reported on Form 8915-F); 15c = 15a - 15b, the amount flowing to 1040 4b.
+        "line_15a_taxable_pre_disaster": round(line_15a, 2),
+        "line_15b_disaster_repayable": round(line_15b, 2),
+        "line_15c_taxable_to_1040": round(line_15c, 2),
+        # Backward-compat alias: line_15_taxable_distributions now means line 15c (the
+        # 1040-bound amount), so callers without disaster distributions see no change.
+        "line_15_taxable_distributions": round(line_15c, 2),
+        "line_18_taxable_conversion": round(line_18, 2),
+        "ratio": round(ratio, 5),
+        "basis_remaining": round(line_14, 2),
+        "taxable_conversion": round(line_18, 2),
+        "taxable_distributions": round(line_15c, 2),
+        "taxable_to_1040": round(line_15c + line_18, 2),
+        "pro_rata_triggered": pro_rata_triggered,
+    }
+
+
 def compute_ftc_limitation(
     foreign_source_income: float,
     worldwide_income: float,
@@ -893,6 +1055,14 @@ if __name__ == "__main__":
     print(f"NIIT owed: ${compute_niit(300000, 20000, 250000):,.2f}")
     print(f"NIIT below threshold: ${compute_niit(240000, 20000, 250000):,.2f}")
     print(f"NIIT no threshold (not modeled): ${compute_niit(300000, 20000, None):,.2f}")
+
+    print("\n=== Form 8606 Pro-Rata Test (backdoor Roth trap) ===")
+    # basis $7K, $50K pre-tax IRA, convert $7K → ratio 7000/57000, ~88% taxable
+    f8606 = compute_form_8606(0, 7000, 50000, 0, 7000)
+    print(f"Ratio: {f8606['ratio']}; taxable conversion: ${f8606['taxable_conversion']:,.2f}; "
+          f"basis remaining: ${f8606['basis_remaining']:,.2f}; trap: {f8606['pro_rata_triggered']}")
+    clean = compute_form_8606(0, 7000, 0, 0, 7000)
+    print(f"Clean backdoor (no pre-tax): taxable conversion ${clean['taxable_conversion']:,.2f}")
 
     print("\n=== QBI Test ===")
     qbi = compute_qbi_deduction(-1000, 50)
