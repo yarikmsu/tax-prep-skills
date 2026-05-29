@@ -20,7 +20,7 @@ These unlock most of the features below and should land before or alongside the 
 | 1 | **Roll-forward last year's return** | `/tax-rollover <prior_year>` | Reads prior `result.json`, copies carryforwards into new `taxpayer_profile.json` and `result.json`. Eliminates the #1 source of "I forgot I had a $3K cap loss carryover" errors. Foundation for every multi-year feature below. | S | ✅ Done (PR #8) |
 | 2 | **Mid-year projection** | `/tax-project [--as-of MM-DD]` | Takes YTD paystubs + last year's pattern, projects full-year tax, computes safe-harbor estimates, suggests W-4 step 4(c) adjustment. Rerunnable quarterly. | M | ✅ Done (PR #11) |
 | 3 | **Scenario modeling** | `/tax-scenario <name>` | Forks `result.json` → `scenarios/<name>.json`, applies one delta (e.g. `+roth_conversion=40000`), recomputes, diffs against baseline. Stackable. | M | ✅ Done (PR #15) |
-| 4 | **Tax-loss harvesting scanner** | `/tax-harvest` | Reads brokerage lot data, ranks losing positions by harvestable loss, checks 30-day wash-sale window against your own buys, outputs sell list with $ federal+state savings. | M | Planned |
+| 4 | **Tax-loss harvesting scanner** | `/tax-harvest` | Reads brokerage lot data, ranks losing positions by harvestable loss, checks 30-day wash-sale window against your own buys, outputs sell list with $ federal+state savings. | M | ✅ Done (PR #18) |
 | 5 | **Withholding true-up** | `/tax-withholding` | Compares YTD federal withholding vs projected liability; outputs revised W-4 step 4(c) amount or 1040-ES voucher schedule. | S | ✅ Done (PR #13) |
 | 6 | **Roth conversion ladder modeler** | `/tax-roth-convert` | Sweeps conversion amounts $0–$100K in $5K steps; charts marginal cost per $; flags IRMAA, NIIT, LTCG bracket-bumping thresholds. | M | ✅ Done (PR #16) |
 | 7 | **Form 8606 basis tracker** | (template + compute path) | Persists non-deductible IRA basis across years; auto-applies pro-rata formula on conversions. Closes the backdoor-Roth pro-rata trap. | S | ✅ Done (PR #17) |
@@ -51,5 +51,17 @@ and layers NIIT/IRMAA/LTCG threshold flags onto the anchored ladder.
 profile field, a `/tax-rollover` carryforward of basis, a `/tax-compute` Form 8606 step, and
 `--ira-basis`/`--ira-value` on `/tax-roth-convert` (each rung's taxable conversion diluted by
 the basis ratio). This closes the "full conversion is taxable" simplification #6 deferred and
-the backdoor-Roth pro-rata trap. Recommended next: **#4 tax-loss harvesting scanner** (M), or
-**#11 retirement contribution dashboard** (S).
+the backdoor-Roth pro-rata trap.
+
+**Progress (2026-05-28):** #4 (tax-loss harvesting scanner) is shipped. Added
+`agents/lib/loss_harvest.py` + `/tax-harvest` skill + `tests/fixtures/harvest/`. Reuses
+`scenario.py` wholesale (the FIRST anchored skill that consumes a separate user input file,
+`holdings.json`) and adds three primitives: `derive_holding_period` (IRS strict >365-day
+rule), `check_wash_sale` (§1091 ±30-day bilateral, all accounts pooled, same-ticker proxy),
+and a per-lot ranking heuristic using ord_mtr (ST losses) and ltcg_mtr (LT losses). Aggregate
+savings re-does Schedule D netting via `_net_capital_gains(new_st, new_lt)` and expresses the
+harvest as a `compute_scenario` delta, so the $3K/$1.5K-MFS cap, character preservation, and
+LTCG bracket positioning come "for free" from the keystone. State savings = state_mtr ×
+keystone's Δ taxable_income (degrades to $0 when state.brackets empty). Federal anchored;
+state simplified. Recommended next: **#11 retirement contribution dashboard** (S) or
+**#10 quarterly reminder calendar** (XS).

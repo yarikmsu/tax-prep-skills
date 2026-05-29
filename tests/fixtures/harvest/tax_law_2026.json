@@ -1,0 +1,82 @@
+{
+  "tax_year": 2026,
+  "federal": {
+    "filing_statuses": {
+      "mfj": {
+        "standard_deduction": 30000,
+        "brackets": [
+          {"rate": 0.10, "min": 0,      "max": 23850},
+          {"rate": 0.12, "min": 23850,  "max": 96950},
+          {"rate": 0.22, "min": 96950,  "max": 206700},
+          {"rate": 0.24, "min": 206700, "max": 394600},
+          {"rate": 0.32, "min": 394600, "max": 501050},
+          {"rate": 0.35, "min": 501050, "max": 751600},
+          {"rate": 0.37, "min": 751600, "max": null}
+        ]
+      },
+      "single": {
+        "standard_deduction": 15000,
+        "brackets": [
+          {"rate": 0.10, "min": 0,      "max": 11925},
+          {"rate": 0.12, "min": 11925,  "max": 48475},
+          {"rate": 0.22, "min": 48475,  "max": 103350},
+          {"rate": 0.24, "min": 103350, "max": 197300},
+          {"rate": 0.32, "min": 197300, "max": 250525},
+          {"rate": 0.35, "min": 250525, "max": 626350},
+          {"rate": 0.37, "min": 626350, "max": null}
+        ]
+      },
+      "mfs": {
+        "standard_deduction": 15000,
+        "brackets": [
+          {"rate": 0.10, "min": 0,      "max": 11925},
+          {"rate": 0.12, "min": 11925,  "max": 48475},
+          {"rate": 0.22, "min": 48475,  "max": 103350},
+          {"rate": 0.24, "min": 103350, "max": 197300}
+        ]
+      },
+      "hoh": {
+        "standard_deduction": 22500,
+        "brackets": [
+          {"rate": 0.10, "min": 0,     "max": 17000},
+          {"rate": 0.12, "min": 17000, "max": 64850},
+          {"rate": 0.22, "min": 64850, "max": 103350}
+        ]
+      }
+    },
+    "capital_gains_rates": {
+      "zero_pct_limit":    {"single": 48000,  "mfj": 96700},
+      "fifteen_pct_limit": {"single": 533400, "mfj": 600050}
+    },
+    "child_tax_credit": {
+      "amount_per_child": 2000,
+      "phase_out_start": {"single": 200000, "mfj": 400000}
+    },
+    "additional_medicare_tax": {
+      "rate": 0.009,
+      "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}
+    },
+    "niit": {
+      "rate": 0.038,
+      "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}
+    },
+    "irmaa": {"lookback_years": 2, "tiers": {"single": [], "mfj": []}}
+  },
+  "state": {
+    "name": "California",
+    "authority": "FTB",
+    "conforms_to_federal": false,
+    "standard_deduction": {"single": 5540, "mfj": 11080, "hoh": 11080},
+    "brackets": [
+      {"rate": 0.01,    "min": 0,       "max": 21512},
+      {"rate": 0.02,    "min": 21512,   "max": 50998},
+      {"rate": 0.04,    "min": 50998,   "max": 80490},
+      {"rate": 0.06,    "min": 80490,   "max": 111732},
+      {"rate": 0.08,    "min": 111732,  "max": 141212},
+      {"rate": 0.093,   "min": 141212,  "max": 721318},
+      {"rate": 0.103,   "min": 721318,  "max": 865574},
+      {"rate": 0.113,   "min": 865574,  "max": 1442628},
+      {"rate": 0.123,   "min": 1442628, "max": null}
+    ]
+  }
+}

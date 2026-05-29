@@ -1,0 +1,69 @@
+{
+  "as_of": "2026-12-15",
+  "lots": [
+    {
+      "id": "L1",
+      "ticker": "VTSAX",
+      "account": "Schwab Brokerage",
+      "acquired": "2024-01-15",
+      "quantity": 100,
+      "cost_basis": 12000,
+      "current_value": 10500
+    },
+    {
+      "id": "L2",
+      "ticker": "AAPL",
+      "account": "Schwab Brokerage",
+      "acquired": "2026-06-01",
+      "quantity": 50,
+      "cost_basis": 11000,
+      "current_value": 8500
+    },
+    {
+      "id": "L3",
+      "ticker": "NVDA",
+      "account": "Schwab Brokerage",
+      "acquired": "2022-03-10",
+      "quantity": 25,
+      "cost_basis": 5000,
+      "current_value": 20000
+    },
+    {
+      "id": "L4",
+      "ticker": "TSLA",
+      "account": "Schwab Brokerage",
+      "acquired": "2023-09-01",
+      "quantity": 20,
+      "cost_basis": 8000,
+      "current_value": 5000
+    },
+    {
+      "id": "L5",
+      "ticker": "META",
+      "account": "Fidelity IRA",
+      "acquired": "2022-05-01",
+      "quantity": 10,
+      "cost_basis": 4000,
+      "current_value": 2500,
+      "tax_advantaged": true
+    }
+  ],
+  "recent_transactions": [
+    {
+      "ticker": "TSLA",
+      "account": "Spouse Schwab",
+      "date": "2026-12-01",
+      "kind": "buy",
+      "quantity": 5,
+      "amount": 1250
+    },
+    {
+      "ticker": "META",
+      "account": "Fidelity IRA",
+      "date": "2027-01-05",
+      "kind": "buy",
+      "quantity": 2,
+      "amount": 500
+    }
+  ]
+}

@@ -55,6 +55,20 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
   is unfetched. Applies the **Form 8606 pro-rata rule** when `--ira-value` (+ `--ira-basis`,
   default from `prior_year.ira_basis`) are supplied: each rung's taxable conversion is diluted
   by the basis fraction via `compute_form_8606`; degrades to full-taxable otherwise.
+- **`/tax-harvest`** — tax-loss harvesting scanner: after `/tax-compute`, reads `holdings.json`
+  (open lots + recent_transactions), classifies losing lots as ELIGIBLE or wash-sale-BLOCKED
+  (§1091, ±30 days, all accounts in the file pooled), computes the post-harvest Schedule D
+  netting against the baseline gains in `result.json` (reusing `scenario._net_capital_gains`
+  for character preservation + the $3K/$1.5K-MFS loss cap), and reports federal + state $
+  savings. Federal savings is **anchored** to `result.json` line 24 via a `compute_scenario`
+  delta (negative `capital_gains` for LT-loss flow, recomputed `other_income` for ST-loss
+  flow); state savings is a simplified estimate (state ordinary marginal rate × federal
+  taxable-income reduction) under the v1 assumption most states tax cap gains as ordinary
+  income, degraded to $0 when `tax_law.state.brackets` is empty. Writes ONE
+  `scenarios/<name>.json` via the reused scenario `save_scenario` guard; never mutates the
+  baseline. Per-lot `est_value_per_dollar` is a ranking heuristic (ord_mtr for ST losses,
+  ltcg_mtr for LT losses) — aggregate savings does the real netting. Same-ticker is the v1
+  "substantially identical" proxy; different-CUSIP ETF swaps are NOT flagged (caveat).
 
 **Form 8606 basis tracking (item #7, not a standalone skill):** `compute_form_8606` in
 `tax_computations.py` is the pro-rata keystone (Part I worksheet — basis ratio capped at 1.0,
@@ -90,7 +104,8 @@ agents/
 │   ├── tax-project.md
 │   ├── tax-withholding.md
 │   ├── tax-scenario.md
-│   └── tax-roth-convert.md
+│   ├── tax-roth-convert.md
+│   └── tax-harvest.md
 ├── templates/        # JSON/MD templates for workspace initialization
 │   ├── result_template.json
 │   ├── answers_template.md
@@ -105,7 +120,8 @@ agents/
 │   ├── yoy_diff.py           # YoY What-Changed diff for /tax-review (read-only)
 │   ├── withholding.py        # Federal withholding true-up for /tax-withholding (read-only)
 │   ├── scenario.py           # What-if scenario modeling for /tax-scenario (writes scenarios/ only)
-│   └── roth_ladder.py        # Roth conversion ladder for /tax-roth-convert (writes scenarios/ only)
+│   ├── roth_ladder.py        # Roth conversion ladder for /tax-roth-convert (writes scenarios/ only)
+│   └── loss_harvest.py       # Tax-loss harvesting scanner for /tax-harvest (writes scenarios/ only)
 └── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
@@ -123,6 +139,10 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - `answers.md` — Persistent Q&A and resolved questions
 - `documents/` — Source tax documents (PDFs, XLSX, CSV) — place files here for parsing
 - `summaries/` — Per-document parsed data as markdown
+- `holdings.json` — Brokerage lot data for `/tax-harvest` (optional; gitignored). User-provided
+  JSON listing open lots + `recent_transactions` for wash-sale detection.
+- `scenarios/` — Derived planning artifacts written by `/tax-scenario`, `/tax-roth-convert`,
+  and `/tax-harvest`. Never mutated by other skills.
 
 ## Tooling
 - PDF parsing: `pdfplumber` — use subagents for large PDFs (>10 pages)
@@ -182,11 +202,12 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - `/tax-project` and the YoY diff in `/tax-review` share one pattern: a pure-compute lib module (frozen dataclasses + markdown renderer + CLI `_main`) that reuses `rollover.load_prior` for the prior-year baseline and NEVER mutates `result.json`/`taxpayer_profile.json`. Follow `agents/lib/projection.py` / `yoy_diff.py` / `withholding.py` for future planning features (backlog #6).
 - `/tax-scenario` (`agents/lib/scenario.py`) extends the pattern: it still never mutates the baseline, but it *does* write derived `scenarios/<name>.json` siblings via a guarded `save_scenario` (forces the target under `workspace/scenarios/`, validates the name is a single path segment, refuses `result.json`/`taxpayer_profile.json`, `chmod 600`). It anchors the absolute scenario tax to the real `result.json` line 24 and models only the marginal effect of the delta via the `compute_scenario` keystone in `tax_computations.py`. The keystone is rates-parameterized like every other function there — backlog #6 (Roth ladder) sweeps it.
 - `/tax-roth-convert` (`agents/lib/roth_ladder.py`, backlog #6) reuses scenario.py wholesale (`extract_baseline_inputs`, `_rate_kwargs`, `read_tax_year`, `save_scenario`, `_validate_name`) and SWEEPS the `compute_scenario` keystone across `ira_distribution` deltas $0..--max. Two things the keystone can't express are layered on in the ladder: (1) **NIIT** via the new `compute_niit` in `tax_computations.py` (rates-parameterized; threshold None → 0.0 so it degrades), added OUTSIDE the keystone because the keystone deliberately omits it and the baseline NIIT is already inside line 24 — so only the *increment* is added and the $0 rung still equals line 24 exactly; (2) **IRMAA** tier flags from `federal.irmaa.tiers` (new schema block), which is a Medicare *premium* surcharge, NOT income tax, so it is flagged as a side cost and never folded into the tax total. LTCG bracket bumping needs no extra code — the QDCG worksheet inside the keystone already prices it into the marginal-rate column; the ladder only *names* where it happens. MAGI≈AGI. Federal-only v1. **Form 8606 basis (item #7) is now wired in**: when `--ira-value` (+ `--ira-basis`, default from `prior_year.ira_basis`) are supplied, each rung calls `compute_form_8606(year_end_value=B−C, amount_converted=C)` and feeds only the taxable portion (line 18) into the keystone — the taxable fraction `1−basis/B` is constant across the sweep, the $0 rung still equals line 24 (taxable conversion at C=0 is 0), and a conversion exceeding the balance B is capped at B and flagged once. Degrades to full-taxable when basis/value are absent (backward compatible — all 45 prior ladder tests unchanged).
+- `/tax-harvest` (`agents/lib/loss_harvest.py`, backlog #4) reuses scenario.py wholesale (`extract_baseline_inputs`, `_rate_kwargs`, `_net_capital_gains`, `read_tax_year`, `save_scenario`, `_validate_name`, `_resolve_under`) and is the FIRST anchored skill that takes a separate user-supplied input file (`holdings.json`, lots + recent_transactions, validated against the workspace boundary via the reused `_resolve_under`). Per-lot logic adds three primitives: (1) `derive_holding_period` — IRS rule is strictly *more than* 365 days for LT, so exactly-365 lots are short-term; (2) `check_wash_sale` — returns `(replacement_qty, reasons)` aggregating §1091's ±30-day bilateral pool per ticker, with all accounts in the file pooled because the user controls account inclusion (a `quantity`-less buy contributes `+math.inf` for the conservative full-block fallback); (3) `_apply_wash_sale_prorate` — distributes the per-ticker pool **FIFO by acquired date** across losing lots of the ticker, computing per-lot `disallowed_loss = matched_qty/lot.quantity × unrealized_loss`. **The proration matters:** a 1-share DRIP buy against a 100-share losing lot disallows 1% of the loss, not 100% (the v1 binary-block bug Codex P2 flagged on PR #18 — when fixed, the fixture's eligible harvest jumped $4,000 → $7,450 because two `partial`-status lots became correctly harvestable). Status is `clear` / `partial` / `fully_blocked`; only `fully_blocked` is excluded from the eligible set, and `wash_sale_blocked_loss` is now the sum of the *disallowed* slices (so `total_loss + blocked = all unrealized losses` reconciles). Same-ticker is the "substantially identical" proxy and different-CUSIP ETF swaps are NOT flagged; basis-shift on disallowed losses (the §1091 deferral to replacement-share basis) is documented but NOT modeled in v1 (affects future-year Schedule D only). Aggregate logic re-does the Schedule D netting via `_net_capital_gains(new_st, new_lt)` and expresses the harvest as a delta to `compute_scenario` (`capital_gains` for LT-loss flow, `other_income` for the recovered net ST), so the $3K/$1.5K-MFS loss cap, character preservation, and LTCG bracket positioning come "for free" from the keystone. **State savings** is a simplified estimate (state ordinary marginal rate × federal taxable-income reduction, where federal taxable-income reduction is the keystone's actual `Δ taxable_income` so second-order effects like QDCG shifts flow through) under the v1 assumption that most states tax cap gains as ordinary; degrades to $0 with a loud banner when `tax_law.state.brackets` is empty. Per-lot `est_value_per_dollar` is a ranking heuristic only (ord_mtr for ST, ltcg_mtr for LT, plus state_mtr if modeled); ranking key is `value_per_dollar × allowed_loss` so partial lots rank by their harvestable portion, not their gross loss. The aggregate `fed_savings` does the real anchored math.
 - "Section present" for diff/presence logic = holds a non-zero number or non-empty list; template scaffolding (strings, booleans, `_`-prefixed keys) never counts.
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 402 tests covering all computation functions (incl. compute_scenario + compute_niit + compute_form_8606) + archive/rollover modules (incl. IRA-basis carryforward) + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder (incl. Form 8606 pro-rata) + integration pipeline
+- 498 tests covering all computation functions (incl. compute_scenario + compute_niit + compute_form_8606) + archive/rollover modules (incl. IRA-basis carryforward) + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder (incl. Form 8606 pro-rata) + tax-loss harvesting (share-prorated wash-sale, account-aware self-acquisition exclusion, FIFO matching across same-ticker lots, zero-quantity-lot rejection, tax-advantaged-account exclusion per Rev. Rul. 2008-5, NIIT relief layered outside the keystone, CG-threshold completeness guard, Schedule D netting, state savings) + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path

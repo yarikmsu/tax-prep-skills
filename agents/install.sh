@@ -48,11 +48,12 @@ documents/*
 FBAR_*.md
 *.pdf
 scenarios/
+holdings.json
 EOF
     echo "  Created .gitignore (excludes sensitive tax data)"
 else
     # Append sensitive patterns not already present
-    for pattern in "taxpayer_profile.json" "tax_law_*.json" "result.json" "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "FBAR_*.md" "*.pdf" "scenarios/" ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"; do
+    for pattern in "taxpayer_profile.json" "tax_law_*.json" "result.json" "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "FBAR_*.md" "*.pdf" "scenarios/" "holdings.json" ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"; do
         if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
             echo "$pattern" >> "$GITIGNORE"
             echo "  Added $pattern to .gitignore"
@@ -125,4 +126,4 @@ fi
 
 echo ""
 echo "Installed ${#skill_files[@]} tax skills to $SKILLS_DIR"
-echo "Available commands: /tax-setup, /tax-parse, /tax-compute, /tax-generate, /tax-verify, /tax-review, /tax-fbar"
+echo "Available commands: /tax-setup, /tax-parse, /tax-compute, /tax-generate, /tax-verify, /tax-review, /tax-fbar, /tax-project, /tax-withholding, /tax-scenario, /tax-roth-convert, /tax-harvest"

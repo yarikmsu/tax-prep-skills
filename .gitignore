@@ -11,6 +11,7 @@ FBAR_*.md
 projections/
 projection_inputs.json
 scenarios/
+holdings.json
 
 # Python bytecode
 __pycache__/
