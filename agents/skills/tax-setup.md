@@ -72,7 +72,7 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 - Approximate total W-2 income? (for threshold screening: AMT, NIIT, Medicare surtax)
 - Any gig/freelance income (1099-NEC)? Crypto transactions (buy/sell/exchange)?
 - Stock compensation: RSU vesting, ISO exercises, ESPP purchases?
-- K-1 income from partnerships or S-corporations?
+- K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
 - Gambling income (W-2G)? → sets `has_gambling_income` flag
 
 **Group 7 — Retirement & savings detail:**
@@ -82,6 +82,7 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 - Age 50-59 or 64+? (catch-up eligibility for 401k/IRA — amounts from `tax_law JSON` `retirement_401k.catch_up_50_plus` and `ira_limits.catch_up_50_plus`)
 - Age 60-63? (SECURE 2.0 super catch-up for 401k — amount from `tax_law JSON` `retirement_401k.catch_up_60_63`, which **supersedes** the standard catch-up if both apply)
 - Age 55+? (HSA catch-up: amount from `tax_law JSON` `hsa_limits.catch_up_55_plus`)
+- Are RMDs (required minimum distributions) currently required from primary or spouse's traditional IRA / 401(k) accounts? (sets `subject_to_rmd_primary` / `subject_to_rmd_spouse` — drives Dec 31 RMD reminders in `tax_calendar_{year}.ics`). RMD start age is birth-year-cohort-dependent under SECURE 2.0 — generally age 73 for those born 1951–1959, age 75 for those born 1960 or later; inherited IRAs trigger RMDs at any age. If unsure, confirm with the taxpayer's preparer.
 - Mega backdoor Roth: Does employer plan allow after-tax contributions + in-service conversion?
 
 **Group 8 — Deductions & credits probe:**
@@ -192,6 +193,32 @@ python3 -m venv .venv && source .venv/bin/activate && pip install -r requirement
 
 ⚠️ **Do NOT use `--break-system-packages`** — always use a virtual environment to isolate dependencies.
 
+### 6.5. Generate quarterly reminder calendar
+
+Generate `tax_calendar_{year}.ics` so the taxpayer can subscribe to upcoming
+deadlines (1040-ES quarterly payments, FBAR statutory + auto-extended due
+dates, RMD Dec 31 reminders for filers flagged `subject_to_rmd_primary` or
+`subject_to_rmd_spouse`, and CA/NY/NJ PTET windows for K-1 recipients driven
+by `flags.k1_states`). The generator reads `taxpayer_profile.json` and emits
+only the categories applicable per the flags.
+
+Run via Bash:
+```bash
+python3 -m agents.lib.tax_calendar \
+  --profile taxpayer_profile.json \
+  --workspace . \
+  --year {year}
+```
+
+`write_calendar` already sets `chmod 600` on the output. v1 uses statutory
+dates only — when April 15 lands on a weekend or DC Emancipation Day, the IRS
+rolls the date forward; cross-check IRS.gov for the authoritative deadline.
+
+Users can subscribe by importing the `.ics` into Google Calendar / Apple
+Calendar / Outlook. A 7-day-prior reminder is embedded per event. The skill
+`/tax-calendar` can regenerate this file whenever flags change (e.g. after a
+mid-year foreign-account opening).
+
 ### 7. Summary
 
 Print a summary of what was created:
@@ -199,6 +226,7 @@ Print a summary of what was created:
 - Tax law data fetched for {year}
 - result.json initialized with {N} applicable sections
 - answers.md initialized
+- tax_calendar_{year}.ics generated (subscribe in calendar app for deadline reminders)
 - Dependencies verified
 - Ready for `/tax-parse` — place source documents in `documents/` first
 

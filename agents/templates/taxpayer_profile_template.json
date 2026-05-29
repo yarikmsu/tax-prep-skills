@@ -71,7 +71,10 @@
     "age_55_plus_primary": false,
     "age_55_plus_spouse": false,
     "age_60_63_primary": false,
-    "age_60_63_spouse": false
+    "age_60_63_spouse": false,
+    "subject_to_rmd_primary": false,
+    "subject_to_rmd_spouse": false,
+    "k1_states": []
   },
   "prior_year": {
     "filing_status": null,

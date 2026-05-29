@@ -27,6 +27,18 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
 /tax-fbar     → Prepare FBAR filing document (if applicable)
 ```
 
+**Calendar artifact (emitted by `/tax-setup`, regeneratable standalone):**
+- **`/tax-calendar`** — quarterly reminder calendar: regenerates
+  `tax_calendar_{year}.ics` from `taxpayer_profile.json` whenever flags change.
+  Normally produced inline by `/tax-setup` step 6.5; this skill exists for
+  mid-year flag corrections (opened a foreign account in August, turned 73 in
+  October). Always emits 4 federal 1040-ES events; conditionally adds FBAR
+  (Apr 15 + Oct 15, in year+1), Dec 31 RMD per age-73+ spouse, and CA/NY/NJ
+  PTET windows when K-1 income exists. v1 uses statutory dates only (no
+  weekend/holiday rollover). UIDs are stable so re-importing the regenerated
+  `.ics` updates existing calendar entries rather than creating duplicates.
+  XS effort.
+
 **Optional planning branch (off `/tax-setup`, not part of the linear flow):**
 - **`/tax-project`** — mid-year projection: run any time after `/tax-setup` to project
   full-year tax, safe-harbor estimates, and W-4 4(c)/1040-ES guidance from YTD figures.
@@ -105,7 +117,8 @@ agents/
 │   ├── tax-withholding.md
 │   ├── tax-scenario.md
 │   ├── tax-roth-convert.md
-│   └── tax-harvest.md
+│   ├── tax-harvest.md
+│   └── tax-calendar.md
 ├── templates/        # JSON/MD templates for workspace initialization
 │   ├── result_template.json
 │   ├── answers_template.md
@@ -121,7 +134,8 @@ agents/
 │   ├── withholding.py        # Federal withholding true-up for /tax-withholding (read-only)
 │   ├── scenario.py           # What-if scenario modeling for /tax-scenario (writes scenarios/ only)
 │   ├── roth_ladder.py        # Roth conversion ladder for /tax-roth-convert (writes scenarios/ only)
-│   └── loss_harvest.py       # Tax-loss harvesting scanner for /tax-harvest (writes scenarios/ only)
+│   ├── loss_harvest.py       # Tax-loss harvesting scanner for /tax-harvest (writes scenarios/ only)
+│   └── tax_calendar.py       # Quarterly reminder .ics generator for /tax-calendar + /tax-setup step 6.5
 └── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
@@ -143,6 +157,9 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
   JSON listing open lots + `recent_transactions` for wash-sale detection.
 - `scenarios/` — Derived planning artifacts written by `/tax-scenario`, `/tax-roth-convert`,
   and `/tax-harvest`. Never mutated by other skills.
+- `tax_calendar_<year>.ics` — RFC 5545 iCalendar with deadlines for the year, written by
+  `/tax-setup` step 6.5 (and regeneratable via `/tax-calendar`). Subscribe in Google
+  Calendar / Apple Calendar / Outlook for 7-day-prior reminders on each event.
 
 ## Tooling
 - PDF parsing: `pdfplumber` — use subagents for large PDFs (>10 pages)
@@ -204,10 +221,11 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - `/tax-roth-convert` (`agents/lib/roth_ladder.py`, backlog #6) reuses scenario.py wholesale (`extract_baseline_inputs`, `_rate_kwargs`, `read_tax_year`, `save_scenario`, `_validate_name`) and SWEEPS the `compute_scenario` keystone across `ira_distribution` deltas $0..--max. Two things the keystone can't express are layered on in the ladder: (1) **NIIT** via the new `compute_niit` in `tax_computations.py` (rates-parameterized; threshold None → 0.0 so it degrades), added OUTSIDE the keystone because the keystone deliberately omits it and the baseline NIIT is already inside line 24 — so only the *increment* is added and the $0 rung still equals line 24 exactly; (2) **IRMAA** tier flags from `federal.irmaa.tiers` (new schema block), which is a Medicare *premium* surcharge, NOT income tax, so it is flagged as a side cost and never folded into the tax total. LTCG bracket bumping needs no extra code — the QDCG worksheet inside the keystone already prices it into the marginal-rate column; the ladder only *names* where it happens. MAGI≈AGI. Federal-only v1. **Form 8606 basis (item #7) is now wired in**: when `--ira-value` (+ `--ira-basis`, default from `prior_year.ira_basis`) are supplied, each rung calls `compute_form_8606(year_end_value=B−C, amount_converted=C)` and feeds only the taxable portion (line 18) into the keystone — the taxable fraction `1−basis/B` is constant across the sweep, the $0 rung still equals line 24 (taxable conversion at C=0 is 0), and a conversion exceeding the balance B is capped at B and flagged once. Degrades to full-taxable when basis/value are absent (backward compatible — all 45 prior ladder tests unchanged).
 - `/tax-harvest` (`agents/lib/loss_harvest.py`, backlog #4) reuses scenario.py wholesale (`extract_baseline_inputs`, `_rate_kwargs`, `_net_capital_gains`, `read_tax_year`, `save_scenario`, `_validate_name`, `_resolve_under`) and is the FIRST anchored skill that takes a separate user-supplied input file (`holdings.json`, lots + recent_transactions, validated against the workspace boundary via the reused `_resolve_under`). Per-lot logic adds three primitives: (1) `derive_holding_period` — IRS rule is strictly *more than* 365 days for LT, so exactly-365 lots are short-term; (2) `check_wash_sale` — returns `(replacement_qty, reasons)` aggregating §1091's ±30-day bilateral pool per ticker, with all accounts in the file pooled because the user controls account inclusion (a `quantity`-less buy contributes `+math.inf` for the conservative full-block fallback); (3) `_apply_wash_sale_prorate` — distributes the per-ticker pool **FIFO by acquired date** across losing lots of the ticker, computing per-lot `disallowed_loss = matched_qty/lot.quantity × unrealized_loss`. **The proration matters:** a 1-share DRIP buy against a 100-share losing lot disallows 1% of the loss, not 100% (the v1 binary-block bug Codex P2 flagged on PR #18 — when fixed, the fixture's eligible harvest jumped $4,000 → $7,450 because two `partial`-status lots became correctly harvestable). Status is `clear` / `partial` / `fully_blocked`; only `fully_blocked` is excluded from the eligible set, and `wash_sale_blocked_loss` is now the sum of the *disallowed* slices (so `total_loss + blocked = all unrealized losses` reconciles). Same-ticker is the "substantially identical" proxy and different-CUSIP ETF swaps are NOT flagged; basis-shift on disallowed losses (the §1091 deferral to replacement-share basis) is documented but NOT modeled in v1 (affects future-year Schedule D only). Aggregate logic re-does the Schedule D netting via `_net_capital_gains(new_st, new_lt)` and expresses the harvest as a delta to `compute_scenario` (`capital_gains` for LT-loss flow, `other_income` for the recovered net ST), so the $3K/$1.5K-MFS loss cap, character preservation, and LTCG bracket positioning come "for free" from the keystone. **State savings** is a simplified estimate (state ordinary marginal rate × federal taxable-income reduction, where federal taxable-income reduction is the keystone's actual `Δ taxable_income` so second-order effects like QDCG shifts flow through) under the v1 assumption that most states tax cap gains as ordinary; degrades to $0 with a loud banner when `tax_law.state.brackets` is empty. Per-lot `est_value_per_dollar` is a ranking heuristic only (ord_mtr for ST, ltcg_mtr for LT, plus state_mtr if modeled); ranking key is `value_per_dollar × allowed_loss` so partial lots rank by their harvestable portion, not their gross loss. The aggregate `fed_savings` does the real anchored math.
 - "Section present" for diff/presence logic = holds a non-zero number or non-empty list; template scaffolding (strings, booleans, `_`-prefixed keys) never counts.
+- `/tax-calendar` (`agents/lib/tax_calendar.py`, backlog #10) is the "minimal write-only" sibling: pure compute (frozen `CalendarEvent` dataclass + per-category builders + `build_events` orchestrator + `to_ics` RFC-5545 serializer) + CLI `_main` + workspace-bounded `write_calendar`. Reuses `rollover._validate_subpath` + `_validate_year_arg` (the same boundary check every other write-derived skill uses), catches the `RolloverError` and re-raises as `CalendarError` to keep this module's error surface consistent. Writes only `tax_calendar_{year}.ics` at the workspace root (NOT under `scenarios/` — it's a top-level deliverable for the taxpayer, not a planning artifact). UIDs use the deterministic `{category}-{key}-{year}@tax-prep-skills` slug so re-importing is idempotent. **Key schema decision: PTET reminders are driven by `flags.k1_states` (entity-state list — where each K-1 partnership/S-corp files), NOT by `address.state` (taxpayer's resident state). A TX resident with a CA K-1 needs CA PTET reminders.** RMD reminders are driven by user-asserted `subject_to_rmd_*` booleans, NOT a derived age check, because RMD start age is birth-year-cohort-dependent under SECURE 2.0. Statutory dates only (no IRS weekend/holiday rollover); CA/NY/NJ PTET only; first-year RMD April-1 deferral not modeled. Federal + 3-state.
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 498 tests covering all computation functions (incl. compute_scenario + compute_niit + compute_form_8606) + archive/rollover modules (incl. IRA-basis carryforward) + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder (incl. Form 8606 pro-rata) + tax-loss harvesting (share-prorated wash-sale, account-aware self-acquisition exclusion, FIFO matching across same-ticker lots, zero-quantity-lot rejection, tax-advantaged-account exclusion per Rev. Rul. 2008-5, NIIT relief layered outside the keystone, CG-threshold completeness guard, Schedule D netting, state savings) + integration pipeline
+- 648 tests covering all computation functions (incl. compute_scenario + compute_niit + compute_form_8606) + archive/rollover modules (incl. IRA-basis carryforward) + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder (incl. Form 8606 pro-rata) + tax-loss harvesting (share-prorated wash-sale, account-aware self-acquisition exclusion, FIFO matching across same-ticker lots, zero-quantity-lot rejection, tax-advantaged-account exclusion per Rev. Rul. 2008-5, NIIT relief layered outside the keystone, CG-threshold completeness guard, Schedule D netting, state savings) + quarterly reminder calendar (1040-ES + FBAR + RMD via user-asserted `subject_to_rmd_*` flag — cohort-safe vs SECURE 2.0 + CA/NY/NJ PTET with CA "greater of" R&TC §19904(a) wording + post-TY2026 12.5% credit-reduction regime + NJ BAIT election in tax_year+1 vs NY in-year statutory difference + RFC 5545 .ics with codepoint-safe UTF-8 folding, strict bool/year/state validation, atomic write, post-init type invariants, non-PTET-state visible note, UID uniqueness invariant) + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path

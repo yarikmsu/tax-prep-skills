@@ -26,7 +26,7 @@ These unlock most of the features below and should land before or alongside the 
 | 7 | **Form 8606 basis tracker** | (template + compute path) | Persists non-deductible IRA basis across years; auto-applies pro-rata formula on conversions. Closes the backdoor-Roth pro-rata trap. | S | ✅ Done (PR #17) |
 | 8 | **Crypto importer** | `/tax-parse-crypto` | Parses Coinbase/Kraken/Gemini CSVs into Form 8949 rows; flags any digital-asset activity for the 1040 page-1 question. | M | Planned |
 | 9 | **PTET election analyzer** (CA/NY/NJ) | section in `/tax-review` + new check in `/tax-project` | Detects K-1 from passthrough; estimates SALT-cap workaround savings; reminds of state election deadlines (CA is March 15 prior-year). | S | Planned |
-| 10 | **Quarterly reminder calendar** | output of `/tax-setup` | Generates `.ics` file with 1040-ES due dates, FBAR (Apr 15 → auto-extended Oct 15), state PTET windows, RMD deadlines. | XS | Planned |
+| 10 | **Quarterly reminder calendar** | output of `/tax-setup` + standalone `/tax-calendar` | Generates `.ics` file with 1040-ES due dates, FBAR (Apr 15 → auto-extended Oct 15), state PTET windows (CA/NY/NJ), RMD deadlines for age 73+. | XS | ✅ Done |
 | 11 | **Retirement contribution dashboard** | `/tax-retirement` | One screen: 401(k) / IRA / HSA / Mega Backdoor — YTD vs max, with marginal-rate $ saved per remaining dollar. Action-oriented. | S | Planned |
 | 12 | **What-changed report YoY** | output of `/tax-review` | Diffs current return against prior `result.json`: AGI Δ, bracket Δ, effective rate Δ, line-item movers > $1K. The single artifact a client most wants to see. | S | ✅ Done (PR #10) |
 
@@ -65,3 +65,18 @@ LTCG bracket positioning come "for free" from the keystone. State savings = stat
 keystone's Δ taxable_income (degrades to $0 when state.brackets empty). Federal anchored;
 state simplified. Recommended next: **#11 retirement contribution dashboard** (S) or
 **#10 quarterly reminder calendar** (XS).
+
+**Progress (2026-05-28 part 2):** #10 (quarterly reminder calendar) is shipped.
+Added `agents/lib/tax_calendar.py` + `/tax-calendar` skill + `/tax-setup` step
+6.5 + `age_73_plus_primary/spouse` flags + 39 new tests (537 total). Pure-
+compute lib + CLI + workspace-bounded writer mirrors the established
+"derived-artifact" pattern but writes at the workspace root rather than under
+`scenarios/` because the `.ics` is a top-level deliverable for the taxpayer.
+RFC 5545 compliant (CRLF, all-day VALUE=DATE form, line folding, escaped
+TEXT specials, 7-day VALARM). UIDs are stable so re-importing the regenerated
+calendar updates existing events rather than duplicating them. v1 caveats:
+statutory dates only (no IRS weekend/holiday rollover), PTET coverage limited
+to CA/NY/NJ, RMD uses Dec 31 only (first-year April-1 deferral not modeled —
+rarely advantageous). Recommended next: **#11 retirement contribution
+dashboard** (S), **#9 PTET election analyzer** (S), or **#8 crypto importer**
+(M).
