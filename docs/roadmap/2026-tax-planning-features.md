@@ -27,7 +27,7 @@ These unlock most of the features below and should land before or alongside the 
 | 8 | **Crypto importer** | `/tax-parse-crypto` | Parses Coinbase/Kraken/Gemini CSVs into Form 8949 rows; flags any digital-asset activity for the 1040 page-1 question. | M | Planned |
 | 9 | **PTET election analyzer** (CA/NY/NJ) | section in `/tax-review` + new check in `/tax-project` | Detects K-1 from passthrough; estimates SALT-cap workaround savings; reminds of state election deadlines (CA is March 15 prior-year). | S | Planned |
 | 10 | **Quarterly reminder calendar** | output of `/tax-setup` + standalone `/tax-calendar` | Generates `.ics` file with 1040-ES due dates, FBAR (Apr 15 → auto-extended Oct 15), state PTET windows (CA/NY/NJ), RMD deadlines for age 73+. | XS | ✅ Done |
-| 11 | **Retirement contribution dashboard** | `/tax-retirement` | One screen: 401(k) / IRA / HSA / Mega Backdoor — YTD vs max, with marginal-rate $ saved per remaining dollar. Action-oriented. | S | ✅ Done |
+| 11 | **Retirement contribution dashboard** | `/tax-retirement` | One screen: 401(k) / IRA / HSA / Mega Backdoor — YTD vs max, with marginal-rate $ saved per remaining dollar. Action-oriented. | S | ✅ Done (PR #20); v1.1 enhancements below |
 | 12 | **What-changed report YoY** | output of `/tax-review` | Diffs current return against prior `result.json`: AGI Δ, bracket Δ, effective rate Δ, line-item movers > $1K. The single artifact a client most wants to see. | S | ✅ Done (PR #10) |
 
 ## Open product questions
@@ -80,3 +80,36 @@ to CA/NY/NJ, RMD uses Dec 31 only (first-year April-1 deferral not modeled —
 rarely advantageous). Recommended next: **#11 retirement contribution
 dashboard** (S), **#9 PTET election analyzer** (S), or **#8 crypto importer**
 (M).
+
+**Progress (2026-05-31):** #11 (retirement contribution dashboard) is shipped
+(PR #20, squash-merged as `4313bdc`). `agents/lib/retirement_dashboard.py` +
+`/tax-retirement` skill. The heaviest review pass on the project: a 5-agent
+`/pr-review-toolkit` round followed by a 16-iteration autonomous Codex loop
+resolving 18 P2 findings (test suite 825 → 870), converging on "no major
+issues". Findings spanned the full stack — nested age-flag normalization,
+the §603 mandatory-Roth split's four preconditions (FICA-wage data present,
+year-indexed threshold, §109 super-catch-up TY2025 effective date, plan Roth
+source), §415(c) 100%-of-comp + annual-additions accounting, per-account
+state conformity (PA 401(k)/IRA; NJ/MA IRA-only), Pub 590-A phase-out
+dollar-rounding order, NaN/Infinity input rejection, and error-contract
+completeness (post-2026 threshold added to the tax_law schema + /tax-setup
+fetch). Meta-lesson: nearly every finding was an implicit single-pass
+assumption (a value is finite, a `min()` only needs one arg, a rule has one
+effective date, an error's remedy exists) — iterating Codex to convergence
+systematically removed them.
+
+## #11 `/tax-retirement` v1.1 enhancements (deferred from PR #20 review)
+
+Surfaced during the Codex loop and **intentionally caveated rather than
+modeled** — each needs an input or scope decision beyond a planning-aid v1.
+The dashboard warns where these bind so no figure is silently wrong.
+
+| Enhancement | Why deferred / what it needs | Current v1 behavior |
+|---|---|---|
+| **Pre-tax/Roth YTD deferral split** | Per Treas. Reg. §1.414(v)-2(b)(1) a §603 high earner's catch-up need be Roth only to the extent prior designated-Roth deferrals are *below* the catch-up limit — so someone who already made enough Roth deferrals may make PRE-TAX catch-up. Needs a new `roth_401k_ytd` input (dashboard only collects total `employee_401k`). | Treats the full high-earner catch-up as Roth; note caveats the $0-savings may be understated. |
+| **HSA eligible-months proration** | IRS Pub 969 §223(b)(2) prorates the HSA limit by eligible months for a mid-year HDHP gain/loss — but the §223(b)(8) last-month rule lets a Dec-1-covered participant use the full limit (13-month testing period). Needs `hsa_eligible_months` + last-month-rule inputs; naive `×months/12` would be wrong for the common last-month-rule case. | Shows the full annual limit; note caveats the full-year assumption + the proration/last-month rule. |
+| **Full state retirement-conformity matrix** | v1 models PA (401(k)+IRA) and NJ/MA (IRA) non-conformity via two sets; the complete 50-state per-account matrix (e.g. other states' IRA/403(b)/pension nuances) is open-ended and lower-certainty. | `_RETIREMENT_DEFERRAL_NONCONFORMING_STATES` / `_IRA_DEDUCTION_NONCONFORMING_STATES`; other states piggyback on federal (caveated). |
+
+Gating question for all three: ties back to the **YTD data ingestion fidelity**
+open question above — they need richer per-account YTD inputs than the cheap
+"paste your numbers" path currently provides.

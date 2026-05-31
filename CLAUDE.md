@@ -242,11 +242,20 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - Dependabot opens PRs weekly for outdated pip dependencies
 - CI config: `.github/workflows/ci.yml`
 
+### Codex PR review (automated)
+- Codex auto-reviews PRs, but ONLY on a trigger: PR open / ready-for-review / a `@codex review` comment — a plain `git push` does NOT trigger a review
+- Findings arrive as inline review comments tagged P1/P2; a clean pass posts a top-level "Didn't find any major issues" comment (NOT a formal review) — when polling for results, check both reviews and issue comments
+- Resolve review threads via the GraphQL `resolveReviewThread` mutation (no REST endpoint); find unanswered Codex threads by querying `reviewThreads` and filtering out IDs already in some comment's `in_reply_to_id`
+
 ### Modifying tax_computations.py
 - All functions take rates/brackets as parameters — never hardcode bracket values
 - The only hardcoded constants are structural (SE threshold = $400, SE factor = 92.35%)
 - Always round output to 2 decimal places
 - Run `python3 agents/lib/tax_computations.py` after changes — self-test must pass
+
+### Input validation (lib parsers)
+- Numeric validators MUST reject non-finite values via `math.isfinite` — `json.loads` accepts `NaN`/`Infinity`, which pass `isinstance(x, (int, float))` and silently defeat `< 0` / `> 1` range checks (all comparisons with NaN are False)
+- Validate VALUE not just type at the parse boundary (e.g. `filing_status` ∈ canonical set, `address.state` a 2-letter code) — a type-valid but out-of-domain string otherwise falls through to a wrong-but-plausible default
 
 ### Reading tax_law_<year>.json
 - Schema is defined in `agents/lib/tax_law_fetcher.py` (`create_empty_tax_law` / `create_state_template`) — read it before writing accessors.
