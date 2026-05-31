@@ -198,6 +198,12 @@ def create_empty_tax_law(year: int) -> dict:
                 "catch_up_50_plus": None,
                 "catch_up_60_63": None,  # SECURE 2.0 super catch-up
                 "total_annual_limit": None,
+                # SECURE 2.0 §603 mandatory-Roth-catchup prior-year-FICA-wage
+                # threshold ($145k indexed from 2023; ~$150k for TY2026).
+                # Indexes annually — /tax-retirement's built-in $150k default
+                # is TY2026-only and hard-errors for TY2027+ if this is unset,
+                # so /tax-setup must fetch + populate it for post-2026 years.
+                "secure_2_0_high_earner_threshold": None,
             },
             "foreign_tax_credit_simplified": {
                 "max_single": 300,

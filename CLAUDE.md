@@ -81,6 +81,51 @@ Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/
   baseline. Per-lot `est_value_per_dollar` is a ranking heuristic (ord_mtr for ST losses,
   ltcg_mtr for LT losses) — aggregate savings does the real netting. Same-ticker is the v1
   "substantially identical" proxy; different-CUSIP ETF swaps are NOT flagged (caveat).
+- **`/tax-retirement`** — retirement contribution dashboard (backlog #11): mid-year planning
+  aid. Reads YTD contribution figures from `projection_inputs.json` (new `retirement_ytd`
+  block) + age flags from `taxpayer_profile.json` + statutory limits from `tax_law_<year>.json`,
+  and reports per-account (401(k) employee, Traditional IRA, Roth IRA, HSA, Mega Backdoor)
+  YTD vs limit + marginal $ saved per remaining dollar. Read-only. Marginal rates are
+  user-supplied (`--marginal-fed`, `--marginal-state`, `--magi`); v1 doesn't auto-derive
+  brackets. **Key invariants:** age windows are NESTED (60-63 ⊂ 55+ ⊂ 50+) and normalized
+  at input — setting only `age_60_63_primary` still grants the IRA/HSA catch-ups
+  (the 401(k), IRA, and HSA sections read different age flags, so the implication
+  is propagated before any per-account math); same propagation on the spouse side
+  (`age_60_63_spouse` → `age_55_spouse`) so a 60-63 spouse still gets the flat $1k
+  HSA catch-up (no 60-63 HSA enhancement — that's 401(k)-only); SECURE 2.0 60–63 super catch-up
+  SUPERSEDES (does not stack with) the 50+ standard catch-up; SECURE 2.0 §603 mandatory-Roth-catchup (TY2026+) splits
+  the 401(k) row into pre-tax base + Roth catch-up when `prior_year_fica_wages` > $150k
+  indexed (gated on `tax_year >= 2026` per IRS Notice 2023-62); IRA pool capped by
+  `taxable_compensation` per IRC §219(b)(1)(A) (`spouse_taxable_compensation` enables the
+  §219(c) MFJ spousal exception); Traditional IRA deduction phases out per MAGI + employer
+  plan coverage (full deduction if NEITHER spouse covered); Roth direct contribution phases
+  out per MAGI (backdoor available via `/tax-roth-convert`); HSA non-conforming states are
+  CA / NJ only (AL conforms since Ala. Code §40-18-15.6, effective 2018-01-01); HSA limit
+  assumes FULL-YEAR HDHP coverage — v1 doesn't model the Pub 969 §223(b)(2) eligible-months
+  proration or the §223(b)(8) last-month rule, so the HSA row carries a caveat (a mid-year
+  HDHP start would otherwise show ~2x the legal capacity); HSA spouse
+  catch-up added on a JOINT return only (MFJ) — MFS spouses file separately so the spouse's
+  $1k catch-up belongs on the spouse's own return, not the MFS primary's; Single/HoH/QSS have
+  no living contributing spouse; Mega Backdoor only
+  emitted when `plan_allows_after_tax_401k`, with after-tax cap = `min(total_annual_limit,
+  taxable_compensation) − non_catchup_employee_401k − employer_match` — the §415(c)
+  annual-additions limit is the LESSER of the dollar limit or 100% of compensation, so the cap
+  is bound by `taxable_compensation` (per-participant §415 comp proxy) when provided (falls back
+  to the dollar limit + warns it may be overstated when absent); the §414(v) catch-up exclusion
+  applies ONLY to age-eligible catch-up dollars (excess deferral above eligible catch-up consumes
+  415c space until corrected); MFS filers MUST set `flags.lived_apart_from_spouse_all_year`
+  explicitly (hard-error if missing — the flag drives IRA phase-out window per Pub 590-A
+  footnote). Federal + state (state piggybacks on federal except for HSA non-conforming +
+  Roth/after-tax-no-current-year-deduction + pre-tax retirement-deferral non-conforming states
+  via PER-ACCOUNT state-conformity sets — `_RETIREMENT_DEFERRAL_NONCONFORMING_STATES={"PA"}`
+  (401(k)/403(b) deferral → `retirement_state_rate`) and `_IRA_DEDUCTION_NONCONFORMING_STATES=
+  {"PA","NJ","MA"}` (Traditional IRA deduction → `ira_state_rate`). 401(k) and IRA conformity
+  differ by state (NJ/MA disallow the IRA deduction but ALLOW the 401(k) exclusion; PA disallows
+  both), so they're gated SEPARATELY; v1 models these, other states caveated not modeled). The §603 catch-up Roth row caveats that per Treas. Reg. §1.414(v)-2(b)(1) the Roth
+  requirement is met only to the extent prior designated-Roth deferrals are below the catch-up
+  limit — a high earner who already made enough Roth deferrals may make PRE-TAX catch-up, so the
+  $0-savings shown may be understated (v1 doesn't track the pre-tax/Roth YTD split). Single-bracket
+  assumption for marginal-saved math.
 
 **Form 8606 basis tracking (item #7, not a standalone skill):** `compute_form_8606` in
 `tax_computations.py` is the pro-rata keystone (Part I worksheet — basis ratio capped at 1.0,
@@ -118,7 +163,8 @@ agents/
 │   ├── tax-scenario.md
 │   ├── tax-roth-convert.md
 │   ├── tax-harvest.md
-│   └── tax-calendar.md
+│   ├── tax-calendar.md
+│   └── tax-retirement.md
 ├── templates/        # JSON/MD templates for workspace initialization
 │   ├── result_template.json
 │   ├── answers_template.md
@@ -135,7 +181,8 @@ agents/
 │   ├── scenario.py           # What-if scenario modeling for /tax-scenario (writes scenarios/ only)
 │   ├── roth_ladder.py        # Roth conversion ladder for /tax-roth-convert (writes scenarios/ only)
 │   ├── loss_harvest.py       # Tax-loss harvesting scanner for /tax-harvest (writes scenarios/ only)
-│   └── tax_calendar.py       # Quarterly reminder .ics generator for /tax-calendar + /tax-setup step 6.5
+│   ├── tax_calendar.py       # Quarterly reminder .ics generator for /tax-calendar + /tax-setup step 6.5
+│   └── retirement_dashboard.py # Mid-year 401k/IRA/HSA/Mega-Backdoor capacity + marginal-saved (/tax-retirement, read-only)
 └── install.sh        # Symlink skills to ~/.claude/skills/<name>/SKILL.md
 ```
 
@@ -225,7 +272,7 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 
 ### Testing
 - Test suite: `source .venv/bin/activate && python3 -m pytest tests/ -v`
-- 648 tests covering all computation functions (incl. compute_scenario + compute_niit + compute_form_8606) + archive/rollover modules (incl. IRA-basis carryforward) + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder (incl. Form 8606 pro-rata) + tax-loss harvesting (share-prorated wash-sale, account-aware self-acquisition exclusion, FIFO matching across same-ticker lots, zero-quantity-lot rejection, tax-advantaged-account exclusion per Rev. Rul. 2008-5, NIIT relief layered outside the keystone, CG-threshold completeness guard, Schedule D netting, state savings) + quarterly reminder calendar (1040-ES + FBAR + RMD via user-asserted `subject_to_rmd_*` flag — cohort-safe vs SECURE 2.0 + CA/NY/NJ PTET with CA "greater of" R&TC §19904(a) wording + post-TY2026 12.5% credit-reduction regime + NJ BAIT election in tax_year+1 vs NY in-year statutory difference + RFC 5545 .ics with codepoint-safe UTF-8 folding, strict bool/year/state validation, atomic write, post-init type invariants, non-PTET-state visible note, UID uniqueness invariant) + integration pipeline
+- 870 tests covering all computation functions (incl. compute_scenario + compute_niit + compute_form_8606) + archive/rollover modules (incl. IRA-basis carryforward) + YoY diff + mid-year projection + withholding true-up + scenario modeling + Roth conversion ladder (incl. Form 8606 pro-rata) + tax-loss harvesting (share-prorated wash-sale, account-aware self-acquisition exclusion, FIFO matching across same-ticker lots, zero-quantity-lot rejection, tax-advantaged-account exclusion per Rev. Rul. 2008-5, NIIT relief layered outside the keystone, CG-threshold completeness guard, Schedule D netting, state savings) + quarterly reminder calendar (1040-ES + FBAR + RMD via user-asserted `subject_to_rmd_*` flag — cohort-safe vs SECURE 2.0 + CA/NY/NJ PTET with CA "greater of" R&TC §19904(a) wording + post-TY2026 12.5% credit-reduction regime + NJ BAIT election in tax_year+1 vs NY in-year statutory difference + RFC 5545 .ics with codepoint-safe UTF-8 folding, strict bool/year/state validation, atomic write, post-init type invariants, non-PTET-state visible note, UID uniqueness invariant) + retirement-dashboard IRS Pub 590-A Worksheet 1-2 phase-out rounding (ceil-to-$10 + $200 floor for partial phase-out, no floor when fully phased out, applied to both Traditional IRA deductible cap and Roth direct-contribution cap; `_phaseout_fraction` returns FULL precision — rounding the fraction before the dollar multiply, combined with ceil-to-$10, can shift the cap a whole $10, so the $10/$200 rounding is applied ONLY to the dollar amount per the IRS worksheet order) + Pub 590-A Table 1-3 MFS+spouse-covered+lived-together $0-$10K phase-out + strict input-block typing (falsy non-dict flags/address/retirement_ytd hard-error instead of silent `or {}` coercion; all numeric validators (`_strict_num`/`_optional_non_negative_num`/`_require_tax_law_amount`/`_validate_rate`/modified_agi) reject non-finite NaN/Infinity — `json.loads` accepts them and they slip past `<0`/`>1` checks since NaN/Inf comparisons are False; same rule applied to filing_status + address.state strings; VALUE validation too — filing_status must be a canonical status (Single/MFJ/MFS/HoH/QSS, case+whitespace-normalized) else hard-error so "Married Filing Jointly"/"" can't silently fall through to Single windows; address.state must be a 2-letter USPS code else hard-error so "California" can't silently miss CA/NJ HSA non-conformity) + Mega Backdoor §415(c) accounting excludes only AGE-ELIGIBLE catch-up per §414(v) (excess deferral above eligible catch-up consumes 415c space until corrected; SECURE 2.0 60-63 super catch-up supersedes 50+ standard; the $150k §603 high-earner threshold default is TY2026-ONLY (the threshold indexes annually) — a post-2026 run on a cache lacking `secure_2_0_high_earner_threshold` HARD-ERRORS rather than silently reusing $150k (which would misclassify $150k-to-indexed earners into mandatory-Roth catch-up) — but the lookup is DEFERRED until catch-up classification is actually needed (catchup_amount>0 and §603 in effect), so an under-50 taxpayer's post-2026 dashboard isn't blocked by a threshold they can't use; when catch-up is UNAVAILABLE (high earner + no Roth source) the dollars above base are excess deferrals that CONSUME §415(c) space in the Mega Backdoor calc (eligible_catchup_max=0), not §414(v)-excluded catch-up; excess after-tax 401(k) (§415(c) annual addition) corrects via EPCRS with the returned amount taxable — NOT the IRA/HSA §4973 6%-excise/April-15 model (both the Mega Backdoor note and the render over-contribution banner give §415(c)-correct guidance keyed on kind=="after_tax"); the §109 super catch-up AMOUNT is gated on `_SUPER_CATCHUP_EFFECTIVE_YEAR=2025` — DISTINCT from §603's 2026 mandatory-Roth gate — so a pre-TY2025 dashboard with age_60_63 falls back to the standard 50+ catch-up instead of hard-erroring on the absent `catch_up_60_63` cache field; the age-fact normalization is NOT year-gated since a 60-63 person is still 55+/50+ for IRA/HSA in any year) + HSA spouse catch-up added on a JOINT return only (MFJ; MFS spouses file separately so the spouse $1k catch-up is on the spouse's own return; Single/HoH/QSS skip stale `age_55_plus_spouse` flag) + SECURE 2.0 §603 mandatory Roth catch-up split (TY2026+ high earners with prior-year FICA wages > $150k indexed → 401(k) row splits into pre-tax base + Roth catch-up with $0 current-year deduction; gated on tax_year >= 2026 per IRS Notice 2023-62 transition delay; the high-earner catch-up also requires the plan to offer a designated Roth source — `plan_offers_roth_401k` (default true) explicit-false → catch-up UNAVAILABLE (base-only row, no phantom catch-up) since a non-Roth plan can't accept a §603-mandated-Roth catch-up; absent → split shown with a caveat; warning note when wage data missing for catch-up-eligible taxpayer in effective years only; strict-`>` $150k threshold boundary pinned at exactly-$150k → no split; `prior_year_fica_wages` defined as the wages the PLAN uses for its Roth-catch-up determination per IRC §414(v)(7)(A) — generally the sponsoring employer's, BUT related common-law employers in the same §414(b)/(c)/(m)/(o) controlled group may be aggregated under the final regs, so notes defer to the plan administrator rather than asserting a blanket no-aggregation rule (categorical "don't aggregate" would make a controlled-group participant under-report → fall below threshold → wrongly keep catch-up pre-tax → overstate savings); catch-up + missing-wage notes carry the caveat) + clean RetirementError (not raw KeyError) when a half-fetched cache is missing the IRA phase-out map + IRA pool capped by taxable compensation per IRC §219(b)(1)(A) / §408A(c)(2) (retiree with $0 wages has $0 IRA capacity; §219(c) MFJ spousal exception combines compensation; warning note when compensation data missing — prevents 6%-per-year contribution-limit excise tax from following overstated capacity; ALSO warns when MFJ + primary comp provided but spouse comp null AND primary comp constrains below statutory — a single-earner couple's $0-wage subject would otherwise see a confident $0 instead of the §219(c) spousal capacity, so it warns of possible UNDERSTATEMENT while keeping the conservative cap to avoid overstatement) + MFS lived-apart flag is load-bearing for IRA computations (drives MFS-$0-$10K phase-out vs Single treatment per Pub 590-A footnote) — hard-error when MFS + missing rather than silently default to lived-together; profile template now includes the field as `null` to prompt explicit user choice + QSS excluded from the spouse-COVERED Traditional IRA phase-out (case 5 gated on filing_status=="MFJ" not the MFJ/QSS helper — a deceased spouse can't be covered by a current-year plan; QSS's OWN coverage still uses the mfj_covered window per Pub 590-A grouping) + per-account over-contributions surfaced with a ⚠ corrective-action banner in render_markdown (over_contributed was otherwise invisible — Remaining $0/Used 100% looked identical to exactly-maxed); for POOLED buckets surfaced only when over_contributed > pool_over_contributed so the Roth MAGI-reduced-cap excess shows even when the IRA pool is under the annual cap, while Traditional (bucket cap == pool cap) never double-reports against the pool banner + integration pipeline
 - Expected values are hand-computed from IRS worksheets — update comments when changing assertions
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path
@@ -247,7 +294,7 @@ This creates `~/.claude/skills/<name>/SKILL.md` symlinks for each skill (the sub
 - Additional Medicare Tax: employer withholds 0.9% on wages >$200K, but MFJ threshold is $250K — over-withholding becomes a credit (Form 8959)
 - FBAR max values (conservative, total inflows) differ from Form 8938 values (realistic simultaneous peak)
 - Form 8938 thresholds differ by filing status — MFJ in US: $200K year-end / $300K any time
-- State HSA non-conformity (CA, NJ, AL): HSA contributions and earnings are state-taxable
+- State HSA non-conformity (CA, NJ): HSA contributions and earnings are state-taxable. (Alabama formerly non-conforming — Ala. Code §40-18-15.6 has allowed the deduction since 2018-01-01)
 - FTC simplified: ≤$600 MFJ ($300 single) from qualified passive sources — no Form 1116 needed
 - QBI deduction (Sec 199A) applies even with standard deduction
 - Form 8949 boxes: A/B/C = short-term (basis reported/not reported/no 1099-B), D/E/F = long-term (same pattern). Foreign brokerages = Box B or E (basis not reported)

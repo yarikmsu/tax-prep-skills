@@ -127,4 +127,4 @@ fi
 
 echo ""
 echo "Installed ${#skill_files[@]} tax skills to $SKILLS_DIR"
-echo "Available commands: /tax-setup, /tax-parse, /tax-compute, /tax-generate, /tax-verify, /tax-review, /tax-fbar, /tax-project, /tax-withholding, /tax-scenario, /tax-roth-convert, /tax-harvest, /tax-calendar"
+echo "Available commands: /tax-setup, /tax-parse, /tax-compute, /tax-generate, /tax-verify, /tax-review, /tax-fbar, /tax-project, /tax-withholding, /tax-scenario, /tax-roth-convert, /tax-harvest, /tax-calendar, /tax-retirement"
