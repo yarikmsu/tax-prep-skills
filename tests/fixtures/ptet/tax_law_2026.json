@@ -1,0 +1,23 @@
+{
+  "tax_year": 2026,
+  "federal": {
+    "filing_statuses": {
+      "mfj": {"standard_deduction": 30000,
+              "brackets": [{"rate": 0.10, "min": 0, "max": 20000},
+                           {"rate": 0.20, "min": 20000, "max": 200000},
+                           {"rate": 0.30, "min": 200000, "max": null}]},
+      "single": {"standard_deduction": 15000,
+                 "brackets": [{"rate": 0.10, "min": 0, "max": 10000},
+                              {"rate": 0.20, "min": 10000, "max": null}]}
+    },
+    "capital_gains_rates": {"zero_pct_limit": {"mfj": 90000, "single": 45000},
+                            "fifteen_pct_limit": {"mfj": 550000, "single": 490000}},
+    "child_tax_credit": {"amount_per_child": 2000, "phase_out_start": {"mfj": 400000, "single": 200000}},
+    "additional_medicare_tax": {"rate": 0.009, "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}},
+    "social_security": {"wage_base": 176100},
+    "qbi_deduction_rate": 0.20
+  },
+  "state": {"code": "CA", "standard_deduction": {"mfj": 11000, "single": 5500},
+            "brackets": [{"rate": 0.01, "min": 0, "max": 20000},
+                         {"rate": 0.05, "min": 20000, "max": null}]}
+}

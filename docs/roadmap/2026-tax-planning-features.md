@@ -25,7 +25,7 @@ These unlock most of the features below and should land before or alongside the 
 | 6 | **Roth conversion ladder modeler** | `/tax-roth-convert` | Sweeps conversion amounts $0–$100K in $5K steps; charts marginal cost per $; flags IRMAA, NIIT, LTCG bracket-bumping thresholds. | M | ✅ Done (PR #16) |
 | 7 | **Form 8606 basis tracker** | (template + compute path) | Persists non-deductible IRA basis across years; auto-applies pro-rata formula on conversions. Closes the backdoor-Roth pro-rata trap. | S | ✅ Done (PR #17) |
 | 8 | **Crypto importer** | `/tax-parse-crypto` | Parses Coinbase/Kraken/Gemini CSVs into Form 8949 rows; flags any digital-asset activity for the 1040 page-1 question. | M | Planned |
-| 9 | **PTET election analyzer** (CA/NY/NJ) | section in `/tax-review` + new check in `/tax-project` | Detects K-1 from passthrough; estimates SALT-cap workaround savings; reminds of state election deadlines (CA is March 15 prior-year). | S | Planned |
+| 9 | **PTET election analyzer** (CA/NY/NJ) | `/tax-ptet` + section in `/tax-review` + check in `/tax-project` | Detects K-1 from passthrough; estimates SALT-cap workaround savings; reminds of state election deadlines (NY is March 15 in-year). | S | ✅ Done |
 | 10 | **Quarterly reminder calendar** | output of `/tax-setup` + standalone `/tax-calendar` | Generates `.ics` file with 1040-ES due dates, FBAR (Apr 15 → auto-extended Oct 15), state PTET windows (CA/NY/NJ), RMD deadlines for age 73+. | XS | ✅ Done |
 | 11 | **Retirement contribution dashboard** | `/tax-retirement` | One screen: 401(k) / IRA / HSA / Mega Backdoor — YTD vs max, with marginal-rate $ saved per remaining dollar. Action-oriented. | S | ✅ Done (PR #20); v1.1 enhancements below |
 | 12 | **What-changed report YoY** | output of `/tax-review` | Diffs current return against prior `result.json`: AGI Δ, bracket Δ, effective rate Δ, line-item movers > $1K. The single artifact a client most wants to see. | S | ✅ Done (PR #10) |
@@ -97,6 +97,30 @@ fetch). Meta-lesson: nearly every finding was an implicit single-pass
 assumption (a value is finite, a `min()` only needs one arg, a rule has one
 effective date, an error's remedy exists) — iterating Codex to convergence
 systematically removed them.
+
+**Progress (2026-05-31 part 2):** #9 (PTET election analyzer) is shipped.
+Added `agents/lib/ptet.py` + `/tax-ptet` skill + `tests/fixtures/ptet/` + 29
+tests (870 → 899). The FIRST read-only-AND-writes-nothing planning skill —
+advisory output (a `/tax-review`-style section), so no `save_scenario` / no
+`scenarios/` artifact. Reuses `scenario.extract_baseline_inputs` / `_rate_kwargs`
+/ `read_tax_year` and `rollover._validate_subpath` / `_validate_year_arg`, and
+ANCHORS the federal benefit the same way scenario/roth-ladder/harvest do: the
+entity-level PTET deduction is a negative `other_income` delta through the
+`compute_scenario` keystone, so the reported savings is the marginal effect
+around the real `result.json` line 24 (and correctly tapers as a large
+deduction falls through brackets). CA flat 9.3% + NY/NJ graduated schedules
+(per-owner approximation, `--ptet-rate` override for the entity-pool case); the
+forgone-SALT offset nets out unused $10K cap headroom (default cap-exhausted,
+`--salt-room` to model headroom). Per the bias-direction taxonomy, the
+cap-exhausted default *overstates* savings → loud `ASSUMPTION` note; the offset
+is valued at the top marginal rate (can only under-state, the safe direction).
+Election deadlines reuse the `/tax-calendar` statutory facts (NY's March-15-in-
+year election is the trap). Wired into `/tax-review` (step 3.6) and
+`/tax-project` (step 8) per the backlog. Federal-only v1; CA/NY/NJ only (other
+states surfaced as a `modeled=False` "not modeled" note, never a silent $0).
+**This closes the original 12-feature TY2026 backlog except #8 (crypto
+importer, M).** Recommended next: **#8 crypto importer** or a v1.1 pass
+(multi-state PTET, full graduated entity-pool modeling, state-credit modeling).
 
 ## #11 `/tax-retirement` v1.1 enhancements (deferred from PR #20 review)
 

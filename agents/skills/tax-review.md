@@ -190,6 +190,29 @@ Produce a deterministic year-over-year diff against the prior return. This step 
 
 A power user can run the same command with `--threshold 500` for a finer-grained diff or `--json` for machine-readable output.
 
+### 3.6. PTET Election Opportunity (SALT-cap workaround)
+
+If the taxpayer has K-1 income from a pass-through entity in **CA, NY, or NJ**,
+the pass-through-entity tax (PTET) election can convert state tax that's stranded
+by the $10,000 SALT cap into a fully-deductible federal expense. This step is
+read-only (`ptet.py` writes nothing).
+
+1. Check `flags.has_k1_income`. If false and no K-1 surfaced during parsing,
+   record `_PTET: not applicable (no pass-through income)._` and proceed to Step 4.
+2. Else, for each entity state in `flags.k1_states` that is CA/NY/NJ, ask the
+   taxpayer for the qualifying pass-through income and whether their $10K SALT cap
+   is already exhausted (usually yes). Then run:
+   ```bash
+   python3 -m agents.lib.ptet --workspace . --year {year} \
+       --income CA=<amount> [--income NY=<amount>] [--salt-room <unused $>]
+   ```
+3. Embed the rendered output as the "PTET Election Opportunity" report block, and
+   flag the **earliest election deadline** (NY's is due *during* the tax year and
+   cannot be made on the return — the highest-risk one to miss).
+4. On non-zero exit, record `_PTET: skipped — {stderr}_`.
+
+See `/tax-ptet` for the standalone skill and full caveats.
+
 ### 4. Generate Review Report
 
 Format the review as:
@@ -246,6 +269,11 @@ Format the review as:
 
 ## 📅 YoY What-Changed
 {embed Step 3.5 output here, or the skip note}
+
+---
+
+## 🏢 PTET Election Opportunity
+{embed Step 3.6 output here, or the "not applicable" / skip note}
 ```
 
 ### 5. Summary

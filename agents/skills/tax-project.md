@@ -49,6 +49,19 @@ taxpayer_profile.json. Re-runnable quarterly.
    ## Mid-year projection TY{year} as-of {MM-DD} — run {today}. Safe-harbor: {covered/underpaid}.
    ```
 
+8. **PTET election check (time-sensitive).** If `flags.has_k1_income` is true and any
+   entry in `flags.k1_states` is **CA / NY / NJ**, the pass-through-entity tax election
+   is a SALT-cap workaround worth flagging *while there's still time to elect* — NY's
+   election is due March 15 **of the tax year itself**, so a mid-year projection is
+   exactly when to surface it. Run:
+   ```bash
+   python3 -m agents.lib.ptet --workspace . --year {year} [--income CA=<amount> ...]
+   ```
+   With no `--income`, this runs in deadline-reminder mode (reads `flags.k1_states`).
+   Append the earliest upcoming election deadline to the projection report. This is
+   read-only and never blocks the projection — on non-zero exit, note `_PTET check
+   skipped: {stderr}_`. See `/tax-ptet` for the full standalone analysis.
+
 ## Security & safety
 - Subagents (if any) must NOT have network access and must NOT write outside `projections/`.
 - Never extract or store full SSNs.
