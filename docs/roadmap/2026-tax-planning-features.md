@@ -24,7 +24,7 @@ These unlock most of the features below and should land before or alongside the 
 | 5 | **Withholding true-up** | `/tax-withholding` | Compares YTD federal withholding vs projected liability; outputs revised W-4 step 4(c) amount or 1040-ES voucher schedule. | S | ✅ Done (PR #13) |
 | 6 | **Roth conversion ladder modeler** | `/tax-roth-convert` | Sweeps conversion amounts $0–$100K in $5K steps; charts marginal cost per $; flags IRMAA, NIIT, LTCG bracket-bumping thresholds. | M | ✅ Done (PR #16) |
 | 7 | **Form 8606 basis tracker** | (template + compute path) | Persists non-deductible IRA basis across years; auto-applies pro-rata formula on conversions. Closes the backdoor-Roth pro-rata trap. | S | ✅ Done (PR #17) |
-| 8 | **Crypto importer** | `/tax-parse-crypto` | Parses Coinbase/Kraken/Gemini CSVs into Form 8949 rows; flags any digital-asset activity for the 1040 page-1 question. | M | Planned |
+| 8 | **Crypto importer** | `/tax-parse-crypto` | Parses Coinbase/Kraken/Gemini CSVs into Form 8949 rows; flags any digital-asset activity for the 1040 page-1 question. | M | ✅ Done |
 | 9 | **PTET election analyzer** (CA/NY/NJ) | `/tax-ptet` + section in `/tax-review` + check in `/tax-project` | Detects K-1 from passthrough; estimates SALT-cap workaround savings; reminds of state election deadlines (NY is March 15 in-year). | S | ✅ Done |
 | 10 | **Quarterly reminder calendar** | output of `/tax-setup` + standalone `/tax-calendar` | Generates `.ics` file with 1040-ES due dates, FBAR (Apr 15 → auto-extended Oct 15), state PTET windows (CA/NY/NJ), RMD deadlines for age 73+. | XS | ✅ Done |
 | 11 | **Retirement contribution dashboard** | `/tax-retirement` | One screen: 401(k) / IRA / HSA / Mega Backdoor — YTD vs max, with marginal-rate $ saved per remaining dollar. Action-oriented. | S | ✅ Done (PR #20); v1.1 enhancements below |
@@ -121,6 +121,40 @@ states surfaced as a `modeled=False` "not modeled" note, never a silent $0).
 **This closes the original 12-feature TY2026 backlog except #8 (crypto
 importer, M).** Recommended next: **#8 crypto importer** or a v1.1 pass
 (multi-state PTET, full graduated entity-pool modeling, state-credit modeling).
+
+**Progress (2026-05-31 part 3):** #8 (crypto importer) is shipped — **the LAST
+backlog item, closing the full 12-feature TY2026 roadmap.** Added
+`agents/lib/crypto_importer.py` + `/tax-parse-crypto` skill +
+`tests/fixtures/crypto/` + 42 tests (930 → 972). An **input-side parser** (the
+`/tax-parse` family, not the anchored-planning family): it produces actual
+Form 8949 rows + Schedule D totals + ordinary-income receipts + the Form 1040
+page-1 digital-asset answer for `/tax-compute` to merge, so it reuses the
+parse/validation idioms (`loss_harvest.derive_holding_period`, strict
+bool/NaN/Infinity validators) rather than the `compute_scenario` keystone. Three
+pure layers: header-name-driven exchange **adapters** (Coinbase incl. Convert
+Notes-parsing, Kraken trades.csv, Gemini), **event expansion** (one normalized
+txn → primitive Acquisition/Disposal/IncomeEvent), and the **FIFO lot engine**.
+Encodes the four crypto tax facts (Notice 2014-21 — property): crypto-to-crypto
+trades ARE taxable dispositions; staking/rewards/etc. are ordinary income at FMV
+that sets basis; the **wash-sale rule does NOT apply** (inverse of `/tax-harvest`);
+digital-asset question = Yes iff any disposal or income receipt. Bias-direction
+decisions: FIFO only (HIFO/LIFO would under-report → forbidden v1); unmatched
+disposals get $0 basis + a `needs_basis` flag (over-states gain → safe direction
+→ banner, every row surfaced). v1 caveats: universal per-asset basis pool (Rev.
+Proc. 2024-28 per-wallet from 2025), Box C/F default (no 1099-DA reconciliation),
+NFTs/DeFi/§1256/mining-as-business not modeled, state handled downstream.
+
+**v1.1 / v2 follow-ups for `/tax-parse-crypto`:** (1) HIFO/specific-ID lot
+selection (needs a contemporaneous specific-ID election input + an
+overstatement→understatement bias flip guard); (2) per-wallet basis segregation
+per Rev. Proc. 2024-28 (currently one universal per-asset pool — run per account
+for strict treatment); (3) Form 1099-DA reconciliation (TY2025+ broker form;
+Box C/F is the v1 default); (4) NFT/collectible 28%-rate handling; (5)
+DeFi/liquidity-pool/wrapping + §1256 + margin/lending events; (6)
+mining/staking-as-a-business auto-routing to Schedule C + SE tax (v1 flags it for
+manual routing); (7) richer real-world Kraken/Gemini CSV variants (the adapters
+target the common documented export — odd variants fall back to subagent
+normalization).
 
 ## #11 `/tax-retirement` v1.1 enhancements (deferred from PR #20 review)
 

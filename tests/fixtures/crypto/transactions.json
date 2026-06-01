@@ -1,0 +1,10 @@
+{
+  "transactions": [
+    {"date": "2023-01-10", "kind": "buy", "asset": "BTC", "quantity": 1.0, "usd_amount": 20000, "fee_usd": 50, "exchange": "coinbase"},
+    {"date": "2023-05-01", "kind": "buy", "asset": "BTC", "quantity": 1.0, "usd_amount": 28000, "fee_usd": 50, "exchange": "coinbase"},
+    {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1.5, "usd_amount": 75000, "fee_usd": 75, "exchange": "coinbase"},
+    {"date": "2024-03-01", "kind": "income", "asset": "ETH", "quantity": 2.0, "usd_amount": 4000, "income_type": "staking", "exchange": "coinbase"},
+    {"date": "2024-09-01", "kind": "trade", "asset": "ETH", "quantity": 2.0, "usd_amount": 5000, "received_asset": "SOL", "received_quantity": 100, "exchange": "coinbase"},
+    {"date": "2024-10-01", "kind": "sell", "asset": "LTC", "quantity": 10, "usd_amount": 900, "fee_usd": 5, "exchange": "kraken"}
+  ]
+}

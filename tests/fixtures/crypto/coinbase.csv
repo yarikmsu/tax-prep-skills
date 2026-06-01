@@ -1,0 +1,10 @@
+You can use this transaction history to compute your gains/losses.
+Coinbase Inc.
+
+Timestamp,Transaction Type,Asset,Quantity Transacted,Spot Price Currency,Spot Price at Transaction,Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes
+2023-01-10T12:00:00Z,Buy,BTC,1.0,USD,20000,20000.00,20050.00,50.00,Bought 1.0 BTC for $20050.00 USD
+2024-06-01T09:30:00Z,Sell,BTC,0.5,USD,50000,25000.00,24975.00,25.00,Sold 0.5 BTC for $24975.00 USD
+2024-03-01T00:00:00Z,Staking Income,ETH,2.0,USD,2000,4000.00,4000.00,0.00,Received 2.0 ETH from staking
+2024-09-01T15:00:00Z,Convert,ETH,2.0,USD,2500,5000.00,5000.00,0.00,Converted 2.0 ETH to 100 SOL
+2024-10-01T10:00:00Z,Receive,DOGE,1000,USD,0.1,100.00,100.00,0.00,Received 1000 DOGE from an external wallet
+2024-11-01T10:00:00Z,Send,BTC,0.1,USD,60000,6000.00,6000.00,0.00,Sent 0.1 BTC to an external wallet

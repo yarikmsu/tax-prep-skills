@@ -32,6 +32,8 @@
   "dependents": [],
 
   "form_1040": {
+    "digital_asset_question": "No",
+    "_note_digital_asset": "Form 1040 page-1 attestation. MUST be 'Yes' if the taxpayer received (reward/award/payment) OR sold/exchanged/disposed of any digital asset. /tax-parse-crypto sets this. Buying-and-holding with USD only is 'No'.",
     "line_1a_wages": 0,
     "line_1z_total_wages": 0,
     "line_2a_tax_exempt_interest": 0,
@@ -133,6 +135,17 @@
     "_include_if": "has individual capital asset transactions",
     "part_i_short_term": [],
     "part_ii_long_term": []
+  },
+
+  "crypto_summary": {
+    "_include_if": "has_crypto flag is true (populated by /tax-parse-crypto)",
+    "_note": "Crypto is PROPERTY (Notice 2014-21): wash-sale (§1091) does NOT apply. FIFO basis, universal per-asset pool (v1). Capital rows feed form_8949/schedule_d; ordinary_income.total feeds Schedule 1 line 8 (Schedule C + SE tax if mining/staking is a business).",
+    "realized_capital_gain": 0,
+    "ordinary_income": 0,
+    "disposals": 0,
+    "needs_basis_count": 0,
+    "per_asset": {},
+    "needs_basis": []
   },
 
   "form_8889_hsa": {

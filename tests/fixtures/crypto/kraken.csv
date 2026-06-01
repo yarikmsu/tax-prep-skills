@@ -1,0 +1,4 @@
+txid,ordertxid,pair,time,type,ordertype,price,cost,fee,vol,margin,misc,ledgers
+TX1,OID1,XXBTZUSD,2023-02-01 10:00:00,buy,limit,30000.0,3000.00,5.00,0.1,0,,
+TX2,OID2,XETHZUSD,2024-07-01 11:00:00,sell,market,3500.0,3500.00,7.00,1.0,0,,
+TX3,OID3,XETHZUSD,2024-01-15 08:00:00,buy,limit,2500.0,2500.00,4.00,1.0,0,,

@@ -12,6 +12,7 @@ projections/
 projection_inputs.json
 scenarios/
 holdings.json
+crypto_transactions.json
 tax_calendar_*.ics
 
 # Python bytecode

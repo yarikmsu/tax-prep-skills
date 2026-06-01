@@ -49,12 +49,13 @@ FBAR_*.md
 *.pdf
 scenarios/
 holdings.json
+crypto_transactions.json
 tax_calendar_*.ics
 EOF
     echo "  Created .gitignore (excludes sensitive tax data)"
 else
     # Append sensitive patterns not already present
-    for pattern in "taxpayer_profile.json" "tax_law_*.json" "result.json" "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "FBAR_*.md" "*.pdf" "scenarios/" "holdings.json" "tax_calendar_*.ics" ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"; do
+    for pattern in "taxpayer_profile.json" "tax_law_*.json" "result.json" "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "FBAR_*.md" "*.pdf" "scenarios/" "holdings.json" "crypto_transactions.json" "tax_calendar_*.ics" ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"; do
         if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
             echo "$pattern" >> "$GITIGNORE"
             echo "  Added $pattern to .gitignore"
