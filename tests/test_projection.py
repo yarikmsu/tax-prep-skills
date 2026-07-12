@@ -165,6 +165,129 @@ def test_project_federal_capital_gains_engages_qdcg():
     assert fed.total_tax > 0
 
 
+def test_project_federal_short_term_gain_taxed_ordinary():
+    """A short-term gain is ORDINARY income — it must not enter the QDCG bucket.
+    100000 wages + 10000 ST = 80000 taxable → 2000 + 20% x 60000 = 14000."""
+    fed = P.project_federal_tax(_proj(capital_gains_short=10000),
+                                _profile_mfj(), _tax_law_2026())
+    assert fed.taxable_income == 80000
+    assert fed.used_qdcg is False
+    assert fed.total_tax == 14000
+
+
+def test_project_federal_legacy_capital_gains_treated_long_term():
+    """The legacy combined field keeps its historical preferential treatment:
+    10000 LT stacks 70000→80000, entirely under the 90000 0% limit → tax 12000
+    (vs 14000 if it were ordinary)."""
+    fed = P.project_federal_tax(_proj(capital_gains=10000),
+                                _profile_mfj(), _tax_law_2026())
+    assert fed.used_qdcg is True
+    assert fed.total_tax == 12000
+
+
+def test_project_federal_split_lt_matches_legacy():
+    legacy = P.project_federal_tax(_proj(capital_gains=10000),
+                                   _profile_mfj(), _tax_law_2026())
+    split = P.project_federal_tax(_proj(capital_gains_long=10000),
+                                  _profile_mfj(), _tax_law_2026())
+    assert split.total_tax == legacy.total_tax
+
+
+def test_project_federal_st_loss_absorbed_by_lt_gain_stays_preferential():
+    """-5000 ST + 15000 LT → net 10000 keeps LT character (net_capital_gains)."""
+    fed = P.project_federal_tax(
+        _proj(capital_gains_short=-5000, capital_gains_long=15000),
+        _profile_mfj(), _tax_law_2026())
+    assert fed.used_qdcg is True
+    assert fed.total_tax == 12000  # same as the 10000-LT case
+
+
+def test_project_federal_net_capital_loss_capped_at_3000():
+    """A 20000 net loss offsets ordinary income only up to $3,000 — the old
+    uncapped flow understated taxable income by 17000.
+    100000 - 3000 - 30000 std = 67000 → 2000 + 20% x 47000 = 11400."""
+    fed = P.project_federal_tax(_proj(capital_gains_long=-20000),
+                                _profile_mfj(), _tax_law_2026())
+    assert fed.taxable_income == 67000
+    assert fed.total_tax == 11400
+
+
+def test_project_federal_niit_added_when_threshold_fetched():
+    """MFJ, AGI 320000, NII 20000, threshold 250000 → NIIT = 3.8% x min(20000,
+    70000) = 760. taxable 290000 → 2000 + 36000 + 27000 = 65000 bracket tax;
+    Additional Medicare (300000-250000) x 0.9% = 450; total 66210."""
+    law = _tax_law_2026()
+    law["federal"]["niit"] = {"rate": 0.038,
+                              "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}}
+    fed = P.project_federal_tax(
+        _proj(wages=300000, ordinary_dividends=20000, medicare_wages=300000),
+        _profile_mfj(), law)
+    assert fed.niit == 760.00
+    assert fed.additional_medicare == 450.00
+    assert fed.total_tax == 66210.00
+
+
+def test_project_federal_niit_reduced_by_capped_capital_loss():
+    """Codex P2 round 3: a net capital loss reduces NII by the capped allowed
+    amount (Form 8960 line 5a is the gain/loss AS INCLUDED IN AGI, not floored
+    at 0). $20K interest + $10K net loss → NII = 20000 - 3000 = 17000;
+    AGI = 300000 + 20000 - 3000 = 317000, excess over 250000 = 67000 →
+    NIIT = 3.8% x min(17000, 67000) = 646."""
+    law = _tax_law_2026()
+    law["federal"]["niit"] = {"rate": 0.038,
+                              "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}}
+    fed = P.project_federal_tax(
+        _proj(wages=300000, taxable_interest=20000, medicare_wages=300000,
+              capital_gains_long=-10000),
+        _profile_mfj(), law)
+    assert fed.niit == 646.00
+
+
+def test_project_federal_niit_degrades_to_zero_without_block():
+    """No niit block in tax_law → threshold None → NIIT 0, no crash."""
+    fed = P.project_federal_tax(
+        _proj(wages=300000, ordinary_dividends=20000, medicare_wages=300000),
+        _profile_mfj(), _tax_law_2026())
+    assert fed.niit == 0.0
+
+
+def test_annualize_rejects_legacy_and_split_capital_gains_together():
+    with pytest.raises(P.ProjectionError, match="legacy"):
+        P.annualize({"wages": 50000}, datetime.date(2026, 7, 1), "biweekly",
+                    {"capital_gains": 5000, "capital_gains_long": 5000}, {}, {})
+
+
+def test_project_federal_qbi_over_threshold_flagged_and_rendered():
+    """Codex P2 round 2: the fetched §199A threshold must reach the projection's
+    QBI call so the over-threshold warning (8995-A limits unmodeled) surfaces
+    instead of silently understating projected tax for SSTB taxpayers."""
+    law = _tax_law_2026()
+    law["federal"]["qbi_threshold"] = {"single": 100000, "mfj": 200000}
+    fed = P.project_federal_tax(
+        _proj(wages=250000, medicare_wages=250000, self_employment_net=100000),
+        _profile_mfj(), law)
+    # AGI ≈ 350000 - half-SE; ti_before_qbi far exceeds the 200000 mfj threshold
+    assert fed.qbi_over_threshold is True
+
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    report = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 125000, "federal_withholding": 15000, "medicare_wages": 125000},
+         "forecast_overrides": {"self_employment_net": 100000},
+         "estimated_payments_made": {}},
+        _profile_mfj(), law, prior, 2026, datetime.date(2026, 7, 2))
+    assert report.federal.qbi_over_threshold is True
+    assert "8995-A" in P.render_markdown(report)
+
+
+def test_project_federal_qbi_threshold_absent_no_flag():
+    """No fetched qbi_threshold → flag stays False (degrade, don't crash)."""
+    fed = P.project_federal_tax(
+        _proj(wages=250000, medicare_wages=250000, self_employment_net=100000),
+        _profile_mfj(), _tax_law_2026())
+    assert fed.qbi_over_threshold is False
+
+
 def test_project_federal_applies_ctc():
     fed = P.project_federal_tax(_proj(federal_withholding=0),
                                 _profile_mfj([{"ctc_eligible": True}, {"ctc_eligible": True}]),
@@ -268,6 +391,27 @@ def test_state_projection_when_baseline_and_brackets_present():
     assert st.taxable_income == 89000
     assert st.tax == 3650
     assert st.balance == round(3650 - 4000, 2)  # -350 refund
+
+
+def test_state_projection_includes_split_capital_gains():
+    """Codex P2: the split ST/LT fields must reach state income too — a 10000
+    LT gain adds to state taxable income (states tax gains as ordinary).
+    100000 + 10000 - 11000 std = 99000 → 200 + 5% x 79000 = 4150."""
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    st = P.project_state_tax(_proj(capital_gains_long=10000), prior,
+                             _tax_law_2026(), filing_status="MFJ")
+    assert st.taxable_income == 99000
+    assert st.tax == 4150
+
+
+def test_state_projection_caps_net_capital_loss():
+    """A 20000 net loss is capped at $3,000 in state income as well.
+    100000 - 3000 - 11000 = 86000 → 200 + 5% x 66000 = 3500."""
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    st = P.project_state_tax(_proj(capital_gains_short=-20000), prior,
+                             _tax_law_2026(), filing_status="MFJ")
+    assert st.taxable_income == 86000
+    assert st.tax == 3500
 
 
 def test_state_projection_none_without_prior():

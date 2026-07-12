@@ -428,6 +428,21 @@ class TestComputeAdditionalMedicare:
         )
         assert result["additional_tax"] == 0
 
+    def test_se_income_excluded_from_part_iv_reconciliation(self):
+        """Form 8959 Part IV line 20 is Medicare WAGES x 1.45% only — SE income has
+        no withholding to reconcile, so it must not inflate regular_medicare.
+        $200K wages + $80K SE, MFJ, Box 6 withheld $3,400."""
+        result = compute_additional_medicare(
+            medicare_wages=200_000, se_income=80_000, threshold=250_000, withheld=3400,
+        )
+        # line 20 = 200000 * 0.0145 = 2900 (NOT 2900 + 80000*0.0145 = 4060)
+        assert result["regular_medicare"] == 2900.00
+        # line 21 = 3400 - 2900 = 500
+        assert result["withheld_addl"] == 500.00
+        # owed = (280000 - 250000) * 0.009 = 270; credit = 500 - 270 = 230
+        assert result["additional_tax"] == 270.00
+        assert result["over_withholding_credit"] == 230.00
+
     def test_none_threshold_raises(self):
         """None threshold raises ValueError."""
         with pytest.raises(ValueError, match="cannot be None"):
@@ -568,6 +583,132 @@ class TestComputeChildTaxCredit:
         with pytest.raises(ValueError, match="phase_out_start cannot be None"):
             compute_child_tax_credit(2, 2000, 200000, None)
 
+    # --- ODC (Credit for Other Dependents) + refundable ACTC (Schedule 8812) ---
+
+    def test_odc_added_for_other_dependents(self):
+        """1 CTC child + 2 other dependents: $2000 + 2 x $500 = $3000."""
+        result = compute_child_tax_credit(1, 2000, 100000, 400000,
+                                          num_other_dependents=2)
+        assert result["full_credit"] == 2000.00
+        assert result["odc_full"] == 1000.00
+        assert result["combined_full"] == 3000.00
+        assert result["credit_allowed"] == 3000.00
+
+    def test_phaseout_applies_to_combined_ctc_and_odc(self):
+        """Schedule 8812 phases out the COMBINED credit: 1 child + 1 ODC,
+        AGI $5K over → reduction ceil(5000/1000) x 50 = 250 off the $2500."""
+        result = compute_child_tax_credit(1, 2000, 405000, 400000,
+                                          num_other_dependents=1)
+        assert result["combined_full"] == 2500.00
+        assert result["phase_out_reduction"] == 250.00
+        assert result["credit_allowed"] == 2250.00
+
+    def test_refundable_actc_capped_per_child(self):
+        """2 children, low tax: unused $3500 capped at 2 x $1700 = $3400 refundable
+        (the per-child line 16b cap binds before the earned-income limit)."""
+        result = compute_child_tax_credit(
+            2, 2000, 30000, 400000,
+            tax_liability=500, earned_income=30000, actc_limit_per_child=1700)
+        assert result["credit_allowed"] == 4000.00
+        assert result["nonrefundable_used"] == 500.00
+        # unused = 3500; cap = 3400; EI limit = 0.15 x (30000-2500) = 4125
+        assert result["refundable_actc"] == 3400.00
+
+    def test_refundable_actc_earned_income_limit_binds(self):
+        """EI $10K: limit = 0.15 x 7500 = 1125 < min(unused, cap) → ACTC 1125."""
+        result = compute_child_tax_credit(
+            1, 2000, 20000, 400000,
+            tax_liability=0, earned_income=10000, actc_limit_per_child=1700)
+        assert result["nonrefundable_used"] == 0.00
+        # unused = 2000; cap = 1700; EI limit = 1125
+        assert result["refundable_actc"] == 1125.00
+
+    def test_refundable_actc_zero_below_earned_income_floor(self):
+        """Earned income at/below the $2,500 floor → no ACTC."""
+        result = compute_child_tax_credit(
+            1, 2000, 10000, 400000,
+            tax_liability=0, earned_income=2500, actc_limit_per_child=1700)
+        assert result["refundable_actc"] == 0.00
+
+    def test_odc_never_refundable(self):
+        """0 CTC children + 2 ODC, $0 tax: the $1000 ODC has no refundable path."""
+        result = compute_child_tax_credit(
+            0, 2000, 50000, 400000, num_other_dependents=2,
+            tax_liability=0, earned_income=50000, actc_limit_per_child=1700)
+        assert result["credit_allowed"] == 1000.00
+        assert result["nonrefundable_used"] == 0.00
+        assert result["refundable_actc"] == 0.00
+
+    def test_fully_used_nonrefundable_no_actc(self):
+        """Tax large enough to absorb the whole credit → ACTC 0."""
+        result = compute_child_tax_credit(
+            2, 2000, 150000, 400000,
+            tax_liability=20000, earned_income=150000, actc_limit_per_child=1700)
+        assert result["nonrefundable_used"] == 4000.00
+        assert result["refundable_actc"] == 0.00
+
+    def test_three_plus_children_ss_alternative_flagged(self):
+        """3 children with the 15% EI formula binding → the unmodeled SS-tax
+        alternative could only RAISE the ACTC, so the understatement is flagged."""
+        result = compute_child_tax_credit(
+            3, 2000, 30000, 400000,
+            tax_liability=0, earned_income=10000, actc_limit_per_child=1700)
+        # unused = 6000; cap = 5100; EI limit = 1125 → binds
+        assert result["refundable_actc"] == 1125.00
+        assert result["actc_3plus_ss_alternative_not_modeled"] is True
+
+    def test_legacy_call_has_no_split_keys_populated(self):
+        """Without tax_liability the split stays None (legacy contract for
+        compute_scenario / projection)."""
+        result = compute_child_tax_credit(2, 2000, 200000, 400000)
+        assert result["nonrefundable_used"] is None
+        assert result["refundable_actc"] is None
+        assert result["actc_3plus_ss_alternative_not_modeled"] is False
+
+    def test_missing_actc_limit_raises_when_needed(self):
+        """Refundable split requested with unused credit but no per-child cap →
+        hard error pointing at the tax_law field, not a silent skip."""
+        with pytest.raises(ValueError, match="refundable_limit"):
+            compute_child_tax_credit(
+                2, 2000, 30000, 400000, tax_liability=0, earned_income=30000)
+
+    def test_missing_earned_income_raises_when_split_requested(self):
+        with pytest.raises(ValueError, match="earned_income is required"):
+            compute_child_tax_credit(
+                2, 2000, 30000, 400000, tax_liability=0, actc_limit_per_child=1700)
+
+    def test_negative_other_dependents_raises(self):
+        with pytest.raises(ValueError, match="non-negative count"):
+            compute_child_tax_credit(1, 2000, 100000, 400000,
+                                     num_other_dependents=-1)
+
+    def test_nan_tax_liability_raises(self):
+        with pytest.raises(ValueError, match="finite"):
+            compute_child_tax_credit(
+                1, 2000, 100000, 400000, tax_liability=float("nan"),
+                earned_income=50000, actc_limit_per_child=1700)
+
+    def test_nan_actc_limit_raises(self):
+        """A corrupted cache refundable_limit (json.loads accepts NaN) must not
+        silently bypass the per-child cap."""
+        with pytest.raises(ValueError, match="finite non-negative"):
+            compute_child_tax_credit(
+                1, 2000, 20000, 400000, tax_liability=0,
+                earned_income=30000, actc_limit_per_child=float("nan"))
+
+    def test_negative_actc_limit_raises(self):
+        """A negative cap would produce a negative refundable ACTC."""
+        with pytest.raises(ValueError, match="finite non-negative"):
+            compute_child_tax_credit(
+                1, 2000, 20000, 400000, tax_liability=0,
+                earned_income=30000, actc_limit_per_child=-1)
+
+    def test_bool_actc_limit_raises(self):
+        with pytest.raises(ValueError, match="got bool"):
+            compute_child_tax_credit(
+                1, 2000, 20000, 400000, tax_liability=0,
+                earned_income=30000, actc_limit_per_child=True)
+
 
 class TestComputeQbiDeduction:
     """Tests for compute_qbi_deduction — QBI deduction computation."""
@@ -607,6 +748,90 @@ class TestComputeQbiDeduction:
         """None QBI raises ValueError."""
         with pytest.raises(ValueError, match="cannot be None"):
             compute_qbi_deduction(None, 500)
+
+    # --- Form 8995 overall cap (lines 11-14): deduction cannot exceed
+    # --- rate x (taxable income before QBI - net capital gain) ---
+
+    def test_income_cap_binds(self):
+        """QBI $100K (component $20K) but TI-before-QBI $50K with $10K net cap gain:
+        cap = 20% x (50000 - 10000) = 8000 < 20000 → deduction capped."""
+        result = compute_qbi_deduction(
+            100000, 0, taxable_income_before_qbi=50000, net_capital_gain=10000)
+        assert result["income_cap"] == 8000.00
+        assert result["total_deduction"] == 8000.00
+        assert result["income_limited"] is True
+        assert result["income_cap_applied"] is True
+
+    def test_income_cap_does_not_bind(self):
+        """TI-before-QBI $200K, no cap gain: cap = 40000 > 10200 → unchanged."""
+        result = compute_qbi_deduction(
+            50000, 1000, taxable_income_before_qbi=200000, net_capital_gain=0)
+        assert result["total_deduction"] == 10200.00
+        assert result["income_limited"] is False
+        assert result["income_cap"] == 40000.00
+
+    def test_income_cap_reit_included(self):
+        """The cap limits the COMBINED QBI+REIT components (Form 8995 line 13):
+        components = 20% x 50000 + 20% x 5000 = 11000; cap = 20% x (30000 - 25000)
+        = 1000 → deduction = 1000."""
+        result = compute_qbi_deduction(
+            50000, 5000, taxable_income_before_qbi=30000, net_capital_gain=25000)
+        assert result["income_cap"] == 1000.00
+        assert result["total_deduction"] == 1000.00
+        assert result["income_limited"] is True
+
+    def test_income_cap_zero_taxable_income(self):
+        """TI-before-QBI $0 (large deductions) → cap 0 → deduction 0, not 20% of QBI."""
+        result = compute_qbi_deduction(
+            80000, 0, taxable_income_before_qbi=0, net_capital_gain=0)
+        assert result["total_deduction"] == 0.00
+        assert result["income_limited"] is True
+
+    def test_legacy_call_skips_cap_and_flags_it(self):
+        """Without taxable_income_before_qbi the cap is skipped (legacy contract)
+        but the result says so — income_cap_applied False, income_cap None."""
+        result = compute_qbi_deduction(100000, 0)
+        assert result["total_deduction"] == 20000.00
+        assert result["income_cap_applied"] is False
+        assert result["income_cap"] is None
+        assert result["income_limited"] is False
+
+    def test_over_threshold_flagged_with_warning(self):
+        """TI above the §199A threshold → over_threshold True + warning text
+        (8995-A wage/UBIA/SSTB limits not modeled — may overstate)."""
+        result = compute_qbi_deduction(
+            100000, 0, taxable_income_before_qbi=450000, net_capital_gain=0,
+            threshold=394600)
+        assert result["over_threshold"] is True
+        assert "8995-A" in result["warning"]
+
+    def test_under_threshold_no_warning(self):
+        result = compute_qbi_deduction(
+            50000, 0, taxable_income_before_qbi=100000, net_capital_gain=0,
+            threshold=394600)
+        assert result["over_threshold"] is False
+        assert "warning" not in result
+
+    def test_no_threshold_check_when_absent(self):
+        """threshold None (not fetched) → over_threshold None, no crash."""
+        result = compute_qbi_deduction(
+            50000, 0, taxable_income_before_qbi=100000, net_capital_gain=0)
+        assert result["over_threshold"] is None
+
+    def test_threshold_without_taxable_income_raises(self):
+        with pytest.raises(ValueError, match="requires taxable_income_before_qbi"):
+            compute_qbi_deduction(50000, 0, threshold=394600)
+
+    def test_negative_taxable_income_raises(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            compute_qbi_deduction(50000, 0, taxable_income_before_qbi=-1,
+                                  net_capital_gain=0)
+
+    def test_nan_taxable_income_raises(self):
+        """json.loads accepts NaN — it must not silently defeat the cap."""
+        with pytest.raises(ValueError, match="finite"):
+            compute_qbi_deduction(50000, 0, taxable_income_before_qbi=float("nan"),
+                                  net_capital_gain=0)
 
 
 class TestComputeNiit:

@@ -261,6 +261,31 @@ def test_salt_cap_is_year_and_status_aware():
     assert ptet._salt_cap(2030, "MFS") == 5000.0
 
 
+def test_salt_cap_prefers_tax_law_cache():
+    """A fetched federal.salt_cap block wins over the built-in schedule — the
+    cache tracks the indexed 2026-2029 amounts the schedule cannot."""
+    cfg = {"amount": 40400, "mfs_amount": 20200}
+    assert ptet._salt_cap(2026, "MFJ", cfg) == 40400.0
+    assert ptet._salt_cap(2026, "MFS", cfg) == 20200.0
+
+
+def test_salt_cap_cache_partial_falls_back():
+    """Unfetched (None) cache values fall back to the statutory schedule."""
+    assert ptet._salt_cap(2026, "MFJ", {"amount": None, "mfs_amount": None}) == 40000.0
+    assert ptet._salt_cap(2026, "MFS", {"amount": 40400}) == 20000.0
+    assert ptet._salt_cap(2026, "MFJ", None) == 40000.0
+
+
+def test_salt_cap_cache_invalid_value_hard_errors():
+    """A present-but-corrupt cache value must not silently price the wrong cap."""
+    with pytest.raises(PtetError):
+        ptet._salt_cap(2026, "MFJ", {"amount": float("nan")})
+    with pytest.raises(PtetError):
+        ptet._salt_cap(2026, "MFJ", {"amount": "forty thousand"})
+    with pytest.raises(PtetError):
+        ptet._salt_cap(2026, "MFJ", {"amount": -1})
+
+
 def test_analyze_other_salt_derives_headroom_from_cap():
     # Codex P1: TY2026 cap is $40k. With $25k of other SALT, $15k of headroom was
     # deductible anyway → offset 30% × min(15000, 18600) = 4,500; net 5,580 − 4,500.

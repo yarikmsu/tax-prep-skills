@@ -128,7 +128,12 @@
       "line_13_cap_gain_dist": 0,
       "line_15_net_long_term": 0
     },
-    "line_16_combined": 0
+    "line_16_combined": 0,
+    "loss_carryforward_to_next_year": {
+      "_comment": "Capital Loss Carryover Worksheet (Schedule D instructions): unused net loss carried to next year, split by character (ST offsets ST first). /tax-compute fills this using the loss actually usable this year ($3,000 / $1,500 MFS cap, less when taxable income is lower); /tax-rollover prefers this explicit block over deriving from line_16_combined.",
+      "short_term": 0,
+      "long_term": 0
+    }
   },
 
   "form_8949": {

@@ -38,6 +38,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     SCENARIO_INPUT_KEYS,
     _coerce_numeric,
     compute_scenario,
+    net_capital_gains,
 )
 
 
@@ -147,24 +148,11 @@ def read_tax_year(result: dict, year: int) -> None:
         )
 
 
-def _net_capital_gains(net_st: float, net_lt: float) -> "tuple[float, float]":
-    """Net Schedule D short- and long-term results, preserving rate character.
-
-    Returns (capital_gains_input, ordinary_short_term_gain):
-    - net loss overall → (combined_loss, 0): routed through capital_gains so the
-      keystone's annual loss cap applies (a loss is never ordinary uncapped income).
-    - both gains → (net_lt, net_st): LT preferential, ST ordinary.
-    - mixed signs, net gain → the surviving gain keeps the character of the larger
-      side: ST-gain-survives → (0, combined); LT-gain-survives → (combined, 0).
-    """
-    combined = net_st + net_lt
-    if combined <= 0:
-        return combined, 0.0
-    if net_st >= 0 and net_lt >= 0:
-        return net_lt, net_st
-    if net_lt < 0:  # long-term loss absorbed by short-term gain → surviving gain is ST
-        return 0.0, combined
-    return combined, 0.0  # short-term loss absorbed by long-term gain → surviving gain is LT
+# Netting logic lives in tax_computations.net_capital_gains so projection.py
+# (which scenario.py imports FROM — importing scenario there would be circular)
+# can reuse the identical character-preservation rules. This private alias is the
+# stable name loss_harvest.py and the tests import.
+_net_capital_gains = net_capital_gains
 
 
 def extract_baseline_inputs(result: dict) -> dict:

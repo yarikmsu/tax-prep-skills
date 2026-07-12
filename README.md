@@ -2,7 +2,7 @@
 
 Reusable, taxpayer-agnostic tax preparation toolkit for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Provides `/tax-*` slash commands that guide Claude through the full US federal + state return pipeline — from document parsing through IRS-perspective review.
 
-Works for any filing status, any state, any tax year.
+Works for any filing status and any tax year. **State support is California-first:** the CA Form 540 is computed in depth (Schedule CA adjustments, exemption credits, mental-health surcharge); other states get a bracket-based estimate only, and NYC, part-year-resident, and nonresident returns are not modeled. The skills are state-parameterized, so adding another state is a well-scoped contribution — PRs welcome.
 
 > **This toolkit handles sensitive financial data.** All taxpayer information stays local on your machine. Full SSNs are never stored — only the last 4 digits. Pre-commit hooks block accidental commits of sensitive files. See [Security & Privacy](#security--privacy) for details.
 
@@ -168,7 +168,7 @@ source .venv/bin/activate
 python3 -m pytest tests/ -v
 ```
 
-90 tests cover all 8 tax computation functions with hand-computed expected values from IRS worksheets.
+The suite (1,000+ tests — see CLAUDE.md for the current count) covers the tax computation functions with hand-computed expected values from IRS worksheets, plus the archive/rollover, projection, scenario, harvesting, calendar, retirement, PTET, and crypto-importer modules.
 
 ### Project Structure
 

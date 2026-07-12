@@ -217,6 +217,21 @@ def create_empty_tax_law(year: int) -> dict:
             },
             "fbar_threshold": 10000,
             "qbi_deduction_rate": 0.20,
+            # Section 199A taxable-income threshold (indexed annually; keyed
+            # single/mfj like capital_gains_rates — map MFJ/QSS→mfj, else→single;
+            # MFS uses the single-side figure). Above it the Form 8995-A
+            # W-2-wage/UBIA limits and SSTB phase-out apply, which the simplified
+            # compute_qbi_deduction does NOT model — it flags `over_threshold`
+            # so /tax-compute can warn instead of silently overstating.
+            "qbi_threshold": {"single": None, "mfj": None},
+            # Federal SALT itemized-deduction cap for THIS cache's year, fetched
+            # per-year because the OBBBA base ($40,000 / $20,000 MFS for
+            # TY2025-2029, reverting to $10,000 / $5,000 in TY2030) is indexed
+            # ~1%/yr for 2026-2029. The MAGI phasedown above $500K ($250K MFS)
+            # is NOT modeled — callers caveat it. Consumers (ptet._salt_cap,
+            # /tax-compute itemized-vs-standard guidance) fall back to the
+            # unindexed statutory schedule when unset.
+            "salt_cap": {"amount": None, "mfs_amount": None},
         },
         "state": {},  # Populated per-state by /tax-setup
         "exchange_rates": {},  # e.g., {"EUR": <annual_avg_rate>} — fetched from IRS.gov yearly average rates

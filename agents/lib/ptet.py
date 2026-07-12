@@ -228,7 +228,7 @@ def _strict_non_negative(value, field_name: str) -> float:
     return v
 
 
-def _salt_cap(tax_year: int, filing_status: str) -> float:
+def _salt_cap(tax_year: int, filing_status: str, cfg: "dict | None" = None) -> float:
     """Federal SALT itemized-deduction cap for the year + filing status.
 
     OBBBA (2025) raised the cap from $10,000 to $40,000 ($20,000 MFS) for
@@ -237,8 +237,20 @@ def _salt_cap(tax_year: int, filing_status: str) -> float:
     ($250,000 MFS) but never below $10,000 — v1 returns the base cap and caveats
     the indexing + MAGI phasedown rather than modeling them (callers can pass an
     explicit --salt-room to override when MAGI is high). Source: IRS Topic 503.
+
+    When `cfg` (the fetched tax_law `federal.salt_cap` block, {"amount": X,
+    "mfs_amount": Y}) carries a value for the needed key, it WINS over the
+    built-in schedule — the per-year cache is the source of truth for the
+    indexed 2026-2029 amounts, which the unindexed schedule above cannot track.
+    A None/absent value falls back to the schedule; a present-but-invalid value
+    is a hard error (a corrupted cache must not silently price the wrong cap).
     """
     mfs = (filing_status or "").upper() == "MFS"
+    if isinstance(cfg, dict):
+        key = "mfs_amount" if mfs else "amount"
+        val = cfg.get(key)
+        if val is not None:
+            return _strict_non_negative(val, f"tax_law federal.salt_cap.{key}")
     if 2025 <= tax_year <= 2029:
         return 20000.0 if mfs else 40000.0
     return 5000.0 if mfs else 10000.0
@@ -380,6 +392,7 @@ def analyze(
     qbi_eligible_states: "set | None" = None,
     itemizes: bool = True,
     passthrough_income: "float | None" = None,
+    salt_cap_cfg: "dict | None" = None,
 ) -> PtetReport:
     """Estimate the federal PTET benefit per K-1 entity state.
 
@@ -411,8 +424,10 @@ def analyze(
             f"--income; add the income or remove the override.")
     # SALT cap headroom. If the taxpayer's other state/local taxes (other_salt)
     # are supplied, derive the unused headroom from the year/status cap; else use
-    # salt_room directly (default 0 = assume the cap is exhausted).
-    salt_cap = _salt_cap(tax_year, filing_status)
+    # salt_room directly (default 0 = assume the cap is exhausted). The fetched
+    # tax_law federal.salt_cap block (salt_cap_cfg) wins over the built-in
+    # statutory schedule when populated.
+    salt_cap = _salt_cap(tax_year, filing_status, salt_cap_cfg)
     if other_salt is not None:
         other_salt = _strict_non_negative(other_salt, "other_salt")
         salt_room = max(0.0, round(salt_cap - other_salt, 2))
@@ -777,7 +792,8 @@ def _main(argv: list) -> int:
             salt_room=salt_room, other_salt=other_salt, marginal_fed=args.marginal_fed,
             rate_overrides=rate_overrides, qbi_eligible_states=qbi_eligible,
             itemizes=not args.standard_deduction,
-            passthrough_income=passthrough_income)
+            passthrough_income=passthrough_income,
+            salt_cap_cfg=(tax_law.get("federal", {}) or {}).get("salt_cap"))
         print(render_markdown(report))
         return 0
     except (PtetError, ScenarioError, RolloverError) as e:

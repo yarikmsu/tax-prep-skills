@@ -21,13 +21,17 @@ from agents.lib.rollover import (  # noqa: E402
     load_prior,
 )
 from agents.lib.tax_computations import (  # noqa: E402
+    CAPITAL_LOSS_LIMIT,
+    CAPITAL_LOSS_LIMIT_MFS,
     _coerce_numeric,
     compute_additional_medicare,
     compute_bracket_tax,
     compute_child_tax_credit,
+    compute_niit,
     compute_qbi_deduction,
     compute_qdcg_tax,
     compute_se_tax,
+    net_capital_gains,
 )
 
 
@@ -70,7 +74,7 @@ class ProjectedInputs:
     medicare_wages: float
     medicare_withheld: float
     ss_wages: float
-    capital_gains: float
+    capital_gains: float  # legacy single figure — treated as LONG-term
     qualified_dividends: float
     ordinary_dividends: float
     taxable_interest: float
@@ -80,6 +84,11 @@ class ProjectedInputs:
     estimated_state_paid: float
     elapsed_fraction: float
     paychecks_remaining: int
+    # ST/LT split (preferred over the legacy combined field): short-term gains
+    # are ORDINARY-rate income — routing them through the preferential QDCG
+    # buckets understates the projection and the safe-harbor target.
+    capital_gains_short: float = 0.0
+    capital_gains_long: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -97,6 +106,8 @@ class FederalProjection:
     estimates_paid: float
     balance: float  # >0 owed, <0 refund
     used_qdcg: bool
+    niit: float = 0.0
+    qbi_over_threshold: bool = False
 
 
 @dataclass(frozen=True)
@@ -210,6 +221,16 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
     ytd_medicare = _num(ytd.get("medicare_wages"), "medicare_wages")
     medicare_wages = round(ytd_medicare / frac, 2) if ytd_medicare else wages
 
+    cg_legacy = _num(overrides.get("capital_gains"), "capital_gains")
+    cg_short = _num(overrides.get("capital_gains_short"), "capital_gains_short")
+    cg_long = _num(overrides.get("capital_gains_long"), "capital_gains_long")
+    if cg_legacy and (cg_short or cg_long):
+        raise ProjectionError(
+            "forecast_overrides has both the legacy 'capital_gains' and the "
+            "'capital_gains_short'/'capital_gains_long' split — use one or the "
+            "other (the legacy field is treated as long-term)."
+        )
+
     return ProjectedInputs(
         wages=wages,
         federal_withholding=ann("federal_withholding"),
@@ -217,7 +238,9 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
         medicare_wages=medicare_wages,
         medicare_withheld=ann("medicare_withheld"),
         ss_wages=ann("ss_wages"),
-        capital_gains=_num(overrides.get("capital_gains"), "capital_gains"),
+        capital_gains=cg_legacy,
+        capital_gains_short=cg_short,
+        capital_gains_long=cg_long,
         qualified_dividends=_num(recurring.get("qualified_dividends"), "qualified_dividends"),
         ordinary_dividends=_num(recurring.get("ordinary_dividends"), "ordinary_dividends"),
         taxable_interest=_num(recurring.get("taxable_interest"), "taxable_interest"),
@@ -243,29 +266,56 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict) -> 
         )
     std = _num(fstatus.get("standard_deduction"), "standard_deduction")
 
+    # ST/LT netting with character preservation (shared net_capital_gains). The
+    # legacy combined `capital_gains` field is treated as LONG-term; short-term
+    # gains are ordinary-rate income and must not enter the preferential bucket.
+    net_st = proj.capital_gains_short
+    net_lt = proj.capital_gains_long + proj.capital_gains
+    cap_input, ordinary_short = net_capital_gains(net_st, net_lt)
+    # A net capital LOSS offsets ordinary income only up to the annual limit
+    # ($3,000; $1,500 MFS); the excess carries forward (not modeled here).
+    loss_limit = CAPITAL_LOSS_LIMIT_MFS if full_key == "mfs" else CAPITAL_LOSS_LIMIT
+    cap_gain_in_gross = cap_input if cap_input >= 0 else max(cap_input, -loss_limit)
+
     if proj.self_employment_net > 0:
         se = compute_se_tax(
             proj.self_employment_net,
             ss_wage_base=(fed.get("social_security", {}) or {}).get("wage_base"),
             w2_ss_wages=proj.ss_wages,
         )
-        qbi = compute_qbi_deduction(
-            proj.self_employment_net, 0.0, rate=fed.get("qbi_deduction_rate", 0.20)
-        )["total_deduction"]
     else:
         se = {"se_tax": 0.0, "deductible_half": 0.0, "se_earnings": 0.0}
-        qbi = 0.0
 
-    gross = (proj.wages + proj.capital_gains + proj.ordinary_dividends
+    gross = (proj.wages + cap_gain_in_gross + ordinary_short + proj.ordinary_dividends
              + proj.taxable_interest + proj.other_income + proj.self_employment_net)
     adjustments = se["deductible_half"]
     agi = max(0.0, gross - adjustments)
-    taxable_income = max(0.0, agi - std - qbi)
+
+    net_ltcg = max(0.0, cap_input)
+    # QBI needs taxable income BEFORE QBI and net capital gain (qualified
+    # dividends + net LTCG) for the Form 8995 overall cap — so it is computed
+    # after AGI, mirroring compute_scenario. The fetched §199A threshold is
+    # passed so the over-threshold warning (8995-A wage/UBIA/SSTB limits not
+    # modeled → deduction may be overstated) surfaces in the report instead of
+    # silently understating projected tax for SSTB/wage-limited taxpayers.
+    ti_before_qbi = max(0.0, agi - std)
+    qbi_over_threshold = False
+    if proj.self_employment_net > 0:
+        qbi_res = compute_qbi_deduction(
+            proj.self_employment_net, 0.0, rate=fed.get("qbi_deduction_rate", 0.20),
+            taxable_income_before_qbi=ti_before_qbi,
+            net_capital_gain=proj.qualified_dividends + net_ltcg,
+            threshold=(fed.get("qbi_threshold") or {}).get(bin_key),
+        )
+        qbi = qbi_res["total_deduction"]
+        qbi_over_threshold = bool(qbi_res.get("over_threshold"))
+    else:
+        qbi = 0.0
+    taxable_income = max(0.0, ti_before_qbi - qbi)
 
     cg = fed.get("capital_gains_rates", {}) or {}
     cg_zero = (cg.get("zero_pct_limit") or {}).get(bin_key)
     cg_fifteen = (cg.get("fifteen_pct_limit") or {}).get(bin_key)
-    net_ltcg = max(0.0, proj.capital_gains)
     if (proj.qualified_dividends or net_ltcg) and cg_zero is not None and cg_fifteen is not None:
         qd = compute_qdcg_tax(taxable_income, proj.qualified_dividends, net_ltcg,
                               brackets, cg_zero, cg_fifteen)
@@ -298,7 +348,23 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict) -> 
     else:
         addl = 0.0
 
-    total_tax = max(0.0, tax_before_credits - ctc) + se["se_tax"] + addl
+    # NIIT (Form 8960): 3.8% of the lesser of net investment income and MAGI
+    # (≈AGI) over the threshold. Omitting it understated the projected total —
+    # and therefore the safe-harbor target — for high earners with investment
+    # income. Degrades to $0 when tax_law has no niit block (threshold None).
+    niit_cfg = fed.get("niit", {}) or {}
+    niit_thr_map = niit_cfg.get("threshold") or {}
+    niit_threshold = niit_thr_map.get(full_key) or niit_thr_map.get(bin_key)
+    # Form 8960 line 5a is the net gain/loss AS INCLUDED IN AGI — a net capital
+    # loss reduces NII by the capped allowed amount (-$3K/-$1.5K-MFS), it is not
+    # floored at zero. cap_gain_in_gross + ordinary_short is exactly that figure
+    # (full combined gain when positive, capped loss when negative);
+    # compute_niit itself returns 0 when total NII goes non-positive.
+    nii = (proj.taxable_interest + proj.ordinary_dividends
+           + cap_gain_in_gross + ordinary_short)
+    niit = compute_niit(agi, nii, niit_threshold, rate=niit_cfg.get("rate", 0.038) or 0.038)
+
+    total_tax = max(0.0, tax_before_credits - ctc) + se["se_tax"] + addl + niit
     balance = round(total_tax - proj.federal_withholding - proj.estimated_fed_paid, 2)
 
     return FederalProjection(
@@ -307,6 +373,7 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict) -> 
         ctc=round(ctc, 2), se_tax=round(se["se_tax"], 2), additional_medicare=round(addl, 2),
         total_tax=round(total_tax, 2), withholding=round(proj.federal_withholding, 2),
         estimates_paid=round(proj.estimated_fed_paid, 2), balance=balance, used_qdcg=used_qdcg,
+        niit=round(niit, 2), qbi_over_threshold=qbi_over_threshold,
     )
 
 
@@ -439,6 +506,7 @@ def render_markdown(r: ProjectionReport) -> str:
               f"| Child Tax Credit | {_money(-f.ctc)} |",
               f"| SE tax | {_money(f.se_tax)} |",
               f"| Additional Medicare | {_money(f.additional_medicare)} |",
+              f"| NIIT (Form 8960) | {_money(f.niit)} |",
               f"| **Total tax** | {_money(f.total_tax)} |",
               f"| Withholding | {_money(-f.withholding)} |",
               f"| Estimates paid | {_money(-f.estimates_paid)} |",
@@ -479,7 +547,14 @@ def render_markdown(r: ProjectionReport) -> str:
     lines += ["",
               "## Caveats",
               "- This is a projection, not a filed return. Re-run after any material income change.",
-              "- State estimated-payment scheduling is informational; state rules vary.", ""]
+              "- State estimated-payment scheduling is informational; state rules vary."]
+    if f.qbi_over_threshold:
+        lines.append(
+            "- **QBI over the §199A threshold:** the Form 8995-A W-2-wage/UBIA limits "
+            "and SSTB phase-out are NOT modeled — the projected QBI deduction may be "
+            "overstated (an SSTB phases to $0), understating projected tax and the "
+            "safe-harbor target. Verify against Form 8995-A.")
+    lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -593,7 +668,19 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
     bin_key = _binary_status_key(filing_status)
     std_map = state_cfg.get("standard_deduction") or {}
     std = _num(std_map.get(bin_key), "state.standard_deduction")
-    state_ti = max(0.0, (proj.wages + proj.capital_gains + proj.ordinary_dividends
+    # Same capital-gains netting + loss cap as the federal side (v1 assumption:
+    # the state taxes capital gains as ordinary income and conforms to the
+    # federal $3K/$1.5K-MFS loss limit, as CA does) — the split
+    # capital_gains_short/_long fields must reach state income too, not just
+    # the legacy combined field.
+    net_st = proj.capital_gains_short
+    net_lt = proj.capital_gains_long + proj.capital_gains
+    cap_input, ordinary_short = net_capital_gains(net_st, net_lt)
+    loss_limit = (CAPITAL_LOSS_LIMIT_MFS
+                  if (filing_status or "").upper() == "MFS" else CAPITAL_LOSS_LIMIT)
+    cap_in_income = (cap_input if cap_input >= 0
+                     else max(cap_input, -loss_limit)) + ordinary_short
+    state_ti = max(0.0, (proj.wages + cap_in_income + proj.ordinary_dividends
                          + proj.taxable_interest + proj.other_income
                          + proj.self_employment_net) - std)
     tax, _ = compute_bracket_tax(state_ti, brackets)

@@ -24,6 +24,17 @@ SE_TAX_THRESHOLD = 400
 CAPITAL_LOSS_LIMIT = 3000
 CAPITAL_LOSS_LIMIT_MFS = 1500
 
+# Schedule 8812 structural statutory constants (IRC §24(d)): the refundable ACTC
+# is 15% of earned income over $2,500. Neither is indexed. The per-child
+# refundable CAP ($1,700 for TY2024/2025) IS indexed and lives in tax_law
+# (federal.child_tax_credit.refundable_limit), not here.
+ACTC_EARNED_INCOME_FLOOR = 2500
+ACTC_EARNED_INCOME_RATE = 0.15
+
+# Credit for Other Dependents (IRC §24(h)(4)): flat $500 per non-CTC dependent,
+# statutorily fixed (not indexed), never refundable.
+ODC_PER_DEPENDENT = 500
+
 
 def _coerce_numeric(value, default=None):
     """Coerce a value to float, handling string amounts like '$5,000'.
@@ -358,13 +369,14 @@ def compute_additional_medicare(
     excess = max(0, combined - threshold)
     additional_tax = excess * rate
 
-    # Form 8959 over-withholding credit logic:
-    #   Regular Medicare = 1.45% of W-2 wages + 1.45% of SE earnings
-    #   (SE pays 2.9% total, but for Form 8959 line 9, only the employee-equivalent
-    #   half (1.45%) counts as "regular Medicare tax" for over-withholding calc)
-    #   Addl Medicare withheld by employer = total withheld (Box 6) − regular Medicare
+    # Form 8959 Part IV reconciliation (lines 19-22):
+    #   line 19 = Medicare tax withheld (W-2 Box 6)
+    #   line 20 = Medicare WAGES (Box 5) × 1.45% — wages only. SE income never
+    #   enters Part IV: there is no withholding on SE earnings to reconcile
+    #   (SE Additional Medicare is paid with the return, not withheld).
+    #   line 21 = line 19 − line 20 = Additional Medicare withheld by employer
     #   Over-withholding credit = Addl Medicare withheld − Addl Medicare owed, if positive
-    regular_medicare = medicare_wages * 0.0145 + se_income * 0.029 / 2
+    regular_medicare = medicare_wages * 0.0145
     withheld_addl = max(0, withheld - regular_medicare)  # employer's Addl Medicare portion
     over_withholding = max(0, withheld_addl - additional_tax)  # credit if over-withheld
 
@@ -652,20 +664,57 @@ def compute_child_tax_credit(
     agi: float,
     phase_out_start: float,
     phase_out_rate: float = 50,
+    num_other_dependents: int = 0,
+    odc_per_dependent: float = ODC_PER_DEPENDENT,
+    tax_liability: float = None,
+    earned_income: float = None,
+    actc_limit_per_child: float = None,
 ) -> dict:
-    """Compute Child Tax Credit.
+    """Compute Child Tax Credit + Credit for Other Dependents + refundable ACTC
+    (Schedule 8812).
+
+    The phase-out reduces the COMBINED CTC+ODC (Schedule 8812 lines 8-12). When
+    `tax_liability` is provided, the credit is split into the nonrefundable
+    portion (line 14: lesser of the credit and tax) and the refundable Additional
+    Child Tax Credit (Part II-A): the unused credit, capped at
+    `actc_limit_per_child` per qualifying child (line 16b — this cap also
+    excludes the never-refundable ODC) and at 15% of earned income over $2,500
+    (line 19). The 3+-children Social-Security-tax alternative (line 27
+    worksheet), which can only INCREASE the ACTC, is not modeled — flagged when
+    it could apply, so the refundable figure may be understated (safe direction).
 
     Args:
         num_qualifying_children: Number of qualifying children under 17.
-        credit_per_child: CTC amount per child.
+        credit_per_child: CTC amount per child (tax_law child_tax_credit.amount_per_child).
         agi: Adjusted Gross Income.
         phase_out_start: Phase-out threshold for filing status.
         phase_out_rate: Reduction per $1,000 over threshold (default $50).
+        num_other_dependents: Dependents not qualifying for CTC (17+, qualifying
+            relatives) — each earns the $500 nonrefundable ODC.
+        odc_per_dependent: ODC amount per dependent (statutory $500).
+        tax_liability: The Credit Limit Worksheet A amount — Form 1040 line 18
+            tax MINUS the nonrefundable credits claimed before the CTC
+            (Schedule 3 part I: FTC, dependent care, education, energy, etc.).
+            NOT raw line 18: passing that lets the CTC consume tax already used
+            by earlier credits, overstating line 19 and suppressing the ACTC.
+            None (default) skips the refundable/nonrefundable split — legacy
+            potential-credit behavior.
+        earned_income: Wages + SE earnings for the ACTC 15% formula. Required
+            when tax_liability is provided (pass 0 if none).
+        actc_limit_per_child: Refundable cap per qualifying child (tax_law
+            child_tax_credit.refundable_limit, indexed — $1,700 TY2024/2025).
+            Required when tax_liability is provided and there are qualifying
+            children.
 
     Returns:
-        Dict with CTC computation.
+        Dict with the combined computation. `credit_allowed` stays the
+        post-phase-out potential credit (pre-tax-liability), matching the legacy
+        contract used by compute_scenario/projection; the split keys
+        (`nonrefundable_used`, `refundable_actc`) are None unless tax_liability
+        is given.
+
     Raises:
-        ValueError: If any parameter is None or invalid.
+        ValueError: If any parameter is None where required, non-finite, or invalid.
     """
     if num_qualifying_children is None:
         raise ValueError("num_qualifying_children cannot be None. Check dependent data.")
@@ -686,46 +735,153 @@ def compute_child_tax_credit(
             f"num_qualifying_children cannot be negative (got {num_qualifying_children}). "
             "Check source data for number of qualifying children."
         )
+    if num_other_dependents is None or num_other_dependents < 0:
+        raise ValueError(
+            f"num_other_dependents must be a non-negative count (got {num_other_dependents})."
+        )
+    if odc_per_dependent is None or odc_per_dependent < 0:
+        raise ValueError(f"odc_per_dependent must be non-negative (got {odc_per_dependent}).")
 
     full_credit = num_qualifying_children * credit_per_child
+    odc_full = num_other_dependents * odc_per_dependent
+    combined_full = full_credit + odc_full
 
     if agi > phase_out_start:
         excess = agi - phase_out_start
         # IRS: "$50 for each $1,000 (or fraction thereof)" — use ceiling, not floor
         reduction = math.ceil(excess / 1000) * phase_out_rate
-        credit = max(0, full_credit - reduction)
+        credit = max(0, combined_full - reduction)
     else:
         reduction = 0
-        credit = full_credit
+        credit = combined_full
+
+    nonrefundable_used = None
+    refundable_actc = None
+    ss_alternative_flag = False
+    if tax_liability is not None:
+        try:
+            tl = _coerce_numeric(tax_liability, default=None)
+            ei = _coerce_numeric(earned_income, default=None) if earned_income is not None else None
+        except TypeError:
+            raise ValueError("tax_liability/earned_income must be numeric, got bool")
+        if tl is None or not math.isfinite(tl) or tl < 0:
+            raise ValueError(f"tax_liability must be a finite non-negative number (got {tax_liability!r}).")
+        if ei is None or not math.isfinite(ei) or ei < 0:
+            raise ValueError(
+                "earned_income is required for the ACTC split (pass 0 if none) "
+                f"and must be finite non-negative (got {earned_income!r})."
+            )
+        nonrefundable_used = min(credit, tl)
+        unused = credit - nonrefundable_used
+        if num_qualifying_children > 0 and unused > 0:
+            if actc_limit_per_child is None:
+                raise ValueError(
+                    "actc_limit_per_child cannot be None when computing the refundable "
+                    "ACTC. Load from tax_law JSON federal.child_tax_credit.refundable_limit."
+                )
+            # The cap comes from the fetched cache — validate like every other
+            # split input: json.loads accepts NaN (bypasses the per-child cap)
+            # and a negative value would produce a negative refund.
+            try:
+                cap_per_child = _coerce_numeric(actc_limit_per_child, default=None)
+            except TypeError:
+                raise ValueError("actc_limit_per_child must be numeric, got bool")
+            if cap_per_child is None or not math.isfinite(cap_per_child) or cap_per_child < 0:
+                raise ValueError(
+                    "actc_limit_per_child must be a finite non-negative number "
+                    f"(got {actc_limit_per_child!r}). Check tax_law JSON "
+                    "federal.child_tax_credit.refundable_limit."
+                )
+            refundable_cap = num_qualifying_children * cap_per_child
+            ei_limit = ACTC_EARNED_INCOME_RATE * max(0.0, ei - ACTC_EARNED_INCOME_FLOOR)
+            potential = min(unused, refundable_cap)
+            refundable_actc = min(potential, ei_limit)
+            # With 3+ children the SS-tax alternative can lift the ACTC above the
+            # 15% earned-income formula — not modeled, may understate.
+            ss_alternative_flag = num_qualifying_children >= 3 and ei_limit < potential
+        else:
+            refundable_actc = 0.0
 
     return {
         "num_children": num_qualifying_children,
         "credit_per_child": credit_per_child,
         "full_credit": round(full_credit, 2),
+        "num_other_dependents": num_other_dependents,
+        "odc_full": round(odc_full, 2),
+        "combined_full": round(combined_full, 2),
         "agi": round(agi, 2),
         "phase_out_start": phase_out_start,
         "phase_out_reduction": round(reduction, 2),
         "credit_allowed": round(credit, 2),
+        "nonrefundable_used": round(nonrefundable_used, 2) if nonrefundable_used is not None else None,
+        "refundable_actc": round(refundable_actc, 2) if refundable_actc is not None else None,
+        "actc_3plus_ss_alternative_not_modeled": ss_alternative_flag,
     }
+
+
+def net_capital_gains(net_st: float, net_lt: float) -> "tuple[float, float]":
+    """Net Schedule D short- and long-term results, preserving rate character.
+
+    Returns (capital_gains_input, ordinary_short_term_gain):
+    - net loss overall → (combined_loss, 0): routed through capital_gains so the
+      annual loss cap applies (a loss is never ordinary uncapped income).
+    - both gains → (net_lt, net_st): LT preferential, ST ordinary.
+    - mixed signs, net gain → the surviving gain keeps the character of the larger
+      side: ST-gain-survives → (0, combined); LT-gain-survives → (combined, 0).
+
+    Shared by scenario.py (baseline extraction), loss_harvest.py (post-harvest
+    netting), and projection.py (ST/LT forecast split) so every consumer applies
+    identical character preservation.
+    """
+    combined = net_st + net_lt
+    if combined <= 0:
+        return combined, 0.0
+    if net_st >= 0 and net_lt >= 0:
+        return net_lt, net_st
+    if net_lt < 0:  # long-term loss absorbed by short-term gain → surviving gain is ST
+        return 0.0, combined
+    return combined, 0.0  # short-term loss absorbed by long-term gain → surviving gain is LT
 
 
 def compute_qbi_deduction(
     qbi_income: float,
     reit_dividends: float,
     rate: float = 0.20,
+    taxable_income_before_qbi: float = None,
+    net_capital_gain: float = None,
+    threshold: float = None,
 ) -> dict:
     """Compute QBI deduction (Form 8995 simplified).
+
+    Applies the Form 8995 OVERALL cap (lines 11-14): the deduction cannot exceed
+    rate x (taxable income before QBI - net capital gain). This cap is on the
+    simplified 8995 itself, not just 8995-A — omitting it overstates the deduction
+    (understates tax) whenever business income is large relative to taxable income
+    (retiree with a side business, loss-heavy year, large itemized/standard
+    deduction).
 
     Args:
         qbi_income: Qualified business income (can be negative = loss).
         reit_dividends: Section 199A REIT dividends.
         rate: QBI deduction rate (default 20%).
+        taxable_income_before_qbi: Taxable income computed WITHOUT the QBI
+            deduction (AGI - deductions, floored at 0). When None the overall cap
+            is SKIPPED (legacy behavior) and `income_cap_applied` is False — the
+            result may overstate the deduction, so callers should pass it.
+        net_capital_gain: Form 8995 line 12 — qualified dividends + net LTCG
+            (never negative). Defaults to 0 when omitted while the cap is active.
+        threshold: Section 199A taxable-income threshold for the filing status
+            (tax_law federal.qbi_threshold, keyed single/mfj). Above it the
+            W-2-wage/UBIA and SSTB limits of Form 8995-A apply, which this
+            simplified function does NOT model — the result is flagged
+            `over_threshold` and may OVERSTATE the deduction (an SSTB should
+            phase to zero). None skips the check (`over_threshold` = None).
 
     Returns:
-        Dict with QBI deduction.
+        Dict with QBI deduction, the cap, and the over-threshold flag.
 
     Raises:
-        ValueError: If any parameter is None or invalid.
+        ValueError: If any parameter is None where required, non-finite, or invalid.
     """
     if qbi_income is None:
         raise ValueError("qbi_income cannot be None. Check Schedule C / Form 8995.")
@@ -744,14 +900,57 @@ def compute_qbi_deduction(
     total_deduction = qbi_component + reit_component
     loss_carryforward = min(0, qbi_income)
 
-    return {
+    income_cap = None
+    income_limited = False
+    if taxable_income_before_qbi is not None:
+        ti = _coerce_numeric(taxable_income_before_qbi, default=None)
+        ncg = _coerce_numeric(net_capital_gain if net_capital_gain is not None else 0, default=None)
+        if ti is None or ncg is None or not math.isfinite(ti) or not math.isfinite(ncg):
+            raise ValueError(
+                "taxable_income_before_qbi and net_capital_gain must be finite numbers"
+            )
+        if ti < 0 or ncg < 0:
+            raise ValueError(
+                "taxable_income_before_qbi and net_capital_gain cannot be negative "
+                f"(got {ti}, {ncg}) — both are floored at 0 upstream."
+            )
+        # Form 8995 line 13 = taxable income - net capital gain; line 14 = 20% of that
+        income_cap = max(0.0, (ti - ncg) * rate)
+        if total_deduction > income_cap:
+            total_deduction = income_cap
+            income_limited = True
+
+    over_threshold = None
+    if threshold is not None:
+        thr = _coerce_numeric(threshold, default=None)
+        if thr is None or not math.isfinite(thr):
+            raise ValueError("threshold must be a finite number when provided")
+        if taxable_income_before_qbi is None:
+            raise ValueError(
+                "threshold check requires taxable_income_before_qbi — pass both."
+            )
+        over_threshold = ti > thr
+
+    result = {
         "qbi_income": round(qbi_income, 2),
         "qbi_component": round(qbi_component, 2),
         "reit_dividends": round(reit_dividends, 2),
         "reit_component": round(reit_component, 2),
         "total_deduction": round(total_deduction, 2),
         "loss_carryforward": round(loss_carryforward, 2),
+        "income_cap_applied": taxable_income_before_qbi is not None,
+        "income_cap": round(income_cap, 2) if income_cap is not None else None,
+        "income_limited": income_limited,
+        "over_threshold": over_threshold,
     }
+    if over_threshold:
+        result["warning"] = (
+            "Taxable income exceeds the Section 199A threshold: Form 8995-A "
+            "W-2-wage/UBIA limits and the SSTB phase-out apply but are NOT modeled "
+            "here — the deduction may be overstated (an SSTB phases to $0). "
+            "Verify against Form 8995-A."
+        )
+    return result
 
 
 def check_form_8938_required(
@@ -947,10 +1146,8 @@ def compute_scenario(
         # W-2 SS-wage figure (a planning proxy for Box 3) — matches projection.py and
         # prevents overstating SE SS tax for high-wage taxpayers.
         se = compute_se_tax(se_net, ss_wage_base=ss_wage_base, w2_ss_wages=max(0.0, wages))
-        qbi = compute_qbi_deduction(se_net, 0.0, rate=qbi_rate)["total_deduction"]
     else:
         se = {"se_tax": 0.0, "deductible_half": 0.0, "se_earnings": 0.0}
-        qbi = 0.0
 
     # A net capital LOSS offsets ordinary income only up to the annual limit
     # ($3,000; $1,500 MFS); the excess carries forward (not modeled here). A net GAIN
@@ -961,7 +1158,6 @@ def compute_scenario(
              + ira_distribution + other_income + se_net)
     adjustments = se["deductible_half"]
     agi = max(0.0, gross - adjustments)
-    taxable_income = max(0.0, agi - standard_deduction - qbi)
 
     net_ltcg = max(0.0, capital_gains)
     # Qualified dividends are a subset of ordinary dividends (which are already in
@@ -969,6 +1165,20 @@ def compute_scenario(
     # with qualified > ordinary must not move income into the preferential bucket
     # that does not exist in gross income (which would lower tax for free).
     eff_qualified = min(max(0.0, qualified_dividends), max(0.0, ordinary_dividends))
+
+    # QBI needs taxable income BEFORE QBI (Form 8995 line 11) and net capital gain
+    # (line 12 = qualified dividends + net LTCG) for the overall cap, so it is
+    # computed after AGI and the preferential-income figures.
+    ti_before_qbi = max(0.0, agi - standard_deduction)
+    if se_net > 0:
+        qbi = compute_qbi_deduction(
+            se_net, 0.0, rate=qbi_rate,
+            taxable_income_before_qbi=ti_before_qbi,
+            net_capital_gain=eff_qualified + net_ltcg,
+        )["total_deduction"]
+    else:
+        qbi = 0.0
+    taxable_income = max(0.0, ti_before_qbi - qbi)
     if (eff_qualified or net_ltcg) and cg_zero_limit is not None and cg_fifteen_limit is not None:
         qd = compute_qdcg_tax(taxable_income, eff_qualified, net_ltcg,
                               brackets, cg_zero_limit, cg_fifteen_limit)

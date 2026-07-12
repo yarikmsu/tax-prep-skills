@@ -27,7 +27,11 @@ FIELD_MAP: dict[str, dict] = {
     # Category 1: Carryforwards (dollar amounts)
     "capital_loss_carryforward": {
         "category": "carryforwards",
-        "source_path": "schedule_d.line_16_combined",  # negative if net loss
+        # Whole schedule_d block: the transform prefers the explicit
+        # loss_carryforward_to_next_year written by /tax-compute (Capital Loss
+        # Carryover Worksheet) and falls back to deriving from line_16_combined
+        # for older archived returns.
+        "source_path": "schedule_d",
         "target_file": "taxpayer_profile.json",
         "target_path": "prior_year.capital_loss_carryforward",
         "transform": "capital_loss_to_carryforward",
@@ -179,8 +183,31 @@ def _set_path(d: dict, dotted: str, value: Any) -> None:
 
 
 def _transform_capital_loss(raw):
-    """schedule_d.line_16_combined is negative if net loss; cf = abs(loss) - $3K used."""
-    if raw is None or raw >= 0:
+    """schedule_d block (or a bare line_16_combined number) → carryforward.
+
+    Prefers the explicit loss_carryforward_to_next_year block written by
+    /tax-compute via the Capital Loss Carryover Worksheet (ST + LT summed — the
+    profile field is a single figure in v1). Falls back to deriving from
+    line_16_combined for older archived returns: abs(loss) − $3,000, which
+    assumes the full non-MFS cap was used. The fallback is a LOWER bound of the
+    true carryforward (the worksheet only ever uses LESS than $3,000 — when
+    taxable income is low — never more), so an all-zero explicit block safely
+    falls through to the derivation instead of dropping a real carryforward.
+    """
+    if isinstance(raw, dict):
+        cf_block = raw.get("loss_carryforward_to_next_year")
+        if isinstance(cf_block, dict):
+            total = 0.0
+            has_explicit = False
+            for key in ("short_term", "long_term"):
+                v = cf_block.get(key)
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                    total += v
+                    has_explicit = True
+            if has_explicit:
+                return total
+        raw = raw.get("line_16_combined")
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw >= 0:
         return 0
     cf = abs(raw) - 3000
     return max(cf, 0)

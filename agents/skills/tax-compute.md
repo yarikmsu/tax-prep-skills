@@ -121,6 +121,15 @@ Line 8: Other income from Schedule 1 (Schedule C net, etc.)
 Line 9: TOTAL INCOME = sum of above
 ```
 
+**Capital loss carryforward (Schedule D):** When line 16 is a net LOSS, cap the
+line 7 deduction at $3,000 ($1,500 MFS) and fill
+`schedule_d.loss_carryforward_to_next_year` (short_term / long_term split) in
+result.json using the Capital Loss Carryover Worksheet from the Schedule D
+instructions — short-term loss is used first, and the amount actually used can
+be LESS than $3,000 when taxable income is low. `/tax-rollover` carries this
+explicit block into next year's `prior_year.capital_loss_carryforward`; leaving
+it zero silently loses the carryforward.
+
 **Form 8606 — Nondeductible IRA basis & Roth conversions (lines 4a/4b):**
 
 Compute this BEFORE finalizing line 4b whenever the taxpayer has any of: a Roth
@@ -207,7 +216,15 @@ Line 15: Taxable income = max(0, Line 11 - Line 14)
 Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
 - QBI = Schedule C net income (can be negative → loss carryforward)
 - REIT dividends = Section 199A dividends from 1099-DIVs
-- Deduction = max(0, QBI × 20%) + round(REIT × 20%)
+- **ALWAYS pass the overall-cap inputs** — Form 8995 lines 11-14 cap the deduction
+  at 20% × (taxable income before QBI − net capital gain):
+  - `taxable_income_before_qbi` = max(0, Line 11 − Line 12)
+  - `net_capital_gain` = qualified dividends (line 3a) + net LTCG (Schedule D line 15, floored at 0)
+  - `threshold` = `federal.qbi_threshold` from tax_law JSON (keyed single/mfj — map MFJ/QSS→mfj, else single)
+- If the result has `over_threshold: true`, surface its `warning`: above the §199A
+  threshold the Form 8995-A W-2-wage/UBIA limits and SSTB phase-out apply and are
+  NOT modeled — the deduction may be overstated (an SSTB phases to $0). Verify
+  against Form 8995-A / tax software before filing.
 
 ### Step 6: Compute Tax (Form 1040 Line 16)
 
@@ -225,8 +242,25 @@ If no qualified dividends and no net capital gain: use regular bracket tax via `
 
 ### Step 7: Compute Credits (Form 1040 Lines 19-21)
 
-**Child Tax Credit (Line 19):**
+**Child Tax Credit + ODC (Line 19) and refundable ACTC (Line 28):**
 Use `compute_child_tax_credit()` — check OBBBA/current year amount from tax_law JSON.
+Pass the full Schedule 8812 inputs, not just the child count:
+- `num_other_dependents` — dependents NOT qualifying for CTC (17+, qualifying
+  relatives) each earn the $500 nonrefundable ODC; the phase-out reduces the
+  COMBINED CTC+ODC.
+- `tax_liability` — the **Credit Limit Worksheet A amount**, NOT raw line 18:
+  line 18 tax MINUS the nonrefundable credits claimed before the CTC (Schedule 3
+  part I — FTC, dependent care, education, residential energy, etc.). Passing
+  raw line 18 lets the CTC consume tax already used by earlier credits,
+  overstating line 19 and suppressing the ACTC on line 28.
+- `earned_income` (wages + SE earnings) and `actc_limit_per_child`
+  (`federal.child_tax_credit.refundable_limit` from tax_law JSON) → the result
+  splits into `nonrefundable_used` (line 19) and `refundable_actc` (**line
+  28**). Skipping this drops the refundable credit for families whose tax is
+  smaller than the credit.
+- If `actc_3plus_ss_alternative_not_modeled` is true, tell the user: with 3+
+  children the Schedule 8812 SS-tax alternative can only INCREASE the ACTC — the
+  computed figure may be understated; verify in tax software.
 
 **Foreign Tax Credit (Line 20 via Schedule 3):**
 Use `compute_ftc_limitation()` — compare tax paid vs. limitation.
@@ -300,7 +334,7 @@ Use `check_form_8938_required()` from `agents/lib/tax_computations.py`:
 After computing the return, systematically check for missed optimization opportunities. For each item, compare the current return against what's possible:
 
 **Category 1 — Deduction optimization:**
-- Itemized vs standard deduction: compute itemized total (SALT up to $10K, mortgage interest, charitable, medical >7.5% AGI). Would itemizing save money?
+- Itemized vs standard deduction: compute itemized total (SALT up to the cap in `federal.salt_cap` from tax_law JSON — OBBBA: $40K / $20K-MFS for TY2025-2029 (base indexed ~1%/yr 2026-2029; MAGI phasedown above $500K not modeled), reverting to $10K / $5K-MFS in TY2030 — plus mortgage interest, charitable, medical >7.5% AGI). Would itemizing save money?
 - Charitable bunching: if charitable is close to tipping point, mention bunching strategy for next year
 - Above-the-line deductions: student loan interest ($2,500 max), educator expenses ($300), SE health insurance — all used?
 

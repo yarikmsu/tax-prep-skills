@@ -140,7 +140,17 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
 **Federal (IRS.gov):**
 - Search: `"IRS {year} tax brackets married filing jointly"`
 - Search: `"IRS {year} standard deduction"`
-- Search: `"IRS {year} child tax credit amount"`
+- Search: `"IRS {year} child tax credit amount"` — populate BOTH
+  `child_tax_credit.amount_per_child` AND `child_tax_credit.refundable_limit`
+  (the per-child ACTC cap, indexed — $1,700 for TY2024/2025; needed for the
+  Schedule 8812 refundable split in `/tax-compute`)
+- Search: `"IRS {year} section 199A QBI taxable income threshold"` — populate
+  `federal.qbi_threshold` (`single`/`mfj`; above it Form 8995-A limits apply and
+  `compute_qbi_deduction` flags `over_threshold`)
+- Search: `"IRS {year} SALT deduction cap"` — populate `federal.salt_cap`
+  (`amount`/`mfs_amount`; OBBBA $40K/$20K-MFS for TY2025-2029 indexed ~1%/yr,
+  $10K/$5K-MFS in TY2030 — consumed by `/tax-ptet` and the itemize-vs-standard
+  check in `/tax-compute`)
 - Search: `"IRS {year} HSA contribution limits"`
 - Search: `"IRS {year} 401k contribution limit"`
 - Search: `"IRS {year} IRA contribution limit phase out"`

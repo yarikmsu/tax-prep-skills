@@ -76,6 +76,27 @@ def test_compute_scenario_se_delta_adds_se_tax():
     assert out["se_tax"] > 0
 
 
+def test_compute_scenario_qbi_capped_by_taxable_income():
+    # SE-only income: uncapped QBI would be 20% x 40000 = 8000, but taxable
+    # income before QBI is only ~7174 (after the standard deduction), so the
+    # Form 8995 overall cap limits the deduction to 20% of that — taxable
+    # income stays at 80% of the pre-QBI figure instead of being wiped to $0
+    # (the old uncapped behavior, which understated tax).
+    out = compute_scenario({"self_employment_net": 40000}, {}, **RATE_KW)
+    ti_before = out["agi"] - 30000
+    assert ti_before > 0
+    assert out["taxable_income"] == pytest.approx(0.8 * ti_before, abs=0.02)
+    assert out["tax_before_credits"] > 0
+
+
+def test_compute_scenario_qbi_uncapped_when_income_high():
+    # With wages on top, taxable income before QBI far exceeds the QBI base →
+    # the full 20% x 40000 = 8000 deduction survives the cap (regression guard).
+    out = compute_scenario({"wages": 150000, "self_employment_net": 40000}, {}, **RATE_KW)
+    ti_before = out["agi"] - 30000
+    assert out["taxable_income"] == pytest.approx(ti_before - 8000, abs=0.02)
+
+
 def test_compute_scenario_se_respects_w2_wage_base():
     # Codex P1: when W-2 wages already exceed the SS wage base, an SE delta owes only
     # the 2.9% Medicare portion (the SS base is fully consumed) — not the full 15.3%.

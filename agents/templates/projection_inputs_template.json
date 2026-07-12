@@ -12,10 +12,12 @@
     "medicare_withheld": null
   },
   "forecast_overrides": {
-    "_comment": "Lumpy/known items entered as FULL-YEAR amounts; NOT annualized.",
+    "_comment": "Lumpy/known items entered as FULL-YEAR amounts; NOT annualized. Prefer the capital_gains_short/_long split — short-term gains are ordinary-rate income, and the legacy combined capital_gains field is treated as LONG-term. Supplying both the legacy field and the split is an error.",
     "year_end_bonus": 0,
     "rsu_vesting": 0,
     "capital_gains": 0,
+    "capital_gains_short": 0,
+    "capital_gains_long": 0,
     "self_employment_net": 0,
     "other_income": 0
   },

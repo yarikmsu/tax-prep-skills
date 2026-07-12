@@ -89,6 +89,40 @@ def test_compute_diff_capital_loss_carryforward():
     assert cap_loss[0].action_suggested == "apply"
 
 
+def test_transform_capital_loss_prefers_explicit_block():
+    """The Capital Loss Carryover Worksheet block written by /tax-compute wins
+    over the line_16 derivation (which assumes the full $3K was used)."""
+    from agents.lib.rollover import _transform_capital_loss
+    raw = {"line_16_combined": -10000,
+           "loss_carryforward_to_next_year": {"short_term": 4000, "long_term": 3500}}
+    assert _transform_capital_loss(raw) == 7500
+
+
+def test_transform_capital_loss_zero_block_falls_back_to_derivation():
+    """All-zero explicit block = template scaffolding, not a computed result —
+    fall back to abs(loss) - 3000 so a real carryforward is not dropped."""
+    from agents.lib.rollover import _transform_capital_loss
+    raw = {"line_16_combined": -10000,
+           "loss_carryforward_to_next_year": {"short_term": 0, "long_term": 0}}
+    assert _transform_capital_loss(raw) == 7000
+
+
+def test_transform_capital_loss_dict_without_block_derives():
+    from agents.lib.rollover import _transform_capital_loss
+    assert _transform_capital_loss({"line_16_combined": -5000}) == 2000
+    assert _transform_capital_loss({"line_16_combined": 5000}) == 0
+    assert _transform_capital_loss({}) == 0
+
+
+def test_transform_capital_loss_legacy_number_still_works():
+    """Older archives resolved source_path to the bare line_16 number."""
+    from agents.lib.rollover import _transform_capital_loss
+    assert _transform_capital_loss(-5000) == 2000
+    assert _transform_capital_loss(-2000) == 0  # within the $3K used
+    assert _transform_capital_loss(None) == 0
+    assert _transform_capital_loss(True) == 0  # bool is not an amount
+
+
 def test_compute_diff_qbi_loss_carryforward():
     prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
     current = _load_current("current_2025_empty")
