@@ -17,11 +17,14 @@ from agents.lib.tax_computations import (
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
+    compute_excess_sdi,
+    compute_excess_ss_withholding,
     compute_ftc_limitation,
     compute_child_tax_credit,
     compute_qbi_deduction,
     compute_niit,
     compute_form_8606,
+    compute_taxable_ss,
     check_form_8938_required,
     SE_TAX_THRESHOLD,
 )
@@ -1158,6 +1161,343 @@ class TestCheckForm8938Required:
         accts = [{"year_end_value_usd": "abc", "max_value_usd": 5000}]
         with pytest.raises(ValueError, match="non-numeric"):
             check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
+
+
+class TestComputeTaxableSS:
+    """1040 line 6b Social Security Benefits Worksheet (Pub 915).
+    Every expected value hand-worked through worksheet lines 1-18."""
+
+    def test_mfj_mid_tier(self):
+        """MFJ, $24K benefits, $40K other. Provisional 52000; excess over
+        32000 base = 20000; tier1 = 12000 -> min(12000, 6000) = 6000;
+        over-second 8000 x 85% = 6800 -> 12800 (under the 20400 cap)."""
+        r = compute_taxable_ss(24000, 40000, tax_exempt_interest=0, filing_status="MFJ")
+        assert r["provisional_income"] == 52000.00
+        assert r["taxable_ss"] == 12800.00
+
+    def test_mfj_below_base_zero(self):
+        """Provisional 30000 <= 32000 base -> nothing taxable."""
+        r = compute_taxable_ss(20000, 20000, tax_exempt_interest=0, filing_status="MFJ")
+        assert r["taxable_ss"] == 0.00
+
+    def test_mfj_85_pct_cap_binds(self):
+        """High income: worksheet line 15 = 151350 but the 85%-of-benefits
+        cap (0.85 x 30000 = 25500) binds."""
+        r = compute_taxable_ss(30000, 200000, tax_exempt_interest=0, filing_status="MFJ")
+        assert r["taxable_ss"] == 25500.00
+        assert r["taxable_fraction"] == 0.85
+
+    def test_mfj_fifty_pct_region(self):
+        """Provisional 36000, excess 4000 within the 12000 tier-1 span ->
+        taxable = half the excess = 2000."""
+        r = compute_taxable_ss(12000, 30000, tax_exempt_interest=0, filing_status="MFJ")
+        assert r["taxable_ss"] == 2000.00
+
+    def test_single_mid_tier(self):
+        """Single, $20K benefits, $28K other: provisional 38000; excess 13000;
+        tier1 9000 -> min(10000, 4500) = 4500; over 4000 x 85% = 3400 -> 7900."""
+        r = compute_taxable_ss(20000, 28000, tax_exempt_interest=0, filing_status="Single")
+        assert r["taxable_ss"] == 7900.00
+
+    def test_tax_exempt_interest_counts(self):
+        """Muni interest raises provisional income even though untaxed —
+        20000 other + 8000 TEI matches the 28000-other case exactly."""
+        r = compute_taxable_ss(20000, 20000, tax_exempt_interest=8000,
+                               filing_status="Single")
+        assert r["taxable_ss"] == 7900.00
+
+    def test_adjustments_reduce_provisional(self):
+        """13000 of above-the-line adjustments pulls provisional to exactly
+        the 25000 base -> 0 taxable."""
+        r = compute_taxable_ss(20000, 28000, adjustments=13000,
+                               tax_exempt_interest=0, filing_status="Single")
+        assert r["taxable_ss"] == 0.00
+
+    def test_qss_uses_single_base(self):
+        """Codex P1: Pub 915 groups QSS with Single/HoH at the $25,000 base —
+        NOT the joint $32,000. Worksheet: provisional 52000; excess 27000;
+        tier1 9000 -> min(12000, 4500) = 4500; over 18000 x 85% = 15300 ->
+        19800 (under the 20400 cap)."""
+        r = compute_taxable_ss(24000, 40000, tax_exempt_interest=0, filing_status="QSS")
+        assert r["base_amount"] == 25000.0
+        assert r["taxable_ss"] == 19800.00
+
+    def test_qss_taxable_between_single_and_joint_bases(self):
+        """The exact failure the joint base caused: QSS provisional 30000 is
+        ABOVE the 25000 single base -> taxable (2500), not $0."""
+        r = compute_taxable_ss(20000, 20000, tax_exempt_interest=0, filing_status="QSS")
+        # excess 5000 within the 9000 span -> half = 2500
+        assert r["taxable_ss"] == 2500.00
+
+    def test_mfs_lived_together_85pct_path(self):
+        """$0 base: lesser of 85% x provisional (34000) and 85% x benefits
+        (17000) -> 17000."""
+        r = compute_taxable_ss(20000, 30000, tax_exempt_interest=0, filing_status="MFS",
+                               lived_apart_from_spouse_all_year=False)
+        assert r["taxable_ss"] == 17000.00
+        assert r["path"] == "mfs_lived_together_85pct"
+
+    def test_mfs_lived_apart_uses_single_worksheet(self):
+        r = compute_taxable_ss(20000, 28000, tax_exempt_interest=0, filing_status="MFS",
+                               lived_apart_from_spouse_all_year=True)
+        assert r["taxable_ss"] == 7900.00
+        assert r["base_amount"] == 25000.0
+
+    def test_mfs_missing_lived_apart_flag_raises(self):
+        """The flag is load-bearing (Pub 915) — silently defaulting either way
+        moves real dollars."""
+        with pytest.raises(ValueError, match="lived_apart_from_spouse_all_year"):
+            compute_taxable_ss(20000, 30000, tax_exempt_interest=0, filing_status="MFS")
+
+    def test_no_benefits_path(self):
+        r = compute_taxable_ss(0, 50000, tax_exempt_interest=0, filing_status="Single")
+        assert r["taxable_ss"] == 0.00
+        assert r["path"] == "no_benefits"
+
+    def test_noncanonical_status_raises(self):
+        with pytest.raises(ValueError, match="Single/MFJ/MFS/HoH/QSS"):
+            compute_taxable_ss(20000, 30000, tax_exempt_interest=0, filing_status="Married Filing Jointly")
+
+    def test_nan_input_raises(self):
+        with pytest.raises(ValueError, match="finite"):
+            compute_taxable_ss(float("nan"), 30000, tax_exempt_interest=0,
+                               filing_status="Single")
+
+    def test_bool_input_raises(self):
+        with pytest.raises(ValueError, match="bool"):
+            compute_taxable_ss(True, 30000, tax_exempt_interest=0, filing_status="Single")
+
+    def test_negative_tei_raises(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            compute_taxable_ss(20000, 30000, tax_exempt_interest=-1,
+                               filing_status="Single")
+
+    def test_lump_sum_flags_election_warning(self):
+        """Codex P2 round 2: prior-year benefits in box 5 make the Pub 915
+        lump-sum election available — it can only LOWER tax and is not
+        modeled, so the result must warn that line 6b is an upper bound."""
+        r = compute_taxable_ss(24000, 40000, tax_exempt_interest=0, filing_status="MFJ",
+                               lump_sum_prior_year_benefits=6000)
+        assert r["lump_sum_election_available"] is True
+        assert "lump-sum" in r["warning"]
+        assert r["taxable_ss"] == 12800.00  # numbers unchanged — flag only
+
+    def test_no_lump_sum_no_warning(self):
+        r = compute_taxable_ss(24000, 40000, tax_exempt_interest=0, filing_status="MFJ")
+        assert r["lump_sum_election_available"] is False
+        assert "warning" not in r
+
+    def test_negative_lump_sum_raises(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            compute_taxable_ss(24000, 40000, tax_exempt_interest=0, filing_status="MFJ",
+                               lump_sum_prior_year_benefits=-1)
+
+    def test_missing_filing_status_raises(self):
+        """Codex P2 round 4: no MFJ default — a Single filer between the $25K
+        and $32K bases would silently get $0 taxable."""
+        with pytest.raises(ValueError, match="filing_status is required"):
+            compute_taxable_ss(20000, 20000, tax_exempt_interest=0)
+
+    def test_missing_tax_exempt_interest_raises(self):
+        """Codex P2 round 12: the skill calls line 2a a required input — a
+        silent 0 default would let an accidental omission understate line 6b
+        for exactly the muni-holding taxpayers the input exists for."""
+        with pytest.raises(ValueError, match="tax_exempt_interest is required"):
+            compute_taxable_ss(20000, 20000, filing_status="Single")
+
+    def test_excluded_income_addbacks_raise_provisional(self):
+        """Codex P2 round 4: Pub 915 line-5-region add-backs (FEIE, excluded
+        adoption benefits, territory income) re-enter provisional income.
+        Single, $20K benefits, $10K other + $18K FEIE addback = provisional
+        38000 — identical to the $28K-other case -> 7900 (omitting the
+        addback would have been $1,500: excess 3000 within the tier ->
+        half)."""
+        r = compute_taxable_ss(20000, 10000, tax_exempt_interest=0, filing_status="Single",
+                               excluded_income_addbacks=18000)
+        assert r["provisional_income"] == 38000.00
+        assert r["taxable_ss"] == 7900.00
+
+    def test_negative_addbacks_raise(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            compute_taxable_ss(20000, 20000, tax_exempt_interest=0, filing_status="Single",
+                               excluded_income_addbacks=-1)
+
+
+class TestComputeExcessSSWithholding:
+    """Schedule 3 line 11 — excess Social Security withholding, per person,
+    wage-aware (Topic 608)."""
+
+    def test_two_employers_over_max(self):
+        """2025 wage base 176100 -> max 10918.20; correctly-withheld 7000 +
+        6000 = 13000 (wages support both) -> 2081.80 refundable credit."""
+        r = compute_excess_ss_withholding([7000, 6000], [120000, 100000],
+                                          ss_wage_base=176100)
+        assert r["max_ss_tax"] == 10918.20
+        assert r["excess_credit"] == 2081.80
+        assert r["employer_over_withheld"] is False
+
+    def test_below_base_wages_never_creditable(self):
+        """Codex P2 round 6: two \\$50K W-2s each erroneously withholding
+        \\$6000 exceed the annual max, but wages support only 3100 each —
+        the whole 5800 overage is an employer error, credit \\$0."""
+        r = compute_excess_ss_withholding([6000, 6000], [50000, 50000],
+                                          ss_wage_base=176100)
+        assert r["excess_credit"] == 0.0
+        assert r["employer_error_amount"] == 5800.00
+        assert r["employer_over_withheld"] is True
+
+    def test_single_employer_over_is_flagged_not_credited(self):
+        """One employer over-withholding is corrected via the employer — the
+        return gets no credit, but the situation is surfaced."""
+        r = compute_excess_ss_withholding([12000], [176100], ss_wage_base=176100)
+        assert r["excess_credit"] == 0.0
+        assert r["employer_error_amount"] == 1081.80
+        assert r["employer_over_withheld"] is True
+
+    def test_multi_employer_individual_overage_clamped(self):
+        """Codex P2 (IRS Topic 608): with [12000, 1000], the 1081.80 that the
+        first employer withheld ABOVE what full-base wages support is an
+        employer error — only the clamped total counts: 10918.20 + 1000 - max
+        = 1000 creditable, NOT 2081.80."""
+        r = compute_excess_ss_withholding([12000, 1000], [176100, 20000],
+                                          ss_wage_base=176100)
+        assert r["excess_credit"] == 1000.00
+        assert r["employer_error_amount"] == 1081.80
+        assert r["employer_over_withheld"] is True
+
+    def test_two_employers_under_max_no_credit(self):
+        r = compute_excess_ss_withholding([5000, 4000], [90000, 70000],
+                                          ss_wage_base=176100)
+        assert r["excess_credit"] == 0.0
+        assert r["employer_over_withheld"] is False
+
+    def test_empty_list_is_zero(self):
+        r = compute_excess_ss_withholding([], [], ss_wage_base=176100)
+        assert r["excess_credit"] == 0.0
+        assert r["num_employers"] == 0
+
+    def test_wage_list_length_mismatch_raises(self):
+        with pytest.raises(ValueError, match="must parallel"):
+            compute_excess_ss_withholding([7000, 6000], [120000],
+                                          ss_wage_base=176100)
+
+    def test_none_wage_base_raises(self):
+        with pytest.raises(ValueError, match="wage_base cannot be None"):
+            compute_excess_ss_withholding([7000, 6000], [120000, 100000],
+                                          ss_wage_base=None)
+
+    def test_nan_entry_raises(self):
+        with pytest.raises(ValueError, match="finite non-negative"):
+            compute_excess_ss_withholding([7000, float("nan")], [120000, 100000],
+                                          ss_wage_base=176100)
+
+    def test_bool_entry_raises(self):
+        with pytest.raises(ValueError, match="bool"):
+            compute_excess_ss_withholding([7000, True], [120000, 100000],
+                                          ss_wage_base=176100)
+
+    def test_non_list_raises(self):
+        with pytest.raises(ValueError, match="must be a list"):
+            compute_excess_ss_withholding(13000, [120000], ss_wage_base=176100)
+
+
+class TestComputeExcessSDI:
+    """CA Form 540 line 74 — excess SDI, per person, cache-driven cap."""
+
+    def test_pre_2024_two_employers_over_cap(self):
+        """TY2023: 1.1% x 153164 = 1684.80 max; correctly-withheld 1200 + 900
+        = 2100 (wages support both) -> 415.20 credit."""
+        r = compute_excess_sdi([1200, 900], [153164, 100000], sdi_rate=0.011,
+                               sdi_wage_limit=153164, tax_year=2023)
+        assert r["max_sdi"] == 1684.80
+        assert r["excess_credit"] == 415.20
+
+    def test_below_limit_wages_never_creditable(self):
+        """Codex P2 round 6 (SDI side): erroneous over-withholding on
+        below-limit wages exceeds the annual max without any creditable
+        excess — wages support only 550 + 550."""
+        r = compute_excess_sdi([1000, 1000], [50000, 50000], sdi_rate=0.011,
+                               sdi_wage_limit=153164, tax_year=2023)
+        assert r["excess_credit"] == 0.0
+        assert r["employer_error_amount"] == 900.00
+
+    def test_no_wage_ceiling_means_no_credit(self):
+        """SB 951 removed the ceiling for TY2024+ (wage_limit None in the
+        cache) — there is no per-person maximum, so no excess-SDI credit;
+        flagged not_applicable instead of computing against a stale cap."""
+        r = compute_excess_sdi([3000, 2500], [250000, 200000], sdi_rate=0.012,
+                               sdi_wage_limit=None, tax_year=2025)
+        assert r["not_applicable"] is True
+        assert r["excess_credit"] == 0.0
+        assert "SB 951" in r["note"]
+
+    def test_post_2024_employer_error_still_reported(self):
+        """Codex P2 round 9: no ceiling != no employer errors — TY2024+ an
+        employer should withhold exactly wages x rate; $3000 on $100K at 1.2%
+        leaves an $1800 recover-from-employer amount even though the credit
+        path is not applicable."""
+        r = compute_excess_sdi([3000], [100000], sdi_rate=0.012,
+                               sdi_wage_limit=None, tax_year=2025)
+        assert r["not_applicable"] is True
+        assert r["excess_credit"] == 0.0
+        assert r["employer_error_amount"] == 1800.00
+        assert r["employer_over_withheld"] is True
+
+    def test_stale_cap_in_2024_plus_cache_is_ignored(self):
+        """Codex P2 round 3: the YEAR decides applicability — a stale pre-2024
+        wage limit left in a TY2024+ cache must not invent a line 74 credit."""
+        r = compute_excess_sdi([2000, 2000], [200000, 200000], sdi_rate=0.011,
+                               sdi_wage_limit=153164, tax_year=2024)
+        assert r["not_applicable"] is True
+        assert r["excess_credit"] == 0.0
+        assert "IGNORED" in r["note"]
+
+    def test_pre_2024_missing_cap_fails_closed(self):
+        """Codex P2 round 2: for a pre-2024 year the ceiling EXISTED — a None
+        wage limit means the cache is unfetched, and treating it as
+        no-ceiling would silently drop a refundable credit. Hard error."""
+        with pytest.raises(ValueError, match="missing from tax_law"):
+            compute_excess_sdi([1200, 900], [153164, 100000], sdi_rate=0.011,
+                               sdi_wage_limit=None, tax_year=2023)
+
+    def test_bad_tax_year_raises(self):
+        with pytest.raises(ValueError, match="4-digit year"):
+            compute_excess_sdi([1200, 900], [153164, 100000], sdi_rate=0.011,
+                               sdi_wage_limit=None, tax_year=True)
+        with pytest.raises(ValueError, match="4-digit year"):
+            compute_excess_sdi([1200, 900], [153164, 100000], sdi_rate=0.011,
+                               sdi_wage_limit=None, tax_year=24)
+
+    def test_single_employer_over_flagged(self):
+        r = compute_excess_sdi([2000], [153164], sdi_rate=0.011,
+                               sdi_wage_limit=153164, tax_year=2023)
+        assert r["excess_credit"] == 0.0
+        assert r["employer_error_amount"] == 315.20
+        assert r["employer_over_withheld"] is True
+
+    def test_multi_employer_individual_overage_clamped(self):
+        """Codex P2 (EDD DE 1964): [2000, 200] — the 315.20 one employer
+        withheld above what full-limit wages support is recovered from that
+        employer; creditable = 1684.80 + 200 - max = 200."""
+        r = compute_excess_sdi([2000, 200], [153164, 20000], sdi_rate=0.011,
+                               sdi_wage_limit=153164, tax_year=2023)
+        assert r["excess_credit"] == 200.00
+        assert r["employer_error_amount"] == 315.20
+
+    def test_wage_list_length_mismatch_raises(self):
+        with pytest.raises(ValueError, match="must parallel"):
+            compute_excess_sdi([1200, 900], [153164], sdi_rate=0.011,
+                               sdi_wage_limit=153164, tax_year=2023)
+
+    def test_invalid_rate_raises(self):
+        with pytest.raises(ValueError, match="finite positive"):
+            compute_excess_sdi([1200, 900], [153164, 100000], sdi_rate=0,
+                               sdi_wage_limit=153164, tax_year=2023)
+
+    def test_nan_limit_raises(self):
+        with pytest.raises(ValueError, match="finite positive"):
+            compute_excess_sdi([1200, 900], [153164, 100000], sdi_rate=0.011,
+                               sdi_wage_limit=float("nan"), tax_year=2023)
 
 
 class TestCoerceNumeric:

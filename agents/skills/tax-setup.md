@@ -185,7 +185,11 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   flags in `/tax-roth-convert`; leave as `[]` if not relevant to the taxpayer.
 
 **State (based on taxpayer's state):**
-- For CA: Search `"FTB California {year} tax brackets"`, `"California {year} standard deduction"`
+- For CA: Search `"FTB California {year} tax brackets"`, `"California {year} standard deduction"`,
+  and `"California SDI rate {year}"` → populate `state.sdi_rate`. Populate
+  `state.sdi_wage_limit` ONLY for pre-2024 years (SB 951 removed the SDI wage
+  ceiling from TY2024 — leave it null for 2024+, which correctly disables the
+  excess-SDI credit in `/tax-compute`)
 - For NY: Search `"New York {year} income tax brackets"`
 - For other states: Search `"{state} {year} income tax rates"`
 

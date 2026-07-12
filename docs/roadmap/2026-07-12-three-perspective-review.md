@@ -445,8 +445,14 @@ Build order by persona coverage × error cost:
   `meta.limitations` manifest printed on PDF page 1 (tests → 1140). Five new
   interview flags (`has_iso_exercise`, `moved_states_this_year`,
   `nyc_resident`, `has_household_employees`, `has_dependent_unearned_income`).
-- **Next (Q3 per sequencing):** Epic A (parse ledger + tie-out), D2/D3/D4,
-  G2 (FBAR set-difference — rides the ledger), C3, E6 (excess SDI).
+- **D2 (taxable-SS worksheet), D4 (excess-SS credit), E6 (CA excess SDI): ✅
+  shipped.** `compute_taxable_ss` (Pub 915 worksheet incl. MFS paths + the
+  muni-interest provisional-income input), `compute_excess_ss_withholding`
+  (per-person, multi-employer only), `compute_excess_sdi` (cache-driven cap;
+  TY2024+ SB 951 no-ceiling → not-applicable). Tests → 1188.
+- **Next (Q3 per sequencing):** Epic A (parse ledger + tie-out), D3
+  (Form 2210 at filing), G2 (FBAR set-difference — rides the ledger), C3
+  (persist /tax-review output).
 
 ### Decisions log
 

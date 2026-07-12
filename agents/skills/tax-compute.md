@@ -140,10 +140,44 @@ Line 3a: Qualified dividends (sum of 1099-DIV Box 1b)
 Line 3b: Ordinary dividends (sum of 1099-DIV Box 1a)
 Line 4a/4b: IRA distributions (if applicable)
 Line 5a/5b: Pensions (1099-R; Code G rollover = 5a only, 5b = $0)
+Line 6a/6b: Social Security benefits (6a = SSA-1099 box 5 total;
+            6b = taxable amount from compute_taxable_ss below)
 Line 7: Capital gain/loss from Schedule D line 16
 Line 8: Other income from Schedule 1 (Schedule C net, etc.)
-Line 9: TOTAL INCOME = sum of above
+Line 9: TOTAL INCOME = 1z + 2b + 3b + 4b + 5b + 6b + 7 + 8
+        (6b — the TAXABLE benefit amount — is IN the sum; omitting it
+        understates AGI by exactly what the worksheet just computed)
 ```
+
+**Taxable Social Security (line 6b):** When any SSA-1099 exists, use
+`compute_taxable_ss()` from `agents/lib/tax_computations.py` — never hand-run
+the worksheet:
+- `ss_benefits` = SSA-1099 box 5, both spouses combined on a joint return
+- `other_income` = all other 1040 income (lines 1z, 2b, 3b, 4b, 5b, 7, 8)
+- `tax_exempt_interest` = line 2a — REQUIRED input: munis raise provisional
+  income even though untaxed (the classic surprise)
+- `adjustments` = Schedule 1 above-the-line adjustments
+- `excluded_income_addbacks` = Pub 915 line-5-region add-backs that re-enter
+  provisional income: Form 2555 FEIE/housing exclusions, excluded adoption
+  benefits (8839), **Form 8815 excluded savings-bond interest** (the worksheet
+  uses PRE-exclusion Schedule B line 2, not the post-exclusion 1040 line 2b —
+  pass the excluded portion here), excluded territory income — REQUIRED for
+  `lives_abroad` taxpayers and Form 8815 filers; omitting them understates
+  line 6b
+- `filing_status` is REQUIRED (no default) and MFS filers MUST pass
+  `lived_apart_from_spouse_all_year` (hard error otherwise) — it selects
+  between the Single-style worksheet and the $0-base 85% path.
+- **ORDERING:** compute the Schedule 1 above-the-line adjustments (Step 4's
+  line 10 inputs — ½ SE tax, deductible IRA/HSA, student-loan interest, etc.)
+  BEFORE this worksheet and pass them as `adjustments` — leaving the default 0
+  because "Step 4 comes later" overstates provisional income and line 6b. If a
+  deduction itself depends on MAGI-including-6b (the deductible-IRA phase-out),
+  use the Pub 590-A Appendix B combined worksheet rather than iterating by hand.
+- **Lump-sum check:** if any SSA-1099/RRB-1099 shows amounts paid **for an
+  earlier year**, pass them as `lump_sum_prior_year_benefits` and surface the
+  returned `warning`: the Pub 915 lump-sum election (Worksheets 2-4, line 6c)
+  can only LOWER taxable benefits and is NOT modeled — the computed line 6b is
+  an upper bound the user should verify in tax software before filing.
 
 **Capital loss carryforward (Schedule D):** When line 16 is a net LOSS, cap the
 line 7 deduction at $3,000 ($1,500 MFS) and fill
@@ -321,6 +355,32 @@ Line 35a: REFUND = Line 34 (or portion to refund)
 Line 37: Amount owed = Line 24 - Line 33 (if positive)
 ```
 
+**Excess Social Security withholding (Schedule 3 line 11 → line 31):** Run
+`compute_excess_ss_withholding()` for **EVERY person with at least one W-2** —
+no trigger condition. It is a cheap pure function that returns zeros when
+nothing is wrong, and every conditional trigger misses an employer-error edge
+case (e.g. $6,000 withheld on $50,000 of wages is an error well below the
+annual max). One call PER PERSON (never pool a couple's
+Box 4 amounts) with that person's per-employer W-2 Box 4 list, **the matching
+per-employer SS-wage list = Box 3 + Box 7 (Social Security tips — Box 4 covers
+both, so Box 3 alone misclassifies a tipped employee's correct withholding as
+employer error)** (withholding alone can't establish the
+credit — erroneous over-withholding on below-base wages is an employer error,
+not a credit), and
+`federal.social_security.wage_base` from tax_law JSON. If the result has a
+nonzero `employer_error_amount`, tell the user to recover that portion from the
+employer (or Form 843) — per IRS Topic 608 an individual employer's
+over-withholding is NEVER a credit on the return, even alongside other
+employers; only `excess_credit` goes on Schedule 3 line 11 — **write it to
+`schedule_3_line_11_excess_ss` in result.json and include it in
+`line_31_schedule3_part2` → line 33** (persisting it keeps the refundable
+payment auditable for `/tax-generate` and `/tax-verify` instead of silently
+folding into the total). **Railroad
+employees (Tier 1 RRTA, W-2 box 14):** the helper models SS tax only — when
+any employer withheld Tier 1 RRTA, compute Schedule 3 line 11 by hand per
+Topic 608 (excess tier 1 RRTA, and combined SS + tier 1 over the base, are
+also creditable) and tell the user the helper's figure would understate it.
+
 ### Step 10: State Return
 
 Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
@@ -338,7 +398,23 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
 8. CA tax after credits
 9. Mental health surcharge (1% on income > $1M)
 10. CA withholding from W-2 Box 17
-11. CA refund/owed
+11. Excess SDI/VPDI credit (Form 540 line 74): run `compute_excess_sdi()`
+    for EVERY person with any CA-wage W-2 — no trigger condition (cheap pure
+    function, zeros when nothing is wrong; conditional triggers miss
+    below-cap wage-relative employer errors, and TY2024+ has no cap to
+    exceed at all yet still surfaces recover-from-employer amounts). One
+    call PER PERSON with the per-employer
+    W-2 Box 14 SDI amounts, **the matching per-employer CA-wages-subject-to-SDI
+    list** (same wage-eligibility rule as the federal credit),
+    `state.sdi_rate` / `state.sdi_wage_limit` from
+    tax_law JSON, **and the tax year** — the year disambiguates a null wage
+    limit: for TY2024+ (SB 951 removed the ceiling) null correctly yields
+    "not applicable"; for pre-2024 years null HARD-ERRORS (the cap existed —
+    fetch it; treating it as no-ceiling would silently drop a refundable
+    credit). A nonzero `employer_error_amount` means that portion is
+    recovered from the employer (EDD DE 1964), not the return; only
+    `excess_credit` goes on the 540. Write it to `ca_excess_sdi_credit`.
+12. CA refund/owed
 
 **Other states:** Follow state-specific rules from `tax_law_{year}.json`.
 

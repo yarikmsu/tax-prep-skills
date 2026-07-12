@@ -953,6 +953,421 @@ def compute_qbi_deduction(
     return result
 
 
+# Social Security Benefits Worksheet base amounts (IRC §86) — statutory-fixed
+# and UNINDEXED since 1984/1993, so they are structural constants, not tax_law
+# cache fields. Keyed by treatment: MFS-lived-with-spouse has a $0 base and its
+# own 85% shortcut path.
+_SS_BASE_AMOUNT = {"single": 25000.0, "mfj": 32000.0}
+_SS_SECOND_THRESHOLD = {"single": 34000.0, "mfj": 44000.0}
+
+_CANONICAL_FILING_STATUSES = {"SINGLE", "MFJ", "MFS", "HOH", "QSS"}
+
+
+def _normalize_filing_status(filing_status) -> str:
+    """Canonical filing-status validation (repo VALUE-validation rule):
+    'Married Filing Jointly' or '' must hard-error, not fall through to a
+    Single-shaped default."""
+    if not isinstance(filing_status, str):
+        raise ValueError(f"filing_status must be a string, got {type(filing_status).__name__}")
+    fs = filing_status.strip().upper()
+    if fs not in _CANONICAL_FILING_STATUSES:
+        raise ValueError(
+            f"filing_status must be one of Single/MFJ/MFS/HoH/QSS, got {filing_status!r}"
+        )
+    return fs
+
+
+def compute_taxable_ss(
+    ss_benefits: float,
+    other_income: float,
+    tax_exempt_interest: float = None,
+    adjustments: float = 0.0,
+    filing_status: str = None,
+    lived_apart_from_spouse_all_year: bool = None,
+    lump_sum_prior_year_benefits: float = 0.0,
+    excluded_income_addbacks: float = 0.0,
+) -> dict:
+    """Taxable Social Security benefits — the 1040 line 6b worksheet (Pub 915).
+
+    Args:
+        ss_benefits: Total benefits, SSA-1099 box 5 (both spouses combined on
+            a joint return). Negative net benefits → $0 taxable.
+        other_income: All other income that lands on the 1040 EXCEPT the SS
+            benefits themselves (lines 1z, 2b, 3b, 4b, 5b, 7, 8).
+        tax_exempt_interest: Line 2a — counts toward provisional income even
+            though it is not taxed (the classic muni-bond surprise). REQUIRED:
+            pass an explicit 0 when there is no line 2a amount — a silent 0
+            default would let an accidental omission understate line 6b for
+            exactly the taxpayers the input exists for.
+        adjustments: Schedule 1 above-the-line adjustments (worksheet line 5).
+        filing_status: Single/MFJ/MFS/HoH/QSS (case-insensitive; value-
+            validated). REQUIRED — no default: silently assuming MFJ would
+            report $0 taxable for a Single/HoH/QSS filer with provisional
+            income between the $25K and $32K bases (fail closed, like every
+            other load-bearing tax fact).
+        excluded_income_addbacks: Pub 915 Worksheet 1 line-5-region add-backs
+            that re-enter provisional income even though excluded from the
+            1040: Form 2555 foreign earned income/housing exclusions, excluded
+            adoption benefits (Form 8839), Form 8815 excluded Series EE/I
+            savings-bond interest (the worksheet uses Schedule B line 2, not
+            the post-exclusion 1040 line 2b), and excluded U.S.-territory
+            income. Omitting these for an affected taxpayer UNDERSTATES
+            line 6b.
+        lived_apart_from_spouse_all_year: REQUIRED for MFS (hard error when
+            None) — it selects between the Single-style worksheet (lived apart
+            all year) and the $0-base 85% path (lived together at any point).
+            Same load-bearing-flag rule as the retirement dashboard.
+        lump_sum_prior_year_benefits: The portion of box 5 paid FOR AN EARLIER
+            year (SSA-1099 "paid in {year} for {prior year}" boxes). The Pub
+            915 lump-sum election (Worksheets 2-4, the line 6c checkbox) can
+            only LOWER taxable benefits and is NOT modeled — when this is > 0
+            the result carries `lump_sum_election_available` + a warning that
+            the regular-worksheet figure is an UPPER BOUND to verify in tax
+            software. The amount is already inside ss_benefits; it changes
+            nothing numerically here.
+
+    Returns:
+        Dict with the worksheet lines: provisional_income, base_amount,
+        taxable_ss (→ 1040 line 6b), taxable_fraction, and the path taken.
+
+    Raises:
+        ValueError: On non-finite/negative-where-invalid inputs, a
+            non-canonical filing status, or MFS without the lived-apart flag.
+    """
+    if tax_exempt_interest is None:
+        raise ValueError(
+            "tax_exempt_interest is required — pass 1040 line 2a, or an "
+            "explicit 0 when there is none. Munis raise provisional income "
+            "even though untaxed; a silent default would understate line 6b."
+        )
+    try:
+        benefits = _coerce_numeric(ss_benefits, default=None)
+        other = _coerce_numeric(other_income, default=None)
+        tei = _coerce_numeric(tax_exempt_interest, default=None)
+        adj = _coerce_numeric(adjustments, default=None)
+        lump = _coerce_numeric(lump_sum_prior_year_benefits, default=None)
+        addbacks = _coerce_numeric(excluded_income_addbacks, default=None)
+    except TypeError:
+        raise ValueError("compute_taxable_ss inputs must be numeric, got bool")
+    if None in (benefits, other, tei, adj, lump, addbacks) or not all(
+        math.isfinite(x) for x in (benefits, other, tei, adj, lump, addbacks)
+    ):
+        raise ValueError("compute_taxable_ss inputs must be finite numbers")
+    if tei < 0 or adj < 0 or lump < 0 or addbacks < 0:
+        raise ValueError(
+            "tax_exempt_interest, adjustments, lump_sum_prior_year_benefits, "
+            "and excluded_income_addbacks cannot be negative"
+        )
+    if filing_status is None:
+        raise ValueError(
+            "filing_status is required (Single/MFJ/MFS/HoH/QSS) — silently "
+            "defaulting would apply the wrong base amount and can report $0 "
+            "taxable for a Single filer between the $25K and $32K bases."
+        )
+
+    def _with_lump_sum_flag(result: dict) -> dict:
+        result["lump_sum_election_available"] = lump > 0
+        if lump > 0:
+            result["warning"] = (
+                "Box 5 includes benefits paid for an earlier year: the Pub 915 "
+                "lump-sum election (Worksheets 2-4, line 6c) can only LOWER "
+                "taxable benefits and is NOT modeled — this regular-worksheet "
+                "figure is an UPPER BOUND. Verify the election in tax software "
+                "before filing."
+            )
+        return result
+
+    fs = _normalize_filing_status(filing_status)
+    if fs == "MFS":
+        if lived_apart_from_spouse_all_year is None:
+            raise ValueError(
+                "MFS requires lived_apart_from_spouse_all_year (true/false) — "
+                "it decides between the Single-style worksheet and the "
+                "$0-base 85% path. Set flags.lived_apart_from_spouse_all_year."
+            )
+        if not isinstance(lived_apart_from_spouse_all_year, bool):
+            raise ValueError("lived_apart_from_spouse_all_year must be a bool")
+
+    if benefits <= 0:
+        return _with_lump_sum_flag({
+            "ss_benefits": round(max(benefits, 0.0), 2), "provisional_income": 0.0,
+            "base_amount": None, "taxable_ss": 0.0, "taxable_fraction": 0.0,
+            "path": "no_benefits",
+        })
+
+    half_benefits = benefits / 2.0
+    provisional = half_benefits + other + tei + addbacks - adj
+
+    if fs == "MFS" and lived_apart_from_spouse_all_year is False:
+        # Lived with spouse at any point: base is $0 — taxable is the lesser
+        # of 85% of provisional income and 85% of benefits.
+        taxable = max(0.0, min(0.85 * provisional, 0.85 * benefits))
+        return _with_lump_sum_flag({
+            "ss_benefits": round(benefits, 2),
+            "provisional_income": round(provisional, 2),
+            "base_amount": 0.0,
+            "taxable_ss": round(taxable, 2),
+            "taxable_fraction": round(taxable / benefits, 4),
+            "path": "mfs_lived_together_85pct",
+        })
+
+    # Pub 915 groups QSS with Single/HoH at the $25,000 base and $9,000 tier
+    # span — ONLY MFJ gets $32,000/$12,000 (and MFS-lived-apart also uses the
+    # single base). QSS-as-joint here would wrongly report $0 taxable for
+    # provisional income between $25K and $32K.
+    key = "mfj" if fs == "MFJ" else "single"
+    base = _SS_BASE_AMOUNT[key]
+    second = _SS_SECOND_THRESHOLD[key]
+
+    if provisional <= base:
+        taxable = 0.0
+    else:
+        excess = provisional - base  # worksheet line 8
+        tier1_span = second - base  # line 9 ($9,000 / $12,000)
+        over_second = max(0.0, excess - tier1_span)  # line 10
+        tier1 = min(excess, tier1_span)  # line 11
+        taxable = min(
+            min(half_benefits, tier1 / 2.0) + 0.85 * over_second,  # line 15
+            0.85 * benefits,  # line 16 cap
+        )
+    return _with_lump_sum_flag({
+        "ss_benefits": round(benefits, 2),
+        "provisional_income": round(provisional, 2),
+        "base_amount": base,
+        "taxable_ss": round(taxable, 2),
+        "taxable_fraction": round(taxable / benefits, 4),
+        "path": "worksheet",
+    })
+
+
+def _multi_employer_excess(
+    withheld: "list[float]",
+    wages: "list[float]",
+    rate: float,
+    wage_cap: float,
+) -> "tuple[float, float]":
+    """Split withholding above a per-person maximum into (return_credit,
+    employer_error_amount).
+
+    IRS Topic 608 (and EDD DE 1964 for CA SDI): anything an employer withheld
+    beyond what that employer's SUBJECT WAGES support — min(wages, cap) × rate
+    — is an employer error, recovered from the employer (or Form 843), NEVER
+    as a credit on the return. Withholding alone cannot establish the credit:
+    two below-base W-2s with erroneous over-withholding can exceed the annual
+    max without any creditable excess existing. Only the correctly-withheld
+    portions count, and only their multi-employer total above the per-person
+    max is creditable.
+    """
+    clamped_total = 0.0
+    employer_error = 0.0
+    for w_amt, wg in zip(withheld, wages):
+        proper = min(wg, wage_cap) * rate  # what this employer SHOULD have withheld, at most
+        allowed = min(w_amt, proper)
+        clamped_total += allowed
+        employer_error += w_amt - allowed
+    per_person_max = round(wage_cap * rate, 2)
+    credit = (max(0.0, round(clamped_total - per_person_max, 2))
+              if len(withheld) >= 2 else 0.0)
+    return credit, round(employer_error, 2)
+
+
+def _validated_withholding_list(withheld_by_employer, what: str) -> "list[float]":
+    if not isinstance(withheld_by_employer, list):
+        raise ValueError(f"{what} must be a list of per-employer amounts")
+    out = []
+    for i, raw in enumerate(withheld_by_employer):
+        try:
+            v = _coerce_numeric(raw, default=None)
+        except TypeError:
+            raise ValueError(f"{what}[{i}] must be numeric, got bool")
+        if v is None or not math.isfinite(v) or v < 0:
+            raise ValueError(f"{what}[{i}] must be a finite non-negative number, got {raw!r}")
+        out.append(v)
+    return out
+
+
+def compute_excess_ss_withholding(
+    withheld_by_employer: list,
+    ss_wages_by_employer: list,
+    ss_wage_base: float,
+    employee_rate: float = 0.062,
+) -> dict:
+    """Excess Social Security withholding credit (Schedule 3 line 11).
+
+    PER PERSON: each spouse's employers are evaluated separately — never pool
+    a couple's Box 4 amounts. The credit exists only for the MULTI-employer
+    case, and per IRS Topic 608 the amount any INDIVIDUAL employer withheld
+    beyond what that employer's SS wages support (min(Box 3, base) × 6.2%) is
+    an employer error recovered from that employer (or Form 843) — reported as
+    employer_error_amount, never credited. Wages are REQUIRED: withholding
+    alone can exceed the annual max on below-base wages (employer rate error)
+    with no creditable excess at all.
+
+    NOT MODELED — Tier 1 RRTA: Topic 608 also credits excess tier 1 railroad
+    retirement tax (and combined SS + tier 1 RRTA over the wage base) on
+    Schedule 3 line 11. This function accepts only SS Box 4/Box 3+7 figures —
+    a taxpayer with a railroad employer must compute the line 11 amount per
+    Topic 608 by hand; feeding only the SS amounts here UNDERSTATES the credit
+    for that (rare, out-of-persona) case.
+
+    Args:
+        withheld_by_employer: One SS-tax figure (W-2 Box 4) per employer for
+            ONE person.
+        ss_wages_by_employer: The matching SS wages per employer — W-2 **Box 3
+            PLUS Box 7 (Social Security tips)**, since Box 4 withholding covers
+            both — parallel to withheld_by_employer (lengths must match).
+            Passing Box 3 alone misclassifies a tipped employee's correct
+            withholding as employer error and understates the credit.
+        ss_wage_base: The year's SS wage base (tax_law federal.social_security
+            .wage_base) — hard error when None (unfetched cache must not
+            silently compute a $0 maximum).
+        employee_rate: Employee SS rate (0.062).
+
+    Returns:
+        Dict with max_ss_tax, total_withheld, excess_credit (Schedule 3 line
+        11), employer_error_amount + employer_over_withheld (recover from the
+        employer, not the return).
+    """
+    if ss_wage_base is None:
+        raise ValueError(
+            "ss_wage_base cannot be None. Load from tax_law JSON "
+            "federal.social_security.wage_base."
+        )
+    try:
+        base = _coerce_numeric(ss_wage_base, default=None)
+        rate = _coerce_numeric(employee_rate, default=None)
+    except TypeError:
+        raise ValueError("ss_wage_base/employee_rate must be numeric, got bool")
+    if None in (base, rate) or not all(math.isfinite(x) for x in (base, rate)) \
+            or base <= 0 or rate <= 0:
+        raise ValueError("ss_wage_base and employee_rate must be finite positive numbers")
+
+    amounts = _validated_withholding_list(withheld_by_employer, "withheld_by_employer")
+    wages = _validated_withholding_list(ss_wages_by_employer, "ss_wages_by_employer")
+    if len(wages) != len(amounts):
+        raise ValueError(
+            f"ss_wages_by_employer must parallel withheld_by_employer "
+            f"({len(amounts)} employers, got {len(wages)} wage figures)."
+        )
+    max_ss = round(base * rate, 2)
+    total = round(sum(amounts), 2)
+    credit, employer_error = _multi_employer_excess(amounts, wages, rate, base)
+    return {
+        "max_ss_tax": max_ss,
+        "total_withheld": total,
+        "num_employers": len(amounts),
+        "excess_credit": credit,
+        "employer_error_amount": employer_error,
+        "employer_over_withheld": employer_error > 0,
+    }
+
+
+# SB 951 removed the CA SDI taxable wage ceiling starting TY2024 — from that
+# year there is no per-person maximum and therefore no excess-SDI credit.
+_SDI_NO_CEILING_FROM = 2024
+
+
+def compute_excess_sdi(
+    sdi_by_employer: list,
+    sdi_wages_by_employer: list,
+    sdi_rate: float,
+    sdi_wage_limit: float,
+    tax_year: int,
+) -> dict:
+    """CA excess-SDI/VPDI credit (Form 540 line 74) — per person, like the
+    federal excess-SS credit.
+
+    The tax year DISAMBIGUATES a None wage limit: for TY2024+ (SB 951) None
+    is CORRECT — no ceiling exists, so the credit is not applicable. For
+    pre-2024 years a ceiling DID exist, so a None limit means the cache is
+    unfetched and the function HARD-ERRORS instead of silently reporting $0
+    for a refundable credit the taxpayer is owed (fail closed, not fail-$0).
+
+    Args:
+        sdi_by_employer: One SDI/VPDI figure (W-2 Box 14) per employer for ONE
+            person.
+        sdi_wages_by_employer: The matching CA wages subject to SDI per
+            employer, parallel to sdi_by_employer (lengths must match).
+        sdi_rate: CA SDI rate (tax_law state.sdi_rate).
+        sdi_wage_limit: SDI taxable wage ceiling (tax_law state.sdi_wage_limit);
+            None is valid ONLY for tax_year >= 2024.
+        tax_year: The return's tax year (4-digit int).
+
+    Per EDD DE 1964, the amount any individual employer withheld beyond what
+    that employer's SDI wages support (min(wages, limit) × rate) is recovered
+    from that employer, not via the excess-SDI claim — the same wage-aware
+    per-employer clamp as the federal excess-SS credit applies (erroneous
+    over-withholding on below-limit wages is never creditable).
+
+    Returns:
+        Dict with max_sdi, total_withheld, excess_credit, not_applicable,
+        employer_error_amount + employer_over_withheld.
+    """
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int) \
+            or not (2000 <= tax_year <= 2099):
+        raise ValueError(f"tax_year must be a 4-digit year integer, got {tax_year!r}")
+    amounts = _validated_withholding_list(sdi_by_employer, "sdi_by_employer")
+    wages = _validated_withholding_list(sdi_wages_by_employer, "sdi_wages_by_employer")
+    if len(wages) != len(amounts):
+        raise ValueError(
+            f"sdi_wages_by_employer must parallel sdi_by_employer "
+            f"({len(amounts)} employers, got {len(wages)} wage figures)."
+        )
+    total = round(sum(amounts), 2)
+    try:
+        rate = _coerce_numeric(sdi_rate, default=None)
+    except TypeError:
+        raise ValueError("sdi_rate must be numeric, got bool")
+    if rate is None or not math.isfinite(rate) or rate <= 0:
+        raise ValueError("sdi_rate must be a finite positive number")
+
+    # The YEAR decides applicability, not the cache: for TY2024+ SB 951 means
+    # no ceiling regardless of what the cache carries — a stale pre-2024
+    # sdi_wage_limit left in a newer cache must not invent a line 74 credit.
+    if tax_year >= _SDI_NO_CEILING_FROM:
+        # No ceiling ≠ no employer errors: each employer should still withhold
+        # exactly wages × rate, and anything above that is recovered from the
+        # employer — hiding it here would contradict the guidance in the note.
+        employer_error = round(
+            sum(max(0.0, a - wg * rate) for a, wg in zip(amounts, wages)), 2)
+        note = ("No SDI wage ceiling (SB 951, TY2024+) — no excess-SDI "
+                "credit exists; an employer that over-withheld must "
+                "refund it directly.")
+        if sdi_wage_limit is not None:
+            note += (" A stale state.sdi_wage_limit in the tax_law cache was "
+                     "IGNORED — computing against it would invent a credit; "
+                     "clear the field for TY2024+.")
+        return {
+            "max_sdi": None, "total_withheld": total, "num_employers": len(amounts),
+            "excess_credit": 0.0, "employer_error_amount": employer_error,
+            "employer_over_withheld": employer_error > 0,
+            "not_applicable": True,
+            "note": note,
+        }
+    if sdi_wage_limit is None:
+        raise ValueError(
+            f"TY{tax_year} had an SDI wage ceiling, but state.sdi_wage_limit "
+            "is missing from tax_law — fetch it. Treating a missing pre-2024 "
+            "cap as 'no ceiling' would silently drop a refundable credit."
+        )
+    try:
+        limit = _coerce_numeric(sdi_wage_limit, default=None)
+    except TypeError:
+        raise ValueError("sdi_wage_limit must be numeric, got bool")
+    if limit is None or not math.isfinite(limit) or limit <= 0:
+        raise ValueError("sdi_wage_limit must be a finite positive number")
+
+    max_sdi = round(rate * limit, 2)
+    credit, employer_error = _multi_employer_excess(amounts, wages, rate, limit)
+    return {
+        "max_sdi": max_sdi, "total_withheld": total, "num_employers": len(amounts),
+        "excess_credit": credit,
+        "employer_error_amount": employer_error,
+        "employer_over_withheld": employer_error > 0,
+        "not_applicable": False,
+    }
+
+
 def check_form_8938_required(
     accounts: list[dict],
     filing_status: str,

@@ -69,6 +69,9 @@
     "line_25c_other_withholding": 0,
     "line_25d_total_withholding": 0,
     "line_26_estimated_payments": 0,
+    "line_31_schedule3_part2": 0,
+    "schedule_3_line_11_excess_ss": 0,
+    "_note_excess_ss": "Schedule 3 line 11: per-person compute_excess_ss_withholding() excess_credit sum (multi-employer over the wage base). Flows into line_31_schedule3_part2 -> line_33. Persisted here so /tax-generate and /tax-verify can audit the refundable payment instead of it silently folding into line 33.",
     "line_33_total_payments": 0,
     "line_34_overpayment": 0,
     "line_35a_refund": 0,
@@ -303,6 +306,8 @@
     "ca_total_tax": 0,
     "ca_withholding_box17": 0,
     "ca_sdi_box14": 0,
+    "ca_excess_sdi_credit": 0,
+    "_note_excess_sdi": "Form 540 line 74: per-person compute_excess_sdi() when 2+ employers over-withheld SDI. TY2024+ (SB 951 removed the wage ceiling): always 0 / not applicable.",
     "ca_refund": 0,
     "note": null
   },

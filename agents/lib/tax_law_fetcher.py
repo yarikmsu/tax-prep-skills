@@ -256,6 +256,12 @@ def create_state_template(state: str) -> dict:
                 "threshold": 1000000,
             },
             "sdi_rate": None,
+            # SDI taxable wage ceiling. SB 951 REMOVED the ceiling starting
+            # TY2024 — leave None for 2024+ (compute_excess_sdi then reports
+            # the excess-SDI credit as not applicable, because without a
+            # per-person maximum no excess can exist). Fetch the FTB cap only
+            # for pre-2024 years.
+            "sdi_wage_limit": None,
             "no_city_income_tax": True,
         },
         "NY": {
@@ -319,6 +325,16 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
 
     # Walk the structure to find None values (skip _meta and non-rate keys)
     null_fields = []
+    # state.sdi_wage_limit is LEGITIMATELY null for TY2024+: SB 951 removed
+    # the CA SDI wage ceiling, and compute_excess_sdi treats None as
+    # not-applicable for those years. Without this exception a correctly
+    # populated 2024+ cache reports INCOMPLETE forever and skills keep asking
+    # to re-fetch a value that must not exist. Pre-2024 caches still flag it
+    # (the ceiling existed and must be fetched). Keep the effective year in
+    # sync with tax_computations._SDI_NO_CEILING_FROM.
+    _sdi_null_is_valid = (isinstance(data.get("tax_year"), int)
+                          and not isinstance(data.get("tax_year"), bool)
+                          and data["tax_year"] >= 2024)
     # MAINTENANCE: Two categories are skipped during None/empty scanning:
     #   1. Keys prefixed with "_" (metadata/comments) — auto-skipped
     #   2. Non-prefixed descriptive fields — add to _SKIP_KEYS below
@@ -344,6 +360,8 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
             for k, v in obj.items():
                 if k.startswith("_") or k in _SKIP_KEYS:
                     continue
+                if k == "sdi_wage_limit" and v is None and _sdi_null_is_valid:
+                    continue
                 child_path = f"{path}.{k}" if path else k
                 if v is None:
                     if k in _EXPECT_STRUCTURED:
@@ -362,6 +380,22 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                     _walk(item, f"{path}[{i}]")
 
     _walk(data)
+
+    # Inverse of the sdi_wage_limit null exception above: the walker only
+    # visits PRESENT keys, so a pre-2024 CA cache created before the field
+    # existed (key absent entirely) would report FRESH even though the cap is
+    # required for the refundable excess-SDI credit — /tax-compute would later
+    # hard-error with no refetch prompt. Flag the missing key explicitly.
+    state_block = data.get("state")
+    if (isinstance(state_block, dict)
+            and state_block.get("name") == "California"
+            and isinstance(data.get("tax_year"), int)
+            and not isinstance(data.get("tax_year"), bool)
+            and data["tax_year"] < 2024
+            and "sdi_wage_limit" not in state_block):
+        null_fields.append(
+            "state.sdi_wage_limit (key absent — the pre-2024 SDI wage ceiling "
+            "is required for the excess-SDI credit)")
 
     # Flag empty exchange_rates — skills depend on rates for foreign conversions
     if isinstance(data.get("exchange_rates"), dict) and not data["exchange_rates"]:
