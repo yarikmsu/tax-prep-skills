@@ -54,19 +54,37 @@ Before generating the PDF, verify result.json internal consistency:
    - If `has_hsa=true` but no Form 8889 section: warn
    - If `has_capital_gains=true` but no Schedule D: warn
 
-If ANY check fails: print warnings and ask "Proceed with PDF generation anyway, or fix first?"
+6. **Limitations manifest check (C2) — HARD STOP, not a warning:**
+   - `meta.limitations` must be a non-empty list (it always carries at least
+     the state-scope note after `/tax-compute` Step 12). If it is empty or
+     missing: **STOP — do not generate.** Re-run `/tax-compute` Step 12 (or the
+     capability gate directly: `python3 agents/lib/capabilities.py --workspace
+     . --json`) to populate it first. This check is deliberately EXCLUDED from
+     the "proceed anyway?" prompt below: a PDF without the page-1 scope box
+     presents itself as complete coverage, which is the exact failure C2 exists
+     to prevent.
+
+If any of checks 1-5 fails: print warnings and ask "Proceed with PDF generation anyway, or fix first?" (Check 6 is a hard stop and is never bypassed this way.)
 
 ### 2. Check PDF Generator
 
 If `generate_tax_pdf.py` does not exist, create one that:
 - Reads `result.json`
 - Uses reportlab to produce a multi-page PDF
+- **Renders a "Scope & Limitations" box on PAGE 1** from `meta.limitations` —
+  every line, verbatim, before any dollar figures. The taxpayer must see what
+  this return does NOT cover (acknowledged gaps, manual worksheets, state
+  scope) with the same prominence as the results themselves.
 - Includes all sections present in result.json
 - Skips sections that are absent or have `_include_if` markers
 - Follows the same format as the existing generator (if one exists)
 
 If `generate_tax_pdf.py` already exists, verify it references all current sections in result.json.
 If result.json has new sections the PDF generator doesn't handle, update the generator.
+**Specifically check that the existing generator renders `meta.limitations` as the
+page-1 "Scope & Limitations" box** — generators created before the C2 manifest
+existed don't, and reusing one silently drops the box even though the
+completeness check passed. If it doesn't, update it before generating.
 
 ### 3. Generate PDF
 

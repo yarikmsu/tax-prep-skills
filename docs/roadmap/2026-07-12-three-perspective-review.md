@@ -435,6 +435,19 @@ Build order by persona coverage × error cost:
    F4/F5, A3. **Community track (unscheduled):** D7 (EITC), NYC/NY/part-year, G1
    (1099-DA — reactivates at P1 if a crypto user appears).
 
+### Status
+
+- **Sprint 1 ("Now" — correctness): ✅ shipped.** B1–B5 + B7 (engine fixes) and
+  B8/E1 (CA-first labeling) merged in PR #27 after five review rounds to
+  convergence (tests 1049 → 1099).
+- **C1/C2 (scope guards): ✅ shipped.** `agents/lib/capabilities.py` capability
+  gate (`/tax-compute` step 0.7, blocking + per-rule acknowledgment) and the
+  `meta.limitations` manifest printed on PDF page 1 (tests → 1140). Five new
+  interview flags (`has_iso_exercise`, `moved_states_this_year`,
+  `nyc_resident`, `has_household_employees`, `has_dependent_unearned_income`).
+- **Next (Q3 per sequencing):** Epic A (parse ledger + tie-out), D2/D3/D4,
+  G2 (FBAR set-difference — rides the ledger), C3, E6 (excess SDI).
+
 ### Decisions log
 
 **Resolved 2026-07-12 (product owner):** (1) both preparer AND checker — Epic F

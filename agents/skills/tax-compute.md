@@ -43,6 +43,30 @@ Before any computation, verify tax law data is current:
    Top bracket: {rate}% on income over ${threshold}
    ```
 
+### Step 0.7: Capability Gate (scope guard)
+
+Before loading any data, verify the engine can actually compute this taxpayer's
+situation — the toolkit must never produce a plausible-looking return that
+silently omits a form it cannot model:
+
+1. Run: `python3 agents/lib/capabilities.py --workspace .`
+2. Act on the exit code:
+   - **0:** Proceed. The printed limitations manifest is reused in Step 12.
+   - **2 (BLOCKED):** **STOP.** Show the user the blocked situations and the
+     two options verbatim from the tool output. Do NOT compute past this point
+     unless the user chooses one:
+     a. Prepare this return in tax software / with a professional — the toolkit
+        stays useful as a checker (`/tax-verify`) and planner; or
+     b. The user EXPLICITLY accepts proceeding without the named form(s). Then:
+        (1) record the decision in `answers.md` (date, rule id, form, one-line
+        user rationale); (2) add the rule id(s) to `acknowledged_limitations`
+        in `taxpayer_profile.json`; (3) re-run the gate and confirm exit 0.
+   - **1 (error):** Fix the reported profile problem (non-bool flag, unknown
+     acknowledged id, malformed state). Never bypass the gate on an error.
+3. NEVER add ids to `acknowledged_limitations` without the user's explicit
+   confirmation in this conversation — the acknowledgment is the taxpayer's
+   decision, not a convenience.
+
 ### Step 1: Load All Input Data
 
 Read these files:
@@ -394,6 +418,11 @@ Update `result.json` with ALL computed values:
 - State return
 - balance_due_summary
 - income_summary_by_person
+- **`meta.limitations` — the C2 manifest.** Run
+  `python3 agents/lib/capabilities.py --workspace . --json` and copy its
+  `limitations` array verbatim into `result.json` `meta.limitations`. It is
+  never empty (it always carries at least the state-scope note); `/tax-generate`
+  prints it on page 1 so the taxpayer sees what this return does NOT cover.
 
 Update `answers.md` with computed results section.
 

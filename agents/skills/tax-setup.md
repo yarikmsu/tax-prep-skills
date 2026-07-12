@@ -47,23 +47,37 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 **Group 2 — Address & state:**
 - Street address, city, state, ZIP
 - State of residence (for state return)
-- Any state residency changes during the year?
+- Did you move states during THIS tax year? → sets `moved_states_this_year`
+  (part-year returns are NOT modeled — the `/tax-compute` capability gate will
+  block; tell the user now, not at compute time)
+- If state is NY: are you a New York City resident? → sets `nyc_resident`
+  (NYC resident tax is NOT computed — same gate)
 
 **Group 3 — Dependents:**
 - Number of dependents (0 = skip)
 - For each: name, SSN (last 4), DOB, relationship, months lived with taxpayer
 - Under 17 at end of tax year? (for CTC eligibility)
+- Does any dependent have investment/unearned income over the kiddie-tax
+  threshold (~$2,600)? → sets `has_dependent_unearned_income` (Form 8615 is
+  NOT modeled — capability gate)
 
 **Group 4 — Tax situations (yes/no flags):**
-- Do you have foreign bank/investment accounts? → triggers FBAR/8938 workflow
-- Do you have self-employment income (1099-NEC, freelance, business)? → triggers Schedule C
-- Do you have rental income? → triggers Schedule E
+- Do you have foreign bank/investment accounts? → triggers FBAR/8938 workflow (`has_foreign_accounts`)
+- Did you LIVE abroad (tax home outside the US) during the year? → sets
+  `lives_abroad` (raises the Form 8938 thresholds; the FEIE / Form 2555
+  election is NOT modeled — only the FTC path — so this lands on the
+  limitations manifest)
+- Do you have self-employment income (1099-NEC, freelance, business)? → triggers Schedule C (`has_self_employment`)
+- Do you have rental income? → sets `has_rental_income` (Schedule E is NOT
+  modeled — the `/tax-compute` capability gate will block; tell the user now)
 - Do you have an HSA (Health Savings Account)?
 - Do you have a 401(k) or employer retirement plan?
 - Did you make IRA contributions this year?
 - Did you have a 401(k) rollover (Form 1099-R)?
 - Did you pay foreign taxes?
 - Did you receive a state tax refund for the prior year (Form 1099-G)? → may be taxable if you itemized
+- Did you employ anyone in your household (nanny, caregiver)? → sets
+  `has_household_employees` (Schedule H is NOT modeled — capability gate)
 
 **Group 5 — Foreign currencies (if applicable):**
 - Which foreign currencies? (for exchange rate lookup)
@@ -72,6 +86,12 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 - Approximate total W-2 income? (for threshold screening: AMT, NIIT, Medicare surtax)
 - Any gig/freelance income (1099-NEC)? Crypto transactions (buy/sell/exchange)?
 - Stock compensation: RSU vesting, ISO exercises, ESPP purchases?
+  - **If ISOs were EXERCISED (and any shares held past year-end)** → sets
+    `has_iso_exercise`. This is load-bearing: AMT (Form 6251) is NOT modeled
+    and the `/tax-compute` capability gate will block — the ISO bargain
+    element is the most common AMT trigger and can add tens of thousands of
+    tax. Warn the user at interview time, not at compute time. (RSU/ESPP alone
+    do NOT set this flag — they are ordinary W-2 wage events.)
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
 - Gambling income (W-2G)? → sets `has_gambling_income` flag
 
@@ -88,12 +108,15 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 
 **Group 8 — Deductions & credits probe:**
 - Student loan interest paid? Educator expenses (if teacher)?
-- College tuition/education expenses? (AOTC / Lifetime Learning Credit)
-- Child/dependent care expenses? (Form 2441)
-- Charitable giving? (approximate amount, cash vs property donations)
-- Energy-efficient home improvements? (heat pump, solar, insulation — 25C/25D)
-- EV purchase or lease this year? (30D/25E)
-- Marketplace health insurance? (Form 1095-A for Premium Tax Credit)
+- College tuition/education expenses? (AOTC / Lifetime Learning Credit) → sets `has_education_expenses`
+- Child/dependent care expenses? (Form 2441) → sets `has_dependent_care`
+- Charitable giving? (approximate amount, cash vs property donations) → sets `has_charitable_giving`
+- Energy-efficient home improvements? (heat pump, solar, insulation — 25C/25D) → sets `has_energy_credits`
+- EV purchase or lease this year? (30D/25E) → sets `has_ev_purchase`
+- Marketplace health insurance? (Form 1095-A) → sets `has_marketplace_insurance`
+  (Form 8962 APTC reconciliation is NOT modeled — the `/tax-compute` capability
+  gate will block; reconciliation is mandatory when advance PTC was paid, so
+  warn the user now)
 
 **Group 9 — Prior year carryforwards:**
 - Capital loss carryforward from prior year? Amount?

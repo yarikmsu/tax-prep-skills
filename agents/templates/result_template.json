@@ -10,7 +10,9 @@
     "_note_exchange_rates": "Keys are currency codes, e.g. {\"EUR\": 1.08}. generate_tax_pdf.py reads this first, falls back to exchange_rate_* keys.",
     "_last_modified_by": null,
     "_last_modified_at": null,
-    "_note_integrity": "Skills should update _last_modified_by (skill name) and _last_modified_at (ISO timestamp) on every write. Subsequent skills should verify these fields to detect unexpected modifications."
+    "_note_integrity": "Skills should update _last_modified_by (skill name) and _last_modified_at (ISO timestamp) on every write. Subsequent skills should verify these fields to detect unexpected modifications.",
+    "limitations": [],
+    "_note_limitations": "C2 manifest: what this return does NOT cover, copied verbatim from the /tax-compute capability gate (python3 agents/lib/capabilities.py --workspace . --json → limitations). /tax-generate prints it on page 1. Never empty after compute — it always carries at least the state-scope note."
   },
 
   "taxpayers": {

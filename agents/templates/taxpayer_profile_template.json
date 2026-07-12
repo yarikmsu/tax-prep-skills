@@ -65,6 +65,11 @@
     "has_estimated_payments": false,
     "has_gambling_income": false,
     "has_1099g_state_refund": false,
+    "has_iso_exercise": false,
+    "moved_states_this_year": false,
+    "nyc_resident": false,
+    "has_household_employees": false,
+    "has_dependent_unearned_income": false,
     "has_mega_backdoor_roth": false,
     "age_50_plus_primary": false,
     "age_50_plus_spouse": false,
@@ -78,6 +83,8 @@
     "has_employer_retirement_plan_spouse": false,
     "lived_apart_from_spouse_all_year": null
   },
+  "acknowledged_limitations": [],
+  "_comment_acknowledged_limitations": "Rule ids from agents/lib/capabilities.py the taxpayer has EXPLICITLY accepted proceeding without (decision recorded in answers.md). An id here downgrades that blocking gap to a limitations-manifest entry. Unknown ids hard-error so a typo cannot silently unblock nothing.",
   "prior_year": {
     "filing_status": null,
     "state_residency_changes": null,
