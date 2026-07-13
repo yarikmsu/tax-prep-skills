@@ -271,6 +271,12 @@ def create_state_template(state: str) -> dict:
             # per-person maximum no excess can exist). Fetch the FTB cap only
             # for pre-2024 years.
             "sdi_wage_limit": None,
+            # R&TC §17077 high-AGI itemized-deduction phase-out thresholds
+            # (indexed annually). FTB publishes three tiers: Single/MFS
+            # (key "single" — map MFS here), MFJ/QSS (key "mfj"), and HoH.
+            # None until fetched — compute_ca_itemized then SKIPS the
+            # phase-out with a loud overstatement note.
+            "itemized_phaseout": {"single": None, "mfj": None, "hoh": None},
             "no_city_income_tax": True,
         },
         "NY": {
@@ -362,7 +368,8 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # (e.g., brackets: 0) or a type coercion failure (e.g., phase_out_start: "400000").
     _EXPECT_STRUCTURED = {"brackets", "threshold", "phaseout",
                           "phase_out_start", "roth_income_phaseout",
-                          "traditional_deduction_phaseout", "filing_statuses"}
+                          "traditional_deduction_phaseout", "filing_statuses",
+                          "itemized_phaseout"}
 
     def _walk(obj, path=""):
         if isinstance(obj, dict):
@@ -414,6 +421,19 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         null_fields.append(
             "state.sdi_wage_limit (key absent — the pre-2024 SDI wage ceiling "
             "is required for the excess-SDI credit)")
+
+    # Same class of guard for the CA itemized phase-out: a cache created
+    # before the D1 schema change has no itemized_phaseout key at all, so
+    # the walker would report FRESH while compute_ca_itemized silently
+    # skips the §17077 phase-out (overstating high-AGI CA itemized
+    # deductions). No year gate — the phase-out long predates any
+    # supported year.
+    if (isinstance(state_block, dict)
+            and state_block.get("name") == "California"
+            and "itemized_phaseout" not in state_block):
+        null_fields.append(
+            "state.itemized_phaseout (key absent — the R&TC §17077 "
+            "thresholds are required for the CA itemized phase-out)")
 
     # Flag empty exchange_rates — skills depend on rates for foreign conversions
     if isinstance(data.get("exchange_rates"), dict) and not data["exchange_rates"]:

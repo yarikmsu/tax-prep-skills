@@ -264,11 +264,41 @@ deduction is already reflected in the Line 12 standard deduction amount from `ta
 ```
 Line 12: Standard deduction (from tax_law JSON, based on filing status;
          already includes OBBBA senior enhancement if applicable)
-         OR itemized deductions (Schedule A) — use whichever is higher
+         OR itemized deductions (Schedule A) — election COMPUTED below
 Line 13a: QBI deduction (Form 8995)
 Line 14: Total deductions = Line 12 + Line 13a
 Line 15: Taxable income = max(0, Line 11 - Line 14)
 ```
+
+**Itemized vs standard (Schedule A) — run `compute_schedule_a()` whenever ANY
+itemizable expense exists** (state withholding alone qualifies — for the CA
+persona SALT usually exceeds the OBBBA cap by itself):
+- Inputs: AGI (line 11), filing status, tax year, the filing status's
+  standard deduction, and `salt_cap` = `federal.salt_cap.amount`
+  (`mfs_amount` for MFS) from tax_law JSON.
+- `state_local_income_taxes` = W-2 box 17 (all states) + CA SDI (box 14) +
+  state estimated payments PAID during the year + prior-year state balance
+  paid this year. Ask the user for the last two — they're not on any W-2.
+- Mortgage: 1098 box 1 + deductible points; ask for the average balance and
+  whether the loan predates Dec 16 2017 (the $1M grandfather). If the
+  balance is unknown the function takes the interest in FULL and notes the
+  overstatement risk — surface that note.
+- Charitable: ask for cash vs noncash split and whether every gift ≥ $250
+  has a written acknowledgment; record the answer in answers.md. Surface
+  the carryforward figure for /tax-rollover if nonzero.
+- MFS: ask whether the spouse itemizes (`mfs_spouse_itemizes` forces
+  itemizing per §63(c)(6)(A)).
+- **TY2026+ §70111 haircut:** the OBBBA top-bracket reduction (2/37 of the
+  lesser of itemized total or 37%-bracket income) is circular with the
+  deduction — compute taxable income PROVISIONALLY with the un-haircut
+  itemized total; if any of it falls in the 37% bracket, re-call
+  `compute_schedule_a` with `top_bracket_income` set to that slice and use
+  the re-called result. Skipping this on a top-bracket return overstates
+  line 12 (the function emits a loud note when the input is absent).
+- Use `use_itemized` for line 12; write the result into the `schedule_a`
+  section when itemizing (or when `election_margin` is within $500 —
+  document the close call). Copy `notes` verbatim, and surface
+  `charitable_carryforward` for next year.
 
 **QBI Deduction (Form 8995):**
 Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
@@ -459,8 +489,24 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    - HSA add-backs (employer contributions + HSA earnings) — CA non-conformity
    - Any other CA-specific additions/subtractions
 3. CA AGI = Federal AGI + additions - subtractions
-4. CA standard deduction (from tax_law JSON, CA section)
-5. CA taxable income = CA AGI - CA deductions
+4. CA deduction — run `compute_ca_itemized()` whenever `compute_schedule_a`
+   ran (SOURCE figures, not the federal total — CA has no SALT cap but
+   disallows income/sales taxes, keeps the $1M mortgage limit, caps cash
+   gifts at 50% of AGI, still allows misc 2%-floor expenses, and phases out
+   itemized deductions above the R&TC §17077 FEDERAL-AGI threshold from
+   `state.itemized_phaseout` — keyed `single`/`mfj`/`hoh`: map MFS→single
+   (FTB publishes Single/MFS as one tier) and QSS→mfj; unfetched →
+   phase-out skipped with a loud note). All AGI-anchored floors use
+   FEDERAL AGI (the function handles this — pass both AGIs). Pass
+   `mfs_spouse_itemizes` AND `married_filing_separately` for MFS/RDP-
+   separate (CA mirrors the federal forced-itemize rule, and the CA
+   mortgage limit halves to $500K). Compare against the CA standard deduction
+   (tax_law JSON, CA section): **the CA election is independent of the
+   federal one** — with CA's small standard deduction, itemizing CA-only
+   is the norm for the persona. Write the `schedule_ca_itemized` section
+   when itemizing.
+5. CA taxable income = CA AGI - CA deduction (line 18 = larger of CA
+   itemized or CA standard)
 6. CA tax from FTB tables (use brackets from tax_law JSON)
 7. CA exemption credits (personal + dependent, amounts from tax_law JSON)
 8. CA tax after credits

@@ -199,6 +199,11 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   `state.sdi_wage_limit` ONLY for pre-2024 years (SB 951 removed the SDI wage
   ceiling from TY2024 — leave it null for 2024+, which correctly disables the
   excess-SDI credit in `/tax-compute`)
+- For CA: Search `"FTB California {year} itemized deduction phaseout AGI threshold"`
+  → populate `state.itemized_phaseout` (`single`/`mfj`/`hoh` AGI thresholds,
+  indexed annually — R&TC §17077; FTB publishes them with the exemption
+  credits). Unfetched → `compute_ca_itemized` skips the phase-out with a
+  loud overstatement note for high-AGI itemizers.
 - For NY: Search `"New York {year} income tax brackets"`
 - For other states: Search `"{state} {year} income tax rates"`
 

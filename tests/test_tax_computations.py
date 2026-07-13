@@ -26,6 +26,8 @@ from agents.lib.tax_computations import (
     compute_form_8606,
     compute_taxable_ss,
     compute_form_2210,
+    compute_schedule_a,
+    compute_ca_itemized,
     check_form_8938_required,
     SE_TAX_THRESHOLD,
 )
@@ -1923,3 +1925,304 @@ class TestForm2210:
                                  prior_year_tax=10000, prior_year_agi=100000,
                                  underpayment_rates=_2210_RATES)
         assert not any("assume that rate persists" in n for n in full["notes"])
+
+
+# ============================================================
+# Schedule A (D1) — itemized deductions + computed election
+# ============================================================
+
+class TestScheduleA:
+    def test_ca_persona_itemizes(self):
+        """The target user: high CA SALT + mortgage. AGI 400K Single TY2025,
+        OBBBA cap $40K: SALT = min(40000, 35000+12000) = 40,000; mortgage
+        18,000 × 750/900 (Pub 936) = 15,000; charity 10,000; medical 5,000
+        under the 30,000 floor → 0. Total 65,000 vs std 15,750."""
+        r = compute_schedule_a(
+            agi=400000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000,
+            medical_expenses=5000,
+            state_local_income_taxes=35000, real_estate_taxes=12000,
+            mortgage_interest=18000, average_mortgage_balance=900000,
+            charitable_cash=10000, charitable_over_250_substantiated=True)
+        assert r["salt_deductible"] == 40000.00
+        assert r["salt_before_cap"] == 47000.00
+        assert r["mortgage_deductible"] == 15000.00
+        assert r["charitable_deductible"] == 10000.00
+        assert r["medical_deductible"] == 0.00
+        assert r["itemized_total"] == 65000.00
+        assert r["use_itemized"] and r["election_margin"] == 49250.00
+
+    def test_obbba_charitable_floor_ty2026(self):
+        """OBBBA §70425: from TY2026 the first 0.5% of AGI of charitable
+        gifts is non-deductible. AGI 200K, cash 5,000 → floor 1,000 →
+        4,000 deductible. TY2025 → full 5,000."""
+        r26 = compute_schedule_a(
+            agi=200000, filing_status="Single", tax_year=2026,
+            standard_deduction=16000, salt_cap=40400,
+            charitable_cash=5000, charitable_over_250_substantiated=True)
+        assert r26["charitable_deductible"] == 4000.00
+        r25 = compute_schedule_a(
+            agi=200000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000,
+            charitable_cash=5000, charitable_over_250_substantiated=True)
+        assert r25["charitable_deductible"] == 5000.00
+
+    def test_charitable_agi_caps_and_carryforward(self):
+        """Pub 526 ordering: cash to 60% of AGI first; appreciated noncash
+        to min(30% AGI, 50% overall remainder). AGI 100K, cash 70K,
+        noncash 20K → cash 60K, noncash 0 (overall headroom exhausted),
+        carryforward 30K."""
+        r = compute_schedule_a(
+            agi=100000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000,
+            charitable_cash=70000, charitable_noncash=20000,
+            charitable_over_250_substantiated=True)
+        assert r["charitable_deductible"] == 60000.00
+        assert r["charitable_carryforward"] == 30000.00
+        assert any("carries forward" in n for n in r["notes"])
+
+    def test_mfs_spouse_itemizes_forces_itemizing(self):
+        r = compute_schedule_a(
+            agi=80000, filing_status="MFS", tax_year=2025,
+            standard_deduction=15750, salt_cap=20000,
+            state_local_income_taxes=5000, mfs_spouse_itemizes=True)
+        assert r["itemized_total"] == 5000.00
+        assert r["use_itemized"] is True  # despite margin being negative
+        assert r["election_margin"] == -10750.00
+
+    def test_sales_tax_election_uses_greater(self):
+        r = compute_schedule_a(
+            agi=90000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000,
+            state_local_income_taxes=4000, state_local_sales_taxes=6000,
+            real_estate_taxes=1000)
+        assert r["salt_before_cap"] == 7000.00
+        assert any("sales-tax election" in n for n in r["notes"])
+
+    def test_grandfathered_1m_limit(self):
+        """Pre-Dec-16-2017 origination keeps the $1M limit — a 950K balance
+        is NOT prorated."""
+        r = compute_schedule_a(
+            agi=300000, filing_status="MFJ", tax_year=2025,
+            standard_deduction=31500, salt_cap=40000,
+            mortgage_interest=30000, average_mortgage_balance=950000,
+            mortgage_pre_dec_16_2017=True)
+        assert r["mortgage_deductible"] == 30000.00
+
+    def test_unknown_balance_notes_overstatement(self):
+        r = compute_schedule_a(
+            agi=300000, filing_status="MFJ", tax_year=2025,
+            standard_deduction=31500, salt_cap=40000,
+            mortgage_interest=30000)
+        assert r["mortgage_deductible"] == 30000.00
+        assert any("OVERSTATES" in n for n in r["notes"])
+
+    def test_substantiation_gate_warnings(self):
+        unknown = compute_schedule_a(
+            agi=100000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000, charitable_cash=1000)
+        assert any("SUBSTANTIATION UNKNOWN" in n for n in unknown["notes"])
+        missing = compute_schedule_a(
+            agi=100000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000, charitable_cash=1000,
+            charitable_over_250_substantiated=False)
+        assert any("SUBSTANTIATION GATE" in n for n in missing["notes"])
+
+    def test_input_validation(self):
+        with pytest.raises(ValueError):
+            compute_schedule_a(float("nan"), "Single", 2025, 15750, 40000)
+        with pytest.raises(ValueError):
+            compute_schedule_a(100000, "Married Filing Jointly", 2025,
+                               15750, 40000)
+        with pytest.raises(ValueError):
+            compute_schedule_a(100000, "Single", 2025.0, 15750, 40000)
+        with pytest.raises(ValueError):
+            compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                               medical_expenses=-1)
+
+    def test_negative_agi_floors_at_zero(self):
+        """Self-review: an unclamped negative AGI would turn the 7.5%
+        medical floor into a bonus and give charitable caps of 0 anyway —
+        the floored base gives full medical, zero charitable capacity."""
+        r = compute_schedule_a(
+            agi=-20000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000,
+            medical_expenses=8000, charitable_cash=1000,
+            charitable_over_250_substantiated=True)
+        assert r["medical_deductible"] == 8000.00
+        assert r["charitable_deductible"] == 0.00
+        assert r["charitable_carryforward"] == 1000.00
+
+
+class TestCaItemized:
+    def test_ca_persona_no_salt_cap_but_income_tax_disallowed(self):
+        """Same CA persona: income taxes (35K) disallowed entirely, property
+        (12K) uncapped; mortgage 18K NOT prorated (balance 900K < $1M);
+        charity 10K. Subtotal 40K; §17077 phase-out at threshold 244K:
+        min(6% × 156,000 = 9,360, 80% × 40,000 = 32,000) = 9,360 →
+        30,640. CA itemizes (std ~5,809) even though numbers differ from
+        federal."""
+        r = compute_ca_itemized(
+            federal_agi=400000, ca_agi=400000, tax_year=2025,
+            state_local_income_taxes=35000, real_estate_taxes=12000,
+            mortgage_interest=18000, average_mortgage_balance=900000,
+            charitable_cash=10000, medical_expenses=5000,
+            ca_standard_deduction=5809, phaseout_threshold=244000)
+        assert r["taxes_deductible"] == 12000.00
+        assert r["mortgage_deductible"] == 18000.00
+        assert r["charitable_deductible"] == 10000.00
+        assert r["phaseout_reduction"] == 9360.00
+        assert r["itemized_total"] == 30640.00
+        assert r["use_itemized"] is True
+
+    def test_phaseout_unfetched_degrades_loudly(self):
+        r = compute_ca_itemized(
+            federal_agi=400000, ca_agi=400000, tax_year=2025,
+            real_estate_taxes=12000)
+        assert r["phaseout_reduction"] == 0.0
+        assert any("OVERSTATED" in n for n in r["notes"])
+
+    def test_ca_cash_cap_is_50_pct(self):
+        """CA never conformed to the TCJA 60% cash cap."""
+        r = compute_ca_itemized(
+            federal_agi=100000, ca_agi=100000, tax_year=2025,
+            charitable_cash=55000, phaseout_threshold=244000)
+        assert r["charitable_deductible"] == 50000.00
+        assert any("50%" in n for n in r["notes"])
+
+    def test_misc_2pct_floor_allowed_for_ca(self):
+        r = compute_ca_itemized(
+            federal_agi=100000, ca_agi=100000, tax_year=2025,
+            misc_2pct_expenses=5000, phaseout_threshold=244000)
+        assert r["misc_deductible"] == 3000.00
+
+    def test_ca_mortgage_limit_1m(self):
+        """A $2M balance prorates against $1M for CA (federal would use
+        $750K — CA is more generous)."""
+        r = compute_ca_itemized(
+            federal_agi=500000, ca_agi=500000, tax_year=2025,
+            mortgage_interest=60000, average_mortgage_balance=2000000,
+            phaseout_threshold=244000)
+        assert r["mortgage_deductible"] == 30000.00
+
+    def test_phaseout_80pct_branch_and_exemptions(self):
+        """Medical and investment interest are EXEMPT from the §17077
+        phase-out subject amount. Huge AGI so 6% side is enormous → the
+        80%-of-subject side binds: subject = taxes only (medical/inv
+        exempt)."""
+        r = compute_ca_itemized(
+            federal_agi=2000000, ca_agi=2000000, tax_year=2025,
+            medical_expenses=200000, investment_interest=10000,
+            real_estate_taxes=20000, phaseout_threshold=244000)
+        # medical deductible = 200000 - 7.5%×2M = 50,000 (exempt)
+        assert r["medical_deductible"] == 50000.00
+        # subject = 20,000 (taxes only) → phaseout = 80% × 20,000 = 16,000
+        assert r["phaseout_reduction"] == 16000.00
+        assert r["itemized_total"] == 50000.00 + 10000.00 + 20000.00 - 16000.00
+
+    def test_ca_floors_anchor_on_federal_agi(self):
+        """Review P1: Schedule CA Part II anchors the medical/charitable/
+        misc floors on FEDERAL AGI (1040 line 11), not CA AGI. The classic
+        CA retiree (SS subtracted → CA AGI < federal): fed 100K / CA 60K,
+        medical 9,000 → 9,000 − 7.5%×100,000 = 1,500 (a CA-AGI base would
+        overstate to 4,500)."""
+        r = compute_ca_itemized(
+            federal_agi=100000, ca_agi=60000, tax_year=2025,
+            medical_expenses=9000, phaseout_threshold=244000)
+        assert r["medical_deductible"] == 1500.00
+        cap = compute_ca_itemized(
+            federal_agi=100000, ca_agi=60000, tax_year=2025,
+            charitable_cash=55000, phaseout_threshold=244000)
+        assert cap["charitable_deductible"] == 50000.00  # 50% of FEDERAL AGI
+
+    def test_ca_mfs_spouse_itemizes_forces_itemizing(self):
+        """Review P2: CA mirrors §63(c)(6)(A) — MFS/RDP-separate with an
+        itemizing spouse cannot take the CA standard deduction."""
+        r = compute_ca_itemized(
+            federal_agi=80000, ca_agi=80000, tax_year=2025,
+            real_estate_taxes=2000, ca_standard_deduction=5809,
+            phaseout_threshold=244000, mfs_spouse_itemizes=True)
+        assert r["use_itemized"] is True
+        assert r["election_margin"] == 2000.00 - 5809.00
+
+    def test_obbba_floor_joins_carryforward_when_cap_exceeded(self):
+        """Review P2 — §170(d)(1)(C): when the percentage cap is exceeded,
+        the floor-disallowed slice ALSO carries forward. TY2026, AGI 100K,
+        cash 70K: deductible 60,000 − 500 = 59,500; carryforward 10,000 +
+        500 = 10,500 (not 10,000)."""
+        r = compute_schedule_a(
+            agi=100000, filing_status="Single", tax_year=2026,
+            standard_deduction=16000, salt_cap=40400,
+            charitable_cash=70000, charitable_over_250_substantiated=True)
+        assert r["charitable_deductible"] == 59500.00
+        assert r["charitable_carryforward"] == 10500.00
+
+    def test_truthy_string_flags_rejected(self):
+        """Review P2: a truthy string in a bool parameter silently changes
+        the money — strict validation per repo convention."""
+        with pytest.raises(ValueError, match="mortgage_pre_dec_16_2017"):
+            compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                               mortgage_pre_dec_16_2017="false")
+        with pytest.raises(ValueError, match="mfs_spouse_itemizes"):
+            compute_schedule_a(100000, "MFS", 2025, 15750, 20000,
+                               mfs_spouse_itemizes="no")
+        with pytest.raises(ValueError, match="charitable_over_250"):
+            compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                               charitable_cash=1000,
+                               charitable_over_250_substantiated="yes")
+        with pytest.raises(ValueError, match="mfs_spouse_itemizes"):
+            compute_ca_itemized(100000, 100000, 2025,
+                                mfs_spouse_itemizes="yes")
+
+    def test_mfs_mortgage_limits_halved(self):
+        """Codex P2: Pub 936 halves the caps for MFS — $375K post-TCJA
+        ($500K grandfathered). Balance 600K, interest 24K → 24K × 375/600
+        = 15,000."""
+        r = compute_schedule_a(
+            agi=200000, filing_status="MFS", tax_year=2025,
+            standard_deduction=15750, salt_cap=20000,
+            mortgage_interest=24000, average_mortgage_balance=600000)
+        assert r["mortgage_deductible"] == 15000.00
+
+    def test_ca_mfs_mortgage_limit_500k(self):
+        """Codex P2: CA's pre-TCJA limit is likewise halved for MFS/RDP-
+        separate ($500K). Balance 800K, interest 32K → 20,000."""
+        r = compute_ca_itemized(
+            federal_agi=200000, ca_agi=200000, tax_year=2025,
+            mortgage_interest=32000, average_mortgage_balance=800000,
+            married_filing_separately=True, phaseout_threshold=244000)
+        assert r["mortgage_deductible"] == 20000.00
+
+    def test_obbba_70111_haircut(self):
+        """Codex P2 — H.R.1 §70111 (TY2026+): itemized reduced by 2/37 of
+        the lesser of the itemized total or 37%-bracket income. SALT 40,400
+        + charity floor'd → total 50,000-ish exercise: use round numbers —
+        itemized 44,400; top-bracket income 100,000 → haircut 2/37 ×
+        44,400 = 2,400."""
+        r = compute_schedule_a(
+            agi=1000000, filing_status="Single", tax_year=2026,
+            standard_deduction=16000, salt_cap=40400,
+            state_local_income_taxes=90000,   # capped at 40,400
+            investment_interest=4000, top_bracket_income=100000)
+        assert r["itemized_total"] == 44400.00 - 2400.00
+        assert r["obbba_70111_reduction"] == 2400.00
+        unknown = compute_schedule_a(
+            agi=1000000, filing_status="Single", tax_year=2026,
+            standard_deduction=16000, salt_cap=40400,
+            state_local_income_taxes=90000, investment_interest=4000)
+        assert unknown["obbba_70111_reduction"] == 0.0
+        assert any("§70111" in n and "OVERSTATED" in n for n in unknown["notes"])
+        r25 = compute_schedule_a(
+            agi=1000000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000,
+            state_local_income_taxes=90000)
+        assert r25["obbba_70111_reduction"] == 0.0
+        assert not any("§70111" in n for n in r25["notes"])
+
+    def test_ca_charitable_carryforward_returned(self):
+        """Codex P2: CA tracks its own carryover (50% cap ≠ federal 60%) —
+        the excess must be RETURNED, not just noted."""
+        r = compute_ca_itemized(
+            federal_agi=100000, ca_agi=100000, tax_year=2025,
+            charitable_cash=55000, phaseout_threshold=244000)
+        assert r["charitable_carryforward"] == 5000.00

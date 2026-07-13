@@ -1374,6 +1374,452 @@ def compute_excess_sdi(
     }
 
 
+# Schedule A structural statutory constants (none indexed):
+# medical floor 7.5% of AGI (§213(a), permanent since 2021); charitable AGI
+# caps — cash 60% (§170(b)(1)(G), made permanent by OBBBA), appreciated
+# property 30%, overall 50% ordering per Pub 526; OBBBA §70425 0.5%-of-AGI
+# charitable floor for itemizers from TY2026; acquisition-debt limits
+# $750K post-TCJA / $1M for pre-Dec-16-2017 originations (§163(h)(3));
+# the SALT cap dollar amount is INDEXED and comes from federal.salt_cap.
+_SCHED_A_MEDICAL_FLOOR = 0.075
+_CHARITY_CASH_AGI_CAP = 0.60
+_CHARITY_APPRECIATED_AGI_CAP = 0.30
+_CHARITY_OBBBA_FLOOR_RATE = 0.005
+_CHARITY_OBBBA_FLOOR_FROM = 2026
+_MORTGAGE_LIMIT_TCJA = 750000.0
+_MORTGAGE_LIMIT_GRANDFATHERED = 1000000.0
+# OBBBA §70111 (TY2026+): itemized deductions are reduced by 2/37 of the
+# lesser of the itemized total or the income taxed in the 37% bracket.
+_OBBBA_ITEMIZED_HAIRCUT = 2.0 / 37.0
+_OBBBA_ITEMIZED_HAIRCUT_FROM = 2026
+# CA Schedule CA: mortgage limit stays $1M (+$100K equity, unmodeled); cash
+# charitable cap stays 50% (CA never conformed to the TCJA 60%); the
+# high-AGI itemized phase-out reduces itemized by the LESSER of 6% of
+# FEDERAL AGI over the (indexed, cached) threshold or 80% of the
+# phase-out-subject deductions (R&TC §17077 — exempt: medical, investment
+# interest, and — if ever modeled — casualty and gambling losses).
+_CA_MORTGAGE_LIMIT = 1000000.0
+_CA_CHARITY_CASH_AGI_CAP = 0.50
+_CA_ITEMIZED_PHASEOUT_RATE = 0.06
+_CA_ITEMIZED_PHASEOUT_MAX = 0.80
+
+
+def _sched_a_amount(value, what: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{what} must be a number, got {value!r}")
+    v = float(value)
+    if not math.isfinite(v):
+        raise ValueError(f"{what} must be finite, got {value!r}")
+    if v < 0:
+        raise ValueError(f"{what} cannot be negative, got {v}")
+    return v
+
+
+def _prorated_mortgage_interest(interest: float, avg_balance, limit: float,
+                                notes: list, label: str) -> float:
+    """Pub 936 simplified method: deductible interest = interest ×
+    limit / average balance when the balance exceeds the limit."""
+    if avg_balance is None:
+        if interest > 0:
+            notes.append(
+                f"{label}: average mortgage balance not provided — interest "
+                f"taken in full, ASSUMING acquisition debt ≤ ${limit:,.0f}; "
+                "if the balance exceeds the limit this OVERSTATES the "
+                "deduction (Pub 936 proration)")
+        return interest
+    bal = _sched_a_amount(avg_balance, "average_mortgage_balance")
+    if bal <= limit or bal == 0:
+        return interest
+    notes.append(
+        f"{label}: interest prorated × {limit:,.0f}/{bal:,.0f} per the "
+        "Pub 936 average-balance method")
+    return interest * limit / bal
+
+
+def compute_schedule_a(
+    agi: float,
+    filing_status: str,
+    tax_year: int,
+    standard_deduction: float,
+    salt_cap: float,
+    medical_expenses: float = 0.0,
+    state_local_income_taxes: float = 0.0,
+    state_local_sales_taxes: float = 0.0,
+    real_estate_taxes: float = 0.0,
+    personal_property_taxes: float = 0.0,
+    mortgage_interest: float = 0.0,
+    mortgage_points: float = 0.0,
+    average_mortgage_balance: float = None,
+    mortgage_pre_dec_16_2017: bool = False,
+    investment_interest: float = 0.0,
+    charitable_cash: float = 0.0,
+    charitable_noncash: float = 0.0,
+    charitable_over_250_substantiated: bool = None,
+    mfs_spouse_itemizes: bool = False,
+    top_bracket_income: float = None,
+) -> dict:
+    """Federal Schedule A + the itemize-vs-standard election, computed.
+
+    Args:
+        salt_cap: the DOLLAR cap for this year/status from federal.salt_cap
+            (amount, or mfs_amount for MFS) — never hardcoded here. The
+            OBBBA MAGI phasedown above $500K is not modeled (caveated).
+        medical_expenses: total unreimbursed — the 7.5% AGI floor is applied
+            HERE, pass the gross figure.
+        state_local_income_taxes: W-2 box 17 + CA SDI + estimated state
+            payments made during the year + prior-year state balance paid.
+        state_local_sales_taxes: the ELECTIVE alternative — the greater of
+            income vs sales taxes is used (both can't be deducted).
+        mortgage_interest/points: 1098 box 1 / deductible points.
+        average_mortgage_balance: for the §163(h)(3) limit proration
+            (Pub 936 simplified method). None → interest taken in full with
+            a loud overstatement caveat.
+        mortgage_pre_dec_16_2017: origination before Dec 16 2017 → $1M
+            grandfathered limit instead of $750K.
+        investment_interest: the ALLOWED amount after the Form 4952 net-
+            investment-income limit — the limit itself is not modeled
+            (caveated); pass the post-limit figure.
+        charitable_cash/noncash: noncash is treated as appreciated property
+            (30% AGI cap — conservative; basis-only gifts allow 50%).
+        charitable_over_250_substantiated: None → unknown → warning; False →
+            substantiation gate warning (deduction still computed — the gate
+            is a preparer stop, not a disallowance).
+        mfs_spouse_itemizes: MFS must itemize when the spouse itemizes,
+            even if the standard deduction is larger (§63(c)(6)(A)).
+        top_bracket_income: TY2026+ only — taxable income falling in the 37%
+            bracket, for the OBBBA §70111 haircut (itemized reduced by 2/37
+            of the lesser of the itemized total or this amount). The figure
+            is circular with the deduction, so /tax-compute computes taxable
+            income provisionally first and re-calls; None for a 2026+ year
+            emits a loud not-applied note instead of silently overstating.
+
+    Returns dict with per-line amounts, itemized_total, use_itemized,
+    election margin, charitable carryforward, and notes.
+    """
+    fs = _normalize_filing_status(filing_status)
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int):
+        raise ValueError(f"tax_year must be an int, got {tax_year!r}")
+    if isinstance(agi, bool) or not isinstance(agi, (int, float)) \
+            or not math.isfinite(float(agi)):
+        raise ValueError(f"agi must be a finite number, got {agi!r}")
+    # AGI may be negative (NOL-shaped returns). Every AGI-derived floor/cap
+    # uses the FLOORED base — an unclamped negative AGI would turn the 7.5%
+    # medical floor into a medical BONUS (med − negative = med + x).
+    agi_v = max(0.0, float(agi))
+    std = _sched_a_amount(standard_deduction, "standard_deduction")
+    cap = _sched_a_amount(salt_cap, "salt_cap")
+    med = _sched_a_amount(medical_expenses, "medical_expenses")
+    inc_tax = _sched_a_amount(state_local_income_taxes, "state_local_income_taxes")
+    sales_tax = _sched_a_amount(state_local_sales_taxes, "state_local_sales_taxes")
+    re_tax = _sched_a_amount(real_estate_taxes, "real_estate_taxes")
+    pp_tax = _sched_a_amount(personal_property_taxes, "personal_property_taxes")
+    mort_int = _sched_a_amount(mortgage_interest, "mortgage_interest")
+    points = _sched_a_amount(mortgage_points, "mortgage_points")
+    inv_int = _sched_a_amount(investment_interest, "investment_interest")
+    cash = _sched_a_amount(charitable_cash, "charitable_cash")
+    noncash = _sched_a_amount(charitable_noncash, "charitable_noncash")
+    for flag_name, flag in (("mortgage_pre_dec_16_2017", mortgage_pre_dec_16_2017),
+                            ("mfs_spouse_itemizes", mfs_spouse_itemizes)):
+        if not isinstance(flag, bool):
+            raise ValueError(f"{flag_name} must be a boolean, got {flag!r} — "
+                             "a truthy string would silently change the money")
+    if charitable_over_250_substantiated is not None \
+            and not isinstance(charitable_over_250_substantiated, bool):
+        raise ValueError(
+            "charitable_over_250_substantiated must be a boolean or None, "
+            f"got {charitable_over_250_substantiated!r}")
+
+    notes = [
+        "OBBBA SALT-cap MAGI phasedown above $500K ($250K MFS) not modeled",
+        "Form 4952 investment-interest limit not modeled — pass the "
+        "post-limit allowed amount",
+        "casualty/theft losses (federally-declared disasters only) not "
+        "modeled",
+        "single-loan mortgage model — mixed pre/post-Dec-16-2017 loans need "
+        "the Pub 936 combined-limit worksheet",
+    ]
+
+    medical_deductible = round(max(0.0, med - _SCHED_A_MEDICAL_FLOOR * agi_v), 2)
+
+    salt_before_cap = max(inc_tax, sales_tax) + re_tax + pp_tax
+    if sales_tax > inc_tax and sales_tax > 0:
+        notes.append("sales-tax election used (exceeds state income taxes)")
+    salt_deductible = round(min(cap, salt_before_cap), 2)
+
+    limit = (_MORTGAGE_LIMIT_GRANDFATHERED if mortgage_pre_dec_16_2017
+             else _MORTGAGE_LIMIT_TCJA)
+    if fs == "MFS":
+        limit /= 2  # Pub 936: $375K post-TCJA / $500K grandfathered for MFS
+    mortgage_deductible = round(
+        _prorated_mortgage_interest(mort_int + points,
+                                    average_mortgage_balance, limit, notes,
+                                    "federal") , 2)
+
+    # Charitable: cash first against the 60% cap, then appreciated noncash
+    # against the LESSER of 30% AGI or remaining overall headroom (Pub 526
+    # ordering). Excess carries forward 5 years.
+    cash_cap = _CHARITY_CASH_AGI_CAP * agi_v
+    cash_allowed = min(cash, cash_cap)
+    noncash_cap = min(_CHARITY_APPRECIATED_AGI_CAP * agi_v,
+                      max(0.0, 0.50 * agi_v - cash_allowed))
+    noncash_allowed = min(noncash, noncash_cap)
+    charity_floor = 0.0
+    if tax_year >= _CHARITY_OBBBA_FLOOR_FROM and (cash_allowed + noncash_allowed) > 0:
+        charity_floor = _CHARITY_OBBBA_FLOOR_RATE * agi_v
+        notes.append(
+            f"OBBBA §70425 charitable floor applied for TY{tax_year}: the "
+            f"first 0.5% of AGI (${charity_floor:,.2f}) is not deductible")
+    charitable_deductible = round(
+        max(0.0, cash_allowed + noncash_allowed - charity_floor), 2)
+    charitable_carryforward = round(
+        (cash - cash_allowed) + (noncash - noncash_allowed), 2)
+    if charitable_carryforward > 0:
+        # §170(d)(1)(C) (OBBBA): when the percentage cap is exceeded, the
+        # floor-disallowed slice ALSO carries forward (it isn't re-floored
+        # next year). A floored amount under the cap is permanently lost.
+        charitable_carryforward = round(charitable_carryforward + charity_floor, 2)
+        notes.append(
+            f"charitable contributions over the AGI caps: "
+            f"${charitable_carryforward:,.2f} carries forward 5 years — "
+            "enter it manually in next year's prior_year block "
+            "(/tax-rollover lists it in the manual-carryforward reminder; "
+            "it is not auto-tracked)")
+    if cash > 0:
+        notes.append(
+            "assumes all donees are 50%-limit public charities — cash to a "
+            "private non-operating foundation is capped at 30% of AGI "
+            "(§170(b)(1)(B)), not modeled")
+    if (cash + noncash) > 0:
+        if charitable_over_250_substantiated is None:
+            notes.append(
+                "SUBSTANTIATION UNKNOWN: any single gift ≥ $250 requires a "
+                "contemporaneous written acknowledgment (§170(f)(8)) — "
+                "confirm before filing")
+        elif charitable_over_250_substantiated is False:
+            notes.append(
+                "SUBSTANTIATION GATE: gifts ≥ $250 lack the written "
+                "acknowledgment — the deduction is disallowed on audit; "
+                "obtain the letters before filing")
+    if noncash > 500:
+        notes.append("noncash gifts over $500 require Form 8283 (not modeled)")
+
+    itemized_total = round(medical_deductible + salt_deductible
+                           + mortgage_deductible + inv_int
+                           + charitable_deductible, 2)
+
+    obbba_70111_reduction = 0.0
+    if tax_year >= _OBBBA_ITEMIZED_HAIRCUT_FROM and itemized_total > 0:
+        if top_bracket_income is None:
+            notes.append(
+                f"OBBBA §70111 (TY{tax_year}): itemized deductions are "
+                "reduced by 2/37 of the lesser of the itemized total or "
+                "income taxed in the 37% bracket — NOT applied "
+                "(top_bracket_income not provided); a 37%-bracket "
+                "itemizer's line 12 is OVERSTATED — compute taxable income "
+                "provisionally and re-call with top_bracket_income")
+        else:
+            tbi = _sched_a_amount(top_bracket_income, "top_bracket_income")
+            if tbi > 0:
+                obbba_70111_reduction = round(
+                    _OBBBA_ITEMIZED_HAIRCUT * min(itemized_total, tbi), 2)
+                itemized_total = round(itemized_total - obbba_70111_reduction, 2)
+                notes.append(
+                    f"OBBBA §70111 haircut applied: −${obbba_70111_reduction:,.2f}"
+                    " (2/37 of the lesser of itemized total or 37%-bracket "
+                    "income)")
+
+    if fs == "MFS" and mfs_spouse_itemizes:
+        use_itemized = True
+        notes.append(
+            "MFS with an itemizing spouse MUST itemize (§63(c)(6)(A)) even "
+            "though the standard deduction is larger")
+    else:
+        use_itemized = itemized_total > std
+    return {
+        "medical_deductible": medical_deductible,
+        "salt_before_cap": round(salt_before_cap, 2),
+        "salt_deductible": salt_deductible,
+        "mortgage_deductible": mortgage_deductible,
+        "investment_interest": round(inv_int, 2),
+        "charitable_deductible": charitable_deductible,
+        "charitable_carryforward": charitable_carryforward,
+        "obbba_70111_reduction": obbba_70111_reduction,
+        "itemized_total": itemized_total,
+        "standard_deduction": std,
+        "use_itemized": use_itemized,
+        "election_margin": round(itemized_total - std, 2),
+        "notes": notes,
+    }
+
+
+def compute_ca_itemized(
+    federal_agi: float,
+    ca_agi: float,
+    tax_year: int,
+    mfs_spouse_itemizes: bool = False,
+    married_filing_separately: bool = False,
+    medical_expenses: float = 0.0,
+    state_local_income_taxes: float = 0.0,
+    real_estate_taxes: float = 0.0,
+    personal_property_taxes: float = 0.0,
+    mortgage_interest: float = 0.0,
+    mortgage_points: float = 0.0,
+    average_mortgage_balance: float = None,
+    investment_interest: float = 0.0,
+    charitable_cash: float = 0.0,
+    charitable_noncash: float = 0.0,
+    misc_2pct_expenses: float = 0.0,
+    ca_standard_deduction: float = None,
+    phaseout_threshold: float = None,
+) -> dict:
+    """CA Schedule CA itemized deductions — computed from the SOURCE figures
+    (not by adjusting the federal Schedule A total), because the differences
+    are structural:
+
+    - State/local INCOME taxes (incl. CA income tax and SDI) and sales taxes
+      are disallowed entirely, but property taxes have NO cap (no SALT cap).
+    - Mortgage limit stays $1M regardless of origination date — interest the
+      federal $750K limit prorated away comes BACK for CA.
+    - Cash charitable cap is 50% of AGI (CA never conformed to the TCJA
+      60%); the OBBBA 0.5% floor is federal-only.
+    - Misc 2%-floor deductions (unreimbursed employee expenses, investment
+      fees, tax prep) are STILL allowed for CA (no TCJA suspension).
+    - High-AGI itemized phase-out (R&TC §17077): reduce by the lesser of 6%
+      of FEDERAL AGI over the (indexed, cached) threshold or 80% of the
+      phase-out-subject amount — exempt: medical, investment interest (and,
+      when ever modeled, casualty and gambling losses — the FTB worksheet
+      excludes those too). phaseout_threshold None → phase-out NOT applied,
+      loud note (a high-AGI CA itemizer's deduction would be overstated
+      until fetched).
+
+    EVERY AGI-anchored floor/cap here (medical 7.5%, charitable 50%/30%,
+    misc 2%) uses FEDERAL AGI — Schedule CA Part II lines reference federal
+    Form 1040 line 11, not CA AGI. ca_agi is accepted for future CA-AGI-
+    based lines but is currently unused in the math; a CA-AGI base would
+    overstate a retiree's medical deduction (CA subtracts Social Security,
+    so CA AGI < federal AGI).
+
+    mfs_spouse_itemizes: CA mirrors the federal §63(c)(6)(A) coupling — an
+    MFS/RDP-separate filer whose spouse itemizes cannot take the CA
+    standard deduction.
+
+    ca_standard_deduction None → election not computed (amounts only).
+    """
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int):
+        raise ValueError(f"tax_year must be an int, got {tax_year!r}")
+    for name, v in (("federal_agi", federal_agi), ("ca_agi", ca_agi)):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) \
+                or not math.isfinite(float(v)):
+            raise ValueError(f"{name} must be a finite number, got {v!r}")
+    for fname, flag in (("mfs_spouse_itemizes", mfs_spouse_itemizes),
+                        ("married_filing_separately", married_filing_separately)):
+        if not isinstance(flag, bool):
+            raise ValueError(f"{fname} must be a boolean, got {flag!r}")
+    fed_agi = float(federal_agi)     # unfloored §17077 trigger
+    # FTB anchors the medical/charitable/misc floors on FEDERAL AGI
+    # (Schedule CA Part II references 1040 line 11) — floored for the same
+    # negative-AGI reason as the federal function. ca_agi intentionally
+    # unused in the current math.
+    agi_v = max(0.0, fed_agi)
+    med = _sched_a_amount(medical_expenses, "medical_expenses")
+    _sched_a_amount(state_local_income_taxes, "state_local_income_taxes")
+    re_tax = _sched_a_amount(real_estate_taxes, "real_estate_taxes")
+    pp_tax = _sched_a_amount(personal_property_taxes, "personal_property_taxes")
+    mort_int = _sched_a_amount(mortgage_interest, "mortgage_interest")
+    points = _sched_a_amount(mortgage_points, "mortgage_points")
+    inv_int = _sched_a_amount(investment_interest, "investment_interest")
+    cash = _sched_a_amount(charitable_cash, "charitable_cash")
+    noncash = _sched_a_amount(charitable_noncash, "charitable_noncash")
+    misc = _sched_a_amount(misc_2pct_expenses, "misc_2pct_expenses")
+
+    notes = ["CA disallows state/local income taxes (incl. CA tax + SDI) "
+             "and sales taxes — property taxes deductible WITHOUT cap"]
+
+    medical_deductible = round(max(0.0, med - _SCHED_A_MEDICAL_FLOOR * agi_v), 2)
+    taxes_deductible = round(re_tax + pp_tax, 2)
+    # CA keeps the pre-TCJA acquisition-debt limit, halved for MFS/RDP-
+    # separate filers ($500K) per the Schedule CA line 8 instructions.
+    ca_limit = (_CA_MORTGAGE_LIMIT / 2 if married_filing_separately
+                else _CA_MORTGAGE_LIMIT)
+    mortgage_deductible = round(
+        _prorated_mortgage_interest(mort_int + points,
+                                    average_mortgage_balance,
+                                    ca_limit, notes,
+                                    f"CA (${ca_limit:,.0f} limit)"),
+        2)
+
+    cash_cap = _CA_CHARITY_CASH_AGI_CAP * agi_v
+    cash_allowed = min(cash, cash_cap)
+    noncash_cap = min(_CHARITY_APPRECIATED_AGI_CAP * agi_v,
+                      max(0.0, 0.50 * agi_v - cash_allowed))
+    noncash_allowed = min(noncash, noncash_cap)
+    charitable_deductible = round(cash_allowed + noncash_allowed, 2)
+    ca_charitable_carryforward = round(
+        (cash - cash_allowed) + (noncash - noncash_allowed), 2)
+    if ca_charitable_carryforward > 0:
+        notes.append(
+            "CA cash charitable cap is 50% of FEDERAL AGI (no TCJA 60% "
+            f"conformity) — ${ca_charitable_carryforward:,.2f} carries "
+            "forward for CA (tracked separately from the federal "
+            "carryforward; enter manually next year)")
+
+    misc_deductible = round(max(0.0, misc - 0.02 * agi_v), 2)
+    if misc > 0:
+        notes.append("misc 2%-floor deductions allowed for CA only "
+                     "(federal TCJA suspension does not apply)")
+
+    subtotal = round(medical_deductible + taxes_deductible
+                     + mortgage_deductible + inv_int
+                     + charitable_deductible + misc_deductible, 2)
+
+    phaseout = 0.0
+    if phaseout_threshold is None:
+        notes.append(
+            "CA itemized phase-out threshold (R&TC §17077, indexed) not in "
+            "the tax_law cache — phase-out NOT applied; a high-AGI "
+            "itemizer's CA deduction may be OVERSTATED until /tax-setup "
+            "fetches state.itemized_phaseout")
+    else:
+        thr = _sched_a_amount(phaseout_threshold, "phaseout_threshold")
+        if fed_agi > thr:
+            subject = max(0.0, subtotal - medical_deductible - inv_int)
+            phaseout = round(min(_CA_ITEMIZED_PHASEOUT_RATE * (fed_agi - thr),
+                                 _CA_ITEMIZED_PHASEOUT_MAX * subject), 2)
+            notes.append(
+                f"CA itemized phase-out applied: −${phaseout:,.2f} (lesser "
+                "of 6% of AGI over threshold or 80% of subject deductions)")
+    itemized_total = round(subtotal - phaseout, 2)
+
+    out = {
+        "medical_deductible": medical_deductible,
+        "taxes_deductible": taxes_deductible,
+        "mortgage_deductible": mortgage_deductible,
+        "investment_interest": round(inv_int, 2),
+        "charitable_deductible": charitable_deductible,
+        "misc_deductible": misc_deductible,
+        "charitable_carryforward": ca_charitable_carryforward,
+        "phaseout_reduction": phaseout,
+        "itemized_total": itemized_total,
+        "use_itemized": None,
+        "notes": notes,
+    }
+    if ca_standard_deduction is not None:
+        std = _sched_a_amount(ca_standard_deduction, "ca_standard_deduction")
+        if mfs_spouse_itemizes:
+            out["use_itemized"] = True
+            notes.append(
+                "MFS/RDP-separate with an itemizing spouse MUST itemize for "
+                "CA too — the CA standard deduction is unavailable")
+        else:
+            out["use_itemized"] = itemized_total > std
+        out["election_margin"] = round(itemized_total - std, 2)
+        if out["use_itemized"] and itemized_total > std:
+            notes.append(
+                "CA itemizes even when the federal return takes the "
+                "standard deduction — the elections are independent")
+    return out
+
+
 # Form 2210 structural statutory constants (IRC §6654, none indexed):
 # required annual payment = LESSER of 90% of current-year tax or 100%/110%
 # of prior-year tax (110% above $150K prior-year AGI, $75K MFS) — §6654(d);

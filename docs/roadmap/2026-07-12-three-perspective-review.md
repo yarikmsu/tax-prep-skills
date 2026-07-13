@@ -475,8 +475,15 @@ Build order by persona coverage × error cost:
   `missing_expected_payers()` (token-subset matching) diffs the rolled-over
   payer list against the ledger — step 2.5 blocking question + step 6.8
   mechanical re-check; the field finally has a consumer. Tests → 1316.
-- **Next (Q4 per sequencing):** D1 (Schedule A + CA Schedule CA), D9
-  (AMT / Form 6251 + 8801 carryforward).
+- **D1 (Schedule A + CA Schedule CA): ✅ shipped.** `compute_schedule_a`
+  (medical 7.5% floor, SALT from the fetched cap, Pub 936 average-balance
+  mortgage proration with the $1M grandfather, Pub 526 charitable ordering
+  + OBBBA §70425 0.5% floor from TY2026 + §170(f)(8) substantiation gate,
+  MFS spouse-itemizes forcing, election computed) + `compute_ca_itemized`
+  (income/sales taxes disallowed but NO cap, $1M mortgage limit, 50% cash
+  cap, misc 2%-floor allowed, R&TC §17077 phase-out from the cached
+  threshold with loud degrade). Elections independent. Tests → 1341.
+- **Next (Q4 per sequencing):** D9 (AMT / Form 6251 + 8801 carryforward).
 
 ### Decisions log
 

@@ -13,7 +13,9 @@ def _write_cache(tmp_path, year, sdi_wage_limit="omit"):
     """A minimal fresh cache: only fields the walker will see. Pass
     sdi_wage_limit="omit" to simulate a legacy cache created before the field
     existed (key absent entirely)."""
-    state = {"name": "California", "sdi_rate": 0.012}
+    state = {"name": "California", "sdi_rate": 0.012,
+             "itemized_phaseout": {"single": 244000, "mfj": 488000,
+                                   "hoh": 366000}}
     if sdi_wage_limit != "omit":
         state["sdi_wage_limit"] = sdi_wage_limit
     data = {
@@ -78,10 +80,30 @@ def test_empty_underpayment_rates_not_flagged(tmp_path):
         "tax_year": 2025,
         "_meta": {"fetched": datetime.now().isoformat()},
         "federal": {"fbar_threshold": 10000, "underpayment_rates": []},
-        "state": {"name": "California", "sdi_rate": 0.012},
+        "state": {"name": "California", "sdi_rate": 0.012,
+                  "itemized_phaseout": {"single": 244000, "mfj": 488000,
+                                        "hoh": 366000}},
         "exchange_rates": {"EUR": 1.08},
     }
     (tmp_path / "tax_law_2025.json").write_text(json.dumps(data))
     result = check_freshness(2025, str(tmp_path))
     assert not any("underpayment_rates" in f for f in result["null_fields"])
     assert result["status"] == "FRESH"
+
+def test_absent_itemized_phaseout_flagged_for_ca(tmp_path):
+    """Codex P2 (PR #33): a pre-D1 CA cache has no itemized_phaseout key —
+    the walker only visits present keys, so without the explicit guard it
+    reported FRESH while compute_ca_itemized silently skipped the §17077
+    phase-out (overstating high-AGI CA itemized deductions)."""
+    data = {
+        "tax_year": 2025,
+        "_meta": {"fetched": datetime.now().isoformat()},
+        "federal": {"fbar_threshold": 10000},
+        "state": {"name": "California", "sdi_rate": 0.012},
+        "exchange_rates": {"EUR": 1.08},
+    }
+    (tmp_path / "tax_law_2025.json").write_text(json.dumps(data))
+    result = check_freshness(2025, str(tmp_path))
+    assert any("itemized_phaseout" in f and "absent" in f
+               for f in result["null_fields"])
+    assert result["status"] == "INCOMPLETE"

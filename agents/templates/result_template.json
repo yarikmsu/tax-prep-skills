@@ -81,6 +81,40 @@
 
   "_optional_sections_below": "Include only if applicable to this taxpayer. Remove sections that don't apply.",
 
+  "schedule_a": {
+    "_include_if": "compute_schedule_a ran and use_itemized is true (or the election was close enough to document — within $500)",
+    "note": "Itemized deductions. Election computed by compute_schedule_a, not vibes.",
+    "medical_deductible": 0,
+    "salt_before_cap": 0,
+    "salt_deductible": 0,
+    "mortgage_deductible": 0,
+    "investment_interest": 0,
+    "charitable_deductible": 0,
+    "charitable_carryforward": 0,
+    "obbba_70111_reduction": 0,
+    "itemized_total": 0,
+    "use_itemized": false,
+    "election_margin": 0,
+    "notes": []
+  },
+
+  "schedule_ca_itemized": {
+    "_include_if": "CA return and compute_ca_itemized ran (CA itemizes far more often than federal — small CA standard deduction, no SALT cap)",
+    "note": "CA Schedule CA itemized path. Independent of the federal election.",
+    "medical_deductible": 0,
+    "taxes_deductible": 0,
+    "mortgage_deductible": 0,
+    "investment_interest": 0,
+    "charitable_deductible": 0,
+    "misc_deductible": 0,
+    "charitable_carryforward": 0,
+    "phaseout_reduction": 0,
+    "itemized_total": 0,
+    "use_itemized": false,
+    "election_margin": 0,
+    "notes": []
+  },
+
   "form_2210": {
     "_include_if": "compute_form_2210 ran and no_penalty is false (an underpayment exists)",
     "note": "Underpayment of estimated tax (1040 line 38). Computed by compute_form_2210 — regular method, even-withholding default; Schedule AI not modeled.",
