@@ -1554,3 +1554,124 @@ def test_build_events_dedupes_mixed_repeated_states():
     ptet = [e for e in events if e.category == "ptet"]
     # CA emits 2, NY emits 5, NJ emits 5, no duplicates → 12 total
     assert len(ptet) == 12
+
+# ---------------------------------------------------------------------------
+# CA 540-ES events (E7 — 30/40/0/30 weighting, no September installment)
+# ---------------------------------------------------------------------------
+
+def test_events_ca_es_three_installments_no_september():
+    events = cal.events_ca_es(2026)
+    assert [e.quarter_label for e in events] == ["Q1", "Q2", "Q4"]
+    assert [e.date for e in events] == [
+        datetime.date(2026, 4, 15),
+        datetime.date(2026, 6, 15),
+        datetime.date(2027, 1, 15),  # final 30% due Jan 15 of NEXT year
+    ]
+    # No event lands on the federal Q3 date — that's the whole point of E7.
+    assert datetime.date(2026, 9, 15) not in [e.date for e in events]
+
+
+def test_events_ca_es_weights_in_summaries():
+    events = cal.events_ca_es(2026)
+    assert "30%" in events[0].summary
+    assert "40%" in events[1].summary
+    assert "30%" in events[2].summary
+
+
+def test_events_ca_es_category_and_uids():
+    events = cal.events_ca_es(2026)
+    for e in events:
+        assert e.category == "state_estimated_tax"
+    uids = [e.uid for e in events]
+    assert len(set(uids)) == 3
+    assert events == cal.events_ca_es(2026)  # determinism
+
+
+def test_events_ca_es_descriptions_flag_no_september_and_high_income_rule():
+    for e in cal.events_ca_es(2026):
+        assert "NO September" in e.description
+        assert "19136.3" in e.description  # $1M/$500K-MFS 90%-only rule
+
+
+def test_build_events_ca_resident_gets_ca_es():
+    p = _profile(address={"state": "CA"})
+    events = cal.build_events(p, 2026)
+    ca_es = [e for e in events if e.category == "state_estimated_tax"]
+    assert len(ca_es) == 3
+
+
+def test_build_events_non_ca_resident_no_ca_es():
+    events = cal.build_events(_profile(), 2026)  # TX
+    assert not [e for e in events if e.category == "state_estimated_tax"]
+
+
+def test_build_events_missing_address_or_state_skips_ca_es():
+    p = _profile()
+    del p["address"]
+    assert not [e for e in cal.build_events(p, 2026)
+                if e.category == "state_estimated_tax"]
+    p2 = _profile(address={"state": None})
+    assert not [e for e in cal.build_events(p2, 2026)
+                if e.category == "state_estimated_tax"]
+
+
+def test_build_events_ca_state_normalized_case_whitespace():
+    p = _profile(address={"state": " ca "})
+    events = cal.build_events(p, 2026)
+    assert [e for e in events if e.category == "state_estimated_tax"]
+
+
+def test_build_events_full_state_name_hard_errors():
+    # "California" silently producing a federal-only calendar would drop the
+    # CA-ES reminders without warning — hard-error at the input boundary.
+    with pytest.raises(cal.CalendarError):
+        cal.build_events(_profile(address={"state": "California"}), 2026)
+
+
+def test_build_events_non_string_state_hard_errors():
+    with pytest.raises(cal.CalendarError):
+        cal.build_events(_profile(address={"state": 42}), 2026)
+
+
+def test_quarter_label_required_on_state_estimated_tax():
+    with pytest.raises(cal.CalendarError):
+        cal.CalendarEvent(
+            uid="x@test", summary="s", date=datetime.date(2026, 4, 15),
+            description="d", category="state_estimated_tax")
+
+
+def test_ca_es_events_serialize_with_category_and_v2_prodid():
+    p = _profile(address={"state": "CA"})
+    ics = cal.to_ics(cal.build_events(p, 2026))
+    assert "CATEGORIES:STATE_ESTIMATED_TAX" in ics
+    assert "tax-calendar v2" in ics
+
+
+def test_build_events_ca_resident_uids_unique_against_federal():
+    # CA-ES UIDs (ca540es-*) must never collide with 1040-ES UIDs (1040es-*).
+    p = _profile(address={"state": "CA"},
+                 flags={"has_foreign_accounts": True, "has_k1_income": True,
+                        "k1_states": ["CA"], "subject_to_rmd_primary": True,
+                        "subject_to_rmd_spouse": False})
+    events = cal.build_events(p, 2026)  # would raise on duplicate UIDs
+    uids = [e.uid for e in events]
+    assert len(set(uids)) == len(uids)
+
+
+def test_build_events_empty_state_string_degrades_to_federal_only():
+    # "" is scaffolding, not a malformed state — the taxpayer still gets the
+    # full federal calendar (losing FBAR/RMD/PTET over "" would be absurd).
+    p = _profile(address={"state": ""})
+    events = cal.build_events(p, 2026)
+    assert not [e for e in events if e.category == "state_estimated_tax"]
+    assert [e for e in events if e.category == "federal_estimated_tax"]
+    p2 = _profile(address={"state": "   "})
+    assert cal.build_events(p2, 2026)
+
+
+def test_build_events_non_usps_two_letter_code_hard_errors():
+    # Two letters alone is not a state: "ZZ" / Canadian "BC" must not
+    # silently produce a federal-only calendar (capabilities.py convention).
+    for bad in ("ZZ", "BC", "CN"):
+        with pytest.raises(cal.CalendarError):
+            cal.build_events(_profile(address={"state": bad}), 2026)

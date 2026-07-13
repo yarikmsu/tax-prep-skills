@@ -256,11 +256,13 @@ python3 -m venv .venv && source .venv/bin/activate && pip install -r requirement
 ### 6.5. Generate quarterly reminder calendar
 
 Generate `tax_calendar_{year}.ics` so the taxpayer can subscribe to upcoming
-deadlines (1040-ES quarterly payments, FBAR statutory + auto-extended due
-dates, RMD Dec 31 reminders for filers flagged `subject_to_rmd_primary` or
-`subject_to_rmd_spouse`, and CA/NY/NJ PTET windows for K-1 recipients driven
-by `flags.k1_states`). The generator reads `taxpayer_profile.json` and emits
-only the categories applicable per the flags.
+deadlines (1040-ES quarterly payments, CA 540-ES installments for CA residents
+per `address.state` — 30%/40%/0%/30% weighting with NO September payment,
+FBAR statutory + auto-extended due dates, RMD Dec 31 reminders for filers
+flagged `subject_to_rmd_primary` or `subject_to_rmd_spouse`, and CA/NY/NJ
+PTET windows for K-1 recipients driven by `flags.k1_states`). The generator
+reads `taxpayer_profile.json` and emits only the categories applicable per
+the flags.
 
 Run via Bash:
 ```bash

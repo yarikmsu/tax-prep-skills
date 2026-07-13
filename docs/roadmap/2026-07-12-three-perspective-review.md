@@ -495,9 +495,22 @@ Build order by persona coverage × error cost:
   `prior_year.amt_credit_carryforward`. `iso_exercise` moved from
   UNSUPPORTED to MANUAL in the capability gate (federal computed; CA
   Schedule P flagged not computed). Tests → 1361.
+- **E7 (CA-ES 30/40/0/30 weighting): ✅ shipped.** `tax_calendar.py` emits
+  3 CA 540-ES events for CA residents per `address.state` (strict 2-letter
+  validation; NO September event — the gap is called out in each
+  description); `projection.py` gains `compute_ca_safe_harbor` (FTB 5805 —
+  lesser-of(90% current, 100/110% prior CA tax) with the R&TC §19136.3
+  current-year-CA-AGI ≥$1M/$500K-MFS 90%-only override) +
+  `compute_ca_estimated_vouchers` (weight-proportional allocation over
+  still-open installments, visible $0 Q3 row, exact-sum rounding), wired
+  into `/tax-project`'s report; `/tax-withholding` adds a CA true-up block
+  anchored to the actual computed `california_540.ca_total_tax` (DE 4
+  per-paycheck + penalty/zero 540-ES schedules). Mandatory e-pay
+  (R&TC §19011.5) caveated in all three surfaces. CA's FTB 3519
+  payment-only extension remains folded into F2's scope. Review round (2 reviewer agents): state.code added to the tax_law schema with an address.state fallback (the CA block silently never fired on a schema-conformant cache — P1); the all-zero california_540 template scaffold no longer reads as a computed $0 CA return (P1); prior-year readers reject bool/NaN/negative-tax/scaffold; §19136 $500/$250-MFS de minimis in the status line; prior-AGI-missing → loud UNDERSTATED note (2210 precedent, federal too); renormalized share-of-remaining column; cumulative-catch-up + farmers/fishermen + AGI-proxy caveats; empty address.state degrades while non-USPS codes hard-error. Codex auto-review round (5 P2s): degraded first-year CA gate, de-minimis-as-covered penalty target, ½-SE-tax in the AGI proxy, mental-health surcharge in the CA target, computed-evidence section gating. Tests → 1429.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
-  sequencing): E7 (CA-ES 30/40/0/30 weighting), H1/H2/H3, D5 (education
-  credits), F2 (/tax-extend), E5 (state contributor playbook). Also
+  sequencing): H1/H2/H3, D5 (education credits), F2 (/tax-extend), E5
+  (state contributor playbook). Also
   queued from the D9 review: Form 3921 extraction in /tax-parse (the ISO
   bargain element is currently user-asserted and invisible to the A1/A2
   tie-out ledger) and 6251 line 1 negative-taxable-income handling.

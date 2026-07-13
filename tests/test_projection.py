@@ -539,3 +539,466 @@ def test_cli_rejects_path_traversal():
     repo_root = Path(__file__).resolve().parent.parent
     out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     assert out.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# E7: CA safe harbor (FTB 5805) + CA 540-ES 30/40/0/30 voucher schedule
+# ---------------------------------------------------------------------------
+
+def test_ca_safe_harbor_min_of_90_and_prior():
+    # pct90 = 0.9*20000 = 18000; prior_agi 100000 <= 150000 -> factor 1.00
+    # -> prior_based 15000 -> required 15000; paid 12000 -> shortfall 3000.
+    sh = P.compute_ca_safe_harbor(20000, 15000, 100000, 400000, "MFJ",
+                                  withholding=10000, estimates_paid=2000)
+    assert sh.pct90_current == 18000.0
+    assert sh.prior_factor == 1.00
+    assert sh.required_annual == 15000.0
+    assert sh.shortfall == 3000.0
+    assert sh.covered is False
+    assert sh.high_income_90_only is False
+    assert sh.degraded is False
+
+
+def test_ca_safe_harbor_110_factor_when_prior_agi_over_150k():
+    # prior_agi 200000 > 150000 -> 1.10*15000 = 16500 < 18000 -> required 16500
+    sh = P.compute_ca_safe_harbor(20000, 15000, 200000, 400000, "MFJ",
+                                  withholding=17000, estimates_paid=0)
+    assert sh.prior_factor == 1.10
+    assert sh.required_annual == 16500.0
+    assert sh.covered is True
+
+
+def test_ca_safe_harbor_prior_agi_exactly_150k_uses_100pct():
+    # The 110% factor is strictly ABOVE $150K (FTB 5805 mirrors §6654).
+    sh = P.compute_ca_safe_harbor(20000, 15000, 150000, 400000, "Single",
+                                  withholding=0, estimates_paid=0)
+    assert sh.prior_factor == 1.00
+
+
+def test_ca_safe_harbor_mfs_75k_threshold():
+    sh = P.compute_ca_safe_harbor(20000, 15000, 80000, 200000, "MFS",
+                                  withholding=0, estimates_paid=0)
+    assert sh.prior_factor == 1.10
+
+
+def test_ca_safe_harbor_high_income_forces_90pct():
+    # R&TC §19136.3: current-year CA AGI >= $1M -> prior-year harbor OFF even
+    # when it would be far cheaper (prior tax 1000). Boundary: exactly $1M.
+    sh = P.compute_ca_safe_harbor(200000, 1000, 100000, 1_000_000, "MFJ",
+                                  withholding=0, estimates_paid=0)
+    assert sh.high_income_90_only is True
+    assert sh.prior_based is None
+    assert sh.required_annual == 180000.0
+    assert sh.degraded is False
+
+
+def test_ca_safe_harbor_just_under_1m_keeps_prior_harbor():
+    sh = P.compute_ca_safe_harbor(200000, 1000, 100000, 999_999.99, "MFJ",
+                                  withholding=0, estimates_paid=0)
+    assert sh.high_income_90_only is False
+    assert sh.required_annual == 1000.0
+
+
+def test_ca_safe_harbor_mfs_high_income_500k():
+    sh = P.compute_ca_safe_harbor(50000, 1000, 100000, 500_000, "MFS",
+                                  withholding=0, estimates_paid=0)
+    assert sh.high_income_90_only is True
+    assert sh.required_annual == 45000.0
+
+
+def test_ca_safe_harbor_degraded_without_prior():
+    sh = P.compute_ca_safe_harbor(20000, None, None, 400000, "MFJ",
+                                  withholding=0, estimates_paid=0)
+    assert sh.degraded is True
+    assert sh.required_annual == 18000.0
+
+
+def test_ca_safe_harbor_high_income_wins_over_degraded():
+    # High income makes the 90% answer statutorily EXACT — not a degraded
+    # guess — even with no prior baseline.
+    sh = P.compute_ca_safe_harbor(20000, None, None, 2_000_000, "MFJ",
+                                  withholding=0, estimates_paid=0)
+    assert sh.high_income_90_only is True
+    assert sh.degraded is False
+
+
+def test_ca_vouchers_full_year_30_40_0_30():
+    # shortfall = 20000 - 8000 - 2000 = 10000, all four installments open.
+    vs = P.compute_ca_estimated_vouchers(20000, 8000, 2000,
+                                         datetime.date(2026, 3, 1))
+    assert [(v.quarter, v.due_date, v.amount) for v in vs] == [
+        (1, "2026-04-15", 3000.0),
+        (2, "2026-06-15", 4000.0),
+        (3, "2026-09-15", 0.0),   # visible $0 row — no September CA payment
+        (4, "2027-01-15", 3000.0),
+    ]
+
+
+def test_ca_vouchers_after_q1_renormalize_weights():
+    # Open: Q2 (.40), Q3 (0), Q4 (.30) -> Q2 = 10000*4/7 = 5714.29,
+    # Q4 takes the remainder 4285.71 so the column sums exactly.
+    vs = P.compute_ca_estimated_vouchers(10000, 0, 0, datetime.date(2026, 5, 1))
+    assert [(v.quarter, v.amount) for v in vs] == [
+        (2, 5714.29), (3, 0.0), (4, 4285.71)]
+    assert round(sum(v.amount for v in vs), 2) == 10000.0
+
+
+def test_ca_vouchers_after_jun_all_on_january():
+    # After Jun 15 only the (zero-weight) Q3 and Q4 remain -> everything
+    # lands on the January installment.
+    vs = P.compute_ca_estimated_vouchers(10000, 0, 0, datetime.date(2026, 7, 2))
+    assert [(v.quarter, v.amount) for v in vs] == [(3, 0.0), (4, 10000.0)]
+
+
+def test_ca_vouchers_after_sep_only_q4():
+    vs = P.compute_ca_estimated_vouchers(10000, 0, 0, datetime.date(2026, 10, 1))
+    assert [(v.quarter, v.due_date, v.amount) for v in vs] == [
+        (4, "2027-01-15", 10000.0)]
+
+
+def test_ca_vouchers_covered_all_zero():
+    vs = P.compute_ca_estimated_vouchers(5000, 8000, 0, datetime.date(2026, 3, 1))
+    assert [v.amount for v in vs] == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_ca_vouchers_rounding_remainder_lands_on_last():
+    # shortfall 100.01: Q1 30.0, Q2 40.0, Q3 0, Q4 = 100.01 - 70.00 = 30.01.
+    vs = P.compute_ca_estimated_vouchers(100.01, 0, 0, datetime.date(2026, 3, 1))
+    assert [v.amount for v in vs] == [30.0, 40.0, 0.0, 30.01]
+    assert round(sum(v.amount for v in vs), 2) == 100.01
+
+
+def test_prior_ca_tax_agi_extraction_and_bool_rejection():
+    assert P._prior_ca_tax_agi(None) == (None, None)
+    assert P._prior_ca_tax_agi(_Prior({})) == (None, None)
+    prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 120000}})
+    assert P._prior_ca_tax_agi(prior) == (5000.0, 120000.0)
+    # JSON true must not become a $1.00 prior-year tax.
+    prior_bool = _Prior({"california_540": {"ca_total_tax": True, "ca_agi": 120000}})
+    assert P._prior_ca_tax_agi(prior_bool) == (None, 120000.0)
+
+
+def test_state_projection_reports_agi():
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    st = P.project_state_tax(_proj(), prior, _tax_law_2026(), filing_status="MFJ")
+    assert st.agi == 100000.0  # income before the 11000 standard deduction
+
+
+def test_build_report_ca_block_present_for_ca_state():
+    r = _build_sample_report()
+    assert r.ca_safe_harbor is not None
+    assert r.ca_vouchers
+    # Vouchers reconcile to the CA shortfall.
+    assert round(sum(v.amount for v in r.ca_vouchers), 2) == r.ca_safe_harbor.shortfall
+    md = P.render_markdown(r)
+    assert "CA safe harbor (FTB 5805)" in md
+    assert "CA 540-ES voucher schedule (30% / 40% / 0% / 30%)" in md
+    assert "there is no September (Q3) payment" in md
+    assert "R&TC §19011.5" in md  # mandatory e-pay caveat
+
+
+def test_build_report_no_ca_block_without_state():
+    r = _build_sample_report(with_state=False)
+    assert r.ca_safe_harbor is None
+    assert r.ca_vouchers == []
+    md = P.render_markdown(r)
+    assert "540-ES voucher" not in md
+    assert "State estimated-payment scheduling is informational" in md
+
+
+def test_build_report_no_ca_block_for_non_ca_state_code():
+    law = _tax_law_2026()
+    law["state"]["code"] = "NY"
+    prior = _Prior({"california_540": {"ca_total_tax": 5000},
+                    "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        _profile_mfj(), law, prior, 2026, datetime.date(2026, 7, 2))
+    assert r.state is not None
+    assert r.ca_safe_harbor is None
+
+
+def test_build_report_ca_high_income_note_rendered():
+    # YTD wages 600000 over half a year -> projected CA AGI well over $1M.
+    prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 900000},
+                    "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 600000, "federal_withholding": 150000,
+                 "state_withholding": 50000},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        _profile_mfj(), _tax_law_2026(), prior, 2026, datetime.date(2026, 7, 2))
+    assert r.state.agi >= 1_000_000
+    assert r.ca_safe_harbor.high_income_90_only is True
+    assert "R&TC §19136.3" in P.render_markdown(r)
+
+
+def test_report_to_dict_includes_ca_fields():
+    d = P._report_to_dict(_build_sample_report())
+    json.dumps(d, default=str)  # JSON-serializable
+    assert d["ca_safe_harbor"] is not None
+    assert isinstance(d["ca_vouchers"], list) and d["ca_vouchers"]
+    d2 = P._report_to_dict(_build_sample_report(with_state=False))
+    assert d2["ca_safe_harbor"] is None
+    assert d2["ca_vouchers"] == []
+
+
+def test_num_rejects_non_finite():
+    # json.loads accepts NaN/Infinity; a NaN ca_agi would silently disable
+    # the R&TC §19136.3 high-income check (understating direction).
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(P.ProjectionError):
+            P._num(bad, "x")
+
+
+# ---------------------------------------------------------------------------
+# E7 review-round fixes (reviewer P1/P2 findings)
+# ---------------------------------------------------------------------------
+
+def test_ca_block_fires_without_state_code_via_resident_state():
+    """P1: the canonical tax_law schema had no state.code — the CA block must
+    fall back to the profile's address.state instead of silently never firing."""
+    law = _tax_law_2026()
+    del law["state"]["code"]
+    prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 120000},
+                    "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+    profile = {"filing_status": "MFJ", "dependents": [],
+               "address": {"state": "CA"}}
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile, law, prior, 2026, datetime.date(2026, 7, 2))
+    assert r.state.code == "CA"
+    assert r.ca_safe_harbor is not None
+
+
+def test_no_state_code_and_no_address_stays_generic():
+    law = _tax_law_2026()
+    del law["state"]["code"]
+    prior = _Prior({"california_540": {"ca_total_tax": 5000},
+                    "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        _profile_mfj(), law, prior, 2026, datetime.date(2026, 7, 2))
+    assert r.state.code == "STATE"
+    assert r.ca_safe_harbor is None
+
+
+def test_prior_ca_tax_agi_rejects_nan_negative_and_scaffold():
+    # NaN prior AGI would silently drop the 110% factor (understating).
+    p1 = _Prior({"california_540": {"ca_total_tax": 50000, "ca_agi": float("nan")}})
+    assert P._prior_ca_tax_agi(p1) == (50000.0, None)
+    # Negative prior tax would make min(pct90, -5000) mark anything covered.
+    p2 = _Prior({"california_540": {"ca_total_tax": -5000, "ca_agi": 100000}})
+    assert P._prior_ca_tax_agi(p2) == (None, 100000.0)
+    # All-zero template scaffold is NOT a computed $0 return.
+    p3 = _Prior({"california_540": {"_include_if": "state is CA",
+                                    "ca_total_tax": 0, "ca_agi": 0}})
+    assert P._prior_ca_tax_agi(p3) == (None, None)
+    # Negative AGI (loss year) is legitimate and makes the section present.
+    p4 = _Prior({"california_540": {"ca_total_tax": 0, "ca_agi": -5000}})
+    assert P._prior_ca_tax_agi(p4) == (0.0, -5000.0)
+
+
+def test_prior_tax_agi_federal_rejects_bool_nan_negative():
+    # float(True) == 1.0 must not become a $1 prior-year tax.
+    p1 = _Prior({"form_1040": {"line_24_total_tax": True, "line_11_agi": 100000}})
+    assert P._prior_tax_agi(p1) == (None, 100000.0)
+    p2 = _Prior({"form_1040": {"line_24_total_tax": float("nan"), "line_11_agi": 100000}})
+    assert P._prior_tax_agi(p2) == (None, 100000.0)
+    p3 = _Prior({"form_1040": {"line_24_total_tax": -1, "line_11_agi": 100000}})
+    assert P._prior_tax_agi(p3) == (None, 100000.0)
+
+
+def test_safe_harbor_prior_agi_missing_flagged_and_rendered():
+    """Prior tax known but prior AGI unknown → 100% factor + loud
+    may-be-UNDERSTATED note (the Form 2210 precedent)."""
+    sh = P.compute_safe_harbor(50000, 30000, None, "MFJ",
+                               withholding=0, estimates_paid=0)
+    assert sh.prior_agi_missing is True
+    assert sh.prior_factor == 1.00
+    csh = P.compute_ca_safe_harbor(20000, 15000, None, 400000, "MFJ",
+                                   withholding=0, estimates_paid=0)
+    assert csh.prior_agi_missing is True
+    assert csh.prior_factor == 1.00
+    # Rendered: prior with CA tax but no ca_agi and no line_11_agi.
+    prior = _Prior({"california_540": {"ca_total_tax": 5000},
+                    "form_1040": {"line_24_total_tax": 15000}})
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        _profile_mfj(), _tax_law_2026(), prior, 2026, datetime.date(2026, 7, 2))
+    assert r.safe_harbor.prior_agi_missing is True
+    assert r.ca_safe_harbor.prior_agi_missing is True
+    md = P.render_markdown(r)
+    assert md.count("may be UNDERSTATED") >= 2  # federal + CA notes
+
+
+def test_ca_safe_harbor_rejects_non_canonical_filing_status():
+    # "Married Filing Separately" silently taking the $1M (not $500K) cliff
+    # and the $150K (not $75K) threshold is the understating direction.
+    for bad in ("Married Filing Separately", "married", "", None):
+        with pytest.raises(P.ProjectionError):
+            P.compute_ca_safe_harbor(20000, 15000, 100000, 400000, bad,
+                                     withholding=0, estimates_paid=0)
+
+
+def test_ca_safe_harbor_de_minimis_flag():
+    # tax minus withholding under $500 ($250 MFS) → no CA penalty (strict <).
+    assert P.compute_ca_safe_harbor(400, None, None, 50000, "Single",
+                                    withholding=0, estimates_paid=0).de_minimis is True
+    assert P.compute_ca_safe_harbor(500, None, None, 50000, "Single",
+                                    withholding=0, estimates_paid=0).de_minimis is False
+    assert P.compute_ca_safe_harbor(300, None, None, 50000, "MFS",
+                                    withholding=0, estimates_paid=0).de_minimis is False
+    assert P.compute_ca_safe_harbor(200, None, None, 50000, "MFS",
+                                    withholding=0, estimates_paid=0).de_minimis is True
+    # Withholding counts: tax 10000 with 9700 withheld → gap 300 → de minimis.
+    assert P.compute_ca_safe_harbor(10000, None, None, 50000, "Single",
+                                    withholding=9700, estimates_paid=0).de_minimis is True
+
+
+def test_ca_status_renders_de_minimis():
+    # Under the de minimis no CA penalty can arise, so the PENALTY target is
+    # covered (shortfall zeroed — DE 4 / penalty vouchers demand nothing);
+    # the zero-balance target still shows the tax due.
+    csh = P.compute_ca_safe_harbor(400, None, None, 50000, "Single",
+                                   withholding=0, estimates_paid=0)
+    assert csh.de_minimis is True
+    assert csh.shortfall == 0.0
+    assert csh.covered is True
+    s = P._ca_status(csh)
+    assert "de minimis" in s and "no CA underpayment penalty" in s
+
+
+def test_ca_voucher_table_shows_renormalized_share():
+    """P2: printing the statutory 30% next to a 100%-of-shortfall Q4 amount
+    misleads — the table must show the share of the REMAINING shortfall."""
+    prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 120000},
+                    "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 100},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        _profile_mfj(), _tax_law_2026(), prior, 2026, datetime.date(2026, 7, 2))
+    md = P.render_markdown(r)
+    assert "Share of remaining" in md
+    assert "| Q4 | 2027-01-15 | 100% |" in md  # only weighted installment left
+    assert "Earlier installments have closed" in md
+    assert "pay catch-up amounts NOW" in md
+    # Proxy caveat always present on the projection CA block.
+    assert "federal-composition proxy" in md
+
+
+def test_ca_near_boundary_warning_rendered():
+    # Projected CA AGI ~980K (MFJ) — within 10% of the $1M cliff but not over.
+    prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 900000},
+                    "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 490000, "federal_withholding": 120000,
+                 "state_withholding": 40000},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        _profile_mfj(), _tax_law_2026(), prior, 2026, datetime.date(2026, 7, 2))
+    assert 900000 <= r.state.agi < 1000000
+    assert r.ca_safe_harbor.high_income_90_only is False
+    md = P.render_markdown(r)
+    assert "within 10% of the R&TC §19136.3 threshold" in md
+
+
+def test_ca_notes_include_farmers_fishermen_caveat():
+    csh = P.compute_ca_safe_harbor(20000, None, None, 50000, "MFJ",
+                                   withholding=0, estimates_paid=0)
+    joined = "\n".join(P._ca_notes(csh))
+    assert "5805F" in joined and "66" in joined
+
+
+# ---------------------------------------------------------------------------
+# Codex auto-review round (PR #35 P2s)
+# ---------------------------------------------------------------------------
+
+def test_ca_block_fires_degraded_without_prior_archive():
+    """Codex P2: a first-year CA resident (no archive/) must still get the
+    state projection + CA 540-ES schedule in degraded mode — the
+    prior-state-section gate was only a "files this state" proxy."""
+    profile = {"filing_status": "MFJ", "dependents": [],
+               "address": {"state": "CA"}}
+    r = P.build_report(
+        {"pay_frequency": "biweekly",
+         "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
+         "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile, _tax_law_2026(), None, 2026, datetime.date(2026, 7, 2))
+    assert r.degraded is True
+    assert r.state is not None
+    assert r.ca_safe_harbor is not None
+    assert r.ca_safe_harbor.degraded is True
+    assert "CA 540-ES voucher schedule" in P.render_markdown(r)
+
+
+def test_state_projection_still_none_without_prior_and_no_resident_match():
+    # No prior AND no resident-state signal -> unchanged legacy behavior.
+    assert P.project_state_tax(_proj(), None, _tax_law_2026(), "MFJ") is None
+    # No prior and a NON-matching resident state -> still None.
+    assert P.project_state_tax(_proj(), None, _tax_law_2026(), "MFJ",
+                               resident_state="TX") is None
+
+
+def test_state_agi_subtracts_half_se_tax():
+    """Codex P2: CA Form 540 starts from FEDERAL AGI, which already nets the
+    deductible half of SE tax — the §19136.3 proxy must not read gross SE
+    income. ~$1.01M SE income => AGI under the $1M cliff."""
+    law = _tax_law_2026()
+    prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 900000}})
+    st = P.project_state_tax(
+        _proj(wages=0, ss_wages=0, medicare_wages=0,
+              self_employment_net=1_010_000),
+        prior, law, filing_status="MFJ")
+    fed = P.project_federal_tax(
+        _proj(wages=0, ss_wages=0, medicare_wages=0,
+              self_employment_net=1_010_000),
+        _profile_mfj(), law)
+    assert st.agi == fed.agi  # both net the deductible half of SE tax
+    assert st.agi < 1_000_000
+    csh = P.compute_ca_safe_harbor(50000, 5000, 900000, st.agi, "MFJ",
+                                   withholding=0, estimates_paid=0)
+    assert csh.high_income_90_only is False  # prior-year harbor stays valid
+
+
+def test_state_tax_includes_mental_health_surcharge():
+    """Codex P2: Form 540 total tax includes the 1% mental-health services
+    tax over $1M taxable income. 2,000,000 wages: ti = 1,989,000;
+    brackets = 200 + 5% x 1,969,000 = 98,650; MH = 1% x 989,000 = 9,890."""
+    law = _tax_law_2026()
+    law["state"]["mental_health_surcharge"] = {"rate": 0.01, "threshold": 1000000}
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    st = P.project_state_tax(_proj(wages=2_000_000), prior, law,
+                             filing_status="MFJ")
+    assert st.taxable_income == 1_989_000
+    assert st.tax == 98650 + 9890
+    # Absent/None block -> no surcharge, no crash.
+    law2 = _tax_law_2026()
+    law2["state"]["mental_health_surcharge"] = {"rate": None, "threshold": None}
+    st2 = P.project_state_tax(_proj(wages=2_000_000), prior, law2,
+                              filing_status="MFJ")
+    assert st2.tax == 98650
+
+
+def test_ca_section_computed_ignores_bookkeeping_fields():
+    """Codex P2: parsed W-2 Box 17 withholding must not vouch for untouched
+    template zeros in the compute-output fields."""
+    scaffold_with_wh = {"california_540": {
+        "_include_if": "state is CA", "ca_total_tax": 0, "ca_agi": 0,
+        "ca_standard_deduction": 0, "ca_withholding_box17": 4500,
+        "ca_sdi_box14": 1200}}
+    assert P._ca_section_computed(scaffold_with_wh) is False
+    assert P._prior_ca_tax_agi(_Prior(scaffold_with_wh)) == (None, None)
+    # Computed $0-tax return: non-zero standard deduction is evidence.
+    computed_zero = {"california_540": {
+        "ca_total_tax": 0, "ca_agi": 0, "ca_standard_deduction": 11080}}
+    assert P._ca_section_computed(computed_zero) is True

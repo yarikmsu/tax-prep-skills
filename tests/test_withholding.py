@@ -262,3 +262,215 @@ def test_main_future_as_of_returns_1(capsys):
     ])
     assert rc == 1
     assert "future" in capsys.readouterr().err.lower()
+
+
+# ---------------------------------------------------------------------------
+# E7: California true-up (Form 540 + FTB 5805 + 540-ES 30/40/0/30)
+# ---------------------------------------------------------------------------
+
+class _FakeCaPrior:
+    def __init__(self, total_tax, agi, ca_tax, ca_agi):
+        self.result = {
+            "form_1040": {"line_24_total_tax": total_tax, "line_11_agi": agi},
+            "california_540": {"ca_total_tax": ca_tax, "ca_agi": ca_agi},
+        }
+
+
+def _ca_result(ca_tax=8000, ca_agi=200000, fed_tax=40000):
+    return {"meta": {"tax_year": 2026, "filing_status": "single"},
+            "form_1040": {"line_24_total_tax": fed_tax},
+            "california_540": {"ca_total_tax": ca_tax, "ca_agi": ca_agi}}
+
+
+def _ca_proj_inputs(fed_wh=10000, state_wh=1000, state_est=0):
+    return {
+        "pay_frequency": "biweekly",
+        "ytd": {"federal_withholding": fed_wh, "state_withholding": state_wh},
+        "estimated_payments_made": {"federal": 0, "state": state_est},
+    }
+
+
+def test_read_ca_inputs_happy_and_absent():
+    assert wh.read_ca_inputs(_ca_result()) == (8000.0, 200000.0)
+    assert wh.read_ca_inputs({"meta": {}}) is None
+
+
+def test_read_ca_inputs_requires_tax_and_agi():
+    with pytest.raises(wh.WithholdingError):
+        wh.read_ca_inputs({"california_540": {"ca_agi": 100000}})
+    # Missing ca_agi would silently disable the R&TC §19136.3 high-income
+    # check — the understating direction — so it hard-errors too.
+    with pytest.raises(wh.WithholdingError):
+        wh.read_ca_inputs({"california_540": {"ca_total_tax": 8000}})
+    with pytest.raises(wh.WithholdingError):
+        wh.read_ca_inputs({"california_540": "corrupt"})
+    with pytest.raises(wh.WithholdingError):
+        wh.read_ca_inputs({"california_540": {"ca_total_tax": -1, "ca_agi": 0}})
+
+
+def test_read_ca_inputs_negative_agi_valid():
+    # A loss year: negative CA AGI is legitimate (just not high-income).
+    assert wh.read_ca_inputs(
+        {"california_540": {"ca_total_tax": 0, "ca_agi": -5000}}) == (0.0, -5000.0)
+
+
+def test_build_report_ca_block_hand_computed():
+    # as_of Jun 30: frac = 181/365. YTD CA withholding 1000 ->
+    # projected = round(1000 * 365/181, 2) = 2016.57; paid = 2016.57.
+    # Prior CA tax 6000, prior CA AGI 120000 (<=150K -> 1.00) -> prior_based
+    # 6000; pct90 = 7200 -> required 6000 -> shortfall 3983.43.
+    # Zero shortfall = 8000 - 2016.57 = 5983.43.
+    as_of = datetime.date(2026, 6, 30)
+    frac = as_of.timetuple().tm_yday / 365
+    prior = _FakeCaPrior(30000, 120000, 6000, 120000)
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(), prior, 2026, as_of)
+    assert r.ca is not None
+    proj_wh = round(1000 / frac, 2)
+    assert r.ca.liability == 8000.0
+    assert r.ca.projected_full_year_withholding == proj_wh
+    assert r.ca.safe_harbor.required_annual == 6000.0
+    assert r.ca.safe_harbor.shortfall == round(6000 - proj_wh, 2)
+    assert r.ca.zero_shortfall == round(8000 - proj_wh, 2)
+    # Jun 30 -> Q2 gone; open Q3 (0 weight) + Q4 -> whole shortfall on Q4.
+    assert [(v.quarter, v.amount) for v in r.ca.vouchers_penalty] == [
+        (3, 0.0), (4, r.ca.safe_harbor.shortfall)]
+    assert [(v.quarter, v.amount) for v in r.ca.vouchers_zero] == [
+        (3, 0.0), (4, r.ca.zero_shortfall)]
+    # DE 4 per-paycheck over the same remaining-paychecks base as federal.
+    pr = r.inputs.paychecks_remaining
+    assert r.ca.de4_penalty.per_paycheck == round(r.ca.safe_harbor.shortfall / pr, 2)
+    assert r.ca.de4_zero.per_paycheck == round(r.ca.zero_shortfall / pr, 2)
+
+
+def test_build_report_ca_none_without_section():
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000}}
+    r = wh.build_report(result, _ca_proj_inputs(), None, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca is None
+    md = wh.render_markdown(r)
+    assert "California true-up" not in md
+    assert "covered for CA returns only" in md
+
+
+def test_build_report_ca_high_income_90_only():
+    # Current-year CA AGI $1.2M -> R&TC §19136.3 forbids the prior-year
+    # harbor even though prior CA tax (1000) would be far cheaper.
+    prior = _FakeCaPrior(30000, 120000, 1000, 900000)
+    r = wh.build_report(_ca_result(ca_tax=100000, ca_agi=1_200_000),
+                        _ca_proj_inputs(state_wh=20000), prior, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca.safe_harbor.high_income_90_only is True
+    assert r.ca.safe_harbor.required_annual == 90000.0
+    assert "R&TC §19136.3" in wh.render_markdown(r)
+
+
+def test_build_report_ca_degraded_without_prior():
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(), None, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca.safe_harbor.degraded is True
+    assert r.ca.safe_harbor.required_annual == round(0.9 * 8000, 2)
+
+
+def test_render_markdown_ca_sections():
+    prior = _FakeCaPrior(30000, 120000, 6000, 120000)
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(), prior, 2026,
+                        datetime.date(2026, 6, 30))
+    md = wh.render_markdown(r)
+    assert "## California true-up (Form 540)" in md
+    assert "CA safe harbor (FTB 5805)" in md
+    assert "DE 4 per-paycheck extra CA withholding" in md
+    assert "CA 540-ES voucher schedule (30% / 40% / 0% / 30%)" in md
+    assert "there is no September (Q3) payment" in md
+    assert "R&TC §19011.5" in md  # mandatory e-pay caveat
+
+
+def test_report_to_dict_includes_ca_and_roundtrips():
+    prior = _FakeCaPrior(30000, 120000, 6000, 120000)
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(), prior, 2026,
+                        datetime.date(2026, 6, 30))
+    back = json.loads(json.dumps(wh._report_to_dict(r), default=str))
+    assert back["ca"]["liability"] == 8000.0
+    assert back["ca"]["safe_harbor"]["required_annual"] == 6000.0
+    assert isinstance(back["ca"]["vouchers_penalty"], list)
+    # Non-CA report serializes ca as null.
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000}}
+    r2 = wh.build_report(result, _ca_proj_inputs(), None, 2026,
+                         datetime.date(2026, 6, 30))
+    assert wh._report_to_dict(r2)["ca"] is None
+
+
+def test_read_ca_inputs_scaffold_section_skipped():
+    """P1: result_template.json ships an ALL-ZERO california_540 scaffold and
+    /tax-setup copies it before /tax-compute step 10 runs — it must NOT
+    become a confident 'CA tax $0 / covered' block."""
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000},
+              "california_540": {"_include_if": "state is CA",
+                                 "ca_filing_status": None,
+                                 "ca_standard_deduction": 0,
+                                 "ca_agi": 0, "ca_total_tax": 0,
+                                 "ca_withholding_box17": 0, "note": None}}
+    assert wh.read_ca_inputs(result) is None
+    r = wh.build_report(result, _ca_proj_inputs(), None, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca is None
+    assert "covered for CA returns only" in wh.render_markdown(r)
+
+
+def test_read_ca_inputs_zero_tax_computed_return_still_counts():
+    # A genuine $0-tax CA return has non-zero ca_agi → present, computed.
+    result = {"california_540": {"ca_total_tax": 0, "ca_agi": 15000}}
+    assert wh.read_ca_inputs(result) == (0.0, 15000.0)
+
+
+def test_render_markdown_ca_catchup_and_de_minimis_notes():
+    prior = _FakeCaPrior(30000, 120000, 6000, 120000)
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(), prior, 2026,
+                        datetime.date(2026, 6, 30))
+    md = wh.render_markdown(r)
+    assert "pay catch-up amounts NOW" in md
+    assert "5805F" in md  # farmers/fishermen not-modeled caveat
+    # De minimis: CA tax 1000, projected withholding ~700 (347/frac) ->
+    # required 900 (degraded 90%) leaves a raw gap, but tax minus
+    # withholding ~300 < $500 -> penalty target COVERED (shortfall zeroed,
+    # DE 4 penalty figure $0) while the zero-balance target still shows
+    # the ~$300 due.
+    r2 = wh.build_report(_ca_result(ca_tax=1000, ca_agi=20000),
+                         _ca_proj_inputs(state_wh=347), None, 2026,
+                         datetime.date(2026, 6, 30))
+    assert r2.ca.safe_harbor.de_minimis is True
+    assert r2.ca.safe_harbor.shortfall == 0.0
+    assert r2.ca.safe_harbor.covered is True
+    assert r2.ca.de4_penalty.per_paycheck == 0.0
+    assert r2.ca.zero_shortfall > 0
+    assert "no CA underpayment penalty applies" in wh.render_markdown(r2)
+
+
+def test_build_report_federal_prior_agi_missing_note():
+    class _PriorNoAgi:
+        result = {"form_1040": {"line_24_total_tax": 30000}}
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000}}
+    r = wh.build_report(result, _proj_inputs(10000), _PriorNoAgi(), 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.safe_harbor.prior_agi_missing is True
+    assert "may be UNDERSTATED" in wh.render_markdown(r)
+
+
+def test_read_ca_inputs_box17_only_scaffold_skipped():
+    """Codex P2: a CA section whose only non-zero field is parsed W-2 Box 17
+    withholding is NOT a computed return — must not print a confident
+    '$0 / covered' CA block."""
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000},
+              "california_540": {"_include_if": "state is CA",
+                                 "ca_standard_deduction": 0,
+                                 "ca_agi": 0, "ca_total_tax": 0,
+                                 "ca_withholding_box17": 4500,
+                                 "ca_sdi_box14": 1200}}
+    assert wh.read_ca_inputs(result) is None
+    r = wh.build_report(result, _ca_proj_inputs(), None, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca is None

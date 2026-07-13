@@ -9,8 +9,9 @@ math and rollover.py for the prior-year baseline + path/year validation.
 import calendar
 import datetime
 import json
+import math
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -43,6 +44,26 @@ PAY_PERIODS = {"weekly": 52, "biweekly": 26, "semimonthly": 24, "monthly": 12}
 _MFJ_LIKE = {"MFJ", "QSS"}
 ES_DUE_DATES = [(1, (4, 15)), (2, (6, 15)), (3, (9, 15)), (4, (1, 15))]  # Q4 due Jan 15 next year
 
+# CA 540-ES installments are NOT four equal quarters: 30% / 40% / 0% / 30%
+# per R&TC §19136.1 (FTB Form 540-ES instructions) — there is NO September
+# (Q3) installment. Q4 is due Jan 15 of the following year, like federal.
+# Structural statutory constants (weights are set in statute, not indexed).
+CA_ES_SCHEDULE = [(1, (4, 15), 0.30), (2, (6, 15), 0.40),
+                  (3, (9, 15), 0.00), (4, (1, 15), 0.30)]
+
+# R&TC §19136.3: taxpayers with CURRENT-year CA AGI at or above these
+# thresholds may not use the prior-year safe harbor at all — they must pay
+# 90% of the current-year tax. Not indexed for inflation.
+CA_HIGH_INCOME_AGI_LIMIT = 1_000_000
+CA_HIGH_INCOME_AGI_LIMIT_MFS = 500_000
+
+# R&TC §19136 (FTB 5805 Part I): NO CA underpayment penalty when current-year
+# tax minus withholding is under $500 ($250 MFS). Statutory-fixed, not indexed.
+CA_ES_DE_MINIMIS = 500
+CA_ES_DE_MINIMIS_MFS = 250
+
+_CANONICAL_STATUSES = {"SINGLE", "MFJ", "MFS", "HOH", "QSS"}
+
 
 def _full_status_key(filing_status: str | None) -> str:
     fs = (filing_status or "").upper()
@@ -54,7 +75,13 @@ def _binary_status_key(filing_status: str | None) -> str:
 
 
 def _num(value, field: str = "") -> float:
-    """Coerce to float; None->0.0; reject bool and unparseable strings."""
+    """Coerce to float; None->0.0; reject bool, non-finite, and unparseable strings.
+
+    Non-finite rejection is load-bearing: json.loads accepts NaN/Infinity, and
+    NaN silently defeats every downstream comparison (all NaN comparisons are
+    False — e.g. a NaN ca_agi would disable the R&TC §19136.3 high-income
+    check, the understating direction).
+    """
     if value is None:
         return 0.0
     try:
@@ -63,6 +90,8 @@ def _num(value, field: str = "") -> float:
         raise ProjectionError(f"{field or 'value'} must be numeric, got bool")
     if n is None:
         raise ProjectionError(f"{field or 'value'} is not numeric: {value!r}")
+    if not math.isfinite(n):
+        raise ProjectionError(f"{field or 'value'} must be finite, got {n!r}")
     return n
 
 
@@ -118,6 +147,10 @@ class StateProjection:
     withholding: float
     estimates_paid: float
     balance: float
+    # Projected state AGI (income before the standard deduction; state
+    # adjustments are not modeled in v1). Feeds the R&TC §19136.3
+    # high-income test, which is on CURRENT-year CA AGI.
+    agi: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -132,6 +165,43 @@ class SafeHarbor:
     shortfall: float
     covered: bool
     degraded: bool
+    # Prior tax present but prior AGI unknown → 100% factor assumed with a
+    # loud understatement note (mirrors compute_form_2210's handling).
+    prior_agi_missing: bool = False
+
+
+@dataclass(frozen=True)
+class CaSafeHarbor:
+    """CA estimated-tax safe harbor (FTB Form 5805).
+
+    Mirrors the federal SafeHarbor structure — CA conforms to the
+    lesser-of(90% current, 100/110% prior) test including the $150K/$75K-MFS
+    prior-AGI threshold for the 110% factor — with one CA-specific rule:
+    current-year CA AGI >= $1,000,000 ($500,000 MFS) forbids the prior-year
+    exception entirely (R&TC §19136.3). `high_income_90_only` flags that path
+    so the renderer can explain why the prior-year row is absent.
+    """
+    pct90_current: float
+    prior_tax: "float | None"
+    prior_factor: "float | None"
+    prior_based: "float | None"
+    required_annual: float
+    withholding: float
+    estimates_paid: float
+    shortfall: float
+    covered: bool
+    degraded: bool
+    high_income_90_only: bool
+    # The §19136.3 threshold applied (by filing status) — lets renderers warn
+    # when a PROXY current-year AGI sits near the cliff.
+    high_income_threshold: float = 0.0
+    # Prior tax present but prior AGI unknown → the 110% factor cannot be
+    # tested; 100% assumed with a loud understatement note (the Form 2210
+    # precedent for the same gap).
+    prior_agi_missing: bool = False
+    # R&TC §19136: current tax minus withholding under $500/$250-MFS → no CA
+    # underpayment penalty can arise regardless of the shortfall shown.
+    de_minimis: bool = False
 
 
 @dataclass(frozen=True)
@@ -162,6 +232,10 @@ class ProjectionReport:
     vouchers: "list[Voucher]"
     w4_penalty: W4Adjustment
     w4_zero: W4Adjustment
+    # Present only when the state projection ran AND the state is CA — the
+    # only state whose estimated-payment weighting (30/40/0/30) is modeled.
+    ca_safe_harbor: "CaSafeHarbor | None" = None
+    ca_vouchers: "list[Voucher]" = field(default_factory=list)
 
 
 def validate_pay_frequency(pay_frequency: str) -> str:
@@ -382,12 +456,17 @@ def compute_safe_harbor(projected_tax: float, prior_tax: float | None, prior_agi
                         estimates_paid: float) -> SafeHarbor:
     pct90 = round(0.90 * projected_tax, 2)
     degraded = prior_tax is None
+    prior_agi_missing = False
     if degraded:
         required = pct90
         prior_factor = None
         prior_based = None
     else:
         threshold = 75000 if (filing_status or "").upper() == "MFS" else 150000
+        # Prior AGI unknown → assume the 100% factor, flagged so renderers
+        # print the may-be-UNDERSTATED note (the compute_form_2210 precedent,
+        # pinned by the required-annual-payment parity test).
+        prior_agi_missing = prior_agi is None
         prior_factor = 1.10 if (prior_agi or 0) > threshold else 1.00
         prior_based = round(prior_factor * prior_tax, 2)
         required = round(min(pct90, prior_based), 2)
@@ -398,6 +477,7 @@ def compute_safe_harbor(projected_tax: float, prior_tax: float | None, prior_agi
         prior_based=prior_based, required_annual=required, withholding=round(withholding, 2),
         estimates_paid=round(estimates_paid, 2), shortfall=shortfall,
         covered=shortfall <= 0, degraded=degraded,
+        prior_agi_missing=prior_agi_missing,
     )
 
 
@@ -429,15 +509,185 @@ def compute_estimated_vouchers(required_annual: float, withholding: float, paid:
     return [Voucher(q, dd, per) for q, dd in open_q]
 
 
+def compute_ca_safe_harbor(projected_tax: float, prior_tax: "float | None",
+                           prior_agi: "float | None", current_agi: float,
+                           filing_status: "str | None", withholding: float,
+                           estimates_paid: float) -> CaSafeHarbor:
+    """CA required annual payment per FTB Form 5805.
+
+    Same structure as the federal §6654 test (CA conforms, including the
+    110%-of-prior factor when PRIOR-year AGI exceeds $150K/$75K-MFS), plus
+    the R&TC §19136.3 limitation: when CURRENT-year CA AGI is at or above
+    $1M ($500K MFS), the prior-year exception is unavailable and the
+    required payment is 90% of the current-year tax. Note the two AGI tests
+    read different years — §19136.3 looks at the year being paid,
+    the 110% factor at the preceding year.
+    """
+    # MFS drives BOTH CA-specific cliffs ($500K §19136.3 limit, $250 de
+    # minimis) plus the $75K 110% threshold — a non-canonical spelling
+    # ("Married Filing Separately") silently taking the non-MFS windows is
+    # the understating direction, so VALUE-validate like retirement_dashboard.
+    status = (filing_status or "").strip().upper()
+    if status not in _CANONICAL_STATUSES:
+        raise ProjectionError(
+            f"filing_status must be one of Single/MFJ/MFS/HoH/QSS for the CA "
+            f"safe harbor, got {filing_status!r}")
+    pct90 = round(0.90 * projected_tax, 2)
+    mfs = status == "MFS"
+    high_limit = CA_HIGH_INCOME_AGI_LIMIT_MFS if mfs else CA_HIGH_INCOME_AGI_LIMIT
+    high = _num(current_agi, "current_agi") >= high_limit
+    degraded = (prior_tax is None) and not high
+    prior_factor = None
+    prior_based = None
+    prior_agi_missing = False
+    if high or degraded:
+        required = pct90
+    else:
+        threshold = 75000 if mfs else 150000
+        prior_agi_missing = prior_agi is None
+        prior_factor = 1.10 if (prior_agi or 0) > threshold else 1.00
+        prior_based = round(prior_factor * prior_tax, 2)
+        required = round(min(pct90, prior_based), 2)
+    paid = round(withholding + estimates_paid, 2)
+    shortfall = round(max(0.0, required - paid), 2)
+    de_minimis = (projected_tax - withholding) < (CA_ES_DE_MINIMIS_MFS if mfs
+                                                  else CA_ES_DE_MINIMIS)
+    # Under the de minimis no CA penalty can arise, so the PENALTY target is
+    # met — zero the shortfall so DE 4 / "to avoid penalty" vouchers don't
+    # demand payments that avoid nothing (Codex P2 on PR #35). The
+    # zero-balance target is computed by callers from the liability and
+    # still shows the tax due.
+    if de_minimis:
+        shortfall = 0.0
+    return CaSafeHarbor(
+        pct90_current=pct90, prior_tax=prior_tax, prior_factor=prior_factor,
+        prior_based=prior_based, required_annual=required,
+        withholding=round(withholding, 2), estimates_paid=round(estimates_paid, 2),
+        shortfall=shortfall, covered=shortfall <= 0, degraded=degraded,
+        high_income_90_only=high, high_income_threshold=float(high_limit),
+        prior_agi_missing=prior_agi_missing, de_minimis=de_minimis,
+    )
+
+
+def compute_ca_estimated_vouchers(required_annual: float, withholding: float,
+                                  paid: float, as_of: datetime.date) -> list:
+    """CA 540-ES voucher schedule under the 30/40/0/30 weighting.
+
+    The remaining shortfall (withholding treated as paid evenly — the FTB
+    5805 default, same as federal — net of estimates already paid) is
+    allocated across the still-open installments in proportion to their
+    statutory weights, so before Apr 15 the split is exactly 30/40/0/30 and
+    after Jun 15 everything lands on the January installment. Q3 is emitted
+    at $0 whenever it's still open so the "no September CA payment" fact is
+    visible in the schedule rather than silently absent. The rounding
+    remainder lands on the last weighted installment so the column sums to
+    the shortfall exactly.
+
+    Simplification (same as the federal schedule): FTB 5805 tracks each
+    installment cumulatively, so paying after a missed installment date does
+    not fully cure that installment's underpayment — this schedule targets
+    the ANNUAL requirement from `as_of` forward.
+    """
+    shortfall = max(0.0, required_annual - withholding - paid)
+    open_q = []
+    for q, (m, d), weight in CA_ES_SCHEDULE:
+        if q == 4:
+            open_q.append((4, f"{as_of.year + 1}-01-15", weight))
+            continue
+        due = datetime.date(as_of.year, m, d)
+        if due >= as_of:
+            open_q.append((q, due.isoformat(), weight))
+    # Q4 is appended unconditionally above, so open_q is never empty and
+    # total_weight is never 0 (Q4 carries 0.30).
+    total_weight = sum(w for _, _, w in open_q)
+    if shortfall <= 0 or total_weight <= 0:
+        return [Voucher(q, dd, 0.0) for q, dd, _ in open_q]
+    last_weighted = max(i for i, (_, _, w) in enumerate(open_q) if w > 0)
+    vouchers = []
+    allocated = 0.0
+    for i, (q, dd, w) in enumerate(open_q):
+        if i == last_weighted:
+            amt = round(shortfall - allocated, 2)
+        else:
+            amt = round(shortfall * w / total_weight, 2)
+            allocated = round(allocated + amt, 2)
+        vouchers.append(Voucher(q, dd, amt))
+    return vouchers
+
+
+def _prior_numeric(v, *, allow_negative: bool):
+    """Prior-year figure sanitizer: bool, non-finite (json.loads accepts
+    NaN/Infinity), and — for tax figures — negative values all degrade to
+    None (→ 90%-of-current fallback) instead of corrupting the min():
+    min(pct90, NaN) propagates NaN and min(pct90, -5000) marks a corrupted
+    archive as "covered"."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return None
+    f = float(v)
+    if not math.isfinite(f):
+        return None
+    if f < 0 and not allow_negative:
+        return None
+    return f
+
+
+# Fields whose non-zero values prove /tax-compute step 10 actually RAN —
+# deliberately excludes payment/bookkeeping fields (ca_withholding_box17,
+# ca_sdi_box14, estimated payments): those can be populated from W-2 parsing
+# before the CA return is ever computed, so their presence proves nothing
+# about ca_total_tax/ca_agi being real rather than untouched template zeros.
+# A genuinely computed CA return always carries a non-zero
+# ca_standard_deduction (statutory minimum ~$5K), even at zero income.
+_CA_COMPUTED_EVIDENCE_FIELDS = (
+    "ca_total_tax", "ca_agi", "ca_taxable_income",
+    "ca_standard_deduction", "ca_tax_from_table",
+)
+
+
+def _ca_section_computed(result: dict) -> bool:
+    """True when result's california_540 section shows COMPUTED evidence —
+    a non-zero finite number in one of the compute-output fields — not mere
+    non-emptiness. yoy_diff._section_present is too weak here: a section
+    holding only parsed W-2 Box 17 withholding reads "present" while
+    ca_total_tax/ca_agi are still template zeros (Codex P2 on PR #35)."""
+    ca = (result or {}).get("california_540")
+    if not isinstance(ca, dict):
+        return False
+    for key in _CA_COMPUTED_EVIDENCE_FIELDS:
+        v = ca.get(key)
+        if (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(v) and v != 0):
+            return True
+    return False
+
+
+def _prior_ca_tax_agi(prior):
+    """Extract (prior CA total tax, prior CA AGI) from the archived
+    california_540 section, or (None, None) when absent, scaffold-only,
+    or non-numeric. An all-zero template scaffold (never computed) must
+    not become a $0 prior-year tax — that would make ANY current shortfall
+    "covered" via min(pct90, 0) — and non-zero payment/bookkeeping fields
+    alone don't rescue it (_ca_section_computed). AGI may be negative
+    (loss year); tax may not."""
+    if prior is None:
+        return None, None
+    result = getattr(prior, "result", {}) or {}
+    if not _ca_section_computed(result):
+        return None, None
+    ca = result.get("california_540", {}) or {}
+    return (_prior_numeric(ca.get("ca_total_tax"), allow_negative=False),
+            _prior_numeric(ca.get("ca_agi"), allow_negative=True))
+
+
 def _prior_tax_agi(prior):
-    """Extract (prior_total_tax, prior_agi) from a PriorReturn-like object, or (None, None)."""
+    """Extract (prior_total_tax, prior_agi) from a PriorReturn-like object,
+    or (None, None). Same sanitization as the CA reader — bool/NaN/negative
+    prior tax degrade to None rather than corrupt the safe-harbor min()."""
     if prior is None:
         return None, None
     f1040 = (getattr(prior, "result", {}) or {}).get("form_1040", {}) or {}
-    tax = f1040.get("line_24_total_tax")
-    agi = f1040.get("line_11_agi")
-    return (float(tax) if isinstance(tax, (int, float)) else None,
-            float(agi) if isinstance(agi, (int, float)) else None)
+    return (_prior_numeric(f1040.get("line_24_total_tax"), allow_negative=False),
+            _prior_numeric(f1040.get("line_11_agi"), allow_negative=True))
 
 
 def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
@@ -449,7 +699,10 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
                      inputs.get("estimated_payments_made", {}))
     fs = profile.get("filing_status")
     federal = project_federal_tax(proj, profile, tax_law)
-    state = project_state_tax(proj, prior, tax_law, fs)
+    address = profile.get("address")
+    resident_state = address.get("state") if isinstance(address, dict) else None
+    state = project_state_tax(proj, prior, tax_law, fs,
+                              resident_state=resident_state)
 
     prior_tax, prior_agi = _prior_tax_agi(prior)
     safe_harbor = compute_safe_harbor(
@@ -463,11 +716,25 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     w4_penalty = compute_w4_4c(safe_harbor.shortfall, proj.paychecks_remaining)
     w4_zero = compute_w4_4c(full_shortfall, proj.paychecks_remaining)
 
+    # CA is the only state whose voucher weighting (30/40/0/30) is modeled;
+    # other states fall back to the informational note in the renderer.
+    ca_safe_harbor = None
+    ca_vouchers: list = []
+    if state is not None and state.code == "CA":
+        prior_ca_tax, prior_ca_agi = _prior_ca_tax_agi(prior)
+        ca_safe_harbor = compute_ca_safe_harbor(
+            state.tax, prior_ca_tax, prior_ca_agi, state.agi, fs,
+            withholding=state.withholding, estimates_paid=state.estimates_paid)
+        ca_vouchers = compute_ca_estimated_vouchers(
+            ca_safe_harbor.required_annual, state.withholding,
+            state.estimates_paid, as_of)
+
     return ProjectionReport(
         year=year, as_of=as_of.strftime("%m-%d"), pay_frequency=pay_frequency,
         baseline_source=(f"archive/{year - 1}" if prior is not None else None),
         degraded=(prior is None), proj=proj, federal=federal, state=state,
-        safe_harbor=safe_harbor, vouchers=vouchers, w4_penalty=w4_penalty, w4_zero=w4_zero)
+        safe_harbor=safe_harbor, vouchers=vouchers, w4_penalty=w4_penalty, w4_zero=w4_zero,
+        ca_safe_harbor=ca_safe_harbor, ca_vouchers=ca_vouchers)
 
 
 def _money(v) -> str:
@@ -475,6 +742,51 @@ def _money(v) -> str:
         return "—"
     body = f"${abs(v):,.0f}"
     return f"({body})" if v < 0 else body
+
+
+def _ca_status(csh: CaSafeHarbor) -> str:
+    """Status cell for the CA safe-harbor table. Under the de minimis no CA
+    penalty can arise regardless of the payment pace (R&TC §19136; FTB 5805
+    Part I), so the penalty target reads covered — with the reason, since
+    the zero-balance target may still show tax due."""
+    if csh.de_minimis:
+        return ("covered — CA tax minus withholding is below the "
+                "$500/$250-MFS de minimis (R&TC §19136; FTB 5805 Part I): "
+                "no CA underpayment penalty applies")
+    return "covered" if csh.covered else "underpaid"
+
+
+def _ca_notes(csh: CaSafeHarbor) -> list:
+    """Caveat bullets shared by the /tax-project and /tax-withholding CA
+    blocks (single source so the two reports can't drift)."""
+    notes = []
+    if csh.high_income_90_only:
+        notes.append(
+            "- **High-income limitation (R&TC §19136.3):** CA AGI is "
+            "$1,000,000 or more ($500,000 MFS), so the prior-year safe "
+            "harbor is NOT available — CA requires 90% of the current-year tax.")
+    if csh.degraded:
+        notes.append("- **Degraded:** no prior-year CA baseline — using the "
+                     "90%-of-current-year test only.")
+    if csh.prior_agi_missing:
+        notes.append(
+            "- **Prior-year CA AGI unavailable** — assumed at or below the "
+            "$150,000/$75,000-MFS threshold (100% factor); if prior CA AGI "
+            "exceeded it, the 110% harbor applies and the required payment "
+            "shown may be UNDERSTATED.")
+    notes.append(
+        "- Not modeled: farmers/fishermen (FTB 5805F — 66⅔% harbor, single "
+        "Jan 15 installment; this 30/40/0/30 schedule does not apply to "
+        "them) and the prior-year-harbor precondition of a filed 12-month "
+        "prior-year CA return.")
+    return notes
+
+
+_CA_VOUCHER_CATCHUP_NOTE = (
+    "This schedule targets the ANNUAL requirement from the as-of date "
+    "forward — FTB 5805 tracks each installment cumulatively, so an "
+    "installment already missed keeps accruing penalty until paid. To stop "
+    "accrual, pay catch-up amounts NOW rather than at the printed dates.")
 
 
 def render_markdown(r: ProjectionReport) -> str:
@@ -522,6 +834,11 @@ def render_markdown(r: ProjectionReport) -> str:
               f"| Withholding + estimates paid | {_money(sh.withholding + sh.estimates_paid)} |",
               f"| **Shortfall** | {_money(sh.shortfall)} |",
               f"| Status | {'covered' if sh.covered else 'underpaid'} |", ""]
+    if sh.prior_agi_missing:
+        lines += ["- **Prior-year AGI unavailable** — assumed at or below the "
+                  "$150,000/$75,000-MFS threshold (100% factor); if prior AGI "
+                  "exceeded it, the 110% harbor applies and the required "
+                  "payment shown may be UNDERSTATED.", ""]
 
     lines += ["## Recommended actions", "",
               "### 1040-ES voucher schedule", "",
@@ -544,10 +861,67 @@ def render_markdown(r: ProjectionReport) -> str:
                   f"| State tax | {_money(s.tax)} |",
                   f"| State withholding | {_money(-s.withholding)} |",
                   f"| **State balance** | {_money(s.balance)} {'(refund)' if s.balance < 0 else '(owed)'} |"]
+    if r.ca_safe_harbor is not None:
+        csh = r.ca_safe_harbor
+        lines += ["", "### CA safe harbor (FTB 5805)", "",
+                  "| Test | Amount |", "|---|---:|",
+                  f"| 90% of projected current-year CA tax | {_money(csh.pct90_current)} |"]
+        if csh.prior_based is not None:
+            lines.append(f"| {csh.prior_factor:.0%} of prior-year CA tax | {_money(csh.prior_based)} |")
+        lines += [f"| **Required annual payment** | {_money(csh.required_annual)} |",
+                  f"| CA withholding + estimates paid | {_money(csh.withholding + csh.estimates_paid)} |",
+                  f"| **Shortfall** | {_money(csh.shortfall)} |",
+                  f"| Status | {_ca_status(csh)} |", ""]
+        lines += _ca_notes(csh)
+        # The §19136.3 test above ran on a PROXY CA AGI (federal-composition
+        # income; no CA adjustments like the HSA add-back) — say so, and get
+        # loud near the cliff where the proxy could mask a crossing.
+        lines.append(
+            "- Projected CA AGI here is a federal-composition proxy (CA "
+            "adjustments such as the HSA add-back are not modeled) — verify "
+            "against Schedule CA when near the §19136.3 threshold.")
+        if (r.state is not None and not csh.high_income_90_only
+                and csh.high_income_threshold > 0
+                and r.state.agi >= 0.9 * csh.high_income_threshold):
+            lines.append(
+                f"- **⚠ Projected CA AGI ({_money(r.state.agi)}) is within "
+                f"10% of the R&TC §19136.3 threshold "
+                f"({_money(csh.high_income_threshold)}).** If true CA AGI "
+                f"reaches the threshold, the prior-year safe harbor is "
+                f"unavailable and the required payment jumps to 90% of "
+                f"current-year tax ({_money(csh.pct90_current)}).")
+        lines += ["", "### CA 540-ES voucher schedule (30% / 40% / 0% / 30%)", "",
+                  "California installments are NOT four equal quarters — there is no "
+                  "September (Q3) payment (R&TC §19136.1; FTB Form 540-ES).", "",
+                  "| Installment | Due | Share of remaining | Amount |",
+                  "|---|---|---:|---:|"]
+        # Share of the REMAINING shortfall, renormalized over the still-open
+        # installments — printing the statutory full-year weight next to a
+        # renormalized amount (e.g. "30%" beside 100% of the shortfall after
+        # Jun 15) misleads.
+        ca_weights = {q: w for q, _, w in CA_ES_SCHEDULE}
+        open_total = sum(ca_weights[v.quarter] for v in r.ca_vouchers)
+        for v in r.ca_vouchers:
+            share = (ca_weights[v.quarter] / open_total) if open_total else 0.0
+            lines.append(f"| Q{v.quarter} | {v.due_date} | {share:.0%} | "
+                         f"{_money(v.amount)} |")
+        lines.append("")
+        if len(r.ca_vouchers) < len(CA_ES_SCHEDULE):
+            lines += ["Earlier installments have closed — the remaining "
+                      "shortfall is reallocated across the open "
+                      "installments in proportion to their statutory "
+                      "weights.", ""]
+        lines.append(_CA_VOUCHER_CATCHUP_NOTE)
     lines += ["",
               "## Caveats",
-              "- This is a projection, not a filed return. Re-run after any material income change.",
-              "- State estimated-payment scheduling is informational; state rules vary."]
+              "- This is a projection, not a filed return. Re-run after any material income change."]
+    if r.ca_safe_harbor is not None:
+        lines.append("- CA mandatory e-pay (R&TC §19011.5): once any estimated/extension "
+                     "payment exceeds $20,000 or total tax liability exceeds $80,000, ALL "
+                     "subsequent CA payments must be made electronically (FTB Web Pay) — "
+                     "a 1% penalty applies to paper payments.")
+    else:
+        lines.append("- State estimated-payment scheduling is informational; state rules vary.")
     if f.qbi_over_threshold:
         lines.append(
             "- **QBI over the §199A threshold:** the Form 8995-A W-2-wage/UBIA limits "
@@ -567,6 +941,9 @@ def _report_to_dict(r: ProjectionReport) -> dict:
         "safe_harbor": vars(r.safe_harbor),
         "vouchers": [vars(v) for v in r.vouchers],
         "w4_penalty": vars(r.w4_penalty), "w4_zero": vars(r.w4_zero),
+        "ca_safe_harbor": (vars(r.ca_safe_harbor)
+                           if r.ca_safe_harbor is not None else None),
+        "ca_vouchers": [vars(v) for v in r.ca_vouchers],
     }
 
 
@@ -654,16 +1031,36 @@ def _detect_prior_state(prior_result: dict) -> str | None:
 
 
 def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
-                      filing_status: str | None):
+                      filing_status: str | None,
+                      resident_state: "str | None" = None):
     """Project state tax only when a prior-year state section exists AND
-    tax_law carries state brackets. Returns StateProjection or None."""
-    if prior is None:
-        return None
-    if _detect_prior_state(getattr(prior, "result", {})) is None:
-        return None
+    tax_law carries state brackets. Returns StateProjection or None.
+
+    `resident_state` (profile address.state) backfills the state code when
+    the tax_law cache predates the `state.code` field — without it the CA
+    540-ES block would silently never fire on a schema-conformant cache
+    (reviewer P1). It ALSO substitutes for the prior-state-section gate:
+    that gate was only ever a "files this state" proxy, and a first-year /
+    missing-archive CA resident still needs the state projection and the
+    CA 540-ES schedule (Codex P2 on PR #35) — so the projection runs
+    whenever the prior return carries a state section OR the resident
+    state matches the configured state law."""
     state_cfg = tax_law.get("state") or {}
     brackets = state_cfg.get("brackets") or []
     if not brackets:
+        return None
+    resident = None
+    if isinstance(resident_state, str):
+        cleaned = resident_state.strip().upper()
+        if len(cleaned) == 2 and cleaned.isalpha():
+            resident = cleaned
+    # Code resolution order: explicit cache field, then the taxpayer's
+    # resident state, then a placeholder (older caches lack `state.code`).
+    code = state_cfg.get("code") or resident or "STATE"
+    has_prior_state = (prior is not None
+                       and _detect_prior_state(getattr(prior, "result", {}))
+                       is not None)
+    if not has_prior_state and (resident is None or resident != code):
         return None
     bin_key = _binary_status_key(filing_status)
     std_map = state_cfg.get("standard_deduction") or {}
@@ -680,15 +1077,46 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
                   if (filing_status or "").upper() == "MFS" else CAPITAL_LOSS_LIMIT)
     cap_in_income = (cap_input if cap_input >= 0
                      else max(cap_input, -loss_limit)) + ordinary_short
-    state_ti = max(0.0, (proj.wages + cap_in_income + proj.ordinary_dividends
-                         + proj.taxable_interest + proj.other_income
-                         + proj.self_employment_net) - std)
+    # The deductible half of SE tax is a federal above-the-line adjustment
+    # already inside federal AGI — and CA Form 540 STARTS from federal AGI,
+    # so the state proxy must subtract it too. Omitting it inflated the
+    # §19136.3 high-income test (~$1.01M SE income read as over the $1M
+    # cliff when true CA AGI was ~$986K — Codex P2 on PR #35). Mirrors the
+    # federal-side compute_se_tax call.
+    if proj.self_employment_net > 0:
+        fed = tax_law.get("federal", {}) or {}
+        se = compute_se_tax(
+            proj.self_employment_net,
+            ss_wage_base=(fed.get("social_security", {}) or {}).get("wage_base"),
+            w2_ss_wages=proj.ss_wages,
+        )
+        se_deduction = se["deductible_half"]
+    else:
+        se_deduction = 0.0
+    state_agi = (proj.wages + cap_in_income + proj.ordinary_dividends
+                 + proj.taxable_interest + proj.other_income
+                 + proj.self_employment_net - se_deduction)
+    state_ti = max(0.0, state_agi - std)
     tax, _ = compute_bracket_tax(state_ti, brackets)
+    # CA mental-health services tax: 1% of taxable income over $1M is part
+    # of Form 540 total tax — omitting it understates the safe-harbor
+    # target for exactly the high earners the §19136.3 rule forces onto
+    # 90%-of-current (Codex P2 on PR #35). Applied only when the cache
+    # carries the block with both fields.
+    mh = state_cfg.get("mental_health_surcharge") or {}
+    mh_rate, mh_threshold = mh.get("rate"), mh.get("threshold")
+    if (isinstance(mh_rate, (int, float)) and not isinstance(mh_rate, bool)
+            and isinstance(mh_threshold, (int, float))
+            and not isinstance(mh_threshold, bool)
+            and math.isfinite(mh_rate) and math.isfinite(mh_threshold)
+            and state_ti > mh_threshold):
+        tax += mh_rate * (state_ti - mh_threshold)
     balance = round(tax - proj.state_withholding - proj.estimated_state_paid, 2)
     return StateProjection(
-        code=state_cfg.get("code", "STATE"), taxable_income=round(state_ti, 2),
+        code=code, taxable_income=round(state_ti, 2),
         tax=round(tax, 2), withholding=round(proj.state_withholding, 2),
         estimates_paid=round(proj.estimated_state_paid, 2), balance=balance,
+        agi=round(state_agi, 2),
     )
 
 

@@ -264,6 +264,9 @@ def create_state_template(state: str) -> dict:
     """Create empty state tax law structure. Filled by WebSearch."""
     state_templates = {
         "CA": {
+            # 2-letter USPS code — load-bearing for /tax-project's CA 540-ES
+            # block (projection.build_report gates on state.code == "CA").
+            "code": "CA",
             "name": "California",
             "authority": "Franchise Tax Board (FTB)",
             "conforms_to_federal": False,
@@ -293,6 +296,7 @@ def create_state_template(state: str) -> dict:
             "no_city_income_tax": True,
         },
         "NY": {
+            "code": "NY",
             "name": "New York",
             "authority": "Department of Taxation and Finance",
             "conforms_to_federal": True,
@@ -302,6 +306,7 @@ def create_state_template(state: str) -> dict:
         },
     }
     return state_templates.get(state, {
+        "code": state,
         "name": state,
         "note": "State template not pre-built. Fetch rates via WebSearch.",
         "standard_deduction": {"single": None, "mfj": None},

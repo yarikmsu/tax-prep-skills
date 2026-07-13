@@ -7,7 +7,12 @@ description: Mid-year projection — project full-year tax from YTD figures, com
 
 Projects full-year federal (and conditional state) tax from year-to-date figures,
 then computes safe-harbor required payments, a 1040-ES voucher schedule, and a
-W-4 line 4(c) per-paycheck adjustment. Read-only: never modifies result.json or
+W-4 line 4(c) per-paycheck adjustment. When the state projection runs and the
+state is CA, the report also includes the **CA safe harbor** (FTB 5805 — with the
+R&TC §19136.3 rule that current-year CA AGI ≥ $1M / $500K MFS forces
+90%-of-current-year only) and a **CA 540-ES voucher schedule** under California's
+**30/40/0/30** installment weighting (30% Apr 15, 40% Jun 15, NO September
+payment, 30% Jan 15 — R&TC §19136.1). Read-only: never modifies result.json or
 taxpayer_profile.json. Re-runnable quarterly.
 
 ## Prerequisites

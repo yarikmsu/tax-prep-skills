@@ -13,7 +13,16 @@ result.json or taxpayer_profile.json. Re-runnable.
 
 Distinct from `/tax-project`: this trues up against the real computed number
 (result.json line 24), not an annualized estimate. Run it after `/tax-compute` has
-produced a current-year result.json. Federal only (state not yet covered).
+produced a current-year result.json.
+
+**State coverage: CA only.** When result.json carries a computed `california_540`
+section, the report adds a **California true-up** block: the actual Form 540 tax vs
+YTD CA withholding projected at the current pace, the FTB 5805 safe harbor (90% of
+current / 100%–110% of prior CA tax — EXCEPT current-year CA AGI ≥ $1M / $500K MFS
+forces 90%-of-current only per R&TC §19136.3), a DE 4 per-paycheck
+extra-withholding figure, and a 540-ES voucher schedule under CA's **30/40/0/30**
+installment weighting (no September payment — R&TC §19136.1). Non-CA returns get
+the federal report plus a "CA only" caveat.
 
 ## Prerequisites
 - `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).

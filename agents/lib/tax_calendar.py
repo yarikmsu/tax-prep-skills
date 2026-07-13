@@ -2,12 +2,14 @@
 """Quarterly reminder calendar for /tax-setup (Backlog #10).
 
 Generates an RFC 5545 iCalendar (.ics) file with year-specific tax deadlines:
-1040-ES quarterly estimated-tax payments, FBAR (with auto-extension), required
-minimum distributions for taxpayers flagged `subject_to_rmd_*` (RMD start age
-is birth-year-cohort-dependent under SECURE 2.0; the user asserts it rather
-than the calendar deriving it from age), and state PTET windows for CA/NY/NJ
-K-1 recipients (driven by `flags.k1_states`, which lists each K-1 entity's
-state, NOT the taxpayer's resident state).
+1040-ES quarterly estimated-tax payments, CA 540-ES installments for CA
+residents (30%/40%/0%/30% weighting — NO September payment; E7), FBAR (with
+auto-extension), required minimum distributions for taxpayers flagged
+`subject_to_rmd_*` (RMD start age is birth-year-cohort-dependent under
+SECURE 2.0; the user asserts it rather than the calendar deriving it from
+age), and state PTET windows for CA/NY/NJ K-1 recipients (driven by
+`flags.k1_states`, which lists each K-1 entity's state, NOT the taxpayer's
+resident state — the 540-ES events, by contrast, follow `address.state`).
 
 Read-only with respect to result.json / taxpayer_profile.json — this module only
 WRITES a derived `tax_calendar_{year}.ics` sibling. It mirrors the
@@ -40,6 +42,7 @@ from pathlib import Path
 from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib.capabilities import _USPS_STATES  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -51,10 +54,11 @@ class CalendarError(Exception):
     """Raised when calendar generation cannot safely proceed."""
 
 
-# PRODID identifies this tool to calendar clients; the trailing "v1" tracks
+# PRODID identifies this tool to calendar clients; the trailing version tracks
 # event-shape compatibility — bump when adding new categories or breaking the
 # UID slug format so calendar apps treat the file as a new feed.
-_PRODID = "-//tax-prep-skills//tax-calendar v1//EN"
+# v2: added the state_estimated_tax category (CA 540-ES events, E7).
+_PRODID = "-//tax-prep-skills//tax-calendar v2//EN"
 _UID_NAMESPACE = "tax-prep-skills"
 _PTET_STATES = {"CA", "NY", "NJ"}
 # Per-state effective tax-year windows for the PTE elective tax regime.
@@ -69,7 +73,8 @@ _PTET_WINDOWS = {
     "NY": (2021, None),
     "NJ": (2020, None),
 }
-_VALID_CATEGORIES = frozenset({"federal_estimated_tax", "fbar", "rmd", "ptet", "note"})
+_VALID_CATEGORIES = frozenset({"federal_estimated_tax", "state_estimated_tax",
+                               "fbar", "rmd", "ptet", "note"})
 _MIN_YEAR = 2000
 _MAX_YEAR = 2099
 
@@ -82,7 +87,12 @@ _STATE_CODE_RE = re.compile(r"^[A-Z]{2}$")
 # C0 control character (\x00-\x1f) plus DEL (\x7f) as defensive hygiene.
 _UID_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
-Category = Literal["federal_estimated_tax", "fbar", "rmd", "ptet", "note"]
+Category = Literal["federal_estimated_tax", "state_estimated_tax",
+                   "fbar", "rmd", "ptet", "note"]
+
+# Categories that carry a per-quarter label (Q1..Q4).
+_ESTIMATED_TAX_CATEGORIES = frozenset({"federal_estimated_tax",
+                                       "state_estimated_tax"})
 
 
 @dataclass(frozen=True)
@@ -91,7 +101,8 @@ class CalendarEvent:
 
     Invariants enforced at construction:
     - `category` must be one of the known categories
-    - `quarter_label` is non-empty iff `category == "federal_estimated_tax"`
+    - `quarter_label` is non-empty iff the category is an estimated-tax one
+      (`federal_estimated_tax` / `state_estimated_tax`)
     """
     uid: str
     summary: str
@@ -114,13 +125,14 @@ class CalendarEvent:
                 f"UID must not contain control characters (CR/LF/NUL/etc.); "
                 f"got {self.uid!r}"
             )
-        is_estimated = self.category == "federal_estimated_tax"
+        is_estimated = self.category in _ESTIMATED_TAX_CATEGORIES
         has_label = bool(self.quarter_label)
         if is_estimated and not has_label:
-            raise CalendarError("1040-ES events require a quarter_label (Q1..Q4)")
+            raise CalendarError(
+                "estimated-tax events require a quarter_label (Q1..Q4)")
         if not is_estimated and has_label:
             raise CalendarError(
-                f"quarter_label only valid on federal_estimated_tax events, "
+                f"quarter_label only valid on estimated-tax events, "
                 f"got category={self.category!r} with quarter_label={self.quarter_label!r}"
             )
 
@@ -195,6 +207,38 @@ def _strict_str_list(d: dict, key: str) -> list[str]:
     return out
 
 
+def _strict_state_str(d: dict, key: str) -> "str | None":
+    """Optional single state-code field (address.state), strict.
+
+    Returns None when missing, explicitly null, or an empty/whitespace
+    string — all scaffolding shapes an interview may leave behind; an
+    incomplete profile still gets the federal calendar. A non-string,
+    non-2-letter, or non-USPS value hard-errors: "California" (or a stray
+    "ZZ"/Canadian "BC") silently producing a federal-only calendar would
+    drop the CA-ES reminders without warning — the same silent-miss failure
+    mode retirement_dashboard guards address.state against, and the same
+    USPS whitelist capabilities.py uses (two letters alone is not a state).
+    """
+    if key not in d or d[key] is None:
+        return None
+    v = d[key]
+    if not isinstance(v, str):
+        raise CalendarError(
+            f"address.{key} must be a string, got {type(v).__name__}"
+        )
+    code = v.strip().upper()
+    if not code:
+        return None
+    if not _STATE_CODE_RE.match(code) or code not in _USPS_STATES:
+        raise CalendarError(
+            f"address.{key} must be a 2-letter USPS state/territory code "
+            f"(e.g. 'CA', 'NY'), got {v!r} — fix taxpayer_profile.json "
+            f"(the calendar refuses to guess and silently drop state "
+            f"reminders)"
+        )
+    return code
+
+
 def _strict_bool(d: dict, key: str, *, default: bool = False) -> bool:
     """Optional boolean field, strict.
 
@@ -245,6 +289,52 @@ def events_1040es(tax_year: int) -> list[CalendarEvent]:
                 f"100%/110% of prior year)."
             ),
             category="federal_estimated_tax",
+            quarter_label=label,
+        ))
+    return out
+
+
+# CA 540-ES installments (R&TC §19136.1; FTB Form 540-ES): 30% / 40% / 0% /
+# 30% — there is NO September (Q3) installment; the final 30% is due Jan 15
+# of the following year. Weights are statutory-structural (set in statute,
+# not indexed), so they're hardcoded like the federal quarter dates above.
+_CA_ES_DUE = [
+    ("Q1", (4, 15), 0, "30%"),
+    ("Q2", (6, 15), 0, "40%"),
+    ("Q4", (1, 15), 1, "30%"),
+]
+
+
+def events_ca_es(tax_year: int) -> list[CalendarEvent]:
+    """CA 540-ES reminders, emitted for California residents (address.state).
+
+    California's estimated-tax installments are NOT four equal quarters:
+    30% is due April 15, 40% June 15, NOTHING in September, and the final
+    30% on January 15 of the following year. Only three events are emitted —
+    the September gap is called out in each description so a taxpayer acting
+    on the federal Q3 reminder doesn't assume a CA payment is due too.
+    """
+    _validate_tax_year(tax_year)
+    out: list[CalendarEvent] = []
+    for label, (m, d), year_offset, pct in _CA_ES_DUE:
+        date = datetime.date(tax_year + year_offset, m, d)
+        out.append(CalendarEvent(
+            uid=f"ca540es-{label.lower()}-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"CA 540-ES {label} estimated tax due — {pct} (TY{tax_year})",
+            date=date,
+            description=(
+                f"California estimated tax installment for tax year "
+                f"{tax_year}: {pct} of the required annual payment. CA "
+                f"weighting is 30%/40%/0%/30% — there is NO September "
+                f"installment, unlike federal. Safe harbor is 90% of "
+                f"current-year or 100%/110% of prior-year CA tax, EXCEPT "
+                f"taxpayers with current-year CA AGI of $1,000,000 or more "
+                f"($500,000 MFS) must use 90% of current year "
+                f"(R&TC §19136.3). Pay via FTB Web Pay — mandatory e-pay "
+                f"may apply once payments exceed $20,000 or total tax "
+                f"exceeds $80,000 (R&TC §19011.5)."
+            ),
+            category="state_estimated_tax",
             quarter_label=label,
         ))
     return out
@@ -652,9 +742,13 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
     # time), so PTET deadlines are entity-state-specific, not
     # taxpayer-resident-state-specific — a TX resident with a CA K-1 needs
     # CA PTET reminders, not TX. The K-1 entity state(s) live in
-    # `flags.k1_states`.
+    # `flags.k1_states`. address.state IS used for the CA 540-ES events
+    # below — personal estimated tax follows the RESIDENT state.
     events: list[CalendarEvent] = []
     events.extend(events_1040es(tax_year))
+
+    if _strict_state_str(address, "state") == "CA":
+        events.extend(events_ca_es(tax_year))
 
     # Signature authority over someone else's foreign account (an employer's,
     # a parent's) triggers FBAR Part IV even with no financial interest — a

@@ -61,6 +61,13 @@ The generator:
 - **Always** emits 4 events for 1040-ES quarterly deadlines (Q1: Apr 15,
   Q2: Jun 15, Q3: Sep 15, Q4: Jan 15 of the next year — Q4 lands in
   `{year}+1` per statute, not a typo)
+- Emits 3 **CA 540-ES** events when `address.state` is `CA` — California's
+  installments are NOT four equal quarters: **30% Apr 15, 40% Jun 15,
+  NOTHING in September, 30% Jan 15 of the next year** (R&TC §19136.1;
+  FTB Form 540-ES). Only three events are emitted; each description calls
+  out the September gap so the federal Q3 reminder isn't mistaken for a CA
+  deadline, and notes the R&TC §19136.3 high-income rule (CA AGI ≥ $1M /
+  $500K MFS → 90%-of-current-year only) and mandatory e-pay (R&TC §19011.5)
 - Emits 2 events for FBAR (statutory Apr 15 and auto-extended Oct 15) when
   `flags.has_foreign_accounts` is true. Dates are in `{year}+1` because FBAR
   reports the prior calendar year
@@ -103,6 +110,7 @@ Print:
 - **PTET coverage is CA / NY / NJ only.** Other states (e.g. CT, IL, MA, NC,
   OR) have varying or no PTET regimes; the v1 backlog scope targets the three
   highest-leverage states for SALT-cap workarounds
-- **No state estimated-tax deadlines.** State 1040-ES windows mostly match the
-  federal Q1–Q4 schedule; the embedded note in each federal event reminds the
-  taxpayer to make matching state payments
+- **State estimated-tax deadlines are CA-only.** CA 540-ES events carry the
+  30/40/0/30 weighting for CA residents (`address.state`); other states'
+  estimated-payment windows mostly match the federal Q1–Q4 schedule but are
+  not emitted — add manual reminders for a non-CA resident state
