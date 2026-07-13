@@ -450,9 +450,14 @@ Build order by persona coverage × error cost:
   muni-interest provisional-income input), `compute_excess_ss_withholding`
   (per-person, multi-employer only), `compute_excess_sdi` (cache-driven cap;
   TY2024+ SB 951 no-ceiling → not-applicable). Tests → 1188.
-- **Next (Q3 per sequencing):** Epic A (parse ledger + tie-out), D3
-  (Form 2210 at filing), G2 (FBAR set-difference — rides the ledger), C3
-  (persist /tax-review output).
+- **Epic A core (A1 parse ledger + A2 tie-out): ✅ shipped.**
+  `parse_ledger.json` (canonical-category key boxes, every document parsed or
+  skipped-with-reason) + `agents/lib/tie_out.py` hard gate at `/tax-compute`
+  step 12.7 (coverage, category validity, per-category sums, loud
+  unverifiable warnings). Tests → 1242.
+- **Next (Q3 per sequencing):** D3 (Form 2210 at filing), G2 (FBAR
+  set-difference — now rides the ledger), C3 (persist /tax-review output),
+  A3/A4 (high-value second read; consume expected_sources).
 
 ### Decisions log
 

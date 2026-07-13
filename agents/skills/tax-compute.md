@@ -502,6 +502,30 @@ Update `result.json` with ALL computed values:
 
 Update `answers.md` with computed results section.
 
+### Step 12.7: Parse-to-return tie-out (HARD GATE)
+
+Prove every parsed document landed on the return — the CP2000 killer:
+
+1. Run: `python3 agents/lib/tie_out.py --workspace .`
+2. Act on the exit code:
+   - **0:** Tied out. If the report lists ⚠ unverifiable categories or ⚠
+     advisory items (a possibly-taxable state refund, a personal-item 1099-K,
+     a recomputed 1099-R box 2a, a net-negative SSA-1099), surface them to the
+     user — they passed the gate but need a manual look before filing.
+   - **2 (FAILED): STOP — the return is NOT complete.** The report
+     (`summaries/_tie_out.md`) names the exact failure: a document with no
+     ledger record, a ledger record pointing at a missing file, or a category
+     sum that doesn't match the return (the classic dropped-1099). Fix the
+     aggregation (or the ledger, if the parse was wrong) and re-run. NEVER
+     proceed to `/tax-generate` past a failed tie-out, and never "fix" a
+     mismatch by editing the ledger to match the return without re-checking
+     the source document.
+   - **1 (error):** parse_ledger.json is missing (re-run `/tax-parse` step
+     6.5) or malformed — fix it; do not bypass.
+3. This gate exists because `/tax-review` audits the already-aggregated
+   result.json and structurally cannot see a document that dropped during
+   aggregation — only the ledger-to-result comparison can.
+
 ### Step 13: Summary
 
 Print:

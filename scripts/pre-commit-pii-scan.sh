@@ -30,7 +30,7 @@ while IFS= read -r file; do
   fi
 
   # Check specific filenames
-  if [ "$filename" = "taxpayer_profile.json" ] || [ "$filename" = "result.json" ] || [ "$filename" = "answers.md" ]; then
+  if [ "$filename" = "taxpayer_profile.json" ] || [ "$filename" = "result.json" ] || [ "$filename" = "answers.md" ] || [ "$filename" = "parse_ledger.json" ] || [ "$filename" = "holdings.json" ]; then
     BLOCKED+=("  BLOCKED FILENAME ($filename): $file")
     continue
   fi

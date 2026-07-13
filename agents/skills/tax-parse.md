@@ -226,6 +226,63 @@ After validation, set restrictive permissions on all output files:
 chmod 600 summaries/*.md result.json
 ```
 
+### 6.5. Emit the parse ledger (parse_ledger.json)
+
+Write `parse_ledger.json` at the workspace root — the machine-readable record
+`/tax-compute`'s tie-out gate uses to PROVE every parsed document landed on a
+return line (the prose summaries stay for humans; this file is for the
+arithmetic). One record per file in `documents/`:
+
+```json
+{"records": [
+  {"doc_id": "w2-acme-primary",
+   "file": "documents/W2_Acme.pdf",
+   "form_type": "W-2",
+   "payer": "Acme Corp",
+   "person": "primary",
+   "key_boxes": {"wages": 100000.00, "federal_withholding_w2": 12000.00,
+                 "ss_wages": 100000.00, "medicare_wages": 100000.00,
+                 "state_withholding_ca": 6000.00},
+   "skipped": null}
+]}
+```
+
+Rules:
+- **Every file in `documents/` gets exactly one record** — parsed with
+  `key_boxes`, or `"skipped": "<reason>"` (duplicate scan, non-tax document,
+  informational-only). No file may be silently absent; the tie-out fails on it.
+- `key_boxes` is keyed by CANONICAL CATEGORY (unknown keys hard-error):
+  | Form box | Category |
+  |---|---|
+  | W-2 box 1 | `wages` |
+  | W-2 box 2 | `federal_withholding_w2` |
+  | W-2 box 3 (+7 tips) / box 5 | `ss_wages` / `medicare_wages` (informational) |
+  | W-2 box 17 (CA) | `state_withholding_ca` |
+  | 1099-INT box 1 (+3) | `taxable_interest`; box 8 → `tax_exempt_interest` |
+  | 1099-DIV box 1a / 1b | `ordinary_dividends` / `qualified_dividends` |
+  | 1099-DIV box 2a | `capital_gain_distributions` (→ Schedule D line 13) |
+  | 1099-R box 1 / 2a | `retirement_gross` / `retirement_taxable` (box 2a is ADVISORY at the gate — the return may legitimately recompute 4b/5b via Form 8606 basis, QCD, or rollover; OMIT `retirement_taxable` when box 2b "taxable amount not determined" is checked — box 1 still hard-ties) |
+  | 1099-B proceeds total | `capital_proceeds` |
+  | Any 1099 federal withholding box | `federal_withholding_1099` |
+  | SSA-1099 box 5 | `ss_benefits` (may be NEGATIVE when repayments exceed gross — record the negative as-is; the gate switches to a Pub 915 advisory instead of a sum tie) |
+  | 1099-NEC box 1 / 1099-MISC boxes 3-7 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below) |
+  | 1099-K box 1a (personal-item sales / reimbursements) | `personal_1099k` (informational — NOT Schedule C: gains go to Form 8949, losses non-deductible; ASK the taxpayer which it is and record the answer in answers.md — the gate emits a verify advisory) |
+  | 1099-SA box 1 | `hsa_distributions` |
+  | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
+  | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
+  | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
+- `person` is `primary`/`spouse`/`joint` (per-person credits need it).
+- Crypto exchange CSVs are ledgered by `/tax-parse-crypto` step 5.5 (as
+  documented skips pointing at its FIFO reconciliation) — don't double-record
+  them here; if `/tax-parse-crypto` hasn't run yet, skip them with
+  "pending /tax-parse-crypto". A "pending" skip deliberately FAILS the
+  tie-out gate until the named skill runs and replaces it — otherwise a
+  forgotten crypto import would pass with its taxable disposals in no sum.
+  On a re-run, carry any existing `crypto-csv` records over verbatim —
+  rewriting them back to "pending" would erase `/tax-parse-crypto`'s
+  reconciliation trail (and re-block the gate).
+- `chmod 600 parse_ledger.json` (it carries dollar figures; already gitignored).
+
 ### 7. Summary
 
 Print:

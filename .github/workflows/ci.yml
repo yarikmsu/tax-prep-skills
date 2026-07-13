@@ -53,7 +53,7 @@ jobs:
             fi
 
             # Check blocked filenames
-            if [ "$filename" = "taxpayer_profile.json" ] || [ "$filename" = "result.json" ] || [ "$filename" = "answers.md" ]; then
+            if [ "$filename" = "taxpayer_profile.json" ] || [ "$filename" = "result.json" ] || [ "$filename" = "answers.md" ] || [ "$filename" = "parse_ledger.json" ] || [ "$filename" = "holdings.json" ]; then
               echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
               continue
             fi

@@ -199,6 +199,32 @@ After writing, set restrictive permissions:
 chmod 600 result.json crypto_transactions.json summaries/crypto_*.json 2>/dev/null
 ```
 
+### 5.5. Ledger the consumed CSVs (tie-out coverage)
+
+`/tax-compute`'s tie-out gate (step 12.7) requires EVERY file in `documents/`
+to have a `parse_ledger.json` record — including the exchange CSVs this skill
+consumed. For each ingested CSV, UPSERT a record keyed by `file` (creating the
+file with `{"records": []}` if `/tax-parse` hasn't run yet): if a record with
+the same `file` already exists — `/tax-parse`'s "pending /tax-parse-crypto"
+placeholder (which fails the gate until replaced), or a rerun after correcting
+basis — REPLACE it in place rather than appending. The tie-out loader
+hard-errors on duplicate `doc_id`/`file`, so an unconditional append would
+make the next `/tax-compute` fail on an otherwise valid workspace:
+
+```json
+{"doc_id": "crypto-coinbase-2025",
+ "file": "documents/coinbase_2025.csv",
+ "form_type": "crypto-csv",
+ "payer": "Coinbase",
+ "person": "primary",
+ "key_boxes": {},
+ "skipped": "crypto exchange CSV — ingested by /tax-parse-crypto; amounts flow to Form 8949/Schedule D + Schedule 1 via crypto_summary (reconciled by this skill's own FIFO engine, not the category sums)"}
+```
+
+The `skipped` reason is load-bearing: it satisfies coverage while documenting
+exactly where the amounts went. Without these records the gate exits 2 on an
+otherwise correct crypto workspace. `chmod 600 parse_ledger.json` after.
+
 ### 6. Report
 
 Print:
