@@ -142,6 +142,102 @@ def test_non_bool_foreign_rejected():
 
 
 # --------------------------------------------------------------------------
+# A3 — second-read verification for high-value records
+# --------------------------------------------------------------------------
+
+def test_high_value_record_without_second_read_advisory():
+    """Any key box ≥ $10K without a second_read outcome draws an advisory —
+    visible, never a silent skip, never a hard failure."""
+    recs = _ledger(_record())  # wages 100k, no second_read
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"])
+    assert not report.failed
+    assert any("second-read" in a and "w2-acme" in a for a in report.advisories)
+
+
+def test_second_read_match_clears_advisory():
+    rec = _record()
+    rec["second_read"] = "match"
+    report = T.evaluate(T.load_ledger({"records": [rec]}), _result(),
+                        ["documents/W2_Acme.pdf"])
+    assert not any("second-read" in a for a in report.advisories)
+
+
+def test_low_value_record_needs_no_second_read():
+    recs = _ledger(_record(key_boxes={"taxable_interest": 500.0}))
+    report = T.evaluate(recs, {"form_1040": {"line_2b_taxable_interest": 500.0}},
+                        ["documents/W2_Acme.pdf"])
+    assert not any("second-read" in a for a in report.advisories)
+
+
+def test_invalid_second_read_value_rejected():
+    """An unrecognized value must not silently count as verified."""
+    rec = _record()
+    rec["second_read"] = "verified"
+    with pytest.raises(T.TieOutError, match="second_read"):
+        T.load_ledger({"records": [rec]})
+
+
+# --------------------------------------------------------------------------
+# A4 — expected_sources consumption (missing payer diff)
+# --------------------------------------------------------------------------
+
+def test_missing_expected_payer_surfaces():
+    recs = _ledger(_record())  # payer "Acme"
+    missing = T.missing_expected_payers(recs, {
+        "_comment": "skipped",
+        "w2_employers": ["Acme Corp"],
+        "interest_payers": ["Chase Bank"],
+        "brokerages": []})
+    assert missing == ["Chase Bank"]  # Acme matched by normalized substring
+
+
+def test_expected_payer_token_subset_matching_both_directions():
+    recs = _ledger(_record(payer="Fidelity Brokerage Services LLC"))
+    assert T.missing_expected_payers(
+        recs, {"brokerages": ["Fidelity"]}) == []
+    short = _ledger(_record(payer="Fidelity"))
+    assert T.missing_expected_payers(
+        short, {"brokerages": ["Fidelity Brokerage Services LLC"]}) == []
+
+
+def test_expected_payer_no_mid_word_false_match():
+    """A raw substring test would match 'Ally' inside 'Tally Corp' and hide
+    the missing payer — token matching must flag it."""
+    recs = _ledger(_record(payer="Tally Corp"))
+    assert T.missing_expected_payers(
+        recs, {"interest_payers": ["Ally"]}) == ["Ally"]
+
+
+def test_expected_sources_accepts_rollover_object_shapes():
+    """P1 caught in review: /tax-rollover writes OBJECT entries, not strings
+    — {'name','ein'} employers, {'name','country_code'} payers,
+    {'institution',...} foreign accounts. A strings-only validator would
+    hard-error on every rolled-over profile."""
+    recs = _ledger(_record())  # payer "Acme"
+    missing = T.missing_expected_payers(recs, {
+        "w2_employers": [{"name": "Acme Corp", "ein": "12-3456789"}],
+        "interest_payers": [{"name": "Monzo Bank", "country_code": "GB"}],
+        "foreign_accounts": [{"institution": "Deutsche Bank",
+                              "country_code": "DE", "account_last4": "1234"}]})
+    assert missing == ["Deutsche Bank", "Monzo Bank"]
+
+
+def test_expected_sources_validation():
+    recs = _ledger(_record())
+    with pytest.raises(T.TieOutError, match="must be a list"):
+        T.missing_expected_payers(recs, {"w2_employers": "Acme"})
+    with pytest.raises(T.TieOutError, match="non-empty"):
+        T.missing_expected_payers(recs, {"w2_employers": [""]})
+    with pytest.raises(T.TieOutError, match="name.*institution"):
+        T.missing_expected_payers(recs, {"w2_employers": [{"ein": "12-3456789"}]})
+    with pytest.raises(T.TieOutError, match="strings or objects"):
+        T.missing_expected_payers(recs, {"w2_employers": [42]})
+    with pytest.raises(T.TieOutError, match="must be an object"):
+        T.missing_expected_payers(recs, None)
+    assert T.missing_expected_payers(recs, {}) == []
+
+
+# --------------------------------------------------------------------------
 # Check A — coverage
 # --------------------------------------------------------------------------
 

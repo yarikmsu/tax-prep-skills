@@ -46,12 +46,14 @@ Ledger contract (parse_ledger.json, written by /tax-parse step 6):
        "person": "primary",              # primary | spouse | joint
        "key_boxes": {"wages": 100000.0, "federal_withholding_w2": 12000.0},
        "skipped": null,                  # or a non-empty reason string
-       "foreign": false},                # optional; true = foreign institution
-      ...]}                              # (feeds /tax-fbar's set-difference).
-                                         # Bool or absent ONLY — null is a
-                                         # hard error; when domicile is
-                                         # unknown, OMIT the field and flag
-                                         # the doc for follow-up instead.
+       "foreign": false,                 # optional; true = foreign institution
+       "second_read": "match"},          # optional; "match"/"mismatch_resolved"
+      ...]}
+foreign feeds /tax-fbar's set-difference. Bool or absent ONLY — null is a
+hard error; when domicile is unknown, OMIT the field and flag the doc for
+follow-up instead. second_read is the A3 verification outcome for records
+with any key box ≥ $10K (/tax-parse step 6.7); a high-value record without
+it draws a tie-out advisory.
 key_boxes are keyed by CANONICAL CATEGORY (registry below), mapped from the
 raw form boxes at parse time — the skill documents the box→category table.
 """
@@ -155,6 +157,13 @@ CATEGORY_TARGETS = {
 # (cash receipts without a 1099); only ledger > result fails (under-report).
 _AT_LEAST_CATEGORIES = {"self_employment_gross"}
 
+# A3: records with any key box at or above this get a second independent
+# extraction (/tax-parse step 6.7). Absence is an ADVISORY, not a failure —
+# the discipline is enforced at parse time; the gate makes the gap visible.
+_SECOND_READ_THRESHOLD = 10000.0
+
+_SECOND_READ_VALUES = {"match", "mismatch_resolved"}
+
 _ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL
 
 
@@ -172,6 +181,10 @@ class LedgerRecord:
     # payers against the FBAR account table so an institution that earned
     # interest in the ledger can't silently miss FinCEN 114.
     foreign: bool = False
+    # A3 second-read verification outcome for high-value records:
+    # "match" (independent re-extraction agreed) or "mismatch_resolved"
+    # (disagreed; user confirmed the correct figure, recorded in answers.md).
+    second_read: "str | None" = None
 
 
 @dataclass(frozen=True)
@@ -278,13 +291,83 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 f"{where}.foreign must be a boolean, got {foreign!r} — a "
                 "truthy string here would silently corrupt the FBAR "
                 "set-difference")
+        second_read = rec.get("second_read")
+        if second_read is not None and second_read not in _SECOND_READ_VALUES:
+            raise TieOutError(
+                f"{where}.second_read must be one of "
+                f"{sorted(_SECOND_READ_VALUES)} or absent, got {second_read!r}"
+                " — an unrecognized value would silently count as verified")
         records.append(LedgerRecord(
             doc_id=doc_id, file=file,
             form_type=_require_str(rec.get("form_type"), f"{where}.form_type"),
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
             person=person, key_boxes=tuple(validated), skipped=skipped,
-            foreign=foreign))
+            foreign=foreign, second_read=second_read))
     return records
+
+
+def _expected_payer_name(entry, where: str) -> str:
+    """Extract the institution name from an expected_sources entry — a plain
+    string, or the object shapes /tax-rollover writes ('name' for
+    employers/payers, 'institution' for foreign accounts)."""
+    if isinstance(entry, str):
+        if entry.strip():
+            return entry.strip()
+        raise TieOutError(f"{where} string entries must be non-empty")
+    if isinstance(entry, dict):
+        for key in ("name", "institution"):
+            v = entry.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        raise TieOutError(
+            f"{where} object entries must carry a non-empty 'name' or "
+            f"'institution', got {entry!r} — an unnamed entry can never "
+            "match a ledger payer and would false-alarm forever")
+    raise TieOutError(
+        f"{where} entries must be strings or objects, got {entry!r}")
+
+
+def _payer_tokens(name: str) -> frozenset:
+    return frozenset(
+        t for t in "".join(
+            ch if ch.isalnum() else " " for ch in name.casefold()).split()
+        if t)
+
+
+def missing_expected_payers(ledger: "list[LedgerRecord]",
+                            expected_sources: dict) -> "list[str]":
+    """A4: expected payers (rolled over from the prior year by /tax-rollover)
+    with no matching ledger payer — each is a document that existed last year
+    and is absent this year (the CP2000 intake gap /tax-parse step 2.5 must
+    resolve: closed account, or a missing document). Matching is a
+    case/punctuation-insensitive TOKEN-SUBSET test in either direction, so
+    "Fidelity" matches "Fidelity Brokerage Services LLC" but "Ally" does NOT
+    match "Tally Corp" — a raw substring test would hide exactly the missing
+    payer this function exists to surface. A renamed institution false-alarms
+    (safe direction: one extra question) rather than false-matching."""
+    if not isinstance(expected_sources, dict):
+        raise TieOutError("expected_sources must be an object")
+    expected = []
+    for key, values in expected_sources.items():
+        if key.startswith("_"):
+            continue
+        if not isinstance(values, list):
+            raise TieOutError(f"expected_sources.{key} must be a list")
+        for v in values:
+            # /tax-rollover writes OBJECT entries — {"name", "ein"} for
+            # employers, {"name", "country_code"} for payers,
+            # {"institution", "country_code", "account_last4"} for foreign
+            # accounts. Plain strings are accepted for hand-maintained lists.
+            expected.append(_expected_payer_name(v, f"expected_sources.{key}"))
+    ledger_tokens = [t for t in (_payer_tokens(r.payer) for r in ledger) if t]
+    missing = []
+    for name in expected:
+        toks = _payer_tokens(name)
+        if not toks:
+            continue
+        if not any(toks <= lt or lt <= toks for lt in ledger_tokens):
+            missing.append(name)
+    return sorted(set(missing))
 
 
 def foreign_payers(ledger: "list[LedgerRecord]") -> "list[str]":
@@ -419,6 +502,21 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
             category=cat, ledger_total=round(sums[cat], 2),
             result_total=round(result_total, 2), delta=delta,
             ok=ok, advisory=cat in _ADVISORY_MISMATCH_CATEGORIES))
+
+    # A3: high-value records (any key box ≥ $10K) need a second independent
+    # extraction — a transposed digit there is material. Absence is an
+    # advisory (the discipline lives in /tax-parse step 6.7), never a
+    # failure.
+    for rec in ledger:
+        if rec.skipped is not None or rec.second_read is not None:
+            continue
+        big = max((abs(amt) for _, amt in rec.key_boxes), default=0.0)
+        if big >= _SECOND_READ_THRESHOLD:
+            advisories.append(
+                f"{rec.doc_id}: key box of {big:,.2f} (≥ "
+                f"{_SECOND_READ_THRESHOLD:,.0f}) has NO second-read "
+                "verification — re-extract the key boxes independently "
+                "(/tax-parse step 6.7) before trusting the sums")
 
     failed = bool(missing_records or phantom_files or pending_skips
                   or missing_targets

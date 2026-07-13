@@ -468,8 +468,15 @@ Build order by persona coverage × error cost:
   the FBAR table in `/tax-fbar` step 1.6 + explicit signature-authority
   interview flag; `reviews/{year}-review.md` workpaper persisted, archived
   at cutover, surfaced by `/tax-rollover` step 5.5. Tests → 1287.
-- **Next (Q3 per sequencing):** A3/A4 (high-value second read; consume
-  expected_sources), then Q4: D1 (Schedule A + CA Schedule CA), D9 (AMT).
+- **A3 (second-read verification) + A4 (consume expected_sources): ✅
+  shipped.** High-value ledger records (any key box ≥ $10K) get an
+  independent second extraction (/tax-parse step 6.7; `second_read` ledger
+  field; unverified high-value records draw a tie-out advisory).
+  `missing_expected_payers()` (token-subset matching) diffs the rolled-over
+  payer list against the ledger — step 2.5 blocking question + step 6.8
+  mechanical re-check; the field finally has a consumer. Tests → 1316.
+- **Next (Q4 per sequencing):** D1 (Schedule A + CA Schedule CA), D9
+  (AMT / Form 6251 + 8801 carryforward).
 
 ### Decisions log
 

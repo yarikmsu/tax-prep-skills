@@ -84,6 +84,18 @@ Before dispatching parsers, confirm completeness with the user. **First check `a
    - `has_1099r=true` but no 1099-R found → warn
    - `has_1099g_state_refund=true` but no 1099-G found → warn: "State refund flag is set but no 1099-G found. Did you receive one?"
 
+3.5. **Expected-sources diff (A4 — deterministic, not memory-based):** when
+   `taxpayer_profile.json` has a non-empty `expected_sources` block (rolled
+   over from the prior year by `/tax-rollover`), diff each expected payer
+   against the classified documents' institutions. For every expected payer
+   with no matching document, ask a **BLOCKING** question:
+   "{Payer} issued a {form type} last year — no document found this year.
+   Was the account closed, or is the document missing?" Record each answer
+   in answers.md. Do not proceed past this step with an unresolved expected
+   payer — a payer that existed last year and silently vanished is the
+   CP2000 intake gap. (After the ledger exists, step 6.8 re-checks this
+   mechanically.)
+
 4. Remind about common late-arriving documents:
    - Form 5498 (IRA contributions) — arrives by end of May
    - Corrected 1099-B (brokerage cost basis corrections) — can arrive through March
@@ -291,6 +303,49 @@ Rules:
   rewriting them back to "pending" would erase `/tax-parse-crypto`'s
   reconciliation trail (and re-block the gate).
 - `chmod 600 parse_ledger.json` (it carries dollar figures; already gitignored).
+
+### 6.7. Second-read verification for high-value records (A3)
+
+For every non-skipped ledger record with **any key box ≥ $10,000**, dispatch
+a SECOND, independent subagent to re-extract ONLY the key boxes from the
+source document:
+
+- The second reader gets the file path and the list of box names to read —
+  **never the first read's values** (independence is the point; an agent
+  shown the expected number will anchor on it). Same sandbox rules as step 3
+  subagents: no network, no writes outside `summaries/`, untrusted-content
+  warning. Instruct it to read each amount digit-by-digit.
+- Compare per box (exact match after normalizing separators):
+  - all match → set `"second_read": "match"` on the ledger record;
+  - any mismatch → present BOTH values to the user via **AskUserQuestion**
+    ("W2_Acme.pdf box 1: first read $101,250.00, second read $110,250.00 —
+    which matches the paper form?"), correct the ledger + summary to the
+    confirmed value, record the resolution in answers.md, and set
+    `"second_read": "mismatch_resolved"`.
+- Records below the threshold may skip this (transposition risk is priced
+  by materiality); the tie-out gate emits an advisory for any high-value
+  record left unverified, so skipping a big one is visible, never silent.
+- Dispatch the second readers in parallel (one per qualifying document).
+
+### 6.8. Expected-sources re-check (A4, mechanical)
+
+Re-run the step 2.5 diff against the FINAL ledger — deterministic, catches
+anything the conversational step missed:
+
+```bash
+python3 -c "
+import json
+from agents.lib.tie_out import load_ledger, missing_expected_payers
+ledger = load_ledger(json.load(open('parse_ledger.json')))
+profile = json.load(open('taxpayer_profile.json'))
+missing = missing_expected_payers(ledger, profile.get('expected_sources') or {})
+print('\n'.join(missing) or '(all expected payers accounted for)')"
+```
+
+Every payer printed must already have an answers.md resolution from step
+2.5 ("account closed at Chase in March", "1099 not yet issued — will amend").
+If one doesn't, STOP and resolve it now — do not hand an unexplained missing
+payer to `/tax-compute`.
 
 ### 7. Summary
 
