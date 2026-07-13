@@ -508,8 +508,29 @@ Build order by persona coverage × error cost:
   per-paycheck + penalty/zero 540-ES schedules). Mandatory e-pay
   (R&TC §19011.5) caveated in all three surfaces. CA's FTB 3519
   payment-only extension remains folded into F2's scope. Review round (2 reviewer agents): state.code added to the tax_law schema with an address.state fallback (the CA block silently never fired on a schema-conformant cache — P1); the all-zero california_540 template scaffold no longer reads as a computed $0 CA return (P1); prior-year readers reject bool/NaN/negative-tax/scaffold; §19136 $500/$250-MFS de minimis in the status line; prior-AGI-missing → loud UNDERSTATED note (2210 precedent, federal too); renormalized share-of-remaining column; cumulative-catch-up + farmers/fishermen + AGI-proxy caveats; empty address.state degrades while non-USPS codes hard-error. Codex auto-review round (5 P2s): degraded first-year CA gate, de-minimis-as-covered penalty target, ½-SE-tax in the AGI proxy, mental-health surcharge in the CA target, computed-evidence section gating. Tests → 1429.
+- **H1/H2/H3 (interview & review upgrades): ✅ shipped.** H1: life-event
+  pass in /tax-setup (Group 1.5 — marriage/divorce, birth/adoption →
+  Form 8839, §121 home sale with the 1099-S must-report rule,
+  inheritance basis step-up, pre-2019-decree alimony) with six MANUAL
+  capability rules (never block; absent flags harmless on legacy
+  profiles; registry invariants enforce template + interview presence).
+  H2: HoH qualifying-person / cost-of-keeping-up-home /
+  considered-unmarried tests recorded in answers.md, cross-checked by
+  /tax-review. H3: /tax-review step 2 gains round-number detection
+  (with statutory-cap false-positive guard), 1099-K Box-1a gross
+  reconciliation (CP2000 direction), and Form 8867-style EITC due
+  diligence (loud not-computed banner — D7 stays community track).
+  Review round (EA reviewer agent, 2 P1 + 6 P2): HoH qualifying-RELATIVE
+  category added (Pub 501 Table 4 — sibling/grandparent HoH was being
+  re-assigned Single), married-at-year-end → HoH via §7703(b)
+  considered-unmarried / NRA-spouse tests (was 'MFJ or MFS only'),
+  temporary-absence rule (deployed spouse ≠ absent), post-2018 alimony
+  modification rule, §121 once-every-2-years + $500K joint conditions,
+  spouse-death/QSS screening question added, EITC full-time-student +
+  younger-than-taxpayer + 25-64 childless window, §691 IRD caveat on
+  inheritance. Codex round (6 P2): Form 8958 gated on filing-status+community-property-domicile (not marriage-year), adoption expenses a standalone question (in-progress/failed/carryforward), year-of-death MFJ requires no same-year remarriage, married-child HoH claimability, childless-EITC either-spouse 25-64, post-2018 alimony CA-nonconformity rule (new has_post2018_alimony flag). Tests → 1447.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
-  sequencing): H1/H2/H3, D5 (education credits), F2 (/tax-extend), E5
+  sequencing): D5 (education credits), F2 (/tax-extend), E5
   (state contributor playbook). Also
   queued from the D9 review: Form 3921 extraction in /tax-parse (the ISO
   bargain element is currently user-asserted and invisible to the A1/A2

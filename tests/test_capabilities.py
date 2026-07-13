@@ -72,6 +72,14 @@ def test_each_unsupported_flag_blocks(flag, rule_id):
     ("has_ev_purchase", "ev_credit"),
     ("has_gambling_income", "gambling"),
     ("lives_abroad", "feie"),
+    # H1 life-event rules — all MANUAL, none block.
+    ("married_this_year", "marriage_year"),
+    ("divorced_this_year", "divorce_year"),
+    ("sold_primary_home", "home_sale"),
+    ("received_inheritance", "inheritance"),
+    ("has_pre2019_alimony", "alimony_pre2019"),
+    ("has_post2018_alimony", "alimony_post2018_state"),
+    ("has_adoption_expenses", "adoption_credit"),
 ])
 def test_manual_flags_do_not_block(flag, rule_id):
     r = C.evaluate(_profile({flag: True}))
@@ -414,3 +422,121 @@ def test_cli_unknown_acknowledge_errors(tmp_path):
     res = _run_cli(tmp_path, "--acknowledge", "not_a_rule")
     assert res.returncode == 1
     assert "unknown acknowledged" in res.stderr
+
+
+# --------------------------------------------------------------------------
+# H1 life-event rules
+# --------------------------------------------------------------------------
+
+def test_life_event_flags_absent_on_legacy_profile_is_harmless():
+    """H1 flags are deliberately NOT gate-era-required: a legacy profile
+    that predates the life-event interview must still pass (a missed
+    manual-worksheet line is a manifest omission, not a materially wrong
+    return)."""
+    p = _profile()
+    for f in ("married_this_year", "divorced_this_year", "sold_primary_home",
+              "received_inheritance", "has_pre2019_alimony",
+              "has_adoption_expenses"):
+        assert f not in p["flags"]
+        assert f not in C._REQUIRED_GATE_FLAGS
+    r = C.evaluate(p)
+    assert r.blocking == ()
+    assert r.manual == ()
+
+
+def test_home_sale_manifest_line_carries_121_and_1099s():
+    r = C.evaluate(_profile({"sold_primary_home": True}))
+    lines = "\n".join(r.limitations)
+    assert "MANUAL WORKSHEET" in lines
+    assert "§121" in lines or "121" in lines
+    assert "1099-S" in lines
+
+
+def test_marriage_year_notes_community_property_8958():
+    r = C.evaluate(_profile({"married_this_year": True}))
+    assert any("8958" in line for line in r.limitations)
+
+
+def test_pre2019_alimony_notes_decree_date_rule():
+    r = C.evaluate(_profile({"has_pre2019_alimony": True}))
+    lines = "\n".join(r.limitations)
+    assert "pre-2019" in lines.lower() or "Pre-2019" in lines
+    assert "recipient" in lines and "payer" in lines
+
+
+def test_multiple_life_events_all_surface():
+    r = C.evaluate(_profile({"divorced_this_year": True,
+                             "received_inheritance": True,
+                             "has_adoption_expenses": True}))
+    ids = {f.rule_id for f in r.manual}
+    assert {"divorce_year", "inheritance", "adoption_credit"} <= ids
+    assert r.blocking == ()
+
+
+def test_life_event_notes_carry_reviewer_corrections():
+    """Review round: the manifest text itself is the deliverable for MANUAL
+    rules — pin the statements a reviewer corrected so they can't regress."""
+    # Marriage: married-at-year-end can still be HoH via §7703(b).
+    r = C.evaluate(_profile({"married_this_year": True}))
+    marriage = "\n".join(r.limitations)
+    assert "considered-unmarried" in marriage
+    assert "7703" in marriage
+    # Inheritance: IRD (§691) is taxable with no §1014 step-up.
+    r = C.evaluate(_profile({"received_inheritance": True}))
+    inherit = "\n".join(r.limitations)
+    assert "691" in inherit and "1014" in inherit
+    # Alimony: post-2018 modification can flip treatment — decree date alone
+    # does not decide.
+    r = C.evaluate(_profile({"has_pre2019_alimony": True}))
+    alimony = "\n".join(r.limitations)
+    assert "MODIFIED after 2018" in alimony
+    # Home sale: once-every-2-years lookback + $500K joint conditions.
+    r = C.evaluate(_profile({"sold_primary_home": True}))
+    home = "\n".join(r.limitations)
+    assert "once every 2 years" in home
+    assert "both spouses" in home
+
+
+# --------------------------------------------------------------------------
+# Codex round (PR #36): community-property MFS + post-2018 alimony
+# --------------------------------------------------------------------------
+
+def test_mfs_community_property_state_flagged_without_any_flag():
+    """Form 8958 applies to EVERY MFS filer in a community-property state —
+    a long-married MFS couple (no married_this_year) must still get the
+    manifest line."""
+    p = _profile(state="CA")
+    p["filing_status"] = "MFS"
+    r = C.evaluate(p)
+    assert r.blocking == ()
+    ids = [f.rule_id for f in r.manual]
+    assert "community_property_mfs" in ids
+    assert any("8958" in line and "BOTH returns" in line
+               for line in r.limitations)
+
+
+def test_mfs_common_law_state_not_flagged():
+    p = _profile(state="NY")
+    p["filing_status"] = "MFS"
+    r = C.evaluate(p)
+    assert "community_property_mfs" not in [f.rule_id for f in r.manual]
+
+
+def test_mfj_community_property_state_not_flagged():
+    r = C.evaluate(_profile(state="CA"))  # default MFJ
+    assert "community_property_mfs" not in [f.rule_id for f in r.manual]
+
+
+def test_mfs_without_address_not_flagged():
+    p = _profile()
+    p["filing_status"] = "MFS"
+    del p["address"]
+    r = C.evaluate(p)
+    assert "community_property_mfs" not in [f.rule_id for f in r.manual]
+
+
+def test_post2018_alimony_notes_ca_nonconformity():
+    r = C.evaluate(_profile({"has_post2018_alimony": True}))
+    lines = "\n".join(r.limitations)
+    assert "CA does" in lines and "NOT conform" in lines
+    assert "Schedule CA" in lines

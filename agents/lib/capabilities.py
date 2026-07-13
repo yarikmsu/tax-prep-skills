@@ -134,6 +134,63 @@ RULES: "tuple[Rule, ...]" = (
          "Living abroad", "Form 2555 (FEIE)",
          "The foreign-earned-income exclusion is not modeled — only the FTC "
          "path is; the FEIE-vs-FTC election is not evaluated."),
+    # --- H1 life-event rules: interview flags → manifest lines. All MANUAL
+    # (hand-worked from worksheets / decree documents), and all read False
+    # when absent — legacy profiles predating the life-event interview pass
+    # are unaffected (deliberately NOT in _REQUIRED_GATE_FLAGS: a missed
+    # manual-worksheet line is a manifest omission, not a materially-wrong
+    # return the way an unscreened ISO/NYC/kiddie situation is).
+    Rule("marriage_year", "married_this_year", MANUAL,
+         "Married during the tax year", "Filing-status validation",
+         "The Dec-31 rule is hand-validated: married at year-end → MFJ or "
+         "MFS, or HoH only via the §7703(b) considered-unmarried or "
+         "nonresident-alien-spouse tests (see the /tax-setup Group 1 HoH "
+         "block); name/SSA mismatch and W-4 updates are checklist items; "
+         "MFS in a community-property state (incl. CA) requires Form 8958 "
+         "income splitting, which is NOT modeled."),
+    Rule("divorce_year", "divorced_this_year", MANUAL,
+         "Divorced or legally separated during the tax year",
+         "Filing-status validation / Form 8332",
+         "Unmarried at Dec 31 → Single or HoH only; dependency allocation "
+         "(Form 8332 release), alimony treatment by decree date, and QDRO "
+         "distributions are hand-checked."),
+    Rule("home_sale", "sold_primary_home", MANUAL,
+         "Sold primary home", "§121 exclusion / Form 8949",
+         "The $250K/$500K-MFJ exclusion (2-of-5-year ownership AND use "
+         "tests; once every 2 years per §121(b)(3); the $500K joint amount "
+         "needs both spouses to meet use, either ownership, neither a "
+         "prior-2-year exclusion), the must-report-if-1099-S-received "
+         "rule, and any depreciation recapture from home-office/rental "
+         "use are hand-computed onto Schedule D/8949."),
+    Rule("inheritance", "received_inheritance", MANUAL,
+         "Received an inheritance", "Basis step-up / inherited IRA rules",
+         "Bequests themselves are not federal income, but income in respect "
+         "of a decedent (§691 — inherited traditional IRA/401(k) "
+         "distributions, the decedent's unpaid wages) IS taxable with NO "
+         "§1014 step-up; basis documentation (date-of-death FMV), "
+         "inherited-IRA distribution rules (SECURE 10-year clock), and any "
+         "state inheritance tax are hand-checked."),
+    Rule("alimony_pre2019", "has_pre2019_alimony", MANUAL,
+         "Alimony under a pre-2019 divorce decree", "Schedule 1 alimony lines",
+         "Pre-2019-decree alimony is taxable to the recipient and deductible "
+         "by the payer (post-TCJA decrees are neither) — but a pre-2019 "
+         "decree MODIFIED after 2018 keeps that treatment ONLY if the "
+         "modification does not expressly apply the TCJA repeal; the "
+         "Schedule 1 entries and the instrument-by-instrument determination "
+         "are hand-entered."),
+    Rule("alimony_post2018_state", "has_post2018_alimony", MANUAL,
+         "Alimony under a post-2018 decree (state nonconformity)",
+         "Schedule CA alimony adjustments",
+         "Federally neither income nor deduction (TCJA §11051), but CA does "
+         "NOT conform: post-2018-decree alimony remains CA-taxable to the "
+         "recipient and CA-deductible by the payer via Schedule CA "
+         "adjustments, which are NOT auto-computed. Other states' "
+         "conformity varies — check the resident state."),
+    Rule("adoption_credit", "has_adoption_expenses", MANUAL,
+         "Adoption expenses", "Form 8839",
+         "The adoption credit, its MAGI phase-out, and the employer-"
+         "assistance exclusion interaction are hand-computed — verify in "
+         "tax software."),
 )
 
 _RULES_BY_ID = {r.rule_id: r for r in RULES}
@@ -220,15 +277,26 @@ def _legacy_residency_change(profile: dict) -> bool:
     return bool(value)
 
 
-def _state_note(profile: dict) -> str:
+# Community-property states whose law splits marital income 50/50 between
+# MFS returns (Form 8958). AK/SD/TN are ELECTIVE (opt-in community-property
+# agreements/trusts) and are not auto-flagged.
+_COMMUNITY_PROPERTY_STATES = frozenset(
+    {"AZ", "CA", "ID", "LA", "NV", "NM", "TX", "WA", "WI"})
+_COMMUNITY_PROPERTY_RULE_ID = "community_property_mfs"
+
+
+def _profile_state(profile: dict) -> "str | None":
+    """Validated 2-letter USPS state code from address.state, or None when
+    the address/state is unset. Malformed values hard-error (same gate
+    _state_note applies — this is the shared extractor)."""
     address = profile.get("address")
     if address is None:
-        return "State: none configured — no state return computed."
+        return None
     if not isinstance(address, dict):
         raise CapabilityError("address must be an object")
     state = address.get("state")
     if state is None:
-        return "State: none configured — no state return computed."
+        return None
     if not isinstance(state, str) or len(state.strip()) != 2 or not state.strip().isalpha():
         raise CapabilityError(
             f"address.state must be a 2-letter USPS code, got {state!r}"
@@ -240,6 +308,13 @@ def _state_note(profile: dict) -> str:
             "fix the profile (a typo like 'CN' for 'CA' would otherwise get a "
             "confident estimate note for a nonexistent state)."
         )
+    return code
+
+
+def _state_note(profile: dict) -> str:
+    code = _profile_state(profile)
+    if code is None:
+        return "State: none configured — no state return computed."
     if code == "CA":
         return "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
     return (f"State ({code}): bracket-based ESTIMATE only — state-specific "
@@ -312,6 +387,24 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
                              "— re-answer by setting flags.moved_states_this_year "
                              "explicitly true/false)",
             rule.form, rule.note, rule.rule_id in acknowledged_ids))
+
+    # Form 8958 community-property income splitting applies to EVERY MFS
+    # filer domiciled in a community-property state — not just marriage-year
+    # filers (Codex P2 on PR #36). Status+state-driven, no flag: both inputs
+    # are already interviewed, so keying this on married_this_year alone
+    # missed every long-married MFS couple.
+    if (str(profile.get("filing_status") or "").strip().upper() == "MFS"
+            and _profile_state(profile) in _COMMUNITY_PROPERTY_STATES):
+        _place(Finding(
+            _COMMUNITY_PROPERTY_RULE_ID, MANUAL,
+            "MFS in a community-property state",
+            "Form 8958 income splitting",
+            "Community income (wages and most income from property acquired "
+            "during the marriage) must be allocated between the spouses' "
+            "separate returns per state law — the Form 8958 allocation is "
+            "NOT modeled; hand-prepare it and adjust BOTH returns. (AK/SD/TN "
+            "community-property elections are opt-in and not auto-flagged.)",
+            acknowledged=False))
 
     state_note = _state_note(profile)
 

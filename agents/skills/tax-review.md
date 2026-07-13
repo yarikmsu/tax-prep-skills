@@ -77,6 +77,20 @@ Simulate an IRS officer reviewing this return. Check:
 - Charitable deductions: Are they > 3% of AGI?
 - Business use of vehicle: Is it 100%? (red flag)
 - Medical expenses: Are they > 7.5% of AGI threshold?
+- **Round-number detection (H3):** scan the deduction and expense entries in
+  `result.json` (Schedule C expense lines, charitable contributions, misc
+  Schedule A items) for suspiciously round values — whole hundreds or
+  thousands ($500, $1,200, $3,000...). One is coincidence; a PATTERN of
+  whole-hundred entries reads as estimation rather than records, a classic
+  DIF signal. For each cluster found, ask whether receipts/records support
+  the exact figures and note the answer in the review workpaper. (Statutory
+  caps that legitimately land on round numbers — the $3,000 capital-loss
+  cap, a $10,000 SALT cap — are NOT flags; check provenance before flagging.)
+- **HoH substantiation (H2 tie-in):** if filing status is HoH, confirm
+  `answers.md` carries the "HoH qualifying tests" block from `/tax-setup`
+  (qualifying person + cost-of-keeping-up-home + considered-unmarried).
+  Missing block → have the taxpayer answer the tests now and record them;
+  HoH without substantiation is a top correspondence-audit trigger.
 
 **Information Return Matching:**
 - Does every 1099 have a corresponding line on the return?
@@ -84,6 +98,34 @@ Simulate an IRS officer reviewing this return. Check:
 - 1099-R: Is the distribution code handled correctly?
 - Foreign income: Are Schedule B Part III questions answered correctly?
 - Is there a discrepancy between W-2 Box 1 and Box 16? (state adjustment)
+- **1099-K gross mismatch (H3):** if any 1099-K was parsed, compare its Box
+  1a gross against the gross receipts reported (Schedule C line 1, or the
+  personal-item disposition on Schedule 1/8949). 1099-K Box 1a is GROSS —
+  it includes refunds, fees, chargebacks, and sales tax collected — so
+  reported receipts BELOW the 1099-K total is exactly what the IRS
+  matching program flags (CP2000). Any excess of 1099-K gross over reported
+  receipts must be reconciled line-by-line (fees/refunds as expenses or
+  adjustments, personal non-taxable transfers identified), and the
+  reconciliation recorded in the review workpaper. Receipts far ABOVE the
+  1099-K total is fine (cash/check sales don't hit a 1099-K).
+- **EITC due diligence (H3):** if the return claims (or the income level
+  suggests eligibility for) the Earned Income Tax Credit, run the Form
+  8867-style checks — EITC has the highest audit rate of any credit:
+  - Qualifying child: relationship, age (<19, <24 if a FULL-TIME student,
+    any age if permanently disabled — and the child must be YOUNGER than
+    the taxpayer/spouse unless disabled), and residency (lived with
+    taxpayer in the US > half the year) — residency is the #1 EITC audit
+    issue; what records exist (school/medical/lease showing the child's
+    address)? With NO qualifying child, the taxpayer (or on MFJ, AT LEAST
+    ONE spouse) must be 25-64 at year end.
+  - Investment income under the year's cap (~$11,600 TY2024, indexed —
+    verify from the fetched tax law)?
+  - Filing status consistent (MFS generally disqualifies unless the
+    ARPA separated-spouse rules — effective TY2021 onward — are met)?
+  - SSNs valid for employment for taxpayer, spouse, AND qualifying children?
+  - NOTE: the toolkit does NOT compute EITC (community-track D7) — if the
+    checks suggest eligibility, say so loudly and direct the taxpayer to
+    software/a preparer rather than silently dropping a refundable credit.
 
 **Audit Trigger Assessment:**
 Using **WebSearch**, check current year IRS audit statistics:

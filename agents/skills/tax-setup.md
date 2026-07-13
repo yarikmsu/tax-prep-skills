@@ -43,6 +43,104 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 - Filing status: Single, Married Filing Jointly (MFJ), Married Filing Separately (MFS), Head of Household (HoH), Qualifying Surviving Spouse (QSS)
 - Primary taxpayer: full legal name, SSN (last 4 for display), date of birth, occupation
 - If MFJ/MFS: Spouse name, SSN (last 4), DOB, occupation
+- **If HoH selected — run the qualifying tests (H2) and record each answer in
+  `answers.md` as the substantiation trail** (HoH is among the most-audited
+  statuses; the IRS asks exactly these):
+  1. **Qualifying person** (Pub 501 Table 4) — one of:
+     - a qualifying CHILD who lived with you MORE than half the year (a
+       MARRIED child counts only if you can claim them as a dependent —
+       generally not if they file a joint return, unless filed solely to
+       claim a refund);
+     - a dependent PARENT (a parent need NOT live with you if you paid more
+       than half the cost of keeping up the parent's main home for the
+       whole year);
+     - another QUALIFYING RELATIVE you can claim as a dependent who is
+       related to you under the §152(d)(2)(A)-(G) list (grandparent,
+       sibling, grandchild, aunt/uncle, in-law, step-parent — NOT the
+       unrelated member-of-household catch-all) AND lived with you more
+       than half the year.
+     Name the person and their relationship.
+  2. **Cost of keeping up the home:** did you pay MORE than half — rent or
+     mortgage interest + property taxes, utilities, repairs, home insurance,
+     and food eaten in the home (NOT clothing, education, medical, or the
+     rental value of a home you own)?
+  3. **If still legally married:** the "considered unmarried" test (§7703(b))
+     — you file separately from your spouse, you paid >1/2 the cost of the
+     home, the home was the main home of YOUR CHILD whom you can claim as a
+     dependent (or could, but for a Form 8332 release to the noncustodial
+     parent — HoH still stands), and your spouse did NOT live in the home
+     during the LAST 6 months of the year. **Temporary absences do not
+     count as not-living-there:** a spouse away for illness, education,
+     business, vacation, or MILITARY DEPLOYMENT is considered to live in
+     the home — a deployed spouse does NOT make you "considered unmarried".
+     ALTERNATIVE: a spouse who was a NONRESIDENT ALIEN at any time in the
+     year (no §6013(g) election) also makes you unmarried for HoH.
+  If ANY test fails, HoH is not allowed — re-ask filing status (usually
+  Single, or MFS if married). Append to `answers.md`:
+  ```markdown
+  ## HoH qualifying tests — TY{year}
+  - Qualifying person: {name}, {relationship}, {months lived with taxpayer}
+  - Paid >1/2 cost of keeping up home: {yes + basis}
+  - Considered-unmarried (if married): {N/A | spouse absent since {month}}
+  ```
+
+**Group 1.5 — Life events THIS tax year (H1):**
+Most yes answers set a profile flag the `/tax-compute` capability gate (C1)
+turns into a limitations-manifest line — ask ALL of these; a life event the
+interview never captures is invisible to every downstream check.
+- Did you get married this year? → sets `married_this_year` (Dec-31 rule:
+  married at year-end → MFJ or MFS — or HoH ONLY via the considered-unmarried
+  or nonresident-alien-spouse tests in Group 1; if MFS in a
+  community-property state (incl. CA), Form 8958 income splitting applies
+  and is NOT modeled)
+- Did you divorce or legally separate this year? → sets `divorced_this_year`
+  (unmarried at Dec 31 → Single or HoH only; ask who claims each dependent —
+  Form 8332 release — and check any QDRO distributions)
+- A child born or adopted this year? → add to Group 3 dependents (a child
+  born ANY day of the year counts for the full year)
+- ANY adoption expenses this year — including an adoption still IN
+  PROGRESS, a failed domestic adoption, prior-year expenses first
+  claimable this year (domestic expenses are claimed the year AFTER
+  payment until final), or an adoption-credit carryforward? → sets
+  `has_adoption_expenses` (Form 8839 credit — manual worksheet). Ask this
+  even when no child was adopted THIS year.
+- Did you SELL your primary home? → sets `sold_primary_home` (§121
+  $250K/$500K-MFJ exclusion with the 2-of-5-year ownership AND use tests;
+  the exclusion is once-every-2-years (§121(b)(3) — ask about other home
+  sales in the prior 2 years); the $500K joint amount additionally needs
+  BOTH spouses to meet the use test, either to meet ownership, and neither
+  to have used the exclusion in the prior 2 years; **ask whether a Form
+  1099-S was received** — if yes, the sale must be reported even when
+  fully excluded)
+- Did you receive an inheritance? → sets `received_inheritance` (bequests
+  themselves are not income, but capture date-of-death FMV basis
+  documentation now; EXCEPTION — income in respect of a decedent (§691):
+  inherited traditional IRA/401(k) distributions and the decedent's unpaid
+  wages ARE taxable and get NO §1014 step-up; inherited IRAs carry
+  SECURE-Act 10-year distribution rules)
+- Do you pay or receive alimony/spousal support under ANY decree? Branch
+  by instrument date:
+  - PRE-2019 decree → sets `has_pre2019_alimony` (federally taxable to
+    recipient / deductible by payer. CAUTION: a pre-2019 decree MODIFIED
+    after 2018 loses grandfathering ONLY if the modification expressly
+    applies the TCJA repeal — read the modification, not just the decree
+    date)
+  - POST-2018 decree → sets `has_post2018_alimony` (federally NEITHER
+    income nor deduction — but CA does NOT conform to the TCJA repeal:
+    post-2018-decree alimony stays CA-taxable to the recipient /
+    CA-deductible by the payer via Schedule CA adjustments, not
+    auto-computed; other states' conformity varies)
+- Did your spouse pass away this year (or in the prior two years)? Year of
+  death → MFJ with the deceased spouse is available ONLY if you did NOT
+  remarry by Dec 31 (if you remarried, you file MFJ/MFS with the NEW
+  spouse and the deceased spouse's final return is MFS); the TWO FOLLOWING
+  years → QSS **only if the tests pass**: a dependent CHILD lived with you ALL year, you paid >1/2
+  the cost of the home, you were entitled to file MFJ in the death year,
+  and you have not remarried. Record the QSS test answers in `answers.md`
+  like the HoH block. Also capture basis step-up on inherited assets
+  (FULL step-up on community property incl. CA) → consider
+  `received_inheritance`.
+- Moved states? asked in Group 2 (`moved_states_this_year`).
 
 **Group 2 — Address & state:**
 - Street address, city, state, ZIP
