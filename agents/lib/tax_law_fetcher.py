@@ -241,6 +241,19 @@ def create_empty_tax_law(year: int) -> dict:
             # rate news releases); compute_form_2210 degrades to
             # penalty-not-computed (loud note, never guessed) when empty.
             "underpayment_rates": [],
+            # Form 6251 AMT parameters (ALL indexed annually — Rev. Proc.
+            # inflation adjustments): exemption amount and its 25%-phase-out
+            # start by status (HoH uses the SINGLE row — the form groups
+            # them; QSS uses mfj), and the 26%→28% rate breakpoint (one
+            # figure, halved for MFS by compute_form_6251). None until fetched;
+            # compute_form_6251 hard-errors rather than guess — an unfetched
+            # AMT table must not silently produce $0 AMT for an ISO
+            # exerciser.
+            "amt": {
+                "exemption": {"single": None, "mfj": None, "mfs": None},
+                "phaseout_start": {"single": None, "mfj": None, "mfs": None},
+                "rate_28_breakpoint": None,
+            },
         },
         "state": {},  # Populated per-state by /tax-setup
         "exchange_rates": {},  # e.g., {"EUR": <annual_avg_rate>} — fetched from IRS.gov yearly average rates
@@ -434,6 +447,16 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         null_fields.append(
             "state.itemized_phaseout (key absent — the R&TC §17077 "
             "thresholds are required for the CA itemized phase-out)")
+
+    # federal.amt absent-key guard (same class): a pre-D9 cache has no amt
+    # key, so the walker reported FRESH while compute_form_6251 would only
+    # hard-error at point of need with no earlier refetch prompt. No year
+    # gate — the AMT exemption table exists every year.
+    fed_block = data.get("federal")
+    if isinstance(fed_block, dict) and "amt" not in fed_block:
+        null_fields.append(
+            "federal.amt (key absent — the AMT exemption/phase-out/"
+            "breakpoint table is required for Form 6251)")
 
     # Flag empty exchange_rates — skills depend on rates for foreign conversions
     if isinstance(data.get("exchange_rates"), dict) and not data["exchange_rates"]:

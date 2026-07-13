@@ -88,11 +88,14 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 - Any gig/freelance income (1099-NEC)? Crypto transactions (buy/sell/exchange)?
 - Stock compensation: RSU vesting, ISO exercises, ESPP purchases?
   - **If ISOs were EXERCISED (and any shares held past year-end)** → sets
-    `has_iso_exercise`. This is load-bearing: AMT (Form 6251) is NOT modeled
-    and the `/tax-compute` capability gate will block — the ISO bargain
-    element is the most common AMT trigger and can add tens of thousands of
-    tax. Warn the user at interview time, not at compute time. (RSU/ESPP alone
-    do NOT set this flag — they are ordinary W-2 wage events.)
+    `has_iso_exercise`. This is load-bearing: it triggers the federal AMT
+    computation (Form 6251 — the bargain element is the most common AMT
+    trigger and can add tens of thousands of tax) and the Form 8801 credit
+    carryforward. CA's own AMT (Schedule P) is NOT computed — tell a CA
+    exerciser now that the CA side needs software verification. Also ask
+    for the exercise spread (FMV − strike per share × shares held).
+    (RSU/ESPP alone do NOT set this flag — they are ordinary W-2 wage
+    events.)
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
 - Gambling income (W-2G)? → sets `has_gambling_income` flag
 
@@ -184,6 +187,11 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   (`single`/`mfj` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
   monthly Part B + Part D surcharge above the standard premium). Optional but unlocks IRMAA
   flags in `/tax-roth-convert`; leave as `[]` if not relevant to the taxpayer.
+- Search: `"IRS {year} AMT exemption amount phase out"` — populate `federal.amt`
+  (`exemption` + `phaseout_start` by status, and `rate_28_breakpoint` — the
+  26%→28% figure, published with the Rev. Proc. inflation adjustments;
+  the MFS breakpoint is derived by halving, don't store it). Required for
+  ISO exercisers — `compute_form_6251` hard-errors on an unfetched table.
 - Search: `"IRS quarterly interest rates underpayment {year}"` (and `{year+1}` Q1-Q2
   when published) — populate `federal.underpayment_rates` as a list of
   `{"effective_from": "YYYY-MM-DD", "annual_rate": 0.08}` covering every §6621

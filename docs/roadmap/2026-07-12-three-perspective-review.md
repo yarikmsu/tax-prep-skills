@@ -483,7 +483,24 @@ Build order by persona coverage × error cost:
   (income/sales taxes disallowed but NO cap, $1M mortgage limit, 50% cash
   cap, misc 2%-floor allowed, R&TC §17077 phase-out from the cached
   threshold with loud degrade). Elections independent. Tests → 1341.
-- **Next (Q4 per sequencing):** D9 (AMT / Form 6251 + 8801 carryforward).
+- **D9 (AMT / Form 6251 + Form 8801): ✅ shipped.** `compute_form_6251`
+  (SALT/standard-deduction addback, ISO bargain element, 25% exemption
+  phase-out, 26/28 rates with the MFS-halved breakpoint, Part III capital-
+  gains coordination at 0/15/20 against the regular breakpoints, indexed
+  table REQUIRED from `federal.amt` — hard-error, never a guessed
+  exemption) + the deferral/exclusion split (with/without-ISO refigure) →
+  `form_8801_carryforward`; `compute_form_8801_credit` consumes the prior
+  credit (§53(c) limit); `/tax-rollover` carries
+  `form_6251.form_8801_carryforward_to_next_year` →
+  `prior_year.amt_credit_carryforward`. `iso_exercise` moved from
+  UNSUPPORTED to MANUAL in the capability gate (federal computed; CA
+  Schedule P flagged not computed). Tests → 1361.
+- **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
+  sequencing): E7 (CA-ES 30/40/0/30 weighting), H1/H2/H3, D5 (education
+  credits), F2 (/tax-extend), E5 (state contributor playbook). Also
+  queued from the D9 review: Form 3921 extraction in /tax-parse (the ISO
+  bargain element is currently user-asserted and invisible to the A1/A2
+  tie-out ledger) and 6251 line 1 negative-taxable-income handling.
 
 ### Decisions log
 

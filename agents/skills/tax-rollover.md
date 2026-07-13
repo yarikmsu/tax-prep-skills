@@ -90,9 +90,9 @@ Show:
 - Categories applied and skipped
 - Number of fields updated
 - Warnings (aged-out dependents, deferred carryforward reminders, etc.)
-- Reminder for deferred carryforwards (NOL, AMT credit, charitable carryover, Form 8606 basis, prior_overpayment_applied):
+- Reminder for deferred carryforwards (NOL, charitable carryover, prior_overpayment_applied — AMT credit and Form 8606 basis are now auto-rolled):
 
-  > If you had NOL, AMT credit, 5-year charitable carryover, Form 8606 non-deductible IRA basis, or prior-year overpayment applied to estimates in TY{prior_year}, enter manually in the `prior_year` section of taxpayer_profile.json — the toolkit doesn't track these yet.
+  > If you had NOL, 5-year charitable carryover, or prior-year overpayment applied to estimates in TY{prior_year}, enter manually in the `prior_year` section of taxpayer_profile.json — the toolkit doesn't track these yet. (Form 8606 IRA basis and the Form 8801 AMT credit ARE auto-rolled — don't double-enter them.)
 
 ## Notes
 - Re-runnable safely — diff against existing values surfaces conflicts as `action_suggested: ask`.

@@ -28,6 +28,8 @@ from agents.lib.tax_computations import (
     compute_form_2210,
     compute_schedule_a,
     compute_ca_itemized,
+    compute_form_6251,
+    compute_form_8801_credit,
     check_form_8938_required,
     SE_TAX_THRESHOLD,
 )
@@ -2226,3 +2228,182 @@ class TestCaItemized:
             federal_agi=100000, ca_agi=100000, tax_year=2025,
             charitable_cash=55000, phaseout_threshold=244000)
         assert r["charitable_carryforward"] == 5000.00
+
+
+# ============================================================
+# Form 6251 AMT + Form 8801 credit (D9)
+# ============================================================
+
+# TY2025 Single AMT parameters (Rev. Proc. 2024-40): exemption 88,100;
+# phase-out starts 626,350; 26%→28% breakpoint 239,100.
+_AMT_2025 = dict(exemption=88100, phaseout_start=626350,
+                 rate_28_breakpoint=239100)
+
+
+class TestForm6251:
+    def test_iso_exerciser_hand_computed(self):
+        """The persona case: TI 300K (after 40K SALT), ISO spread 200K.
+        AMTI = 300,000 + 40,000 + 200,000 = 540,000 < 626,350 → full
+        exemption 88,100. Base 451,900 > breakpoint → 28% × 451,900 −
+        2% × 239,100 = 126,532 − 4,782 = 121,750. AMT = 121,750 − 80,000
+        = 41,750, all deferral-attributable (without the ISO there is no
+        AMT at all)."""
+        r = compute_form_6251(
+            taxable_income=300000, filing_status="Single",
+            regular_tax=80000, salt_deducted=40000,
+            iso_bargain_element=200000, **_AMT_2025)
+        assert r["amti"] == 540000.00
+        assert r["exemption_allowed"] == 88100.00
+        assert r["tmt"] == 121750.00
+        assert r["amt"] == 41750.00
+        assert r["form_8801_carryforward"] == 41750.00
+
+    def test_exemption_phaseout_25_pct(self):
+        """AMTI 726,350 = 100,000 over the start → exemption reduced by
+        25,000 → 63,100."""
+        r = compute_form_6251(
+            taxable_income=686350, filing_status="Single",
+            regular_tax=250000, salt_deducted=40000, **_AMT_2025)
+        assert r["amti"] == 726350.00
+        assert r["exemption_allowed"] == 88100.00 - 25000.00
+
+    def test_no_amt_when_regular_tax_higher(self):
+        r = compute_form_6251(
+            taxable_income=200000, filing_status="Single",
+            regular_tax=60000, standard_deduction_taken=15750, **_AMT_2025)
+        assert r["amt"] == 0.0 and r["form_8801_carryforward"] == 0.0
+
+    def test_exclusion_only_amt_generates_no_credit(self):
+        """SALT-only AMT (no ISO) is an EXCLUSION item — no 8801 credit.
+        AMTI 440,000; base 351,900; TMT 93,750 vs regular 90,000 →
+        AMT 3,750, none of it deferral-attributable."""
+        r = compute_form_6251(
+            taxable_income=400000, filing_status="Single",
+            regular_tax=90000, salt_deducted=40000, **_AMT_2025)
+        assert r["amt"] == 3750.00
+        assert r["form_8801_carryforward"] == 0.0
+
+    def test_part_iii_capital_gains_at_preferential_rates(self):
+        """LTCG stays at 15/20% inside AMT — it must NOT be taxed at 26/28.
+        TI 500K of which 100K LTCG; ISO 100K. Regular ordinary = 400K (over
+        the 15% start), so the whole 100K cg sits below the 20% breakpoint
+        → 15%. AMTI 615,750; exemption 88,100 (under phase-out start);
+        base 527,650; ordinary part 427,650: 28% × 427,650 − 4,782 =
+        114,960; cap part 15,000; TMT 129,960."""
+        r = compute_form_6251(
+            taxable_income=500000, filing_status="Single",
+            regular_tax=140000, standard_deduction_taken=15750,
+            iso_bargain_element=100000,
+            qualified_dividends=0, net_ltcg=100000,
+            zero_pct_limit=48350, fifteen_pct_limit=533400, **_AMT_2025)
+        assert r["tmt"] == 129960.00
+
+    def test_unfetched_amt_table_hard_errors(self):
+        with pytest.raises(ValueError, match="unfetched"):
+            compute_form_6251(
+                taxable_income=300000, filing_status="Single",
+                regular_tax=80000, exemption=None, phaseout_start=626350,
+                rate_28_breakpoint=239100, iso_bargain_element=200000)
+
+    def test_both_salt_and_std_rejected(self):
+        with pytest.raises(ValueError, match="OR standard_deduction"):
+            compute_form_6251(
+                taxable_income=300000, filing_status="Single",
+                regular_tax=80000, salt_deducted=40000,
+                standard_deduction_taken=15750, **_AMT_2025)
+
+    def test_mfs_breakpoint_halved_and_caveat(self):
+        r = compute_form_6251(
+            taxable_income=200000, filing_status="MFS",
+            regular_tax=40000, standard_deduction_taken=15750,
+            iso_bargain_element=50000,
+            exemption=68500, phaseout_start=626350,
+            rate_28_breakpoint=239100)
+        # Rev. Proc. 2024-40 MFS exemption 68,500. AMTI 265,750 (below the
+        # §55(d)(3) recapture ceiling — no addback); base 197,250 > 119,550
+        # (halved bp) → 28% × 197,250 − 2% × 119,550 = 55,230 − 2,391
+        # = 52,839
+        assert r["tmt"] == 52839.00
+
+    def test_ca_schedule_p_note_always_present(self):
+        r = compute_form_6251(
+            taxable_income=100000, filing_status="Single",
+            regular_tax=20000, standard_deduction_taken=15750, **_AMT_2025)
+        assert any("Schedule P" in n for n in r["notes"])
+
+
+class TestForm8801:
+    def test_credit_limited_by_regular_minus_tmt(self):
+        """§53(c): the credit can't push you into AMT — usable = min(cf,
+        regular − TMT)."""
+        r = compute_form_8801_credit(
+            prior_carryforward=30000, regular_tax=90000,
+            tentative_minimum_tax=75000)
+        assert r["credit_allowed"] == 15000.00
+        assert r["carryforward_remaining"] == 15000.00
+
+    def test_nonrefundable_credits_reduce_the_limit(self):
+        """Review P1 — §53(c)(1) nets ALL nonrefundable credits (CTC,
+        education, FTC...), not just the FTC: cf 30K, line 16 50K, CTC
+        4,400, TMT 40K → usable min(30,000, 45,600 − 40,000) = 5,600 —
+        passing 0 credits overstated it to 10,000 (understated tax)."""
+        r = compute_form_8801_credit(
+            prior_carryforward=30000, regular_tax=50000,
+            tentative_minimum_tax=40000, nonrefundable_credits=4400)
+        assert r["credit_allowed"] == 5600.00
+        assert r["carryforward_remaining"] == 24400.00
+
+    def test_full_credit_when_headroom_exceeds(self):
+        r = compute_form_8801_credit(10000, 90000, 60000)
+        assert r["credit_allowed"] == 10000.00
+        assert r["carryforward_remaining"] == 0.0
+
+    def test_no_credit_in_an_amt_year(self):
+        r = compute_form_8801_credit(10000, 60000, 75000)
+        assert r["credit_allowed"] == 0.0
+        assert r["carryforward_remaining"] == 10000.00
+
+    def test_amt_ftc_reduces_tmt(self):
+        """Review P2 — 6251 line 8: the AMT FTC (= regular FTC on the
+        simplified path) reduces line 7 to give TMT; omitting it overstates
+        AMT by exactly the FTC."""
+        base = dict(taxable_income=400000, filing_status="Single",
+                    regular_tax=90000, salt_deducted=40000, **_AMT_2025)
+        without = compute_form_6251(**base)
+        with_ftc = compute_form_6251(amt_ftc=600, **base)
+        assert round(without["amt"] - with_ftc["amt"], 2) == 600.00
+
+    def test_ti_zero_phantom_amti_noted(self):
+        r = compute_form_6251(
+            taxable_income=0, filing_status="Single", regular_tax=0,
+            salt_deducted=40000, iso_bargain_element=300000, **_AMT_2025)
+        assert any("negative-taxable-income" in n for n in r["notes"])
+
+    def test_mfs_exemption_recapture_above_ceiling(self):
+        """§55(d)(3) last sentence (Codex P2): MFS past the phase-out
+        CEILING (626,350 + 68,500/0.25 = 900,350) adds back 25% of the
+        excess capped at the exemption. TI 850,000 std + ISO 100,000 →
+        raw AMTI 965,750 → addback min(68,500, 25% × 65,400) = 16,350 →
+        AMTI 982,100; exemption fully phased → TMT = 28% × 982,100 −
+        2,391 = 272,597."""
+        r = compute_form_6251(
+            taxable_income=850000, filing_status="MFS",
+            regular_tax=260000, standard_deduction_taken=15750,
+            iso_bargain_element=100000,
+            exemption=68500, phaseout_start=626350,
+            rate_28_breakpoint=239100)
+        assert r["amti"] == 982100.00
+        assert r["exemption_allowed"] == 0.00
+        assert r["tmt"] == 272597.00
+
+    def test_senior_deduction_added_back(self):
+        """Codex P2 — OBBBA Schedule 1-A line 37 (TY2025+) is NOT allowed
+        for AMT: +6,000 AMTI raises TMT by 28% × 6,000 = 1,680 in the 28%
+        zone."""
+        base = dict(taxable_income=300000, filing_status="Single",
+                    regular_tax=80000, salt_deducted=40000,
+                    iso_bargain_element=200000, **_AMT_2025)
+        plain = compute_form_6251(**base)
+        senior = compute_form_6251(senior_deduction=6000, **base)
+        assert senior["amti"] == plain["amti"] + 6000.00
+        assert round(senior["amt"] - plain["amt"], 2) == 1680.00

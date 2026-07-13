@@ -82,11 +82,6 @@ class CapabilityReport:
 # interview never asks is dead (the D1 lesson from expected_sources).
 RULES: "tuple[Rule, ...]" = (
     # --- UNSUPPORTED: the engine would produce a materially wrong return ---
-    Rule("iso_exercise", "has_iso_exercise", UNSUPPORTED,
-         "ISO exercise (incentive stock options)", "Form 6251 (AMT)",
-         "The AMT bargain-element computation is not modeled — exercising and "
-         "holding ISOs can add tens of thousands of dollars of AMT this return "
-         "would silently omit."),
     Rule("rental_income", "has_rental_income", UNSUPPORTED,
          "Rental real estate income", "Schedule E / Form 8582",
          "Rental income and expenses, depreciation, and the §469 passive-loss "
@@ -111,6 +106,13 @@ RULES: "tuple[Rule, ...]" = (
          "Tax at the parents' rate on a child's unearned income is not "
          "modeled (and the dependent may have their own filing requirement)."),
     # --- MANUAL: the skills hand-compute these from worksheets; flag loudly ---
+    Rule("iso_exercise", "has_iso_exercise", MANUAL,
+         "ISO exercise (incentive stock options)", "CA Schedule P (CA AMT)",
+         "Federal Form 6251 AMT (incl. the ISO bargain element and the Form "
+         "8801 credit carryforward) IS computed by /tax-compute — but CA has "
+         "its own AMT (Schedule P, 7% flat, different exemption) which is "
+         "NOT computed; a CA ISO exerciser must verify the CA side in tax "
+         "software."),
     Rule("education_credits", "has_education_expenses", MANUAL,
          "Education expenses", "Form 8863",
          "AOTC/LLC amounts and MAGI phase-outs are hand-computed per the "

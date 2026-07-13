@@ -57,6 +57,17 @@ FIELD_MAP: dict[str, dict] = {
         "target_path": "prior_year.ira_basis",
         "transform": "ira_basis",
     },
+    "amt_credit_carryforward": {
+        "category": "carryforwards",
+        # Written by /tax-compute: this year's deferral-attributable AMT
+        # (compute_form_6251 form_8801_carryforward) PLUS any unused prior
+        # credit (compute_form_8801_credit carryforward_remaining). Losing
+        # it forfeits the ISO AMT money permanently.
+        "source_path": "form_6251.form_8801_carryforward_to_next_year",
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.amt_credit_carryforward",
+        "transform": "abs",
+    },
     # Category 2: Static identity
     "primary_first_name": {
         "category": "identity",

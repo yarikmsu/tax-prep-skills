@@ -1820,6 +1820,247 @@ def compute_ca_itemized(
     return out
 
 
+# Form 6251 structural statutory constants (§55): the two AMT rates and the
+# 25% exemption phase-out rate are fixed; the exemption amounts, phase-out
+# starts, and the 26%→28% breakpoint are INDEXED and come from federal.amt.
+_AMT_RATE_LOW = 0.26
+_AMT_RATE_HIGH = 0.28
+_AMT_EXEMPTION_PHASEOUT_RATE = 0.25
+
+
+def _amt_2628(ordinary: float, breakpoint: float) -> float:
+    """Form 6251 line 7 / Part III line 40 formula: 26% up to the
+    breakpoint, else 28% minus the 2%-of-breakpoint offset."""
+    if ordinary <= breakpoint:
+        return _AMT_RATE_LOW * ordinary
+    return _AMT_RATE_HIGH * ordinary - 0.02 * breakpoint
+
+
+def compute_form_6251(
+    taxable_income: float,
+    filing_status: str,
+    regular_tax: float,
+    exemption: float,
+    phaseout_start: float,
+    rate_28_breakpoint: float,
+    salt_deducted: float = 0.0,
+    standard_deduction_taken: float = 0.0,
+    iso_bargain_element: float = 0.0,
+    private_activity_bond_interest: float = 0.0,
+    other_adjustments: float = 0.0,
+    qualified_dividends: float = 0.0,
+    net_ltcg: float = 0.0,
+    zero_pct_limit: float = None,
+    fifteen_pct_limit: float = None,
+    amt_ftc: float = 0.0,
+    senior_deduction: float = 0.0,
+) -> dict:
+    """Form 6251 AMT (v1: the ISO-exerciser path) + the Form 8801
+    deferral-item credit carryforward.
+
+    Args:
+        taxable_income: 1040 line 15 (6251 line 1).
+        regular_tax: 1040 line 16 MINUS Schedule 3 line 1 foreign tax
+            credit (the 6251 line 10 comparison base — simplified; Schedule
+            J / Form 4972 recomputations not modeled).
+        senior_deduction: the OBBBA enhanced senior deduction (Schedule
+            1-A line 37, TY2025+) — NOT allowed for AMT, added back to AMTI
+            (up to $6K per eligible spouse); omitting it understates AMTI
+            for a senior ISO exerciser.
+        amt_ftc: the AMT foreign tax credit (6251 line 8, subtracted from
+            line 7 to give TMT). For filers on the repo's simplified-FTC
+            path (≤$600 MFJ / $300 single, no Form 1116) it EQUALS the
+            regular FTC — pass the same figure; omitting it overstates AMT
+            by exactly the FTC.
+        exemption / phaseout_start / rate_28_breakpoint: federal.amt from
+            the tax_law cache, keyed by status (breakpoint is the single
+            published figure — HALVED here for MFS per the form). REQUIRED:
+            an unfetched AMT table hard-errors rather than producing $0 AMT
+            for an ISO exerciser.
+        salt_deducted: Schedule A line 7 as deducted (exclusion item,
+            added back). standard_deduction_taken: 1040 line 12 when NOT
+            itemizing (6251 line 2a adds back whichever applied — pass one
+            or the other, never both).
+        iso_bargain_element: ISO exercise spread (FMV − strike at exercise,
+            for shares NOT sold in the same year) — the DEFERRAL item that
+            generates the Form 8801 credit.
+        private_activity_bond_interest: specified PAB tax-exempt interest
+            (exclusion item).
+        other_adjustments: signed catch-all for unmodeled lines
+            (depreciation, NOL, etc.) — treated as an EXCLUSION item in the
+            8801 split (conservative: understates the credit, never invents
+            one); caveated.
+        qualified_dividends / net_ltcg / zero_pct_limit / fifteen_pct_limit:
+            Part III capital-gains coordination — AMT taxes qualified
+            dividends and net LTCG at the SAME 0/15/20 rates using the
+            regular breakpoints (required when the capital amount > 0).
+
+    MFS note: the §55(d)(3) MFS exemption-recapture addback (AMTI increased
+    when over the phase-out ceiling) is NOT modeled — caveated.
+
+    Returns dict: amti, exemption_allowed, tmt, amt (Schedule 2 line 1),
+    form_8801_carryforward (deferral-attributable AMT — persists to next
+    year via /tax-rollover), notes.
+    """
+    fs = _normalize_filing_status(filing_status)
+    ti = _sched_a_amount(taxable_income, "taxable_income")
+    rtax = _sched_a_amount(regular_tax, "regular_tax")
+    for what, v in (("exemption", exemption),
+                    ("phaseout_start", phaseout_start),
+                    ("rate_28_breakpoint", rate_28_breakpoint)):
+        if v is None:
+            raise ValueError(
+                f"federal.amt.{what} is unfetched — refusing to compute AMT "
+                "without the indexed table (a guessed exemption would "
+                "silently zero the AMT for an ISO exerciser); fetch via "
+                "/tax-setup")
+    ex = _sched_a_amount(exemption, "exemption")
+    ph_start = _sched_a_amount(phaseout_start, "phaseout_start")
+    bp = _sched_a_amount(rate_28_breakpoint, "rate_28_breakpoint")
+    if fs == "MFS":
+        bp /= 2  # the form prints the halved figure for MFS
+    salt = _sched_a_amount(salt_deducted, "salt_deducted")
+    std = _sched_a_amount(standard_deduction_taken, "standard_deduction_taken")
+    if salt > 0 and std > 0:
+        raise ValueError(
+            "pass salt_deducted (itemized) OR standard_deduction_taken — "
+            "both at once double-counts the line 2a addback")
+    iso = _sched_a_amount(iso_bargain_element, "iso_bargain_element")
+    pab = _sched_a_amount(private_activity_bond_interest,
+                          "private_activity_bond_interest")
+    if isinstance(other_adjustments, bool) \
+            or not isinstance(other_adjustments, (int, float)) \
+            or not math.isfinite(float(other_adjustments)):
+        raise ValueError(
+            f"other_adjustments must be a finite number, got {other_adjustments!r}")
+    other = float(other_adjustments)
+    ftc_amt = _sched_a_amount(amt_ftc, "amt_ftc")
+    senior = _sched_a_amount(senior_deduction, "senior_deduction")
+    qd = _sched_a_amount(qualified_dividends, "qualified_dividends")
+    if isinstance(net_ltcg, bool) or not isinstance(net_ltcg, (int, float)) \
+            or not math.isfinite(float(net_ltcg)):
+        raise ValueError(f"net_ltcg must be a finite number, got {net_ltcg!r}")
+    ltcg = max(0.0, float(net_ltcg))
+
+    notes = [
+        "v1 models the ISO-exerciser path: depreciation/NOL/intangible-"
+        "drilling and other 6251 lines go through other_adjustments "
+        "(treated as exclusion items — the 8801 credit may be understated, "
+        "never overstated)",
+        "CA has its OWN AMT (Schedule P, 7% flat, different exemption) — "
+        "NOT computed; a CA ISO exerciser must verify Schedule P in "
+        "software",
+    ]
+
+
+    def _amti(iso_amount: float) -> float:
+        amti = ti + salt + std + iso_amount + pab + other + senior
+        if fs == "MFS":
+            # §55(d)(3) last sentence: an MFS filer past the phase-out
+            # CEILING adds back 25% of the excess, capped at the exemption
+            # amount (prevents the halved exemption from advantaging MFS).
+            ceiling = ph_start + ex / _AMT_EXEMPTION_PHASEOUT_RATE
+            amti += min(ex, _AMT_EXEMPTION_PHASEOUT_RATE
+                        * max(0.0, amti - ceiling))
+        return amti
+
+    def _tmt(iso_amount: float) -> float:
+        amti = _amti(iso_amount)
+        exemption_allowed = max(
+            0.0, ex - _AMT_EXEMPTION_PHASEOUT_RATE * max(0.0, amti - ph_start))
+        base = max(0.0, amti - exemption_allowed)
+        cg = min(base, qd + ltcg)
+        if cg > 0:
+            if zero_pct_limit is None or fifteen_pct_limit is None:
+                raise ValueError(
+                    "capital_gains_rates limits are required for the Part "
+                    "III coordination when qualified dividends / net LTCG "
+                    "are present")
+            z = _sched_a_amount(zero_pct_limit, "zero_pct_limit")
+            f15 = _sched_a_amount(fifteen_pct_limit, "fifteen_pct_limit")
+            ordinary = base - cg
+            # Part III lines 43-51: the 0%/15% headroom is measured against
+            # the REGULAR worksheet's ordinary income (regular taxable
+            # income minus the capital amount), not the AMT base.
+            regular_ordinary = max(0.0, ti - (qd + ltcg))
+            at0 = min(cg, max(0.0, z - regular_ordinary))
+            at15 = min(cg - at0, max(0.0, f15 - regular_ordinary - at0))
+            at20 = cg - at0 - at15
+            part_iii = (_amt_2628(ordinary, bp)
+                        + 0.15 * at15 + 0.20 * at20)
+            # line 64: the lesser of the coordinated tax or the flat 26/28
+            return min(part_iii, _amt_2628(base, bp))
+        return _amt_2628(base, bp)
+
+    # 6251 line 8: the AMT FTC reduces line 7 to give TMT — applied to
+    # both refigures (Form 8801 refigures it too; identical on the
+    # simplified-FTC path).
+    tmt = max(0.0, _tmt(iso) - ftc_amt)
+    amt = round(max(0.0, tmt - rtax), 2)
+    # Form 8801: the credit equals AMT attributable to DEFERRAL items — the
+    # form refigures 6251 with exclusion items only; v1's only deferral
+    # item is the ISO spread, so the split is the with/without-ISO delta.
+    amt_exclusion_only = round(
+        max(0.0, max(0.0, _tmt(0.0) - ftc_amt) - rtax), 2)
+    credit = round(max(0.0, amt - amt_exclusion_only), 2)
+    if ti == 0 and (salt + std) > 0:
+        notes.append(
+            "1040 line 15 is $0 — the 6251 line 1 negative-taxable-income "
+            "rule is not modeled, so AMTI here may be OVERSTATED (safe "
+            "direction) when deductions exceeded AGI; refigure line 1 as "
+            "AGI minus deductions (negative) for precision")
+
+    amti_full = _amti(iso)
+    exemption_allowed = max(
+        0.0, ex - _AMT_EXEMPTION_PHASEOUT_RATE * max(0.0, amti_full - ph_start))
+    if amt > 0:
+        notes.append(
+            f"AMT of ${amt:,.2f} applies (Schedule 2 line 1). "
+            f"${credit:,.2f} of it is deferral-attributable (ISO) and "
+            "becomes a Form 8801 minimum tax credit carryforward — record "
+            "it; losing it forfeits the money permanently")
+    return {
+        "amti": round(amti_full, 2),
+        "exemption_allowed": round(exemption_allowed, 2),
+        "tmt": round(tmt, 2),
+        "regular_tax": round(rtax, 2),
+        "amt": amt,
+        "form_8801_carryforward": credit,
+        "notes": notes,
+    }
+
+
+def compute_form_8801_credit(
+    prior_carryforward: float,
+    regular_tax: float,
+    tentative_minimum_tax: float,
+    nonrefundable_credits: float = 0.0,
+) -> dict:
+    """Form 8801 Part II (simplified): the prior-year minimum tax credit is
+    usable this year up to the excess of regular tax MINUS ALL allowable
+    nonrefundable credits (CTC, education, dependent care, FTC — §53(c)(1)
+    nets the subpart A/B/D credits, not just the FTC) over this year's
+    tentative minimum tax. It can never push you INTO AMT. The unused
+    remainder carries forward indefinitely.
+
+    Pass tentative_minimum_tax from compute_form_6251()["tmt"] (0.0 when no
+    6251 inputs exist this year is WRONG — the TMT exists even when no AMT
+    is due; always run compute_form_6251 first when a carryforward exists).
+    nonrefundable_credits: the credits claimed BEFORE this one (1040 line 19
+    + Schedule 3 lines 1-4/5b/6c...) — omitting them overstates the usable
+    credit and understates tax.
+    """
+    cf = _sched_a_amount(prior_carryforward, "prior_carryforward")
+    rtax = _sched_a_amount(regular_tax, "regular_tax")
+    tmt = _sched_a_amount(tentative_minimum_tax, "tentative_minimum_tax")
+    credits = _sched_a_amount(nonrefundable_credits, "nonrefundable_credits")
+    usable = round(min(cf, max(0.0, rtax - credits - tmt)), 2)
+    return {
+        "credit_allowed": usable,          # Schedule 3 line 6b
+        "carryforward_remaining": round(cf - usable, 2),
+    }
+
+
 # Form 2210 structural statutory constants (IRC §6654, none indexed):
 # required annual payment = LESSER of 90% of current-year tax or 100%/110%
 # of prior-year tax (110% above $150K prior-year AGI, $75K MFS) — §6654(d);

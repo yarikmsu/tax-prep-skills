@@ -21,7 +21,7 @@ def _write_cache(tmp_path, year, sdi_wage_limit="omit"):
     data = {
         "tax_year": year,
         "_meta": {"fetched": datetime.now().isoformat()},
-        "federal": {"fbar_threshold": 10000},
+        "federal": {"fbar_threshold": 10000, "amt": {"exemption": {"single": 88100, "mfj": 137000, "mfs": 68500}, "phaseout_start": {"single": 626350, "mfj": 1252700, "mfs": 626350}, "rate_28_breakpoint": 239100}},
         "state": state,
         "exchange_rates": {"EUR": 1.08},
     }
@@ -79,7 +79,7 @@ def test_empty_underpayment_rates_not_flagged(tmp_path):
     data = {
         "tax_year": 2025,
         "_meta": {"fetched": datetime.now().isoformat()},
-        "federal": {"fbar_threshold": 10000, "underpayment_rates": []},
+        "federal": {"fbar_threshold": 10000, "underpayment_rates": [], "amt": {"exemption": {"single": 88100, "mfj": 137000, "mfs": 68500}, "phaseout_start": {"single": 626350, "mfj": 1252700, "mfs": 626350}, "rate_28_breakpoint": 239100}},
         "state": {"name": "California", "sdi_rate": 0.012,
                   "itemized_phaseout": {"single": 244000, "mfj": 488000,
                                         "hoh": 366000}},
@@ -107,3 +107,21 @@ def test_absent_itemized_phaseout_flagged_for_ca(tmp_path):
     assert any("itemized_phaseout" in f and "absent" in f
                for f in result["null_fields"])
     assert result["status"] == "INCOMPLETE"
+
+def test_absent_amt_key_flagged(tmp_path):
+    """Review P2 (PR #34): a pre-D9 cache has no federal.amt key — without
+    the guard it reported FRESH while Form 6251 could only hard-error at
+    point of need with no earlier refetch prompt."""
+    data = {
+        "tax_year": 2025,
+        "_meta": {"fetched": datetime.now().isoformat()},
+        "federal": {"fbar_threshold": 10000},
+        "state": {"name": "California", "sdi_rate": 0.012,
+                  "itemized_phaseout": {"single": 244000, "mfj": 488000,
+                                        "hoh": 366000}},
+        "exchange_rates": {"EUR": 1.08},
+    }
+    (tmp_path / "tax_law_2025.json").write_text(json.dumps(data))
+    result = check_freshness(2025, str(tmp_path))
+    assert any("federal.amt" in f and "absent" in f
+               for f in result["null_fields"])

@@ -115,6 +115,19 @@
     "notes": []
   },
 
+  "form_6251": {
+    "_include_if": "has_iso_exercise flag is true, OR AMT applies, OR a prior-year Form 8801 carryforward exists",
+    "note": "AMT (v1: ISO-exerciser path). CA Schedule P NOT computed — see notes.",
+    "amti": 0,
+    "exemption_allowed": 0,
+    "tmt": 0,
+    "amt": 0,
+    "form_8801_carryforward": 0,
+    "prior_credit_allowed": 0,
+    "form_8801_carryforward_to_next_year": 0,
+    "notes": []
+  },
+
   "form_2210": {
     "_include_if": "compute_form_2210 ran and no_penalty is false (an underpayment exists)",
     "note": "Underpayment of estimated tax (1040 line 38). Computed by compute_form_2210 — regular method, even-withholding default; Schedule AI not modeled.",

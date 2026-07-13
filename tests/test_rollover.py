@@ -509,3 +509,35 @@ def test_apply_changes_two_file_atomicity(tmp_path, monkeypatch):
     assert targets.result.read_bytes() == original_result
     # No leftover .tmp files
     assert list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_compute_diff_amt_credit_carryforward():
+    """D9: form_6251.form_8801_carryforward_to_next_year rolls into
+    prior_year.amt_credit_carryforward — losing the ISO AMT credit
+    forfeits the money permanently."""
+    prior = PriorReturn(
+        year=2024,
+        result={"meta": {"tax_year": 2024},
+                "form_6251": {"form_8801_carryforward_to_next_year": 41750.0}},
+        profile=json.loads((FIXTURES / "prior_2024_clean" / "taxpayer_profile.json").read_text()),
+    )
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    amt = [c for c in diff["carryforwards"]
+           if c.json_path == "prior_year.amt_credit_carryforward"]
+    assert len(amt) == 1
+    assert amt[0].prior_value == 41750.0
+    assert amt[0].action_suggested == "apply"
+
+
+def test_compute_diff_amt_credit_zero_skipped():
+    prior = PriorReturn(
+        year=2024,
+        result={"meta": {"tax_year": 2024},
+                "form_6251": {"form_8801_carryforward_to_next_year": 0}},
+        profile=json.loads((FIXTURES / "prior_2024_clean" / "taxpayer_profile.json").read_text()),
+    )
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    assert not [c for c in diff["carryforwards"]
+                if c.json_path == "prior_year.amt_credit_carryforward"]

@@ -43,11 +43,13 @@ def test_clean_profile_not_blocked():
     assert r.acknowledged == ()
 
 
-def test_iso_exercise_blocks():
+def test_iso_exercise_is_manual_not_blocking():
+    """D9 shipped federal Form 6251 — iso_exercise no longer blocks; it
+    surfaces the CA Schedule P (CA AMT not computed) manifest note."""
     r = C.evaluate(_profile({"has_iso_exercise": True}))
-    assert len(r.blocking) == 1
-    assert r.blocking[0].rule_id == "iso_exercise"
-    assert "6251" in r.blocking[0].form
+    assert r.blocking == ()
+    assert [f.rule_id for f in r.manual] == ["iso_exercise"]
+    assert "Schedule P" in r.manual[0].form
 
 
 @pytest.mark.parametrize("flag,rule_id", [
@@ -78,33 +80,33 @@ def test_manual_flags_do_not_block(flag, rule_id):
 
 
 def test_acknowledged_unblocks_and_lands_in_manifest():
-    r = C.evaluate(_profile({"has_iso_exercise": True},
-                            acknowledged=["iso_exercise"]))
+    r = C.evaluate(_profile({"has_rental_income": True},
+                            acknowledged=["rental_income"]))
     assert r.blocking == ()
-    assert [f.rule_id for f in r.acknowledged] == ["iso_exercise"]
-    assert any("NOT COMPUTED (user acknowledged)" in line and "6251" in line
+    assert [f.rule_id for f in r.acknowledged] == ["rental_income"]
+    assert any("NOT COMPUTED (user acknowledged)" in line and "Schedule E" in line
                for line in r.limitations)
 
 
 def test_acknowledgment_is_per_rule_not_global():
     """Acknowledging one gap must not unblock a different one."""
     r = C.evaluate(_profile(
-        {"has_iso_exercise": True, "has_rental_income": True},
-        acknowledged=["iso_exercise"]))
+        {"has_marketplace_insurance": True, "has_rental_income": True},
+        acknowledged=["marketplace_insurance"]))
     assert [f.rule_id for f in r.blocking] == ["rental_income"]
 
 
 def test_unknown_acknowledged_id_hard_errors():
     """A typo in acknowledged_limitations silently unblocks nothing — reject."""
     with pytest.raises(C.CapabilityError, match="unknown acknowledged"):
-        C.evaluate(_profile({"has_iso_exercise": True},
-                            acknowledged=["iso_exercize"]))
+        C.evaluate(_profile({"has_rental_income": True},
+                            acknowledged=["rental_incom"]))
 
 
 def test_stale_but_valid_acknowledged_id_is_harmless():
     """An acknowledgment for a rule whose flag is off is ignored, not an error
     (the situation may have been corrected after acknowledgment)."""
-    r = C.evaluate(_profile({}, acknowledged=["iso_exercise"]))
+    r = C.evaluate(_profile({}, acknowledged=["rental_income"]))
     assert r.blocking == () and r.acknowledged == ()
 
 
@@ -302,8 +304,8 @@ def test_manifest_contains_manual_items():
 
 def test_blocking_items_do_not_appear_in_manifest():
     """A blocking item must gate, not slide into the manifest as if handled."""
-    r = C.evaluate(_profile({"has_iso_exercise": True}))
-    assert not any("6251" in line for line in r.limitations)
+    r = C.evaluate(_profile({"has_rental_income": True}))
+    assert not any("Schedule E" in line for line in r.limitations)
 
 
 # --------------------------------------------------------------------------
@@ -311,9 +313,9 @@ def test_blocking_items_do_not_appear_in_manifest():
 # --------------------------------------------------------------------------
 
 def test_render_blocked_shows_options_and_ids():
-    md = C.render_markdown(C.evaluate(_profile({"has_iso_exercise": True})))
+    md = C.render_markdown(C.evaluate(_profile({"has_rental_income": True})))
     assert "⛔ BLOCKED" in md
-    assert "`iso_exercise`" in md
+    assert "`rental_income`" in md
     assert "acknowledged_limitations" in md  # the unblock instructions
 
 
@@ -373,15 +375,15 @@ def test_cli_exit_zero_when_clean(tmp_path):
 
 
 def test_cli_exit_two_when_blocked(tmp_path):
-    _write_profile(tmp_path, _profile({"has_iso_exercise": True}))
+    _write_profile(tmp_path, _profile({"has_rental_income": True}))
     res = _run_cli(tmp_path)
     assert res.returncode == 2
     assert "BLOCKED" in res.stdout
 
 
 def test_cli_acknowledge_flag_unblocks(tmp_path):
-    _write_profile(tmp_path, _profile({"has_iso_exercise": True}))
-    res = _run_cli(tmp_path, "--acknowledge", "iso_exercise")
+    _write_profile(tmp_path, _profile({"has_rental_income": True}))
+    res = _run_cli(tmp_path, "--acknowledge", "rental_income")
     assert res.returncode == 0
 
 

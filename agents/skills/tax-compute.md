@@ -328,6 +328,58 @@ Use `compute_qdcg_tax()` from `agents/lib/tax_computations.py`:
 
 If no qualified dividends and no net capital gain: use regular bracket tax via `compute_bracket_tax()`.
 
+### Step 6.5: AMT (Form 6251 → Schedule 2 line 1 → 1040 line 17)
+
+Run `compute_form_6251()` **whenever the return itemizes, or ANY addback
+input is nonzero** (`has_iso_exercise`, private-activity-bond interest, a
+prior-year Form 8801 carryforward — the TMT is needed even when no AMT is
+due this year). It is a cheap pure function returning $0 harmlessly — a
+"looks unlikely" judgment call is how SALT-only AMT gets silently omitted
+(post-OBBBA a $40K SALT deduction alone is a real trigger in the
+$250-450K band):
+
+- Inputs: `taxable_income` = line 15; `regular_tax` = line 16 MINUS the
+  Schedule 3 line 1 foreign tax credit; `amt_ftc` = that same FTC on the
+  simplified path (the AMT FTC equals the regular FTC when no Form 1116 is
+  required); `federal.amt` from tax_law JSON (exemption/phaseout_start by
+  status — map QSS→mfj, HoH→single; `rate_28_breakpoint` is the single
+  published figure, the function halves it for MFS).
+- Addback: `salt_deducted` (Schedule A line 7 = the salt_deductible figure)
+  when itemizing, else `standard_deduction_taken` = line 12 — one or the
+  other, never both.
+- `iso_bargain_element`: ask the user for the exercise-year spread (FMV −
+  strike) on ISO shares exercised AND HELD past year-end (same-year sales
+  are ordinary W-2 income, not an AMT adjustment) — record in answers.md.
+- **ISO shares from a PRIOR-year exercise sold this year:** include the
+  NEGATIVE line 2k basis adjustment (regular gain − AMT gain, since the
+  AMT basis is higher by the old spread) in `other_adjustments` — it
+  lowers this year's TMT, which is exactly what frees the Form 8801
+  credit. Ask whenever `prior_year.amt_credit_carryforward` > 0.
+- `senior_deduction`: the OBBBA Schedule 1-A line 37 enhanced senior
+  deduction (TY2025+, up to $6K per eligible spouse) is NOT allowed for
+  AMT — pass the amount claimed so it's added back to AMTI.
+- Pass `qualified_dividends`/`net_ltcg` + the capital_gains_rates limits so
+  Part III taxes them at 0/15/20 inside AMT.
+- **Routing:** `amt` → Schedule 2 line 1 → 1040 **line 17** (tax BEFORE
+  credits), NOT line 23. This matters downstream: the CTC Credit Limit
+  Worksheet A base in Step 7 is line 18 = line 16 + Schedule 2 line 1 —
+  omitting the AMT from it under-allows nonrefundable CTC and spills the
+  difference into refundable ACTC. Copy the result into the `form_6251`
+  section; surface the CA Schedule P note VERBATIM (CA AMT is NOT computed
+  — a CA ISO exerciser must verify in software).
+- **Form 8801 prior credit:** when `prior_year.amt_credit_carryforward` >
+  0, run `compute_form_8801_credit(prior_carryforward, regular_tax, tmt,
+  nonrefundable_credits)` where `nonrefundable_credits` = ALL nonrefundable
+  credits claimed before it (line 19 CTC + Schedule 3 lines 1-4) — §53(c)
+  nets them; passing 0 overstates the usable credit and understates tax.
+  `credit_allowed` goes to Schedule 3 line 6b (→ line 20).
+- **ALWAYS write `form_8801_carryforward_to_next_year`** whenever
+  `compute_form_6251` ran = this year's `form_8801_carryforward` + (the
+  8801 `carryforward_remaining` if a prior credit was used, else 0). This
+  is NOT conditional on having a prior credit — a FIRST-year ISO exerciser
+  is exactly who generates the credit, and /tax-rollover reads this field;
+  leaving it unwritten forfeits the money permanently.
+
 ### Step 7: Compute Credits (Form 1040 Lines 19-21)
 
 **Child Tax Credit + ODC (Line 19) and refundable ACTC (Line 28):**
@@ -337,10 +389,14 @@ Pass the full Schedule 8812 inputs, not just the child count:
   relatives) each earn the $500 nonrefundable ODC; the phase-out reduces the
   COMBINED CTC+ODC.
 - `tax_liability` — the **Credit Limit Worksheet A amount**, NOT raw line 18:
-  line 18 tax MINUS the nonrefundable credits claimed before the CTC (Schedule 3
-  part I — FTC, dependent care, education, residential energy, etc.). Passing
-  raw line 18 lets the CTC consume tax already used by earlier credits,
-  overstating line 19 and suppressing the ACTC on line 28.
+  line 18 tax (= line 16 **+ Schedule 2 line 1 AMT** from Step 6.5 — the AMT
+  is part of the pre-credit base) MINUS the nonrefundable credits claimed
+  before the CTC (Schedule 3 part I — FTC, dependent care, education,
+  residential energy, etc.). Passing raw line 18 lets the CTC consume tax
+  already used by earlier credits, overstating line 19 and suppressing the
+  ACTC on line 28; omitting the AMT from line 18 does the reverse — it
+  under-allows nonrefundable CTC and spills the difference into refundable
+  ACTC.
 - `earned_income` (wages + SE earnings) and `actc_limit_per_child`
   (`federal.child_tax_credit.refundable_limit` from tax_law JSON) → the result
   splits into `nonrefundable_used` (line 19) and `refundable_actc` (**line
