@@ -45,8 +45,13 @@ Ledger contract (parse_ledger.json, written by /tax-parse step 6):
        "payer": "Acme Corp",
        "person": "primary",              # primary | spouse | joint
        "key_boxes": {"wages": 100000.0, "federal_withholding_w2": 12000.0},
-       "skipped": null},                 # or a non-empty reason string
-      ...]}
+       "skipped": null,                  # or a non-empty reason string
+       "foreign": false},                # optional; true = foreign institution
+      ...]}                              # (feeds /tax-fbar's set-difference).
+                                         # Bool or absent ONLY — null is a
+                                         # hard error; when domicile is
+                                         # unknown, OMIT the field and flag
+                                         # the doc for follow-up instead.
 key_boxes are keyed by CANONICAL CATEGORY (registry below), mapped from the
 raw form boxes at parse time — the skill documents the box→category table.
 """
@@ -162,6 +167,11 @@ class LedgerRecord:
     person: str
     key_boxes: "tuple[tuple[str, float], ...]"
     skipped: "str | None"
+    # Document is from a foreign institution (foreign brokerage/bank — the
+    # Box B/E no-basis convention is a hint). /tax-fbar set-differences these
+    # payers against the FBAR account table so an institution that earned
+    # interest in the ledger can't silently miss FinCEN 114.
+    foreign: bool = False
 
 
 @dataclass(frozen=True)
@@ -262,12 +272,26 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
         person = rec.get("person") or "joint"
         if person not in ("primary", "spouse", "joint"):
             raise TieOutError(f"{where}.person must be primary/spouse/joint")
+        foreign = rec.get("foreign", False)
+        if not isinstance(foreign, bool):
+            raise TieOutError(
+                f"{where}.foreign must be a boolean, got {foreign!r} — a "
+                "truthy string here would silently corrupt the FBAR "
+                "set-difference")
         records.append(LedgerRecord(
             doc_id=doc_id, file=file,
             form_type=_require_str(rec.get("form_type"), f"{where}.form_type"),
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
-            person=person, key_boxes=tuple(validated), skipped=skipped))
+            person=person, key_boxes=tuple(validated), skipped=skipped,
+            foreign=foreign))
     return records
+
+
+def foreign_payers(ledger: "list[LedgerRecord]") -> "list[str]":
+    """Sorted unique payers of foreign-institution records — the FBAR
+    set-difference input (/tax-fbar step 1.6). Skipped records count too: a
+    duplicate scan of a foreign bank's statement still evidences the account."""
+    return sorted({r.payer for r in ledger if r.foreign})
 
 
 def _result_total(result: dict, category: str) -> "float | None":

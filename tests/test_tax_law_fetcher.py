@@ -68,3 +68,20 @@ def test_absent_sdi_key_fine_for_2024_plus_ca(tmp_path):
     result = check_freshness(2025, str(tmp_path))
     assert not any("sdi_wage_limit" in f for f in result["null_fields"])
     assert result["status"] == "FRESH"
+
+def test_empty_underpayment_rates_not_flagged(tmp_path):
+    """Self-review (PR #31): an empty federal.underpayment_rates is
+    legitimate — a withholding-only taxpayer never needs the §6621 timeline,
+    and compute_form_2210 degrades loudly at the point of need. Flagging it
+    would nag INCOMPLETE forever (the sdi_wage_limit precedent)."""
+    data = {
+        "tax_year": 2025,
+        "_meta": {"fetched": datetime.now().isoformat()},
+        "federal": {"fbar_threshold": 10000, "underpayment_rates": []},
+        "state": {"name": "California", "sdi_rate": 0.012},
+        "exchange_rates": {"EUR": 1.08},
+    }
+    (tmp_path / "tax_law_2025.json").write_text(json.dumps(data))
+    result = check_freshness(2025, str(tmp_path))
+    assert not any("underpayment_rates" in f for f in result["null_fields"])
+    assert result["status"] == "FRESH"

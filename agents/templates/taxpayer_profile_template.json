@@ -40,6 +40,7 @@
   ],
   "flags": {
     "has_foreign_accounts": false,
+    "signature_authority_foreign_accounts": false,
     "has_self_employment": false,
     "has_rental_income": false,
     "has_hsa": false,

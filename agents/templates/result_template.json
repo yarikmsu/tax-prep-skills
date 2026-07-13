@@ -75,10 +75,22 @@
     "line_33_total_payments": 0,
     "line_34_overpayment": 0,
     "line_35a_refund": 0,
-    "line_37_amount_owed": 0
+    "line_37_amount_owed": 0,
+    "line_38_estimated_tax_penalty": 0
   },
 
   "_optional_sections_below": "Include only if applicable to this taxpayer. Remove sections that don't apply.",
+
+  "form_2210": {
+    "_include_if": "compute_form_2210 ran and no_penalty is false (an underpayment exists)",
+    "note": "Underpayment of estimated tax (1040 line 38). Computed by compute_form_2210 — regular method, even-withholding default; Schedule AI not modeled.",
+    "required_annual_payment": 0,
+    "required_basis": null,
+    "quarters": [],
+    "penalty": 0,
+    "penalty_computed": false,
+    "notes": []
+  },
 
   "interest_detail": {
     "_include_if": "taxable interest > $0",
@@ -194,7 +206,7 @@
   },
 
   "fbar_fincen_114": {
-    "_include_if": "has_foreign_accounts flag is true AND aggregate > $10K",
+    "_include_if": "(has_foreign_accounts OR signature_authority_foreign_accounts flag is true) AND aggregate > $10K — signature-authority-only accounts count toward the aggregate and go on Part IV (31 CFR 1010.350)",
     "required": false,
     "due_date": null,
     "filed_separately": true,

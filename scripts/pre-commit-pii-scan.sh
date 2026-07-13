@@ -46,6 +46,18 @@ while IFS= read -r file; do
     BLOCKED+=("  BLOCKED FILENAME ($filename): $file")
     continue
   fi
+
+  # Persisted /tax-review workpapers (reviews/{year}-review.md) derive from
+  # PII-bearing result.json — block the directory and the filename pattern
+  case "$file" in
+    reviews/*|*/reviews/*)
+      BLOCKED+=("  BLOCKED PATH (reviews/): $file")
+      continue ;;
+  esac
+  if echo "$filename" | grep -qE '^[0-9]{4}-review\.md$'; then
+    BLOCKED+=("  BLOCKED FILENAME ($filename): $file")
+    continue
+  fi
 done <<< "$STAGED_FILES"
 
 if [ ${#BLOCKED[@]} -gt 0 ]; then

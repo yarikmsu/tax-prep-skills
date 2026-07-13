@@ -232,6 +232,15 @@ def create_empty_tax_law(year: int) -> dict:
             # /tax-compute itemized-vs-standard guidance) fall back to the
             # unindexed statutory schedule when unset.
             "salt_cap": {"amount": None, "mfs_amount": None},
+            # IRC §6621 federal underpayment rate (short-term AFR + 3%), set
+            # PER CALENDAR QUARTER. Form 2210 accrues the tax year's penalty
+            # across Apr 15 TY → Apr 15 TY+1, so the list must cover every
+            # rate period in that span. Each entry:
+            #   {"effective_from": "YYYY-MM-DD", "annual_rate": 0.08}
+            # Ships empty — /tax-setup fetches (irs.gov quarterly interest
+            # rate news releases); compute_form_2210 degrades to
+            # penalty-not-computed (loud note, never guessed) when empty.
+            "underpayment_rates": [],
         },
         "state": {},  # Populated per-state by /tax-setup
         "exchange_rates": {},  # e.g., {"EUR": <annual_avg_rate>} — fetched from IRS.gov yearly average rates
@@ -361,6 +370,15 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 if k.startswith("_") or k in _SKIP_KEYS:
                     continue
                 if k == "sdi_wage_limit" and v is None and _sdi_null_is_valid:
+                    continue
+                # underpayment_rates may legitimately stay empty: a
+                # withholding-only taxpayer never needs the §6621 timeline,
+                # and compute_form_2210 degrades LOUDLY at the point of need
+                # (penalty-not-computed note) instead of guessing. Flagging
+                # it here would nag INCOMPLETE forever (the sdi_wage_limit
+                # precedent). /tax-compute step 9.5 prompts the fetch when a
+                # penalty actually applies.
+                if k == "underpayment_rates" and isinstance(v, list) and not v:
                     continue
                 child_path = f"{path}.{k}" if path else k
                 if v is None:

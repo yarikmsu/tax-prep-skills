@@ -276,6 +276,25 @@ Format the review as:
 {embed Step 3.6 output here, or the "not applicable" / skip note}
 ```
 
+### 4.5. Persist the Review (workpaper)
+
+Write the FULL Step 4 report to `reviews/{year}-review.md` — the review is a
+workpaper that belongs with the return, not scrollback that vanishes:
+
+```bash
+mkdir -p reviews && chmod 700 reviews
+# write the report, then:
+chmod 600 reviews/{year}-review.md
+```
+
+- `reviews/` is gitignored (it derives from PII-bearing result.json) and is
+  archived into `archive/{year}/reviews/` by `/tax-archive` at year-end
+  cutover, where `/tax-rollover` surfaces its "Tax Planning for Next Year"
+  section as next year's checklist.
+- Re-running `/tax-review` overwrites the file (the latest review of a return
+  supersedes earlier ones — result.json changed, so the old review audited a
+  return that no longer exists).
+
 ### 5. Summary
 
 Print:
@@ -283,3 +302,4 @@ Print:
 - Number of flags identified
 - Optimization opportunities found (with estimated dollar impact)
 - Top 3 recommendations for next tax year
+- Path of the persisted review (`reviews/{year}-review.md`)

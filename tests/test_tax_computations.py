@@ -25,6 +25,7 @@ from agents.lib.tax_computations import (
     compute_niit,
     compute_form_8606,
     compute_taxable_ss,
+    compute_form_2210,
     check_form_8938_required,
     SE_TAX_THRESHOLD,
 )
@@ -1611,3 +1612,314 @@ class TestFullPipeline:
         line_24 = max(0, line_16 - total_credits) + medicare_result["additional_tax"]
         # 30678 - (4000 + 400) + 0 = 26278
         assert line_24 == 26278.00
+
+
+# ============================================================
+# Form 2210 — underpayment of estimated tax (1040 line 38)
+# ============================================================
+
+# §6621 quarterly rate fixture fully covering Apr 15 2025 → Apr 15 2026
+# (including the Apr 1 2026 reset, so no coverage-gap note fires).
+_2210_RATES = [
+    {"effective_from": "2025-01-01", "annual_rate": 0.08},
+    {"effective_from": "2025-10-01", "annual_rate": 0.07},
+    {"effective_from": "2026-01-01", "annual_rate": 0.07},
+    {"effective_from": "2026-04-01", "annual_rate": 0.07},
+]
+
+
+class TestForm2210:
+    def test_de_minimis_under_1000(self):
+        """§6654(e)(1): balance after withholding under $1,000 → no penalty.
+        Estimated payments do NOT enter this test (2210 line 7 is tax minus
+        withholding only)."""
+        r = compute_form_2210(1900, 1000, "Single", 2025)
+        assert r["no_penalty"] and "de minimis" in r["no_penalty_reason"]
+
+    def test_de_minimis_boundary_exactly_1000_owes(self):
+        r = compute_form_2210(2000, 1000, "Single", 2025, prior_year_tax=2000,
+                              prior_year_agi=50000,
+                              underpayment_rates=_2210_RATES)
+        assert not r["no_penalty"]
+
+    def test_prior_year_zero_exception(self):
+        """§6654(e)(2): explicit $0 prior-year liability → no penalty."""
+        r = compute_form_2210(20000, 1000, "Single", 2025, prior_year_tax=0)
+        assert r["no_penalty"] and "6654(e)(2)" in r["no_penalty_reason"]
+
+    def test_withholding_meets_safe_harbor(self):
+        """Prior-based harbor 100% × 10,000 = 10,000 ≤ withholding."""
+        r = compute_form_2210(20000, 10000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000)
+        assert r["no_penalty"]
+        assert r["required_annual_payment"] == 10000.00
+
+    def test_required_is_lesser_of_90_and_prior(self):
+        """90% of 10,000 = 9,000 < 100% of 20,000 prior."""
+        r = compute_form_2210(10000, 2000, "Single", 2025,
+                              prior_year_tax=20000, prior_year_agi=100000,
+                              underpayment_rates=_2210_RATES)
+        assert r["required_annual_payment"] == 9000.00
+
+    def test_110_pct_factor_above_150k_agi(self):
+        r = compute_form_2210(30000, 2000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=200000,
+                              underpayment_rates=_2210_RATES)
+        # min(27000, 1.10 × 10000 = 11000)
+        assert r["required_annual_payment"] == 11000.00
+
+    def test_mfs_110_threshold_is_75k(self):
+        r_mfs = compute_form_2210(30000, 2000, "MFS", 2025,
+                                  prior_year_tax=10000, prior_year_agi=80000,
+                                  underpayment_rates=_2210_RATES)
+        assert r_mfs["required_annual_payment"] == 11000.00
+        r_single = compute_form_2210(30000, 2000, "Single", 2025,
+                                     prior_year_tax=10000, prior_year_agi=80000,
+                                     underpayment_rates=_2210_RATES)
+        assert r_single["required_annual_payment"] == 10000.00
+
+    def test_hand_computed_penalty_even_withholding(self):
+        """Required 10,000 (prior harbor); wh 8,000 → each installment
+        underpaid $500 with the §6654(b)(3) FIFO cascade. TY2025 Q2 is due
+        Jun 16 (§7503 — Jun 15 is a Sunday), matching the printed form.
+        Hand-worked:
+          Q1 500 × 8% × 62/365 (Apr 15→Jun 16)          =  6.7945
+          Q2 1000 × 8% × 91/365 (Jun 16→Sep 15)         = 19.9452
+          Q3 1500 × [8% × 16/365 + 7% × 92/365
+                     + 7% × 14/365] (Sep 15→Jan 15)     = 35.7534
+          Q4 2000 × 7% × 90/365 (Jan 15→Apr 15)         = 34.5205
+          total                                          = 97.0137 → 97.01"""
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              underpayment_rates=_2210_RATES)
+        assert r["penalty"] == 97.01
+        assert r["penalty_computed"]
+        assert [q["underpayment"] for q in r["quarters"]] == \
+            [500.0, 1000.0, 1500.0, 2000.0]
+        assert all(q["required_installment"] == 2500.0 for q in r["quarters"])
+
+    def test_timely_estimate_cures_all_quarters(self):
+        """A $2,000 estimate on Apr 15 + even withholding covers every
+        installment through the credit carryforward → $0 penalty."""
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              estimated_payments=[
+                                  {"date": "2025-04-15", "amount": 2000}],
+                              underpayment_rates=_2210_RATES)
+        assert r["penalty"] == 0.0
+        assert [q["underpayment"] for q in r["quarters"]] == [0.0, 0.0, 0.0, 0.0]
+
+    def test_late_estimate_accrues_until_paid(self):
+        """The same $2,000 paid Jun 1 leaves Q1's $500 accruing 47 days at 8%:
+        500 × 0.08 × 47/365 = 5.1507 → 5.15."""
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              estimated_payments=[
+                                  {"date": "2025-06-01", "amount": 2000}],
+                              underpayment_rates=_2210_RATES)
+        assert r["penalty"] == 5.15
+        assert [q["underpayment"] for q in r["quarters"]] == [500.0, 0.0, 0.0, 0.0]
+
+    def test_leap_year_denominator_366(self):
+        """TY2023's Q4 installment is due Jan 16 2024 (§7503 — Jan 15 IS MLK
+        Monday that year) and accrues to Apr 15 2024 over 90 days in a leap
+        year: 500 × 0.08 × 90/366 = 9.8360 (365 would give 9.86; the
+        statutory Jan 15 start would give 9.95)."""
+        rates = [{"effective_from": "2023-01-01", "annual_rate": 0.08}]
+        r = compute_form_2210(20000, 8000, "Single", 2023,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              estimated_payments=[
+                                  {"date": "2023-04-15", "amount": 500},
+                                  {"date": "2023-06-15", "amount": 500},
+                                  {"date": "2023-09-15", "amount": 500}],
+                              underpayment_rates=rates)
+        # Q1-Q3 covered (early estimates + deemed withholding on the rolled
+        # due dates); only Q4's 500 remains → accrues 2024-01-16 → 2024-04-15
+        # = 90 days, leap denominator: 500×0.08×90/366 = 9.8360
+        assert r["penalty"] == 9.84
+
+    def test_rates_unfetched_degrades_loudly(self):
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000)
+        assert r["penalty"] is None and not r["penalty_computed"]
+        assert not r["no_penalty"]
+        assert any("underpayment_rates is unfetched" in n for n in r["notes"])
+        # quarterly underpayments still reported
+        assert [q["underpayment"] for q in r["quarters"]] == \
+            [500.0, 1000.0, 1500.0, 2000.0]
+
+    def test_rates_starting_after_span_hard_error(self):
+        with pytest.raises(ValueError, match="rate timeline must cover"):
+            compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              underpayment_rates=[
+                                  {"effective_from": "2025-07-01",
+                                   "annual_rate": 0.08}])
+
+    def test_rate_timeline_gap_note_when_fetched_early(self):
+        """Rates fetched only through mid-TY assume the last rate persists —
+        noted, not silent."""
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              underpayment_rates=[
+                                  {"effective_from": "2025-01-01",
+                                   "annual_rate": 0.08}])
+        assert r["penalty_computed"]
+        assert any("assume that rate persists" in n for n in r["notes"])
+
+    def test_missing_prior_year_degrades_to_90pct(self):
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              underpayment_rates=_2210_RATES)
+        assert r["required_annual_payment"] == 18000.00
+        assert any("90%-of-current test only" in n for n in r["notes"])
+
+    def test_missing_prior_agi_notes_possible_understatement(self):
+        r = compute_form_2210(30000, 2000, "Single", 2025,
+                              prior_year_tax=10000,
+                              underpayment_rates=_2210_RATES)
+        assert r["required_annual_payment"] == 10000.00  # 100% factor assumed
+        assert any("UNDERSTATED" in n for n in r["notes"])
+
+    def test_matches_projection_safe_harbor(self):
+        """The required-annual-payment math is duplicated from
+        projection.compute_safe_harbor (circular-import constraint) — pin
+        that they agree so they can't drift."""
+        from agents.lib.projection import compute_safe_harbor
+        for tax, prior, agi, fs in [
+                (20000, 10000, 100000, "Single"),
+                (30000, 10000, 200000, "Single"),
+                (30000, 10000, 80000, "MFS"),
+                (10000, 20000, 100000, "MFJ")]:
+            sh = compute_safe_harbor(projected_tax=tax, prior_tax=prior,
+                                     prior_agi=agi, filing_status=fs,
+                                     withholding=0.0, estimates_paid=0.0)
+            r = compute_form_2210(tax, 0, fs, 2025, prior_year_tax=prior,
+                                  prior_year_agi=agi,
+                                  underpayment_rates=_2210_RATES)
+            assert r["required_annual_payment"] == sh.required_annual
+
+    def test_invalid_inputs_rejected(self):
+        with pytest.raises(ValueError):
+            compute_form_2210(float("nan"), 0, "Single", 2025)
+        with pytest.raises(ValueError):
+            compute_form_2210(20000, -1, "Single", 2025)
+        with pytest.raises(ValueError):
+            compute_form_2210(20000, 0, "Married Filing Jointly", 2025)
+        with pytest.raises(ValueError):
+            compute_form_2210(True, 0, "Single", 2025)
+        with pytest.raises(ValueError):
+            compute_form_2210(20000, 0, "Single", 2025.0)
+        with pytest.raises(ValueError, match="date"):
+            compute_form_2210(20000, 0, "Single", 2025,
+                              estimated_payments=[
+                                  {"date": "June 1", "amount": 100}])
+        with pytest.raises(ValueError, match="amount"):
+            compute_form_2210(20000, 0, "Single", 2025,
+                              estimated_payments=[
+                                  {"date": "2025-06-01", "amount": -5}])
+        with pytest.raises(ValueError, match="duplicate"):
+            compute_form_2210(20000, 0, "Single", 2025,
+                              underpayment_rates=[
+                                  {"effective_from": "2025-01-01", "annual_rate": 0.08},
+                                  {"effective_from": "2025-01-01", "annual_rate": 0.07}])
+        with pytest.raises(ValueError, match="annual_rate"):
+            compute_form_2210(20000, 0, "Single", 2025,
+                              underpayment_rates=[
+                                  {"effective_from": "2025-01-01", "annual_rate": 1.5}])
+        with pytest.raises(ValueError, match="annual_rate"):
+            compute_form_2210(20000, 0, "Single", 2025,
+                              underpayment_rates=[
+                                  {"effective_from": "2025-01-01",
+                                   "annual_rate": float("inf")}])
+
+    def test_payment_after_apr15_does_not_extend_accrual(self):
+        """§6654(b)(2): accrual stops at Apr 15 of tax_year+1 even when the
+        retiring payment arrives later — a May payment must yield the same
+        penalty as never paying (it retires the balance, not the clock)."""
+        unpaid = compute_form_2210(20000, 8000, "Single", 2025,
+                                   prior_year_tax=10000, prior_year_agi=100000,
+                                   underpayment_rates=_2210_RATES)
+        late = compute_form_2210(20000, 8000, "Single", 2025,
+                                 prior_year_tax=10000, prior_year_agi=100000,
+                                 estimated_payments=[
+                                     {"date": "2026-05-20", "amount": 5000}],
+                                 underpayment_rates=_2210_RATES)
+        assert late["penalty"] == unpaid["penalty"] == 97.01
+
+    def test_wrong_year_payment_date_hard_errors(self):
+        """A payment dated before the tax year is a typo'd year that would
+        fabricate day-one credit and UNDERSTATE the penalty — hard error."""
+        with pytest.raises(ValueError, match="predates tax year"):
+            compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              estimated_payments=[
+                                  {"date": "2015-04-15", "amount": 2000}],
+                              underpayment_rates=_2210_RATES)
+
+    def test_payment_on_rolled_due_date_is_timely(self):
+        """Self-review P1: TY2025 Q2 is due Jun 16 (Jun 15 is a Sunday) — a
+        taxpayer paying on the IRS-printed dates owes NOTHING, not a phantom
+        1-day penalty."""
+        r = compute_form_2210(20000, 0, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              estimated_payments=[
+                                  {"date": "2025-04-15", "amount": 2500},
+                                  {"date": "2025-06-16", "amount": 2500},
+                                  {"date": "2025-09-15", "amount": 2500},
+                                  {"date": "2026-01-15", "amount": 2500}],
+                              underpayment_rates=_2210_RATES)
+        assert r["penalty"] == 0.0 and r["penalty_computed"]
+        assert [q["underpayment"] for q in r["quarters"]] == [0.0, 0.0, 0.0, 0.0]
+
+    def test_zero_rate_in_cache_hard_errors(self):
+        """§6621 can never be 0 (short-term AFR + 3 points) — a 0 placeholder
+        from a fetch bug would silently zero line 38 (the understating
+        direction)."""
+        with pytest.raises(ValueError, match="never be 0"):
+            compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              underpayment_rates=[
+                                  {"effective_from": "2025-01-01",
+                                   "annual_rate": 0.0}])
+
+    def test_fully_covered_return_needs_no_rates(self):
+        """Timely payments → $0 penalty is computable WITHOUT a rate
+        timeline; an unfetched cache must not degrade a return that owes
+        nothing."""
+        r = compute_form_2210(20000, 0, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              estimated_payments=[
+                                  {"date": "2025-04-15", "amount": 10000}])
+        assert r["penalty"] == 0.0 and r["penalty_computed"]
+
+    def test_future_dated_payment_notes_forfeited_credit(self):
+        """An off-by-one-year typo in the FUTURE direction can't understate
+        (the payment simply earns nothing) but must be flagged, not silent."""
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              estimated_payments=[
+                                  {"date": "2026-06-15", "amount": 2000}],
+                              underpayment_rates=_2210_RATES)
+        assert r["penalty"] == 97.01  # same as never paying
+        assert any("cannot reduce this year's penalty" in n for n in r["notes"])
+
+    def test_negative_line_4_refundable_credits_no_crash(self):
+        """Codex P2: refundable credits can exceed line 24 → negative 2210
+        line 4. The unconditional /tax-compute call must resolve to the
+        de minimis no-penalty path, not crash on validation."""
+        r = compute_form_2210(-1500, 0, "Single", 2025,
+                              prior_year_tax=5000, prior_year_agi=60000)
+        assert r["no_penalty"] and "de minimis" in r["no_penalty_reason"]
+
+    def test_rates_missing_apr1_reset_noted(self):
+        """Codex P2: coverage through Jan 1 still extrapolates Apr 1-15 at
+        the Q1 rate — that must be noted, not silent."""
+        r = compute_form_2210(20000, 8000, "Single", 2025,
+                              prior_year_tax=10000, prior_year_agi=100000,
+                              underpayment_rates=_2210_RATES[:3])
+        assert r["penalty_computed"]
+        assert any("assume that rate persists" in n for n in r["notes"])
+        full = compute_form_2210(20000, 8000, "Single", 2025,
+                                 prior_year_tax=10000, prior_year_agi=100000,
+                                 underpayment_rates=_2210_RATES)
+        assert not any("assume that rate persists" in n for n in full["notes"])

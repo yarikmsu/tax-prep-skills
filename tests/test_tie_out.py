@@ -17,12 +17,16 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _record(doc_id="w2-acme", file="documents/W2_Acme.pdf", form_type="W-2",
-            payer="Acme", person="primary", key_boxes=None, skipped=None):
-    return {"doc_id": doc_id, "file": file, "form_type": form_type,
-            "payer": payer, "person": person,
-            "key_boxes": key_boxes if key_boxes is not None
-            else {"wages": 100000.0, "federal_withholding_w2": 12000.0},
-            "skipped": skipped}
+            payer="Acme", person="primary", key_boxes=None, skipped=None,
+            foreign=None):
+    rec = {"doc_id": doc_id, "file": file, "form_type": form_type,
+           "payer": payer, "person": person,
+           "key_boxes": key_boxes if key_boxes is not None
+           else {"wages": 100000.0, "federal_withholding_w2": 12000.0},
+           "skipped": skipped}
+    if foreign is not None:
+        rec["foreign"] = foreign
+    return rec
 
 
 def _ledger(*records):
@@ -111,6 +115,30 @@ def test_bad_person_rejected():
 def test_malformed_payload_rejected():
     with pytest.raises(T.TieOutError, match="'records' list"):
         T.load_ledger({"docs": []})
+
+
+# --------------------------------------------------------------------------
+# foreign marker → FBAR set-difference (G2)
+# --------------------------------------------------------------------------
+
+def test_foreign_payers_collected_including_skips():
+    """A skipped duplicate scan of a foreign bank still evidences the
+    account — /tax-fbar's set-difference must see it."""
+    recs = _ledger(
+        _record(),  # domestic W-2, no foreign field
+        _record(doc_id="fb", file="documents/ForeignBank.pdf",
+                form_type="1099-INT-equivalent", payer="Deutsche Bank",
+                key_boxes={"taxable_interest": 300.0}, foreign=True),
+        _record(doc_id="fb2", file="documents/ForeignBank_copy.pdf",
+                form_type="1099-INT-equivalent", payer="Deutsche Bank",
+                key_boxes={}, skipped="duplicate scan", foreign=True))
+    assert T.foreign_payers(recs) == ["Deutsche Bank"]
+    assert recs[0].foreign is False
+
+
+def test_non_bool_foreign_rejected():
+    with pytest.raises(T.TieOutError, match="foreign must be a boolean"):
+        _ledger(_record(foreign="yes"))
 
 
 # --------------------------------------------------------------------------

@@ -69,6 +69,18 @@ jobs:
               echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
               continue
             fi
+
+            # Persisted /tax-review workpapers derive from PII-bearing
+            # result.json. Keep in sync with scripts/pre-commit-pii-scan.sh.
+            case "$file" in
+              reviews/*|*/reviews/*)
+                echo "  BLOCKED PATH (reviews/): $file" >> "$VIOLATIONS_FILE"
+                continue ;;
+            esac
+            if echo "$filename" | grep -qE '^[0-9]{4}-review\.md$'; then
+              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
+              continue
+            fi
           done
 
           if [ -s "$VIOLATIONS_FILE" ]; then

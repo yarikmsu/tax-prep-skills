@@ -14,7 +14,10 @@ Prepare FBAR (Report of Foreign Bank and Financial Accounts) filing documentatio
 
 ## Prerequisites
 - `result.json` must exist with foreign account data
-- `taxpayer_profile.json` must exist (for has_foreign_accounts flag)
+- `taxpayer_profile.json` must exist. Run this skill when
+  `has_foreign_accounts` **OR** `signature_authority_foreign_accounts` is
+  true — signature authority alone triggers FinCEN 114 Part IV, even with no
+  owned foreign account and nothing on the tax return.
 - `summaries/*.md` should have detailed foreign account information
 
 ## Steps
@@ -44,12 +47,17 @@ Read foreign account data from `result.json` sections:
 - `interest_detail` — foreign interest sources
 - `dividend_detail` — foreign dividend sources
 
-Sum maximum balances across ALL foreign financial accounts.
+Sum maximum balances across ALL foreign financial accounts — **including
+signature-authority-only accounts** (31 CFR 1010.350: they count toward the
+$10K aggregate and go on Part IV even though they never appear on the tax
+return or in any parsed document). Ask the signature-authority question
+(step 1.6) BEFORE concluding "not required": a not-required verdict reached
+from owned accounts alone is incomplete.
 If aggregate maximum value > `fbar_threshold` (from `tax_law JSON`) at any point during the year: FBAR is required.
 
 ### 1.5. Account Completeness Probe
 
-Before computing FBAR values, verify the account list is complete. **First check `answers.md` — if foreign accounts were already confirmed complete, skip to Step 2.** Otherwise, ask via **AskUserQuestion**:
+Before computing FBAR values, verify the account list is complete. **First check `answers.md` — if foreign accounts were already confirmed complete, skip to Step 1.6.** Otherwise, ask via **AskUserQuestion**:
 
 1. Present found foreign accounts:
    ```
@@ -74,6 +82,39 @@ Before computing FBAR values, verify the account list is complete. **First check
 4. If user identifies new accounts not in documents:
    - Ask for institution name, country, account type, approximate max balance
    - Add to the account list for processing
+
+### 1.6. Ledger Set-Difference (deterministic completeness check)
+
+The completeness probe above relies on the user's memory; this check is
+mechanical. When `parse_ledger.json` exists (written by `/tax-parse` step 6.5):
+
+1. Collect foreign payers from the ledger:
+   ```bash
+   python3 -c "
+   import json
+   from agents.lib.tie_out import load_ledger, foreign_payers
+   ledger = load_ledger(json.load(open('parse_ledger.json')))
+   print('\n'.join(foreign_payers(ledger)) or '(none)')"
+   ```
+2. Diff against the FBAR account table: **every foreign payer in the ledger
+   must appear as an institution in the account list** (or be explicitly
+   justified in answers.md — e.g. "not a financial account: foreign employer
+   issuing a wage statement", or for a crypto exchange "crypto-only all year,
+   no fiat balance — not reportable per FinCEN Notice 2020-2"). An
+   institution that earned interest in the parsed documents cannot silently
+   miss the FBAR table — treat an unmatched payer as a missing account until
+   resolved.
+3. The reverse direction is fine: FBAR accounts with no ledger record are
+   normal (an account that earned nothing generates no tax document).
+4. Record the diff outcome in answers.md.
+
+**Signature authority (explicit question, not reminder prose):** ask via
+**AskUserQuestion** — "Did you have signature authority over (but no
+financial interest in) any foreign account in {year} — an employer's account,
+a parent's account, a nonprofit's?" Record the yes/no in
+`flags.signature_authority_foreign_accounts` in `taxpayer_profile.json` and
+in answers.md. A YES adds those accounts to the FBAR (Part IV) even though
+they never appear on the tax return or in any ledger document.
 
 ### 2. Gather Account Details
 

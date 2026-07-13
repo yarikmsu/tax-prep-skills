@@ -656,7 +656,11 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
     events: list[CalendarEvent] = []
     events.extend(events_1040es(tax_year))
 
-    if _strict_bool(flags, "has_foreign_accounts"):
+    # Signature authority over someone else's foreign account (an employer's,
+    # a parent's) triggers FBAR Part IV even with no financial interest — a
+    # signature-authority-only taxpayer needs the same deadline reminders.
+    if _strict_bool(flags, "has_foreign_accounts") \
+            or _strict_bool(flags, "signature_authority_foreign_accounts"):
         events.extend(events_fbar(tax_year))
 
     events.extend(events_rmd(

@@ -12,9 +12,15 @@ are structural IRS constants that rarely change:
 All bracket/threshold/credit values come from tax_law JSON.
 """
 
+import calendar
+import datetime
 import json
 import math
+import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from agents.lib.irs_dates import next_business_day  # noqa: E402
 
 # SE tax filing threshold per IRS rules
 SE_TAX_THRESHOLD = 400
@@ -1366,6 +1372,357 @@ def compute_excess_sdi(
         "employer_over_withheld": employer_error > 0,
         "not_applicable": False,
     }
+
+
+# Form 2210 structural statutory constants (IRC §6654, none indexed):
+# required annual payment = LESSER of 90% of current-year tax or 100%/110%
+# of prior-year tax (110% above $150K prior-year AGI, $75K MFS) — §6654(d);
+# no penalty when the balance after withholding is under $1,000 — §6654(e)(1);
+# no penalty when prior-year tax was $0 — §6654(e)(2).
+_F2210_DE_MINIMIS = 1000.0
+_F2210_PRIOR_AGI_THRESHOLD = 150000.0
+_F2210_PRIOR_AGI_THRESHOLD_MFS = 75000.0
+
+
+def _f2210_amount(value, what: str, allow_negative: bool = False) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{what} must be a number, got {value!r}")
+    v = float(value)
+    if not math.isfinite(v):
+        raise ValueError(f"{what} must be finite, got {value!r}")
+    if v < 0 and not allow_negative:
+        raise ValueError(f"{what} cannot be negative, got {v}")
+    return v
+
+
+def _f2210_date(value, what: str) -> datetime.date:
+    try:
+        return datetime.date.fromisoformat(str(value))
+    except ValueError:
+        raise ValueError(f"{what} must be an ISO date (YYYY-MM-DD), got {value!r}")
+
+
+def _f2210_rate_periods(underpayment_rates) -> list:
+    """Validate federal.underpayment_rates into a sorted
+    [(effective_from, annual_rate)] timeline. Empty input → empty list (the
+    caller degrades to penalty-not-computed). Coverage against the accrual
+    span is the caller's job — it knows which slices actually accrue.
+    annual_rate must be strictly positive: §6621 is the federal short-term
+    rate + 3 points, so a 0 in the cache is a fetch bug that would silently
+    zero line 38 (the understating direction) — hard error, like a corrupt
+    SDI cap."""
+    periods = []
+    seen = set()
+    for i, entry in enumerate(underpayment_rates or []):
+        where = f"underpayment_rates[{i}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{where} must be an object")
+        eff = _f2210_date(entry.get("effective_from"), f"{where}.effective_from")
+        rate = entry.get("annual_rate")
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) \
+                or not math.isfinite(float(rate)) or not (0 < float(rate) < 1):
+            raise ValueError(
+                f"{where}.annual_rate must be a finite fraction in (0, 1) — "
+                f"§6621 can never be 0 — got {rate!r}")
+        if eff in seen:
+            raise ValueError(f"{where}: duplicate effective_from {eff.isoformat()}")
+        seen.add(eff)
+        periods.append((eff, float(rate)))
+    periods.sort()
+    return periods
+
+
+def _f2210_accrue(amount: float, start: datetime.date, end: datetime.date,
+                  periods: list) -> float:
+    """Simple interest on one underpayment slice across the rate timeline,
+    split at rate changes AND Jan 1 (the Form 2210 worksheet day-count uses
+    365, or 366 for days falling in a leap year)."""
+    if end <= start:
+        return 0.0
+    total = 0.0
+    for i, (eff, rate) in enumerate(periods):
+        nxt = periods[i + 1][0] if i + 1 < len(periods) else None
+        s = max(start, eff)
+        e = end if nxt is None else min(end, nxt)
+        while s < e:
+            year_end = datetime.date(s.year + 1, 1, 1)
+            sub_e = min(e, year_end)
+            denom = 366 if calendar.isleap(s.year) else 365
+            total += amount * rate * (sub_e - s).days / denom
+            s = sub_e
+    return total
+
+
+def compute_form_2210(
+    current_year_tax: float,
+    withholding: float,
+    filing_status: str,
+    tax_year: int,
+    prior_year_tax: float = None,
+    prior_year_agi: float = None,
+    estimated_payments: list = None,
+    underpayment_rates: list = None,
+) -> dict:
+    """Form 2210 underpayment-of-estimated-tax penalty at filing (1040 line 38).
+
+    Args:
+        current_year_tax: Form 2210 line 4 — total tax AFTER credits including
+            other taxes, MINUS refundable credits (line 24 − EIC/ACTC/AOC
+            refundable parts). NOT raw line 22.
+        withholding: total federal withholding (line 25d). Deemed paid in four
+            equal installments on the due dates (the §6654(g) default; the
+            actual-withholding-date election is not modeled — caveated).
+        filing_status: Single/MFJ/MFS/HoH/QSS (drives the $75K MFS AGI
+            threshold for the 110% prior-year factor).
+        tax_year: the year being filed. Installment due dates are the
+            statutory Apr/Jun/Sep 15 and Jan 15 of tax_year+1 rolled forward
+            per §7503 over weekends/DC legal holidays (matching the printed
+            Form 2210 columns); accrual ends at the statutory Apr 15 of
+            tax_year+1 (the worksheet endpoint, which does NOT roll).
+        prior_year_tax: prior-year total tax. None = unknown → the required
+            annual payment degrades to the 90%-of-current test (the prior-year
+            harbor could only LOWER it). Explicit 0 → §6654(e)(2) no-penalty.
+        prior_year_agi: prior-year AGI for the 110% factor. None with a
+            non-zero prior_year_tax assumes the 100% factor and notes the
+            possible understatement.
+        estimated_payments: list of {"date": "YYYY-MM-DD", "amount": float}
+            1040-ES payments (dates matter — a January payment can't cure an
+            April underpayment retroactively).
+        underpayment_rates: federal.underpayment_rates from the tax_law cache
+            (IRC §6621 quarterly rates: {"effective_from", "annual_rate"}).
+            Empty/None → the quarterly underpayments are still reported but
+            the dollar penalty is NOT computed (loud note), never guessed.
+
+    The annualized-income method (Schedule AI) is NOT modeled — for lumpy
+    income it usually REDUCES the penalty, so the figure here may overstate;
+    §6654(e)(3) waivers (casualty, disaster, retirement/disability) are also
+    out of scope. Both are caveated in notes.
+
+    Returns dict with required_annual_payment, no_penalty(+reason), quarters
+    (per-installment required/underpayment), penalty, penalty_computed, notes.
+    """
+    fs = _normalize_filing_status(filing_status)
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int):
+        raise ValueError(f"tax_year must be an int, got {tax_year!r}")
+    # current_year_tax (2210 line 4) may be NEGATIVE: refundable credits
+    # (EIC, refundable ACTC/AOTC, net PTC, fuel credit) can exceed line 24.
+    # Rejecting it would crash the unconditional /tax-compute call on exactly
+    # the returns that owe nothing — the de minimis test below handles it.
+    tax = _f2210_amount(current_year_tax, "current_year_tax",
+                        allow_negative=True)
+    wh = _f2210_amount(withholding, "withholding")
+
+    est_events = []
+    for i, p in enumerate(estimated_payments or []):
+        if not isinstance(p, dict):
+            raise ValueError(f"estimated_payments[{i}] must be an object")
+        amt = _f2210_amount(p.get("amount"), f"estimated_payments[{i}].amount")
+        d = _f2210_date(p.get("date"), f"estimated_payments[{i}].date")
+        # A payment dated before the tax year is almost surely a typo'd year
+        # — and it would sit as day-one credit that UNDERSTATES the penalty,
+        # so it hard-errors rather than degrades. (Late payments past Apr 15
+        # of tax_year+1 are legal; accrual just stops at the statutory end.)
+        if d.year < tax_year:
+            raise ValueError(
+                f"estimated_payments[{i}].date {d.isoformat()} predates tax "
+                f"year {tax_year} — a wrong-year date would fabricate early "
+                "payment credit and understate the penalty")
+        est_events.append((d, amt))
+    total_est = round(sum(a for _, a in est_events), 2)
+
+    notes = [
+        "annualized-income method (Schedule AI) not modeled — for income "
+        "concentrated late in the year it usually REDUCES the penalty",
+        "withholding deemed paid evenly across the four installments "
+        "(§6654(g) default); the actual-date election is not modeled",
+        "§6654(e)(3) waivers (casualty/disaster, retirement/disability) "
+        "not modeled",
+        "§6654(i) farmers/fishermen (66⅔% harbor, single Jan-15 installment) "
+        "not modeled — the four-installment default OVERSTATES for them",
+        "§6654(h) not modeled: filing AND paying in full by Jan 31 stops the "
+        "fourth installment's accrual",
+        "prior-year MFJ filers now filing MFS must allocate the joint "
+        "prior-year tax per Pub 505 — passing the full joint figure "
+        "OVERSTATES the prior-year harbor",
+    ]
+    result = {
+        "current_year_tax": round(tax, 2),
+        "withholding": round(wh, 2),
+        "estimated_payments_total": total_est,
+        "required_annual_payment": None,
+        "required_basis": None,
+        "no_penalty": False,
+        "no_penalty_reason": None,
+        "quarters": [],
+        "penalty": None,
+        "penalty_computed": False,
+        "notes": notes,
+    }
+
+    if tax - wh < _F2210_DE_MINIMIS:
+        result["no_penalty"] = True
+        result["no_penalty_reason"] = (
+            f"balance after withholding (${tax - wh:,.2f}) is under the "
+            "$1,000 de minimis (§6654(e)(1)) — no penalty")
+        return result
+
+    if prior_year_tax is not None:
+        pt = _f2210_amount(prior_year_tax, "prior_year_tax")
+        if pt == 0:
+            result["no_penalty"] = True
+            result["no_penalty_reason"] = (
+                "prior-year tax liability was $0 — §6654(e)(2) exception "
+                "(requires the prior year covered 12 months and the taxpayer "
+                "was a US citizen/resident all year — verify)")
+            return result
+
+    # Required annual payment — same math as projection.compute_safe_harbor
+    # (kept in sync by test; projection imports THIS module, so the planning
+    # dataclass can't be reused here without a circular import).
+    pct90 = round(0.90 * tax, 2)
+    if prior_year_tax is None:
+        required = pct90
+        basis = "90% of current-year tax (prior-year figures unavailable)"
+        notes.append(
+            "prior-year tax/AGI unavailable: required annual payment uses the "
+            "90%-of-current test only — supplying prior-year figures can only "
+            "LOWER it, never raise it")
+    else:
+        threshold = (_F2210_PRIOR_AGI_THRESHOLD_MFS if fs == "MFS"
+                     else _F2210_PRIOR_AGI_THRESHOLD)
+        pa = (None if prior_year_agi is None
+              else _f2210_amount(prior_year_agi, "prior_year_agi",
+                                 allow_negative=True))
+        factor = 1.10 if (pa or 0) > threshold else 1.00
+        prior_based = round(factor * pt, 2)
+        required = min(pct90, prior_based)
+        basis = (f"lesser of 90% of current ({pct90:,.2f}) and "
+                 f"{factor:.0%} of prior-year tax ({prior_based:,.2f})")
+        if pa is None:
+            notes.append(
+                "prior_year_agi unavailable — assumed at or below the "
+                f"${threshold:,.0f} threshold (100% factor); if prior AGI "
+                "exceeded it the 110% harbor applies and the penalty here "
+                "may be UNDERSTATED")
+    result["required_annual_payment"] = round(required, 2)
+    result["required_basis"] = basis
+
+    if wh >= required:
+        result["no_penalty"] = True
+        result["no_penalty_reason"] = (
+            "withholding alone meets the required annual payment — no "
+            "Form 2210 needed")
+        return result
+
+    # §7503 rolls the INSTALLMENT due dates forward over weekends/DC legal
+    # holidays — the printed Form 2210 columns use the rolled dates and
+    # accrual starts there (TY2025 Q2 is due Jun 16; TY2023 Q4 is Jan 16 2024
+    # because Jan 15 is MLK Day). The accrual STOP stays statutory Apr 15:
+    # the 2210 penalty worksheet ends every period at April 15 even in years
+    # when filing day itself rolls (e.g. 2023's Apr 18).
+    due_dates = [next_business_day(datetime.date(tax_year, 4, 15)),
+                 next_business_day(datetime.date(tax_year, 6, 15)),
+                 next_business_day(datetime.date(tax_year, 9, 15)),
+                 next_business_day(datetime.date(tax_year + 1, 1, 15))]
+    final_date = datetime.date(tax_year + 1, 4, 15)
+    per_installment = required / 4.0
+
+    # Timeline simulation per the Part III worksheet: charges open
+    # underpayment slices; payments (deemed-even withholding on each due
+    # date + dated estimates) retire slices oldest-first; excess sits as
+    # credit against future installments. Charges sort before same-date
+    # payments so a timely payment retires its installment at zero days.
+    timeline = [(d, 0, per_installment) for d in due_dates]
+    timeline += [(d, 1, wh / 4.0) for d in due_dates]
+    timeline += [(d, 1, a) for d, a in est_events]
+    timeline.sort(key=lambda t: (t[0], t[1]))
+
+    open_slices = []   # [due_date, remaining]
+    closed = []        # (amount, accrual_start, accrual_end)
+    credit = 0.0
+    for dt, kind, amt in timeline:
+        if kind == 0:
+            c = amt - min(credit, amt)
+            credit -= min(credit, amt)
+            if c > 1e-9:
+                open_slices.append([dt, c])
+        else:
+            a = amt
+            while a > 1e-9 and open_slices:
+                s = open_slices[0]
+                pay = min(a, s[1])
+                # §6654(b)(2): the penalty period ends at the EARLIER of the
+                # payment date or Apr 15 of tax_year+1 — a payment made after
+                # the statutory stop retires the balance but never extends
+                # the accrual.
+                closed.append((pay, s[0], min(dt, final_date)))
+                s[1] -= pay
+                a -= pay
+                if s[1] <= 1e-9:
+                    open_slices.pop(0)
+            credit += a
+    for s in open_slices:
+        closed.append((s[1], s[0], final_date))
+
+    # Per-quarter display: only underpayment that PERSISTED past the due
+    # date (a charge retired by a same-day payment never accrues and would
+    # read as a false alarm).
+    persisting = {d: 0.0 for d in due_dates}
+    for amount, start, end in closed:
+        if end > start:
+            persisting[start] += amount
+    result["quarters"] = [
+        {"due_date": d.isoformat(),
+         "required_installment": round(per_installment, 2),
+         "underpayment": round(persisting[d], 2)}
+        for d in due_dates]
+
+    if any(d > final_date for d, _ in est_events):
+        notes.append(
+            f"estimated payment(s) dated after Apr 15 {tax_year + 1} cannot "
+            "reduce this year's penalty — verify the date(s) (an off-by-one "
+            "YEAR typo in the other direction hard-errors; this direction "
+            "only forfeits credit)")
+
+    accruing = [(a, s, e) for a, s, e in closed if e > s]
+    if not accruing:
+        # Every installment was covered by its due date — $0 penalty needs
+        # no rate timeline (a fetched-late cache must not block a return
+        # that owes nothing).
+        result["penalty"] = 0.0
+        result["penalty_computed"] = True
+        return result
+
+    periods = _f2210_rate_periods(underpayment_rates)
+    if not periods:
+        notes.append(
+            "federal.underpayment_rates is unfetched — a penalty APPLIES on "
+            "the quarterly underpayments above but the dollar amount is NOT "
+            "computed; fetch the IRC §6621 quarterly rates via /tax-setup, "
+            "or file without line 38 and let the IRS bill it")
+        return result
+
+    earliest = min(s for _, s, _ in accruing)
+    if periods[0][0] > earliest:
+        raise ValueError(
+            f"underpayment_rates start {periods[0][0].isoformat()}, after "
+            f"the earliest accruing underpayment ({earliest.isoformat()}) — "
+            "the rate timeline must cover the whole accrual span")
+    # The accrual span runs through Apr 15 of tax_year+1 and §6621 resets
+    # quarterly — a timeline whose last entry predates Apr 1 of tax_year+1
+    # is extrapolating the final segment (Jan-1-only coverage would silently
+    # price Apr 1-15 at the Q1 rate).
+    if periods[-1][0] < datetime.date(tax_year + 1, 4, 1):
+        notes.append(
+            f"underpayment_rates' last change is {periods[-1][0].isoformat()} "
+            f"— rate periods through Apr 15 {tax_year + 1} assume that rate "
+            "persists (§6621 resets quarterly; the Apr 1 rate is not in the "
+            "cache); re-fetch the quarterly rates near filing")
+    penalty = sum(_f2210_accrue(amount, start, end, periods)
+                  for amount, start, end in accruing)
+    result["penalty"] = round(penalty, 2)
+    result["penalty_computed"] = True
+    return result
 
 
 def check_form_8938_required(

@@ -272,6 +272,15 @@ Rules:
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
   | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
 - `person` is `primary`/`spouse`/`joint` (per-person credits need it).
+- Set `"foreign": true` on every record from a FOREIGN institution (foreign
+  bank/brokerage — the Form 8949 Box B/E basis-not-reported convention is a
+  hint, as is a non-US address on the statement). `/tax-fbar` set-differences
+  these payers against the FBAR account table, so a foreign bank that earned
+  interest in the ledger cannot silently miss FinCEN 114. Omit the field (or
+  `false`) for US institutions. The value must be a JSON boolean or absent —
+  `null`/strings hard-error the whole ledger. If domicile is UNKNOWN, omit
+  the field and ask the user (record the answer in answers.md) — don't guess
+  either direction.
 - Crypto exchange CSVs are ledgered by `/tax-parse-crypto` step 5.5 (as
   documented skips pointing at its FIFO reconciliation) — don't double-record
   them here; if `/tax-parse-crypto` hasn't run yet, skip them with

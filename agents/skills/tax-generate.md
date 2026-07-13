@@ -44,6 +44,13 @@ Before generating the PDF, verify result.json internal consistency:
 3. **Payments check:**
    - Verify `line_25d_total_withholding` = sum of withholding components
    - Verify refund/owed = total payments - total tax
+   - If `line_38_estimated_tax_penalty` > 0: show it as its own line in the
+     summary ("Estimated-tax penalty (Form 2210)"). On a balance-due return
+     the payment amount includes it; on an overpayment return verify
+     `line_35a_refund` = line 34 − line 38 (an unreduced refund alongside a
+     nonzero line 38 is a mismatch — warn). If the `form_2210` section says
+     a penalty applies but `penalty_computed` is false, print the
+     rates-unfetched note instead of silently showing $0
 
 4. **State return check:**
    - If taxpayer is in an income-tax state: verify state return section is populated

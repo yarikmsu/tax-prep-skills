@@ -63,6 +63,7 @@ Use **AskUserQuestion** to collect taxpayer information. Ask in logical groups:
 
 **Group 4 — Tax situations (yes/no flags):**
 - Do you have foreign bank/investment accounts? → triggers FBAR/8938 workflow (`has_foreign_accounts`)
+- Do you have SIGNATURE AUTHORITY over (but no financial interest in) any foreign account — an employer's, a parent's, a nonprofit's? → FBAR Part IV even with no financial interest (`signature_authority_foreign_accounts`)
 - Did you LIVE abroad (tax home outside the US) during the year? → sets
   `lives_abroad` (raises the Form 8938 thresholds; the FEIE / Form 2555
   election is NOT modeled — only the FTC path — so this lands on the
@@ -183,6 +184,14 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   (`single`/`mfj` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
   monthly Part B + Part D surcharge above the standard premium). Optional but unlocks IRMAA
   flags in `/tax-roth-convert`; leave as `[]` if not relevant to the taxpayer.
+- Search: `"IRS quarterly interest rates underpayment {year}"` (and `{year+1}` Q1-Q2
+  when published) — populate `federal.underpayment_rates` as a list of
+  `{"effective_from": "YYYY-MM-DD", "annual_rate": 0.08}` covering every §6621
+  rate period from Apr 15 of {year} through Apr 15 of {year+1} (the Form 2210
+  accrual span — the irs.gov quarterly interest-rate news releases are the
+  source). Rates for future quarters aren't published yet at setup time —
+  `/tax-compute` re-checks at filing and `compute_form_2210` refuses to guess
+  missing periods.
 
 **State (based on taxpayer's state):**
 - For CA: Search `"FTB California {year} tax brackets"`, `"California {year} standard deduction"`,

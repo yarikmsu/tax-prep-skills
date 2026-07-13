@@ -75,6 +75,15 @@ Warnings:
 
 Do **not** log specific field values (SSN, dollar amounts) into `answers.md` — only counts and warnings.
 
+### 5.5. Surface the prior-year review checklist
+
+If `archive/{prior_year}/reviews/{prior_year}-review.md` exists (the workpaper
+`/tax-review` persists), read its **"Tax Planning for Next Year"** section and
+print it as this year's starting checklist — those recommendations were made
+FOR the year now being set up. Note in `answers.md` that the checklist was
+surfaced (item count only, no dollar figures). If the file doesn't exist
+(review never run, or pre-C3 archive), skip silently — this is additive.
+
 ### 6. Print final summary
 
 Show:

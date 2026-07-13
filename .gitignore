@@ -11,6 +11,7 @@ FBAR_*.md
 projections/
 projection_inputs.json
 scenarios/
+reviews/
 holdings.json
 parse_ledger.json
 crypto_transactions.json

@@ -152,6 +152,15 @@ Read `result.json` and the extracted software return. Compare every line.
 | 33 | Total payments | form_1040.line_33_total_payments |
 | 35a | Refund | form_1040.line_35a_refund |
 | 37 | Amount owed | form_1040.line_37_amount_owed |
+| 38 | Estimated-tax penalty | form_1040.line_38_estimated_tax_penalty |
+
+**Line 38 tolerance note:** tax software computes Form 2210 with methods this
+engine deliberately doesn't model (Schedule AI annualization, the
+actual-withholding-date election) — a line 38 difference of a few dollars, or
+software showing LESS via Schedule AI, is a METHOD difference, not an error.
+Investigate only if software shows MORE, or the difference is large. A line 38
+mismatch also propagates into line 37/35a (the penalty folds into the payment
+or reduces the refund).
 
 **Also verify supplemental forms:**
 - Schedule B: interest/dividend totals

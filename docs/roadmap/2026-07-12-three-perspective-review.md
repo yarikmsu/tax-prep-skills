@@ -455,9 +455,21 @@ Build order by persona coverage × error cost:
   skipped-with-reason) + `agents/lib/tie_out.py` hard gate at `/tax-compute`
   step 12.7 (coverage, category validity, per-category sums, loud
   unverifiable warnings). Tests → 1242.
-- **Next (Q3 per sequencing):** D3 (Form 2210 at filing), G2 (FBAR
-  set-difference — now rides the ledger), C3 (persist /tax-review output),
-  A3/A4 (high-value second read; consume expected_sources).
+- **Epic A hardening (Codex rounds 6–11 on PR #30): ✅ shipped.** Missing
+  result sections/fields fail (not warn), "pending <skill>" skips block,
+  Box C/F proceeds excluded from the broker tie, advisory classes for
+  recomputed 1099-R box 2a / negative SSA-1099 / state refunds /
+  personal-item 1099-Ks. Tests → 1266.
+- **D3 (Form 2210 at filing), G2 (FBAR set-difference), C3 (persist
+  /tax-review): ✅ shipped.** `compute_form_2210` (§6654 safe harbor +
+  §6621 quarterly-rate accrual, FIFO payment cascade, loud degrade when
+  rates unfetched) → 1040 line 38 via `/tax-compute` step 9.5;
+  `foreign` marker on ledger records + `foreign_payers()` diffed against
+  the FBAR table in `/tax-fbar` step 1.6 + explicit signature-authority
+  interview flag; `reviews/{year}-review.md` workpaper persisted, archived
+  at cutover, surfaced by `/tax-rollover` step 5.5. Tests → 1287.
+- **Next (Q3 per sequencing):** A3/A4 (high-value second read; consume
+  expected_sources), then Q4: D1 (Schedule A + CA Schedule CA), D9 (AMT).
 
 ### Decisions log
 

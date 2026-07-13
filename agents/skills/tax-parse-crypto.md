@@ -221,6 +221,17 @@ make the next `/tax-compute` fail on an otherwise valid workspace:
  "skipped": "crypto exchange CSV — ingested by /tax-parse-crypto; amounts flow to Form 8949/Schedule D + Schedule 1 via crypto_summary (reconciled by this skill's own FIFO engine, not the category sums)"}
 ```
 
+Set `"foreign": true` on the record when the exchange entity is
+foreign-domiciled (Kraken/Binance non-US entities) so `/tax-fbar` step 1.6
+surfaces it in the set-difference. The marker forces the CONVERSATION, not
+the filing: per FinCEN Notice 2020-2 a foreign account holding ONLY virtual
+currency is currently not FBAR-reportable, but one that also held fiat or
+other reportable assets at any point during the year IS. `/tax-fbar`
+resolves each surfaced exchange either into the account table (held fiat —
+common: USD balances between trades) or into a documented answers.md
+exclusion citing Notice 2020-2 (crypto-only all year — verify no fiat
+balance ever existed).
+
 The `skipped` reason is load-bearing: it satisfies coverage while documenting
 exactly where the amounts went. Without these records the gate exits 2 on an
 otherwise correct crypto workspace. `chmod 600 parse_ledger.json` after.

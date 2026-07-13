@@ -5,7 +5,7 @@ description: Archive current year's tax files into archive/{year}/ before starti
 
 # /tax-archive
 
-Move current-year tax files (`result.json`, `taxpayer_profile.json`, `answers.md`, `tax_law_{year}.json`, `summaries/`, `documents/`) into `archive/{year}/` so the workspace can be initialized for a new tax year.
+Move current-year tax files (`result.json`, `taxpayer_profile.json`, `answers.md`, `parse_ledger.json`, `tax_law_{year}.json`, `summaries/`, `documents/`, `reviews/`) into `archive/{year}/` so the workspace can be initialized for a new tax year.
 
 ## Usage
 ```

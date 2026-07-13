@@ -41,6 +41,20 @@ def test_happy_path_moves_files(workspace):
     assert not (workspace / "summaries").exists()
 
 
+def test_reviews_and_parse_ledger_archived(workspace):
+    """C3/A1 artifacts belong to the year: the persisted /tax-review
+    workpaper and the parse ledger must ride the year-end cutover."""
+    (workspace / "reviews").mkdir()
+    (workspace / "reviews" / "2024-review.md").write_text("# Review")
+    (workspace / "parse_ledger.json").write_text(json.dumps({"records": []}))
+    archive_year(2024, root=workspace)
+    archive = workspace / "archive" / "2024"
+    assert (archive / "reviews" / "2024-review.md").exists()
+    assert (archive / "parse_ledger.json").exists()
+    assert not (workspace / "reviews").exists()
+    assert not (workspace / "parse_ledger.json").exists()
+
+
 def test_refuses_if_archive_exists(workspace):
     (workspace / "archive" / "2024").mkdir(parents=True)
     with pytest.raises(ArchiveError, match="already exists"):

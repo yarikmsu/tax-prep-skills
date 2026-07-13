@@ -24,9 +24,13 @@ class ArchiveReport:
     dry_run: bool = False
 
 
-# Files that the toolkit creates per year and may want archived
-EXPECTED_TOP_LEVEL_FILES = ("result.json", "taxpayer_profile.json", "answers.md")
-EXPECTED_TOP_LEVEL_DIRS = ("summaries", "documents")
+# Files that the toolkit creates per year and may want archived.
+# parse_ledger.json belongs to the year (the tie-out record — /tax-amend's
+# "what changed" baseline); reviews/ holds the persisted /tax-review
+# workpapers that /tax-rollover surfaces next year.
+EXPECTED_TOP_LEVEL_FILES = ("result.json", "taxpayer_profile.json", "answers.md",
+                            "parse_ledger.json")
+EXPECTED_TOP_LEVEL_DIRS = ("summaries", "documents", "reviews")
 
 
 def _validate_year(year) -> int:

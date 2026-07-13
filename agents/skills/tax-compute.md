@@ -381,6 +381,74 @@ any employer withheld Tier 1 RRTA, compute Schedule 3 line 11 by hand per
 Topic 608 (excess tier 1 RRTA, and combined SS + tier 1 over the base, are
 also creditable) and tell the user the helper's figure would understate it.
 
+### Step 9.5: Estimated-Tax Penalty (Form 2210 → line 38)
+
+Run `compute_form_2210()` **unconditionally** — it is a cheap pure function
+that returns `no_penalty` with the governing reason (under-$1,000 de minimis,
+prior-year-zero exception, withholding meets the safe harbor) when nothing is
+owed, and every conditional trigger misses an edge case.
+
+Inputs:
+- `current_year_tax`: line 24 **minus ALL refundable credits** — EIC,
+  refundable ACTC, refundable AOTC, net Premium Tax Credit, fuel credit
+  (Form 4136), §1341 credit, refundable adoption credit (the Form 2210
+  line 2/3 treatment; excess SS/RRTA is NOT here — it counts as withholding
+  on line 6). NOT raw line 22. The result may be NEGATIVE (credits exceed
+  tax) — pass it as-is; the de minimis test resolves it to no-penalty.
+- `withholding`: line 25d **plus Schedule 3 line 11 excess SS/RRTA**
+  (`schedule_3_line_11_excess_ss`) — Form 2210 line 6 treats the excess-SS
+  special refund as withholding (IRC §31(b)), deemed evenly paid like the
+  rest. Omitting it overstates the penalty and can trigger a Form 2210 that
+  isn't due at all.
+- `filing_status`, `tax_year` from the profile.
+- `prior_year_tax`: `archive/{year-1}/result.json` form_1040
+  `line_24_total_tax` **minus the prior year's refundable credits** (same
+  line 2/3 treatment as the current year — Form 2210 line 8 uses the
+  prior-year tax net of refundable credits; the raw line 24 overstates the
+  harbor), floored at 0. `prior_year_agi`: prior `line_11_agi`. No archive →
+  pass `None` for both (degrades to the 90%-of-current test — the prior-year
+  harbor could only lower the requirement, so this never understates).
+- `estimated_payments`: the FULL Form 2210 Table-1 payment timeline, not
+  just line 26. Ask the user and record in answers.md:
+  - dated 1040-ES payments ("paid evenly on the due dates" → four equal
+    entries on Apr/Jun/Sep 15 and Jan 15). Dates matter: a January payment
+    cannot retroactively cure an April underpayment;
+  - a prior-year overpayment applied to estimates — dated Apr 15 of the tax
+    year when the prior return was filed on time; if it was filed LATE, use
+    the actual filing date (the credit didn't exist until then);
+  - **the balance-due payment with an early-filed return**: when this return
+    is filed and paid before Apr 15, include that payment at its actual date
+    — it stops the Q4 (and any open) accrual early per the 2210 line 11
+    rule (payment date or Apr 15, whichever is earlier). Filing and paying
+    in full by Jan 31 eliminates the Q4 installment entirely (§6654(h) —
+    the function notes this case; adjust manually).
+- `underpayment_rates`: `federal.underpayment_rates` from tax_law JSON.
+
+Act on the result:
+- `no_penalty` → `line_38_estimated_tax_penalty` = 0; omit the `form_2210`
+  section; note the reason in answers.md. When the reason is the
+  prior-year-zero exception, first CONFIRM its two preconditions with the
+  user (the prior year covered a full 12 months AND the taxpayer was a US
+  citizen/resident all year) — record the confirmation in answers.md before
+  zeroing line 38.
+- `penalty_computed` → write the penalty to `line_38_estimated_tax_penalty`
+  and copy the result into the `form_2210` section. Then:
+  - balance due: `line_37_amount_owed` = (line 24 − line 33) **+ line 38** —
+    the 1040 line-37 instruction says to include the line 38 penalty in the
+    line 37 entry, and tax software does the same, so `/tax-verify` compares
+    like for like;
+  - overpayment (line 34 > 0): **reduce the refund** — line 35a = line 34 −
+    line 38 (a big January estimate can produce a refund at filing while
+    Q1-Q3 still accrued a penalty); if the penalty exceeds the overpayment,
+    the remainder becomes the line 37 balance due.
+- penalty applies but `penalty_computed` is false (rates unfetched) → keep
+  line 38 at 0, include the `form_2210` section with its notes, and tell the
+  user: fetch the §6621 quarterly rates via `/tax-setup`, or file without
+  line 38 and let the IRS bill the penalty. Never guess a rate.
+- Surface the Schedule AI note when income was concentrated late in the year
+  (RSU vest, year-end sale) — the annualized method usually reduces the
+  penalty but is manual.
+
 ### Step 10: State Return
 
 Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
