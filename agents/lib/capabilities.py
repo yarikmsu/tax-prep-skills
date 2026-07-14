@@ -115,8 +115,13 @@ RULES: "tuple[Rule, ...]" = (
          "software."),
     Rule("education_credits", "has_education_expenses", MANUAL,
          "Education expenses", "Form 8863",
-         "AOTC/LLC amounts and MAGI phase-outs are hand-computed per the "
-         "skill worksheet — verify in tax software."),
+         "AOTC/LLC amounts and MAGI phase-outs ARE computed by /tax-compute "
+         "(compute_education_credits, D5) — but from USER-ASSERTED "
+         "eligibility facts (half-time, first-4-years, <4 prior AOTC claims, "
+         "no felony drug conviction) and expenses YOU net of tax-free "
+         "scholarships/employer assistance/529 earnings per Pub 970 — "
+         "verify those inputs; the scholarship-election optimization is "
+         "not modeled."),
     Rule("dependent_care", "has_dependent_care", MANUAL,
          "Dependent care expenses", "Form 2441",
          "The credit and its earned-income limitation are hand-computed."),

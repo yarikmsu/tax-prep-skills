@@ -410,7 +410,73 @@ Pass the full Schedule 8812 inputs, not just the child count:
 Use `compute_ftc_limitation()` — compare tax paid vs. limitation.
 If FTC ≤ simplified limit (from `tax_law JSON` `foreign_tax_credit_simplified`) from passive sources: no Form 1116 needed.
 
-**Other credits:** Education (Form 8863), dependent care (Form 2441), etc. as applicable.
+**Education credits (Form 8863 → Schedule 3 line 3 + 1040 line 29):**
+When `flags.has_education_expenses` is true, use `compute_education_credits()`:
+0. **WHO may claim (the biggest Pub 970 trap — check FIRST):** qualified
+   expenses count only for the taxpayer, spouse, or a dependent the taxpayer
+   CLAIMS on this return (§25A(f)(1)(A)). A student who is claimed as a
+   dependent claims NOTHING on their own return; expenses paid BY that
+   dependent student are treated as paid by the claiming parent (§25A(g)(3));
+   tuition paid for someone who is NOT a claimed dependent (e.g. a
+   grandchild not claimed) earns $0. Confirm each 1098-T student's
+   dependency status on THIS return before counting their expenses.
+1. Gather PER-STUDENT inputs (from 1098-T summaries + the interview): adjusted
+   qualified expenses — tuition + required fees (+ course materials for AOTC),
+   **NET of tax-free scholarships/grants (1098-T box 5), employer
+   assistance, and the FULL expenses used to keep any 529/Coverdell
+   distribution tax-free** — no double benefit: the same dollar of expenses
+   cannot both make a 1099-Q distribution tax-free AND support a credit, so
+   reserve the ENTIRE distribution amount allocated to expenses (not just
+   its earnings portion). Alternative election: treat part of the 529
+   earnings as taxable to free up $4,000 of expenses for the AOTC — often
+   favorable (a 100% credit vs tax on a slice of earnings); surface the
+   trade-off and let the user choose. The Pub 970 coordination is YOUR
+   worksheet — the function takes the already-netted figure. Ask whether a
+   scholarship can be elected taxable only if the user raises it (not
+   auto-optimized). **If a student ends up LLC-only, STRIP
+   course materials not paid to the institution as a condition of
+   enrollment** — they count for the AOTC regardless of vendor (§25A(i)(3))
+   but for the LLC only when institution-billed (Pub 970).
+2. Per student, assert the AOTC facts explicitly with the user: degree
+   program, at least half-time for one academic period, within the first 4
+   years, AOTC/Hope claimed fewer than 4 prior years, no felony drug
+   conviction, student TIN issued by the return due date (§25A(i)(6)), the
+   institution's EIN available (Form 8863 line 22), and no prior AOTC
+   disallowance requiring Form 8862 → `aotc_eligible`. When false the
+   expenses pool into the LLC — EXCEPT the TIN case: **a student with NO
+   TIN gets NEITHER credit (§25A(g)(1)) — OMIT them from the students list
+   entirely**, don't pool them into the LLC; only the issued-AFTER-the-due-
+   date timing rule is AOTC-specific (such a student, with a TIN by filing,
+   may still take the LLC). **Lifetime-budget caveat:** §25A allows only
+   4 AOTC years per student and the credit is ELECTIVE — in a low-expense
+   year (e.g. freshman fall with $800 of tuition) claiming AOTC burns a
+   lifetime year for a small credit; surface the trade-off and let the user
+   choose (set `aotc_eligible` false to defer).
+3. `magi` = AGI (+ FEIE/foreign-housing addbacks if `lives_abroad`).
+   **QSS phases out on the SINGLE $80K-$90K range** (Form 8863 groups QSS
+   with Single/HoH — not the usual QSS→MFJ mapping). MFS gets neither credit.
+4. `tax_liability` = line 18 minus the Form 8863 Credit Limit Worksheet
+   credits — Schedule 3 **lines 1, 2, 6d, and 6l** (FTC, dependent care,
+   Schedule R elderly/disabled, Form 8978): in this pipeline the FTC plus
+   any hand-computed Form 2441 / Schedule R / 8978 amounts (manual
+   worksheets here, but the form still reserves their tax first).
+5. Route the outputs: `nonrefundable_credit` → Schedule 3 line 3;
+   `refundable_aotc` → **form_1040.line_29_refundable_aotc** (payments
+   section — it pays out even at $0 tax and MUST be summed into
+   line_33_total_payments); set the line 7 checkbox input
+   `no_refundable_aotc` ONLY when the Form 8863 line 7 conditions hold —
+   the age/support BRANCHES differ: (a) UNDER 18 at year end → condition
+   met regardless of support; (b) exactly 18 → met only if earned income
+   was LESS than half their own support; (c) 19-23 AND a full-time
+   student → met only if earned income was LESS than half their own
+   support (exactly half does NOT check the box — strict less-than);
+   plus, in every branch, at least one living parent and not filing MFJ.
+   A self-supporting 22-year-old student KEEPS the refundable 40%;
+   checking the box on "student under 24" alone denies up to $1,000.
+6. Write the `form_8863` section to result.json and remember to subtract
+   Schedule 3 line 3 from the CTC's Credit Limit Worksheet amount above.
+
+**Other credits:** Dependent care (Form 2441), etc. as applicable (manual worksheets — see the limitations manifest).
 
 ### Step 8: Compute Other Taxes (Form 1040 Line 23)
 

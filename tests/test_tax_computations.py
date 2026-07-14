@@ -21,6 +21,7 @@ from agents.lib.tax_computations import (
     compute_excess_ss_withholding,
     compute_ftc_limitation,
     compute_child_tax_credit,
+    compute_education_credits,
     compute_qbi_deduction,
     compute_niit,
     compute_form_8606,
@@ -2407,3 +2408,134 @@ class TestForm8801:
         senior = compute_form_6251(senior_deduction=6000, **base)
         assert senior["amti"] == plain["amti"] + 6000.00
         assert round(senior["amt"] - plain["amt"], 2) == 1680.00
+
+
+class TestEducationCredits:
+    """Form 8863 (D5) — hand-computed from the §25A statutory parameters."""
+
+    def _one(self, exp, eligible=True, **kw):
+        return compute_education_credits(
+            kw.pop("magi", 100000), kw.pop("filing_status", "MFJ"),
+            [{"qualified_expenses": exp, "aotc_eligible": eligible}], **kw)
+
+    def test_aotc_tier_math(self):
+        # 100% of first 2000 + 25% of next 2000.
+        assert self._one(1500)["aotc_tentative"] == 1500.0
+        assert self._one(2000)["aotc_tentative"] == 2000.0
+        assert self._one(3000)["aotc_tentative"] == 2250.0
+        assert self._one(4000)["aotc_tentative"] == 2500.0
+        assert self._one(10000)["aotc_tentative"] == 2500.0  # capped
+
+    def test_llc_twenty_pct_per_return_cap(self):
+        r = self._one(6000, eligible=False)
+        assert r["llc_tentative"] == 1200.0
+        # Two LLC students pool to the $10,000 PER-RETURN cap.
+        r2 = compute_education_credits(100000, "MFJ", [
+            {"qualified_expenses": 7000, "aotc_eligible": False},
+            {"qualified_expenses": 8000, "aotc_eligible": False}])
+        assert r2["llc_tentative"] == 2000.0  # 20% x 10000, not 15000
+        assert any("per-RETURN cap" in n for n in r2["notes"])
+
+    def test_refundable_split_40_60(self):
+        # AOTC 2500 -> 1000 refundable (1040 line 29) + 1500 nonrefundable.
+        r = self._one(4000, tax_liability=50000)
+        assert r["refundable_aotc"] == 1000.0
+        assert r["aotc_nonrefundable"] == 1500.0
+        assert r["nonrefundable_credit"] == 1500.0
+
+    def test_line7_checkbox_folds_refundable_back(self):
+        r = self._one(4000, no_refundable_aotc=True)
+        assert r["refundable_aotc"] == 0.0
+        assert r["aotc_nonrefundable"] == 2500.0
+
+    def test_refundable_survives_zero_tax(self):
+        # Refundable AOTC pays out at $0 tax; nonrefundable is limited to 0.
+        r = self._one(4000, tax_liability=0)
+        assert r["refundable_aotc"] == 1000.0
+        assert r["nonrefundable_credit"] == 0.0
+
+    def test_tax_limit_caps_nonrefundable(self):
+        # AOTC nonref 1500 + LLC 1200 = 2700 vs tax 2000 -> 2000, no carryover.
+        r = compute_education_credits(100000, "MFJ", [
+            {"qualified_expenses": 4000, "aotc_eligible": True},
+            {"qualified_expenses": 6000, "aotc_eligible": False}],
+            tax_liability=2000)
+        assert r["nonrefundable_credit"] == 2000.0
+        assert any("limited by tax" in n for n in r["notes"])
+
+    def test_phaseout_mfj_and_single_ranges(self):
+        # MFJ midpoint 170000 -> ratio 0.5; single midpoint 85000 -> 0.5.
+        r = self._one(4000, magi=170000, filing_status="MFJ")
+        assert r["phase_out_ratio"] == 0.5
+        assert r["refundable_aotc"] == 500.0
+        r2 = self._one(4000, magi=85000, filing_status="Single")
+        assert r2["phase_out_ratio"] == 0.5
+
+    def test_phaseout_boundaries(self):
+        assert self._one(4000, magi=160000)["phase_out_ratio"] == 1.0
+        assert self._one(4000, magi=180000)["phase_out_ratio"] == 0.0
+        assert self._one(4000, magi=180000)["refundable_aotc"] == 0.0
+
+    def test_qss_uses_single_range_not_mfj(self):
+        # Form 8863 groups QSS with Single/HoH at $80K-$90K — the usual
+        # QSS->mfj mapping would phase out too LATE and overstate the credit.
+        r = compute_education_credits(120000, "QSS",
+            [{"qualified_expenses": 4000, "aotc_eligible": True}])
+        assert r["phase_out_ratio"] == 0.0
+        r2 = compute_education_credits(120000, "HoH",
+            [{"qualified_expenses": 4000, "aotc_eligible": True}])
+        assert r2["phase_out_ratio"] == 0.0
+
+    def test_mfs_gets_neither_credit(self):
+        r = compute_education_credits(50000, "MFS",
+            [{"qualified_expenses": 4000, "aotc_eligible": True}])
+        assert r["allowed"] is False
+        assert r["nonrefundable_credit"] == 0.0
+        assert r["refundable_aotc"] == 0.0
+
+    def test_mixed_students_assignment(self):
+        r = compute_education_credits(100000, "MFJ", [
+            {"qualified_expenses": 4000, "aotc_eligible": True, "name": "A"},
+            {"qualified_expenses": 3000, "aotc_eligible": False, "name": "B"}])
+        by_name = {a["name"]: a for a in r["assignment"]}
+        assert by_name["A"]["credit"] == "AOTC"
+        assert by_name["B"]["credit"] == "LLC"
+        assert r["aotc_tentative"] == 2500.0
+        assert r["llc_tentative"] == 600.0
+
+    def test_two_aotc_students_each_capped_separately(self):
+        r = compute_education_credits(100000, "MFJ", [
+            {"qualified_expenses": 4000, "aotc_eligible": True},
+            {"qualified_expenses": 4000, "aotc_eligible": True}])
+        assert r["aotc_tentative"] == 5000.0  # per STUDENT, not per return
+
+    def test_invalid_inputs_rejected(self):
+        with pytest.raises(ValueError):
+            compute_education_credits(float("nan"), "MFJ",
+                [{"qualified_expenses": 1, "aotc_eligible": True}])
+        with pytest.raises(ValueError):
+            compute_education_credits(100000, "Married Filing Jointly",
+                [{"qualified_expenses": 1, "aotc_eligible": True}])
+        with pytest.raises(ValueError):
+            compute_education_credits(100000, "MFJ", [])
+        with pytest.raises(ValueError):  # negative expenses
+            compute_education_credits(100000, "MFJ",
+                [{"qualified_expenses": -1, "aotc_eligible": True}])
+        with pytest.raises(ValueError):  # eligibility must be explicit bool
+            compute_education_credits(100000, "MFJ",
+                [{"qualified_expenses": 1000}])
+        with pytest.raises(ValueError):  # truthy-string eligibility
+            compute_education_credits(100000, "MFJ",
+                [{"qualified_expenses": 1000, "aotc_eligible": "yes"}])
+        with pytest.raises(ValueError):
+            compute_education_credits(100000, "MFJ",
+                [{"qualified_expenses": 1000, "aotc_eligible": True}],
+                no_refundable_aotc="no")
+
+    def test_low_expense_aotc_year_notes_lifetime_budget(self):
+        # Review round: §25A allows 4 lifetime AOTC years and the credit is
+        # elective — a low-expense claim must surface the trade-off.
+        r = self._one(800)
+        assert any("4 lifetime AOTC years" in n for n in r["notes"])
+        # A full-credit year ($4,000+) carries no such note.
+        assert not any("lifetime" in n for n in self._one(4000)["notes"])

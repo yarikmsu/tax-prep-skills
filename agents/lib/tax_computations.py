@@ -2680,6 +2680,208 @@ def compute_scenario(
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Form 8863 — Education credits (AOTC + LLC), §25A
+# ---------------------------------------------------------------------------
+# Statutory-fixed parameters (NOT indexed — hardcoded per the ACTC-floor
+# precedent). §25A(b): AOTC = 100% of the first $2,000 of qualified expenses
+# + 25% of the next $2,000, per student. §25A(c): LLC = 20% of up to $10,000
+# of expenses PER RETURN. §25A(i)(5)/(6): 40% of the AOTC is refundable
+# unless the taxpayer is a child subject to the §1(g) kiddie conditions.
+# §25A(d) (post-CAA-2021, both credits): phase-out over MAGI $80K-$90K
+# (single/HoH/QSS) / $160K-$180K (MFJ); MFS may claim NEITHER credit.
+_AOTC_TIER1_EXPENSES = 2000.0
+_AOTC_TIER1_RATE = 1.00
+_AOTC_TIER2_EXPENSES = 2000.0
+_AOTC_TIER2_RATE = 0.25
+_AOTC_REFUNDABLE_FRACTION = 0.40
+_LLC_EXPENSE_CAP = 10000.0
+_LLC_RATE = 0.20
+# NOTE the status grouping is NOT the usual binary map: Form 8863 groups QSS
+# with Single/HoH at $80K-$90K (only MFJ gets the doubled range) — mapping
+# QSS→mfj here would phase a QSS filer out too LATE and overstate the credit.
+_ED_PHASEOUT = {
+    "SINGLE": (80000.0, 90000.0),
+    "HOH": (80000.0, 90000.0),
+    "QSS": (80000.0, 90000.0),
+    "MFJ": (160000.0, 180000.0),
+}
+
+
+def compute_education_credits(
+    magi: float,
+    filing_status: str,
+    students: list,
+    tax_liability: float = None,
+    no_refundable_aotc: bool = False,
+) -> dict:
+    """Form 8863 education credits — AOTC (per student) + LLC (per return).
+
+    Every AOTC-eligible student takes the AOTC: its 100%/25% tiers strictly
+    dominate the LLC's 20% at every expense level and the AOTC is per-student
+    while the LLC's $10,000 cap is per-return, so the assignment needs no
+    search. Non-eligible students' expenses pool into the LLC.
+
+    Args:
+        magi: Modified AGI (AGI + FEIE/foreign-housing/Puerto-Rico exclusions
+            — MAGI≈AGI for domestic filers).
+        filing_status: canonical Single/MFJ/MFS/HoH/QSS. MFS → neither credit
+            (§25A(g)(6)); QSS phases out on the SINGLE range (Form 8863).
+        students: list of dicts, each with:
+            qualified_expenses: adjusted qualified education expenses —
+                tuition + required fees (+ course materials for AOTC), NET of
+                tax-free scholarships/grants, employer assistance, and
+                529/Coverdell earnings used (the caller nets these — Pub 970
+                coordination is the caller's worksheet). MUST belong to the
+                taxpayer, spouse, or a dependent CLAIMED on this return
+                (§25A(f)(1)(A)) — the caller screens claimants; a dependent
+                student's own payments count as the parent's (§25A(g)(3)).
+            aotc_eligible: bool — degree program, at least half-time, within
+                the first 4 years, AOTC claimed fewer than 4 prior years, no
+                felony drug conviction (all user-asserted facts).
+            name: optional label echoed in the assignment.
+        tax_liability: Credit Limit Worksheet amount (Form 1040 line 18 minus
+            the nonrefundable credits claimed BEFORE education credits —
+            currently just the FTC in this pipeline). None skips the limit
+            (potential-credit behavior).
+        no_refundable_aotc: Form 8863 line 7 checkbox — a taxpayer who was
+            under 24 with the §25A(i)(5) kiddie conditions gets NO refundable
+            AOTC (the 40% slice folds back into the nonrefundable pot).
+
+    Returns dict with allowed, aotc_tentative, llc_tentative, phase-out
+    ratios (FULL precision — compliant with the form's "at least three
+    places" rounding rule and matches tax software), refundable_aotc
+    (Form 1040 line 29),
+    nonrefundable_credit (Schedule 3 line 3, tax-limited when tax_liability
+    given), per-student assignment, and notes.
+    """
+    magi_v = _f2210_amount(magi, "magi", allow_negative=True)
+    fs = _normalize_filing_status(filing_status)
+    if not isinstance(no_refundable_aotc, bool):
+        raise ValueError("no_refundable_aotc must be a bool")
+    if tax_liability is not None:
+        tax_liability = _f2210_amount(tax_liability, "tax_liability")
+    if not isinstance(students, list) or not students:
+        raise ValueError("students must be a non-empty list of student dicts")
+
+    notes = []
+    if fs == "MFS":
+        return {
+            "allowed": False,
+            "aotc_tentative": 0.0, "llc_tentative": 0.0,
+            "phase_out_ratio": 0.0,
+            "refundable_aotc": 0.0, "aotc_nonrefundable": 0.0,
+            "llc_after_phaseout": 0.0, "nonrefundable_credit": 0.0,
+            "assignment": [],
+            "notes": ["MFS may claim neither education credit (§25A(g)(6))."],
+        }
+
+    lower, upper = _ED_PHASEOUT[fs]
+    if magi_v >= upper:
+        ratio = 0.0
+    elif magi_v <= lower:
+        ratio = 1.0
+    else:
+        ratio = (upper - magi_v) / (upper - lower)
+    if 0.0 < ratio < 1.0:
+        notes.append(
+            f"MAGI {magi_v:,.0f} is inside the {lower:,.0f}-{upper:,.0f} "
+            f"phase-out — both credits scaled by {ratio:.4f} (full "
+            f"precision; Form 8863 rounds to 3 decimals)."
+        )
+    elif ratio == 0.0:
+        notes.append(
+            f"MAGI {magi_v:,.0f} is at or above {upper:,.0f} — both "
+            f"education credits fully phased out."
+        )
+
+    aotc_tentative = 0.0
+    llc_pool = 0.0
+    assignment = []
+    for i, st in enumerate(students):
+        if not isinstance(st, dict):
+            raise ValueError(f"students[{i}] must be a dict")
+        exp = _f2210_amount(st.get("qualified_expenses"),
+                            f"students[{i}].qualified_expenses")
+        eligible = st.get("aotc_eligible")
+        if not isinstance(eligible, bool):
+            raise ValueError(
+                f"students[{i}].aotc_eligible must be a bool (the AOTC "
+                f"eligibility facts are user-asserted — absence is not 'no')")
+        label = st.get("name") or f"student {i + 1}"
+        if eligible:
+            credit = (_AOTC_TIER1_RATE * min(exp, _AOTC_TIER1_EXPENSES)
+                      + _AOTC_TIER2_RATE * max(
+                          0.0, min(exp, _AOTC_TIER1_EXPENSES
+                                   + _AOTC_TIER2_EXPENSES)
+                          - _AOTC_TIER1_EXPENSES))
+            aotc_tentative += credit
+            if exp < _AOTC_TIER1_EXPENSES + _AOTC_TIER2_EXPENSES:
+                # Within-year dominance over the LLC still holds, but §25A
+                # caps AOTC at 4 LIFETIME years per student and the credit
+                # is elective — a low-expense year burns a claim worth up
+                # to $2,500 in a full year.
+                notes.append(
+                    f"{label}: AOTC claimed on {exp:,.0f} of expenses "
+                    f"(under the $4,000 that earns the full $2,500) — this "
+                    f"consumes one of the student's 4 lifetime AOTC years; "
+                    f"consider deferring (set aotc_eligible false) if "
+                    f"future years will have higher expenses.")
+            assignment.append({"name": label, "credit": "AOTC",
+                               "expenses_used": round(min(exp, 4000.0), 2),
+                               "tentative": round(credit, 2)})
+        else:
+            llc_pool += exp
+            assignment.append({"name": label, "credit": "LLC",
+                               "expenses_used": round(exp, 2),
+                               "tentative": None})
+
+    llc_tentative = _LLC_RATE * min(llc_pool, _LLC_EXPENSE_CAP)
+    if llc_pool > _LLC_EXPENSE_CAP:
+        notes.append(
+            f"LLC expense pool {llc_pool:,.0f} exceeds the $10,000 "
+            f"per-RETURN cap — {llc_pool - _LLC_EXPENSE_CAP:,.0f} of "
+            f"expenses earn no credit.")
+
+    aotc_after = aotc_tentative * ratio
+    llc_after = llc_tentative * ratio
+
+    if no_refundable_aotc:
+        refundable = 0.0
+        aotc_nonref = aotc_after
+        if aotc_after > 0:
+            notes.append(
+                "Form 8863 line 7 checkbox: taxpayer meets the §25A(i)(5) "
+                "under-24 conditions — the 40% refundable slice folds back "
+                "into the nonrefundable credit.")
+    else:
+        refundable = aotc_after * _AOTC_REFUNDABLE_FRACTION
+        aotc_nonref = aotc_after - refundable
+
+    nonref_total = aotc_nonref + llc_after
+    if tax_liability is not None and nonref_total > tax_liability:
+        notes.append(
+            f"Nonrefundable education credits limited by tax: "
+            f"{nonref_total:,.2f} tentative vs {tax_liability:,.2f} "
+            f"available — the excess is NOT refundable and does not carry "
+            f"forward.")
+        nonref_total = tax_liability
+
+    return {
+        "allowed": True,
+        "aotc_tentative": round(aotc_tentative, 2),
+        "llc_tentative": round(llc_tentative, 2),
+        "phase_out_ratio": ratio,
+        "refundable_aotc": round(refundable, 2),
+        "aotc_nonrefundable": round(aotc_nonref, 2),
+        "llc_after_phaseout": round(llc_after, 2),
+        "nonrefundable_credit": round(nonref_total, 2),
+        "assignment": assignment,
+        "notes": notes,
+    }
+
+
 if __name__ == "__main__":
     # Quick self-test with sample data
     print("=== Bracket Tax Test (MFJ 2025 OBBBA) ===")

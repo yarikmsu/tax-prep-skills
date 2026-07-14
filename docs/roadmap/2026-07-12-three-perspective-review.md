@@ -529,8 +529,19 @@ Build order by persona coverage × error cost:
   spouse-death/QSS screening question added, EITC full-time-student +
   younger-than-taxpayer + 25-64 childless window, §691 IRD caveat on
   inheritance. Codex round (6 P2): Form 8958 gated on filing-status+community-property-domicile (not marriage-year), adoption expenses a standalone question (in-progress/failed/carryforward), year-of-death MFJ requires no same-year remarriage, married-child HoH claimability, childless-EITC either-spouse 25-64, post-2018 alimony CA-nonconformity rule (new has_post2018_alimony flag). Tests → 1447.
+- **D5 (education credits / Form 8863): ✅ shipped.**
+  `compute_education_credits` in tax_computations.py (§25A statutory
+  constants — AOTC 100%/25% tiers per student, LLC 20% per return with
+  the $10K cap, both phase-outs $80K-$90K / $160K-$180K fixed post-CAA-
+  2021, QSS on the SINGLE range, MFS neither credit, 40% refundable
+  AOTC → 1040 line 29, line-7 under-24 checkbox); form_8863 template
+  section; /tax-compute step 7 routing (Schedule 3 line 3 + line 29,
+  feeds the CTC Credit Limit Worksheet); interview collects per-student
+  1098-T + eligibility facts; education_credits capability note now says
+  COMPUTED from asserted facts (Pub 970 scholarship netting stays the
+  caller's worksheet). Review round (no P1 — tier math/phase-outs/QSS/refundable-before-limit all verified exact; 5 P2 caveat gaps fixed: §25A(f)(1) dependent-claimant screening, 2441 in the Credit Limit Worksheet, LLC course-materials rule, 4-lifetime-years elective note, full line-7 §25A(i)(5) conditions). Codex round (5 P2): no-TIN students omitted entirely (not LLC-pooled), CLW enumerates Schedule 3 lines 1/2/6d/6l, line-7 age/support branches (<18 unconditional; 18 and 19-23 strict less-than-half support), 529 no-double-benefit reserves the FULL distribution-allocated expenses (not just earnings) with the taxable-earnings election surfaced, form_1040.line_29_refundable_aotc field added so the refundable payment is auditable. Tests → 1461.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
-  sequencing): D5 (education credits), F2 (/tax-extend), E5
+  sequencing): F2 (/tax-extend), E5
   (state contributor playbook). Also
   queued from the D9 review: Form 3921 extraction in /tax-parse (the ISO
   bargain element is currently user-asserted and invisible to the A1/A2

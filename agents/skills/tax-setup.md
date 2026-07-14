@@ -210,7 +210,17 @@ interview never captures is invisible to every downstream check.
 
 **Group 8 — Deductions & credits probe:**
 - Student loan interest paid? Educator expenses (if teacher)?
-- College tuition/education expenses? (AOTC / Lifetime Learning Credit) → sets `has_education_expenses`
+- College tuition/education expenses? (AOTC / Lifetime Learning Credit) → sets `has_education_expenses`.
+  Form 8863 IS computed by `/tax-compute` (D5) — collect per student NOW:
+  **whether the student is claimed as a dependent on THIS return** (only the
+  taxpayer, spouse, or a CLAIMED dependent's expenses count — §25A(f)(1);
+  a dependent student claims nothing on their own return, and a
+  non-claimed relative's tuition earns $0), 1098-T box 1 payments and box 5
+  scholarships (expenses are netted per Pub 970), and the AOTC eligibility
+  facts (degree program, at least half-time, first 4 years, AOTC claimed
+  fewer than 4 prior years, no felony drug conviction, TIN by the due
+  date). MFS gets neither credit; QSS phases out on the SINGLE $80K-$90K
+  MAGI range.
 - Child/dependent care expenses? (Form 2441) → sets `has_dependent_care`
 - Charitable giving? (approximate amount, cash vs property donations) → sets `has_charitable_giving`
 - Energy-efficient home improvements? (heat pump, solar, insulation — 25C/25D) → sets `has_energy_credits`

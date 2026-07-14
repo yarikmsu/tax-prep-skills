@@ -69,6 +69,8 @@
     "line_25c_other_withholding": 0,
     "line_25d_total_withholding": 0,
     "line_26_estimated_payments": 0,
+    "line_29_refundable_aotc": 0,
+    "_note_refundable_aotc": "Form 8863 line 8 (40% refundable AOTC) — flows into line_33 even at $0 tax. Persisted at the 1040 level (like the excess-SS note below) so /tax-generate and /tax-verify can audit the refundable payment instead of it silently folding into line 33.",
     "line_31_schedule3_part2": 0,
     "schedule_3_line_11_excess_ss": 0,
     "_note_excess_ss": "Schedule 3 line 11: per-person compute_excess_ss_withholding() excess_credit sum (multi-employer over the wage base). Flows into line_31_schedule3_part2 -> line_33. Persisted here so /tax-generate and /tax-verify can audit the refundable payment instead of it silently folding into line 33.",
@@ -391,6 +393,20 @@
       "net_schedule_c": 0,
       "total_income": 0
     }
+  },
+
+  "form_8863": {
+    "_include_if": "has_education_expenses",
+    "_note": "Form 8863 education credits — computed by compute_education_credits. nonrefundable_credit_schedule3_line3 flows to Schedule 3 line 3 (and reduces the CTC Credit Limit Worksheet amount); refundable_aotc_line29 flows to Form 1040 line 29 (payments — pays out at $0 tax). Per-student AOTC eligibility facts (half-time, first 4 years, <4 prior claims, no felony drug conviction) are user-asserted; qualified expenses are NET of tax-free scholarships/employer assistance/529 earnings per Pub 970.",
+    "students": [],
+    "magi": 0,
+    "phase_out_ratio": 0,
+    "aotc_tentative": 0,
+    "llc_tentative": 0,
+    "refundable_aotc_line29": 0,
+    "nonrefundable_credit_schedule3_line3": 0,
+    "no_refundable_aotc_checkbox": false,
+    "notes": []
   },
 
   "form_8606": {
