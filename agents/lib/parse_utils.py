@@ -206,7 +206,7 @@ def classify_document(text: str) -> str:
               If None or empty, returns "unknown".
 
     Returns one of: w2, 1099-int, 1099-div, 1099-b, 1099-r, 1099-sa,
-    1099-nec, 1099-misc, 1099-k, brokerage_statement, foreign_bank,
+    1099-nec, 1099-misc, 1099-k, 3921, brokerage_statement, foreign_bank,
     tax_return, unknown.
     """
     if not text:
@@ -215,6 +215,11 @@ def classify_document(text: str) -> str:
     text_upper = text.upper()
 
     patterns = {
+        # Form 3921 FIRST: its keywords are maximally specific, while
+        # broker-issued 3921 packets routinely mention generic phrases like
+        # "cost basis" (1099-b) or "Form 1040" (tax_return) in their cover
+        # text — insertion order is the tiebreak.
+        "3921": ["EXERCISE OF AN INCENTIVE STOCK OPTION", "FORM 3921"],
         "w2": ["WAGE AND TAX STATEMENT", "FORM W-2"],
         "1099-int": ["INTEREST INCOME", "FORM 1099-INT"],
         "1099-div": ["DIVIDENDS AND DISTRIBUTIONS", "FORM 1099-DIV"],

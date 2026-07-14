@@ -556,12 +556,34 @@ Build order by persona coverage × error cost:
   retroactively VOID the extension — Crocker), 'begins' not 'resumes'
   for the post-Oct-15 FTF clock, calendar docs + all-categories UID
   test updated for the new category. Tests → 1466.
+- **D9-review follow-ups: ✅ shipped.** (1) Form 3921 extraction: new
+  parse_utils classification (pattern ordered before tax_return),
+  /tax-parse iso_bargain ledger category ((box4−box3)×box5, HELD-shares
+  only — same-year disqualifying dispositions recorded as skips with a
+  W-2-includes-the-spread confirmation), form_6251.iso_bargain_element
+  input echo + tie-out category so a dropped 3921 FAILS the gate;
+  /tax-compute prefers parsed 3921s over user assertion. (2) 6251
+  line 1 negative-taxable-income: compute_form_6251 now accepts a
+  negative line-1 figure (AGI − deductions when line 15 is $0) which
+  lowers AMTI dollar-for-dollar; the $0-input note tells the caller to
+  refigure; /tax-compute step 6.5 instructs the refigure. Review round (4 P2 + 3
+  P3): 3921 pattern moved to the TOP of the classification dict (the
+  generic 1099-b 'COST BASIS' keyword shadowed broker-issued 3921
+  packets), underwater exercises skip instead of hard-erroring the
+  ledger, partial same-year sales prorate box 5 to held shares,
+  §422(c)(2) loss-sale W-2 confirmation wording, refigure note fires on
+  any $0 line-15 input, interview defers to parsed 3921s, early-
+  exercise/83(b) caveat. Second-lens (pipeline-integration) review,
+  replacing the exhausted Codex cross-check (3 P2): per-FILE skip
+  semantics for mixed 3921 packets (one summed record, exclusions in
+  answers.md — per-exercise splits hard-error the ledger), 3921 added
+  to the dispatch group table / Must-capture notes / has_iso_exercise
+  intake probe, and compute_form_6251 now ECHOES iso_bargain_element
+  in its return dict so the copy-the-result flow can't false-fail the
+  tie-out against the template's 0. Tests → 1473.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
   sequencing): E5
-  (state contributor playbook). Also
-  queued from the D9 review: Form 3921 extraction in /tax-parse (the ISO
-  bargain element is currently user-asserted and invisible to the A1/A2
-  tie-out ledger) and 6251 line 1 negative-taxable-income handling.
+  (state contributor playbook). The D9-review queue (Form 3921 parse, 6251 negative-TI) is done.
 
 ### Decisions log
 

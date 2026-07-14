@@ -2378,7 +2378,23 @@ class TestForm8801:
         r = compute_form_6251(
             taxable_income=0, filing_status="Single", regular_tax=0,
             salt_deducted=40000, iso_bargain_element=300000, **_AMT_2025)
-        assert any("negative-taxable-income" in n for n in r["notes"])
+        assert any("pass the NEGATIVE result" in n for n in r["notes"])
+
+    def test_negative_taxable_income_accepted_and_lowers_amti(self):
+        """D9-review follow-up: when 1040 line 15 is $0 because deductions
+        exceeded AGI, the 6251 line 1 instructions use AGI minus deductions
+        (negative). Passing the negative figure must lower AMTI vs the $0
+        input — dollar-for-dollar before the exemption."""
+        zero = compute_form_6251(
+            taxable_income=0, filing_status="Single", regular_tax=0,
+            salt_deducted=40000, iso_bargain_element=300000, **_AMT_2025)
+        neg = compute_form_6251(
+            taxable_income=-25000, filing_status="Single", regular_tax=0,
+            salt_deducted=40000, iso_bargain_element=300000, **_AMT_2025)
+        assert neg["amti"] == zero["amti"] - 25000
+        assert neg["amt"] < zero["amt"]
+        # The refigure note only fires on the ambiguous $0 input.
+        assert not any("pass the NEGATIVE result" in n for n in neg["notes"])
 
     def test_mfs_exemption_recapture_above_ceiling(self):
         """§55(d)(3) last sentence (Codex P2): MFS past the phase-out
@@ -2539,3 +2555,17 @@ class TestEducationCredits:
         assert any("4 lifetime AOTC years" in n for n in r["notes"])
         # A full-credit year ($4,000+) carries no such note.
         assert not any("lifetime" in n for n in self._one(4000)["notes"])
+
+    def test_6251_returns_iso_bargain_echo(self):
+        """Second-lens review: the result dict must echo the ISO input so
+        the copy-the-result flow fills form_6251.iso_bargain_element and
+        the tie-out's iso_bargain category verifies the parsed 3921 sum —
+        without it a CORRECT return false-fails against the template's 0."""
+        r = compute_form_6251(
+            taxable_income=200000, filing_status="Single", regular_tax=40000,
+            iso_bargain_element=50000, **_AMT_2025)
+        assert r["iso_bargain_element"] == 50000.0
+        r0 = compute_form_6251(
+            taxable_income=200000, filing_status="Single", regular_tax=40000,
+            **_AMT_2025)
+        assert r0["iso_bargain_element"] == 0.0

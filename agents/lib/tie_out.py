@@ -133,6 +133,12 @@ CATEGORY_TARGETS = {
     # from hard failure to a mere unverifiable warning.
     "ss_benefits": ("form_1040", ["line_6a_social_security"]),
     "state_withholding_ca": ("california_540", ["ca_withholding_box17"]),
+    # Form 3921 (box 4 FMV - box 3 strike) x box 5 shares, HELD-through-
+    # year-end exercises only (same-year disqualifying dispositions are W-2
+    # ordinary income and are recorded as skips). Ties to the input echo
+    # /tax-compute step 6.5 writes — a dropped 3921 otherwise leaves the
+    # AMT bargain element user-asserted and invisible (D9 review).
+    "iso_bargain": ("form_6251", ["iso_bargain_element"]),
     # Broker totals: only verifiable when /tax-compute filled proceeds detail
     # somewhere in schedule_d (either part — a long-term-only return must not
     # be compared against Part I's zero template rows); otherwise Check D

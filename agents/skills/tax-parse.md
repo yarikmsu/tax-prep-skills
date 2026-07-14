@@ -53,6 +53,7 @@ Group documents for parallel processing:
 |-------|-----------|-----------------|
 | **US W-2s** | W-2 PDFs | pdfplumber → extract all boxes |
 | **US 1099s** | 1099-INT, DIV, B, R, SA, NEC, MISC | pdfplumber → extract all boxes |
+| **Form 3921 (ISO exercise)** | Form 3921 PDFs (often a combined annual packet — one 3921 PER EXERCISE) | pdfplumber → extract boxes 1-5 per exercise |
 | **US Brokerage** | Fidelity, Merrill, Schwab consolidated statements | pdfplumber page-by-page (large PDFs) |
 | **Foreign Bank** | Non-English documents, foreign bank statements | pdfplumber + Claude multilingual parsing |
 | **Excel/CSV** | .xlsx, .csv files | openpyxl / csv module |
@@ -83,6 +84,7 @@ Before dispatching parsers, confirm completeness with the user. **First check `a
    - `has_ira_contributions=true` but no 5498 found → note: "Form 5498 arrives late (May). Continue without it?"
    - `has_1099r=true` but no 1099-R found → warn
    - `has_1099g_state_refund=true` but no 1099-G found → warn: "State refund flag is set but no 1099-G found. Did you receive one?"
+   - `has_iso_exercise=true` but no Form 3921 found → warn: "ISO exercise flag is set but no Form 3921 found — the AMT bargain element will fall back to your own figure. The issuer must furnish 3921 by Jan 31; check the equity portal (E*TRADE/Shareworks/Carta)."
 
 3.5. **Expected-sources diff (A4 — deterministic, not memory-based):** when
    `taxpayer_profile.json` has a non-empty `expected_sources` block (rolled
@@ -283,6 +285,7 @@ Rules:
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
   | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
+  | Form 3921 (box 4 FMV − box 3 strike) × box 5 shares | `iso_bargain` (→ the `form_6251.iso_bargain_element` input echo — the AMT adjustment). **Only exercises whose shares were HELD past year-end**: a same-year sale (disqualifying disposition) is ordinary W-2 income, NOT an AMT adjustment — record those 3921s as `"skipped": "disqualifying disposition — W-2 ordinary income"` and confirm the W-2 includes that income (the full spread, or sale price − strike if sold below exercise-date FMV in an arm's-length sale — §422(c)(2)). **Partial same-year sale of one exercise: prorate — record (box 4 − box 3) × only the shares HELD.** **Underwater/zero-spread exercise (box 4 ≤ box 3): no AMT adjustment.** **The ledger is per-FILE (one record per PDF, skip XOR key_boxes):** use a `"skipped"` record ONLY when NO exercise in the file produced an adjustment (all sold same-year / all underwater); for a MIXED file, emit ONE non-skipped record whose `iso_bargain` sums only the held, in-the-money exercises, and document the excluded exercises (+ the W-2-inclusion confirmation) in answers.md — a negative or per-exercise-split record hard-errors the whole ledger. ASK the user which lots were held vs sold (record in answers.md). Caveat: box 4 measures the adjustment for VESTED shares (or with an §83(b) election) — an early-exercise of unvested shares without 83(b) is measured at vesting instead (rare; flag it). |
 - `person` is `primary`/`spouse`/`joint` (per-person credits need it).
 - Set `"foreign": true` on every record from a FOREIGN institution (foreign
   bank/brokerage — the Form 8949 Box B/E basis-not-reported convention is a
@@ -378,6 +381,15 @@ Foreign brokerages: typically Box B or E (basis not reported to IRS)
 Must capture: Boxes 1, 2a, 4, 5, 7 (distribution code)
 Code G = direct rollover (not taxable but report on 1040 line 5a)
 Code 1 = early distribution (10% penalty unless exception)
+
+### Form 3921 (ISO exercise)
+One 3921 PER EXERCISE — a combined annual PDF holds several.
+Must capture (PER exercise): Box 1 (grant date), Box 2 (exercise date),
+Box 3 (exercise price PER SHARE), Box 4 (FMV PER SHARE on exercise date),
+Box 5 (number of shares), corporation name.
+The AMT bargain element is (box 4 − box 3) × box 5 per exercise — the
+ledger row in step 6.5 explains held-vs-sold and the per-FILE record rule.
+
 
 ### HSA (1099-SA + 5498-SA)
 1099-SA: Boxes 1 (distributions), 2 (earnings on excess), 3 (distribution code)

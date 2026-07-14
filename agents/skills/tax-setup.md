@@ -190,8 +190,10 @@ interview never captures is invisible to every downstream check.
     computation (Form 6251 — the bargain element is the most common AMT
     trigger and can add tens of thousands of tax) and the Form 8801 credit
     carryforward. CA's own AMT (Schedule P) is NOT computed — tell a CA
-    exerciser now that the CA side needs software verification. Also ask
-    for the exercise spread (FMV − strike per share × shares held).
+    exerciser now that the CA side needs software verification. If Form 3921
+    is among the documents, /tax-parse extracts the spread per exercise —
+    only ask for the figure (FMV − strike per share × shares held) when no
+    3921 will be provided.
     (RSU/ESPP alone do NOT set this flag — they are ordinary W-2 wage
     events.)
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.

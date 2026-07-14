@@ -338,7 +338,10 @@ due this year). It is a cheap pure function returning $0 harmlessly — a
 (post-OBBBA a $40K SALT deduction alone is a real trigger in the
 $250-450K band):
 
-- Inputs: `taxable_income` = line 15; `regular_tax` = line 16 MINUS the
+- Inputs: `taxable_income` = line 15 — **but when line 15 is $0 because
+  deductions exceeded AGI, pass line 11 AGI minus line 14 deductions (a
+  NEGATIVE number)** per the Form 6251 line 1 instructions; passing $0
+  overstates AMTI by the shortfall; `regular_tax` = line 16 MINUS the
   Schedule 3 line 1 foreign tax credit; `amt_ftc` = that same FTC on the
   simplified path (the AMT FTC equals the regular FTC when no Form 1116 is
   required); `federal.amt` from tax_law JSON (exemption/phaseout_start by
@@ -347,9 +350,15 @@ $250-450K band):
 - Addback: `salt_deducted` (Schedule A line 7 = the salt_deductible figure)
   when itemizing, else `standard_deduction_taken` = line 12 — one or the
   other, never both.
-- `iso_bargain_element`: ask the user for the exercise-year spread (FMV −
-  strike) on ISO shares exercised AND HELD past year-end (same-year sales
-  are ordinary W-2 income, not an AMT adjustment) — record in answers.md.
+- `iso_bargain_element`: **prefer the parsed Form 3921s** — /tax-parse
+  records (box 4 FMV − box 3 strike) × box 5 shares per exercise under the
+  `iso_bargain` ledger category for shares HELD past year-end (same-year
+  sales are ordinary W-2 income, not an AMT adjustment). Sum those
+  records; fall back to asking the user only when no 3921 was provided
+  (record in answers.md). **Write the figure to
+  `form_6251.iso_bargain_element`** — the Step 12.7 tie-out compares the
+  ledger's iso_bargain records against this input echo, so a dropped 3921
+  fails the gate instead of silently shrinking the AMT.
 - **ISO shares from a PRIOR-year exercise sold this year:** include the
   NEGATIVE line 2k basis adjustment (regular gain − AMT gain, since the
   AMT basis is higher by the old spread) in `other_adjustments` — it

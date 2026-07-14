@@ -1859,7 +1859,7 @@ def compute_form_6251(
     deferral-item credit carryforward.
 
     Args:
-        taxable_income: 1040 line 15 (6251 line 1).
+        taxable_income: Form 6251 line 1 — 1040 line 15 when positive. When line 15 is $0 because deductions exceeded AGI, pass line 11 AGI minus line 14 deductions (a NEGATIVE number) per the 6251 line 1 instructions — passing 0 overstates AMTI by the shortfall (the D9-review follow-up; a 0 input with addbacks still gets the may-be-OVERSTATED note since the caller may not have refigured).
         regular_tax: 1040 line 16 MINUS Schedule 3 line 1 foreign tax
             credit (the 6251 line 10 comparison base — simplified; Schedule
             J / Form 4972 recomputations not modeled).
@@ -1903,7 +1903,7 @@ def compute_form_6251(
     year via /tax-rollover), notes.
     """
     fs = _normalize_filing_status(filing_status)
-    ti = _sched_a_amount(taxable_income, "taxable_income")
+    ti = _f2210_amount(taxable_income, "taxable_income", allow_negative=True)
     rtax = _sched_a_amount(regular_tax, "regular_tax")
     for what, v in (("exemption", exemption),
                     ("phaseout_start", phaseout_start),
@@ -2003,12 +2003,15 @@ def compute_form_6251(
     amt_exclusion_only = round(
         max(0.0, max(0.0, _tmt(0.0) - ftc_amt) - rtax), 2)
     credit = round(max(0.0, amt - amt_exclusion_only), 2)
-    if ti == 0 and (salt + std) > 0:
+    # Fire on ANY $0 line-15 input — deductions exceeding AGI is what
+    # makes it 0, whether or not the deductions were AMT addbacks
+    # (a charity/mortgage-only itemizer has the same refigure duty).
+    if ti == 0:
         notes.append(
-            "1040 line 15 is $0 — the 6251 line 1 negative-taxable-income "
-            "rule is not modeled, so AMTI here may be OVERSTATED (safe "
-            "direction) when deductions exceeded AGI; refigure line 1 as "
-            "AGI minus deductions (negative) for precision")
+            "1040 line 15 is $0 — if deductions exceeded AGI, refigure "
+            "line 1 as AGI minus deductions and pass the NEGATIVE result "
+            "(now accepted); a $0 input overstates AMTI by the shortfall "
+            "(safe direction, but refigure for precision)")
 
     amti_full = _amti(iso)
     exemption_allowed = max(
@@ -2026,6 +2029,12 @@ def compute_form_6251(
         "regular_tax": round(rtax, 2),
         "amt": amt,
         "form_8801_carryforward": credit,
+        # Input echo — matches result_template form_6251.iso_bargain_element
+        # so the copy-the-result flow writes it and the A2 tie-out's
+        # iso_bargain category can verify the parsed 3921 sum. Without the
+        # echo, a CORRECT return false-fails the gate against the template's
+        # untouched 0 (reviewer P2 on the D9 follow-ups).
+        "iso_bargain_element": round(iso, 2),
         "notes": notes,
     }
 

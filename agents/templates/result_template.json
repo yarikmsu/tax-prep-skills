@@ -120,6 +120,8 @@
   "form_6251": {
     "_include_if": "has_iso_exercise flag is true, OR AMT applies, OR a prior-year Form 8801 carryforward exists",
     "note": "AMT (v1: ISO-exerciser path). CA Schedule P NOT computed — see notes.",
+    "iso_bargain_element": 0,
+    "_note_iso_bargain": "Input echo: sum of (box 4 FMV - box 3 strike) x box 5 shares across Form 3921s for shares HELD past year-end (same-year sales are W-2 income, not an AMT adjustment). The A2 tie-out compares the parse ledger's iso_bargain records against this figure.",
     "amti": 0,
     "exemption_allowed": 0,
     "tmt": 0,

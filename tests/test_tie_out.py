@@ -760,3 +760,12 @@ def test_cli_malformed_ledger_errors(tmp_path):
 def test_bad_tolerance_rejected():
     with pytest.raises(T.TieOutError, match="tolerance"):
         T.evaluate([], {}, [], tolerance=float("nan"))
+
+
+def test_iso_bargain_category_registered():
+    """D9 review follow-up: Form 3921 bargain elements tie to the
+    form_6251.iso_bargain_element input echo — a dropped 3921 must fail
+    the gate, not stay invisible as a user assertion."""
+    from agents.lib.tie_out import CATEGORY_TARGETS
+    assert CATEGORY_TARGETS["iso_bargain"] == (
+        "form_6251", ["iso_bargain_element"])
