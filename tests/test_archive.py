@@ -56,10 +56,36 @@ def test_reviews_and_parse_ledger_archived(workspace):
 
 
 def test_refuses_if_archive_exists(workspace):
+    # A real prior archive (has result.json etc.) still refuses.
     (workspace / "archive" / "2024").mkdir(parents=True)
+    (workspace / "archive" / "2024" / "result.json").write_text("{}")
     with pytest.raises(ArchiveError, match="already exists"):
         archive_year(2024, root=workspace)
     # Root untouched
+    assert (workspace / "result.json").exists()
+
+
+def test_merges_alongside_tax_amend_snapshot(workspace):
+    """F3: /tax-amend writes archive/{year}/as_filed/ during the season;
+    the year-end archive must MERGE the final files in alongside it, not
+    refuse."""
+    snap = workspace / "archive" / "2024" / "as_filed"
+    snap.mkdir(parents=True)
+    (snap / "result.json").write_text(json.dumps({"meta": {"tax_year": 2024}}))
+    archive_year(2024, root=workspace)
+    archive = workspace / "archive" / "2024"
+    # Final files moved in; the as-filed snapshot preserved untouched.
+    assert (archive / "result.json").exists()
+    assert (archive / "as_filed" / "result.json").exists()
+    assert not (workspace / "result.json").exists()
+
+
+def test_refuses_if_archive_has_more_than_snapshot(workspace):
+    arch = workspace / "archive" / "2024"
+    (arch / "as_filed").mkdir(parents=True)
+    (arch / "documents").mkdir()  # a non-snapshot child
+    with pytest.raises(ArchiveError, match="more than"):
+        archive_year(2024, root=workspace)
     assert (workspace / "result.json").exists()
 
 

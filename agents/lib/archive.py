@@ -44,15 +44,28 @@ def _validate_year(year) -> int:
 def archive_year(year, root: Path, dry_run: bool = False) -> ArchiveReport:
     """Move TY{year} files from root into root/archive/{year}/.
 
-    Refuses if archive/{year}/ already exists. Refuses if root/result.json
-    has meta.tax_year != year. Refuses if root/result.json missing.
+    Refuses if archive/{year}/ already exists with anything beyond a
+    /tax-amend `as_filed/` snapshot (which it merges alongside). Refuses if
+    root/result.json has meta.tax_year != year. Refuses if root/result.json
+    missing.
     """
     year = _validate_year(year)
     root = Path(root).resolve()
     archive_dir = root / "archive" / str(year)
 
+    # A pre-existing archive/{year}/ normally means the year is already
+    # archived — refuse. The ONE exception is a /tax-amend snapshot: it
+    # writes archive/{year}/as_filed/ during filing season, and the
+    # year-end archive must merge the final (amended) files in ALONGSIDE
+    # that snapshot rather than refuse. Tolerate only when as_filed/ is the
+    # sole child (nothing that would collide with the moved year files).
     if archive_dir.exists():
-        raise ArchiveError(f"{archive_dir} already exists. Move or delete it first.")
+        children = {p.name for p in archive_dir.iterdir()}
+        if children - {"as_filed"}:
+            raise ArchiveError(
+                f"{archive_dir} already exists and contains more than the "
+                f"/tax-amend snapshot ({sorted(children)}). Move or delete "
+                f"it first.")
 
     result_path = root / "result.json"
     if not result_path.exists():
@@ -73,7 +86,7 @@ def archive_year(year, root: Path, dry_run: bool = False) -> ArchiveReport:
             (report.moved if (root / name).exists() else report.skipped).append(name)
         return report
 
-    archive_dir.mkdir(parents=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
     moved_paths: list[tuple[Path, Path]] = []
     try:
         # Track moved paths BEFORE chmod so a chmod failure still rolls the file back

@@ -628,6 +628,29 @@ Build order by persona coverage × error cost:
 - **CORRECTION to the line below:** F1 and F3 were in the Q4 line but
   never shipped when it was first marked complete — F1 ships above;
   F3 (/tax-amend) is the remaining scheduled P1.
+- **F3 (/tax-amend): ✅ shipped.** agents/lib/amend.py: 1040-X
+  three-column engine (columns A/B/C mapped from as-filed vs corrected
+  form_1040 fields; line 16-22 refund-or-owe mechanics with the
+  paid-with-original input; the ledger diff computes Part II — A1's
+  promise made good). Skill: immutable as-filed snapshot to
+  archive/{year}/as_filed/ (refuse overwrite — one live amendment in
+  v1), §6511 refund-claim window + don't-amend-math-errors + wait-for-
+  original-refund timing checks, corrections through the NORMAL
+  parse/compute path with the tie-out gate, MFJ→MFS-after-due-date
+  refusal, carryforward-ripple flag for later filed years, CA
+  Schedule X + §18622 six-month duty. With F1+F2+F3, Epic F and every
+  scheduled roadmap item is SHIPPED.
+  Self-review round (both reviewer agents died on credit exhaustion —
+  reviewed on Opus 4.8 instead): 1040-X line 2 QBI double-count fixed
+  (line 2 = 1040 line 12 std/itemized only, NOT line_14 which includes
+  QBI — the 1−2−4a=5 arithmetic now reconciles), balance-mechanics
+  fields relabeled to official 1040-X line numbers (16 paid-with-
+  original / 17 total payments / 18 original overpayment / 19 net),
+  archive_year now MERGES the year-end cutover alongside a /tax-amend
+  as_filed/ snapshot instead of refusing on the pre-existing
+  archive/{year}/ dir, and the skill instructs superseding a corrected
+  1099 (overwrite same filename or delete the original) so the
+  per-file ledger doesn't double-count. Tests → 1506.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
   sequencing): ALL SHIPPED (E7, H1/H2/H3, D5, F2, E5, D9-review queue).
 
