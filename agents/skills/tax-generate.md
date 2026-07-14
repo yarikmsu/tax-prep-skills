@@ -9,7 +9,8 @@ Generate a formatted PDF summary of the computed tax return.
 
 ## Usage
 ```
-/tax-generate
+/tax-generate                   # summary PDF
+/tax-generate --filing-package  # + the F1 filing package (see below)
 ```
 
 ## Prerequisites
@@ -113,10 +114,76 @@ Report:
 - File size
 - Page count (use pdfplumber to count pages if desired)
 
+### 4.5. Filing package mode (`--filing-package`, F1)
+
+When invoked with `--filing-package`, ALSO produce
+`Tax_Return_{year}_Filing_Package.pdf` (chmod 600). **This is NOT an
+e-file artifact** — no MeF submission, no Form 8879; say so on page 1 of
+the package in the same banner style as the Scope & Limitations box. The
+package has four parts:
+
+1. **Assembly order + attachment checklist** — computed, never
+   hand-enumerated:
+   ```bash
+   python3 -m agents.lib.filing_package --result result.json --workspace .
+   ```
+   Render its table (Form 1040 first, then every present form by its
+   official Attachment Sequence No., state forms last) and its checklist
+   (signature, W-2 Copy B, withholding-only 1099 rule, Form 8949/1040-V/
+   CA-540/FBAR conditionals) verbatim into the PDF. Spot-check the
+   sequence numbers against the filing year's official forms (they are
+   printed in each form's top-right corner and can change).
+2. **Line-numbered form pages** — for each section in the assembly order,
+   print the section's fields labeled with the OFFICIAL line numbers (the
+   result.json field names encode them: `line_9_total_income` → "Line 9").
+   Order lines numerically per form. Fields with no `line_` prefix print
+   under a "supporting detail" subheading after the numbered lines.
+   Schedules 1/2/3/B/SE/8812 appear in the assembly order as DERIVED rows
+   (the module infers them from computed fields) — print their lines from
+   the source fields with a note naming the schedule and line (Schedule 2
+   line 1 AMT, Schedule 3 line 3 education credits, Schedule 3 line 11
+   excess SS, Schedule B Parts I/II from interest_detail/dividend_detail,
+   Schedule SE from schedule_c.se_tax, Schedule 8812 from line_19_ctc/
+   line 28).
+   **Field-name ≠ official-line caveats (print ON the affected page — a
+   filer transcribing by our labels would put figures on the wrong
+   official lines):**
+   - Schedule D: `line_1c_1099b_box_c` is NOT official line 1c (Box C
+     rows go on line 3); `line_11_1099b`/`line_12_not_reported` do NOT
+     match official lines 11/12 (those are 4797/K-1 lines) — label these
+     rows "internal name — place per the Schedule D instructions".
+   - Form 8889: `line_14c_qualified_medical` and
+     `line_15_taxable_distributions` don't match official 14c/15
+     (official 15 = unreimbursed qualified medical; taxable = 16).
+   - Form 1040: `line_13a_qbi_deduction` prints as "Line 13" (no 13a on
+     the current form).
+   - California 540: the section has NO `line_` prefixes — render it as a
+     values table WITHOUT line labels and point to the 540 instructions
+     for line placement.
+3. **Transfer mapping** — one table: each package form → where it is
+   entered in tax software (generic area names: "Income → Wages (W-2)",
+   "Deductions & Credits → Education", "Other Tax Situations → AMT"...).
+   Do NOT name a specific vendor's menu paths as authoritative — label the
+   column "typical software section".
+4. **Sign-and-file page** — paper-filing steps (sign/date both spouses,
+   assemble in sequence order, mail to the address for the taxpayer's
+   state + payment/no-payment variant — instruct the user to CONFIRM the
+   current IRS mailing address on irs.gov, addresses change). **The CA
+   return is a SEPARATE envelope to the FTB** (payment vs refund PO boxes
+   differ — confirm on ftb.ca.gov), with the checklist's federal-copy and
+   payment mechanics. E-file alternative (Free File / software using the
+   transfer mapping), and the FBAR reminder exactly as the checklist
+   words it (three-way: files-separately / determination-PENDING /
+   no-signals — never a categorical all-clear).
+
+The summary PDF from step 3 is unchanged — the package is an ADDITIONAL
+artifact.
+
 ### 5. Summary
 
 Print:
-- PDF generated successfully at {path}
+- PDF generated successfully at {path} (+ the filing package path when
+  `--filing-package` was used)
 - {N} pages
 - Sections included: {list of forms/sections in the PDF}
 - Suggested next step: `/tax-verify <software-return.pdf>` to cross-check against tax software

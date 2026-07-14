@@ -604,6 +604,30 @@ Build order by persona coverage × error cost:
   gaps (sdi_withheld and ss_tips were registered but undocumented, so
   their ties never fired). With this, the
   ENTIRE next tier is shipped.
+- **F1 (filing package): ✅ shipped.** /tax-generate --filing-package:
+  agents/lib/filing_package.py computes the paper-assembly order (Form
+  1040 first, then present forms by official Attachment Sequence No. —
+  12 before 12A before 19 — state forms last; template scaffolding
+  never generates a phantom attachment line) + the attachment
+  checklist (signature, W-2 Copy B, withholding-only 1099 rule,
+  8949/1040-V/CA-540/FBAR-files-separately conditionals). The skill
+  renders four package parts: assembly+checklist, line-numbered form
+  pages from the result.json field names, a vendor-neutral software
+  transfer mapping, and a sign-and-file page. NOT an e-file artifact
+  (no MeF, no 8879) — page-1 banner says so. Two-reviewer round (EA
+  filing-practice + code/contract, 3 P1 + 12 P2): DERIVED Schedule
+  1/2/3/B/SE/8812 rows added (the package listed an unfilable envelope
+  for a Schedule C return), FBAR three-way gating (absence of the
+  section is not an all-clear — ~$10K/violation), Schedule D/8889/540
+  field-name≠official-line transcription caveats printed on the
+  affected pages, compute-evidence guard (parse-stage data can't
+  package), CA separate envelope + FTB payment mechanics + federal-
+  copy bright line, 8949 dual-exception wording, per-individual 8606,
+  refund 35b-d + 1040-V mechanics + next-year voucher cross-ref,
+  full-table ordering pin + digit-guard. Tests → 1492.
+- **CORRECTION to the line below:** F1 and F3 were in the Q4 line but
+  never shipped when it was first marked complete — F1 ships above;
+  F3 (/tax-amend) is the remaining scheduled P1.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
   sequencing): ALL SHIPPED (E7, H1/H2/H3, D5, F2, E5, D9-review queue).
 
