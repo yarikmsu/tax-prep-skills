@@ -68,6 +68,11 @@ The generator:
   out the September gap so the federal Q3 reminder isn't mistaken for a CA
   deadline, and notes the R&TC §19136.3 high-income rule (CA AGI ≥ $1M /
   $500K MFS → 90%-of-current-year only) and mandatory e-pay (R&TC §19011.5)
+- Emits 2 **extension** events when `flags.filed_extension` is true (set by
+  `/tax-extend`, never by the interview): April 15 of `{year}+1` (Form 4868 +
+  payment due — the extension extends FILING, not PAYMENT; CA residents get
+  the FTB 3519 payment-only note) and October 15 of `{year}+1` (extended
+  filing deadline)
 - Emits 2 events for FBAR (statutory Apr 15 and auto-extended Oct 15) when
   `flags.has_foreign_accounts` is true. Dates are in `{year}+1` because FBAR
   reports the prior calendar year

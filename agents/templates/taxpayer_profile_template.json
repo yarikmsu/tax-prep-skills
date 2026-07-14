@@ -74,6 +74,8 @@
     "has_pre2019_alimony": false,
     "has_post2018_alimony": false,
     "has_adoption_expenses": false,
+    "filed_extension": false,
+    "_comment_filed_extension": "Set by /tax-extend (not the interview). Drives the Apr-15 pay-by + Oct-15 extended-deadline events in tax_calendar_{year}.ics.",
     "moved_states_this_year": false,
     "nyc_resident": false,
     "has_household_employees": false,

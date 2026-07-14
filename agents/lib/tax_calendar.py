@@ -3,7 +3,9 @@
 
 Generates an RFC 5545 iCalendar (.ics) file with year-specific tax deadlines:
 1040-ES quarterly estimated-tax payments, CA 540-ES installments for CA
-residents (30%/40%/0%/30% weighting — NO September payment; E7), FBAR (with
+residents (30%/40%/0%/30% weighting — NO September payment; E7), extension
+deadlines when `flags.filed_extension` is set by /tax-extend (Form 4868
+April pay-by + October extended filing, F2), FBAR (with
 auto-extension), required minimum distributions for taxpayers flagged
 `subject_to_rmd_*` (RMD start age is birth-year-cohort-dependent under
 SECURE 2.0; the user asserts it rather than the calendar deriving it from
@@ -58,7 +60,8 @@ class CalendarError(Exception):
 # event-shape compatibility — bump when adding new categories or breaking the
 # UID slug format so calendar apps treat the file as a new feed.
 # v2: added the state_estimated_tax category (CA 540-ES events, E7).
-_PRODID = "-//tax-prep-skills//tax-calendar v2//EN"
+# v3: added the extension category (/tax-extend, F2).
+_PRODID = "-//tax-prep-skills//tax-calendar v3//EN"
 _UID_NAMESPACE = "tax-prep-skills"
 _PTET_STATES = {"CA", "NY", "NJ"}
 # Per-state effective tax-year windows for the PTE elective tax regime.
@@ -74,7 +77,7 @@ _PTET_WINDOWS = {
     "NJ": (2020, None),
 }
 _VALID_CATEGORIES = frozenset({"federal_estimated_tax", "state_estimated_tax",
-                               "fbar", "rmd", "ptet", "note"})
+                               "extension", "fbar", "rmd", "ptet", "note"})
 _MIN_YEAR = 2000
 _MAX_YEAR = 2099
 
@@ -88,7 +91,7 @@ _STATE_CODE_RE = re.compile(r"^[A-Z]{2}$")
 _UID_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 Category = Literal["federal_estimated_tax", "state_estimated_tax",
-                   "fbar", "rmd", "ptet", "note"]
+                   "extension", "fbar", "rmd", "ptet", "note"]
 
 # Categories that carry a per-quarter label (Q1..Q4).
 _ESTIMATED_TAX_CATEGORIES = frozenset({"federal_estimated_tax",
@@ -338,6 +341,60 @@ def events_ca_es(tax_year: int) -> list[CalendarEvent]:
             quarter_label=label,
         ))
     return out
+
+
+def events_extension(tax_year: int, *, state: "str | None" = None) -> list[CalendarEvent]:
+    """Extension deadlines for a taxpayer who filed (or will file) Form 4868.
+
+    Both events land in {tax_year + 1} — the filing season for tax_year.
+    The April event is the one that matters financially: the extension
+    extends the time to FILE, never the time to PAY — unpaid tax accrues
+    interest plus the 0.5%/month late-payment penalty from April 15 even
+    with a valid extension. For CA residents the April description carries
+    the FTB 3519 nuance: CA's extension is AUTOMATIC (no form), but any CA
+    balance due must be PAID by April 15 via FTB 3519 / Web Pay.
+    """
+    _validate_tax_year(tax_year)
+    filing_year = tax_year + 1
+    ca = (state == "CA")
+    apr_desc = (
+        f"Form 4868 for tax year {tax_year} must be filed AND the estimated "
+        f"balance due PAID by this date — the extension extends the time to "
+        f"file, NOT the time to pay; unpaid tax accrues interest plus the "
+        f"0.5%/month late-payment penalty from today even with a valid "
+        f"extension. Pay via IRS Direct Pay/EFTPS (an extension payment "
+        f"marked 'Form 4868' files the extension automatically)."
+    )
+    if ca:
+        apr_desc += (
+            " California: the state extension is AUTOMATIC — no form — but "
+            "any CA balance due must be paid TODAY via FTB Form 3519 (Web "
+            "Pay; mandatory e-pay may apply per R&TC §19011.5)."
+        )
+    oct_desc = (
+        f"Extended filing deadline for the tax year {tax_year} return "
+        f"(federal Form 1040{' and CA Form 540' if ca else ''}). No further "
+        f"extension is available — file by today; with a valid extension "
+        f"the late-FILING penalty (5%/month, up to 25%, offset by any "
+        f"concurrent 0.5% late-payment penalty per §6651(c)(1)) BEGINS "
+        f"after this date."
+    )
+    return [
+        CalendarEvent(
+            uid=f"extension-pay-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"Form 4868 + extension payment due (TY{tax_year})",
+            date=datetime.date(filing_year, 4, 15),
+            description=apr_desc,
+            category="extension",
+        ),
+        CalendarEvent(
+            uid=f"extension-file-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"EXTENDED filing deadline (TY{tax_year})",
+            date=datetime.date(filing_year, 10, 15),
+            description=oct_desc,
+            category="extension",
+        ),
+    ]
 
 
 def events_fbar(tax_year: int) -> list[CalendarEvent]:
@@ -747,8 +804,15 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
     events: list[CalendarEvent] = []
     events.extend(events_1040es(tax_year))
 
-    if _strict_state_str(address, "state") == "CA":
+    resident_state = _strict_state_str(address, "state")
+    if resident_state == "CA":
         events.extend(events_ca_es(tax_year))
+
+    # /tax-extend sets flags.filed_extension when the taxpayer extends —
+    # the regenerated calendar then carries the April pay-by date and the
+    # October extended filing deadline (both in tax_year + 1).
+    if _strict_bool(flags, "filed_extension"):
+        events.extend(events_extension(tax_year, state=resident_state))
 
     # Signature authority over someone else's foreign account (an employer's,
     # a parent's) triggers FBAR Part IV even with no financial interest — a

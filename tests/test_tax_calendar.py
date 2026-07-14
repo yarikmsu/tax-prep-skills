@@ -601,6 +601,7 @@ def test_build_events_uids_unique_across_all_categories():
     p["flags"]["subject_to_rmd_primary"] = True
     p["flags"]["subject_to_rmd_spouse"] = True
     p["flags"]["has_k1_income"] = True
+    p["flags"]["filed_extension"] = True  # extension-file vs fbar-extended share Oct 15
     p["address"]["state"] = "CA"
     events = cal.build_events(p, 2026)
     uids = [e.uid for e in events]
@@ -1640,11 +1641,11 @@ def test_quarter_label_required_on_state_estimated_tax():
             description="d", category="state_estimated_tax")
 
 
-def test_ca_es_events_serialize_with_category_and_v2_prodid():
+def test_ca_es_events_serialize_with_category_and_current_prodid():
     p = _profile(address={"state": "CA"})
     ics = cal.to_ics(cal.build_events(p, 2026))
     assert "CATEGORIES:STATE_ESTIMATED_TAX" in ics
-    assert "tax-calendar v2" in ics
+    assert "tax-calendar v3" in ics  # v3: extension category (F2)
 
 
 def test_build_events_ca_resident_uids_unique_against_federal():
@@ -1675,3 +1676,53 @@ def test_build_events_non_usps_two_letter_code_hard_errors():
     for bad in ("ZZ", "BC", "CN"):
         with pytest.raises(cal.CalendarError):
             cal.build_events(_profile(address={"state": bad}), 2026)
+
+
+# ---------------------------------------------------------------------------
+# Extension events (F2 — /tax-extend sets flags.filed_extension)
+# ---------------------------------------------------------------------------
+
+def test_events_extension_dates_land_in_filing_year():
+    events = cal.events_extension(2026)
+    assert [e.date for e in events] == [
+        datetime.date(2027, 4, 15),   # 4868 + payment due
+        datetime.date(2027, 10, 15),  # extended filing deadline
+    ]
+    for e in events:
+        assert e.category == "extension"
+
+
+def test_events_extension_pay_by_language_and_ca_3519():
+    apr = cal.events_extension(2026)[0]
+    assert "NOT the time to pay" in apr.description
+    assert "3519" not in apr.description  # non-CA: no FTB nuance
+    apr_ca = cal.events_extension(2026, state="CA")[0]
+    assert "FTB Form 3519" in apr_ca.description
+    assert "AUTOMATIC" in apr_ca.description
+    oct_ca = cal.events_extension(2026, state="CA")[1]
+    assert "CA Form 540" in oct_ca.description
+
+
+def test_build_events_extension_gated_on_flag():
+    p = _profile()
+    assert not [e for e in cal.build_events(p, 2026)
+                if e.category == "extension"]
+    p2 = _profile(flags={"filed_extension": True})
+    ext = [e for e in cal.build_events(p2, 2026) if e.category == "extension"]
+    assert len(ext) == 2
+    # CA resident's April event carries the FTB 3519 nuance end-to-end.
+    p3 = _profile(address={"state": "CA"}, flags={"filed_extension": True})
+    ext_ca = [e for e in cal.build_events(p3, 2026)
+              if e.category == "extension"]
+    assert any("FTB Form 3519" in e.description for e in ext_ca)
+
+
+def test_build_events_extension_flag_strict_bool():
+    with pytest.raises(cal.CalendarError):
+        cal.build_events(_profile(flags={"filed_extension": "yes"}), 2026)
+
+
+def test_extension_events_serialize_with_category():
+    p = _profile(flags={"filed_extension": True})
+    ics = cal.to_ics(cal.build_events(p, 2026))
+    assert "CATEGORIES:EXTENSION" in ics

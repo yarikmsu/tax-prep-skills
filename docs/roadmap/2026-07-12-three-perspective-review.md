@@ -540,8 +540,24 @@ Build order by persona coverage × error cost:
   1098-T + eligibility facts; education_credits capability note now says
   COMPUTED from asserted facts (Pub 970 scholarship netting stays the
   caller's worksheet). Review round (no P1 — tier math/phase-outs/QSS/refundable-before-limit all verified exact; 5 P2 caveat gaps fixed: §25A(f)(1) dependent-claimant screening, 2441 in the Credit Limit Worksheet, LLC course-materials rule, 4-lifetime-years elective note, full line-7 §25A(i)(5) conditions). Codex round (5 P2): no-TIN students omitted entirely (not LLC-pooled), CLW enumerates Schedule 3 lines 1/2/6d/6l, line-7 age/support branches (<18 unconditional; 18 and 19-23 strict less-than-half support), 529 no-double-benefit reserves the FULL distribution-allocated expenses (not just earnings) with the taxable-earnings election surfaced, form_1040.line_29_refundable_aotc field added so the refundable payment is auditable. Tests → 1461.
+- **F2 (/tax-extend): ✅ shipped.** New skill: balance-due estimate
+  ladder (computed result.json line 37 → /tax-project balance → user
+  estimate, each rung labeled), 10% cushion recommendation via the
+  90%-paid late-payment waiver, pay-electronically-IS-filing, the
+  extends-filing-not-payment fact carried everywhere, what the
+  extension does NOT move (IRA/HSA, Q1 1040-ES — but SEP/solo-401k
+  employer contributions DO follow it), CA automatic + FTB 3519
+  payment-only + §19011.5. tax_calendar.py gains the extension
+  category (Apr 15 + Oct 15 of year+1, CA 3519 nuance in the April
+  event, PRODID v3) gated on the skill-set flags.filed_extension.
+  Review round (4 P2): §6651(c)(1) FTF/FTP offset (combined 5%, not
+  5.5%) + >60-day minimum FTF penalty, the Treas. Reg. §1.6081-4
+  properly-estimated-liability requirement (a lowball estimate can
+  retroactively VOID the extension — Crocker), 'begins' not 'resumes'
+  for the post-Oct-15 FTF clock, calendar docs + all-categories UID
+  test updated for the new category. Tests → 1466.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
-  sequencing): F2 (/tax-extend), E5
+  sequencing): E5
   (state contributor playbook). Also
   queued from the D9 review: Form 3921 extraction in /tax-parse (the ISO
   bargain element is currently user-asserted and invisible to the A1/A2
