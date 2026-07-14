@@ -2,7 +2,7 @@
 
 Reusable, taxpayer-agnostic tax preparation toolkit for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Provides `/tax-*` slash commands that guide Claude through the full US federal + state return pipeline — from document parsing through IRS-perspective review.
 
-Works for any filing status and any tax year. **State support is California-first:** the CA Form 540 is computed in depth (Schedule CA adjustments, exemption credits, mental-health surcharge); other states get a bracket-based estimate only, and NYC, part-year-resident, and nonresident returns are not modeled. The skills are state-parameterized, so adding another state is a well-scoped contribution — PRs welcome.
+Works for any filing status and any tax year. **State support is California-first:** the CA Form 540 is computed in depth (Schedule CA adjustments, exemption credits, mental-health surcharge); other states get a bracket-based estimate only, and NYC, part-year-resident, and nonresident returns are not modeled. The skills are state-parameterized, so adding another state is a well-scoped contribution — see the [state-module playbook](docs/contributing/state-module-playbook.md) for the pattern (fetched-law block, result section, compute functions, registrations, tests). PRs welcome.
 
 > **This toolkit handles sensitive financial data.** All taxpayer information stays local on your machine. Full SSNs are never stored — only the last 4 digits. Pre-commit hooks block accidental commits of sensitive files. See [Security & Privacy](#security--privacy) for details.
 

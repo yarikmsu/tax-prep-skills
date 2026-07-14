@@ -581,9 +581,31 @@ Build order by persona coverage × error cost:
   intake probe, and compute_form_6251 now ECHOES iso_bargain_element
   in its return dict so the copy-the-result flow can't false-fail the
   tie-out against the template's 0. Tests → 1473.
+- **E5 (state contributor playbook): ✅ shipped.**
+  `docs/contributing/state-module-playbook.md` — the worked CA pattern
+  as a 90-minute recipe: state questionnaire (the 12 CA sharp edges as
+  questions), fetched-law block, result-section conventions (all-zero
+  scaffold rule + computed-evidence field), rates-parameterized compute
+  functions with the bias taxonomy, the step-10 branch, the
+  enumeration-registration checklist (projection/yoy/tie-out/
+  capabilities/nonconformity sets/calendar/extend), test requirements,
+  honesty surfaces, and explicit non-goals (part-year stays gated).
+  Plus `docs/superpowers/specs/TEMPLATE-state-module.md` fill-in spec.
+  README + CLAUDE.md truth-in-labeling now link it. Two-reviewer round (accuracy lens + NY-contributor dry-run, 2 P1 +
+  11 P2): the producer/consumer pairing rule (tie-out category + the
+  tax-parse.md table row are BOTH halves; /tax-setup fetch bullets per
+  fetched field), YoY not auto-generic, per-section STATE_MOVER_FIELDS
+  restructure + OPTIONAL_SECTIONS, both _PTET_STATES copies, evidence-
+  pair concreteness, existing-stub/_SKIP_KEYS warning, Q13 recapture
+  (NY §601(d-1)), withholding-has-no-generic-path truth, input-
+  collection step, 90-minute claim scoped, §17043 citation added to the
+  named precedent. NEW doc-sync test binds every tie-out category to
+  the tax-parse.md table — and immediately caught two REAL pre-existing
+  gaps (sdi_withheld and ss_tips were registered but undocumented, so
+  their ties never fired). With this, the
+  ENTIRE next tier is shipped.
 - **Roadmap Q3+Q4 sequencing COMPLETE.** Next tier ("next year" per
-  sequencing): E5
-  (state contributor playbook). The D9-review queue (Form 3921 parse, 6251 negative-TI) is done.
+  sequencing): ALL SHIPPED (E7, H1/H2/H3, D5, F2, E5, D9-review queue).
 
 ### Decisions log
 

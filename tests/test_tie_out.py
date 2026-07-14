@@ -769,3 +769,20 @@ def test_iso_bargain_category_registered():
     from agents.lib.tie_out import CATEGORY_TARGETS
     assert CATEGORY_TARGETS["iso_bargain"] == (
         "form_6251", ["iso_bargain_element"])
+
+
+def test_every_category_documented_in_tax_parse_skill():
+    """E5-review P1 enforcement: the tie-out only checks categories the
+    ledger EMITS, and parse subagents learn categories from tax-parse.md's
+    step-6.5 table — a category registered in CATEGORY_TARGETS but absent
+    from the skill doc is dead protection (the gate passes vacuously).
+    Mirrors the capabilities interview-asks-it grep test."""
+    from pathlib import Path
+    from agents.lib.tie_out import CATEGORY_TARGETS, _INFORMATIONAL
+    skill = (Path(__file__).resolve().parent.parent
+             / "agents/skills/tax-parse.md").read_text()
+    for cat in sorted(set(CATEGORY_TARGETS) | set(_INFORMATIONAL)):
+        assert f"`{cat}`" in skill, (
+            f"tie-out category {cat!r} is registered but never documented "
+            f"in agents/skills/tax-parse.md — parse subagents can't emit "
+            f"it, so the tie never fires (register both halves or neither)")

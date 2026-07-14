@@ -270,7 +270,7 @@ Rules:
   |---|---|
   | W-2 box 1 | `wages` |
   | W-2 box 2 | `federal_withholding_w2` |
-  | W-2 box 3 (+7 tips) / box 5 | `ss_wages` / `medicare_wages` (informational) |
+  | W-2 box 3 / box 7 / box 5 | `ss_wages` / `ss_tips` / `medicare_wages` (informational — box 7 social-security tips are their own category, not folded into box 3) |
   | W-2 box 17 (CA) | `state_withholding_ca` |
   | 1099-INT box 1 (+3) | `taxable_interest`; box 8 → `tax_exempt_interest` |
   | 1099-DIV box 1a / 1b | `ordinary_dividends` / `qualified_dividends` |
@@ -285,6 +285,7 @@ Rules:
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
   | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
+  | W-2 box 14 SDI/CASDI (per person, summed across employers) | `sdi_withheld` (→ `california_540.ca_sdi_box14` — feeds the pre-TY2024 excess-SDI credit; TY2024+ has no wage cap but the figure still ties out) |
   | Form 3921 (box 4 FMV − box 3 strike) × box 5 shares | `iso_bargain` (→ the `form_6251.iso_bargain_element` input echo — the AMT adjustment). **Only exercises whose shares were HELD past year-end**: a same-year sale (disqualifying disposition) is ordinary W-2 income, NOT an AMT adjustment — record those 3921s as `"skipped": "disqualifying disposition — W-2 ordinary income"` and confirm the W-2 includes that income (the full spread, or sale price − strike if sold below exercise-date FMV in an arm's-length sale — §422(c)(2)). **Partial same-year sale of one exercise: prorate — record (box 4 − box 3) × only the shares HELD.** **Underwater/zero-spread exercise (box 4 ≤ box 3): no AMT adjustment.** **The ledger is per-FILE (one record per PDF, skip XOR key_boxes):** use a `"skipped"` record ONLY when NO exercise in the file produced an adjustment (all sold same-year / all underwater); for a MIXED file, emit ONE non-skipped record whose `iso_bargain` sums only the held, in-the-money exercises, and document the excluded exercises (+ the W-2-inclusion confirmation) in answers.md — a negative or per-exercise-split record hard-errors the whole ledger. ASK the user which lots were held vs sold (record in answers.md). Caveat: box 4 measures the adjustment for VESTED shares (or with an §83(b) election) — an early-exercise of unvested shares without 83(b) is measured at vesting instead (rare; flag it). |
 - `person` is `primary`/`spouse`/`joint` (per-person credits need it).
 - Set `"foreign": true` on every record from a FOREIGN institution (foreign
