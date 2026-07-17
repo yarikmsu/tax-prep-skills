@@ -115,6 +115,8 @@ the only cluster where the engine currently *does* — for the year being planne
 
 ### EPIC I — TY2026 law readiness — **P0**
 
+> Requirements spec: `docs/superpowers/specs/2026-07-17-ty2026-obbba-readiness-design.md`
+
 > As a TY2026 planner (and a TY2025 filer who claimed tips/overtime/car-loan), I want
 > the OBBBA provisions that first bite now to be computed, capped, and phased out —
 > not hand-waved above the line.
@@ -148,6 +150,8 @@ the only cluster where the engine currently *does* — for the year being planne
   1-A treatment and recommend amendment where material.
 
 ### EPIC J — Equity-comp depth — **P1** (in-persona)
+
+> Requirements spec: `docs/superpowers/specs/2026-07-17-equity-comp-basis-design.md`
 
 > As a CA W-2 + equity-comp filer, I want my RSU/ESPP sales to stop double-taxing my
 > W-2 income.
