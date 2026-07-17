@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is
-Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/tax-*` skills that guide Claude through the full US federal + state return pipeline — from document parsing through IRS review. Works for any filing status and any tax year. **State support is California-first** (2026-07-12 product decision): CA Form 540 is computed in depth; other states are bracket-estimate only; NYC / part-year / nonresident returns are not modeled. Other-state depth is community-contribution territory — see the state-module playbook at `docs/contributing/state-module-playbook.md` (spec template: `docs/superpowers/specs/TEMPLATE-state-module.md`) and the roadmap (`docs/roadmap/2026-07-12-three-perspective-review.md`).
+Reusable, taxpayer-agnostic tax preparation toolkit for Claude Code. Provides `/tax-*` skills that guide Claude through the full US federal + state return pipeline — from document parsing through IRS review. Works for any filing status and any tax year. **State support is California-first** (2026-07-12 product decision): CA Form 540 is computed in depth; other states are bracket-estimate only; NYC / part-year / nonresident returns are not modeled. Other-state depth is community-contribution territory — see the state-module playbook at `docs/contributing/state-module-playbook.md` (spec template: `docs/superpowers/specs/TEMPLATE-state-module.md`) and the roadmap (`docs/roadmap/2026-07-12-three-perspective-review.md`; active backlog: `docs/roadmap/2026-07-17-product-owner-review.md` — TY2026 OBBBA readiness Epic I, equity-comp Epic J, integrity Epic K).
 
 ## Architecture
 

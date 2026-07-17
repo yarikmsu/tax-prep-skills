@@ -1,5 +1,9 @@
 # Three-Perspective Review + Product Requirements — 2026-07-12
 
+> **Successor:** every scheduled item below is shipped (PRs #27–#42). The active
+> backlog is now `2026-07-17-product-owner-review.md` (TY2026 OBBBA readiness,
+> equity-comp depth, integrity round-out).
+
 Source: multi-perspective review (CPA, Enrolled Agent, IRS compliance officer) conducted
 2026-07-12 by three parallel review agents over the full codebase, followed by a
 verification pass on every engine-defect claim (file:line checked against source), then
