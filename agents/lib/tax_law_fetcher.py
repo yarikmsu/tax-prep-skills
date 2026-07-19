@@ -253,6 +253,33 @@ def create_empty_tax_law(year: int) -> dict:
                 "exemption": {"single": None, "mfj": None, "mfs": None},
                 "phaseout_start": {"single": None, "mfj": None, "mfs": None},
                 "rate_28_breakpoint": None,
+                # §55(d)(3) exemption phase-out rate. Ships None: the statutory
+                # schedule (25% ≤TY2025, 50% TY2026+ per OBBBA §70107) is
+                # built into compute_form_6251, so None is VALID (do NOT nag —
+                # the salt_cap freshness treatment). Fetch only to OVERRIDE the
+                # built-in schedule; a corrupt value (non-fraction) hard-errors.
+                "phaseout_rate": None,
+            },
+            # OBBBA Schedule 1-A deductions (I2) — tips (§224), overtime
+            # premium (§225), car-loan interest (§70203), enhanced senior
+            # (§70103). ALL indexed → fetched; the phase-out MECHANICS
+            # ($100/$1,000, $200/$1,000, 6%) are structural constants in
+            # compute_schedule_1a. Ships all-None: these are OPT-IN per
+            # taxpayer, so a null block is the DEFAULT (freshness does not nag —
+            # the phaseout_rate/underpayment_rates precedent); the engine
+            # hard-errors at the point of use when a taxpayer actually has one
+            # of these items but the corresponding figure is unfetched.
+            # tips_cap / car_loan_cap / senior_amount_per_person are scalars;
+            # overtime_cap and the three phase-out thresholds are keyed
+            # single/mfj (MFJ/QSS→mfj, else→single; MFS is gated to $0).
+            "schedule_1a": {
+                "tips_cap": None,
+                "overtime_cap": {"single": None, "mfj": None},
+                "car_loan_cap": None,
+                "senior_amount_per_person": None,
+                "tips_overtime_phaseout_start": {"single": None, "mfj": None},
+                "car_loan_phaseout_start": {"single": None, "mfj": None},
+                "senior_phaseout_start": {"single": None, "mfj": None},
             },
         },
         "state": {},  # Populated per-state by /tax-setup
@@ -408,6 +435,24 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 # precedent). /tax-compute step 9.5 prompts the fetch when a
                 # penalty actually applies.
                 if k == "underpayment_rates" and isinstance(v, list) and not v:
+                    continue
+                # federal.amt.phaseout_rate legitimately stays None: the
+                # §55(d)(3) statutory schedule (25%/50% at TY2026 per §70107)
+                # is built into compute_form_6251, so a null here is the
+                # DEFAULT, not a gap — it's fetched only to OVERRIDE. Flagging
+                # it would nag INCOMPLETE forever (the underpayment_rates /
+                # sdi_wage_limit precedent). A non-null corrupt value still
+                # hard-errors at compute time (_resolve_amt_phaseout_rate).
+                if k == "phaseout_rate" and v is None:
+                    continue
+                # federal.schedule_1a is OPT-IN per taxpayer (tips/overtime/
+                # car-loan/senior) — a null block is the DEFAULT, not a gap.
+                # compute_schedule_1a hard-errors at the point of use when a
+                # taxpayer actually has one of these items with an unfetched
+                # figure, so nagging INCOMPLETE here for every return is wrong
+                # (the phaseout_rate/underpayment_rates precedent). Skip the
+                # whole subtree.
+                if k == "schedule_1a" and isinstance(v, dict):
                     continue
                 child_path = f"{path}.{k}" if path else k
                 if v is None:

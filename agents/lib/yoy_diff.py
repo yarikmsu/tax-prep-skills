@@ -73,6 +73,8 @@ LINE_MOVER_FIELDS: list[tuple[str, str]] = [
     ("Schedule 1 other income (line 8)", "form_1040.line_8_schedule1_other"),
     ("Adjustments (1040 line 10)", "form_1040.line_10_adjustments"),
     ("QBI deduction (1040 line 13a)", "form_1040.line_13a_qbi_deduction"),
+    ("Schedule 1-A deductions (1040 line 13b)",
+     "form_1040.line_13b_schedule_1a_deductions"),
     ("Tax (1040 line 16)", "form_1040.line_16_tax"),
     ("Child Tax Credit (1040 line 19)", "form_1040.line_19_ctc"),
     ("Other taxes (1040 line 23)", "form_1040.line_23_other_taxes"),

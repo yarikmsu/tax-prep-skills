@@ -103,6 +103,16 @@ def test_line_movers_threshold_filters():
     assert "Schedule C net" in labels              # 0 -> 12000
 
 
+def test_line_movers_names_schedule_1a_driver():
+    """Codex round-3 P3: a taxpayer newly claiming Schedule 1-A (line 13b)
+    should see it named as a YoY driver, not just an unexplained taxable-income
+    move."""
+    prior, current = _prior(), _current()
+    current["form_1040"]["line_13b_schedule_1a_deductions"] = 18000
+    movers = compute_line_movers(prior, current, threshold=1000)
+    assert any("line 13b" in m.label for m in movers)
+
+
 def test_line_movers_sorted_by_abs_delta_desc():
     movers = compute_line_movers(_prior(), _current(), threshold=1000)
     deltas = [abs(m.delta) for m in movers]

@@ -55,6 +55,8 @@
     "line_11_agi": 0,
     "line_12_standard_deduction": 0,
     "line_13a_qbi_deduction": 0,
+    "line_13b_schedule_1a_deductions": 0,
+    "_note_line_13b": "OBBBA Schedule 1-A total (tips + overtime premium + car-loan interest + enhanced senior), a BELOW-AGI deduction. Line 14 = 12 + 13a + 13b. Never in line 10 (would wrongly cut AGI). See the schedule_1a section.",
     "line_14_total_deductions": 0,
     "line_15_taxable_income": 0,
     "line_16_tax": 0,
@@ -82,6 +84,20 @@
   },
 
   "_optional_sections_below": "Include only if applicable to this taxpayer. Remove sections that don't apply.",
+
+  "schedule_1a": {
+    "_include_if": "compute_schedule_1a ran and total > 0 (any of tips/overtime-premium/car-loan/senior allowed) — TY2025-2028 only (OBBBA)",
+    "note": "OBBBA Schedule 1-A deductions, BELOW AGI (line 13b). Copy compute_schedule_1a's NESTED per-provision objects here VERBATIM (each carries allowed / disallowed_by_cap / disallowed_by_phaseout) and ALSO record the raw input amount + magi, so the Schedule 1-A worksheet (lines 4-38) can be reconstructed/audited from result.json — not just the allowed totals. total → form_1040.line_13b_schedule_1a_deductions; senior.allowed → form_6251.senior_deduction (AMT addback). NOT in line 10 — these do not reduce AGI or any MAGI-gated computation.",
+    "magi": 0,
+    "tips": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},
+    "overtime": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},
+    "car_loan": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},
+    "senior": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},
+    "car_loan_detail": [],
+    "_note_car_loan_detail": "Schedule 1-A Part IV per-vehicle rows when car_loan.allowed > 0: [{vin, interest_paid, business_deducted}]. The car_loan_interest passed to compute_schedule_1a must be the PERSONAL-use portion NET of any vehicle interest already deducted on Schedule C/E/F (business_deducted) — passing gross double-deducts the business share and understates tax. /tax-generate --filing-package reads this for the Part IV detail.",
+    "total": 0,
+    "notes": []
+  },
 
   "schedule_a": {
     "_include_if": "compute_schedule_a ran and use_itemized is true (or the election was close enough to document — within $500)",

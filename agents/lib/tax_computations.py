@@ -1820,12 +1820,319 @@ def compute_ca_itemized(
     return out
 
 
-# Form 6251 structural statutory constants (§55): the two AMT rates and the
-# 25% exemption phase-out rate are fixed; the exemption amounts, phase-out
-# starts, and the 26%→28% breakpoint are INDEXED and come from federal.amt.
+# Schedule 1-A structural statutory constants (OBBBA). Amounts (caps, senior
+# per-person figure) and phase-out THRESHOLDS are INDEXED and come from the
+# fetched federal.schedule_1a block — never hardcoded. Only the phase-out
+# MECHANICS are bill-fixed and coded here. NOTE the rounding differs by
+# provision (see _sch1a_per1000_phaseout):
+#   §224 tips / §225 overtime: reduced by $100 for each WHOLE $1,000 of MAGI
+#     over the threshold — the statute (§224(b)(2)(A)/§225) has NO "or fraction
+#     thereof", so the excess/$1,000 is rounded DOWN (floor).
+#   §70203 car-loan interest: reduced by $200 for each $1,000 "or fraction
+#     thereof" — Schedule 1-A Part IV line 27 rounds UP (ceil).
+#   §70103 senior: reduced by 6% of MAGI over the threshold (continuous %).
+# Effective TY2025-2028 for all four (verify the sunset per provision at the
+# final instructions).
+_SCH1A_TIPS_OT_PHASEOUT_PER_1000 = 100.0
+_SCH1A_CARLOAN_PHASEOUT_PER_1000 = 200.0
+_SCH1A_SENIOR_PHASEOUT_RATE = 0.06
+_SCH1A_EFFECTIVE_FROM = 2025
+_SCH1A_EFFECTIVE_THROUGH = 2028
+
+
+def _sch1a_status_group(fs: str) -> str:
+    """Schedule 1-A caps/thresholds are keyed single vs mfj. The doubled figures
+    apply ONLY to a JOINT RETURN — so QSS maps to `single`, NOT `mfj` (a
+    qualifying surviving spouse does not file a joint return; the deceased
+    spouse can't be on it). Mapping QSS→mfj would hand a QSS filer the $25K
+    overtime cap and doubled MAGI thresholds, overstating line 13b. This is
+    deliberately narrower than the usual MFJ/QSS grouping used for brackets and
+    the standard deduction. (MFS is gated to $0 for the joint-filing-required
+    provisions before this matters, and uses the single figure for car-loan.)"""
+    return "mfj" if fs == "MFJ" else "single"
+
+
+def _sch1a_require(limits, path: str):
+    """Pull a required indexed figure from the fetched federal.schedule_1a
+    block, hard-erroring (the federal.amt unfetched-table precedent) when it
+    is absent — a guessed cap would silently mis-limit the deduction."""
+    node = limits
+    for key in path.split("."):
+        if not isinstance(node, dict) or node.get(key) is None:
+            raise ValueError(
+                f"federal.schedule_1a.{path} is unfetched — refusing to "
+                "compute a Schedule 1-A deduction without the indexed cap/"
+                "threshold (a guess would mis-limit it); fetch via /tax-setup")
+        node = node[key]
+    return _sched_a_amount(node, f"schedule_1a.{path}")
+
+
+def _sch1a_per1000_phaseout(magi: float, threshold: float, per_1000: float,
+                            capped_amount: float, round_up: bool) -> float:
+    """$X per $1,000 of MAGI over the threshold, not below 0, never exceeding
+    the (already-capped) deduction it reduces. Rounding differs by provision:
+    the car-loan worksheet (§70203) counts each $1,000 "or fraction thereof"
+    (round UP), but the tips (§224) and overtime (§225) worksheets count only
+    whole $1,000 increments (round DOWN) — a taxpayer $1 over the threshold
+    loses nothing there. Using the wrong direction on tips/overtime understates
+    the deduction (overstates tax) by up to one $100 increment."""
+    if magi <= threshold:
+        return 0.0
+    ratio = (magi - threshold) / 1000.0
+    increments = math.ceil(ratio) if round_up else math.floor(ratio)
+    return min(capped_amount, per_1000 * increments)
+
+
+def compute_schedule_1a(
+    filing_status: str,
+    tax_year: int,
+    magi: float,
+    limits: dict,
+    qualified_tips: float = 0.0,
+    overtime_premium: float = 0.0,
+    car_loan_interest: float = 0.0,
+    primary_age_65: bool = False,
+    spouse_age_65: bool = False,
+) -> dict:
+    """OBBBA Schedule 1-A deductions — tips (§224), overtime premium (§225),
+    car-loan interest (§70203), and the enhanced senior deduction (§70103).
+
+    These are BELOW-the-line deductions (new Form 1040 line 13b), claimed
+    AFTER AGI and available to itemizers and non-itemizers alike. They do NOT
+    reduce AGI — routing them into AGI adjustments corrupts every MAGI-gated
+    computation downstream (IRA phase-outs, taxable SS, NIIT, education
+    credits, ACA PTC) and understates tax.
+
+    Args:
+        magi: modified AGI = AGI + §911/§931/§933 exclusions (the caller
+            computes it; reuse the FEIE-addback convention from
+            compute_education_credits). Each provision phases out on MAGI.
+        limits: the fetched federal.schedule_1a block. Its indexed figures
+            (caps, senior per-person amount, per-provision phase-out
+            thresholds) are REQUIRED when the corresponding input is nonzero;
+            an unfetched figure hard-errors rather than guessing. When ALL
+            inputs are zero the block is not consulted (a return with no
+            Schedule 1-A items needs no cache).
+        overtime_premium: the FLSA §7 PREMIUM portion only — the "half" of
+            time-and-a-half, NOT the whole overtime wage. The note carries the
+            warning; the caller/parser must extract the premium, not gross OT.
+        primary_age_65 / spouse_age_65: 65-or-older by year end. spouse only
+            counts on a JOINT return.
+
+    Returns: per-provision {allowed, disallowed_by_cap, disallowed_by_phaseout}
+    dicts, a top-level `total` (sum of alloweds → line 13b), `senior_deduction`
+    (= senior allowed, for the Form 6251 AMT addback), and notes.
+    """
+    fs = _normalize_filing_status(filing_status)
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int) \
+            or not (2000 <= tax_year <= 2099):
+        raise ValueError(f"tax_year must be a 4-digit year integer, got {tax_year!r}")
+    for name, flag in (("primary_age_65", primary_age_65),
+                       ("spouse_age_65", spouse_age_65)):
+        if not isinstance(flag, bool):
+            raise ValueError(f"{name} must be a bool, got {flag!r}")
+    tips_raw = _sched_a_amount(qualified_tips, "qualified_tips")
+    ot_raw = _sched_a_amount(overtime_premium, "overtime_premium")
+    car_raw = _sched_a_amount(car_loan_interest, "car_loan_interest")
+    senior_eligible = int(primary_age_65) + int(
+        spouse_age_65 and fs == "MFJ")
+
+    def _zero(reason=None):
+        blank = {"allowed": 0.0, "disallowed_by_cap": 0.0,
+                 "disallowed_by_phaseout": 0.0}
+        out = {"tips": dict(blank), "overtime": dict(blank),
+               "car_loan": dict(blank), "senior": dict(blank),
+               "total": 0.0, "senior_deduction": 0.0,
+               "notes": [reason] if reason else []}
+        return out
+
+    # Effective-year gate: outside TY2025-2028 all four are $0.
+    if not (_SCH1A_EFFECTIVE_FROM <= tax_year <= _SCH1A_EFFECTIVE_THROUGH):
+        return _zero(
+            f"Schedule 1-A deductions (tips/overtime/car-loan/senior) are not "
+            f"in effect for TY{tax_year} (OBBBA window "
+            f"{_SCH1A_EFFECTIVE_FROM}-{_SCH1A_EFFECTIVE_THROUGH})")
+
+    # No inputs at all → $0 without needing the cache.
+    if tips_raw == 0 and ot_raw == 0 and car_raw == 0 and senior_eligible == 0:
+        return _zero()
+
+    # MAGI may be NEGATIVE on a loss/NOL year — it's used only to test excess
+    # over the phase-out threshold (max(0, magi − threshold)), so a negative
+    # MAGI simply yields no phase-out rather than an error. allow_negative.
+    magi_v = _f2210_amount(magi, "magi", allow_negative=True)
+    notes = []
+    group = _sch1a_status_group(fs)
+    is_mfs = fs == "MFS"
+
+    def _provision(raw, cap, threshold, per_1000, round_up, jointly_required,
+                   label):
+        blank = {"allowed": 0.0, "disallowed_by_cap": 0.0,
+                 "disallowed_by_phaseout": 0.0}
+        if raw == 0:
+            return blank
+        if jointly_required and is_mfs:
+            notes.append(
+                f"{label}: $0 — MFS filers cannot claim it (§ requires a "
+                "joint return); the ${:,.0f} claimed is disallowed".format(raw))
+            return {"allowed": 0.0, "disallowed_by_cap": 0.0,
+                    "disallowed_by_phaseout": round(raw, 2)}
+        capped = min(raw, cap)
+        reduction = _sch1a_per1000_phaseout(magi_v, threshold, per_1000, capped,
+                                            round_up)
+        allowed = round(max(0.0, capped - reduction), 2)
+        return {
+            "allowed": allowed,
+            "disallowed_by_cap": round(max(0.0, raw - cap), 2),
+            "disallowed_by_phaseout": round(capped - allowed, 2),
+        }
+
+    # Tips (§224) — joint-filing required; phases out at $100 per WHOLE $1,000
+    # (round DOWN — no "or fraction" language). MFS is definitionally $0, so the
+    # cache is not consulted for it.
+    tips = _provision(
+        tips_raw,
+        _sch1a_require(limits, "tips_cap") if tips_raw and not is_mfs else 0.0,
+        _sch1a_require(limits, f"tips_overtime_phaseout_start.{group}")
+        if tips_raw and not is_mfs else 0.0,
+        _SCH1A_TIPS_OT_PHASEOUT_PER_1000, False, True, "Qualified tips")
+    if tips_raw > 0 and not is_mfs:
+        notes.append(
+            "For tips from a Schedule C / 1099 trade or business, the deduction "
+            "is capped at that trade-or-business's NET PROFIT (Schedule 1-A "
+            "line 5) and excludes SSTB (§199A(d)(2)) tip income — v1 does NOT "
+            "model those limits, so `qualified_tips` for a self-employed filer "
+            "must already be net-profit-capped and SSTB-excluded (a low/"
+            "negative-profit or SSTB tipped business would otherwise overstate "
+            "the deduction). That net-profit limit is FURTHER REDUCED by the "
+            "allocable ½-SE-tax / SE-retirement / SE-health-insurance "
+            "deductions per the final Schedule 1-A line-5 instructions, so "
+            "`qualified_tips` for a self-employed filer must already reflect "
+            "that reduction")
+
+    # Overtime PREMIUM (§225) — joint-filing required; same thresholds/rounding
+    # as tips (round DOWN).
+    overtime = _provision(
+        ot_raw,
+        _sch1a_require(limits, f"overtime_cap.{group}")
+        if ot_raw and not is_mfs else 0.0,
+        _sch1a_require(limits, f"tips_overtime_phaseout_start.{group}")
+        if ot_raw and not is_mfs else 0.0,
+        _SCH1A_TIPS_OT_PHASEOUT_PER_1000, False, True, "Overtime")
+    if ot_raw > 0:
+        notes.append(
+            "Overtime deduction covers the FLSA premium portion ONLY (the "
+            "'half' of time-and-a-half), not the whole overtime wage — "
+            "confirm the input is the premium, not gross overtime pay")
+
+    # Car-loan interest (§70203) — JOINT-filing required: the OBBBA car-loan
+    # interest deduction is NOT available to a married taxpayer who files
+    # separately (MFS), so _provision zeros it with a disallowed note (verified
+    # vs IRS / H&R Block / Federal Register guidance — the round-1 "no MFS bar"
+    # reading was wrong). Non-MFS filers claim it at the $100K/$200K-MFJ
+    # threshold; phases out at $200 per $1,000 "or fraction thereof" (round UP).
+    car_loan = _provision(
+        car_raw,
+        _sch1a_require(limits, "car_loan_cap") if car_raw and not is_mfs else 0.0,
+        _sch1a_require(limits, f"car_loan_phaseout_start.{group}")
+        if car_raw and not is_mfs else 0.0,
+        _SCH1A_CARLOAN_PHASEOUT_PER_1000, True, True, "Car-loan interest")
+    if car_raw > 0 and not is_mfs:
+        notes.append(
+            "car_loan_interest must be the PERSONAL-use portion of the vehicle "
+            "loan interest, NET of any interest already deducted on Schedule "
+            "C/E/F (business use) — passing gross interest double-deducts the "
+            "business share and understates tax")
+
+    # Senior (§70103) — per-person amount × eligible count, joint-required for
+    # the spouse's share. The 6% phase-out is applied PER ELIGIBLE PERSON, not
+    # once to the combined base: each person's $6,000 is reduced by 6% of the
+    # excess MAGI, so a two-senior MFJ couple's deduction reaches $0 at the
+    # SAME MAGI a one-senior filer's does (~threshold + amount/6%). Phasing the
+    # combined $12,000 once would fully phase ~$100K later (350K vs 250K MFJ)
+    # and overstate the deduction for phased-out couples (Codex P1).
+    senior = {"allowed": 0.0, "disallowed_by_cap": 0.0,
+              "disallowed_by_phaseout": 0.0}
+    if senior_eligible > 0:
+        if is_mfs:
+            notes.append(
+                "Senior deduction: $0 — the OBBBA §70103 enhanced senior "
+                "deduction requires a joint return for a married filer")
+        else:
+            per_person = _sch1a_require(limits, "senior_amount_per_person")
+            base = per_person * senior_eligible
+            thr = _sch1a_require(limits, f"senior_phaseout_start.{group}")
+            reduction = (_SCH1A_SENIOR_PHASEOUT_RATE * max(0.0, magi_v - thr))
+            per_person_allowed = max(0.0, per_person - reduction)
+            allowed = round(senior_eligible * per_person_allowed, 2)
+            senior = {
+                "allowed": allowed,
+                "disallowed_by_cap": 0.0,
+                "disallowed_by_phaseout": round(base - allowed, 2),
+            }
+            notes.append(
+                "Senior deduction is IN ADDITION to the §63(f) age-65 "
+                "additional standard deduction (they stack) and is available "
+                "to itemizers — it is NOT a standard-deduction enhancement")
+
+    if tips["allowed"] or overtime["allowed"] or senior["allowed"]:
+        notes.append(
+            "Valid-SSN eligibility is the caller's screen: tips (§224), "
+            "overtime (§225), and the senior deduction (§70103) require the "
+            "recipient/claimant to have a valid SSN — an ITIN filer does NOT "
+            "qualify. This function takes amounts + age flags only, so a "
+            "non-SSN person's amount must be zeroed / age flag omitted before "
+            "the call (otherwise line 13b is overstated)")
+
+    total = round(tips["allowed"] + overtime["allowed"]
+                  + car_loan["allowed"] + senior["allowed"], 2)
+    return {
+        "tips": tips,
+        "overtime": overtime,
+        "car_loan": car_loan,
+        "senior": senior,
+        "total": total,
+        # Convenience for the Form 6251 AMT addback (§70103 senior is a
+        # Schedule 1-A line-37 addback; tips/overtime/car-loan are NOT added
+        # back for AMT absent contrary language in the final 6251 instructions).
+        "senior_deduction": senior["allowed"],
+        "notes": notes,
+    }
+
+
+# Form 6251 structural statutory constants (§55): the two AMT rates are fixed;
+# the exemption amounts, phase-out starts, and the 26%→28% breakpoint are
+# INDEXED and come from federal.amt. The exemption phase-out RATE is a
+# bill-fixed structural fact keyed by year: §55(d)(3) sets 25% through TY2025,
+# and OBBBA §70107 raises it to 50% for tax years beginning after 2025 (and
+# resets the phase-out thresholds to the 2018 base, reindexed — those flow in
+# through federal.amt.phaseout_start, so only the RATE is encoded here).
 _AMT_RATE_LOW = 0.26
 _AMT_RATE_HIGH = 0.28
-_AMT_EXEMPTION_PHASEOUT_RATE = 0.25
+_AMT_PHASEOUT_RATE_PRE_2026 = 0.25
+_AMT_PHASEOUT_RATE_2026 = 0.50  # OBBBA §70107, TY2026+
+_AMT_PHASEOUT_RATE_OBBBA_FROM = 2026
+
+
+def _resolve_amt_phaseout_rate(tax_year: int, override) -> float:
+    """Resolve the AMT exemption phase-out rate: an explicit cache-supplied
+    override wins (the ptet._salt_cap precedent — a fetched figure beats the
+    built-in schedule), else the statutory schedule by year. The MFS
+    exemption-recapture ceiling uses this SAME rate — the two must never
+    drift (§55(d)(3) drives both, and §70107 changes §55(d)(3)).
+    """
+    if override is not None:
+        if isinstance(override, bool) \
+                or not isinstance(override, (int, float)) \
+                or not math.isfinite(float(override)) \
+                or not (0 < float(override) <= 1):
+            raise ValueError(
+                "exemption_phaseout_rate must be a finite fraction in (0, 1], "
+                f"got {override!r}")
+        return float(override)
+    if tax_year >= _AMT_PHASEOUT_RATE_OBBBA_FROM:
+        return _AMT_PHASEOUT_RATE_2026
+    return _AMT_PHASEOUT_RATE_PRE_2026
 
 
 def _amt_2628(ordinary: float, breakpoint: float) -> float:
@@ -1839,6 +2146,7 @@ def _amt_2628(ordinary: float, breakpoint: float) -> float:
 def compute_form_6251(
     taxable_income: float,
     filing_status: str,
+    tax_year: int,
     regular_tax: float,
     exemption: float,
     phaseout_start: float,
@@ -1854,6 +2162,7 @@ def compute_form_6251(
     fifteen_pct_limit: float = None,
     amt_ftc: float = 0.0,
     senior_deduction: float = 0.0,
+    exemption_phaseout_rate: float = None,
 ) -> dict:
     """Form 6251 AMT (v1: the ISO-exerciser path) + the Form 8801
     deferral-item credit carryforward.
@@ -1877,6 +2186,15 @@ def compute_form_6251(
             published figure — HALVED here for MFS per the form). REQUIRED:
             an unfetched AMT table hard-errors rather than producing $0 AMT
             for an ISO exerciser.
+        tax_year: 4-digit int. Drives the §55(d)(3) exemption phase-out rate
+            (and the MFS recapture rate): 25% through TY2025, 50% from TY2026
+            (OBBBA §70107). REQUIRED — an unspecified year would silently keep
+            25% for a TY2026 ISO exerciser and understate the AMT.
+        exemption_phaseout_rate: optional cache override
+            (federal.amt.phaseout_rate). When supplied (finite fraction in
+            (0,1]) it WINS over the statutory schedule — the salt_cap
+            precedent — so a fetched figure can correct the built-in schedule
+            without a code change. None → statutory schedule by tax_year.
         salt_deducted: Schedule A line 7 as deducted (exclusion item,
             added back). standard_deduction_taken: 1040 line 12 when NOT
             itemizing (6251 line 2a adds back whichever applied — pass one
@@ -1903,6 +2221,13 @@ def compute_form_6251(
     year via /tax-rollover), notes.
     """
     fs = _normalize_filing_status(filing_status)
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int) \
+            or not (2000 <= tax_year <= 2099):
+        raise ValueError(f"tax_year must be a 4-digit year integer, got {tax_year!r}")
+    # §55(d)(3) exemption phase-out rate — year-keyed (25% ≤2025, 50% from
+    # 2026 per OBBBA §70107) unless the cache supplies an override. Both the
+    # exemption phase-out and the MFS recapture ceiling use THIS resolved rate.
+    po_rate = _resolve_amt_phaseout_rate(tax_year, exemption_phaseout_rate)
     ti = _f2210_amount(taxable_income, "taxable_income", allow_negative=True)
     rtax = _sched_a_amount(regular_tax, "regular_tax")
     for what, v in (("exemption", exemption),
@@ -1957,17 +2282,17 @@ def compute_form_6251(
         amti = ti + salt + std + iso_amount + pab + other + senior
         if fs == "MFS":
             # §55(d)(3) last sentence: an MFS filer past the phase-out
-            # CEILING adds back 25% of the excess, capped at the exemption
-            # amount (prevents the halved exemption from advantaging MFS).
-            ceiling = ph_start + ex / _AMT_EXEMPTION_PHASEOUT_RATE
-            amti += min(ex, _AMT_EXEMPTION_PHASEOUT_RATE
-                        * max(0.0, amti - ceiling))
+            # CEILING adds back the phase-out rate × the excess, capped at the
+            # exemption amount (prevents the halved exemption from advantaging
+            # MFS). Uses the SAME year-resolved rate as the phase-out below.
+            ceiling = ph_start + ex / po_rate
+            amti += min(ex, po_rate * max(0.0, amti - ceiling))
         return amti
 
     def _tmt(iso_amount: float) -> float:
         amti = _amti(iso_amount)
         exemption_allowed = max(
-            0.0, ex - _AMT_EXEMPTION_PHASEOUT_RATE * max(0.0, amti - ph_start))
+            0.0, ex - po_rate * max(0.0, amti - ph_start))
         base = max(0.0, amti - exemption_allowed)
         cg = min(base, qd + ltcg)
         if cg > 0:
@@ -2015,7 +2340,7 @@ def compute_form_6251(
 
     amti_full = _amti(iso)
     exemption_allowed = max(
-        0.0, ex - _AMT_EXEMPTION_PHASEOUT_RATE * max(0.0, amti_full - ph_start))
+        0.0, ex - po_rate * max(0.0, amti_full - ph_start))
     if amt > 0:
         notes.append(
             f"AMT of ${amt:,.2f} applies (Schedule 2 line 1). "
@@ -2607,6 +2932,28 @@ def compute_scenario(
     ira_distribution = merged("ira_distribution")
     se_net = merged("self_employment_net")
     other_income = merged("other_income")
+    # OBBBA Schedule 1-A (line 13b) is a fixed below-AGI deduction for this
+    # return — NOT a delta-able income field, so it's read straight from the
+    # baseline (constant across the $0-delta and the scenario, so the anchored
+    # delta is unchanged in magnitude but priced from the correct, lower
+    # taxable-income position — matters near bracket/QDCG/credit thresholds).
+    # SECOND-ORDER caveat (same class as the taxable-SS note in
+    # scenario.extract_baseline_inputs): a MAGI-INCREASING delta (Roth
+    # conversion, wages, cap gains) also phases OUT more of the Schedule 1-A
+    # deduction near a threshold — held fixed here, so a delta crossing a
+    # phase-out band is modeled slightly too cheap. Not re-derived (the
+    # keystone lacks the caps/limits); surfaced in the planning skills' caveats.
+    try:
+        schedule_1a_deduction = _coerce_numeric(
+            baseline.get("schedule_1a_deduction", 0), default=None)
+    except TypeError:
+        raise ValueError("scenario input 'schedule_1a_deduction' must be numeric, got bool")
+    if (schedule_1a_deduction is None
+            or not math.isfinite(schedule_1a_deduction)
+            or schedule_1a_deduction < 0):
+        raise ValueError(
+            "scenario input 'schedule_1a_deduction' must be a finite "
+            "non-negative number")
 
     if se_net > 0:
         # W-2 wages already consume the Social Security wage base via payroll, so the
@@ -2637,7 +2984,7 @@ def compute_scenario(
     # QBI needs taxable income BEFORE QBI (Form 8995 line 11) and net capital gain
     # (line 12 = qualified dividends + net LTCG) for the overall cap, so it is
     # computed after AGI and the preferential-income figures.
-    ti_before_qbi = max(0.0, agi - standard_deduction)
+    ti_before_qbi = max(0.0, agi - standard_deduction - schedule_1a_deduction)
     if se_net > 0:
         qbi = compute_qbi_deduction(
             se_net, 0.0, rate=qbi_rate,

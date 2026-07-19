@@ -140,6 +140,7 @@ Read `result.json` and the extracted software return. Compare every line.
 | 11 | AGI | form_1040.line_11_agi |
 | 12 | Standard deduction | form_1040.line_12_standard_deduction |
 | 13a | QBI deduction | form_1040.line_13a_qbi_deduction |
+| 13b | Schedule 1-A deductions (tips/OT/car-loan/senior) | form_1040.line_13b_schedule_1a_deductions |
 | 15 | Taxable income | form_1040.line_15_taxable_income |
 | 16 | Tax | form_1040.line_16_tax |
 | 19 | CTC | form_1040.line_19_ctc |

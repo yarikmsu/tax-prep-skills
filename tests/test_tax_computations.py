@@ -29,6 +29,7 @@ from agents.lib.tax_computations import (
     compute_form_2210,
     compute_schedule_a,
     compute_ca_itemized,
+    compute_schedule_1a,
     compute_form_6251,
     compute_form_8801_credit,
     check_form_8938_required,
@@ -2238,7 +2239,172 @@ class TestCaItemized:
 # TY2025 Single AMT parameters (Rev. Proc. 2024-40): exemption 88,100;
 # phase-out starts 626,350; 26%→28% breakpoint 239,100.
 _AMT_2025 = dict(exemption=88100, phaseout_start=626350,
-                 rate_28_breakpoint=239100)
+                 rate_28_breakpoint=239100, tax_year=2025)
+
+
+_SCH1A_LIMITS = {
+    "tips_cap": 25000,
+    "overtime_cap": {"single": 12500, "mfj": 25000},
+    "car_loan_cap": 10000,
+    "senior_amount_per_person": 6000,
+    "tips_overtime_phaseout_start": {"single": 150000, "mfj": 300000},
+    "car_loan_phaseout_start": {"single": 100000, "mfj": 200000},
+    "senior_phaseout_start": {"single": 75000, "mfj": 150000},
+}
+
+
+class TestSchedule1A:
+    """OBBBA Schedule 1-A (I2) — hand-computed from the enacted caps/phase-outs.
+    Figures in _SCH1A_LIMITS are representative TY2025 amounts."""
+
+    def _c(self, fs="Single", year=2025, magi=120000, **kw):
+        return compute_schedule_1a(fs, year, magi, _SCH1A_LIMITS, **kw)
+
+    def test_all_provisions_hand_computed(self):
+        """Single, MAGI 120K. Tips 30K→cap 25K; OT premium 10K (under cap);
+        car-loan 12K→cap 10K then phased $200×ceil(20K/1K)=4,000 → 6,000;
+        senior (1 elig) 6,000 − 6%×(120K−75K)=2,700 → 3,300. Total 44,300."""
+        r = self._c(qualified_tips=30000, overtime_premium=10000,
+                    car_loan_interest=12000, primary_age_65=True)
+        assert r["tips"] == {"allowed": 25000.0, "disallowed_by_cap": 5000.0,
+                             "disallowed_by_phaseout": 0.0}
+        assert r["overtime"]["allowed"] == 10000.0
+        assert r["car_loan"] == {"allowed": 6000.0, "disallowed_by_cap": 2000.0,
+                                 "disallowed_by_phaseout": 4000.0}
+        assert r["senior"]["allowed"] == 3300.0
+        assert r["total"] == 44300.0
+        assert r["senior_deduction"] == 3300.0
+
+    def test_tips_overtime_fully_phased_out(self):
+        """MAGI far over the 150K start → tips/overtime phase to $0 at
+        $100/$1,000. Tips cap 25K needs 250 increments = 250K over → MAGI
+        400K zeroes it exactly."""
+        r = self._c(magi=400000, qualified_tips=25000, overtime_premium=12500)
+        assert r["tips"]["allowed"] == 0.0
+        assert r["tips"]["disallowed_by_phaseout"] == 25000.0
+        assert r["overtime"]["allowed"] == 0.0
+
+    def test_senior_two_eligible_mfj(self):
+        """MFJ, both 65, MAGI 150K = threshold exactly → full 12,000."""
+        r = self._c(fs="MFJ", magi=150000, primary_age_65=True,
+                    spouse_age_65=True)
+        assert r["senior"]["allowed"] == 12000.0
+
+    def test_spouse_age_ignored_when_not_mfj(self):
+        """A Single filer's spouse_age_65 flag can't add a second $6K."""
+        r = self._c(fs="Single", magi=75000, primary_age_65=True,
+                    spouse_age_65=True)
+        assert r["senior"]["allowed"] == 6000.0
+
+    def test_mfs_zeroes_all_schedule_1a_provisions(self):
+        """MFS: ALL four Schedule 1-A provisions are $0. Tips/overtime/senior
+        require a joint return, and the OBBBA §70203 car-loan interest
+        deduction is likewise UNAVAILABLE to a married filer who files
+        separately (verified vs IRS / H&R Block / Federal Register — the
+        round-1 "no MFS bar" reading was wrong). MAGI 120K, car 9000 → $0."""
+        r = self._c(fs="MFS", qualified_tips=20000, overtime_premium=8000,
+                    car_loan_interest=9000, primary_age_65=True)
+        assert r["tips"]["allowed"] == 0.0
+        assert r["overtime"]["allowed"] == 0.0
+        assert r["senior"]["allowed"] == 0.0
+        assert r["car_loan"]["allowed"] == 0.0
+        assert r["car_loan"]["disallowed_by_phaseout"] == 9000.0  # full disallow
+        assert r["total"] == 0.0
+        assert any("joint return" in n for n in r["notes"])
+
+    def test_senior_per_person_phaseout_mfj_over_threshold(self):
+        """Codex P1: the 6% phase-out is PER PERSON, not on the combined base.
+        MFJ both 65, MAGI 200K, threshold 150K → reduction 6%×50K=3,000 per
+        person → each 6,000−3,000=3,000 → 6,000 total (NOT 12,000−3,000=9,000).
+        A two-senior couple thus reaches $0 at the same MAGI a one-senior filer
+        does."""
+        r = self._c(fs="MFJ", magi=200000, primary_age_65=True,
+                    spouse_age_65=True)
+        assert r["senior"]["allowed"] == 6000.0
+        assert r["senior"]["disallowed_by_phaseout"] == 6000.0
+        # Fully phased at threshold + amount/6% = 150K + 100K = 250K.
+        r2 = self._c(fs="MFJ", magi=250000, primary_age_65=True,
+                     spouse_age_65=True)
+        assert r2["senior"]["allowed"] == 0.0
+
+    def test_tips_overtime_round_down_car_loan_rounds_up(self):
+        """Codex P2: tips/overtime phase-out counts WHOLE $1,000s (round down —
+        $1 over loses nothing); car-loan counts fractions (round up — $1 over
+        loses a full $200 increment)."""
+        one_over = self._c(magi=150001, qualified_tips=20000,
+                           overtime_premium=5000)
+        assert one_over["tips"]["allowed"] == 20000.0       # floor → 0 reduction
+        assert one_over["overtime"]["allowed"] == 5000.0
+        car = self._c(magi=100001, car_loan_interest=8000)
+        assert car["car_loan"]["allowed"] == 7800.0         # ceil → 1×$200
+
+    def test_qss_uses_single_caps_not_joint(self):
+        """Codex P2: QSS is not a joint return — it gets the SINGLE overtime
+        cap ($12,500) and single thresholds, not the doubled MFJ figures. QSS
+        is unmarried, so the joint-filing bar does not apply (unlike MFS)."""
+        r = self._c(fs="QSS", magi=120000, overtime_premium=20000,
+                    primary_age_65=True, spouse_age_65=True)
+        assert r["overtime"]["allowed"] == 12500.0          # single cap, not 25K
+        assert r["overtime"]["disallowed_by_cap"] == 7500.0
+        # spouse_age_65 ignored (not MFJ) → 1 eligible senior on the single
+        # $75K threshold: 6,000 − 6%×(120K−75K)=2,700 → 3,300.
+        assert r["senior"]["allowed"] == 3300.0
+
+    def test_year_gate_before_and_after_window(self):
+        for yr in (2024, 2029):
+            r = self._c(year=yr, qualified_tips=20000, primary_age_65=True)
+            assert r["total"] == 0.0
+            assert any("not in effect" in n for n in r["notes"])
+
+    def test_overtime_premium_warning(self):
+        r = self._c(overtime_premium=5000)
+        assert any("premium portion ONLY" in n for n in r["notes"])
+
+    def test_all_zero_needs_no_cache(self):
+        r = compute_schedule_1a("Single", 2025, 120000, None)
+        assert r["total"] == 0.0
+
+    def test_missing_cache_hard_errors_when_input_present(self):
+        with pytest.raises(ValueError, match="unfetched"):
+            compute_schedule_1a("Single", 2025, 120000, {},
+                                qualified_tips=10000)
+
+    def test_input_validation(self):
+        with pytest.raises(ValueError, match="tax_year"):
+            self._c(year=2025.0, qualified_tips=1000)
+        with pytest.raises(ValueError, match="primary_age_65"):
+            compute_schedule_1a("Single", 2025, 120000, _SCH1A_LIMITS,
+                                primary_age_65="yes")
+        for bad in (-1, float("nan"), True):
+            with pytest.raises(ValueError):
+                self._c(qualified_tips=bad)
+
+    def test_negative_magi_yields_no_phaseout_not_error(self):
+        """Codex round-3 P2: a loss/NOL year with negative MAGI must not
+        hard-error — MAGI only tests excess over the threshold, so a negative
+        MAGI simply produces no phase-out (full deduction)."""
+        r = self._c(magi=-20000, qualified_tips=30000, car_loan_interest=5000,
+                    primary_age_65=True)
+        assert r["tips"]["allowed"] == 25000.0       # cap only, no phaseout
+        assert r["car_loan"]["allowed"] == 5000.0    # under cap, no phaseout
+        assert r["senior"]["allowed"] == 6000.0      # full, no phaseout
+        # NaN/Inf MAGI is still rejected.
+        with pytest.raises(ValueError):
+            self._c(magi=float("nan"), qualified_tips=1000)
+
+    def test_qbi_base_reduced_by_schedule_1a(self):
+        """Ordering invariant: line 13b reduces the Form 8995 overall-cap
+        base. TI-before-QBI 100K, QBI 90K → uncapped 18K but cap
+        20%×100K=20K (not binding) → 18K. Subtract 20K of 13b → base 80K →
+        cap 16K binds → 16K."""
+        no_1a = compute_qbi_deduction(90000, 0,
+                                      taxable_income_before_qbi=100000,
+                                      net_capital_gain=0, threshold=191950)
+        with_1a = compute_qbi_deduction(90000, 0,
+                                        taxable_income_before_qbi=80000,
+                                        net_capital_gain=0, threshold=191950)
+        assert no_1a["total_deduction"] == 18000.0
+        assert with_1a["total_deduction"] == 16000.0
 
 
 class TestForm6251:
@@ -2302,7 +2468,7 @@ class TestForm6251:
     def test_unfetched_amt_table_hard_errors(self):
         with pytest.raises(ValueError, match="unfetched"):
             compute_form_6251(
-                taxable_income=300000, filing_status="Single",
+                taxable_income=300000, filing_status="Single", tax_year=2025,
                 regular_tax=80000, exemption=None, phaseout_start=626350,
                 rate_28_breakpoint=239100, iso_bargain_element=200000)
 
@@ -2315,7 +2481,7 @@ class TestForm6251:
 
     def test_mfs_breakpoint_halved_and_caveat(self):
         r = compute_form_6251(
-            taxable_income=200000, filing_status="MFS",
+            taxable_income=200000, filing_status="MFS", tax_year=2025,
             regular_tax=40000, standard_deduction_taken=15750,
             iso_bargain_element=50000,
             exemption=68500, phaseout_start=626350,
@@ -2331,6 +2497,86 @@ class TestForm6251:
             taxable_income=100000, filing_status="Single",
             regular_tax=20000, standard_deduction_taken=15750, **_AMT_2025)
         assert any("Schedule P" in n for n in r["notes"])
+
+    def test_ty2026_exemption_phaseout_50_pct(self):
+        """I1 — OBBBA §70107: the exemption phase-out rate is 50% for TY2026+
+        (25% through TY2025). Same fixture, both years, AMTI 726,350 = 100,000
+        over the start. Regular tax 150,000 so AMT is positive both ways.
+          TY2025 (25%): exemption 88,100 − 25,000 = 63,100; base 663,250;
+            TMT 28%×663,250 − 4,782 = 180,928; AMT 30,928.
+          TY2026 (50%): exemption 88,100 − 50,000 = 38,100; base 688,250;
+            TMT 28%×688,250 − 4,782 = 187,928; AMT 37,928.
+        Delta 7,000 = the extra 25,000 of phased-out exemption × 28%."""
+        common = dict(taxable_income=686350, filing_status="Single",
+                      regular_tax=150000, salt_deducted=40000,
+                      exemption=88100, phaseout_start=626350,
+                      rate_28_breakpoint=239100)
+        y25 = compute_form_6251(tax_year=2025, **common)
+        y26 = compute_form_6251(tax_year=2026, **common)
+        assert y25["exemption_allowed"] == 63100.00
+        assert y26["exemption_allowed"] == 38100.00
+        assert y25["amt"] == 30928.00
+        assert y26["amt"] == 37928.00
+        assert round(y26["amt"] - y25["amt"], 2) == 7000.00
+
+    def test_phaseout_boundary_full_exemption_both_years(self):
+        """AMTI exactly at phaseout_start → no reduction, either year."""
+        common = dict(taxable_income=586350, filing_status="Single",
+                      regular_tax=100000, salt_deducted=40000, **{
+                          k: v for k, v in _AMT_2025.items()
+                          if k != "tax_year"})
+        # AMTI = 586,350 + 40,000 = 626,350 = phaseout_start exactly.
+        y25 = compute_form_6251(tax_year=2025, **common)
+        y26 = compute_form_6251(tax_year=2026, **common)
+        assert y25["amti"] == 626350.00
+        assert y25["exemption_allowed"] == 88100.00
+        assert y26["exemption_allowed"] == 88100.00
+
+    def test_ty2026_mfs_recapture_uses_50_pct(self):
+        """§55(d)(3) recapture ceiling and the phase-out both use the
+        year-resolved 50% rate. Raw AMTI 815,750 sits BELOW the TY2025 25%
+        ceiling (626,350 + 68,500/0.25 = 900,350 → no addback) but ABOVE the
+        TY2026 50% ceiling (626,350 + 68,500/0.50 = 763,350). TY2026 addback
+        = min(68,500, 50% × (815,750 − 763,350)) = min(68,500, 26,200) =
+        26,200 → AMTI 841,950; exemption fully phased out."""
+        common = dict(taxable_income=700000, filing_status="MFS",
+                      regular_tax=200000, standard_deduction_taken=15750,
+                      iso_bargain_element=100000, exemption=68500,
+                      phaseout_start=626350, rate_28_breakpoint=239100)
+        y25 = compute_form_6251(tax_year=2025, **common)
+        y26 = compute_form_6251(tax_year=2026, **common)
+        assert y25["amti"] == 815750.00  # no recapture at 25%
+        assert y26["amti"] == 841950.00  # +26,200 recapture at 50%
+        assert y26["exemption_allowed"] == 0.00
+
+    def test_cache_override_rate_wins_over_schedule(self):
+        """federal.amt.phaseout_rate override beats the statutory schedule
+        (the salt_cap precedent): a TY2025 return with an explicit 0.50 rate
+        phases out like TY2026, not the 25% default."""
+        common = dict(taxable_income=686350, filing_status="Single",
+                      regular_tax=150000, salt_deducted=40000,
+                      exemption=88100, phaseout_start=626350,
+                      rate_28_breakpoint=239100)
+        overridden = compute_form_6251(
+            tax_year=2025, exemption_phaseout_rate=0.50, **common)
+        y26 = compute_form_6251(tax_year=2026, **common)
+        assert overridden["exemption_allowed"] == 38100.00
+        assert overridden["amt"] == y26["amt"]
+
+    def test_tax_year_validation(self):
+        common = dict(taxable_income=300000, filing_status="Single",
+                      regular_tax=80000, **{k: v for k, v in _AMT_2025.items()
+                                            if k != "tax_year"})
+        for bad in (True, 2025.0, 1999, 2100, "2025", None):
+            with pytest.raises(ValueError, match="tax_year"):
+                compute_form_6251(tax_year=bad, **common)
+
+    def test_exemption_phaseout_rate_validation(self):
+        common = dict(taxable_income=300000, filing_status="Single",
+                      regular_tax=80000, **_AMT_2025)
+        for bad in (float("nan"), float("inf"), True, 0, -0.1, 1.5, "0.5"):
+            with pytest.raises(ValueError, match="exemption_phaseout_rate"):
+                compute_form_6251(exemption_phaseout_rate=bad, **common)
 
 
 class TestForm8801:
@@ -2404,7 +2650,7 @@ class TestForm8801:
         AMTI 982,100; exemption fully phased → TMT = 28% × 982,100 −
         2,391 = 272,597."""
         r = compute_form_6251(
-            taxable_income=850000, filing_status="MFS",
+            taxable_income=850000, filing_status="MFS", tax_year=2025,
             regular_tax=260000, standard_deduction_taken=15750,
             iso_bargain_element=100000,
             exemption=68500, phaseout_start=626350,

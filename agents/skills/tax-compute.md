@@ -236,23 +236,20 @@ not fully. A clean backdoor (no other pre-tax traditional IRA) converts tax-free
 ### Step 4: Compute AGI (Form 1040 Lines 10-11)
 
 ```
-Line 10: Adjustments to income from Schedule 1:
+Line 10: Adjustments to income from Schedule 1 Part II:
   - IRA deduction (check eligibility based on employer plan, MAGI, filing status)
   - SE tax deduction (half of SE tax, if Schedule C profit)
   - HSA deduction (personal contributions beyond employer)
   - Student loan interest (if applicable)
-  - OBBBA above-the-line exclusions (Schedule 1 Part II, if applicable):
-    · No tax on tips: exclude qualifying tip income
-    · No tax on overtime: exclude qualifying overtime pay
-    · Car loan interest deduction
-    (These are tracked within line_10_adjustments in result.json.
-     No separate taxpayer_profile flags needed — detect from W-2 data.)
 Line 11: AGI = Line 9 - Line 10
 ```
 
-⚠️ **OBBBA note:** The tips/overtime/car-loan provisions are ABOVE-the-line adjustments
-(Schedule 1 Part II). Do NOT also deduct them below the line. The senior enhanced standard
-deduction is already reflected in the Line 12 standard deduction amount from `tax_law_{year}.json`.
+⚠️ **OBBBA tips / overtime / car-loan / senior are NOT here.** They are
+**Schedule 1-A deductions taken BELOW AGI** (Form 1040 line 13b), computed in
+Step 5 — NOT Schedule 1 Part II adjustments. Putting them in line 10 wrongly
+cuts AGI and corrupts every MAGI-gated computation downstream (IRA phase-out,
+taxable SS, NIIT, education credits, ACA PTC). Do not touch `line_10_adjustments`
+for them.
 
 **IRA deduction eligibility check:**
 - Use phaseout ranges from `tax_law_{year}.json`
@@ -262,13 +259,85 @@ deduction is already reflected in the Line 12 standard deduction amount from `ta
 ### Step 5: Compute Taxable Income (Form 1040 Lines 12-15)
 
 ```
-Line 12: Standard deduction (from tax_law JSON, based on filing status;
-         already includes OBBBA senior enhancement if applicable)
+Line 12: Standard deduction (from tax_law JSON = the §63(c) BASE for the
+         filing status only). Two separate add-ons are NOT in that cached
+         figure and must be handled explicitly:
+           • §63(f) age-65/blind ADDITIONAL standard deduction — an extra
+             ~$1,600 (single/HoH) / ~$1,550 per box (MFJ/MFS/QSS), one box per
+             65+ AND one per blind, for filers taking the STANDARD deduction.
+             Fetch the per-box amount and add it here for each checked box
+             (age flags come from the interview; ask about blindness). Omitting
+             it overstates line 12→ taxable income for a 65+/blind filer.
+           • OBBBA §70103 enhanced senior deduction — a SEPARATE Schedule 1-A
+             item on line 13b (below), available to itemizers too; NOT part of
+             line 12. (v1 does not yet cache the §63(f) per-box amount — flag
+             it if unfetched rather than silently dropping it.)
          OR itemized deductions (Schedule A) — election COMPUTED below
 Line 13a: QBI deduction (Form 8995)
-Line 14: Total deductions = Line 12 + Line 13a
+Line 13b: Schedule 1-A deductions (compute_schedule_1a — below)
+Line 14: Total deductions = Line 12 + Line 13a + Line 13b
 Line 15: Taxable income = max(0, Line 11 - Line 14)
 ```
+
+**Schedule 1-A (OBBBA tips / overtime / car-loan / senior) — run
+`compute_schedule_1a()` whenever any of those items exist (TY2025-2028).**
+BELOW-AGI deductions; they never touch line 10/11.
+- Inputs: `filing_status`, `tax_year`, `magi` (= AGI + §911/§931/§933
+  exclusions — reuse the FEIE add-back convention; MAGI≈AGI when
+  `lives_abroad` is false), `limits` = `federal.schedule_1a` from tax_law
+  JSON, plus the raw per-provision amounts and the two `age_65` booleans.
+- **Overtime is the FLSA premium portion ONLY** (the "half" of
+  time-and-a-half), not gross overtime pay — pass the premium, and surface
+  the function's warning note.
+- **SSTB tips are excluded for EVERYONE** — tips earned in a specified service
+  trade or business (§199A(d)(2)) don't qualify whether the earner is a W-2
+  employee OF the SSTB or self-employed IN it. Screen SSTB out of
+  `qualified_tips` for both sources before calling (v1 doesn't model it).
+  **Transition-relief exception:** a worker in an occupation that CUSTOMARILY
+  and regularly received tips before 2025 is treated as NON-SSTB under the
+  final Schedule 1-A instructions' transition relief (until final regs) — do
+  NOT strip those tips even if the business is otherwise an SSTB.
+- **Unreported / employer-allocated tips (Form 4137) — MANUAL, CONDITIONAL:**
+  those amounts belong on 1040 line 1c (wages) and Schedule 2 line 5 (employee
+  SS/Medicare tax) via Form 4137, which v1 does not compute. They ARE qualified
+  tips (2025 Schedule 1-A Part II has a Form 4137 line), so do not lose the
+  deduction: include them in `qualified_tips` ONLY ONCE the paired Form 4137
+  income + FICA have been entered by hand. While that paired treatment is NOT
+  done, keep them OUT of `qualified_tips` (else the deduction is claimed while
+  the income + payroll tax are dropped). The capability gate flags this as a
+  manual item either way.
+- **Self-employed tips:** additionally, `qualified_tips` from a Schedule C /
+  1099 trade or business must already be capped at that business's NET PROFIT
+  **reduced by the allocable ½-SE-tax, SE-retirement, and SE-health-insurance
+  deductions** (Schedule 1-A line 5 per the final instructions) — v1 does NOT
+  model the cap, so a low/negative-profit tipped business would otherwise
+  overstate the deduction. Surface the function's caveat.
+- The `total` goes to `form_1040.line_13b_schedule_1a_deductions` and the
+  `schedule_1a` result section. **AGI (line 11) is unchanged** — verify the
+  IRA phase-out, taxable SS, NIIT, and education-credit MAGI you already
+  computed do not move.
+- **QBI base:** compute Schedule 1-A BEFORE the Form 8995 overall cap and
+  pass `taxable_income_before_qbi` = line 11 − line 12 − line 13b to
+  `compute_qbi_deduction` — Schedule 1-A shrinks the QBI cap base.
+- **AMT:** pass the `senior_deduction` (= `schedule_1a` senior allowed) to
+  `compute_form_6251` in Step 6.5 — the §70103 senior deduction is a
+  Schedule 1-A line-37 AMT add-back. Tips/overtime/car-loan are NOT added
+  back for AMT in v1 (verify against the final 6251 instructions).
+- MFS gets $0 for ALL FOUR Schedule 1-A provisions — tips, overtime, senior,
+  AND car-loan interest. The OBBBA §70203 car-loan deduction is unavailable to
+  a married taxpayer who files separately (verified vs IRS/H&R Block/Federal
+  Register guidance), same as the joint-filing bar on tips/overtime/senior; the
+  function zeros them and emits the disallowed notes — do not re-add car-loan.
+- **Valid-SSN eligibility (screen PER RECIPIENT, not return-wide):** tips,
+  overtime, and the senior deduction require the PERSON who received the
+  tips/overtime — or each 65+ person claiming the senior amount — to have a
+  valid SSN; an ITIN holder does NOT qualify. Apply the test per recipient:
+  on a joint return where only one spouse received the tips/overtime (or only
+  one 65+ spouse has a valid SSN), the valid-SSN spouse's amount STILL flows
+  to line 13b — do NOT zero the whole deduction because the OTHER spouse
+  holds an ITIN. The engine takes amounts + age booleans only, so screen SSN
+  eligibility BEFORE calling and pass $0 (or omit that person's age flag) for
+  the non-SSN recipient ONLY; the function caveats this.
 
 **Itemized vs standard (Schedule A) — run `compute_schedule_a()` whenever ANY
 itemizable expense exists** (state withholding alone qualifies — for the CA
@@ -302,11 +371,18 @@ persona SALT usually exceeds the OBBBA cap by itself):
 
 **QBI Deduction (Form 8995):**
 Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
-- QBI = Schedule C net income (can be negative → loss carryforward)
+- QBI = Schedule C net income (can be negative → loss carryforward). **Exclude
+  §224 qualified tips:** when the Schedule 1-A tip deduction (line 13b) came
+  from this trade or business, the 2025 Form 8995 instructions EXCLUDE that tip
+  income from QBI — subtract the qualified-tip amount from the Schedule C net
+  income BEFORE passing it as QBI, or the same dollars get both the line-13b
+  deduction and an extra 20% QBI deduction (double benefit → understatement).
 - REIT dividends = Section 199A dividends from 1099-DIVs
 - **ALWAYS pass the overall-cap inputs** — Form 8995 lines 11-14 cap the deduction
   at 20% × (taxable income before QBI − net capital gain):
-  - `taxable_income_before_qbi` = max(0, Line 11 − Line 12)
+  - `taxable_income_before_qbi` = max(0, Line 11 − Line 12 − Line 13b) — the
+    Schedule 1-A total (line 13b) reduces the QBI overall-cap base, since it
+    comes before QBI in the deduction stack. Omitting it overstates the cap.
   - `net_capital_gain` = qualified dividends (line 3a) + net LTCG (Schedule D line 15, floored at 0)
   - `threshold` = `federal.qbi_threshold` from tax_law JSON (keyed single/mfj — map MFJ/QSS→mfj, else single)
 - If the result has `over_threshold: true`, surface its `warning`: above the §199A
@@ -346,7 +422,12 @@ $250-450K band):
   simplified path (the AMT FTC equals the regular FTC when no Form 1116 is
   required); `federal.amt` from tax_law JSON (exemption/phaseout_start by
   status — map QSS→mfj, HoH→single; `rate_28_breakpoint` is the single
-  published figure, the function halves it for MFS).
+  published figure, the function halves it for MFS). Pass `tax_year` (the
+  return year) and `exemption_phaseout_rate` = `federal.amt.phaseout_rate`
+  (usually `null` → the function applies the §55(d)(3) statutory rate: 25%
+  through TY2025, **50% from TY2026** per OBBBA §70107). A TY2026 ISO
+  exerciser in the phase-out range keeps too much exemption if `tax_year` is
+  wrong — pass it explicitly, never default.
 - Addback: `salt_deducted` (Schedule A line 7 = the salt_deductible figure)
   when itemizing, else `standard_deduction_taken` = line 12 — one or the
   other, never both.

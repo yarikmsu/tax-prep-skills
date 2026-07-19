@@ -71,6 +71,7 @@ def test_each_unsupported_flag_blocks(flag, rule_id):
     ("has_energy_credits", "energy_credits"),
     ("has_ev_purchase", "ev_credit"),
     ("has_gambling_income", "gambling"),
+    ("has_unreported_or_allocated_tips", "unreported_allocated_tips"),
     ("lives_abroad", "feie"),
     # H1 life-event rules — all MANUAL, none block.
     ("married_this_year", "marriage_year"),

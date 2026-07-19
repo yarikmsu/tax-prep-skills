@@ -19,7 +19,11 @@
     "capital_gains_short": 0,
     "capital_gains_long": 0,
     "self_employment_net": 0,
-    "other_income": 0
+    "other_income": 0,
+    "schedule_1a": 0,
+    "_comment_schedule_1a": "OBBBA Schedule 1-A total (tips + overtime premium + car-loan + senior), a full-year BELOW-AGI deduction (line 13b, TY2025-2028). Estimate the capped/MAGI-phased amount via compute_schedule_1a; it reduces projected taxable income but NOT AGI (so taxable SS/NIIT are unchanged). Gated off outside TY2025-2028, for MFS, and when the fetched federal.schedule_1a caps are absent.",
+    "schedule_1a_se_tips": 0,
+    "_comment_schedule_1a_se_tips": "The portion of schedule_1a above that is SELF-EMPLOYED qualified tips from the projected Schedule C business. Form 8995 excludes deducted tip income from QBI, so this amount is also removed from the QBI base (capped at self_employment_net). Leave 0 for W-2 tips or when there is no Schedule C tip income."
   },
   "recurring_from_prior": {
     "_comment": "Defaults pulled from archive/{year-1}/ by the skill; user-editable. Treated as full-year.",

@@ -28,7 +28,10 @@ taxpayer_profile.json. Re-runnable quarterly.
 2. **Load or create `projection_inputs.json`.** If absent, copy
    `agents/templates/projection_inputs_template.json` to the workspace and interview the
    user for: YTD wages, YTD federal + state withholding, pay frequency, as-of date, and any
-   known lumpy items (year-end bonus, RSU vesting, capital gains, self-employment net).
+   known lumpy items (year-end bonus, RSU vesting, capital gains, self-employment net,
+   and — for TY2025-2028 — the OBBBA **Schedule 1-A** total via `forecast_overrides.schedule_1a`,
+   estimated with `compute_schedule_1a`: tips + overtime premium + car-loan + senior, a
+   below-AGI deduction that lowers projected taxable income but not AGI).
    Validate inputs (no shell metacharacters; numeric fields numeric). `chmod 600` the file.
 
 3. **Resolve prior-year baseline.** If `archive/{year-1}/` exists, read its

@@ -93,24 +93,90 @@ def _field_num(section: dict, field: str, what: str) -> float:
 
 
 def _derived_schedules(result: dict) -> list:
-    """Schedules with no same-named result section, derived from the
-    computed fields that encode them. Value-gated (not _section_present):
-    a $0 line_19_ctc must not conjure a Schedule 8812."""
+    """Schedules derived from the computed fields that encode them, value-gated
+    (not _section_present): a $0 line_19_ctc must not conjure a Schedule 8812.
+
+    Each entry is (title, sequence, section_key). section_key is None for the
+    reconstructed schedules that have NO same-named result section (Schedule
+    1/2/3/B/SE/8812); Schedule 1-A is the exception — it has a real
+    `schedule_1a` section, so its key is set and the filing package renders
+    the per-provision worksheet detail rather than a bare assembly line."""
     f1040 = result.get("form_1040") or {}
     sch_c = result.get("schedule_c") or {}
     out = []
     if (_field_num(f1040, "line_8_schedule1_other", "line_8") != 0
             or _field_num(f1040, "line_10_adjustments", "line_10") != 0
             or _section_present(result, "schedule_c")):
-        out.append(("Schedule 1 (Additional Income and Adjustments)", "01"))
+        out.append(("Schedule 1 (Additional Income and Adjustments)", "01",
+                    None))
+    # Schedule 1-A (OBBBA tips/overtime/car-loan/senior below-AGI deductions) —
+    # gated on the computed line-13b total. The official form prints Attachment
+    # Sequence No. "1A"; _seq_sort_key parses it to (1, "A"), which sorts after
+    # Schedule 1 ("01" → (1, "")) and before Schedule 2, so it still attaches
+    # right after Schedule 1.
+    if _field_num(f1040, "line_13b_schedule_1a_deductions", "line_13b") != 0:
+        # line 13b is non-zero, so the `schedule_1a` section MUST carry the
+        # per-provision tips/overtime/car-loan/senior worksheet detail —
+        # packaging a bare Schedule 1-A row (or a total-only section like
+        # {"total": 9000}, which _section_present would wave through) would
+        # attach an incomplete form. Require at least one provision object with
+        # an `allowed` figure, so an inconsistent result hard-stops instead of
+        # emitting a keyed-but-hollow attachment.
+        sch1a = result.get("schedule_1a")
+        line_13b = _field_num(
+            f1040, "line_13b_schedule_1a_deductions", "line_13b")
+        allowed_sum = 0.0
+        if isinstance(sch1a, dict):
+            for p in ("tips", "overtime", "car_loan", "senior"):
+                obj = sch1a.get(p)
+                if isinstance(obj, dict) and "allowed" in obj:
+                    allowed_sum += _field_num(
+                        obj, "allowed", f"schedule_1a.{p}.allowed")
+        # The per-provision `allowed` amounts must RECONCILE to line 13b — a
+        # key check alone would pass a scaffold (every allowed:0) or a stale
+        # section whose detail doesn't support the packaged total, attaching a
+        # hollow/mismatched Schedule 1-A worksheet.
+        if round(allowed_sum, 2) != round(line_13b, 2):
+            raise FilingPackageError(
+                f"schedule_1a per-provision allowed amounts (sum "
+                f"{allowed_sum:.2f}) do not reconcile to Form 1040 line 13b "
+                f"({line_13b:.2f}) — the attached Schedule 1-A worksheet must "
+                f"support the packaged total; re-run /tax-compute before "
+                f"packaging")
+        # Car-loan Part IV: a nonzero car-loan deduction needs at least one
+        # complete vehicle row (VIN + interest_paid) to complete Schedule 1-A
+        # Part IV — a claim with no vehicle detail can't be assembled. (The
+        # allowed amount is not reconciled to the row interest: the cap and
+        # MAGI phase-out make allowed ≤ personal interest, so equality would
+        # false-fail a legitimately capped/phased claim.)
+        car_obj = sch1a.get("car_loan") if isinstance(sch1a, dict) else None
+        car_allowed = (
+            _field_num(car_obj, "allowed", "schedule_1a.car_loan.allowed")
+            if isinstance(car_obj, dict) and "allowed" in car_obj else 0.0)
+        if car_allowed > 0:
+            detail = sch1a.get("car_loan_detail")
+            has_row = isinstance(detail, list) and any(
+                isinstance(row, dict) and row.get("vin")
+                and _field_num(row, "interest_paid",
+                               "car_loan_detail.interest_paid") > 0
+                for row in detail)
+            if not has_row:
+                raise FilingPackageError(
+                    "schedule_1a.car_loan.allowed is nonzero but "
+                    "schedule_1a.car_loan_detail has no complete vehicle row "
+                    "(vin + interest_paid) — Schedule 1-A Part IV requires the "
+                    "VIN detail to attach; add it before packaging")
+        out.append(("Schedule 1-A (Additional Deductions — tips/overtime/"
+                    "car-loan/senior)", "1A", "schedule_1a"))
     if (_field_num(f1040, "line_23_other_taxes", "line_23") != 0
             or _field_num(result.get("form_6251") or {}, "amt", "amt") > 0):
-        out.append(("Schedule 2 (Additional Taxes)", "02"))
+        out.append(("Schedule 2 (Additional Taxes)", "02", None))
     if (_field_num(f1040, "line_20_schedule3_line8", "line_20") != 0
             or _field_num(f1040, "line_31_schedule3_part2", "line_31") != 0
             or _field_num(f1040, "schedule_3_line_11_excess_ss",
                           "sch3_line11") != 0):
-        out.append(("Schedule 3 (Additional Credits and Payments)", "03"))
+        out.append(("Schedule 3 (Additional Credits and Payments)", "03",
+                    None))
     # Schedule B: >$1,500 interest or dividends, or Part III (foreign
     # accounts — mandatory for exactly this toolkit's FBAR audience).
     interest = result.get("interest_detail") or {}
@@ -122,11 +188,12 @@ def _derived_schedules(result: dict) -> list:
             or _section_present(result, "fbar_fincen_114")
             or _section_present(result, "form_8938_fatca")):
         out.append(("Schedule B (Interest and Ordinary Dividends — incl. "
-                    "Part III foreign accounts)", "08"))
+                    "Part III foreign accounts)", "08", None))
     if _field_num(sch_c, "se_tax", "schedule_c.se_tax") > 0:
-        out.append(("Schedule SE (Self-Employment Tax)", "17"))
+        out.append(("Schedule SE (Self-Employment Tax)", "17", None))
     if _field_num(f1040, "line_19_ctc", "line_19_ctc") > 0:
-        out.append(("Schedule 8812 (Credits for Qualifying Children)", "47"))
+        out.append(("Schedule 8812 (Credits for Qualifying Children)", "47",
+                    None))
     return out
 
 
@@ -156,8 +223,8 @@ def assembly_order(result: dict) -> list:
     for key, (title, seq) in _FEDERAL_SEQUENCE.items():
         if _section_present(result, key):
             federal.append({"key": key, "title": title, "sequence": seq})
-    for title, seq in _derived_schedules(result):
-        federal.append({"key": None, "title": title, "sequence": seq})
+    for title, seq, dkey in _derived_schedules(result):
+        federal.append({"key": dkey, "title": title, "sequence": seq})
     federal.sort(key=lambda e: _seq_sort_key(e["sequence"]))
     order.extend(federal)
     # Form 8938 files WITH the return but the template models it as an

@@ -155,8 +155,13 @@ package has four parts:
    - Form 8889: `line_14c_qualified_medical` and
      `line_15_taxable_distributions` don't match official 14c/15
      (official 15 = unreimbursed qualified medical; taxable = 16).
-   - Form 1040: `line_13a_qbi_deduction` prints as "Line 13" (no 13a on
-     the current form).
+   - Form 1040 (2025+): QBI `line_13a_qbi_deduction` prints as **line 13a**
+     and `line_13b_schedule_1a_deductions` (OBBBA Schedule 1-A total —
+     tips/overtime/car-loan/senior) as **line 13b** — the 2025 form splits
+     line 13 into 13a/13b (pre-2025 returns had a single "Line 13" for QBI;
+     label per the return year). When 13b is $0, print QBI as 13a and omit the
+     13b row. The `schedule_1a` section carries the per-provision detail.
+     Line 14 = line 12 + line 13a + line 13b — spot-check the sum.
    - California 540: the section has NO `line_` prefixes — render it as a
      values table WITHOUT line labels and point to the 540 instructions
      for line placement.

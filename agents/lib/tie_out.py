@@ -91,8 +91,13 @@ _SIGNED_CATEGORIES = {"ss_benefits"}
 # a 1099-G refund is taxable only if the prior year itemized and would
 # false-mismatch against the aggregate Schedule 1 line 8; a personal-item
 # 1099-K belongs on Form 8949, not Schedule C).
+# qualified_tips / qualified_overtime_premium feed the OBBBA Schedule 1-A
+# BELOW-AGI deduction (line 13b), not a 1040 income line — informational like
+# ss_tips. The deduction is capped and MAGI-phased, so the ledger figure won't
+# equal any result line; the record just makes the raw amount traceable.
 _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
-                  "state_refund_1099g", "personal_1099k"}
+                  "state_refund_1099g", "personal_1099k",
+                  "qualified_tips", "qualified_overtime_premium"}
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
@@ -107,6 +112,16 @@ _INFORMATIONAL_ADVISORIES = {
         "personal-item sales are not Schedule C income: gains belong on "
         "Form 8949, losses are non-deductible — verify the classification "
         "recorded in answers.md"),
+    "qualified_tips": (
+        "feeds the OBBBA Schedule 1-A tip deduction (line 13b) — verify the "
+        "computed schedule_1a.tips.allowed / line_13b is nonzero, OR that the "
+        "occupation/SSN/MFS rules disqualify it (a parsed tip figure with "
+        "line 13b at $0 is a dropped deduction)"),
+    "qualified_overtime_premium": (
+        "feeds the OBBBA Schedule 1-A overtime deduction (line 13b) — verify "
+        "the computed schedule_1a.overtime.allowed / line_13b is nonzero, OR "
+        "that eligibility disqualifies it (a parsed premium with line 13b at "
+        "$0 is a dropped deduction)"),
 }
 
 # Categories where the ledger figure is PAYER-reported but the return

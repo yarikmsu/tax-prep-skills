@@ -12,7 +12,7 @@ from agents.lib import amend as AM  # noqa: E402
 
 def _result(agi=100000, deductions=30000, qbi=0, taxable=70000, tax=12000,
             credits=2000, other=0, total_tax=10000, wh=9000, est=0,
-            payments=None, overpayment=0):
+            payments=None, overpayment=0, sched_1a=0):
     payments = wh + est if payments is None else payments
     return {
         "meta": {"limitations": ["State: CA computed in depth."]},
@@ -20,7 +20,8 @@ def _result(agi=100000, deductions=30000, qbi=0, taxable=70000, tax=12000,
             "line_11_agi": agi,
             "line_12_standard_deduction": deductions,
             "line_13a_qbi_deduction": qbi,
-            "line_14_total_deductions": deductions + qbi,
+            "line_13b_schedule_1a_deductions": sched_1a,
+            "line_14_total_deductions": deductions + qbi + sched_1a,
             "line_15_taxable_income": taxable,
             "line_16_tax": tax,
             "line_21_total_credits": credits,
@@ -186,3 +187,17 @@ def test_line_2_is_deduction_only_no_qbi_double_count():
     # AGI(1) − deduction(2) − qbi(4a) reconciles to taxable(5).
     assert (by_line["1"]["corrected"] - by_line["2"]["corrected"]
             - by_line["4a"]["corrected"]) == by_line["5"]["corrected"]
+
+
+def test_line_4b_schedule_1a_row():
+    """Form 1040-X line 4b (added Dec 2025) carries the OBBBA Schedule 1-A
+    deduction; the taxable-income arithmetic is 1 − 2 − 4a − 4b = 5."""
+    orig = _result(deductions=27700, qbi=5000, sched_1a=0, agi=100000, taxable=67300)
+    corr = _result(deductions=27700, qbi=5000, sched_1a=8000, agi=100000, taxable=59300)
+    by_line = {r["line"]: r for r in AM.three_column(orig, corr)["rows"]}
+    assert by_line["4b"]["original"] == 0.0
+    assert by_line["4b"]["corrected"] == 8000.0
+    assert by_line["4b"]["change"] == 8000.0
+    assert (by_line["1"]["corrected"] - by_line["2"]["corrected"]
+            - by_line["4a"]["corrected"] - by_line["4b"]["corrected"]
+            == by_line["5"]["corrected"])

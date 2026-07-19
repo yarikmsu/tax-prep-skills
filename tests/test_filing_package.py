@@ -84,6 +84,68 @@ def test_derived_schedule_b_triggers():
                    for e in FP.assembly_order(_result()))
 
 
+def test_derived_schedule_1a_gated_on_line_13b():
+    """OBBBA Schedule 1-A appears (Attachment Seq. 1A, after Schedule 1)
+    when line 13b > 0, and is absent otherwise — a taxpayer with tips/
+    overtime/car-loan/senior deductions can't mail an incomplete package."""
+    r = _result()
+    assert not any(e["sequence"] == "1A" for e in FP.assembly_order(r))
+    r["form_1040"]["line_13b_schedule_1a_deductions"] = 12000
+    r["schedule_1a"] = {"tips": {"allowed": 12000}, "total": 12000}
+    seqs = [e["sequence"] for e in FP.assembly_order(r)]
+    assert "1A" in seqs
+    # 1A sorts after 01 and before 02.
+    r["form_1040"]["line_8_schedule1_other"] = 5000  # forces Schedule 1 (01)
+    ordered = [e["sequence"] for e in FP.assembly_order(r)]
+    assert ordered.index("01") < ordered.index("1A")
+
+
+def test_schedule_1a_derived_row_keys_the_real_section():
+    """Unlike the reconstructed schedules (key None), Schedule 1-A has a real
+    result section — the assembly entry must carry key='schedule_1a' so the
+    filing package renders the per-provision worksheet detail, not just a bare
+    attachment line. With line 13b > 0 but the section missing/scaffold, the
+    result is inconsistent and packaging HARD-STOPS (a bare row can't attach)."""
+    # line 13b set, no schedule_1a section -> incomplete result -> hard error.
+    r = _result()
+    r["form_1040"]["line_13b_schedule_1a_deductions"] = 9000
+    with pytest.raises(FP.FilingPackageError):
+        FP.assembly_order(r)
+    # A total-only section (no per-provision detail) is ALSO rejected — a bare
+    # total can't populate the attached Schedule 1-A worksheet.
+    r["schedule_1a"] = {"total": 9000}
+    with pytest.raises(FP.FilingPackageError):
+        FP.assembly_order(r)
+    # Provision detail that does NOT reconcile to line 13b is rejected too — a
+    # scaffold (allowed:0) or stale section can't support the packaged total.
+    r["schedule_1a"] = {"tips": {"allowed": 5000}, "total": 5000}  # 5000 != 9000
+    with pytest.raises(FP.FilingPackageError):
+        FP.assembly_order(r)
+    # Real schedule_1a section present -> keyed so the section renders.
+    r["schedule_1a"] = {"tips": {"allowed": 9000}, "total": 9000}
+    entry2 = next(e for e in FP.assembly_order(r) if e["sequence"] == "1A")
+    assert entry2["key"] == "schedule_1a"
+    # Other derived schedules stay key None (they have no result section).
+    r["form_1040"]["line_8_schedule1_other"] = 5000
+    sch1 = next(e for e in FP.assembly_order(r) if e["sequence"] == "01")
+    assert sch1["key"] is None
+
+
+def test_schedule_1a_car_loan_requires_vehicle_detail():
+    """Codex round-14 P2: a nonzero car-loan deduction needs a Part IV vehicle
+    row (VIN + interest_paid) to attach Schedule 1-A — a claim with no
+    car_loan_detail hard-stops; a complete row packages."""
+    r = _result()
+    r["form_1040"]["line_13b_schedule_1a_deductions"] = 4000
+    r["schedule_1a"] = {"car_loan": {"allowed": 4000}, "total": 4000}
+    with pytest.raises(FP.FilingPackageError):
+        FP.assembly_order(r)
+    # A complete vehicle row lets it package.
+    r["schedule_1a"]["car_loan_detail"] = [
+        {"vin": "1FTFW1E50NKE00000", "interest_paid": 4200}]
+    assert any(e["sequence"] == "1A" for e in FP.assembly_order(r))
+
+
 def test_derived_schedule_8812_value_gated():
     r = _result()
     r["form_1040"]["line_19_ctc"] = 4000

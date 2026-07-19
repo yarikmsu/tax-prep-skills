@@ -40,10 +40,14 @@ class AmendError(Exception):
 _1040X_LINES = [
     ("1", "Adjusted gross income", "line_11_agi"),
     # 1040-X line 2 is 1040 line 12 (standard OR itemized deduction) ONLY —
-    # NOT line_14_total_deductions (= line 12 + line 13 QBI), which would
-    # double-count QBI against line 4a and break the 1−2−4a=5 arithmetic.
+    # NOT line_14_total_deductions (= line 12 + line 13a QBI + line 13b
+    # Schedule 1-A), which would double-count QBI/Schedule-1-A against lines
+    # 4a/4b and break the 1−2−4a−4b=5 arithmetic.
     ("2", "Itemized deductions or standard deduction", "line_12_standard_deduction"),
     ("4a", "Qualified business income deduction", "line_13a_qbi_deduction"),
+    # Line 4b (added to Form 1040-X Dec 2025) — OBBBA Schedule 1-A deductions.
+    ("4b", "Schedule 1-A deductions (tips/overtime/car-loan/senior)",
+     "line_13b_schedule_1a_deductions"),
     ("5", "Taxable income", "line_15_taxable_income"),
     ("6", "Tax", "line_16_tax"),
     ("7", "Nonrefundable credits", "line_21_total_credits"),

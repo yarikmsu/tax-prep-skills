@@ -135,6 +135,18 @@ RULES: "tuple[Rule, ...]" = (
          "Gambling income", "W-2G / Schedule A",
          "Winnings are reported as income; losses are deductible only when "
          "itemizing and are hand-computed."),
+    Rule("unreported_allocated_tips", "has_unreported_or_allocated_tips",
+         MANUAL, "Unreported or employer-allocated tips (Form 4137)",
+         "Form 4137 / Schedule 2 line 5",
+         "Unreported cash/charge tips and employer-ALLOCATED tips (W-2 box 8) "
+         "run through Form 4137, which adds them to wages on Form 1040 line 1c "
+         "AND computes the employee Social Security/Medicare tax on Schedule 2 "
+         "line 5 — v1 does NOT compute Form 4137. These tips ARE §224 qualified "
+         "tips (Schedule 1-A Part II has a Form 4137 line), but include them in "
+         "the qualified-tips deduction ONLY after hand-computing Form 4137 and "
+         "adding the paired income + payroll tax; otherwise the deduction is "
+         "claimed while the income and FICA are dropped. Verify in tax "
+         "software."),
     Rule("feie", "lives_abroad", MANUAL,
          "Living abroad", "Form 2555 (FEIE)",
          "The foreign-earned-income exclusion is not modeled — only the FTC "
@@ -200,20 +212,27 @@ RULES: "tuple[Rule, ...]" = (
 
 _RULES_BY_ID = {r.rule_id: r for r in RULES}
 
-# Flags introduced WITH the capability gate. A legacy profile (created before
-# the gate existed) simply lacks these keys, and treating absence as False
-# would wave through exactly the situations the gate exists to catch — an
-# existing ISO/NYC/household/kiddie profile was never asked the question. All
-# five must be EXPLICITLY answered (true/false): absence fails closed as the
-# `unanswered_gate_questions` blocker, which is deliberately NOT in the rule
-# registry so it cannot be acknowledged away — the remedy is answering five
-# yes/no questions, not accepting a gap.
+# Flags whose ABSENCE must fail closed rather than default to False, because a
+# missing answer would wave through exactly the situation the gate exists to
+# catch. The original gate-era five (an existing ISO/NYC/household/kiddie
+# profile was never asked the question) — plus `has_unreported_or_allocated_
+# tips` (added with the OBBBA Schedule 1-A pass): unreported / employer-
+# allocated tips run through Form 4137 (Form 1040 line 1c wage income + Schedule
+# 2 line 5 employee SS/Medicare tax), which the engine does NOT compute, so
+# absence-as-False would silently DROP real income + payroll tax — a materially
+# wrong return, not merely an omitted hand-worked credit like the other MANUAL
+# rules (this is the same reason `has_iso_exercise`, itself a MANUAL rule, is
+# required-present). Each must be EXPLICITLY answered (true/false): absence
+# fails closed as the `unanswered_gate_questions` blocker, which is deliberately
+# NOT in the rule registry so it cannot be acknowledged away — the remedy is
+# answering the yes/no questions, not accepting a gap.
 _REQUIRED_GATE_FLAGS = (
     "has_iso_exercise",
     "moved_states_this_year",
     "nyc_resident",
     "has_household_employees",
     "has_dependent_unearned_income",
+    "has_unreported_or_allocated_tips",
 )
 _MIGRATION_RULE_ID = "unanswered_gate_questions"
 

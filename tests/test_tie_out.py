@@ -154,6 +154,23 @@ def test_high_value_record_without_second_read_advisory():
     assert any("second-read" in a and "w2-acme" in a for a in report.advisories)
 
 
+def test_schedule_1a_tips_overtime_draw_advisory():
+    """A parsed tips/overtime figure feeds the Schedule 1-A deduction (line
+    13b) — it must draw a to-verify advisory so a parsed statement with line
+    13b left at $0 (a dropped deduction) can't silently report 'Tied out'."""
+    recs = _ledger(_record(
+        doc_id="w2-diner", file="documents/W2_Diner.pdf",
+        key_boxes={"wages": 40000.0, "qualified_tips": 8000.0,
+                   "qualified_overtime_premium": 3000.0}))
+    report = T.evaluate(recs, _result(wages=40000.0, w2_wh=0.0),
+                        ["documents/W2_Diner.pdf"])
+    assert not report.failed  # informational — advisory, not a gate failure
+    assert any("qualified_tips" in a and "line 13b" in a
+               for a in report.advisories)
+    assert any("qualified_overtime_premium" in a and "line 13b" in a
+               for a in report.advisories)
+
+
 def test_second_read_match_clears_advisory():
     rec = _record()
     rec["second_read"] = "match"

@@ -87,17 +87,26 @@ def test_annualize_scales_steady_items_and_adds_overrides_full_year():
     as_of = datetime.date(2026, 7, 2)  # day 183 of 365
     frac = P.elapsed_fraction(as_of)
     overrides = {"year_end_bonus": 10000, "rsu_vesting": 5000, "capital_gains": 3000,
-                 "self_employment_net": 0, "other_income": 1000}
+                 "self_employment_net": 0, "other_income": 1000, "schedule_1a": 8000}
     recurring = {"taxable_interest": 800, "ordinary_dividends": 1200, "qualified_dividends": 900}
     proj = P.annualize(_ytd_half_year(), as_of, "biweekly", overrides, recurring,
                        {"federal": 0, "state": 0})
     assert proj.wages == pytest.approx(round(50000 / frac, 2) + 15000, abs=0.01)
     assert proj.federal_withholding == pytest.approx(round(6000 / frac, 2), abs=0.01)
     assert proj.capital_gains == 3000
+    assert proj.schedule_1a_total == 8000  # full-year override, not annualized
     assert proj.other_income == 1000
     assert proj.taxable_interest == 800
     assert proj.qualified_dividends == 900
     assert proj.paychecks_remaining == P.paychecks_remaining("biweekly", frac)
+
+
+def test_annualize_rejects_negative_schedule_1a():
+    """Codex round-5 P2: a negative Schedule 1-A override must hard-error, not
+    silently floor to $0 (which would drop the deduction and overstate tax)."""
+    with pytest.raises(P.ProjectionError, match="non-negative"):
+        P.annualize({"wages": 50000}, datetime.date(2026, 7, 1), "biweekly",
+                    {"schedule_1a": -5000}, {}, {"federal": 0, "state": 0})
 
 
 def test_annualize_carries_estimates_and_defaults_medicare_wages_to_wages():
@@ -109,8 +118,21 @@ def test_annualize_carries_estimates_and_defaults_medicare_wages_to_wages():
     assert proj.medicare_wages == proj.wages
 
 
+def _sch1a_full_limits():
+    """A fully-populated federal.schedule_1a block (all 7 caps/thresholds)."""
+    return {
+        "tips_cap": 25000, "car_loan_cap": 10000,
+        "senior_amount_per_person": 6000,
+        "overtime_cap": {"single": 12500, "mfj": 25000},
+        "tips_overtime_phaseout_start": {"single": 150000, "mfj": 300000},
+        "car_loan_phaseout_start": {"single": 100000, "mfj": 200000},
+        "senior_phaseout_start": {"single": 75000, "mfj": 150000},
+    }
+
+
 def _tax_law_2026():
     return {
+        "tax_year": 2026,
         "federal": {
             "filing_statuses": {
                 "mfj": {"standard_deduction": 30000,
@@ -225,6 +247,159 @@ def test_project_federal_niit_added_when_threshold_fetched():
     assert fed.niit == 760.00
     assert fed.additional_medicare == 450.00
     assert fed.total_tax == 66210.00
+
+
+def test_project_schedule_1a_reduces_taxable_income_not_agi_or_niit():
+    """I2 projection parity: a Schedule 1-A forecast override is a BELOW-AGI
+    deduction — it drops taxable income but leaves AGI, NIIT, and Additional
+    Medicare (all MAGI/wage-based) untouched. MFJ AGI 320000, NII 20000,
+    threshold 250000; a $15,000 Schedule 1-A cuts taxable income by 15,000
+    while NIIT (760) and Add'l Medicare (450) are identical to the base case."""
+    law = _tax_law_2026()
+    law["federal"]["niit"] = {"rate": 0.038,
+                              "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}}
+    args = dict(wages=300000, ordinary_dividends=20000, medicare_wages=300000)
+    base = P.project_federal_tax(_proj(**args), _profile_mfj(), law)
+    with_1a = P.project_federal_tax(_proj(schedule_1a_total=15000, **args),
+                                    _profile_mfj(), law)
+    assert with_1a.agi == base.agi
+    assert with_1a.niit == base.niit == 760.00
+    assert with_1a.additional_medicare == base.additional_medicare == 450.00
+    assert with_1a.taxable_income == base.taxable_income - 15000
+
+
+def test_project_schedule_1a_gated_off_outside_effective_years():
+    """Codex P2: compute_schedule_1a returns $0 outside TY2025-2028, so a stale
+    forecast override must not shave taxable income for TY2029+ (which would
+    understate tax and the safe-harbor target)."""
+    law = _tax_law_2026()
+    law["tax_year"] = 2029
+    gated = P.project_federal_tax(_proj(schedule_1a_total=15000), _profile_mfj(), law)
+    base = P.project_federal_tax(_proj(), _profile_mfj(), law)
+    assert gated.taxable_income == base.taxable_income  # override ignored in 2029
+
+
+def test_project_schedule_1a_flags_unfetched_caps():
+    """Codex round-13 P2: a nonzero schedule_1a override is subtracted raw
+    (uncapped/unphased) when federal.schedule_1a is unfetched — surface a
+    warning flag rather than silently trusting a possibly-raw figure."""
+    law = _tax_law_2026()
+    law["federal"].pop("schedule_1a", None)  # caps/thresholds not fetched
+    unfetched = P.project_federal_tax(
+        _proj(schedule_1a_total=9000), _profile_mfj(), law)
+    assert unfetched.schedule_1a_unfetched is True
+    # FULLY-populated caps -> no warning.
+    law["federal"]["schedule_1a"] = _sch1a_full_limits()
+    fetched = P.project_federal_tax(
+        _proj(schedule_1a_total=9000), _profile_mfj(), law)
+    assert fetched.schedule_1a_unfetched is False
+    # A truthy-but-all-None scaffold (create_empty_tax_law) reads as unfetched.
+    law["federal"]["schedule_1a"] = {
+        "tips_cap": None, "car_loan_cap": None,
+        "overtime_cap": {"single": None, "mfj": None},
+        "senior_amount_per_person": None}
+    scaffold = P.project_federal_tax(
+        _proj(schedule_1a_total=9000), _profile_mfj(), law)
+    assert scaffold.schedule_1a_unfetched is True
+    # A PARTIAL top-level block (only tips_cap present) reads as unfetched —
+    # the other caps/thresholds can't validate the override.
+    law["federal"]["schedule_1a"] = {"tips_cap": 25000}
+    partial_top = P.project_federal_tax(
+        _proj(schedule_1a_total=9000), _profile_mfj(), law)
+    assert partial_top.schedule_1a_unfetched is True
+    # A nested cap map missing a status key (single present, mfj absent) too.
+    law["federal"]["schedule_1a"] = dict(_sch1a_full_limits(),
+                                         overtime_cap={"single": 12500})
+    partial_nested = P.project_federal_tax(
+        _proj(schedule_1a_total=9000), _profile_mfj(), law)
+    assert partial_nested.schedule_1a_unfetched is True
+    # A malformed scalar (string / negative / NaN) reads as unfetched too — the
+    # compute path rejects those, so a corrupt cache can't validate the override.
+    for bad in ("25000", -1, float("nan")):
+        law["federal"]["schedule_1a"] = dict(_sch1a_full_limits(), tips_cap=bad)
+        got = P.project_federal_tax(
+            _proj(schedule_1a_total=9000), _profile_mfj(), law)
+        assert got.schedule_1a_unfetched is True, bad
+    # No override -> no warning even when the block is absent.
+    law["federal"].pop("schedule_1a", None)
+    none = P.project_federal_tax(_proj(), _profile_mfj(), law)
+    assert none.schedule_1a_unfetched is False
+
+
+def test_project_schedule_1a_override_fails_closed_on_bad_cache_year():
+    """Codex round-16 P2: the effective-year gate must FAIL CLOSED — a cache
+    whose tax_year is missing, a string, or out of the TY2025-2028 window must
+    NOT let a raw override shave taxable income (only a genuine in-window int
+    applies it)."""
+    base_law = _tax_law_2026()
+    base = P.project_federal_tax(_proj(), _profile_mfj(), base_law)
+    for bad in (None, "2026", 2029, 2024, True):
+        law = _tax_law_2026()
+        if bad is None:
+            law.pop("tax_year", None)
+        else:
+            law["tax_year"] = bad
+        got = P.project_federal_tax(
+            _proj(schedule_1a_total=15000), _profile_mfj(), law)
+        assert got.taxable_income == base.taxable_income, bad  # override cleared
+    # A genuine in-window int DOES apply the override.
+    ok = P.project_federal_tax(
+        _proj(schedule_1a_total=15000), _profile_mfj(), _tax_law_2026())
+    assert ok.taxable_income == base.taxable_income - 15000
+    # Cache year in-window but != the requested projection year -> cleared
+    # (a 2026 cache can't validate a 2027 projection's override).
+    mism = P.project_federal_tax(
+        _proj(schedule_1a_total=15000), _profile_mfj(), _tax_law_2026(),
+        requested_year=2027)
+    assert mism.taxable_income == base.taxable_income
+
+
+def test_project_schedule_1a_se_tips_excluded_from_qbi():
+    """Codex round-17 P2: self-employed §224 tips in the Schedule 1-A override
+    are removed from the QBI base (Form 8995 excludes deducted tip income). With
+    high wages so the QBI overall cap is not binding, $20K SE tips in a $100K
+    Schedule C business yields QBI on $80K, not $100K — a 20% × $20K = $4,000
+    smaller QBI deduction, so taxable income is $4,000 higher with the split."""
+    law = _tax_law_2026()
+    law["federal"]["schedule_1a"] = _sch1a_full_limits()
+    common = dict(wages=300000, self_employment_net=100000, schedule_1a_total=20000)
+    base = P.project_federal_tax(_proj(**common), _profile_mfj(), law)
+    split = P.project_federal_tax(
+        _proj(schedule_1a_se_tips=20000, **common), _profile_mfj(), law)
+    assert split.taxable_income == base.taxable_income + 4000
+    # SE tax is unchanged — the tip deduction is income-tax only, not SE tax.
+    assert split.se_tax == base.se_tax
+
+
+def test_project_se_tips_qbi_exclusion_bounded_by_applied_deduction():
+    """Codex round-18 P2: the SE-tip QBI exclusion can't exceed the APPLIED
+    Schedule 1-A deduction. An inconsistent override (se_tips 20000 but the
+    schedule_1a total only 1000) excludes at most $1,000 from the QBI base, not
+    $20,000 — so QBI drops by 20% × $1,000 = $200, not $4,000."""
+    law = _tax_law_2026()
+    law["federal"]["schedule_1a"] = _sch1a_full_limits()
+    common = dict(wages=300000, self_employment_net=100000, schedule_1a_total=1000)
+    base = P.project_federal_tax(_proj(**common), _profile_mfj(), law)
+    got = P.project_federal_tax(
+        _proj(schedule_1a_se_tips=20000, **common), _profile_mfj(), law)
+    assert got.taxable_income == base.taxable_income + 200
+
+
+def test_project_schedule_1a_zeroed_for_mfs():
+    """Codex round-14 P2: all four Schedule 1-A provisions are $0 for MFS
+    (tips/overtime/senior joint-required + the §70203 car-loan MFS bar), so a
+    raw MFS override must not shave projected taxable income."""
+    law = _tax_law_2026()
+    law["federal"]["filing_statuses"]["mfs"] = {
+        "standard_deduction": 15000,
+        "brackets": [{"rate": 0.10, "min": 0, "max": 10000},
+                     {"rate": 0.20, "min": 10000, "max": None}]}
+    prof = {"filing_status": "MFS", "dependents": []}
+    with_1a = P.project_federal_tax(
+        _proj(schedule_1a_total=9000, wages=80000), prof, law)
+    base = P.project_federal_tax(_proj(wages=80000), prof, law)
+    assert with_1a.taxable_income == base.taxable_income  # override ignored
+    assert with_1a.schedule_1a_unfetched is False  # zeroed → no warning
 
 
 def test_project_federal_niit_reduced_by_capped_capital_loss():

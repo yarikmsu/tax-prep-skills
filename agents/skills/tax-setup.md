@@ -198,6 +198,52 @@ interview never captures is invisible to every downstream check.
     events.)
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
 - Gambling income (W-2G)? → sets `has_gambling_income` flag
+- **OBBBA Schedule 1-A deductions (TY2025-2028 only — BELOW-AGI, line 13b):**
+  - Any **qualified tip income** in a customarily-tipped occupation? → sets
+    `has_qualified_tips` (§224). Source: the employer's designated qualified-
+    tip amount (W-2 box 14 code / separate statement) if provided, ELSE **W-2
+    box 7 (Social Security tips)** — a single-employer tipped worker usually
+    has no separate statement, so box 7 tips still set the flag. The SSN test
+    is RECIPIENT-specific: the spouse who RECEIVED the tips must have a valid
+    SSN (an ITIN on the OTHER, non-recipient spouse does NOT disqualify the
+    return); MFS doesn't qualify — married must file jointly. **Unreported or
+    employer-ALLOCATED tips (W-2 box 8)?** → sets
+    `has_unreported_or_allocated_tips` (Form 4137 — adds them to wages on 1040
+    line 1c and computes SS/Medicare tax on Schedule 2 line 5; NOT modeled by
+    the engine, so it lands in the limitations manifest). They ARE §224
+    qualified tips (Schedule 1-A Part II has a Form 4137 line), so once the
+    paired Form 4137 income + FICA are hand-entered they CAN feed
+    `qualified_tips` (set `has_qualified_tips` too) — exclude them only while
+    that paired treatment is unhandled; don't permanently drop the deduction.
+  - Any **overtime pay**? → sets `has_qualified_overtime`. Capture the **FLSA
+    premium portion ONLY** (the "half" of time-and-a-half, box 14 / employer
+    statement), NOT gross overtime wages (§225).
+  - **Car-loan interest** on a vehicle bought after 2024-12-31? → sets
+    `has_car_loan_interest` (§70203). Only qualifies if: NEW vehicle (original
+    use), first-lien loan originated after 2024-12-31, US final assembly,
+    a qualified passenger vehicle with **GVWR under 14,000 lbs** (car/SUV/van/
+    pickup/motorcycle — NOT a heavier commercial vehicle), personal use, the
+    VIN is reported on the return, and the filer is NOT married-filing-
+    separately (§70203 is unavailable to MFS). Ask for the VIN and the GVWR;
+    route an unknown/over-14,000-lb vehicle to manual verification (don't set
+    the flag).
+- **Age 65 or older** (either spouse) by year end? → sets
+  `age_65_plus_primary` / `age_65_plus_spouse`. Drives BOTH the §63(f)
+  additional standard deduction AND the separate OBBBA §70103 enhanced senior
+  deduction (Schedule 1-A line 13b — they STACK). The spouse's §70103 senior
+  deduction counts only on MFJ; the §63(f) additional standard deduction,
+  however, may ALSO count the spouse's age/blindness box on an MFS return when
+  the spouse had NO income, isn't filing a return, and can't be claimed as a
+  dependent by another taxpayer (2025 Form 1040 line 12d). **Valid-SSN split:**
+  the §70103 senior deduction (unlike §63(f)) requires the 65+ person to have a
+  valid SSN. The `age_65_plus_*` flags drive §63(f), so KEEP them set for a 65+
+  ITIN person — but do NOT pass that person's age boolean into
+  `compute_schedule_1a` (screen §70103 SSN eligibility separately), or Schedule
+  1-A over-claims the senior deduction for a non-SSN filer.
+  **Final (decedent) returns:** a taxpayer/spouse who was born before the
+  cutoff but DIED before actually reaching age 65 does NOT qualify (per the
+  Schedule 1-A instructions) — do NOT set the flag in that case even though
+  the birth year would otherwise suggest 65+.
 
 **Group 7 — Retirement & savings detail:**
 - IRA type: Traditional, Roth, or both? Any Roth conversion this year?
@@ -302,6 +348,22 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   26%→28% figure, published with the Rev. Proc. inflation adjustments;
   the MFS breakpoint is derived by halving, don't store it). Required for
   ISO exercisers — `compute_form_6251` hard-errors on an unfetched table.
+  Leave `phaseout_rate` as `null` unless a source contradicts the built-in
+  schedule (25% ≤TY2025, 50% from TY2026 per OBBBA §70107) — the statutory
+  rate is coded, so a null is correct, not a gap. **TY2026+ staleness
+  tripwire:** §70107 also RESETS the phase-out thresholds to the 2018 base
+  (~$500K single / $1M MFJ, reindexed), so a TY2026 fetch that returns
+  TY2025-magnitude `phaseout_start` values (~$626K single) is reading a stale
+  source — re-search for the post-OBBBA figures.
+- Search: `"IRS Schedule 1-A {year} tips overtime deduction limits"` — populate
+  `federal.schedule_1a` (`tips_cap`, `overtime_cap` by single/mfj,
+  `car_loan_cap`, `senior_amount_per_person`, and the three phase-out-start
+  pairs: `tips_overtime_phaseout_start`, `car_loan_phaseout_start`,
+  `senior_phaseout_start`). ONLY needed when the taxpayer has tips, overtime,
+  car-loan interest, or is 65+ (TY2025-2028) — leave the block all-null
+  otherwise (freshness does not nag; `compute_schedule_1a` hard-errors at the
+  point of use if a figure is missing when actually needed). The phase-out
+  MECHANICS ($100/$1,000, $200/$1,000, 6%) are coded, not fetched.
 - Search: `"IRS quarterly interest rates underpayment {year}"` (and `{year+1}` Q1-Q2
   when published) — populate `federal.underpayment_rates` as a list of
   `{"effective_from": "YYYY-MM-DD", "annual_rate": 0.08}` covering every §6621

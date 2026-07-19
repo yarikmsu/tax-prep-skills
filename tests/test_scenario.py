@@ -51,6 +51,29 @@ def test_compute_scenario_wages_delta_moves_ordinary():
     assert out1["agi"] - out0["agi"] == 10000.0
 
 
+def test_compute_scenario_schedule_1a_lowers_taxable_income():
+    """Codex round-2 P2: a below-AGI Schedule 1-A deduction (line 13b) is a
+    constant that the keystone subtracts before QBI — it lowers taxable income
+    (so marginal deltas price from the correct position) but leaves AGI
+    untouched."""
+    base = {"wages": 150000}
+    with_1a = {"wages": 150000, "schedule_1a_deduction": 20000}
+    out = compute_scenario(base, {}, **RATE_KW)
+    out_1a = compute_scenario(with_1a, {}, **RATE_KW)
+    assert out_1a["agi"] == out["agi"]
+    assert out_1a["taxable_income"] == out["taxable_income"] - 20000
+    assert out_1a["total_federal_tax"] < out["total_federal_tax"]
+    # A negative, bool, NaN, or Infinity value is rejected (Codex round-18 P2:
+    # json.loads accepts NaN/Infinity, and they slip past a bare `< 0` check).
+    import pytest
+    for bad in ({"wages": 1, "schedule_1a_deduction": -5},
+                {"wages": 1, "schedule_1a_deduction": True},
+                {"wages": 1, "schedule_1a_deduction": float("nan")},
+                {"wages": 1, "schedule_1a_deduction": float("inf")}):
+        with pytest.raises(ValueError):
+            compute_scenario(bad, {}, **RATE_KW)
+
+
 def test_compute_scenario_capital_gains_uses_preferential_rate():
     base = {"wages": 150000}
     out0 = compute_scenario(base, {}, **RATE_KW)
@@ -426,7 +449,10 @@ def test_build_report_job_loss_agi_zero_renders():
     r = _build(["wages=-200000"])
     assert r.scenario_outcome.agi == 0.0
     assert r.diff.scenario_effective_rate is None
-    assert "Bottom line" in sc.render_markdown(r)
+    md = sc.render_markdown(r)
+    assert "Bottom line" in md
+    # Codex round-4 P2: the Schedule 1-A second-order caveat is user-facing.
+    assert "Schedule 1-A" in md and "phase OUT" in md
 
 
 def test_three_deep_stacking_carries_anchor_and_accumulates():

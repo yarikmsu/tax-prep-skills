@@ -33,6 +33,8 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_qdcg_tax,
     compute_se_tax,
     net_capital_gains,
+    _SCH1A_EFFECTIVE_FROM,
+    _SCH1A_EFFECTIVE_THROUGH,
 )
 
 
@@ -74,6 +76,47 @@ def _binary_status_key(filing_status: str | None) -> str:
     return "mfj" if (filing_status or "").upper() in _MFJ_LIKE else "single"
 
 
+# The full federal.schedule_1a schema (tax_law_fetcher.create_empty_tax_law):
+# three scalar caps + four single/mfj-keyed maps. A raw projection override can
+# only be validated when EVERY one is populated — so the completeness check
+# requires the whole set, not just whichever keys happen to be present.
+_SCH1A_SCALAR_LIMITS = ("tips_cap", "car_loan_cap", "senior_amount_per_person")
+_SCH1A_NESTED_LIMITS = ("overtime_cap", "tips_overtime_phaseout_start",
+                        "car_loan_phaseout_start", "senior_phaseout_start")
+
+
+def _sch1a_limit_bad(v) -> bool:
+    """A usable indexed cap/threshold must be a FINITE, NON-NEGATIVE real number
+    (bool excluded). The compute path rejects string/NaN/Infinity/negative via
+    _sched_a_amount, so the projection completeness check must reject them too —
+    otherwise a corrupt cache like {"tips_cap": "25000"} or a negative figure
+    would pass and let a raw override apply without the unfetched warning."""
+    return (isinstance(v, bool) or not isinstance(v, (int, float))
+            or not math.isfinite(v) or v < 0)
+
+
+def _sch1a_limits_incomplete(block) -> bool:
+    """The fetched federal.schedule_1a block is USABLE for validating a raw
+    override only when EVERY indexed cap/threshold is populated. create_empty_
+    tax_law seeds the whole block all-None, and inspecting only present keys
+    would wave through a scaffold OR a partial cache (e.g. {"tips_cap": 25000}
+    missing the others) — so validate the FULL required schema explicitly: each
+    scalar cap present + non-None, and each nested map carrying BOTH single and
+    mfj non-None. Any gap → incomplete (fail closed; a raw override applied
+    against a partial cache would be uncapped/unphased). Codex rounds 14-16."""
+    if not isinstance(block, dict):
+        return True
+    for key in _SCH1A_SCALAR_LIMITS:
+        if _sch1a_limit_bad(block.get(key)):
+            return True
+    for key in _SCH1A_NESTED_LIMITS:
+        nested = block.get(key)
+        if not isinstance(nested, dict) or any(
+                _sch1a_limit_bad(nested.get(k)) for k in ("single", "mfj")):
+            return True
+    return False
+
+
 def _num(value, field: str = "") -> float:
     """Coerce to float; None->0.0; reject bool, non-finite, and unparseable strings.
 
@@ -92,6 +135,18 @@ def _num(value, field: str = "") -> float:
         raise ProjectionError(f"{field or 'value'} is not numeric: {value!r}")
     if not math.isfinite(n):
         raise ProjectionError(f"{field or 'value'} must be finite, got {n!r}")
+    return n
+
+
+def _nonneg_num(value, field: str = "") -> float:
+    """_num, but HARD-ERROR on a negative value instead of letting a downstream
+    max(0, …) silently floor it to $0. Used for the Schedule 1-A override — a
+    negative deduction is invalid input (the compute/scenario paths reject it),
+    and silently coercing to $0 would drop the deduction and overstate the
+    projected tax + safe-harbor target with no warning."""
+    n = _num(value, field)
+    if n < 0:
+        raise ProjectionError(f"{field or 'value'} must be non-negative, got {n!r}")
     return n
 
 
@@ -118,6 +173,16 @@ class ProjectedInputs:
     # buckets understates the projection and the safe-harbor target.
     capital_gains_short: float = 0.0
     capital_gains_long: float = 0.0
+    # OBBBA Schedule 1-A total (tips + overtime premium + car-loan + senior),
+    # a BELOW-AGI deduction (line 13b). Reduces taxable income and the QBI cap
+    # base, NEVER AGI — so taxable SS and NIIT (MAGI-based) are unaffected.
+    schedule_1a_total: float = 0.0
+    # The portion of schedule_1a_total that is SELF-EMPLOYED §224 qualified
+    # tips (from the projected Schedule C business). Form 8995 excludes deducted
+    # tip income from QBI, so this is subtracted from the QBI base as well as
+    # feeding the line-13b total — without it the same SE tips get both the
+    # line-13b deduction and 20% QBI. Must not exceed self_employment_net.
+    schedule_1a_se_tips: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -137,6 +202,7 @@ class FederalProjection:
     used_qdcg: bool
     niit: float = 0.0
     qbi_over_threshold: bool = False
+    schedule_1a_unfetched: bool = False
 
 
 @dataclass(frozen=True)
@@ -315,6 +381,9 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
         capital_gains=cg_legacy,
         capital_gains_short=cg_short,
         capital_gains_long=cg_long,
+        schedule_1a_total=_nonneg_num(overrides.get("schedule_1a"), "schedule_1a"),
+        schedule_1a_se_tips=_nonneg_num(
+            overrides.get("schedule_1a_se_tips"), "schedule_1a_se_tips"),
         qualified_dividends=_num(recurring.get("qualified_dividends"), "qualified_dividends"),
         ordinary_dividends=_num(recurring.get("ordinary_dividends"), "ordinary_dividends"),
         taxable_interest=_num(recurring.get("taxable_interest"), "taxable_interest"),
@@ -327,7 +396,8 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
     )
 
 
-def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict) -> FederalProjection:
+def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
+                        requested_year: "int | None" = None) -> FederalProjection:
     fs = profile.get("filing_status")
     full_key = _full_status_key(fs)
     bin_key = _binary_status_key(fs)
@@ -372,11 +442,64 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict) -> 
     # passed so the over-threshold warning (8995-A wage/UBIA/SSTB limits not
     # modeled → deduction may be overstated) surfaces in the report instead of
     # silently understating projected tax for SSTB/wage-limited taxpayers.
-    ti_before_qbi = max(0.0, agi - std)
+    # OBBBA Schedule 1-A (line 13b) is a below-AGI deduction: it comes off
+    # taxable income and the QBI cap base but NOT AGI (AGI is line 366, already
+    # fixed — so the taxable-SS and NIIT MAGI computations are unaffected).
+    # The projected total is a forecast_overrides figure (the taxpayer/skill
+    # estimates the capped, MAGI-phased amount via compute_schedule_1a); the
+    # projection does not re-derive the caps. GATE by the effective-year window:
+    # compute_schedule_1a returns $0 outside TY2025-2028, so a stale override
+    # for TY2029+/pre-2025 must not shave taxable income (which would understate
+    # tax and the safe-harbor target) — Codex P2.
+    proj_year = tax_law.get("tax_year")
+    sch1a = max(0.0, proj.schedule_1a_total)
+    # Effective-year gate, FAIL CLOSED: apply the Schedule 1-A override ONLY
+    # when the cache's tax_year is a genuine int inside TY2025-2028. A missing,
+    # non-int, or out-of-window year clears it — a malformed or legacy cache
+    # (or a TY2029+/pre-2025 projection) must not shave taxable income. (The
+    # earlier "clear only when it's an int OUTSIDE the window" logic failed
+    # open on a missing/string year — Codex round-16 P2.)
+    year_ok = (isinstance(proj_year, int) and not isinstance(proj_year, bool)
+               and _SCH1A_EFFECTIVE_FROM <= proj_year <= _SCH1A_EFFECTIVE_THROUGH
+               # ...and, when the caller supplies the requested projection year,
+               # the cache year must MATCH it — a cache built for a different
+               # (even in-window) year can't validate this year's override.
+               and (requested_year is None or proj_year == requested_year))
+    if sch1a and not year_ok:
+        sch1a = 0.0
+    # MFS gate: ALL FOUR Schedule 1-A provisions are $0 for a married filer who
+    # files separately — tips/overtime/senior require a joint return AND the
+    # §70203 car-loan deduction is also unavailable to MFS (round 13) — so an
+    # MFS override must not shave taxable income here either (Codex round-14 P2).
+    if sch1a and full_key == "mfs":
+        sch1a = 0.0
+    # A raw override is subtracted here without re-deriving the caps/MAGI phase-
+    # out (compute_schedule_1a is not called). If the indexed `federal.schedule_
+    # 1a` block is missing OR only scaffold (all/any None — as create_empty_tax_
+    # law seeds it), the override is applied uncapped/unphased — flag it so the
+    # user knows the projected deduction may exceed the real amount rather than
+    # silently trusting a possibly-raw figure.
+    schedule_1a_unfetched = bool(
+        sch1a > 0 and _sch1a_limits_incomplete(fed.get("schedule_1a")))
+    ti_before_qbi = max(0.0, agi - std - sch1a)
+    # §224 SE tips are EXCLUDED from QBI (Form 8995): when the applied Schedule
+    # 1-A deduction includes self-employed qualified tips, those same dollars
+    # are removed from the QBI base so they don't get both the line-13b
+    # deduction and 20% QBI. Only when the deduction is actually applied (same
+    # gate as sch1a) and capped at self_employment_net so the base can't go
+    # negative (Codex round-17 P2).
+    # Bound by BOTH self_employment_net (can't exclude more SE income than
+    # exists) AND sch1a (the APPLIED deduction — SE tips can't be excluded from
+    # QBI beyond what was actually deducted on line 13b; an override with
+    # se_tips > schedule_1a is inconsistent and must not over-exclude). Codex P2.
+    se_tips_qbi_excl = (
+        min(proj.schedule_1a_se_tips, proj.self_employment_net, sch1a)
+        if sch1a > 0 else 0.0)
+    qbi_base = max(0.0, proj.self_employment_net - se_tips_qbi_excl)
     qbi_over_threshold = False
-    if proj.self_employment_net > 0:
+    if qbi_base > 0:
         qbi_res = compute_qbi_deduction(
-            proj.self_employment_net, 0.0, rate=fed.get("qbi_deduction_rate", 0.20),
+            qbi_base, 0.0, rate=fed.get("qbi_deduction_rate", 0.20),
             taxable_income_before_qbi=ti_before_qbi,
             net_capital_gain=proj.qualified_dividends + net_ltcg,
             threshold=(fed.get("qbi_threshold") or {}).get(bin_key),
@@ -448,6 +571,7 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict) -> 
         total_tax=round(total_tax, 2), withholding=round(proj.federal_withholding, 2),
         estimates_paid=round(proj.estimated_fed_paid, 2), balance=balance, used_qdcg=used_qdcg,
         niit=round(niit, 2), qbi_over_threshold=qbi_over_threshold,
+        schedule_1a_unfetched=schedule_1a_unfetched,
     )
 
 
@@ -698,7 +822,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
                      inputs.get("recurring_from_prior", {}),
                      inputs.get("estimated_payments_made", {}))
     fs = profile.get("filing_status")
-    federal = project_federal_tax(proj, profile, tax_law)
+    federal = project_federal_tax(proj, profile, tax_law, requested_year=year)
     address = profile.get("address")
     resident_state = address.get("state") if isinstance(address, dict) else None
     state = project_state_tax(proj, prior, tax_law, fs,
@@ -806,6 +930,14 @@ def render_markdown(r: ProjectionReport) -> str:
                      "90%-of-current-year test only; recurring income defaulted to 0.")
     if r.proj.federal_withholding == 0:
         lines.append("- **Note:** projected federal withholding is $0 — verify YTD withholding was entered.")
+    lines.append(
+        "- **Second-order effects (use /tax-compute for the exact figures):** "
+        "the standard deduction is the base amount — no §63(f) age-65/blind "
+        "add-on (slightly overstates the safe-harbor target near a threshold). "
+        "Self-employed §224 tips are removed from the QBI base ONLY when you "
+        "supply `forecast_overrides.schedule_1a_se_tips`; if a Schedule 1-A "
+        "override includes SE tips but that split is omitted, those dollars "
+        "stay in QBI and the projection understates tax.")
     lines.append("")
 
     lines += ["## Projected full-year federal", "",
@@ -928,6 +1060,15 @@ def render_markdown(r: ProjectionReport) -> str:
             "and SSTB phase-out are NOT modeled — the projected QBI deduction may be "
             "overstated (an SSTB phases to $0), understating projected tax and the "
             "safe-harbor target. Verify against Form 8995-A.")
+    if f.schedule_1a_unfetched:
+        lines.append(
+            "- **Schedule 1-A override applied WITHOUT fetched caps:** a "
+            "`forecast_overrides.schedule_1a` amount was subtracted but "
+            "`federal.schedule_1a` (the indexed caps/thresholds) is unfetched, so "
+            "the raw figure was NOT capped or MAGI-phased — the projected deduction "
+            "may exceed the real Schedule 1-A amount, understating projected tax and "
+            "the safe-harbor target. Fetch the block via /tax-setup, or enter the "
+            "already-capped/phased amount.")
     lines.append("")
     return "\n".join(lines) + "\n"
 
