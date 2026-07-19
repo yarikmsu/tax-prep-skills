@@ -114,10 +114,15 @@ def test_compute_scenario_qbi_capped_by_taxable_income():
 
 def test_compute_scenario_qbi_uncapped_when_income_high():
     # With wages on top, taxable income before QBI far exceeds the QBI base →
-    # the full 20% x 40000 = 8000 deduction survives the cap (regression guard).
+    # the QBI deduction survives the overall cap (regression guard). Per
+    # §199A(c)(4) / Reg. §1.199A-3(b)(1)(vi) the QBI base is the SE net REDUCED
+    # by the deductible half of SE tax (= ½ SE tax, IRC §164(f)), so the
+    # deduction is 20% x (40000 - ½ SE tax), NOT 20% x gross 40000.
     out = compute_scenario({"wages": 150000, "self_employment_net": 40000}, {}, **RATE_KW)
     ti_before = out["agi"] - 30000
-    assert out["taxable_income"] == pytest.approx(ti_before - 8000, abs=0.02)
+    half_se_tax = out["se_tax"] / 2
+    expected_qbi = 0.20 * (40000 - half_se_tax)
+    assert out["taxable_income"] == pytest.approx(ti_before - expected_qbi, abs=0.02)
 
 
 def test_compute_scenario_se_respects_w2_wage_base():

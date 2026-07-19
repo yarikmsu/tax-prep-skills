@@ -862,6 +862,9 @@ def compute_qbi_deduction(
     tax_year: int = None,
     qbi_minimum: dict = None,
     active_qualified_trade: bool = False,
+    half_se_tax: float = 0.0,
+    se_health_insurance: float = 0.0,
+    se_retirement: float = 0.0,
 ) -> dict:
     """Compute QBI deduction (Form 8995 simplified).
 
@@ -872,10 +875,29 @@ def compute_qbi_deduction(
     (retiree with a side business, loss-heavy year, large itemized/standard
     deduction).
 
+    QBI base netting (§199A(c)(4) / Reg. §1.199A-3(b)(1)(vi) / Form 8995 line 1):
+    qualified business income is REDUCED by the deductions attributable to the
+    trade or business — the deductible half of SE tax, the SE health-insurance
+    deduction, and SE retirement-plan (SEP/SIMPLE/qualified) contributions. These
+    are the `half_se_tax` / `se_health_insurance` / `se_retirement` args (each the
+    portion attributable to the qualifying trade); their sum is subtracted from
+    `qbi_income` BEFORE the 20% is taken. Omitting them overstates QBI and the
+    deduction (understates tax). They default to 0 for backward compatibility, so
+    a caller that already nets QBI, or has no SE activity, is unaffected.
+
     Args:
-        qbi_income: Qualified business income (can be negative = loss).
+        qbi_income: Qualified business income (can be negative = loss), BEFORE the
+            §1.199A-3(b)(1)(vi) SE-deduction netting (pass the SE deductions
+            separately via the three args below; do not pre-net them here).
         reit_dividends: Section 199A REIT dividends.
         rate: QBI deduction rate (default 20%).
+        half_se_tax: Deductible half of SE tax attributable to the trade
+            (Schedule 1 line 15 portion). Reduces QBI. Non-negative.
+        se_health_insurance: SE health-insurance deduction attributable to the
+            trade (Schedule 1 line 17 portion). Reduces QBI. Non-negative.
+        se_retirement: SE retirement-plan (SEP/SIMPLE/qualified) contribution
+            deduction attributable to the trade (Schedule 1 line 16 portion).
+            Reduces QBI. Non-negative.
         taxable_income_before_qbi: Taxable income computed WITHOUT the QBI
             deduction (AGI - deductions, floored at 0). When None the overall cap
             is SKIPPED (legacy behavior) and `income_cap_applied` is False — the
@@ -907,10 +929,35 @@ def compute_qbi_deduction(
             "REIT dividends from 1099-DIV are always non-negative."
         )
 
-    qbi_component = max(0, qbi_income * rate)
+    # §199A(c)(4) / Reg. §1.199A-3(b)(1)(vi): net QBI down by the deductions
+    # attributable to the trade (½ SE tax, SE health insurance, SE retirement).
+    # Each must be a finite, non-negative number (they are deductions — they can
+    # only REDUCE QBI). In practice these stay below QBI (SEHI/retirement are
+    # limited to net SE earnings), but the netting is left natural: if they were
+    # to exceed QBI the excess becomes a qualified-business-loss carryforward.
+    se_reductions = 0.0
+    for _name, _val in (("half_se_tax", half_se_tax),
+                        ("se_health_insurance", se_health_insurance),
+                        ("se_retirement", se_retirement)):
+        if isinstance(_val, bool):
+            raise ValueError(
+                f"{_name} must be a finite number, got {_val!r}")
+        _v = _coerce_numeric(_val, default=None)
+        if _v is None or not math.isfinite(_v):
+            raise ValueError(
+                f"{_name} must be a finite number, got {_val!r}")
+        if _v < 0:
+            raise ValueError(
+                f"{_name} cannot be negative (got {_v}) — it is a deduction that "
+                "reduces QBI per Reg. §1.199A-3(b)(1)(vi).")
+        se_reductions += _v
+    se_reductions = round(se_reductions, 2)
+    qbi_income_net = qbi_income - se_reductions
+
+    qbi_component = max(0, qbi_income_net * rate)
     reit_component = round(reit_dividends * rate, 2)
     total_deduction = qbi_component + reit_component
-    loss_carryforward = min(0, qbi_income)
+    loss_carryforward = min(0, qbi_income_net)
 
     income_cap = None
     income_limited = False
@@ -945,14 +992,14 @@ def compute_qbi_deduction(
     qbi_minimum_note = None
     if (isinstance(tax_year, int) and not isinstance(tax_year, bool)
             and tax_year >= _QBI_MINIMUM_FROM
-            and active_qualified_trade and qbi_income > 0):
+            and active_qualified_trade and qbi_income_net > 0):
         if isinstance(qbi_minimum, dict) \
                 and qbi_minimum.get("income_threshold") is not None \
                 and qbi_minimum.get("amount") is not None:
             inc_thr = _sched_a_amount(
                 qbi_minimum["income_threshold"], "qbi_minimum.income_threshold")
             floor = _sched_a_amount(qbi_minimum["amount"], "qbi_minimum.amount")
-            if qbi_income >= inc_thr and total_deduction < floor:
+            if qbi_income_net >= inc_thr and total_deduction < floor:
                 # The floor lifts the QBI amount, but the §199A(a)(2) OVERALL
                 # ceiling (20% of taxable income − net capital gain) still binds
                 # — the minimum cannot exceed the Form 8995 overall cap. Re-cap
@@ -982,7 +1029,9 @@ def compute_qbi_deduction(
         over_threshold = ti > thr
 
     result = {
-        "qbi_income": round(qbi_income, 2),
+        "qbi_income": round(qbi_income_net, 2),
+        "qbi_income_before_se_deductions": round(qbi_income, 2),
+        "se_deductions_attributable": se_reductions,
         "qbi_component": round(qbi_component, 2),
         "reit_dividends": round(reit_dividends, 2),
         "reit_component": round(reit_component, 2),
@@ -3275,10 +3324,16 @@ def compute_scenario(
     # computed after AGI and the preferential-income figures.
     ti_before_qbi = max(0.0, agi - standard_deduction - schedule_1a_deduction)
     if se_net > 0:
+        # §199A(c)(4) / Reg. §1.199A-3(b)(1)(vi): net the QBI base by the
+        # deductible half of SE tax (the only trade-attributable SE deduction the
+        # scenario models — SE health insurance / retirement are not scenario
+        # inputs). Omitting it overstates the QBI deduction and understates the
+        # scenario tax for a self-employed filer.
         qbi = compute_qbi_deduction(
             se_net, 0.0, rate=qbi_rate,
             taxable_income_before_qbi=ti_before_qbi,
             net_capital_gain=eff_qualified + net_ltcg,
+            half_se_tax=se["deductible_half"],
         )["total_deduction"]
     else:
         qbi = 0.0

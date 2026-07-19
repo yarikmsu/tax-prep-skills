@@ -496,6 +496,20 @@ Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
   income BEFORE passing it as QBI, or the same dollars get both the line-13b
   deduction and an extra 20% QBI deduction (double benefit → understatement).
 - REIT dividends = Section 199A dividends from 1099-DIVs
+- **Net the QBI base by the SE deductions attributable to the trade**
+  (§199A(c)(4) / Reg. §1.199A-3(b)(1)(vi) / Form 8995 line 1): for a
+  self-employed filer, pass the portion of each of these that is attributable to
+  the qualifying trade — `half_se_tax` (the deductible ½ of SE tax, Schedule 1
+  line 15), `se_health_insurance` (Schedule 1 line 17), and `se_retirement`
+  (SEP/SIMPLE/qualified-plan contributions, Schedule 1 line 16). `compute_qbi_deduction`
+  subtracts their sum from `qbi_income` BEFORE taking the 20%. **Do NOT pre-net
+  them into `qbi_income`** — pass the raw Schedule C net profit (less any §224
+  tip exclusion above) and the SE deductions separately, or they'd be
+  double-counted. Omitting them OVERSTATES QBI and the deduction (understates
+  tax). For a W-2-only / no-SE-activity filer these stay 0 (the default). With
+  multiple trades, attribute each deduction to the trade that generated it. The
+  result reports `qbi_income_before_se_deductions` and `se_deductions_attributable`
+  for transparency; `qbi_income` is the netted Form 8995 line-1 figure.
 - **ALWAYS pass the overall-cap inputs** — Form 8995 lines 11-14 cap the deduction
   at 20% × (taxable income before QBI − net capital gain):
   - `taxable_income_before_qbi` = max(0, Line 11 − Line 12 − Line 13b − Line 13c)

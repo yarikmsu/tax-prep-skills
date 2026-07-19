@@ -498,11 +498,17 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
     qbi_base = max(0.0, proj.self_employment_net - se_tips_qbi_excl)
     qbi_over_threshold = False
     if qbi_base > 0:
+        # §199A(c)(4) / Reg. §1.199A-3(b)(1)(vi): net the QBI base by the
+        # deductible half of SE tax (the SE-tips exclusion is already applied in
+        # qbi_base above; SE health insurance / retirement are not projection
+        # inputs). Omitting it overstates the QBI deduction and understates
+        # projected tax for a self-employed filer.
         qbi_res = compute_qbi_deduction(
             qbi_base, 0.0, rate=fed.get("qbi_deduction_rate", 0.20),
             taxable_income_before_qbi=ti_before_qbi,
             net_capital_gain=proj.qualified_dividends + net_ltcg,
             threshold=(fed.get("qbi_threshold") or {}).get(bin_key),
+            half_se_tax=se["deductible_half"],
         )
         qbi = qbi_res["total_deduction"]
         qbi_over_threshold = bool(qbi_res.get("over_threshold"))

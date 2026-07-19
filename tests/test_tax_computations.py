@@ -847,6 +847,107 @@ class TestComputeQbiDeduction:
             compute_qbi_deduction(50000, 0, taxable_income_before_qbi=float("nan"),
                                   net_capital_gain=0)
 
+    # --- §199A(c)(4) / Reg. §1.199A-3(b)(1)(vi): QBI base netting by the
+    # --- SE deductions attributable to the trade (½ SE tax, SE health
+    # --- insurance, SE retirement) BEFORE the 20% is taken ---
+
+    def test_se_deductions_reduce_qbi_base(self):
+        """Schedule C net $100K, but ½ SE tax $7,065 + SEHI $6,000 + SEP $18,587
+        are attributable to the trade. QBI = 100000 - 31652 = 68348;
+        component = 20% x 68348 = 13669.60. Omitting the netting would give
+        20% x 100000 = 20000 (a $6,330 overstatement)."""
+        result = compute_qbi_deduction(
+            100000, 0,
+            half_se_tax=7065, se_health_insurance=6000, se_retirement=18587)
+        assert result["se_deductions_attributable"] == 31652.00
+        assert result["qbi_income_before_se_deductions"] == 100000.00
+        assert result["qbi_income"] == 68348.00
+        assert result["qbi_component"] == 13669.60
+        assert result["total_deduction"] == 13669.60
+
+    def test_se_deductions_default_zero_backward_compatible(self):
+        """No SE-deduction args → QBI unchanged (legacy callers unaffected)."""
+        result = compute_qbi_deduction(50000, 1000)
+        assert result["se_deductions_attributable"] == 0.00
+        assert result["qbi_income"] == 50000.00
+        assert result["qbi_income_before_se_deductions"] == 50000.00
+        assert result["qbi_component"] == 10000.00
+        assert result["total_deduction"] == 10200.00
+
+    def test_se_deductions_only_half_se_tax(self):
+        """Only ½ SE tax supplied: QBI = 80000 - 5652 = 74348;
+        component = 20% x 74348 = 14869.60."""
+        result = compute_qbi_deduction(80000, 0, half_se_tax=5652)
+        assert result["se_deductions_attributable"] == 5652.00
+        assert result["qbi_component"] == 14869.60
+
+    def test_se_deductions_do_not_touch_reit(self):
+        """SE deductions net only the QBI component, never REIT dividends:
+        QBI 40000 - 3000 = 37000 (component 7400); REIT 5000 (component 1000)."""
+        result = compute_qbi_deduction(40000, 5000, half_se_tax=3000)
+        assert result["qbi_component"] == 7400.00
+        assert result["reit_component"] == 1000.00
+        assert result["total_deduction"] == 8400.00
+
+    def test_se_deductions_exceeding_qbi_create_loss_carryforward(self):
+        """Pathological (SEHI/retirement are normally capped at net earnings):
+        QBI 10000 - 12000 = -2000 → component 0, loss carryforward -2000."""
+        result = compute_qbi_deduction(10000, 0, se_retirement=12000)
+        assert result["qbi_component"] == 0.00
+        assert result["loss_carryforward"] == -2000.00
+        assert result["qbi_income"] == -2000.00
+
+    def test_negative_net_qbi_does_not_offset_reit(self):
+        """Form 8995 keeps the QBI and REIT/PTP buckets SEPARATE: a negative
+        total QBI is floored at 0 for the QBI component (line 4 "if zero or less
+        enter -0-", line 5) and the REIT component (lines 8-9) is added
+        independently (line 10) — the buckets do NOT offset. Net QBI
+        10000-12000=-2000 with $10K REIT → component 0 + 2000 = 2000 (NOT the
+        combined-then-20% $1,600), and the -2000 carries forward (line 16)
+        regardless of the positive REIT deduction. Pins the Form 8995 mechanics
+        against a same-year QBI-loss-vs-REIT netting."""
+        result = compute_qbi_deduction(10000, 10000, se_retirement=12000)
+        assert result["qbi_component"] == 0.00
+        assert result["reit_component"] == 2000.00
+        assert result["total_deduction"] == 2000.00
+        assert result["loss_carryforward"] == -2000.00
+
+    def test_se_deduction_negative_raises(self):
+        with pytest.raises(ValueError, match="reduces QBI"):
+            compute_qbi_deduction(50000, 0, se_health_insurance=-1)
+
+    def test_se_deduction_nan_raises(self):
+        """json.loads accepts NaN/Infinity — they must not defeat the netting."""
+        with pytest.raises(ValueError, match="finite"):
+            compute_qbi_deduction(50000, 0, half_se_tax=float("inf"))
+
+    def test_se_deduction_bool_raises(self):
+        with pytest.raises(ValueError, match="finite"):
+            compute_qbi_deduction(50000, 0, se_retirement=True)
+
+    def test_se_deductions_net_before_income_cap(self):
+        """The overall cap sees the netted component: QBI 100000, SE deds 40000 →
+        component 12000. TI-before-QBI 55000, no cap gain → cap 11000 < 12000 →
+        capped to 11000 (proves netting happens before the cap)."""
+        result = compute_qbi_deduction(
+            100000, 0, half_se_tax=40000,
+            taxable_income_before_qbi=55000, net_capital_gain=0)
+        assert result["qbi_component"] == 12000.00
+        assert result["income_cap"] == 11000.00
+        assert result["total_deduction"] == 11000.00
+        assert result["income_limited"] is True
+
+    def test_se_deductions_gate_70105_minimum_on_net_qbi(self):
+        """§70105 floor gates on NET QBI: gross 1500 but SE deds 600 → net 900,
+        below the $1,000 income_threshold → floor NOT applied (component 180)."""
+        qm = {"income_threshold": 1000, "amount": 400}
+        r = compute_qbi_deduction(
+            1500, 0, tax_year=2026, qbi_minimum=qm,
+            active_qualified_trade=True, half_se_tax=600)
+        assert r["qbi_income"] == 900.00
+        assert r["qbi_minimum_applied"] is False
+        assert r["qbi_component"] == 180.00
+
 
 class TestComputeNiit:
     """Tests for compute_niit — Form 8960 net investment income tax (3.8%)."""

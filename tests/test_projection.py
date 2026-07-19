@@ -385,6 +385,25 @@ def test_project_se_tips_qbi_exclusion_bounded_by_applied_deduction():
     assert got.taxable_income == base.taxable_income + 200
 
 
+def test_project_qbi_base_netted_by_half_se_tax():
+    """Codex PR #51 P1: the projection nets the QBI base by the deductible half
+    of SE tax (§199A(c)(4) / Reg. §1.199A-3(b)(1)(vi)). With high wages so the
+    Form 8995 overall cap is not binding and no Schedule 1-A, QBI is
+    20% × (SE net − ½ SE tax), NOT 20% × gross SE net — if the ½-SE-tax netting
+    were dropped the deduction would be 20% × $100K = $20K and taxable income
+    would be 20% × ½-SE-tax lower."""
+    law = _tax_law_2026()
+    f = P.project_federal_tax(
+        _proj(wages=300000, medicare_wages=300000, self_employment_net=100000),
+        _profile_mfj(), law)
+    half_se_tax = f.se_tax / 2
+    netted_qbi = 0.20 * (100000 - half_se_tax)
+    ti_before = f.agi - 30000  # MFJ std, no Schedule 1-A
+    assert f.taxable_income == pytest.approx(ti_before - netted_qbi, abs=0.02)
+    # Sanity: the netting genuinely shaved the QBI below the gross 20% × $100K.
+    assert netted_qbi < 20000
+
+
 def test_project_schedule_1a_zeroed_for_mfs():
     """Codex round-14 P2: all four Schedule 1-A provisions are $0 for MFS
     (tips/overtime/senior joint-required + the §70203 car-loan MFS bar), so a
