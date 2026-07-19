@@ -42,6 +42,7 @@ is already fully consumed by the owner's other state/local taxes — pass
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import math
 import sys
@@ -149,10 +150,23 @@ def _schedule_for(state: str, tax_year: "int | None") -> list:
     return _PTET_RATE_SCHEDULES[state]
 
 
+def _obs_date(year: int, month: int, day: int) -> str:
+    """A PTET (state) deadline formatted with §7503 WEEKEND rollover applied —
+    matching tax_calendar._state_due (state-specific legal holidays are not
+    modeled, so weekends only). Renders e.g. 'June 16, 2026' when the statutory
+    date is a Sunday."""
+    d = datetime.date(year, month, day)
+    while d.weekday() >= 5:
+        d += datetime.timedelta(days=1)
+    return f"{d.strftime('%B')} {d.day}, {d.year}"
+
+
 def _election_deadline(state: str, tax_year: int) -> "tuple[str, str]":
     """Return (deadline_date, actionable note) for making a TY{tax_year} election.
 
-    Statutory dates only (no weekend/holiday rollover), matching tax_calendar.py.
+    Dates carry the §7503 next-business-day WEEKEND rollover (via _obs_date),
+    matching tax_calendar.py's state deadlines — state-specific legal holidays
+    are not modeled, so a date on a state holiday may shift one more day.
     """
     if state == "CA":
         # The June 15 prepayment (greater of $1,000 or 50% of prior-year PTET) is
@@ -167,44 +181,48 @@ def _election_deadline(state: str, tax_year: int) -> "tuple[str, str]":
         #     the PTE credit is REDUCED by 12.5% of the unpaid June amount
         #     (R&TC §19904). Calling June 15 an election-preservation deadline
         #     would wrongly imply the election is lost after that date.
+        march_next = _obs_date(tax_year + 1, 3, 15)
+        june = _obs_date(tax_year, 6, 15)
         if tax_year == 2021:
             return (
-                "March 15, 2022",
-                "CA AB 150 (first year): there was NO June 15 prepayment "
-                "requirement for TY2021 — make the election on a timely-filed "
-                "2021 entity return (originally due March 15, 2022).")
+                _obs_date(2022, 3, 15),
+                f"CA AB 150 (first year): there was NO June 15 prepayment "
+                f"requirement for TY2021 — make the election on a timely-filed "
+                f"2021 entity return (originally due {_obs_date(2022, 3, 15)}).")
         if tax_year >= 2026:
             note = (
-                f"CA SB 132: pay the June 15, {tax_year} prepayment (greater of "
+                f"CA SB 132: pay the {june} prepayment (greater of "
                 f"$1,000 or 50% of prior-year PTET). For TY2026-2030 the TY{tax_year} "
                 f"election REMAINS AVAILABLE if you miss it, but your PTE credit is "
                 f"reduced by 12.5% of the unpaid June amount; balance + election "
-                f"filed by March 15, {tax_year + 1}.")
+                f"filed by {march_next}.")
         else:  # TY2022-2025
             note = (
-                f"CA AB 150: pay the June 15, {tax_year} prepayment (greater of "
+                f"CA AB 150: pay the {june} prepayment (greater of "
                 f"$1,000 or 50% of prior-year PTET) — REQUIRED to make the "
                 f"TY{tax_year} election (the election is lost if missed); balance + "
-                f"election filed by March 15, {tax_year + 1}.")
-        return (f"June 15, {tax_year}", note)
+                f"election filed by {march_next}.")
+        return (june, note)
     if state == "NY":
         # NY's election for the tax year is due by March 15 OF the tax year —
         # the earliest binding PTET date across the three states, and the one
         # most likely to be missed (it falls before the year is even underway
         # in practice). Backlog #9 flags this specifically.
+        march = _obs_date(tax_year, 3, 15)
         return (
-            f"March 15, {tax_year}",
+            march,
             f"NY Tax Law §861: the annual PTET election for TY{tax_year} is due "
-            f"by March 15, {tax_year} via the Tax Department's PTET Web "
+            f"by {march} via the Tax Department's PTET Web "
             f"Application — it CANNOT be made on the return after the fact.",
         )
     if state == "NJ":
         # NJ's BAIT election is made on/with the entity return, due the
         # following March 15.
+        march_next = _obs_date(tax_year + 1, 3, 15)
         return (
-            f"March 15, {tax_year + 1}",
+            march_next,
             f"NJ BAIT (P.L. 2021 c.419): elect on Form PTE-100 by the entity "
-            f"return due date, March 15, {tax_year + 1}.",
+            f"return due date, {march_next}.",
         )
     return ("", "")
 

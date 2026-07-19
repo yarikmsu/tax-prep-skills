@@ -105,8 +105,9 @@ def test_events_ptet_ny_emits_election_plus_three_estimates_plus_return():
     payment on March 15 of the following year (per NY Tax Department)."""
     events = cal.events_ptet(2026, state="NY", has_k1_income=True)
     dates = sorted(e.date for e in events)
+    # L1: §7503 weekend rollover — statutory Mar 15 2026 is a Sunday → Mar 16.
     assert dates == [
-        datetime.date(2026, 3, 15),   # election + Q1
+        datetime.date(2026, 3, 16),   # election + Q1 (Mar 15 = Sunday)
         datetime.date(2026, 6, 15),   # Q2 estimate
         datetime.date(2026, 9, 15),   # Q3 estimate
         datetime.date(2026, 12, 15),  # Q4 estimate (NY-specific — NOT Jan 15)
@@ -1288,9 +1289,12 @@ def test_events_ptet_ny_election_stays_in_tax_year():
     Codex caught."""
     events = cal.events_ptet(2026, state="NY", has_k1_income=True)
     election = next(e for e in events if "election" in e.uid)
-    assert election.date == datetime.date(2026, 3, 15), (
-        f"NY PTET election must be March 15 of tax year, got {election.date}"
+    # In-year (tax_year, not tax_year+1). L1: statutory Mar 15 2026 is a Sunday,
+    # observed Mar 16 — still WITHIN the tax year, which is what this pins.
+    assert election.date == datetime.date(2026, 3, 16), (
+        f"NY PTET election must be ~March 15 of tax year, got {election.date}"
     )
+    assert election.date.year == 2026
 
 
 # --- Review pass 2: gaps surfaced by 5-agent re-review ---
@@ -1499,12 +1503,14 @@ def test_events_ptet_ny_emits_annual_return_event():
     annual return (Mar 15 next year)."""
     events = cal.events_ptet(2026, state="NY", has_k1_income=True)
     dates = sorted(e.date for e in events)
+    # L1: §7503 weekend rollover — statutory Mar 15 2026 is a SUNDAY → observed
+    # Mar 16; the other four fall on weekdays and don't move.
     assert dates == [
-        datetime.date(2026, 3, 15),   # election + Q1
+        datetime.date(2026, 3, 16),   # election + Q1 (Mar 15 = Sunday)
         datetime.date(2026, 6, 15),   # Q2
         datetime.date(2026, 9, 15),   # Q3
         datetime.date(2026, 12, 15),  # Q4
-        datetime.date(2027, 3, 15),   # annual return + final payment
+        datetime.date(2027, 3, 15),   # annual return + final payment (Monday)
     ]
 
 
@@ -1645,7 +1651,7 @@ def test_ca_es_events_serialize_with_category_and_current_prodid():
     p = _profile(address={"state": "CA"})
     ics = cal.to_ics(cal.build_events(p, 2026))
     assert "CATEGORIES:STATE_ESTIMATED_TAX" in ics
-    assert "tax-calendar v3" in ics  # v3: extension category (F2)
+    assert "tax-calendar v4" in ics  # v4: §7503 next-business-day rollover (L1)
 
 
 def test_build_events_ca_resident_uids_unique_against_federal():
@@ -1726,3 +1732,53 @@ def test_extension_events_serialize_with_category():
     p = _profile(flags={"filed_extension": True})
     ics = cal.to_ics(cal.build_events(p, 2026))
     assert "CATEGORIES:EXTENSION" in ics
+
+
+# ---------------------------------------------------------------------------
+# L1 — §7503 next-business-day rollover
+# ---------------------------------------------------------------------------
+
+def test_1040es_federal_rolls_past_weekend_and_dc_holiday():
+    # Apr 15 2028 is a Saturday → next business day skips the weekend AND the
+    # Mon Apr 17 DC Emancipation-Day observance, landing on Tue Apr 18.
+    q1 = next(e for e in cal.events_1040es(2028) if e.quarter_label == "Q1")
+    assert q1.date == datetime.date(2028, 4, 18)
+    assert "next business day" in q1.description
+
+
+def test_ca_540es_state_rolls_weekend_only_not_dc_holiday():
+    # Apr 15 2023 is a Saturday. FEDERAL would roll to Apr 18 (past the Mon
+    # Apr 17 DC Emancipation observance), but a CA (state) deadline rolls past
+    # the WEEKEND ONLY → Mon Apr 17, because DC holidays don't bind CA.
+    q1 = next(e for e in cal.events_ca_es(2023) if e.quarter_label == "Q1")
+    assert q1.date == datetime.date(2023, 4, 17)
+    assert "State-specific legal holidays are not modeled" in q1.description
+
+
+def test_rmd_dec31_does_not_roll():
+    # Dec 31 2028 is a Sunday, but an RMD is a distribution deadline, not a
+    # §7503 file/pay act — it must NOT roll into the next year.
+    ev = cal.events_rmd(2028, primary_subject_to_rmd=True,
+                        spouse_subject_to_rmd=False)
+    assert ev[0].date == datetime.date(2028, 12, 31)
+    assert "next business day" not in ev[0].description
+
+
+def test_no_observed_note_when_date_falls_on_a_weekday():
+    # Apr 15 2027 is a Thursday — no roll, no observed-date note.
+    q1 = next(e for e in cal.events_1040es(2027) if e.quarter_label == "Q1")
+    assert q1.date == datetime.date(2027, 4, 15)
+    assert "next business day" not in q1.description
+
+
+def test_ptet_ny_election_matches_ptet_module_rolled_date():
+    # tax_calendar and ptet must print the SAME rolled date for the NY election
+    # (L1 requirement: wire both through the rollover together). Mar 15 2026 =
+    # Sunday → Mar 16 in both.
+    from agents.lib import ptet
+    cal_election = next(e for e in cal.events_ptet(2026, state="NY",
+                                                   has_k1_income=True)
+                        if "election" in e.uid)
+    assert cal_election.date == datetime.date(2026, 3, 16)
+    ptet_date, _ = ptet._election_deadline("NY", 2026)
+    assert ptet_date == "March 16, 2026"

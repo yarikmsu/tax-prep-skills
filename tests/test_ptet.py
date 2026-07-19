@@ -177,8 +177,10 @@ def test_analyze_election_deadlines_per_state():
                 state_incomes={"CA": 1, "NY": 1, "NJ": 1}, tax_year=2026,
                 filing_status="MFJ")
     by = {s.state: s.election_deadline for s in r.states}
+    # L1: §7503 weekend rollover. June 15 2026 = Mon (no roll); NJ Mar 15 2027 =
+    # Mon (no roll); NY statutory Mar 15 2026 = Sunday → observed Mar 16.
     assert by["CA"] == "June 15, 2026"      # current-year prepayment
-    assert by["NY"] == "March 15, 2026"     # election due IN the tax year
+    assert by["NY"] == "March 16, 2026"     # election due IN the tax year (Mar 15 = Sun)
     assert by["NJ"] == "March 15, 2027"     # on the entity return
 
 
@@ -232,7 +234,8 @@ def test_ca_deadline_note_is_year_aware():
     # SB 132 (2026-2030) — election survives a missed payment; 12.5% credit hit.
     d25, n25 = ptet._election_deadline("CA", 2025)
     d26, n26 = ptet._election_deadline("CA", 2026)
-    assert d25 == "June 15, 2025" and d26 == "June 15, 2026"
+    # L1: June 15 2025 is a Sunday → observed June 16; June 15 2026 is a Monday.
+    assert d25 == "June 16, 2025" and d26 == "June 15, 2026"
     assert "REQUIRED" in n25 and "lost if missed" in n25
     assert "12.5%" in n26 and "REMAINS AVAILABLE" in n26
 
