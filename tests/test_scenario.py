@@ -263,6 +263,21 @@ def test_extract_empty_schedule_d_falls_back_to_line7():
     assert sc.extract_baseline_inputs(result)["capital_gains"] == 4444.0
 
 
+def test_extract_baseline_combines_line_13b_and_13c():
+    # Codex (PR #46): both the Schedule 1-A total (13b) AND the §170(p)
+    # charitable deduction (13c) are fixed below-AGI deductions — the scenario
+    # baseline must subtract BOTH before QBI/taxable income, so they combine
+    # into the single schedule_1a_deduction input.
+    result = {"form_1040": {"line_13b_schedule_1a_deductions": 9000,
+                            "line_13c_charitable_non_itemizer": 2000}}
+    inp = sc.extract_baseline_inputs(result)
+    assert inp["schedule_1a_deduction"] == 11000.0
+    # 13c alone (no 13b) still flows through.
+    only_13c = sc.extract_baseline_inputs(
+        {"form_1040": {"line_13c_charitable_non_itemizer": 1500}})
+    assert only_13c["schedule_1a_deduction"] == 1500.0
+
+
 def test_extract_short_term_gain_long_term_loss_nets():
     # +20k ST with -10k LT → +10k ordinary, no preferential gain (Codex P2 example).
     result = {"form_1040": {}, "schedule_d": {

@@ -5,10 +5,12 @@ Expected values are hand-computed from IRS worksheets and publications.
 Tolerance: $0.01 (exact match after rounding to 2 decimal places).
 """
 
+import json
 import math
 import pytest
 import sys
 import os
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agents.lib.tax_computations import (
@@ -30,6 +32,7 @@ from agents.lib.tax_computations import (
     compute_schedule_a,
     compute_ca_itemized,
     compute_schedule_1a,
+    compute_charitable_non_itemizer,
     compute_form_6251,
     compute_form_8801_credit,
     check_form_8938_required,
@@ -2405,6 +2408,182 @@ class TestSchedule1A:
                                         net_capital_gain=0, threshold=191950)
         assert no_1a["total_deduction"] == 18000.0
         assert with_1a["total_deduction"] == 16000.0
+
+
+class TestCharitableNonItemizer:
+    """I3 — §170(p) OBBBA non-itemizer charitable deduction (TY2026+)."""
+    _CAP = dict(amount=1000, joint_amount=2000)
+
+    def test_under_cap_single(self):
+        r = compute_charitable_non_itemizer(800, "Single", 2026, False, **self._CAP)
+        assert r["allowed"] == 800.0
+        assert r["disallowed_by_cap"] == 0.0
+
+    def test_cap_binds_single(self):
+        r = compute_charitable_non_itemizer(1500, "Single", 2026, False, **self._CAP)
+        assert r["allowed"] == 1000.0
+        assert r["disallowed_by_cap"] == 500.0
+
+    def test_mfj_joint_cap(self):
+        r = compute_charitable_non_itemizer(3000, "MFJ", 2026, False, **self._CAP)
+        assert r["allowed"] == 2000.0
+
+    def test_mfs_uses_non_joint_amount(self):
+        # MFS follows the non-joint figure (not half the joint, not the joint).
+        r = compute_charitable_non_itemizer(3000, "MFS", 2026, False, **self._CAP)
+        assert r["allowed"] == 1000.0
+
+    def test_qss_uses_non_joint_amount(self):
+        # A qualifying surviving spouse does not file a joint return.
+        r = compute_charitable_non_itemizer(3000, "QSS", 2026, False, **self._CAP)
+        assert r["allowed"] == 1000.0
+
+    def test_pre_2026_is_zero(self):
+        r = compute_charitable_non_itemizer(800, "Single", 2025, False, **self._CAP)
+        assert r["allowed"] == 0.0
+        assert any("not in effect" in n for n in r["notes"])
+
+    def test_itemizer_is_zero(self):
+        r = compute_charitable_non_itemizer(800, "Single", 2026, True, **self._CAP)
+        assert r["allowed"] == 0.0
+        assert any("standard-deduction filers only" in n.lower()
+                   or "itemizer" in n.lower() for n in r["notes"])
+
+    def test_unfetched_cap_hard_errors_when_nonzero(self):
+        with pytest.raises(ValueError, match="unfetched"):
+            compute_charitable_non_itemizer(800, "Single", 2026, False)
+
+    def test_zero_gifts_no_cache_needed(self):
+        # No contributions -> $0 without consulting the (unfetched) cap.
+        r = compute_charitable_non_itemizer(0, "Single", 2026, False)
+        assert r["allowed"] == 0.0
+
+    def test_substantiation_tristate(self):
+        unknown = compute_charitable_non_itemizer(800, "Single", 2026, False, **self._CAP)
+        assert any("SUBSTANTIATION UNKNOWN" in n for n in unknown["notes"])
+        gated = compute_charitable_non_itemizer(
+            800, "Single", 2026, False, over_250_substantiated=False, **self._CAP)
+        assert any("SUBSTANTIATION GATE" in n for n in gated["notes"])
+        ok = compute_charitable_non_itemizer(
+            800, "Single", 2026, False, over_250_substantiated=True, **self._CAP)
+        assert not any("SUBSTANTIATION" in n for n in ok["notes"])
+
+    def test_notes_carry_daf_and_floor_facts(self):
+        r = compute_charitable_non_itemizer(800, "Single", 2026, False, **self._CAP)
+        joined = " ".join(r["notes"])
+        assert "donor-advised" in joined and "509(a)(3)" in joined
+        assert "0.5%" in joined and "carryforward" in joined
+
+    def test_rejects_bad_inputs(self):
+        for bad in (
+            dict(cash_contributions=-1),
+            dict(itemizes="no"),
+            dict(over_250_substantiated="yes"),
+            dict(filing_status="Married Filing Jointly"),
+            dict(tax_year=26),
+        ):
+            kw = dict(cash_contributions=800, filing_status="Single",
+                      tax_year=2026, itemizes=False, **self._CAP)
+            kw.update(bad)
+            with pytest.raises(ValueError):
+                compute_charitable_non_itemizer(**kw)
+
+    def test_mandatory_mfs_itemization_not_overridden_by_170p(self):
+        # Codex (PR #46 round 3, SDnf3): an MFS filer whose spouse itemizes is
+        # DENIED the standard deduction under §63(c)(6)(A); the §170(p) tilt
+        # must NOT flip such a filer to the standard deduction to claim line
+        # 13c. Engine side: a forced itemizer (itemizes=True) always gets $0.
+        r = compute_charitable_non_itemizer(3000, "MFS", 2026, True, **self._CAP)
+        assert r["allowed"] == 0.0
+        # Skill side: /tax-compute must guard the tilt on mandatory itemization.
+        compute_md = " ".join((Path(__file__).resolve().parent.parent
+                      / "agents/skills/tax-compute.md").read_text().split())
+        assert "mfs_spouse_itemizes" in compute_md
+        assert "63(c)(6)(A)" in compute_md
+        assert "mandatory itemization" in compute_md.lower()
+
+
+class TestQBIMinimum:
+    """I4 §70105 — minimum QBI deduction (OBBBA TY2026+)."""
+    _QM = dict(income_threshold=1000, amount=400)
+
+    def test_floor_lifts_small_active_qbi(self):
+        # 20% of 1500 = 300, below the 400 floor -> 400.
+        r = compute_qbi_deduction(1500, 0, tax_year=2026, qbi_minimum=self._QM,
+                                  active_qualified_trade=True)
+        assert r["total_deduction"] == 400.0
+        assert r["qbi_minimum_applied"] is True
+
+    def test_floor_not_applied_when_computed_exceeds(self):
+        # 20% of 5000 = 1000 > floor -> no lift.
+        r = compute_qbi_deduction(5000, 0, tax_year=2026, qbi_minimum=self._QM,
+                                  active_qualified_trade=True)
+        assert r["total_deduction"] == 1000.0
+        assert r["qbi_minimum_applied"] is False
+
+    def test_below_income_threshold_no_floor(self):
+        # QBI 500 < 1000 threshold -> not eligible -> 20% of 500 = 100.
+        r = compute_qbi_deduction(500, 0, tax_year=2026, qbi_minimum=self._QM,
+                                  active_qualified_trade=True)
+        assert r["total_deduction"] == 100.0
+        assert r["qbi_minimum_applied"] is False
+
+    def test_passive_activity_no_floor(self):
+        r = compute_qbi_deduction(1500, 0, tax_year=2026, qbi_minimum=self._QM,
+                                  active_qualified_trade=False)
+        assert r["total_deduction"] == 300.0
+
+    def test_pre_2026_no_floor(self):
+        r = compute_qbi_deduction(1500, 0, tax_year=2025, qbi_minimum=self._QM,
+                                  active_qualified_trade=True)
+        assert r["total_deduction"] == 300.0
+
+    def test_unfetched_cache_degrades_with_note(self):
+        r = compute_qbi_deduction(1500, 0, tax_year=2026, qbi_minimum=None,
+                                  active_qualified_trade=True)
+        assert r["total_deduction"] == 300.0
+        assert r["qbi_minimum_applied"] is False
+        assert "qbi_minimum_note" in r and "unfetched" in r["qbi_minimum_note"]
+
+    def test_floor_does_not_exceed_overall_income_cap(self):
+        # Codex P1: the §199A(a)(2) OVERALL cap (20% of taxable income − net
+        # capital gain) still binds — a $400 floor cannot exceed a $20 cap.
+        r = compute_qbi_deduction(1000, 0, tax_year=2026, qbi_minimum=self._QM,
+                                  active_qualified_trade=True,
+                                  taxable_income_before_qbi=1000,
+                                  net_capital_gain=900)
+        assert r["total_deduction"] == 20.0
+        assert r["qbi_minimum_applied"] is False
+
+    def test_floor_applies_within_ample_income_cap(self):
+        # Ample ordinary headroom: floor lifts 20%×1500=300 up to 400.
+        r = compute_qbi_deduction(1500, 0, tax_year=2026, qbi_minimum=self._QM,
+                                  active_qualified_trade=True,
+                                  taxable_income_before_qbi=100000,
+                                  net_capital_gain=0)
+        assert r["total_deduction"] == 400.0
+        assert r["qbi_minimum_applied"] is True
+
+    def test_legacy_call_unchanged(self):
+        r = compute_qbi_deduction(1500, 0)
+        assert r["total_deduction"] == 300.0
+        assert r["qbi_minimum_applied"] is False
+
+    def test_active_trade_attestation_collected_by_setup(self):
+        # Codex (PR #46 round 2, SDiXY): the §70105 floor is gated on
+        # active_qualified_trade, which defaults False. If /tax-setup never
+        # collects the attestation the normal workflow silently omits an
+        # otherwise-applicable floor (overstating tax). Pin that the flag
+        # exists in the profile template AND the interview asks for it AND
+        # /tax-compute wires it into the QBI call.
+        repo = Path(__file__).resolve().parent.parent
+        template = json.loads(
+            (repo / "agents/templates/taxpayer_profile_template.json").read_text())
+        assert "qbi_active_trade" in template["flags"]
+        setup_md = (repo / "agents/skills/tax-setup.md").read_text()
+        assert "qbi_active_trade" in setup_md
+        compute_md = (repo / "agents/skills/tax-compute.md").read_text()
+        assert "flags.qbi_active_trade" in compute_md
 
 
 class TestForm6251:

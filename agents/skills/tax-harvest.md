@@ -188,6 +188,13 @@ the same guarded writer `/tax-scenario` uses.
   has no bright-line rule on this — consult guidance for your situation.
 - **Accounts are pooled across the file.** The user controls which accounts to include.
   Omitting a spouse account or an IRA hides §1091 reach.
+- **QSBS §1202 (not modeled — do not assert the old rule).** OBBBA revised §1202 for
+  qualified small-business stock ACQUIRED after 2025-07-04: a tiered exclusion of
+  50% / 75% / 100% at 3 / 4 / 5-year holding (vs the old flat 5-year / 100%-only), with
+  a raised per-issuer cap and gross-assets ceiling. The earliest affected sales ripen
+  2028+. This scanner does NOT compute §1202 gain exclusion — if a losing/gaining lot is
+  QSBS, the exclusion is hand-checked against the acquisition date; don't apply the
+  pre-OBBBA 5-year/100% rule to post-2025-07-04 stock.
 - **Federal only on the anchored side.** State is a marginal estimate.
 - **Holding period uses fixed 365-day comparison.** Leap years may shift the boundary
   by 1 day on lots held very close to one year.

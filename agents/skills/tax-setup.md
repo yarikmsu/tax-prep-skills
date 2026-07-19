@@ -158,6 +158,10 @@ interview never captures is invisible to every downstream check.
 - Does any dependent have investment/unearned income over the kiddie-tax
   threshold (~$2,600)? → sets `has_dependent_unearned_income` (Form 8615 is
   NOT modeled — capability gate)
+- **Trump accounts (OBBBA §530A "MAGA"/newborn savings accounts) are NOT
+  modeled** (out of persona): the $1,000 seed for children born 2025-2028 and
+  the contribution/withdrawal mechanics are not computed — if a dependent has
+  one, flag it for manual handling rather than silently omitting it.
 
 **Group 4 — Tax situations (yes/no flags):**
 - Do you have foreign bank/investment accounts? → triggers FBAR/8938 workflow (`has_foreign_accounts`)
@@ -167,6 +171,16 @@ interview never captures is invisible to every downstream check.
   election is NOT modeled — only the FTC path — so this lands on the
   limitations manifest)
 - Do you have self-employment income (1099-NEC, freelance, business)? → triggers Schedule C (`has_self_employment`)
+  - **If yes (or you have K-1 pass-through business income):** Is that income
+    from an ACTIVE qualified trade or business you materially participate in —
+    NOT a passive/portfolio investment (e.g. a rental, a limited-partner
+    interest you don't run, or REIT dividends)? → sets `qbi_active_trade`. This
+    is load-bearing for TY2026+: §70105 grants an active qualified business a
+    MINIMUM QBI deduction (indexed ~$400) once QBI is at/above the indexed
+    income threshold (~$1,000), even when 20% of QBI is smaller. It defaults
+    False (no floor → no over-claim), so leaving it unset silently forgoes an
+    otherwise-applicable floor and OVERSTATES tax for a small active business.
+    Ask explicitly whenever `has_self_employment` or `has_k1_income` is set.
 - Do you have rental income? → sets `has_rental_income` (Schedule E is NOT
   modeled — the `/tax-compute` capability gate will block; tell the user now)
 - Do you have an HSA (Health Savings Account)?
@@ -364,6 +378,17 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   otherwise (freshness does not nag; `compute_schedule_1a` hard-errors at the
   point of use if a figure is missing when actually needed). The phase-out
   MECHANICS ($100/$1,000, $200/$1,000, 6%) are coded, not fetched.
+- Search: `"IRS §170(p) non-itemizer charitable deduction {year} amount"` —
+  populate `federal.charitable_non_itemizer` (`amount` ~$1,000 non-joint,
+  `joint_amount` ~$2,000 MFJ). ONLY needed for a TY2026+ STANDARD-deduction
+  filer with cash charitable gifts — leave all-null otherwise (freshness does
+  not nag; `compute_charitable_non_itemizer` hard-errors at use if unfetched
+  when actually needed).
+- Search: `"IRS §70105 minimum QBI deduction {year} amount threshold"` —
+  populate `federal.qbi_minimum` (`income_threshold` ~$1,000, `amount` ~$400,
+  both indexed). ONLY needed for a TY2026+ filer with a small ACTIVE qualified
+  trade — leave all-null otherwise (the minimum is taxpayer-favorable, so
+  `compute_qbi_deduction` DEGRADES with a note rather than guessing).
 - Search: `"IRS quarterly interest rates underpayment {year}"` (and `{year+1}` Q1-Q2
   when published) — populate `federal.underpayment_rates` as a list of
   `{"effective_from": "YYYY-MM-DD", "annual_rate": 0.08}` covering every §6621

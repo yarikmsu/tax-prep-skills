@@ -55,6 +55,38 @@ Copy `result.json`, `taxpayer_profile.json`, `parse_ledger.json`,
   to WAIT for it before filing the 1040-X (IRS guidance — amending mid-
   processing tangles both).
 
+### 2.5. TY2025 Schedule 1-A misplacement scan (OBBBA, run for any TY2025 return)
+
+TY2025 returns prepared before 2026-07 were computed while `/tax-compute`
+carried the pre-fix instruction that treated OBBBA tips / overtime / car-loan
+interest as **above-the-line adjustments inside `line_10_adjustments`** — which
+wrongly CUT AGI (corrupting every MAGI-gated computation) and applied **no caps
+or phase-outs**. The engine was corrected 2026-07 (these are BELOW-AGI Schedule
+1-A line-13b deductions). Scan every TY2025 amendment for this:
+
+1. **Detect.** The as-filed `result.json` misplaced these amounts if EITHER:
+   (a) `answers.md` records tips/overtime/car-loan claimed as line-10
+   adjustments; OR (b) `form_1040.line_10_adjustments` exceeds the sum of the
+   legitimate adjustments (½ SE tax, HSA, IRA, SE health, student-loan
+   interest, etc.) by roughly the tips/overtime/car-loan figures — and
+   `line_13b_schedule_1a_deductions` is $0 while those items exist.
+2. **Recompute** under the corrected treatment (the I2 `compute_schedule_1a`
+   engine): move the amounts out of line 10 (restoring the correct, HIGHER
+   AGI), apply the per-provision caps + MAGI phase-outs, and route the capped
+   total to line 13b. Then rerun the normal compute path so every MAGI-gated
+   figure (IRA phase-out, taxable SS, NIIT, education credits) re-resolves.
+3. **Report the three-column delta** (§6511 timing framing from Step 2). The
+   net can go EITHER way: restoring AGI can raise tax (lost the wrong AGI cut)
+   while capping an over-cap deduction also raises it, but the corrected
+   below-AGI placement can restore MAGI-gated credits that the wrong AGI had
+   phased out. Recommend amendment when the net delta is material.
+4. **Record** a scan line in `answers.md` (run date + outcome; NO dollar
+   figures). If no TY2025 return claimed these provisions, note that the scan
+   ran clean — the correction is prophylactic for this taxpayer.
+
+(Not applicable to TY2026+ returns — those were computed with the corrected
+engine from the start.)
+
 ### 3. Apply the corrections through the normal pipeline
 
 1. Place corrected documents in `documents/` (a corrected 1099 usually

@@ -281,6 +281,15 @@ def create_empty_tax_law(year: int) -> dict:
                 "car_loan_phaseout_start": {"single": None, "mfj": None},
                 "senior_phaseout_start": {"single": None, "mfj": None},
             },
+            # §170(p) non-itemizer charitable deduction (OBBBA §70424, TY2026+).
+            # OPT-IN: null block is the DEFAULT (compute_charitable_non_itemizer
+            # hard-errors at use when a standard-deduction filer has cash gifts
+            # and the cap is unfetched). amount = non-joint; joint_amount = MFJ.
+            "charitable_non_itemizer": {"amount": None, "joint_amount": None},
+            # §70105 minimum QBI deduction (OBBBA, TY2026+). OPT-IN: taxpayer-
+            # favorable, so compute_qbi_deduction DEGRADES (no floor) when this
+            # is unfetched rather than guessing an indexed figure.
+            "qbi_minimum": {"income_threshold": None, "amount": None},
         },
         "state": {},  # Populated per-state by /tax-setup
         "exchange_rates": {},  # e.g., {"EUR": <annual_avg_rate>} — fetched from IRS.gov yearly average rates
@@ -453,6 +462,13 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 # (the phaseout_rate/underpayment_rates precedent). Skip the
                 # whole subtree.
                 if k == "schedule_1a" and isinstance(v, dict):
+                    continue
+                # federal.charitable_non_itemizer (§170(p)) and
+                # federal.qbi_minimum (§70105) are OPT-IN TY2026+ blocks, same
+                # as schedule_1a — a null block is the DEFAULT, and the compute
+                # functions degrade/hard-error at the point of use. Skip both.
+                if k in ("charitable_non_itemizer", "qbi_minimum") \
+                        and isinstance(v, dict):
                     continue
                 child_path = f"{path}.{k}" if path else k
                 if v is None:

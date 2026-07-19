@@ -161,7 +161,11 @@ package has four parts:
      line 13 into 13a/13b (pre-2025 returns had a single "Line 13" for QBI;
      label per the return year). When 13b is $0, print QBI as 13a and omit the
      13b row. The `schedule_1a` section carries the per-provision detail.
-     Line 14 = line 12 + line 13a + line 13b — spot-check the sum.
+     For TY2026+, `line_13c_charitable_non_itemizer` (OBBBA §170(p) below-AGI
+     charitable deduction for standard-deduction filers) prints as **line 13c**
+     when nonzero (omit the row when $0); the `charitable_non_itemizer` section
+     carries the detail.
+     Line 14 = line 12 + line 13a + line 13b + line 13c — spot-check the sum.
    - California 540: the section has NO `line_` prefixes — render it as a
      values table WITHOUT line labels and point to the 540 instructions
      for line placement.

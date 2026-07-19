@@ -56,7 +56,9 @@
     "line_12_standard_deduction": 0,
     "line_13a_qbi_deduction": 0,
     "line_13b_schedule_1a_deductions": 0,
-    "_note_line_13b": "OBBBA Schedule 1-A total (tips + overtime premium + car-loan interest + enhanced senior), a BELOW-AGI deduction. Line 14 = 12 + 13a + 13b. Never in line 10 (would wrongly cut AGI). See the schedule_1a section.",
+    "_note_line_13b": "OBBBA Schedule 1-A total (tips + overtime premium + car-loan interest + enhanced senior), a BELOW-AGI deduction. Line 14 = 12 + 13a + 13b + 13c. Never in line 10 (would wrongly cut AGI). See the schedule_1a section.",
+    "line_13c_charitable_non_itemizer": 0,
+    "_note_line_13c": "OBBBA §170(p) non-itemizer charitable deduction (compute_charitable_non_itemizer, TY2026+). A BELOW-AGI deduction for STANDARD-deduction filers only ($1,000/$2,000-MFJ cap; cash gifts, no DAF/§509(a)(3)). Included in line 14, NOT in AGI, and reduces the Form 8995 taxable-income-before-QBI base like 13b. $0 for itemizers (they use Schedule A charitable) and pre-TY2026. See the charitable_non_itemizer section. (Verify the final TY2026 form line placement and rename if the IRS assigns a different line.)",
     "line_14_total_deductions": 0,
     "line_15_taxable_income": 0,
     "line_16_tax": 0,
@@ -96,6 +98,15 @@
     "car_loan_detail": [],
     "_note_car_loan_detail": "Schedule 1-A Part IV per-vehicle rows when car_loan.allowed > 0: [{vin, interest_paid, business_deducted}]. The car_loan_interest passed to compute_schedule_1a must be the PERSONAL-use portion NET of any vehicle interest already deducted on Schedule C/E/F (business_deducted) — passing gross double-deducts the business share and understates tax. /tax-generate --filing-package reads this for the Part IV detail.",
     "total": 0,
+    "notes": []
+  },
+
+  "charitable_non_itemizer": {
+    "_include_if": "compute_charitable_non_itemizer ran and allowed > 0 (STANDARD-deduction filer, cash gifts, TY2026+)",
+    "note": "OBBBA §170(p) below-AGI charitable deduction for standard-deduction filers. allowed → form_1040.line_13c_charitable_non_itemizer (in line 14, NOT AGI; reduces the Form 8995 taxable-income-before-QBI base). Cash gifts only (no DAF/§509(a)(3)); no §70425 0.5% floor; no carryforward. $0 for itemizers and pre-TY2026.",
+    "raw": 0,
+    "allowed": 0,
+    "disallowed_by_cap": 0,
     "notes": []
   },
 

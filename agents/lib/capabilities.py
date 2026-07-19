@@ -127,14 +127,28 @@ RULES: "tuple[Rule, ...]" = (
          "The credit and its earned-income limitation are hand-computed."),
     Rule("energy_credits", "has_energy_credits", MANUAL,
          "Residential energy improvements", "Form 5695",
-         "The 25C/25D credits are hand-computed."),
+         "The 25C/25D credits are hand-computed. **OBBBA termination (both "
+         "keyed to PLACED-IN-SERVICE date, not the payment date):** the §25D "
+         "residential clean-energy credit does NOT apply to property PLACED IN "
+         "SERVICE after 2025-12-31, and the §25C energy-efficient-home-"
+         "improvement credit ends for property placed in service after "
+         "2025-12-31 — so an installation placed in service in 2025 still "
+         "qualifies even if the final payment falls in 2026. A TY2026+ hand-"
+         "worksheet must verify the in-service date, not just the invoice date."),
     Rule("ev_credit", "has_ev_purchase", MANUAL,
          "Electric-vehicle purchase", "Form 8936",
-         "The clean-vehicle credit and its income caps are hand-checked."),
+         "The clean-vehicle credit and its income caps are hand-checked. "
+         "**OBBBA termination:** the §30D new-clean-vehicle and §25E used-"
+         "clean-vehicle credits do NOT apply to vehicles ACQUIRED after "
+         "2025-09-30 — a later acquisition gets $0; confirm the acquisition "
+         "date before claiming."),
     Rule("gambling", "has_gambling_income", MANUAL,
          "Gambling income", "W-2G / Schedule A",
          "Winnings are reported as income; losses are deductible only when "
-         "itemizing and are hand-computed."),
+         "itemizing and are hand-computed. **OBBBA §70114 (TY2026+):** the "
+         "wagering-loss deduction is limited to 90% of losses (still capped at "
+         "winnings) — a TY2026+ hand-worksheet done under the old 100% rule "
+         "OVERSTATES the loss deduction and understates tax. TY2025 stays 100%."),
     Rule("unreported_allocated_tips", "has_unreported_or_allocated_tips",
          MANUAL, "Unreported or employer-allocated tips (Form 4137)",
          "Form 4137 / Schedule 2 line 5",

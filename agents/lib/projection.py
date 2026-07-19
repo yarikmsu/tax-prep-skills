@@ -937,7 +937,10 @@ def render_markdown(r: ProjectionReport) -> str:
         "Self-employed §224 tips are removed from the QBI base ONLY when you "
         "supply `forecast_overrides.schedule_1a_se_tips`; if a Schedule 1-A "
         "override includes SE tips but that split is omitted, those dollars "
-        "stay in QBI and the projection understates tax.")
+        "stay in QBI and the projection understates tax. The §70105 minimum "
+        "QBI deduction (TY2026+, ~$400 for a small ACTIVE trade) is NOT applied "
+        "in this forecast — so projected tax may be slightly OVERSTATED (safe "
+        "direction) for an eligible small business; /tax-compute applies it.")
     lines.append("")
 
     lines += ["## Projected full-year federal", "",

@@ -48,6 +48,19 @@ def test_three_column_rows_hand_computed():
     assert by_line["11"]["change"] == 440.0
 
 
+def test_charitable_non_itemizer_maps_to_1040x_line_4c():
+    # Codex (PR #46): a §170(p) line-13c change must surface as 1040-X line 4c,
+    # so the 1 − 2 − 4a − 4b − 4c = 5 arithmetic reconciles for the amendment.
+    orig = _result()
+    orig["form_1040"]["line_13c_charitable_non_itemizer"] = 0
+    corr = _result(taxable=68000)
+    corr["form_1040"]["line_13c_charitable_non_itemizer"] = 2000
+    by_line = {r["line"]: r for r in AM.three_column(orig, corr)["rows"]}
+    assert "4c" in by_line
+    assert by_line["4c"]["change"] == 2000.0
+    assert by_line["4c"]["corrected"] == 2000.0
+
+
 def test_balance_mechanics_owed_after_original_refund():
     """Original: tax 10k, payments 11k -> 1k refund received.
     Corrected: tax 10.44k, payments unchanged 11k, paid nothing with

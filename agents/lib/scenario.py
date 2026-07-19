@@ -200,11 +200,17 @@ def extract_baseline_inputs(result: dict) -> dict:
         "other_income": round(
             _num(f.get("line_8_schedule1_other"), "other_income") + ordinary_short
             + _num(f.get("line_6b_taxable_ss"), "taxable_ss"), 2),
-        # OBBBA Schedule 1-A total (line 13b) — a fixed below-AGI deduction the
-        # keystone subtracts before QBI so marginal deltas are priced from the
-        # correct taxable-income position (not a delta-able income field).
-        "schedule_1a_deduction": _num(
-            f.get("line_13b_schedule_1a_deductions"), "schedule_1a_deduction"),
+        # OBBBA below-AGI deductions the keystone subtracts before QBI so
+        # marginal deltas are priced from the correct taxable-income position
+        # (not delta-able income fields): Schedule 1-A total (line 13b) PLUS the
+        # §170(p) non-itemizer charitable deduction (line 13c). Both sit in the
+        # line-13 region below AGI and reduce the QBI cap base identically, so
+        # they combine into the single fixed `schedule_1a_deduction` input.
+        "schedule_1a_deduction": round(
+            _num(f.get("line_13b_schedule_1a_deductions"),
+                 "schedule_1a_deduction")
+            + _num(f.get("line_13c_charitable_non_itemizer"),
+                   "charitable_non_itemizer"), 2),
     }
 
 
@@ -432,10 +438,11 @@ def render_markdown(r: ScenarioReport) -> str:
               "MAGI-increasing delta that would phase OUT more of the tips/overtime/car-loan/"
               "senior deduction near a threshold is not re-computed, so the marginal cost "
               "there may read slightly low.",
-              "- Self-employed §224 tips are not removed from the QBI base and the §63(f) "
-              "age-65/blind standard-deduction add-on is not threaded (both are held from the "
-              "baseline result.json); marginal pricing near a threshold may read slightly off. "
-              "The filed /tax-compute return handles both exactly.",
+              "- Self-employed §224 tips are not removed from the QBI base, the §63(f) "
+              "age-65/blind standard-deduction add-on is not threaded, and the §70105 "
+              "minimum QBI deduction (TY2026+ small active trade) is not applied (all held "
+              "from the baseline result.json); marginal pricing near a threshold may read "
+              "slightly off. The filed /tax-compute return handles them exactly.",
               "- MFS and HOH use the single-status capital-gains brackets (a toolkit-wide "
               "tax_law simplification); MFS gains near the 15%/20% boundary may read low.",
               "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6).",

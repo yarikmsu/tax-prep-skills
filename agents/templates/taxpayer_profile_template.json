@@ -53,6 +53,7 @@
     "has_crypto": false,
     "has_stock_compensation": false,
     "has_k1_income": false,
+    "qbi_active_trade": false,
     "has_roth_conversion": false,
     "has_backdoor_roth": false,
     "has_student_loan_interest": false,

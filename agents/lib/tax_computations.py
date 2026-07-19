@@ -849,6 +849,9 @@ def net_capital_gains(net_st: float, net_lt: float) -> "tuple[float, float]":
     return combined, 0.0  # short-term loss absorbed by long-term gain → surviving gain is LT
 
 
+_QBI_MINIMUM_FROM = 2026  # §70105 minimum QBI deduction, OBBBA — TY2026+
+
+
 def compute_qbi_deduction(
     qbi_income: float,
     reit_dividends: float,
@@ -856,6 +859,9 @@ def compute_qbi_deduction(
     taxable_income_before_qbi: float = None,
     net_capital_gain: float = None,
     threshold: float = None,
+    tax_year: int = None,
+    qbi_minimum: dict = None,
+    active_qualified_trade: bool = False,
 ) -> dict:
     """Compute QBI deduction (Form 8995 simplified).
 
@@ -926,6 +932,44 @@ def compute_qbi_deduction(
             total_deduction = income_cap
             income_limited = True
 
+    # §70105 minimum QBI deduction (OBBBA, TY2026+): a taxpayer whose ACTIVE
+    # qualified-trade QBI is at/above the income threshold gets AT LEAST the
+    # indexed minimum, even if 20% of QBI (post-cap) is smaller. Taxpayer-
+    # favorable, so it DEGRADES (no floor + note) when the cache is unfetched —
+    # an indexed figure is never guessed. Requires the active-trade attestation
+    # (a passive/portfolio activity does not qualify).
+    if not isinstance(active_qualified_trade, bool):
+        raise ValueError(
+            f"active_qualified_trade must be a bool, got {active_qualified_trade!r}")
+    qbi_minimum_applied = False
+    qbi_minimum_note = None
+    if (isinstance(tax_year, int) and not isinstance(tax_year, bool)
+            and tax_year >= _QBI_MINIMUM_FROM
+            and active_qualified_trade and qbi_income > 0):
+        if isinstance(qbi_minimum, dict) \
+                and qbi_minimum.get("income_threshold") is not None \
+                and qbi_minimum.get("amount") is not None:
+            inc_thr = _sched_a_amount(
+                qbi_minimum["income_threshold"], "qbi_minimum.income_threshold")
+            floor = _sched_a_amount(qbi_minimum["amount"], "qbi_minimum.amount")
+            if qbi_income >= inc_thr and total_deduction < floor:
+                # The floor lifts the QBI amount, but the §199A(a)(2) OVERALL
+                # ceiling (20% of taxable income − net capital gain) still binds
+                # — the minimum cannot exceed the Form 8995 overall cap. Re-cap
+                # so a taxpayer with little ordinary taxable-income headroom
+                # (e.g. mostly preferential income) is not handed a deduction
+                # larger than the ceiling.
+                lifted = floor if income_cap is None else min(floor, income_cap)
+                if lifted > total_deduction:
+                    total_deduction = lifted
+                    qbi_minimum_applied = True
+        else:
+            qbi_minimum_note = (
+                "§70105 minimum QBI deduction (TY2026+) NOT applied — "
+                "federal.qbi_minimum is unfetched; the deduction may be "
+                "understated for a small active qualified trade. Fetch the cache "
+                "to enable the minimum.")
+
     over_threshold = None
     if threshold is not None:
         thr = _coerce_numeric(threshold, default=None)
@@ -948,7 +992,10 @@ def compute_qbi_deduction(
         "income_cap": round(income_cap, 2) if income_cap is not None else None,
         "income_limited": income_limited,
         "over_threshold": over_threshold,
+        "qbi_minimum_applied": qbi_minimum_applied,
     }
+    if qbi_minimum_note:
+        result["qbi_minimum_note"] = qbi_minimum_note
     if over_threshold:
         result["warning"] = (
             "Taxable income exceeds the Section 199A threshold: Form 8995-A "
@@ -2098,6 +2145,93 @@ def compute_schedule_1a(
         "senior_deduction": senior["allowed"],
         "notes": notes,
     }
+
+
+_CHARITABLE_NONITEMIZER_FROM = 2026  # §170(p), OBBBA §70424 — permanent TY2026+
+
+
+def compute_charitable_non_itemizer(
+    cash_contributions: float,
+    filing_status: str,
+    tax_year: int,
+    itemizes: bool,
+    over_250_substantiated: bool = None,
+    amount: float = None,
+    joint_amount: float = None,
+) -> dict:
+    """§170(p) (OBBBA §70424) — a permanent BELOW-AGI charitable deduction for
+    STANDARD-deduction filers, effective TY2026+.
+
+    CASH gifts only; donor-advised-fund and §509(a)(3) supporting-organization
+    gifts do NOT qualify (the caller attests). Mutually exclusive with the
+    Schedule A charitable deduction — an itemizer gets $0 here. Does NOT reduce
+    AGI (it sits with Schedule 1-A in the line-13 region, below AGI); the §70425
+    0.5%-of-AGI itemizer floor does NOT apply; amounts deducted here generate NO
+    carryforward. The caps are INDEXED — `amount` (non-joint) and `joint_amount`
+    (MFJ) come from federal.charitable_non_itemizer, never hardcoded; an
+    unfetched cap hard-errors when the input is nonzero.
+
+    Returns {allowed, disallowed_by_cap, notes}.
+    """
+    raw = _sched_a_amount(cash_contributions, "cash_contributions")
+    fs = _normalize_filing_status(filing_status)
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int) \
+            or not (2000 <= tax_year <= 2099):
+        raise ValueError(f"tax_year must be a 4-digit year integer, got {tax_year!r}")
+    if not isinstance(itemizes, bool):
+        raise ValueError(f"itemizes must be a bool, got {itemizes!r}")
+    if over_250_substantiated is not None \
+            and not isinstance(over_250_substantiated, bool):
+        raise ValueError(
+            "over_250_substantiated must be a boolean or None, "
+            f"got {over_250_substantiated!r}")
+
+    notes = []
+    if tax_year < _CHARITABLE_NONITEMIZER_FROM:
+        notes.append(
+            f"§170(p) non-itemizer charitable deduction is not in effect before "
+            f"TY{_CHARITABLE_NONITEMIZER_FROM} (OBBBA §70424) — $0")
+        return {"allowed": 0.0, "disallowed_by_cap": 0.0, "notes": notes}
+    if itemizes:
+        notes.append(
+            "§170(p) is for STANDARD-deduction filers only — an itemizer claims "
+            "cash gifts on Schedule A instead (mutually exclusive); $0 here")
+        return {"allowed": 0.0, "disallowed_by_cap": 0.0, "notes": notes}
+    if raw == 0:
+        return {"allowed": 0.0, "disallowed_by_cap": 0.0, "notes": notes}
+
+    # MFJ uses the joint cap; Single/HoH/MFS/QSS use the non-joint figure (MFS
+    # follows the non-joint amount per the statute; QSS does not file jointly).
+    cap_value = joint_amount if fs == "MFJ" else amount
+    label = "joint_amount" if fs == "MFJ" else "amount"
+    if cap_value is None:
+        raise ValueError(
+            f"federal.charitable_non_itemizer.{label} is unfetched — refusing "
+            "to compute the §170(p) deduction without the indexed cap (a guess "
+            "would mis-limit it); fetch via /tax-setup")
+    cap = _sched_a_amount(cap_value, f"charitable_non_itemizer.{label}")
+    allowed = round(min(raw, cap), 2)
+
+    notes.append(
+        "CASH gifts only — donor-advised-fund and §509(a)(3) supporting-"
+        "organization gifts do NOT qualify for §170(p); confirm the gifts are "
+        "direct cash to a qualifying charity")
+    notes.append(
+        "the §70425 0.5%-of-AGI charitable floor does NOT apply to §170(p) "
+        "(that floor is itemizer-only); amounts deducted here carry NO "
+        "carryforward")
+    if over_250_substantiated is None:
+        notes.append(
+            "SUBSTANTIATION UNKNOWN: any single gift ≥ $250 requires a "
+            "contemporaneous written acknowledgment (§170(f)(8)) — confirm "
+            "before filing")
+    elif over_250_substantiated is False:
+        notes.append(
+            "SUBSTANTIATION GATE: gifts ≥ $250 lack the written acknowledgment "
+            "— the deduction is disallowed on audit; obtain the letters first")
+    return {"allowed": allowed,
+            "disallowed_by_cap": round(max(0.0, raw - cap), 2),
+            "notes": notes}
 
 
 # Form 6251 structural statutory constants (§55): the two AMT rates are fixed;

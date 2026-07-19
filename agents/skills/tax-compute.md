@@ -275,7 +275,8 @@ Line 12: Standard deduction (from tax_law JSON = the §63(c) BASE for the
          OR itemized deductions (Schedule A) — election COMPUTED below
 Line 13a: QBI deduction (Form 8995)
 Line 13b: Schedule 1-A deductions (compute_schedule_1a — below)
-Line 14: Total deductions = Line 12 + Line 13a + Line 13b
+Line 13c: §170(p) non-itemizer charitable deduction (compute_charitable_non_itemizer — below; TY2026+, STANDARD-deduction filers only)
+Line 14: Total deductions = Line 12 + Line 13a + Line 13b + Line 13c
 Line 15: Taxable income = max(0, Line 11 - Line 14)
 ```
 
@@ -339,6 +340,29 @@ BELOW-AGI deductions; they never touch line 10/11.
   eligibility BEFORE calling and pass $0 (or omit that person's age flag) for
   the non-SSN recipient ONLY; the function caveats this.
 
+**§170(p) non-itemizer charitable deduction (OBBBA, TY2026+) — run
+`compute_charitable_non_itemizer()` when the filer takes the STANDARD deduction
+and made cash charitable gifts:**
+- Inputs: `cash_contributions` (CASH gifts only — NOT donor-advised-fund or
+  §509(a)(3) supporting-org gifts, and NOT noncash; confirm/attest),
+  `filing_status`, `tax_year`, `itemizes` (the computed election result — pass
+  `True` and it returns $0, since itemizers claim charitable on Schedule A),
+  `over_250_substantiated` (the same tri-state as Schedule A), and
+  `amount`/`joint_amount` from `federal.charitable_non_itemizer`.
+- The `allowed` goes to `form_1040.line_13c_charitable_non_itemizer` and the
+  `charitable_non_itemizer` result section. It is BELOW AGI (in line 14, NOT
+  line 10) — verify AGI and every MAGI-gated computation are unchanged, exactly
+  like line 13b.
+- **QBI base:** line 13c ALSO reduces the Form 8995 taxable-income-before-QBI
+  base (it comes before QBI in the deduction stack) — see the QBI section.
+- CHICKEN-AND-EGG with the election: compute the itemize-vs-standard election
+  FIRST (below), then call this with the resolved `itemizes`. But the election
+  comparison itself must add §170(p) to the STANDARD side (below) — so compute
+  the §170(p) amount provisionally (as if standard) to run the comparison, then
+  finalize with the real `itemizes`.
+- Copy `notes` verbatim (DAF exclusion, no-0.5%-floor, no-carryforward,
+  substantiation). $0 and a not-in-effect note before TY2026.
+
 **Itemized vs standard (Schedule A) — run `compute_schedule_a()` whenever ANY
 itemizable expense exists** (state withholding alone qualifies — for the CA
 persona SALT usually exceeds the OBBBA cap by itself):
@@ -368,6 +392,21 @@ persona SALT usually exceeds the OBBBA cap by itself):
   section when itemizing (or when `election_margin` is within $500 —
   document the close call). Copy `notes` verbatim, and surface
   `charitable_carryforward` for next year.
+- **§170(p) tilts the election (TY2026+) — but only when the election is NOT
+  mandatory.** The comparison is NOT (itemized total) vs (standard deduction) —
+  a standard-deduction donor ALSO gets the §170(p) line-13c deduction, so
+  compare `itemized_total` vs `standard_deduction + §170(p) allowed`. A donor
+  near the margin who would itemize on the bare numbers can come out ahead
+  taking the standard deduction once §170(p) is added. `compute_schedule_a`'s
+  election does not know about §170(p) — do this tilt yourself, then set
+  `itemizes` accordingly before finalizing line 13c. **EXCEPTION — mandatory
+  itemization:** when `mfs_spouse_itemizes` is set, §63(c)(6)(A) DENIES the
+  standard deduction to this MFS filer (their standard deduction is $0 and
+  `compute_schedule_a` already forces `use_itemized=True`). Do NOT run the tilt
+  in that case — the taxpayer must itemize regardless of §170(p), and because
+  §170(p) is a NON-itemizer deduction it is $0 for them (line 13c stays $0). Run
+  the standard-vs-standard+§170(p) tilt ONLY when the standard deduction is
+  actually available (i.e. `compute_schedule_a` did not force itemization).
 
 **QBI Deduction (Form 8995):**
 Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
@@ -380,11 +419,25 @@ Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
 - REIT dividends = Section 199A dividends from 1099-DIVs
 - **ALWAYS pass the overall-cap inputs** — Form 8995 lines 11-14 cap the deduction
   at 20% × (taxable income before QBI − net capital gain):
-  - `taxable_income_before_qbi` = max(0, Line 11 − Line 12 − Line 13b) — the
-    Schedule 1-A total (line 13b) reduces the QBI overall-cap base, since it
-    comes before QBI in the deduction stack. Omitting it overstates the cap.
+  - `taxable_income_before_qbi` = max(0, Line 11 − Line 12 − Line 13b − Line 13c)
+    — BOTH the Schedule 1-A total (13b) AND the §170(p) charitable deduction
+    (13c) reduce the QBI overall-cap base, since both come before QBI in the
+    deduction stack. Omitting either overstates the cap.
   - `net_capital_gain` = qualified dividends (line 3a) + net LTCG (Schedule D line 15, floored at 0)
   - `threshold` = `federal.qbi_threshold` from tax_law JSON (keyed single/mfj — map MFJ/QSS→mfj, else single)
+- **§70105 minimum QBI deduction (TY2026+):** pass `tax_year`, `qbi_minimum` =
+  `federal.qbi_minimum` (`{income_threshold, amount}`), and
+  `active_qualified_trade` = the profile's `flags.qbi_active_trade` (the
+  attestation `/tax-setup` collects — True only when the QBI is from an ACTIVE
+  qualified trade/business the taxpayer materially participates in, NOT a
+  passive/portfolio activity). A small active business at or above the income
+  threshold gets AT LEAST the indexed minimum even when 20% of QBI is smaller.
+  **Do NOT default this to True** — the flag defaults False so a passive/
+  portfolio filer never gets a floor they don't qualify for; but confirm the
+  flag was actually set (a legacy profile predating the flag reads False),
+  because omitting it for a genuine active business OVERSTATES tax. Taxpayer-
+  favorable: it DEGRADES (no floor, `qbi_minimum_note` surfaced) when the cache
+  is unfetched — never guess. Surface `qbi_minimum_note` when present.
 - If the result has `over_threshold: true`, surface its `warning`: above the §199A
   threshold the Form 8995-A W-2-wage/UBIA limits and SSTB phase-out apply and are
   NOT modeled — the deduction may be overstated (an SSTB phases to $0). Verify
