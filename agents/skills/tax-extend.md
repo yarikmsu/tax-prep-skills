@@ -127,6 +127,47 @@ added), the how-to-pay instructions, and the two new calendar dates.
   reduces the 5% failure-to-file by the 0.5% failure-to-pay (combined 5%,
   not 5.5%). A return more than 60 days late also faces the minimum FTF
   penalty (lesser of an indexed ~$510 or 100% of the unpaid tax).
+- **Estimating the penalty when a return is already late:** use
+  `compute_late_filing_penalty(unpaid_tax, ftf_months, ftp_months,
+  filed_over_60_days_late=, min_penalty_floor=)` from
+  `agents/lib/tax_computations.py`. `unpaid_tax` is the net balance due as of the
+  deadline (tax required to be shown − payments/credits by the due date); count
+  each month OR FRACTION as one whole month for `ftf_months` (filing) and
+  `ftp_months` (payment) separately. Pass the year's indexed `min_penalty_floor`
+  — **fetch the §6651(a) minimum for the year the return was REQUIRED TO BE FILED**
+  (the calendar year the due date falls in — generally the tax year + 1, NOT the
+  year the return is actually filed) from that year's IRS Revenue Procedure
+  (Rev. Proc. 2024-40 for returns required to be filed in 2025, Rev. Proc.
+  2025-32 for 2026); do NOT hardcode or reuse a prior year's figure (it indexes
+  annually — a stale value understates the mandatory minimum) — so the >60-day
+  minimum is applied; omitting it degrades with a loud note rather than silently
+  understating. The helper encodes the §6651(c)(1) overlap and both 25% caps; it
+  does NOT compute §6601 interest (separate) or the §6651(f) fraudulent-failure
+  15%/mo rate. It is advisory — penalties may be abated for reasonable cause /
+  first-time abatement.
+  - **Under-reported returns are NOT modeled.** `unpaid_tax` is the base for both
+    penalties, which is right only when the return shows the full tax required. If
+    the return under-reports (tax shown < tax required), the FTF base is the tax
+    REQUIRED (§6651(b)(1)) while the FTP base is the tax SHOWN (§6651(b)(2)) and
+    the deficiency follows §6651(a)(3) after notice — use a full §6651 computation.
+  - **Post-deadline partial payments are NOT modeled by this single-call helper.**
+    The FTF base is fixed at the tax unpaid on/before the due date (§6651(b)(1)),
+    while FTP stops on the paid portion, and the §6651(c)(1) overlap couples them
+    across months — a mid-period payment can't be reconstructed by re-running the
+    helper per balance segment. Compute that case from the §6651 worksheet / tax
+    software.
+  - **Do NOT run the FTP side for a valid-extension filer who met the 90%
+    exception.** If a timely Form 4868 was filed AND ≥90% of the tax shown was
+    paid by the original April 15 deadline AND the balance is paid with the
+    timely-extended return, the late-PAYMENT penalty is WAIVED for the extension
+    period (reasonable cause presumed — Treas. Reg. §301.6651-1(c)(3); interest
+    still runs). Pass `ftp_months=0` (and `ftf_months=0` — the extension prevents
+    the late-FILING penalty entirely) in that case; the helper models only the
+    genuinely-unwaived scenario. §6651(d) note: for a balance wholly at the
+    collection stage (past an IRS notice-and-demand / intent-to-levy) pass
+    `ftp_rate=0.01`; a MIXED pre/post-notice period while FTF is still accruing
+    is NOT modeled (summing separate calls restarts the 5-month FTF cap) — use
+    the §6651 worksheet for that.
 - Form 2350 (citizens abroad), combat-zone postponements, and disaster-relief
   postponements are not modeled.
 - This skill never modifies `result.json`; it writes only the profile flag,

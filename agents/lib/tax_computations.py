@@ -3582,6 +3582,229 @@ def compute_education_credits(
     }
 
 
+def compute_late_filing_penalty(
+    unpaid_tax: float,
+    ftf_months: int,
+    ftp_months: int,
+    filed_over_60_days_late: bool = False,
+    min_penalty_floor: float = None,
+    ftf_rate: float = 0.05,
+    ftp_rate: float = 0.005,
+    ftf_cap: float = 0.25,
+    ftp_cap: float = 0.25,
+) -> dict:
+    """§6651 failure-to-file (FTF) + failure-to-pay (FTP) penalties.
+
+    NOT interest — §6601 interest on the balance (and on the penalties
+    themselves) is separate and NOT computed here (it needs the quarterly
+    underpayment rates and daily compounding; see compute_form_2210 for the
+    rate machinery). This is the additions-to-tax only.
+
+    Rules encoded:
+    - §6651(a)(1) FTF: `ftf_rate` (5%) per month or fraction the return is late,
+      capped at `ftf_cap` (25% → 5 months of accrual).
+    - §6651(a)(2) FTP: `ftp_rate` (0.5%) per month or fraction the tax is unpaid,
+      capped at `ftp_cap` (25% → 50 months).
+    - §6651(c)(1) overlap: in any month BOTH apply, the FTF penalty is reduced by
+      that month's FTP penalty (so FTF nets to 4.5%/month while both run). The
+      reduction covers the overlapping months during which FTF is still accruing
+      (at most 5). Classic result: 5 months late, both running → FTF 22.5% + FTP
+      2.5% = 25% combined, not 27.5%.
+    - §6651(a) minimum (return filed > 60 days late): the FTF penalty is at least
+      the LESSER of `min_penalty_floor` or 100% of the tax due, applied to the
+      FTF piece. `min_penalty_floor` is the inflation-indexed §6651(a) dollar
+      amount for the year the return is REQUIRED TO BE FILED — it is passed in
+      and MUST be fetched from that year's IRS Revenue Procedure (e.g. Rev. Proc.
+      2024-40 for returns required to be filed in 2025, Rev. Proc. 2025-32 for
+      returns required to be filed in 2026), NOT hardcoded (it indexes annually —
+      do not reuse a prior year's figure, which would understate the mandatory
+      minimum).
+
+    Base: `unpaid_tax` is the net tax due as of the deadline — the tax required
+    to be shown MINUS payments/credits made by the due date (§6651(b)(1)). Both
+    penalties run on this net amount, so a fully-paid-but-late return (unpaid_tax
+    = 0) carries $0 of both (and $0 minimum — the minimum is a floor on the FTF
+    penalty, which is measured on the net amount due).
+
+    Months are whole-month counts (each month OR FRACTION thereof = one whole
+    month) — the caller supplies the counted months for filing and for payment
+    separately (they differ when the return is filed but the tax stays unpaid).
+
+    Scope (explicit v1 limits — surfaced in the returned `note`):
+    - CORRECTLY-REPORTED RETURN ASSUMED: `unpaid_tax` is used as the base for
+      BOTH penalties, which is right only when the return reports the full tax
+      required. For an UNDER-reported return the bases diverge — §6651(a)(1) FTF
+      is on the tax REQUIRED to be shown (§6651(b)(1)) while §6651(a)(2) FTP is on
+      the tax SHOWN on the return (§6651(b)(2)), and the unreported deficiency
+      follows the separate §6651(a)(3) path after notice-and-demand. That case is
+      NOT modeled here — use a full §6651 computation with the separate bases.
+    - PARTIAL-PAYMENT SCHEDULE NOT MODELED: both penalties run on the single
+      constant `unpaid_tax`. A post-deadline PARTIAL PAYMENT stops FTP on the paid
+      portion but, per §6651(b)(1), does NOT shrink the FTF base (fixed at the tax
+      unpaid on/before the due date). Because FTF, the declining FTP base, and the
+      §6651(c)(1) overlap offset interact across months, a mid-period payment
+      cannot be reconstructed by re-running this helper per balance segment —
+      compute that case from the §6651 worksheet / tax software.
+    - SINGLE FTP RATE (mixed pre/post-notice NOT modeled): §6651(d) raises FTP
+      from 0.5% to 1%/month for months beginning >10 days after an IRS notice-and-
+      demand / intent-to-levy. This helper applies ONE `ftp_rate` uniformly — for
+      a wholly post-notice balance pass `ftp_rate=0.01`; a mid-period rate change
+      while FTF is still accruing cannot be reconstructed by summing separate
+      calls (each restarts the 5-month FTF cap) — use the §6651 worksheet.
+    - The 90%-paid Form 4868 extension exception (no FTP during the extension
+      period) is the CALLER's screen — do not pass FTP months for a filer who
+      met it (see /tax-extend).
+
+    Raises:
+        ValueError: on non-finite / negative / wrong-type inputs, or a rate
+            outside (0, 1].
+    """
+    # --- base ---
+    if isinstance(unpaid_tax, bool):
+        raise ValueError("unpaid_tax must be a number, not bool")
+    ut = _coerce_numeric(unpaid_tax, default=None)
+    if ut is None or not math.isfinite(ut):
+        raise ValueError(f"unpaid_tax must be a finite number, got {unpaid_tax!r}")
+    if ut < 0:
+        raise ValueError(f"unpaid_tax cannot be negative (got {ut})")
+
+    # --- month counts (whole months; part-month already counted as full) ---
+    for _name, _m in (("ftf_months", ftf_months), ("ftp_months", ftp_months)):
+        if isinstance(_m, bool) or not isinstance(_m, int):
+            raise ValueError(f"{_name} must be a non-negative int, got {_m!r}")
+        if _m < 0:
+            raise ValueError(f"{_name} cannot be negative (got {_m})")
+
+    if not isinstance(filed_over_60_days_late, bool):
+        raise ValueError("filed_over_60_days_late must be a bool")
+
+    # --- rates: validate AND store the coerced floats so the arithmetic below
+    # uses numbers (a coercible "0.05" must not pass validation and then raise
+    # TypeError at the multiply — the documented contract is ValueError). ---
+    _rates = {}
+    for _name, _r in (("ftf_rate", ftf_rate), ("ftp_rate", ftp_rate),
+                      ("ftf_cap", ftf_cap), ("ftp_cap", ftp_cap)):
+        if isinstance(_r, bool):
+            raise ValueError(f"{_name} must be a number, not bool")
+        _rv = _coerce_numeric(_r, default=None)
+        if _rv is None or not math.isfinite(_rv) or _rv <= 0 or _rv > 1:
+            raise ValueError(f"{_name} must be a finite fraction in (0, 1], got {_r!r}")
+        _rates[_name] = _rv
+    ftf_rate = _rates["ftf_rate"]
+    ftp_rate = _rates["ftp_rate"]
+    ftf_cap = _rates["ftf_cap"]
+    ftp_cap = _rates["ftp_cap"]
+
+    # --- FTF (gross, capped) ---
+    ftf_pct = min(ftf_months * ftf_rate, ftf_cap)
+    ftf_gross = round(ftf_pct * ut, 2)
+
+    # --- FTP (capped) ---
+    ftp_pct = min(ftp_months * ftp_rate, ftp_cap)
+    ftp_penalty = round(ftp_pct * ut, 2)
+
+    # --- §6651(c)(1) overlap: reduce FTF by FTP for months both run, but only
+    # for the months FTF actually accrues. FTF accrues until it hits the cap;
+    # the number of accrual months is CEIL(cap/rate) — the final month in which
+    # the cap is reached still counts (and still overlaps a concurrent FTP
+    # month), so a non-integer cap/rate (via overrides, e.g. 0.25/0.06 = 4.17)
+    # rounds UP to 5, not `round`-to-4 (which would under-count the offset and
+    # overstate the penalty). round(...,9) first kills float noise so an exact
+    # 0.25/0.05 = 5.0 doesn't ceil to 6. ---
+    ftf_accrual_months = min(ftf_months, math.ceil(round(ftf_cap / ftf_rate, 9)))
+    overlap_months = min(ftf_accrual_months, ftp_months)
+    # The §6651(c)(1) reduction is the FTP that ACTUALLY ACCRUED in the
+    # overlapping months — it cannot exceed the FTP cap. Without this clamp a
+    # `ftp_cap` override below `ftp_rate * overlap_months` (e.g. ftp_rate=0.10,
+    # ftp_cap=0.10, 5 months) would subtract more FTP than was ever charged and
+    # wipe out too much of the FTF penalty.
+    # Round the reduction at source too, so the returned FTF breakdown
+    # reconciles: ftf_penalty = ftf_penalty_gross − overlap_reduction exactly
+    # (both operands already 2-dp) rather than deriving it from unrounded values.
+    overlap_reduction = round(min(ftp_rate * overlap_months, ftp_cap) * ut, 2)
+    # The percentage FTF (before any >60-day minimum). Kept as its own field so
+    # the breakdown identity `ftf_penalty_gross − overlap_reduction ==
+    # ftf_penalty_before_minimum` ALWAYS holds, even when the minimum overrides
+    # the final ftf_penalty below.
+    ftf_penalty_before_minimum = max(0.0, round(ftf_gross - overlap_reduction, 2))
+    ftf_penalty = ftf_penalty_before_minimum
+
+    # --- §6651(a) minimum for a return filed > 60 days late ---
+    minimum_penalty = None
+    minimum_penalty_applied = False
+    min_note = None
+    if filed_over_60_days_late:
+        if min_penalty_floor is None:
+            min_note = (
+                "Return filed >60 days late: the §6651(a) minimum penalty (lesser "
+                "of the indexed dollar floor or 100% of tax due) is NOT applied "
+                "because the indexed floor was not supplied — the FTF penalty may "
+                "be understated for a small balance. Provide min_penalty_floor.")
+        else:
+            if isinstance(min_penalty_floor, bool):
+                raise ValueError("min_penalty_floor must be a number, not bool")
+            floor = _coerce_numeric(min_penalty_floor, default=None)
+            if floor is None or not math.isfinite(floor) or floor < 0:
+                raise ValueError(
+                    f"min_penalty_floor must be a finite non-negative number, "
+                    f"got {min_penalty_floor!r}")
+            minimum_penalty = min(floor, ut)  # lesser of floor or 100% of tax due
+            if minimum_penalty > ftf_penalty:
+                ftf_penalty = minimum_penalty
+                minimum_penalty_applied = True
+
+    # Round the two components and derive the total FROM the rounded values so
+    # the displayed breakdown always reconciles (ftf + ftp == total) — rounding
+    # the total independently from the unrounded pieces can drift a cent.
+    ftf_penalty = round(ftf_penalty, 2)
+    ftp_penalty = round(ftp_penalty, 2)
+    total_penalty = round(ftf_penalty + ftp_penalty, 2)
+    note = (
+        "CORRECTLY-REPORTED RETURN ASSUMED: `unpaid_tax` is the base for BOTH "
+        "penalties — correct only when the return shows the full tax required. An "
+        "UNDER-reported return diverges (FTF on the tax REQUIRED per §6651(b)(1), "
+        "FTP on the tax SHOWN per §6651(b)(2), the deficiency via §6651(a)(3) "
+        "after notice) and is NOT modeled — use a full §6651 computation. "
+        "PARTIAL-PAYMENT SCHEDULE NOT MODELED: this single-call helper runs both "
+        "penalties on one constant `unpaid_tax`. A post-deadline PARTIAL PAYMENT "
+        "stops FTP on the paid portion but, per §6651(b)(1), does NOT shrink the "
+        "FTF base (fixed at the tax unpaid ON OR BEFORE the due date). Because "
+        "FTF, the declining FTP base, and the §6651(c)(1) overlap offset interact "
+        "across months, a mid-period payment cannot be reconstructed by re-running "
+        "this helper per balance segment — compute that case from the §6651 "
+        "worksheet or tax software instead of this estimate. "
+        "SINGLE FTP RATE — MIXED PRE/POST-NOTICE NOT MODELED: §6651(d) raises the "
+        "FTP rate from 0.5% to 1%/month for months beginning >10 days after an IRS "
+        "notice-and-demand / intent-to-levy. This helper applies ONE `ftp_rate` "
+        "uniformly — the default 0.5% UNDERstates a wholly post-notice balance "
+        "(for that case pass ftp_rate=0.01). A MID-PERIOD rate change while FTF is "
+        "still accruing cannot be reconstructed by summing separate calls (each "
+        "call restarts the 5-month FTF cap) — compute that from the §6651 "
+        "worksheet / tax software. "
+        "§6601 interest on the unpaid tax and on these penalties is separate and "
+        "NOT included. Penalties may be abated for reasonable cause / first-time "
+        "abatement (Form 843 / §6651(a) reasonable-cause). Fraudulent failure to "
+        "file (§6651(f)) raises the FTF rate to 15%/mo (75% cap) and is not "
+        "modeled.")
+    if min_note:
+        note = min_note + " " + note
+
+    return {
+        "unpaid_tax": round(ut, 2),
+        "ftf_months": ftf_months,
+        "ftp_months": ftp_months,
+        "ftf_penalty_gross": round(ftf_gross, 2),
+        "overlap_reduction": round(overlap_reduction, 2),
+        "ftf_penalty_before_minimum": round(ftf_penalty_before_minimum, 2),
+        "ftf_penalty": round(ftf_penalty, 2),
+        "ftp_penalty": round(ftp_penalty, 2),
+        "minimum_penalty": round(minimum_penalty, 2) if minimum_penalty is not None else None,
+        "minimum_penalty_applied": minimum_penalty_applied,
+        "total_penalty": round(total_penalty, 2),
+        "note": note,
+    }
+
+
 if __name__ == "__main__":
     # Quick self-test with sample data
     print("=== Bracket Tax Test (MFJ 2025 OBBBA) ===")
@@ -3661,3 +3884,11 @@ if __name__ == "__main__":
     print(f"Baseline tax: ${base['total_federal_tax']:,.2f}; +$40K → ${scen['total_federal_tax']:,.2f}")
     print(f"Marginal cost of $40K conversion: ${delta_tax:,.2f} "
           f"({delta_tax / 40000:.1%} marginal rate)")
+
+    print("\n=== §6651 Late-Filing/Late-Payment Penalty Test ===")
+    # $10K unpaid, 5 months late (both), filed >60 days late, 2025 floor $485.
+    # FTF 22.5% + FTP 2.5% = $2,250 + $250 = $2,500 (classic 25% combined).
+    pen = compute_late_filing_penalty(10000, 5, 5, filed_over_60_days_late=True,
+                                      min_penalty_floor=485)
+    print(f"FTF ${pen['ftf_penalty']:,.2f} + FTP ${pen['ftp_penalty']:,.2f} "
+          f"= ${pen['total_penalty']:,.2f} (overlap −${pen['overlap_reduction']:,.2f})")

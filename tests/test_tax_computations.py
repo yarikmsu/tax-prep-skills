@@ -37,6 +37,7 @@ from agents.lib.tax_computations import (
     compute_form_6251,
     compute_form_8801_credit,
     check_form_8938_required,
+    compute_late_filing_penalty,
     SE_TAX_THRESHOLD,
 )
 
@@ -3238,3 +3239,187 @@ class TestEducationCredits:
             taxable_income=200000, filing_status="Single", regular_tax=40000,
             **_AMT_2025)
         assert r0["iso_bargain_element"] == 0.0
+
+
+class TestComputeLateFilingPenalty:
+    """Tests for compute_late_filing_penalty — §6651 FTF/FTP additions to tax."""
+
+    def test_classic_five_months_both(self):
+        """$10K unpaid, 5 months late (both). FTF 25% gross − 2.5% overlap =
+        22.5% = $2,250; FTP 2.5% = $250; combined $2,500 (the classic 25%)."""
+        r = compute_late_filing_penalty(10000, 5, 5)
+        assert r["ftf_penalty_gross"] == 2500.00
+        assert r["overlap_reduction"] == 250.00
+        assert r["ftf_penalty"] == 2250.00
+        assert r["ftp_penalty"] == 250.00
+        assert r["total_penalty"] == 2500.00
+
+    def test_ftf_caps_at_25_percent(self):
+        """10 months late: FTF caps at 25% (5 months accrual), FTP keeps running.
+        FTF 25% − 2.5% overlap = 22.5% = $2,250; FTP 5% = $500; total $2,750."""
+        r = compute_late_filing_penalty(10000, 10, 10)
+        assert r["ftf_penalty_gross"] == 2500.00   # capped at 25%
+        assert r["overlap_reduction"] == 250.00     # only 5 accrual months overlap
+        assert r["ftf_penalty"] == 2250.00
+        assert r["ftp_penalty"] == 500.00
+        assert r["total_penalty"] == 2750.00
+
+    def test_ftp_caps_at_25_percent_combined_max(self):
+        """FTP caps at 25% after 50 months; with FTF's 22.5% the combined max is
+        ~47.5%. $10K, FTF 5 / FTP 60 → $2,250 + $2,500 = $4,750."""
+        r = compute_late_filing_penalty(10000, 5, 60)
+        assert r["ftp_penalty"] == 2500.00          # capped at 25%
+        assert r["ftf_penalty"] == 2250.00
+        assert r["total_penalty"] == 4750.00
+
+    def test_minimum_penalty_applies_small_balance(self):
+        """Return filed >60 days late, small balance: §6651(a) minimum = lesser of
+        the floor ($485) or 100% of tax due ($300) → $300, which exceeds the
+        computed FTF ($40.50) → FTF floored to $300. FTP ($4.50) is separate."""
+        r = compute_late_filing_penalty(300, 3, 3, filed_over_60_days_late=True,
+                                        min_penalty_floor=485)
+        assert r["ftf_penalty"] == 300.00
+        assert r["minimum_penalty"] == 300.00
+        assert r["minimum_penalty_applied"] is True
+        assert r["ftp_penalty"] == 4.50
+        assert r["total_penalty"] == 304.50
+        # The percentage FTF (before the minimum) still reconciles to the
+        # gross/reduction breakdown even though the minimum overrides the final.
+        assert r["ftf_penalty_before_minimum"] == 40.50
+        assert round(r["ftf_penalty_gross"] - r["overlap_reduction"], 2) == \
+            r["ftf_penalty_before_minimum"]
+
+    def test_minimum_penalty_uses_floor_when_lesser(self):
+        """>60 days late, 1 month, $5K balance: computed FTF is 5% = $250, but the
+        §6651(a) minimum = lesser($485 floor, $5,000) = $485 > $250 → FTF $485."""
+        r = compute_late_filing_penalty(5000, 1, 0, filed_over_60_days_late=True,
+                                        min_penalty_floor=485)
+        assert r["ftf_penalty"] == 485.00
+        assert r["minimum_penalty"] == 485.00
+        assert r["minimum_penalty_applied"] is True
+        assert r["total_penalty"] == 485.00
+
+    def test_minimum_not_applied_when_computed_exceeds_floor(self):
+        """A large balance's percentage FTF already exceeds the floor → no bump."""
+        r = compute_late_filing_penalty(50000, 3, 0, filed_over_60_days_late=True,
+                                        min_penalty_floor=485)
+        assert r["ftf_penalty"] == 7500.00          # 15% x 50000
+        assert r["minimum_penalty_applied"] is False
+
+    def test_fully_paid_but_late_is_zero(self):
+        """No unpaid tax → $0 of both penalties (and $0 minimum), even >60 days
+        late: the FTF penalty is measured on the net amount due."""
+        r = compute_late_filing_penalty(0, 5, 5, filed_over_60_days_late=True,
+                                        min_penalty_floor=485)
+        assert r["total_penalty"] == 0.00
+        assert r["minimum_penalty_applied"] is False
+
+    def test_no_minimum_when_not_over_60_days(self):
+        """Filed within 60 days → no §6651(a) minimum floor, just the percentages."""
+        r = compute_late_filing_penalty(300, 1, 1, filed_over_60_days_late=False,
+                                        min_penalty_floor=485)
+        assert r["minimum_penalty_applied"] is False
+        assert r["ftf_penalty"] == 13.50            # 5% x 300 − 0.5% overlap
+        assert r["ftp_penalty"] == 1.50
+        assert r["total_penalty"] == 15.00
+
+    def test_over_60_days_without_floor_degrades_with_note(self):
+        """>60 days late but no floor supplied → minimum NOT applied, loud note
+        (don't silently understate); percentages still computed."""
+        r = compute_late_filing_penalty(300, 3, 3, filed_over_60_days_late=True)
+        assert r["minimum_penalty_applied"] is False
+        assert r["minimum_penalty"] is None
+        assert "not supplied" in r["note"]
+
+    def test_no_overlap_when_ftp_months_zero(self):
+        """FTF with no overlapping FTP month keeps the full 5%/month (no §6651(c)
+        reduction). $10K, FTF 2 / FTP 0 → 10% = $1,000, no reduction."""
+        r = compute_late_filing_penalty(10000, 2, 0)
+        assert r["overlap_reduction"] == 0.00
+        assert r["ftf_penalty"] == 1000.00
+        assert r["ftp_penalty"] == 0.00
+
+    def test_negative_unpaid_raises(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            compute_late_filing_penalty(-1, 1, 1)
+
+    def test_bool_months_raises(self):
+        with pytest.raises(ValueError, match="non-negative int"):
+            compute_late_filing_penalty(1000, True, 1)
+
+    def test_float_months_raises(self):
+        with pytest.raises(ValueError, match="non-negative int"):
+            compute_late_filing_penalty(1000, 1.5, 1)
+
+    def test_nan_unpaid_raises(self):
+        with pytest.raises(ValueError, match="finite"):
+            compute_late_filing_penalty(float("nan"), 1, 1)
+
+    def test_rate_over_one_raises(self):
+        with pytest.raises(ValueError, match="fraction in"):
+            compute_late_filing_penalty(1000, 1, 1, ftf_rate=1.5)
+
+    def test_string_rate_coerced_not_typeerror(self):
+        """Codex P3 (PR #52): a coercible string rate must be used as a float in
+        the arithmetic (not raise TypeError at the multiply). ftf_rate='0.05'
+        behaves exactly like 0.05 → $10K, 5/5 months → $2,500 total."""
+        r = compute_late_filing_penalty(10000, 5, 5, ftf_rate="0.05")
+        assert r["total_penalty"] == 2500.00
+        # A truly invalid string still raises the documented ValueError.
+        with pytest.raises(ValueError, match="fraction in"):
+            compute_late_filing_penalty(10000, 5, 5, ftf_rate="not-a-rate")
+
+    def test_overlap_accrual_months_ceil_for_noninteger_ratio(self):
+        """Codex P2 (PR #52): with an override making cap/rate non-integer
+        (0.25/0.06 = 4.17), FTF still accrues in the 5th month (reaching the 25%
+        cap), so all 5 concurrent FTP months offset it — NOT 4 (round). $10K,
+        5/5 months, ftf_rate=0.06: FTF gross 25% = $2,500, overlap 5 × 0.5% =
+        $250 → FTF $2,250 (round-to-4 would wrongly give $2,300 → $2,550 total)."""
+        r = compute_late_filing_penalty(10000, 5, 5, ftf_rate=0.06)
+        assert r["ftf_penalty_gross"] == 2500.00
+        assert r["overlap_reduction"] == 250.00
+        assert r["ftf_penalty"] == 2250.00
+        assert r["total_penalty"] == 2500.00
+
+    def test_note_flags_partial_payment_and_post_notice_rate(self):
+        """Codex P2/P1 (PR #52): the scope limitations are surfaced loudly in the
+        note — the FTF base is fixed at the due-date balance per §6651(b)(1) (a
+        later payment doesn't shrink it), and §6651(d) raises FTP post-notice."""
+        r = compute_late_filing_penalty(10000, 3, 3)
+        assert "§6651(b)(1)" in r["note"]
+        assert "FTF base" in r["note"]
+        assert "§6651(d)" in r["note"]
+        assert "NOT MODELED" in r["note"]  # both the partial-payment + mixed-rate scopes
+        assert "UNDER-reported" in r["note"]  # separate FTF/FTP bases scope
+
+    def test_overlap_reduction_capped_at_accrued_ftp(self):
+        """Codex P2 (PR #52): the §6651(c)(1) reduction can't exceed the FTP that
+        actually accrued (capped by ftp_cap). With ftp_rate=0.10, ftp_cap=0.10,
+        $1,000, 5/5 months: FTP is capped at 10% = $100, and the FTF offset is
+        that same $100 (not 0.10×5=50% = $500), so FTF = 25% − 10% = $150 and the
+        combined total is $250 (the 25% combined amount), not $100."""
+        r = compute_late_filing_penalty(1000, 5, 5, ftp_rate=0.10, ftp_cap=0.10)
+        assert r["ftp_penalty"] == 100.00
+        assert r["overlap_reduction"] == 100.00
+        assert r["ftf_penalty"] == 150.00
+        assert r["total_penalty"] == 250.00
+
+    def test_breakdown_reconciles_to_the_cent(self):
+        """Codex P3 (PR #52, both rounds): every displayed field reconciles —
+        ftf_penalty == ftf_penalty_gross − overlap_reduction, and total_penalty
+        == ftf_penalty + ftp_penalty — because gross, reduction, and the two
+        components are all rounded at source. unpaid=100.10, 3/3 → gross $15.02,
+        reduction $1.50, FTF $13.52, FTP $1.50, total $15.02."""
+        r = compute_late_filing_penalty(100.10, 3, 3)
+        assert r["ftf_penalty_gross"] == 15.02
+        assert r["overlap_reduction"] == 1.50
+        assert r["ftf_penalty"] == 13.52
+        assert r["ftp_penalty"] == 1.50
+        assert r["total_penalty"] == 15.02
+        # The reconciliation identities the returned detail must satisfy:
+        assert r["ftf_penalty_before_minimum"] == 13.52
+        assert round(r["ftf_penalty_gross"] - r["overlap_reduction"], 2) == \
+            r["ftf_penalty_before_minimum"]
+        # No minimum here, so ftf_penalty == the percentage figure.
+        assert r["ftf_penalty"] == r["ftf_penalty_before_minimum"]
+        assert round(r["ftf_penalty"] + r["ftp_penalty"], 2) == r["total_penalty"]
