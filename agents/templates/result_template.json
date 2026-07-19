@@ -52,6 +52,8 @@
     "line_6b_taxable_ss": 0,
     "line_7_capital_gain": 0,
     "line_8_schedule1_other": 0,
+    "schedule_e_k1_income": 0,
+    "_note_schedule_e_k1_income": "GROSS POSITIVE partnership / S-corp K-1 distributive income the return reflects — the PTET-ELIGIBLE pass-through-entity income only. EXCLUDE Schedule E rental real estate and royalty income (not a qualifying PTET entity), and DO NOT net against other entities' K-1 LOSSES (the PTET base is per-entity: a $200K profitable CA K-1 alongside a separate $100K loss is a real $200K PTET base, so record $200K here, not the $100K net). Sum the positive qualifying K-1 shares. /tax-ptet's phantom-income guard compares supplied --income against THIS figure (not the aggregate line 8, which folds in unemployment / taxable refunds / Sch C / gambling), so unrelated Schedule-1 income can't mask a K-1 that isn't in the return, while a legitimate per-entity PTET claim isn't blocked by an unrelated Schedule E loss. 0 when there is no qualifying K-1 income.",
     "line_9_total_income": 0,
     "line_10_adjustments": 0,
     "line_11_agi": 0,

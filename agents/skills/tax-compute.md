@@ -149,6 +149,19 @@ Line 9: TOTAL INCOME = 1z + 2b + 3b + 4b + 5b + 6b + 7 + 8
         understates AGI by exactly what the worksheet just computed)
 ```
 
+**Also record `schedule_e_k1_income` (L2):** write the GROSS POSITIVE
+partnership / S-corp K-1 distributive income the return reflects to
+`form_1040.schedule_e_k1_income` — the PTET-ELIGIBLE pass-through-entity income
+ONLY. EXCLUDE Schedule E rental real estate and royalty income (not a
+qualifying PTET entity), and do NOT net against other entities' K-1 LOSSES: the
+PTET base is per-entity, so a $200K profitable CA K-1 alongside a separate
+$100K loss is a real $200K base — record $200K, not the $100K net. Sum the
+positive qualifying K-1 shares. `/tax-ptet`'s phantom-income guard compares the
+user's supplied `--income` against this figure so a large unrelated line-8 item
+can't mask a K-1 that isn't in the return, while a legitimate per-entity claim
+isn't blocked by an unrelated Schedule E loss. Leave it 0 when there is no
+qualifying K-1 income.
+
 **Taxable Social Security (line 6b):** When any SSA-1099 exists, use
 `compute_taxable_ss()` from `agents/lib/tax_computations.py` — never hand-run
 the worksheet:

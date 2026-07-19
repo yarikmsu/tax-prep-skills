@@ -531,6 +531,82 @@ def test_cli_qbi_eligible_flag_priced(tmp_path):
     assert "QBI clawback modeled" in res.stdout
 
 
+def _set_result_fields(ws, **fields):
+    res = json.loads((ws / "result.json").read_text())
+    res.setdefault("form_1040", {}).update(fields)
+    (ws / "result.json").write_text(json.dumps(res))
+
+
+def test_cli_phantom_guard_prefers_dedicated_k1_field(tmp_path):
+    # L2: the fixture has line_8_schedule1_other=250000 (which would ADMIT a
+    # $200K K-1 claim), but only $50K of that is actually K-1. With the dedicated
+    # schedule_e_k1_income=50000 field present, a --income CA=200000 claim is a
+    # phantom and the guard must FAIL — proving it compares against the K-1
+    # field, not the aggregate line 8.
+    ws = _ws(tmp_path)
+    _set_result_fields(ws, schedule_e_k1_income=50000)
+    res = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert res.returncode != 0
+    assert "K-1 / Schedule E pass-through income" in res.stderr
+    assert "50,000" in res.stderr
+
+
+def test_cli_phantom_guard_passes_when_dedicated_k1_field_matches(tmp_path):
+    ws = _ws(tmp_path)
+    _set_result_fields(ws, schedule_e_k1_income=200000)
+    res = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert res.returncode == 0, res.stderr
+    assert "PTET Election Analysis" in res.stdout
+
+
+def test_cli_phantom_guard_falls_back_to_line_8_for_legacy_result(tmp_path):
+    # A legacy result.json without schedule_e_k1_income still guards against the
+    # aggregate line 8 (250000 here), so a $200K claim passes as before.
+    ws = _ws(tmp_path)
+    res = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert res.returncode == 0, res.stderr
+
+
+def test_cli_phantom_guard_fails_closed_on_non_finite_k1_field(tmp_path):
+    # Codex P2 (PR #50): a corrupt schedule_e_k1_income = Infinity must NOT pass
+    # every claim (float('inf') > anything) — it FAILS CLOSED rather than
+    # silently admitting a phantom K-1.
+    ws = _ws(tmp_path)
+    _set_result_fields(ws, schedule_e_k1_income=float("inf"))
+    res = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert res.returncode != 0
+    assert "must be finite" in res.stderr
+
+
+def test_cli_phantom_guard_present_but_invalid_does_not_fall_back(tmp_path):
+    # A present-but-non-numeric dedicated field must fail closed, NOT degrade to
+    # the looser line-8 aggregate (which would admit the claim).
+    ws = _ws(tmp_path)
+    _set_result_fields(ws, schedule_e_k1_income="not-a-number")
+    res = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert res.returncode != 0
+    assert "must be a number" in res.stderr
+
+
+def test_cli_phantom_guard_fails_closed_on_null_k1_field(tmp_path):
+    # Codex P2 (PR #50, SHdpp): a PRESENT-but-null schedule_e_k1_income is a
+    # malformed CURRENT result — it must FAIL CLOSED (the field key is present,
+    # so the current schema applies), NOT be treated as an absent key that
+    # degrades to the looser line-8 aggregate fallback (which would admit the
+    # $200K claim against line_8=250000). Only a truly ABSENT key is legacy.
+    ws = _ws(tmp_path)
+    _set_result_fields(ws, schedule_e_k1_income=None)
+    res = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert res.returncode != 0
+    assert "must be a number" in res.stderr
+
+
 def test_cli_sums_repeated_same_state_income(tmp_path):
     # Two CA K-1 entities → CA PTET base is the sum (150k × 9.3% = $13,950).
     ws = _ws(tmp_path)

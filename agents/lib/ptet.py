@@ -507,24 +507,25 @@ def analyze(
 
     # Anchoring sanity check: the PTET deduction reduces pass-through income that
     # must already be in result.json. Compare supplied K-1 income against the
-    # PASS-THROUGH bucket, NOT total gross — large unrelated wages must not mask a
-    # K-1 that isn't in the return. The bucket is the RAW Schedule 1 line 8
-    # (`passthrough_income`, where Schedule E / K-1 distributive share lands) when
-    # the caller supplies it; the composite `other_income` is only a fallback,
-    # since it also folds in taxable Social Security + net short-term gains and
-    # would overstate the K-1 bucket (Codex P2). If qualifying exceeds the bucket
-    # the deduction would drive pass-through income negative and "save" tax on
-    # income that was never taxed. Fail fast and tell the user to recompute.
+    # K-1 bucket, NOT total gross — large unrelated income must not mask a K-1
+    # that isn't in the return. The caller (`_main`) supplies `passthrough_income`
+    # from the DEDICATED `schedule_e_k1_income` field (L2 — the Schedule E line-5
+    # / K-1 distributive share ISOLATED from the rest of line 8), falling back to
+    # the aggregate `line_8_schedule1_other` for a legacy result.json and to the
+    # composite `other_income` (`_baseline_passthrough`) for direct callers. If
+    # qualifying exceeds the bucket the deduction would drive pass-through income
+    # negative and "save" tax on income that was never taxed. Fail fast.
     total_qualifying = round(sum(m["income"] for m in modeled_states), 2)
     baseline_passthrough = (round(max(0.0, passthrough_income), 2)
                             if passthrough_income is not None
                             else _baseline_passthrough(baseline_inputs))
     if total_qualifying > baseline_passthrough + 1.0:
         raise PtetError(
-            f"Supplied K-1 income ${total_qualifying:,.0f} exceeds the pass-through "
-            f"income in result.json (Schedule 1 line 8: ${baseline_passthrough:,.0f}) "
-            f"— the return may not include this K-1. Recompute result.json with the "
-            f"K-1 income (/tax-compute) before estimating PTET.")
+            f"Supplied K-1 income ${total_qualifying:,.0f} exceeds the K-1 / "
+            f"Schedule E pass-through income in result.json "
+            f"(${baseline_passthrough:,.0f}) — the return may not include this "
+            f"K-1. Recompute result.json with the K-1 income (/tax-compute) "
+            f"before estimating PTET.")
 
     # Anchored federal benefit of deducting the PTET at the entity level (net of
     # any QBI clawback already baked into total_reduction).
@@ -772,16 +773,42 @@ def _main(argv: list) -> int:
             or profile.get("filing_status") or "Single"
         baseline_inputs = extract_baseline_inputs(result)
         rate_kwargs = _rate_kwargs(profile, tax_law, filing_status)
-        # Raw Schedule 1 line 8 = the pure pass-through bucket (Schedule E / K-1),
-        # without the taxable-SS / short-term-gain that extract_baseline_inputs
-        # folds into other_income — used for the phantom-income guard.
-        raw_l8 = (result.get("form_1040", {}) or {}).get("line_8_schedule1_other")
+        # Phantom-income guard bucket (L2): PREFER the dedicated
+        # `schedule_e_k1_income` field (the gross positive qualifying K-1
+        # distributive income) — the aggregate line 8 also folds in
+        # unemployment, taxable refunds, Schedule C, gambling, etc., any of which
+        # could mask a K-1 that isn't in the return. Fall back to the aggregate
+        # `line_8_schedule1_other` only for a legacy result.json written before
+        # the dedicated field existed. The dedicated field, when PRESENT, must be
+        # a finite non-negative number — a corrupt `Infinity`/NaN (json.loads
+        # accepts them) or a non-numeric value FAILS CLOSED rather than passing
+        # every claim or silently degrading to the looser line-8 fallback.
+        form_1040 = result.get("form_1040", {}) or {}
+
+        def _guard_bucket(raw, field_name):
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise PtetError(
+                    f"result.json form_1040.{field_name} must be a number, "
+                    f"got {raw!r}")
+            if not math.isfinite(float(raw)):
+                raise PtetError(
+                    f"result.json form_1040.{field_name} must be finite, "
+                    f"got {raw!r}")
+            return round(max(0.0, float(raw)), 2)
+
+        # KEY PRESENCE (not value) picks the branch: the dedicated field ships in
+        # the current template (defaulting 0), so its KEY is present on every
+        # current-schema result. A present key with a null/corrupt value is a
+        # malformed CURRENT result and must FAIL CLOSED via _guard_bucket rather
+        # than silently degrading to the looser line-8 aggregate — only a truly
+        # ABSENT key (a legacy result.json predating the field) takes the fallback.
         passthrough_income = None
-        if raw_l8 is not None:
-            try:
-                passthrough_income = max(0.0, float(raw_l8))
-            except (TypeError, ValueError):
-                passthrough_income = None
+        if "schedule_e_k1_income" in form_1040:
+            passthrough_income = _guard_bucket(
+                form_1040["schedule_e_k1_income"], "schedule_e_k1_income")
+        elif form_1040.get("line_8_schedule1_other") is not None:
+            passthrough_income = _guard_bucket(
+                form_1040["line_8_schedule1_other"], "line_8_schedule1_other")
 
         state_incomes = _parse_state_amounts(args.income, what="income", combine="sum")
         rate_overrides = _parse_state_amounts(args.ptet_rate, what="ptet-rate",
