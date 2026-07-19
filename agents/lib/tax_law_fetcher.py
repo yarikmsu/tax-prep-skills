@@ -293,6 +293,12 @@ def create_empty_tax_law(year: int) -> dict:
         },
         "state": {},  # Populated per-state by /tax-setup
         "exchange_rates": {},  # e.g., {"EUR": <annual_avg_rate>} — fetched from IRS.gov yearly average rates
+        # H4 source pinning: block-path → authoritative URL the figure was
+        # fetched from (e.g. "federal.filing_statuses": "https://www.irs.gov/...").
+        # /tax-setup records the primary source per fetched block; check_freshness
+        # reports a NON-AUTHORITATIVE recorded URL as INCOMPLETE and lists
+        # populated-but-unpinned core blocks as an advisory.
+        "_sources": {},
     }
 
 
@@ -355,6 +361,198 @@ def create_state_template(state: str) -> dict:
 
 
 _FRESHNESS_DAYS = 14  # Data older than this is considered STALE
+
+# H4 source pinning: authoritative sources a fetched rate/bracket may be pinned
+# to. An LLM WebSearch can surface a blog or a stale aggregator; recording a URL
+# from a non-primary host is treated as UNVERIFIED (→ INCOMPLETE) so a
+# non-primary figure can't silently flow into a filed return.
+#
+# The `.gov` TLD is restricted to bona-fide US government entities (managed by
+# CISA), so ANY `.gov` host is authoritative — this covers every federal agency
+# (irs.gov, ssa.gov, treasury.gov, congress.gov, govinfo.gov, federalregister.
+# gov) AND every state tax authority (ftb.ca.gov, edd.ca.gov, tax.ny.gov,
+# nj.gov, revenue.wi.gov, …) without enumerating 50 states. Non-`.gov`
+# authoritative legal sources are listed explicitly below (Cornell LII hosts the
+# U.S. Code on .edu). A lookalike like `irs.gov.evil.com` ends in `.com`, not
+# `.gov`, so it is correctly rejected.
+_AUTHORITATIVE_NONGOV_DOMAINS = frozenset({
+    "law.cornell.edu",    # LII U.S. Code
+})
+
+# US state/territory display-name → USPS code, so a legacy state cache with only
+# `name: "California"` (no `code`) normalizes to the documented `state.CA` pin
+# key rather than a bogus `state.California` advisory.
+_STATE_NAME_TO_CODE = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "district of columbia": "DC", "florida": "FL", "georgia": "GA",
+    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN",
+    "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
+    "maine": "ME", "maryland": "MD", "massachusetts": "MA", "michigan": "MI",
+    "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT",
+    "nebraska": "NE", "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ",
+    "new mexico": "NM", "new york": "NY", "north carolina": "NC",
+    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR",
+    "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+}
+
+
+def _state_pin_code(state: dict) -> str:
+    """The documented `state.<CODE>` pin suffix for a single-state cache block:
+    the explicit 2-letter `code` if valid, else the USPS code mapped from the
+    display `name`, else 'state' (bare) so an unrecognized legacy block never
+    emits a display-name advisory that a real code pin can't satisfy."""
+    code = state.get("code")
+    if isinstance(code, str) and len(code) == 2 and code.isalpha():
+        return code.upper()
+    name = state.get("name")
+    if isinstance(name, str):
+        mapped = _STATE_NAME_TO_CODE.get(name.strip().lower())
+        if mapped:
+            return mapped
+    return "state"
+
+# Federal blocks that SHOULD carry a `_sources` pin are DERIVED from the cache
+# (every populated structured `federal.<block>`), not a fixed short list — a
+# hardcoded pair would leave child_tax_credit / additional_medicare_tax / niit /
+# amt / salt_cap unaudited even though they feed scenario/projection/compute.
+# Absence of a pin is an advisory (unpinned), not a status flip; a recorded
+# non-authoritative URL is the harder INCOMPLETE failure. Scalars (e.g.
+# fbar_threshold) are lower-risk statutory constants and are not audited — only
+# structured rate/bracket/threshold blocks (dict/list) are.
+
+
+def _source_host_authoritative(url) -> bool:
+    """True iff `url` is a non-empty string whose host is a US government (`.gov`)
+    site or an explicit non-`.gov` authoritative legal source. Anything else — a
+    blog, aggregator, news site, a bare string, a malformed URL — is NOT
+    authoritative. `.gov` is registry-restricted to government entities, so a
+    lookalike (`irs.gov.evil.com`) resolves to a `.com` host and is rejected."""
+    if not isinstance(url, str) or not url.strip():
+        return False
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        return False
+    # Must be a retrievable web URL — reject javascript:/file:/ftp:/data: even
+    # when a government hostname is present (`javascript://www.irs.gov/x` parses
+    # a hostname but is not a fetchable authoritative source).
+    if parsed.scheme not in ("https", "http"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    host = host.lower()
+    if host == "gov" or host.endswith(".gov"):
+        return True
+    return any(host == d or host.endswith("." + d)
+               for d in _AUTHORITATIVE_NONGOV_DOMAINS)
+
+
+def _has_real_data(node) -> bool:
+    """True iff `node` contains at least one real (non-None, non-empty) leaf.
+    A create_empty_tax_law scaffold block (a dict whose leaves are all None,
+    e.g. an unfetched `federal.amt`) is NOT real data — checking only that the
+    top-level dict is non-empty would wrongly flag it as a populated block."""
+    if node is None:
+        return False
+    if isinstance(node, dict):
+        return any(_has_real_data(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_has_real_data(v) for v in node)
+    if isinstance(node, str):
+        return len(node.strip()) > 0
+    return True  # a number/bool leaf is real data
+
+
+def _block_populated(data: dict, dotted: str) -> bool:
+    """Whether a dotted block path holds real (non-None, non-empty) data —
+    scaffold dicts with all-None leaves do NOT count."""
+    node = data
+    for seg in dotted.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            return False
+        node = node[seg]
+    return _has_real_data(node)
+
+
+def _fetched_federal_blocks(data: dict) -> list:
+    """Populated `federal.<block>` paths that genuinely need a source pin — the
+    FETCHED, indexed rate/bracket/threshold tables. A block qualifies iff it is
+    STRUCTURED (dict/list) AND it DIFFERS from its create_empty_tax_law seed
+    (i.e. a fetched slot was actually filled). That equality test cleanly
+    excludes, without an enumerated list: fully-seeded structural-constant
+    blocks (se_tax, niit, additional_medicare_tax, foreign_tax_credit_simplified,
+    form_8938_thresholds — bill-fixed rates the template ships complete) AND
+    not-yet-fetched blocks whose only content is a structural sub-constant
+    (an empty `irmaa` still equals its {lookback_years, tiers:[]} seed). Blocks
+    the template doesn't seed at all (e.g. `amt`, added by /tax-setup) are
+    audited once populated. Scalars (fbar_threshold) are excluded as lower-risk
+    statutory constants."""
+    fed = data.get("federal")
+    if not isinstance(fed, dict):
+        return []
+    ref = create_empty_tax_law(2025).get("federal", {})  # structure is year-independent
+    blocks = []
+    for key, val in fed.items():
+        if not isinstance(key, str) or key.startswith("_"):
+            continue
+        if not isinstance(val, (dict, list)):
+            continue  # scalars: lower-risk statutory constants, not audited
+        if key in ref and val == ref[key]:
+            continue  # unchanged seed → structural constant OR not yet fetched
+        if not _block_populated(data, f"federal.{key}"):
+            continue
+        blocks.append(f"federal.{key}")
+    return blocks
+
+
+def verify_source_pinning(data: dict) -> dict:
+    """H4: audit `_sources` (block-path → authoritative URL) against the cache.
+
+    Returns {"non_authoritative": [(block, url), ...], "unpinned": [block, ...]}.
+      - non_authoritative: a `_sources` entry whose URL host is NOT an
+        authoritative domain — the hard failure (→ INCOMPLETE): a recorded but
+        non-primary source is affirmatively suspect.
+      - unpinned: a populated core block (federal + each configured state) with
+        NO `_sources` entry — an advisory (legacy caches predate pinning), not
+        a status flip.
+    """
+    sources = data.get("_sources")
+    if sources is not None and not isinstance(sources, dict):
+        raise ValueError(f"_sources must be an object, got {type(sources).__name__}")
+    sources = sources or {}
+    non_authoritative = []
+    for block, url in sources.items():
+        if isinstance(block, str) and block.startswith("_"):
+            continue
+        if not _source_host_authoritative(url):
+            non_authoritative.append((block, url))
+    # (source_key, data_path): every populated structured federal block pins by
+    # its own path (derived from the cache, so child_tax_credit / niit / amt /
+    # etc. are all audited, not just filing_statuses + capital_gains_rates). The
+    # cache holds ONE state as a flat block under `state` (state.code,
+    # state.brackets, …), NOT keyed by code — so it is a SINGLE expected pin
+    # `state.<code>` (what /tax-setup records) whose DATA lives at `state`.
+    # Iterating the state's field keys would emit bogus state.code/state.name/
+    # state.brackets advisories and never credit the real state.CA pin.
+    expected = [(b, b) for b in _fetched_federal_blocks(data)]
+    state = data.get("state")
+    if isinstance(state, dict) and _block_populated(data, "state"):
+        code = _state_pin_code(state)
+        src_key = f"state.{code}" if code != "state" else "state"
+        expected.append((src_key, "state"))
+    # exchange_rates is fetched data (IRS yearly-average rates) that directly
+    # scales reported USD foreign income / FBAR values — audit it too.
+    if _block_populated(data, "exchange_rates"):
+        expected.append(("exchange_rates", "exchange_rates"))
+    unpinned = [src for src, path in expected
+                if _block_populated(data, path) and src not in sources]
+    return {"non_authoritative": non_authoritative, "unpinned": unpinned}
 
 
 def check_freshness(year: int, workspace: str = ".") -> dict:
@@ -536,6 +734,21 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     if isinstance(data.get("state"), dict) and not data["state"]:
         null_fields.append("state (no state tax data configured)")
 
+    # H4 source pinning: a recorded but NON-AUTHORITATIVE source is INCOMPLETE
+    # (a non-primary URL affirmatively taints the figure); populated-but-
+    # unpinned core blocks are a softer advisory that never flips FRESH (legacy
+    # caches predate the field). A malformed _sources object hard-errors.
+    unpinned_sources = []
+    try:
+        pinning = verify_source_pinning(data)
+        for block, url in pinning["non_authoritative"]:
+            null_fields.append(
+                f"_sources.{block} (non-authoritative source {url!r} — pin to a "
+                "primary irs.gov/ftb.ca.gov/congress.gov URL)")
+        unpinned_sources = pinning["unpinned"]
+    except ValueError as e:
+        null_fields.append(f"_sources ({e})")
+
     # Determine status
     if null_fields:
         status = "INCOMPLETE"
@@ -559,10 +772,18 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         status = "FRESH"
         recommendation = "Tax law data is current. Proceed with computation."
 
+    if unpinned_sources:
+        # Advisory only — never flips FRESH (legacy caches predate _sources).
+        recommendation += (
+            f" NOTE: {len(unpinned_sources)} populated block(s) are UNPINNED "
+            f"(no _sources URL): {', '.join(unpinned_sources)}. Record the "
+            "authoritative source per block so the figures are traceable.")
+
     return {
         "status": status,
         "age_days": age_days,
         "null_fields": null_fields,
+        "unpinned_sources": unpinned_sources,
         "recommendation": recommendation,
     }
 

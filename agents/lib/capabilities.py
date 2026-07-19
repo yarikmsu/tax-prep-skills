@@ -165,6 +165,24 @@ RULES: "tuple[Rule, ...]" = (
          "Living abroad", "Form 2555 (FEIE)",
          "The foreign-earned-income exclusion is not modeled — only the FTC "
          "path is; the FEIE-vs-FTC election is not evaluated."),
+    Rule("pfic", "has_foreign_mutual_funds", MANUAL,
+         "Foreign mutual funds / ETFs (PFIC)", "Form 8621",
+         "Non-US mutual funds and ETFs held in a foreign brokerage are almost "
+         "always PFICs (§1291-1298). Form 8621 is filed PER FUND, but the "
+         "obligation is EVENT-DRIVEN — DETERMINE per fund whether a trigger "
+         "applies rather than assuming every fund needs a form: an excess "
+         "distribution, a disposition/sale, a QEF/MTM election or ongoing "
+         "QEF/MTM inclusion, or the §1298(f) annual reporting requirement (which "
+         "carries de-minimis exceptions — a small holder under the threshold "
+         "with no distribution, sale, or election may be EXCEPTED from annual "
+         "filing). When a trigger does apply the default §1291 regime is "
+         "PUNITIVE — an excess distribution (or gain on sale) is spread across "
+         "the holding period, taxed at the top ordinary rate per year, plus a "
+         "compounding interest charge; QEF and mark-to-market elections mitigate "
+         "but must be made TIMELY (generally the first year). None of this is "
+         "modeled here — the flag surfaces the possible obligation so it is not "
+         "silently missed alongside the FBAR/8938 reporting on the same "
+         "accounts. Compute in specialized software / with a preparer."),
     # --- H1 life-event rules: interview flags → manifest lines. All MANUAL
     # (hand-worked from worksheets / decree documents), and all read False
     # when absent — legacy profiles predating the life-event interview pass

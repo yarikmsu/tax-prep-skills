@@ -102,8 +102,12 @@ Before comparing, gather context. **First check `answers.md` — if this return 
    - If draft: note that values may change before filing
 
 2. **Manual adjustments:** Did you manually enter or override any values in the tax software?
-   - If yes: ask which lines/forms were manually adjusted
-   - These will be excluded from the discrepancy report in Step 2
+   - If yes: ask which lines/forms were manually adjusted, and the reason
+   - These are NOT silently dropped from the report — they move to a dedicated
+     **OVERRIDDEN (unverified)** section in Step 4 with the $ delta and the
+     stated reason. An override is the line most in need of scrutiny (the
+     software figure was overridden precisely because it disagreed), so it
+     stays visible; it just isn't counted as a computed-vs-software *error*.
 
 3. **Known differences:** Are there any values you expect to differ from what we computed?
    - e.g., "I entered an extra 1099 directly in the software"
@@ -114,7 +118,7 @@ Log answers to `answers.md` under "Confirmed Assumptions".
 
 Read `result.json` and the extracted software return. Compare every line.
 
-**Before comparing:** Review answers from Step 1.5. If the user identified manual overrides or known differences, mark those lines as "expected discrepancy" and do not flag them.
+**Before comparing:** Review answers from Step 1.5. If the user identified manual overrides or known differences, do NOT silently drop them — route each to the **OVERRIDDEN (unverified)** section of the Step 4 report with its $ delta and the user's stated reason. They are excluded from the ⚠️ Discrepancies *error* count (they're intentional), but they remain visible and unverified: an overridden line is a self-declared departure from the computed figure and is exactly what a reviewer must scrutinize, so it can never vanish from the report.
 
 **Comparison rules:**
 - Tax software rounds to whole dollars; result.json keeps cents
@@ -225,6 +229,15 @@ Create a clear verification report:
 | 1040 | XX   | $X       | $Y       | $Z   | {explanation} |
 ...
 
+### 🔓 OVERRIDDEN (unverified)
+User-declared manual overrides — NOT counted as errors above, but surfaced here
+with the delta because the software figure was overridden precisely where it
+disagreed with the computed value. Empty if none were declared in Step 1.5.
+| Form | Line | Software (override) | Computed | Delta | Stated reason |
+|------|------|---------------------|----------|-------|---------------|
+| 1040 | XX   | $X                  | $Y       | $Z    | {user reason} |
+...
+
 ### 📋 Form Checklist
 | Form | Expected | Present | Status |
 |------|----------|---------|--------|
@@ -247,6 +260,16 @@ Print:
 - Number of lines checked
 - Number of matches
 - Number of discrepancies (with total dollar impact)
+- Number of OVERRIDDEN (unverified) lines (with total override delta) — call
+  these out separately; they are self-declared departures a reviewer must
+  still scrutinize, not resolved matches
 - Missing/extra forms
 - Overall assessment: PASS (all match), REVIEW (minor differences), FAIL (major discrepancies)
+  - **PASS is UNAVAILABLE while any OVERRIDDEN (unverified) line remains.** An
+    override is unreconciled by definition — the software figure was overridden
+    where it disagreed with the computed value — so a report with zero ordinary
+    discrepancies but a live override is at best **REVIEW**, never PASS. Only
+    once every overridden delta has been reconciled (the user shows why the
+    override is correct, and it's recorded in answers.md) can the line leave the
+    OVERRIDDEN section and the return reach PASS.
 - Suggested next step: `/tax-review` for EA/IRS officer perspective

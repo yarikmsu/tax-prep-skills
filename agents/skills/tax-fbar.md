@@ -188,6 +188,25 @@ While preparing FBAR, separately evaluate Form 8938:
 
 Report whether Form 8938 is required separately from FBAR.
 
+### 4.5. PFIC / Form 8621 cross-check (G3)
+
+The same foreign brokerage accounts being reported here frequently hold non-US
+mutual funds or ETFs, which are almost always **PFICs** (§1291-1298) that **may
+require Form 8621 per fund** — an EVENT-DRIVEN obligation (excess distribution,
+sale, QEF/MTM election, or the §1298(f) annual reporting, which carries
+de-minimis exceptions) entirely separate from FBAR/8938 (and NOT computed by
+this toolkit — it's on the `/tax-compute` limitations manifest).
+
+- If `taxpayer_profile.json flags.has_foreign_mutual_funds` is set, or any
+  account in the FBAR/8938 list is a brokerage/investment account (vs a plain
+  deposit account), surface a cross-note: "Foreign fund holdings in {account}
+  likely trigger Form 8621 (PFIC) — punitive §1291 treatment unless a timely
+  QEF / mark-to-market election was made; confirm your preparer / specialized
+  software is handling each fund. FBAR and 8938 do NOT satisfy the 8621 filing."
+- This is a completeness reminder only — do NOT attempt the §1291 / QEF /
+  mark-to-market computation. The test is the FUND's domicile (a non-US fund),
+  not the underlying holdings (a US fund of foreign stocks is not a PFIC).
+
 ### 5. Generate FBAR Preparation Document
 
 ⚠️ **SECURITY:** The generated file contains sensitive account numbers. Verify `FBAR_*.md` is in `.gitignore` (install.sh adds it by default). Warn the user: "This file contains full account numbers — securely delete it after FBAR filing is complete."

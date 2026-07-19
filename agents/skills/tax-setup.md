@@ -166,6 +166,22 @@ interview never captures is invisible to every downstream check.
 **Group 4 — Tax situations (yes/no flags):**
 - Do you have foreign bank/investment accounts? → triggers FBAR/8938 workflow (`has_foreign_accounts`)
 - Do you have SIGNATURE AUTHORITY over (but no financial interest in) any foreign account — an employer's, a parent's, a nonprofit's? → FBAR Part IV even with no financial interest (`signature_authority_foreign_accounts`)
+- Do you hold any NON-US-DOMICILED mutual funds or ETFs in ANY brokerage
+  account — foreign OR US (e.g. a UK OEIC/unit trust, an Irish/Luxembourg UCITS
+  ETF, a Canadian mutual fund)? → sets `has_foreign_mutual_funds`. **Ask this
+  independently of the foreign-account questions:** PFIC status follows the
+  FUND's domicile, NOT where it's held, so a foreign-domiciled fund bought
+  through a US broker is still a PFIC and must set the flag even when the
+  taxpayer has no foreign accounts. These are almost
+  always PFICs (§1291-1298); **Form 8621 may be required per fund** — the
+  obligation is EVENT-DRIVEN (an excess distribution, a sale, a QEF/MTM
+  election, or the §1298(f) annual reporting, which has de-minimis exceptions),
+  so determine per fund rather than assuming every fund needs a form. When a
+  trigger applies the default §1291 regime is punitive (excess-distribution
+  spreading + interest charge) and is NOT modeled here, so this lands on the
+  limitations manifest and is flagged in `/tax-review`. US-domiciled funds
+  (even ones holding foreign stocks) are NOT PFICs — this is about the FUND's
+  domicile, not what it invests in.
 - Did you LIVE abroad (tax home outside the US) during the year? → sets
   `lives_abroad` (raises the Form 8938 thresholds; the FEIE / Form 2555
   election is NOT modeled — only the FTC path — so this lands on the
@@ -437,6 +453,23 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
 - Search: `"federal tax law changes {year}"` to catch any mid-year legislation (like OBBBA for 2025)
 
 Save all fetched rates to `tax_law_{year}.json` using the structure from `agents/lib/tax_law_fetcher.py`.
+
+**Pin the source per block (H4).** As you populate EACH fetched block, record
+the AUTHORITATIVE URL you fetched it from in the `_sources` map, keyed by block
+path — every populated federal rate/bracket block (`federal.filing_statuses`,
+`federal.capital_gains_rates`, `federal.child_tax_credit`, `federal.amt`,
+`federal.salt_cap`, `federal.qbi_threshold`, …), the single state block keyed by
+its **2-letter code** (`state.CA`), AND `exchange_rates` when foreign currencies
+are used. Example:
+`"_sources": {"federal.filing_statuses": "https://www.irs.gov/pub/irs-drop/rp-24-40.pdf", "federal.capital_gains_rates": "https://www.irs.gov/...", "state.CA": "https://www.ftb.ca.gov/...", "exchange_rates": "https://www.irs.gov/individuals/international-taxpayers/yearly-average-currency-exchange-rates"}`.
+Use only PRIMARY sources — any US-government `.gov` site (irs.gov, ftb.ca.gov,
+edd.ca.gov, tax.ny.gov, nj.gov, ssa.gov, treasury.gov, congress.gov,
+govinfo.gov) or law.cornell.edu, with an **https/http** URL. A blog or
+aggregator (smartasset, nerdwallet, a news site) is NOT acceptable —
+`tax_law_fetcher.check_freshness` reports a non-authoritative (or non-web)
+recorded URL as **INCOMPLETE**, and a populated-but-unpinned fetched block as an
+advisory. This is the chain-of-custody pin: an LLM-fetched bracket must trace to
+a government source before it flows into a filed return.
 
 ### 5. Initialize Result Files
 

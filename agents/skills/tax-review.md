@@ -160,6 +160,21 @@ Using **WebSearch**, check current year IRS audit statistics:
 - Schedule B Part III: foreign accounts question answered YES?
 - Foreign income properly reported with exchange rates?
 - Foreign tax credit documentation adequate?
+- **PFIC / Form 8621 (G3):** if `flags.has_foreign_mutual_funds` is set (or a
+  foreign brokerage in the FBAR/8938 account list plausibly holds pooled
+  investment funds), flag it LOUDLY: non-US mutual funds/ETFs are almost always
+  PFICs (§1291-1298) that **may require Form 8621 per fund** — an EVENT-DRIVEN
+  obligation (excess distribution, sale, QEF/MTM election, or §1298(f) annual
+  reporting, which has de-minimis exceptions), so determine per fund rather than
+  assuming every fund needs a form. When a trigger applies the default §1291
+  regime is punitive (excess-distribution spreading + compounding interest
+  charge) — a silent multi-thousand-dollar compliance miss that rides alongside
+  the same accounts FBAR/8938 already cover. This engine does NOT compute Form
+  8621 (it's on the limitations manifest); confirm the taxpayer's preparer /
+  specialized software has determined the obligation per fund, and that any QEF
+  / mark-to-market election was made timely (generally the first year held).
+  US-domiciled funds holding foreign stocks are NOT PFICs — the test is the
+  fund's domicile.
 
 **Substantiation Checklist:**
 - Schedule C expenses: Are receipts available?

@@ -73,6 +73,7 @@ def test_each_unsupported_flag_blocks(flag, rule_id):
     ("has_gambling_income", "gambling"),
     ("has_unreported_or_allocated_tips", "unreported_allocated_tips"),
     ("lives_abroad", "feie"),
+    ("has_foreign_mutual_funds", "pfic"),
     # H1 life-event rules — all MANUAL, none block.
     ("married_this_year", "marriage_year"),
     ("divorced_this_year", "divorce_year"),
@@ -451,6 +452,16 @@ def test_home_sale_manifest_line_carries_121_and_1099s():
     assert "MANUAL WORKSHEET" in lines
     assert "§121" in lines or "121" in lines
     assert "1099-S" in lines
+
+
+def test_pfic_manifest_line_carries_8621_and_1291():
+    # K3 (G3): a foreign-fund holder's manifest must name Form 8621 and the
+    # punitive §1291 default so the PFIC obligation isn't silently missed.
+    r = C.evaluate(_profile({"has_foreign_mutual_funds": True}))
+    assert r.blocking == ()
+    lines = "\n".join(r.limitations)
+    assert "8621" in lines
+    assert "1291" in lines
 
 
 def test_marriage_year_notes_community_property_8958():
