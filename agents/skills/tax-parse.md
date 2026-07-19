@@ -85,6 +85,21 @@ Before dispatching parsers, confirm completeness with the user. **First check `a
    - `has_1099r=true` but no 1099-R found → warn
    - `has_1099g_state_refund=true` but no 1099-G found → warn: "State refund flag is set but no 1099-G found. Did you receive one?"
    - `has_iso_exercise=true` but no Form 3921 found → warn: "ISO exercise flag is set but no Form 3921 found — the AMT bargain element will fall back to your own figure. The issuer must furnish 3921 by Jan 31; check the equity portal (E*TRADE/Shareworks/Carta)."
+   - **`has_rsu_vesting=true` or `has_espp=true` AND any 1099-B present →
+     BLOCKING requirement.** The broker's *supplemental information* statement
+     (the "adjusted cost basis" pages) — or the equity-plan vest confirmations /
+     Form 3922 (ESPP) — becomes a REQUIRED intake document, because the 1099-B
+     cost basis for employer stock EXCLUDES the W-2-included compensation (for
+     RSUs, typically $0) and an unadjusted sale DOUBLE-TAXES that income. Ask a
+     BLOCKING question per broker that may hold employer stock: "This 1099-B
+     from {broker} may include RSU/ESPP/NQSO sales whose reported basis omits
+     the W-2 compensation. Provide the broker's supplemental 'adjusted cost
+     basis' statement (or the equity-plan vest confirmations / Form 3922), or
+     confirm no employer stock was sold through this broker." Do not proceed
+     past this step for that broker with an unresolved answer — a missing
+     supplemental statement is exactly the double-taxation gap. Record the
+     answer in answers.md. (The tie-out hard gate and the /tax-review
+     $0-basis check both backstop this if it slips.)
 
 3.5. **Expected-sources diff (A4 — deterministic, not memory-based):** when
    `taxpayer_profile.json` has a non-empty `expected_sources` block (rolled
@@ -295,6 +310,8 @@ Rules:
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
   | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
+  | Broker supplemental statement / Form 3922 / vest confirmation (adjusted basis − 1099-B-reported basis, for lots SOLD this year) | `employer_stock_basis_adjustment` (→ the Schedule D `adjustment` fields — the Form 8949 code-B correction that stops RSU/ESPP/NQSO double-taxation). Record the **POSITIVE SUM** of (adjusted basis − reported basis) across all employer-stock lots sold this year; per-lot detail goes in the summary markdown. A supplemental statement whose adjustment never lands in result.json FAILS the tie-out hard gate (the double-tax scenario). Only from DOCUMENTED basis — never inferred. |
+  | Form 3922 (ESPP) boxes 3/4/5/8 | `espp_purchase_info` (informational — grant-date FMV / purchase-date FMV / price paid / shares; feeds the §423 disposition split and FUTURE basis math). A 3922 for shares NOT sold this year is a documented informational record, NOT a skip-error — it feeds later-year basis; keep the 3922s in `documents/`. |
   | W-2 box 14 SDI/CASDI (per person, summed across employers) | `sdi_withheld` (→ `california_540.ca_sdi_box14` — feeds the pre-TY2024 excess-SDI credit; TY2024+ has no wage cap but the figure still ties out) |
   | Form 3921 (box 4 FMV − box 3 strike) × box 5 shares | `iso_bargain` (→ the `form_6251.iso_bargain_element` input echo — the AMT adjustment). **Only exercises whose shares were HELD past year-end**: a same-year sale (disqualifying disposition) is ordinary W-2 income, NOT an AMT adjustment — record those 3921s as `"skipped": "disqualifying disposition — W-2 ordinary income"` and confirm the W-2 includes that income (the full spread, or sale price − strike if sold below exercise-date FMV in an arm's-length sale — §422(c)(2)). **Partial same-year sale of one exercise: prorate — record (box 4 − box 3) × only the shares HELD.** **Underwater/zero-spread exercise (box 4 ≤ box 3): no AMT adjustment.** **The ledger is per-FILE (one record per PDF, skip XOR key_boxes):** use a `"skipped"` record ONLY when NO exercise in the file produced an adjustment (all sold same-year / all underwater); for a MIXED file, emit ONE non-skipped record whose `iso_bargain` sums only the held, in-the-money exercises, and document the excluded exercises (+ the W-2-inclusion confirmation) in answers.md — a negative or per-exercise-split record hard-errors the whole ledger. ASK the user which lots were held vs sold (record in answers.md). Caveat: box 4 measures the adjustment for VESTED shares (or with an §83(b) election) — an early-exercise of unvested shares without 83(b) is measured at vesting instead (rare; flag it). |
 - `person` is `primary`/`spouse`/`joint` (per-person credits need it).

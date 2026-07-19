@@ -188,6 +188,72 @@ be LESS than $3,000 when taxable income is low. `/tax-rollover` carries this
 explicit block into next year's `prior_year.capital_loss_carryforward`; leaving
 it zero silently loses the carryforward.
 
+**Employer-stock basis adjustment — Form 8949 code B (J1):** Brokers report the
+1099-B cost basis for RSU/ESPP/NQSO shares EXCLUDING the compensation already in
+W-2 box 1 (for RSUs, typically $0 basis). Reporting that basis verbatim
+DOUBLE-TAXES the W-2 income. Each `schedule_d` box detail row carries a signed
+`adjustment` (Form 8949 column (g), code B in column (f)); leave `cost` at the
+BROKER-reported figure (column (e), so /tax-verify and software transfer match
+the 1099-B) and put the correction in `adjustment`. **gain = proceeds − cost +
+adjustment.** The adjustment is NEGATIVE (raises basis, reduces gain). Set the
+row's `adjustment_code` to **"B"** AND set **`employer_stock` to true** — the
+tie-out scopes the employer-stock reconciliation on the `employer_stock`
+provenance marker, NOT the code (Form 8949 code B is also used for ordinary
+non-employer 1099-B basis corrections, so the boolean is what keeps an
+unrelated code-B correction on another lot from corrupting the total).
+
+- **Report the adjusted lot on Form 8949.** A covered Box A/D transaction that
+  carries ANY adjustment loses the direct-to-Schedule-D shortcut (that shortcut
+  is only for adjustment-free Box A/D lots) — it MUST appear on Form 8949 (or an
+  allowed substitute statement). Populate the `form_8949.part_i_short_term` /
+  `part_ii_long_term` arrays for the lot IN ADDITION to the `schedule_d` box
+  row, so the filing package and /tax-verify carry the required 8949 entry.
+- **Apply ONLY from a documented source** — the broker supplemental
+  ("adjusted cost basis") statement, Form 3922/3921, or a vest confirmation
+  carrying the per-share compensation. **NEVER infer an adjustment** — an
+  invented adjustment understates tax (the unsafe direction). No source
+  document → NO adjustment → set a loud `possible_double_taxation` warning on
+  the row instead (overstates tax but is visible; the /tax-review $0-basis
+  check escalates it). Record each applied adjustment in answers.md: source
+  doc, per-lot math, no aggregate invention.
+- **Character/term and box classification are UNCHANGED by the adjustment** —
+  an RSU lot's holding period still runs from the vest date, and the adjustment
+  never moves a lot between 8949 boxes (foreign brokers stay Box B/E).
+- **Sanity bounds:** the total adjustment for a grant type must NOT exceed the
+  W-2-included equity compensation the user attests (ask once; if unknown,
+  warn rather than block). Per lot, an adjustment that would drive corrected
+  basis below $0 (adjustment magnitude > proceeds on a $0-basis lot is fine,
+  but corrected basis can't go negative) is arithmetically impossible → hard
+  error, re-examine the source figures.
+- The tie-out (`employer_stock_basis_adjustment` category) sums these
+  `adjustment` fields and FAILS the hard gate if a ledgered supplemental
+  statement's correction never landed here — so a dropped adjustment cannot
+  pass review.
+
+**ESPP §423 disposition split (J2):** For ESPP sales, use
+`compute_espp_disposition()` from `agents/lib/tax_computations.py` with the Form
+3922 boxes (3 = grant FMV/sh, 4 = purchase FMV/sh, 5 = price paid/sh, 8 =
+shares) + the sale proceeds and the grant/purchase/sale dates. It returns the
+`ordinary_income` component, the corrected `capital_basis`, the
+`capital_gain`, and the `term`:
+- **The ordinary component must land in income exactly once — for BOTH
+  disposition types.** The flow raises the capital basis by the ordinary amount
+  (removing it from the capital gain), so if it isn't also added to wages it
+  disappears from taxable income entirely (understates tax — the unsafe
+  direction). Route it to **1040 line 1h** (other earned income) UNLESS it is
+  documented as already included in W-2 box 1; record the routing/no-double-add
+  decision in answers.md.
+  - **DISQUALIFYING:** the employer is SUPPOSED to include it in W-2 box 1, but
+    a FORMER employer often omits it → line 1h is the default. If box 1 already
+    includes it, do NOT double-add — ASK, never assume.
+  - **QUALIFYING:** the employer generally does NOT report it (they usually
+    don't know you sold) → it almost always needs line 1h. Same
+    already-in-W-2 check before adding, but the default is that it is NOT there.
+- The corrected `capital_basis` = price paid + ordinary income; when the broker
+  reported price-paid-only basis, the code-B `adjustment` for that lot is
+  (broker basis − corrected basis) — feed it through the code-B flow above so
+  the ordinary component isn't taxed twice.
+
 **Form 8606 — Nondeductible IRA basis & Roth conversions (lines 4a/4b):**
 
 Compute this BEFORE finalizing line 4b whenever the taxpayer has any of: a Roth

@@ -33,6 +33,7 @@ from agents.lib.tax_computations import (
     compute_ca_itemized,
     compute_schedule_1a,
     compute_charitable_non_itemizer,
+    compute_espp_disposition,
     compute_form_6251,
     compute_form_8801_credit,
     check_form_8938_required,
@@ -2501,6 +2502,148 @@ class TestCharitableNonItemizer:
         assert "mfs_spouse_itemizes" in compute_md
         assert "63(c)(6)(A)" in compute_md
         assert "mandatory itemization" in compute_md.lower()
+
+
+class TestESPPDisposition:
+    """J2 — §423 ESPP qualifying/disqualifying split (Form 3922 boxes 3/4/5/8).
+
+    Hand-computed per IRC §423(c) / Pub 525. Per-share boxes: box3 grant FMV,
+    box4 purchase FMV, box5 price paid; ×100 shares. box5=$8.50 (a 15% discount
+    off the $10 grant FMV); box4=$12 purchase FMV → price-total $850."""
+
+    def test_disqualifying_gain_sale(self):
+        # Sold 2024-12-01, within 1 yr of the 2024-06-30 purchase → disqualifying.
+        # Ordinary = (12 − 8.5)×100 = 350; basis = 850 + 350 = 1200;
+        # gain = 1500 − 1200 = 300; short-term (held < 1 yr from purchase).
+        r = compute_espp_disposition(100, 10, 12, 8.5, 1500,
+                                     "2024-01-01", "2024-06-30", "2024-12-01")
+        assert r["classification"] == "disqualifying"
+        assert r["ordinary_income"] == 350.0
+        assert r["capital_basis"] == 1200.0
+        assert r["capital_gain"] == 300.0
+        assert r["term"] == "short"
+
+    def test_disqualifying_loss_sale_ordinary_fixed(self):
+        # Sold at a loss (900 = $9/sh), but the disqualifying ordinary element
+        # is STILL box4−box5 = 350 regardless of sale price; capital loss −300.
+        r = compute_espp_disposition(100, 10, 12, 8.5, 900,
+                                     "2024-01-01", "2024-06-30", "2024-12-01")
+        assert r["ordinary_income"] == 350.0
+        assert r["capital_gain"] == -300.0
+        assert r["term"] == "short"
+
+    def test_qualifying_gain_exceeds_discount(self):
+        # > 2 yr grant AND > 1 yr purchase → qualifying. Grant discount =
+        # (10 − 8.5)×100 = 150; actual gain = 2000 − 850 = 1150; ordinary =
+        # lesser = 150; basis 1000; LTCG 1000.
+        r = compute_espp_disposition(100, 10, 12, 8.5, 2000,
+                                     "2020-01-01", "2020-06-30", "2023-01-01")
+        assert r["classification"] == "qualifying"
+        assert r["ordinary_income"] == 150.0
+        assert r["capital_basis"] == 1000.0
+        assert r["capital_gain"] == 1000.0
+        assert r["term"] == "long"
+        # Codex PR #47 round 2: a qualifying disposition's ordinary component is
+        # generally NOT on the W-2 → the notes must direct line-1h reporting,
+        # and box3−box5 is the exact §423(c)(2) limit for a non-lookback plan
+        # (a conservative upper bound only for lookback), not a generic proxy.
+        joined = " ".join(r["notes"])
+        assert "line 1h" in joined
+        assert "UPPER BOUND" in joined and "lookback" in joined.lower()
+
+    def test_qualifying_gain_below_discount(self):
+        # Actual gain (900 − 850 = 50) < discount (150) → ordinary = 50, no LTCG.
+        r = compute_espp_disposition(100, 10, 12, 8.5, 900,
+                                     "2020-01-01", "2020-06-30", "2023-01-01")
+        assert r["ordinary_income"] == 50.0
+        assert r["capital_gain"] == 0.0
+
+    def test_qualifying_loss_sale_ordinary_zero(self):
+        # Loss sale (800 < 850 basis): actual gain floored at 0 → ordinary 0,
+        # never negative; capital loss −50.
+        r = compute_espp_disposition(100, 10, 12, 8.5, 800,
+                                     "2020-01-01", "2020-06-30", "2023-01-01")
+        assert r["ordinary_income"] == 0.0
+        assert r["capital_gain"] == -50.0
+
+    def test_exact_two_year_grant_anniversary_is_disqualifying(self):
+        # Sold exactly 2 years after grant (2022-01-01) — the >2yr test is
+        # STRICT, so this fails the grant leg → disqualifying.
+        r = compute_espp_disposition(100, 10, 12, 8.5, 2000,
+                                     "2020-01-01", "2020-06-30", "2022-01-01")
+        assert r["classification"] == "disqualifying"
+
+    def test_just_past_both_anniversaries_is_qualifying(self):
+        # One day past the grant+2yr anniversary, well past purchase+1yr.
+        r = compute_espp_disposition(100, 10, 12, 8.5, 2000,
+                                     "2020-01-01", "2020-06-30", "2022-01-02")
+        assert r["classification"] == "qualifying"
+
+    def test_purchase_before_grant_hard_errors(self):
+        with pytest.raises(ValueError, match="precedes grant_date"):
+            compute_espp_disposition(100, 10, 12, 8.5, 1500,
+                                     "2024-06-30", "2024-01-01", "2024-12-01")
+
+    def test_sale_before_purchase_hard_errors(self):
+        with pytest.raises(ValueError, match="precedes purchase_date"):
+            compute_espp_disposition(100, 10, 12, 8.5, 1500,
+                                     "2024-01-01", "2024-06-30", "2024-05-01")
+
+    def test_rejects_bad_numeric_inputs(self):
+        base = dict(shares=100, grant_fmv_per_share=10, purchase_fmv_per_share=12,
+                    price_paid_per_share=8.5, sale_proceeds=1500,
+                    grant_date="2024-01-01", purchase_date="2024-06-30",
+                    sale_date="2024-12-01")
+        for bad in (dict(shares=0), dict(shares=-1), dict(shares=True),
+                    dict(sale_proceeds=float("nan")),
+                    dict(price_paid_per_share=float("inf")),
+                    dict(grant_date="not-a-date")):
+            kw = dict(base)
+            kw.update(bad)
+            with pytest.raises(ValueError):
+                compute_espp_disposition(**kw)
+
+
+class TestEquityCompWiring:
+    """J1/J2 — the equity-comp basis-adjustment plumbing that lives in
+    templates and skills (pinned so it can't silently regress)."""
+
+    def _repo(self):
+        return Path(__file__).resolve().parent.parent
+
+    def test_flags_in_template_and_interview(self):
+        template = json.loads(
+            (self._repo() / "agents/templates/taxpayer_profile_template.json").read_text())
+        for flag in ("has_rsu_vesting", "has_espp"):
+            assert flag in template["flags"], flag
+        setup_md = (self._repo() / "agents/skills/tax-setup.md").read_text()
+        assert "has_rsu_vesting" in setup_md and "has_espp" in setup_md
+
+    def test_schedule_d_rows_carry_adjustment_and_code_b_note(self):
+        template = json.loads(
+            (self._repo() / "agents/templates/result_template.json").read_text())
+        sd = template["schedule_d"]
+        assert "_note_8949_code_b" in sd
+        # Every box detail row (short- and long-term) carries a signed adjustment.
+        for part in ("part_i_short_term", "part_ii_long_term"):
+            box_rows = [v for k, v in sd[part].items()
+                        if isinstance(v, dict) and "adjustment" in v]
+            assert box_rows, part
+            for row in box_rows:
+                assert set(("proceeds", "cost", "adjustment", "gain")) <= set(row)
+
+    def test_line_1h_present_for_espp_dd_routing(self):
+        template = json.loads(
+            (self._repo() / "agents/templates/result_template.json").read_text())
+        assert "line_1h_other_earned_income" in template["form_1040"]
+
+    def test_tie_out_category_registered_and_documented(self):
+        from agents.lib.tie_out import CATEGORY_TARGETS, _INFORMATIONAL
+        assert "employer_stock_basis_adjustment" in CATEGORY_TARGETS
+        assert "espp_purchase_info" in _INFORMATIONAL
+        parse_md = (self._repo() / "agents/skills/tax-parse.md").read_text()
+        assert "employer_stock_basis_adjustment" in parse_md
+        assert "espp_purchase_info" in parse_md
 
 
 class TestQBIMinimum:

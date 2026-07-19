@@ -2234,6 +2234,161 @@ def compute_charitable_non_itemizer(
             "notes": notes}
 
 
+# §423 ESPP qualifying-disposition holding periods (IRC §423(a)): a disposition
+# is QUALIFYING only when it occurs AFTER both the 2-year period beginning on
+# the grant date AND the 1-year period beginning on the purchase (transfer)
+# date have expired — strictly more than, per the /tax-harvest
+# derive_holding_period precedent (exact-anniversary days still fail).
+_ESPP_QUALIFYING_GRANT_YEARS = 2
+_ESPP_QUALIFYING_PURCHASE_YEARS = 1
+
+
+def _espp_date(raw, label: str) -> datetime.date:
+    """Parse an ISO date (or accept a date) for the §423 helper — house-style
+    strict validation, distinct message per field."""
+    if isinstance(raw, datetime.date) and not isinstance(raw, datetime.datetime):
+        return raw
+    if isinstance(raw, datetime.datetime):
+        return raw.date()
+    if not isinstance(raw, str):
+        raise ValueError(f"{label} must be a YYYY-MM-DD date string, got {raw!r}")
+    try:
+        return datetime.date.fromisoformat(raw)
+    except ValueError as e:
+        raise ValueError(f"{label} {raw!r} is not a valid YYYY-MM-DD date: {e}")
+
+
+def _add_years(d: datetime.date, years: int) -> datetime.date:
+    """The date `years` calendar years after d, collapsing Feb 29 → Feb 28 in a
+    non-leap target year (so a leap-day anniversary lands on the last valid
+    February day rather than raising)."""
+    try:
+        return d.replace(year=d.year + years)
+    except ValueError:
+        # Only Feb 29 can fail — map to Feb 28 of the target year.
+        return d.replace(year=d.year + years, day=28)
+
+
+def compute_espp_disposition(
+    shares: float,
+    grant_fmv_per_share: float,
+    purchase_fmv_per_share: float,
+    price_paid_per_share: float,
+    sale_proceeds: float,
+    grant_date,
+    purchase_date,
+    sale_date,
+) -> dict:
+    """§423 ESPP disposition split (Form 3922 boxes 3/4/5/8 → ordinary + capital).
+
+    Per sold lot, all per-share box values × `shares` totals:
+      - box 3 = grant-date FMV per share (`grant_fmv_per_share`)
+      - box 4 = purchase-date FMV per share (`purchase_fmv_per_share`)
+      - box 5 = price paid per share (`price_paid_per_share`)
+      - box 8 = shares
+
+    QUALIFYING disposition (sold > 2 years after grant AND > 1 year after
+    purchase, strictly): ordinary income = LESSER of (grant-date discount) and
+    (actual gain), floored at $0 (a loss sale yields $0 ordinary, never
+    negative); the remainder is long-term capital gain. The grant-date discount
+    is (grant FMV − price paid) per share in v1 — the true §423(c) figure is
+    FMV-at-grant × the plan discount %, but the plan's lookback/discount facts
+    are not on Form 3922, so `box3 − box5` is the v1 proxy. It can OVERSTATE the
+    discount (box 5 is often a lookback-lowered purchase price), which
+    overstates ordinary income — the SAFE direction; caveated.
+
+    DISQUALIFYING disposition (fails either holding test): ordinary income =
+    (purchase FMV − price paid), floored at $0, REGARDLESS of the sale price;
+    the capital basis is (price paid + ordinary income) and the capital
+    gain/loss runs from the purchase date (short- or long-term).
+
+    In both branches the corrected capital basis is (price paid + ordinary
+    income) — the code-B column (g) adjustment is the caller's
+    (broker-reported basis − corrected basis) once the broker figure is known
+    (brokers routinely report price-paid-only basis, omitting the ordinary
+    component). Returns {classification, ordinary_income, capital_basis,
+    capital_gain, term, notes}.
+    """
+    n = _sched_a_amount(shares, "shares")
+    if n == 0:
+        raise ValueError("shares must be > 0 for an ESPP disposition")
+    g_fmv = _sched_a_amount(grant_fmv_per_share, "grant_fmv_per_share")
+    p_fmv = _sched_a_amount(purchase_fmv_per_share, "purchase_fmv_per_share")
+    price = _sched_a_amount(price_paid_per_share, "price_paid_per_share")
+    proceeds = _sched_a_amount(sale_proceeds, "sale_proceeds")
+    gd = _espp_date(grant_date, "grant_date")
+    pd = _espp_date(purchase_date, "purchase_date")
+    sd = _espp_date(sale_date, "sale_date")
+    if pd < gd:
+        raise ValueError(
+            f"purchase_date {pd} precedes grant_date {gd} — impossible for a "
+            "§423 plan (the option is granted before it is exercised)")
+    if sd < pd:
+        raise ValueError(
+            f"sale_date {sd} precedes purchase_date {pd} — a share cannot be "
+            "sold before it is purchased")
+
+    price_total = round(price * n, 2)
+    notes = []
+    qualifying = (sd > _add_years(gd, _ESPP_QUALIFYING_GRANT_YEARS)
+                  and sd > _add_years(pd, _ESPP_QUALIFYING_PURCHASE_YEARS))
+
+    if qualifying:
+        grant_discount = max(0.0, (g_fmv - price)) * n
+        actual_gain = max(0.0, proceeds - price_total)
+        ordinary = round(min(grant_discount, actual_gain), 2)
+        term = "long"  # a qualifying disposition is always > 1 year from purchase
+        notes.append(
+            "QUALIFYING §423 disposition (> 2 yr from grant AND > 1 yr from "
+            "purchase): ordinary income = lesser of the grant-date discount and "
+            "actual gain, floored at $0")
+        notes.append(
+            "grant-date discount = box3 − box5 (grant FMV − price paid). For a "
+            "PLAIN discount plan this is EXACTLY the §423(c)(2) limit (FMV at "
+            "grant − option price) — do NOT reduce it. Only for a LOOKBACK plan, "
+            "where box5 reflects the lower purchase-date FMV, is the true limit "
+            "lower: §423(c)'s flush rule sets the option price 'as if exercised "
+            "at grant' (= discount % × grant FMV), so box3 − box5 is then a "
+            "conservative UPPER BOUND (may overstate ordinary income → overstates "
+            "tax, the safe direction). Reduce it ONLY on documented lookback "
+            "plan terms")
+        notes.append(
+            "the ordinary component generally is NOT reported on W-2 for a "
+            "qualifying disposition (the employer usually doesn't know you sold) "
+            "→ report it on 1040 line 1h unless documented as already in W-2 box "
+            "1; the corrected basis already removes it from the capital gain, so "
+            "omitting it from wages would drop it from income entirely")
+    else:
+        ordinary = round(max(0.0, (p_fmv - price)) * n, 2)
+        # Capital-gain term runs from the PURCHASE date: long-term iff sold more
+        # than one year after purchase (strictly), same anniversary rule as the
+        # qualifying test's 1-year leg.
+        term = "long" if sd > _add_years(pd, 1) else "short"
+        notes.append(
+            "DISQUALIFYING §423 disposition (sold within 2 yr of grant or 1 yr "
+            "of purchase): ordinary income = purchase-date bargain element "
+            "(box4 − box5), regardless of sale price")
+        notes.append(
+            "the ordinary component belongs in W-2 box 1 — if the employer did "
+            "NOT include it (common for former employees) it goes to 1040 line "
+            "1h; do NOT double-count if the W-2 already includes it")
+
+    capital_basis = round(price_total + ordinary, 2)
+    capital_gain = round(proceeds - capital_basis, 2)
+    notes.append(
+        "corrected capital basis = price paid + ordinary income; the broker "
+        "often reports price-paid-only basis, so the Form 8949 code-B column "
+        "(g) adjustment = (broker basis − corrected basis) reduces the gain")
+    return {
+        "classification": "qualifying" if qualifying else "disqualifying",
+        "ordinary_income": ordinary,
+        "capital_basis": capital_basis,
+        "capital_gain": capital_gain,
+        "term": term,
+        "notes": notes,
+    }
+
+
 # Form 6251 structural statutory constants (§55): the two AMT rates are fixed;
 # the exemption amounts, phase-out starts, and the 26%→28% breakpoint are
 # INDEXED and come from federal.amt. The exemption phase-out RATE is a

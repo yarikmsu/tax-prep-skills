@@ -52,6 +52,8 @@
     "lives_abroad": false,
     "has_crypto": false,
     "has_stock_compensation": false,
+    "has_rsu_vesting": false,
+    "has_espp": false,
     "has_k1_income": false,
     "qbi_active_trade": false,
     "has_roth_conversion": false,

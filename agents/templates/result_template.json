@@ -37,6 +37,8 @@
     "digital_asset_question": "No",
     "_note_digital_asset": "Form 1040 page-1 attestation. MUST be 'Yes' if the taxpayer received (reward/award/payment) OR sold/exchanged/disposed of any digital asset. /tax-parse-crypto sets this. Buying-and-holding with USD only is 'No'.",
     "line_1a_wages": 0,
+    "line_1h_other_earned_income": 0,
+    "_note_line_1h": "1040 line 1h — other earned income NOT on a W-2. J2: a DISQUALIFYING ESPP disposition's ordinary component goes here when the employer W-2 did NOT already include it (common for former employees); do NOT double-add if the W-2 already includes it. line_1z_total_wages = sum of lines 1a–1h.",
     "line_1z_total_wages": 0,
     "line_2a_tax_exempt_interest": 0,
     "line_2b_taxable_interest": 0,
@@ -212,12 +214,17 @@
 
   "schedule_d": {
     "_include_if": "has_capital_gains flag is true",
+    "_note_8949_code_b": "Each box detail row carries a SIGNED `adjustment` (Form 8949 column (g)) with an `adjustment_code` (column (f), e.g. 'B'): negative reduces the gain. gain = proceeds − cost + adjustment. The `cost` field stays the BROKER-reported basis (column (e)) so /tax-verify and software transfer match the 1099-B; the correction lives in `adjustment`. The classic case is employer stock (RSU/ESPP/NQSO) whose 1099-B basis excludes the W-2-included compensation — set `adjustment_code` to 'B', set `employer_stock` to true, and apply the adjustment ONLY from a documented source (broker supplemental statement, Form 3922/3921, vest confirmation), never inferred. A covered Box A/D lot that carries ANY adjustment must be reported on Form 8949 (populate the `form_8949` arrays too) — the direct-to-Schedule-D shortcut is only for adjustment-free Box A/D lots. The tie-out sums ONLY rows with `employer_stock == true` — code 'B' is NOT unique to employer stock (a non-employer 1099-B basis correction also uses code B), so the boolean provenance marker (not the code alone) scopes the employer-stock reconciliation; a non-employer code-B correction on another lot therefore can't corrupt it. Row key → Schedule D line mapping: Box A → line 1a (no adj) / 1b (with adj, via 8949); Box B → line 2; Box C → line 3; Box D → line 8a (no adj) / 8b (with adj, via 8949); Box E → line 9; Box F → line 10. Box A/D = basis reported to IRS; Box B/E = basis not reported (foreign brokers); Box C/F = no 1099-B (no code-B adjustment).",
     "part_i_short_term": {
-      "line_1a_1099b_box_a": {"proceeds": 0, "cost": 0, "gain": 0, "source": null},
-      "line_1c_1099b_box_c": {"proceeds": 0, "cost": 0, "gain": 0, "source": null},
+      "line_1a_1099b_box_a": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
+      "line_2_1099b_box_b": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
+      "line_1c_1099b_box_c": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
       "line_7_net_short_term": 0
     },
     "part_ii_long_term": {
+      "line_8a_1099b_box_d": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
+      "line_9_1099b_box_e": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
+      "line_10_1099b_box_f": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
       "line_11_1099b": 0,
       "line_12_not_reported": 0,
       "line_13_cap_gain_dist": 0,

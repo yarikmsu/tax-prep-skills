@@ -108,6 +108,27 @@ Simulate an IRS officer reviewing this return. Check:
   adjustments, personal non-taxable transfers identified), and the
   reconciliation recorded in the review workpaper. Receipts far ABOVE the
   1099-K total is fine (cash/check sales don't hit a 1099-K).
+- **Employer-stock $0-basis check (J1):** when the taxpayer has equity comp
+  (`flags.has_rsu_vesting` or `flags.has_espp` set), scan every Schedule D /
+  Form 8949 detail row (`result.json schedule_d` box rows) for a row with
+  `cost` of $0, OR `cost` < 20% of `proceeds`, AND `adjustment` == 0 (no
+  code-B correction applied). Each such row is a PRESUMPTIVE missing code-B
+  basis adjustment — brokers report RSU/ESPP/NQSO basis EXCLUDING the W-2-
+  included compensation (for RSUs, typically $0), so the unadjusted gain is
+  overstated by exactly that compensation (a four-to-five-figure over-payment).
+  Banner: "presumptive missing code-B basis adjustment on {row} — broker basis
+  for employer stock excludes W-2 compensation; expected overstatement of gain.
+  Obtain the broker supplemental statement / Form 3922 / vest confirmation and
+  apply the adjustment via /tax-compute." The 20%-of-proceeds heuristic is a
+  REVIEW FLAG only — never an automatic adjustment (an invented adjustment
+  understates tax, the unsafe direction). A non-employer ticker with $0 basis
+  (equity flags unset) does NOT fire.
+- **ESPP/RSU wash-sale interplay (J1, caveat):** selling employer stock at a
+  LOSS within 30 days of a vest or ESPP purchase of the SAME ticker is a §1091
+  wash sale — the loss is disallowed and shifts to the replacement lot's basis.
+  This return-side flow does NOT model it; if the taxpayer vested/purchased and
+  sold the same ticker at a loss inside a 30-day window, point them at
+  `/tax-harvest` (which models the §1091 mechanics against `holdings.json`).
 - **EITC due diligence (H3):** if the return claims (or the income level
   suggests eligibility for) the Earned Income Tax Credit, run the Form
   8867-style checks — EITC has the highest audit rate of any credit:

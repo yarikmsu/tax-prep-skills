@@ -210,6 +210,24 @@ interview never captures is invisible to every downstream check.
     3921 will be provided.
     (RSU/ESPP alone do NOT set this flag — they are ordinary W-2 wage
     events.)
+  - **If RSUs VESTED this year, NQSOs were exercised, OR you SOLD any
+    RSU/NQSO employer shares this year (even shares that vested/were exercised
+    in a PRIOR year)** → sets `has_rsu_vesting`. **If ESPP shares were
+    PURCHASED or SOLD this year (any purchase year)** → sets `has_espp`. The
+    SALE trigger is load-bearing: the double-tax happens at SALE, so a taxpayer
+    liquidating long-held employer stock with no current-year vesting still
+    needs the basis correction — keying only on current-year vesting would
+    leave the primary scenario unprotected. These are load-bearing for basis
+    correction: brokers report the 1099-B cost basis for employer stock
+    EXCLUDING the compensation already in W-2 box 1 (for RSUs, typically $0
+    basis), so an unadjusted sale DOUBLE-TAXES the W-2 income — routinely a
+    four-to-five-figure overstatement.
+    When either flag is set AND any 1099-B is present, the broker's
+    *supplemental information* statement (the "adjusted cost basis" pages) —
+    or the equity-plan vest confirmations / Form 3922 (ESPP) / Form 3921 (ISO)
+    — becomes a REQUIRED intake document; `/tax-parse` will prompt for it and
+    `/tax-compute` applies the Form 8949 code-B basis adjustment only from that
+    documentation (never inferred).
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
 - Gambling income (W-2G)? → sets `has_gambling_income` flag
 - **OBBBA Schedule 1-A deductions (TY2025-2028 only — BELOW-AGI, line 13b):**

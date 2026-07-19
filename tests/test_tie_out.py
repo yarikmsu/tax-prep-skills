@@ -34,7 +34,10 @@ def _ledger(*records):
 
 
 def _result(wages=100000.0, w2_wh=12000.0, **extra_1040):
-    f = {"line_1z_total_wages": wages, "line_25a_w2_withholding": w2_wh}
+    # line 1a = W-2 box 1 (what the wages category ties to); line 1z = 1a–1h
+    # sum. Equal here unless a test sets line_1h explicitly via extra_1040.
+    f = {"line_1a_wages": wages, "line_1z_total_wages": wages,
+         "line_25a_w2_withholding": w2_wh}
     f.update(extra_1040)
     return {"form_1040": f}
 
@@ -110,6 +113,19 @@ def test_bool_amount_rejected():
 def test_bad_person_rejected():
     with pytest.raises(T.TieOutError, match="primary/spouse/joint"):
         _ledger(_record(person="taxpayer"))
+
+
+def test_wages_tie_to_line_1a_not_1z_with_line_1h_income():
+    """Codex P1 (PR #47): the W-2 ledger total ties to line 1a, not line 1z.
+    A return with $100K W-2 wages plus $350 of line-1h income (a J2 ESPP
+    disqualifying-disposition ordinary component the former employer omitted)
+    has line_1z = 100350 but line_1a = 100000 — it must still PASS."""
+    recs = _ledger(_record(key_boxes={"wages": 100000.0}))
+    result = _result(wages=100000.0, line_1z_total_wages=100350.0,
+                     line_1h_other_earned_income=350.0)
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"])
+    wage_check = next(c for c in report.sum_checks if c.category == "wages")
+    assert wage_check.result_total == 100000.0 and wage_check.ok
 
 
 def test_malformed_payload_rejected():
@@ -622,6 +638,75 @@ def test_dropped_capital_gain_distribution_fails():
     assert check.result_total == 0.0 and not check.ok
 
 
+def test_employer_stock_adjustment_ties_when_applied():
+    """J1: supplemental statement ledgers a +$50K basis correction; the
+    Schedule D row carries adjustment −50000 (reduces gain) → the negated sum
+    ties, gate passes."""
+    recs = _ledger(_record(doc_id="s", file="documents/supp.pdf",
+                           form_type="brokerage_statement", payer="Broker",
+                           key_boxes={"employer_stock_basis_adjustment": 50000.0}))
+    result = {"schedule_d": {"part_i_short_term": {
+        "line_1a_1099b_box_a": {"proceeds": 60000.0, "cost": 0.0,
+                                "adjustment": -50000.0, "adjustment_code": "B",
+                                "employer_stock": True, "gain": 10000.0}}}}
+    report = T.evaluate(recs, result, ["documents/supp.pdf"])
+    assert not report.failed
+    check = next(c for c in report.sum_checks
+                 if c.category == "employer_stock_basis_adjustment")
+    assert check.result_total == 50000.0 and check.ok
+
+
+def test_employer_stock_adjustment_ignores_non_employer_code_b_rows():
+    """Codex P2 (PR #47): code B is NOT unique to employer stock — a non-
+    employer 1099-B basis correction (also code B) on another lot must not
+    corrupt the reconciliation. The scan filters on the `employer_stock`
+    provenance marker, not the code."""
+    recs = _ledger(_record(doc_id="s", file="documents/supp.pdf",
+                           form_type="brokerage_statement", payer="Broker",
+                           key_boxes={"employer_stock_basis_adjustment": 50000.0}))
+    result = {"schedule_d": {"part_i_short_term": {
+        "line_1a_1099b_box_a": {"proceeds": 60000.0, "cost": 0.0,
+                                "adjustment": -50000.0, "adjustment_code": "B",
+                                "employer_stock": True, "gain": 10000.0},
+        "line_2_1099b_box_b": {"proceeds": 9000.0, "cost": 12000.0,
+                               "adjustment": -1000.0, "adjustment_code": "B",
+                               "employer_stock": False, "gain": -4000.0}}}}
+    report = T.evaluate(recs, result, ["documents/supp.pdf"])
+    assert not report.failed
+    check = next(c for c in report.sum_checks
+                 if c.category == "employer_stock_basis_adjustment")
+    assert check.result_total == 50000.0 and check.ok
+
+
+def test_employer_stock_adjustment_dropped_fails_hard_gate():
+    """The double-tax scenario this category exists to kill: the supplemental
+    statement parsed into the ledger but the adjustment never landed in
+    result.json (row shows the unadjusted $0-basis gain) → FAIL."""
+    recs = _ledger(_record(doc_id="s", file="documents/supp.pdf",
+                           form_type="brokerage_statement", payer="Broker",
+                           key_boxes={"employer_stock_basis_adjustment": 50000.0}))
+    result = {"schedule_d": {"part_i_short_term": {
+        "line_1a_1099b_box_a": {"proceeds": 60000.0, "cost": 0.0,
+                                "adjustment": 0, "gain": 60000.0}}}}
+    report = T.evaluate(recs, result, ["documents/supp.pdf"])
+    assert report.failed
+    check = next(c for c in report.sum_checks
+                 if c.category == "employer_stock_basis_adjustment")
+    assert check.result_total == 0.0 and not check.ok
+
+
+def test_espp_purchase_info_is_informational_not_gated():
+    """A Form 3922 with no sale of those shares is an informational record —
+    it never fails the sum gate (feeds future-year basis)."""
+    recs = _ledger(_record(doc_id="f", file="documents/3922.pdf",
+                           form_type="3922", payer="Employer",
+                           key_boxes={"espp_purchase_info": 1200.0}))
+    result = {"schedule_d": {"part_i_short_term": {}}}
+    report = T.evaluate(recs, result, ["documents/3922.pdf"])
+    assert not report.failed
+    assert not any(c.category == "espp_purchase_info" for c in report.sum_checks)
+
+
 def test_self_employment_gross_is_at_least_check():
     """Codex P2 round 3: Schedule C gross receipts may legitimately EXCEED the
     1099 totals (cash income) — only ledger > result fails."""
@@ -696,8 +781,9 @@ def test_category_targets_fields_exist_in_result_template():
     template = json.loads(
         (REPO / "agents/templates/result_template.json").read_text())
     for cat, (section_name, fields) in T.CATEGORY_TARGETS.items():
-        if cat == "capital_proceeds":
-            continue  # detail-row scan, not fixed field names
+        if cat in ("capital_proceeds", "employer_stock_basis_adjustment"):
+            continue  # detail-row scan (_proceeds_total / _adjustments_total),
+            #            not fixed field names
         section = template.get(section_name)
         assert isinstance(section, dict), f"{cat}: no {section_name} in template"
         for field in fields:

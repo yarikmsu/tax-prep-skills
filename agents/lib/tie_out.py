@@ -97,7 +97,10 @@ _SIGNED_CATEGORIES = {"ss_benefits"}
 # equal any result line; the record just makes the raw amount traceable.
 _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   "state_refund_1099g", "personal_1099k",
-                  "qualified_tips", "qualified_overtime_premium"}
+                  "qualified_tips", "qualified_overtime_premium",
+                  # Form 3922 ESPP boxes — feed the §423 disposition split and
+                  # FUTURE-year basis; no single result line to tie to.
+                  "espp_purchase_info"}
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
@@ -134,7 +137,12 @@ _ADVISORY_MISMATCH_CATEGORIES = {"retirement_taxable"}
 # category → (result section, [field names summed on the result side]).
 # The comparison is sum(ledger category) == sum(present mapped fields).
 CATEGORY_TARGETS = {
-    "wages": ("form_1040", ["line_1z_total_wages"]),
+    # W-2 box 1 ties to line 1a (the pure "total from Forms W-2, box 1"), NOT
+    # line 1z. Line 1z = the sum of lines 1a–1h, which can legitimately EXCEED
+    # the W-2 total (line 1h carries non-W-2 earned income — e.g. a J2 ESPP
+    # disqualifying-disposition ordinary component the former employer omitted).
+    # Tying to line 1z would false-fail a correct return with any 1b–1h income.
+    "wages": ("form_1040", ["line_1a_wages"]),
     "federal_withholding_w2": ("form_1040", ["line_25a_w2_withholding"]),
     "federal_withholding_1099": ("form_1040", ["line_25b_1099_withholding"]),
     "taxable_interest": ("form_1040", ["line_2b_taxable_interest"]),
@@ -163,6 +171,15 @@ CATEGORY_TARGETS = {
     # which counts as present — a dropped mutual-fund distribution therefore
     # FAILS the sum check rather than hiding as unverifiable.
     "capital_gain_distributions": ("schedule_d", ["part_ii_long_term.line_13_cap_gain_dist"]),
+    # J1: employer-stock (RSU/ESPP/NQSO) Form 8949 code-B basis corrections.
+    # The ledger records the POSITIVE sum of (adjusted basis − 1099-B basis) for
+    # lots sold this year; the result side is the NEGATED sum of the signed
+    # schedule_d `adjustment` fields (negative = reduces gain), so the two tie
+    # (see _adjustments_total via the special branch in _result_total). A
+    # supplemental statement that parsed into the ledger but whose adjustment
+    # never landed in result.json therefore FAILS the hard gate — the
+    # double-taxation scenario this category exists to kill.
+    "employer_stock_basis_adjustment": ("schedule_d", ["_adjustments_total"]),
     # 1099-NEC box 1 / 1099-MISC box 3-7 / 1099-K box 1a → Schedule C gross
     # receipts. AT-LEAST check (not equality): gross receipts may legitimately
     # EXCEED the 1099 totals (cash income without an information return), but
@@ -438,6 +455,32 @@ def _result_total(result: dict, category: str) -> "float | None":
                         if p != 0:
                             found = True
         return total if found else None
+    if category == "employer_stock_basis_adjustment":
+        # Sum the SIGNED `adjustment` across the Schedule D box detail rows
+        # flagged `employer_stock`, then NEGATE: employer-stock corrections are
+        # negative (basis up → gain down), while the ledger records the positive
+        # basis correction, so −Σadjustment ties. Scope on the `employer_stock`
+        # boolean provenance marker, NOT the adjustment_code — Form 8949 code
+        # 'B' is not unique to employer stock (a non-employer 1099-B basis
+        # correction also uses code B), so a code-only filter could pull an
+        # unrelated correction into (or offset) the employer-stock total.
+        # schedule_d present with no employer-stock rows returns 0.0 (a real "no
+        # adjustment landed" figure a nonzero ledger fails against) — None only
+        # when the section is absent (already handled above).
+        total = 0.0
+        for part_key in ("part_i_short_term", "part_ii_long_term"):
+            part = section.get(part_key)
+            if not isinstance(part, dict):
+                continue
+            for row in part.values():
+                if not isinstance(row, dict):
+                    continue
+                if row.get("employer_stock") is not True:
+                    continue
+                adj = row.get("adjustment")
+                if isinstance(adj, (int, float)) and not isinstance(adj, bool):
+                    total += float(adj)
+        return -total
     total = 0.0
     for field in fields:
         node = section

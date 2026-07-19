@@ -25,6 +25,25 @@ def test_classify_3921_beats_tax_return_fallthrough():
     assert classify_document(text) == "3921"
 
 
+def test_classify_form_3922():
+    """J2: Form 3922 (ESPP §423 purchase info) must classify so the
+    purchase-date boxes enter the ledger for the disposition split and future
+    basis math."""
+    assert classify_document(
+        "Form 3922 — Transfer of Stock Acquired Through an Employee Stock "
+        "Purchase Plan Under Section 423(c)") == "3922"
+    assert classify_document(
+        "EMPLOYEE STOCK PURCHASE PLAN UNDER SECTION 423\nCopy B") == "3922"
+
+
+def test_classify_3922_beats_1099b_cost_basis_shadow():
+    # A broker-issued 3922 packet mentions "COST BASIS" (the 1099-b keyword) in
+    # its cover text — the 3922 pattern must win, exactly as 3921 does.
+    text = ("FORM 3922 Transfer of Stock Acquired Through an Employee Stock "
+            "Purchase Plan — see your COST BASIS records")
+    assert classify_document(text) == "3922"
+
+
 def test_classify_existing_types_unchanged():
     assert classify_document("FORM W-2 Wage and Tax Statement") == "w2"
     assert classify_document("Form 1099-INT Interest Income") == "1099-int"
