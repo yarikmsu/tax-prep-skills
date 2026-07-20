@@ -37,7 +37,13 @@ focused estimate or mid-year deadline check.
 ## How it works
 
 1. **Per-state PTET paid.** For each K-1 entity state you supply income for, the
-   entity-level tax is computed from the statutory rate schedule:
+   entity-level tax is computed from the rate schedule. A **fetched**
+   `ptet.<STATE>` schedule in `tax_law_{year}.json` (keyed by K-1 entity state,
+   populated by `/tax-setup`) is PREFERRED — version-controlled per year like
+   federal rates. If a state's schedule was not fetched, the built-in statutory
+   schedule below is used with a **loud unfetched-schedule warning** naming the
+   vintage (the NJ BAIT overhaul is the drift precedent); a corrupt fetched
+   block hard-errors. The built-in schedules:
    - **CA** (R&TC §19900): flat **9.3%**.
    - **NY** (Tax Law §860/§864): graduated — 6.85% ≤$2M, 9.65% $2M–$5M,
      10.30% $5M–$25M, 10.90% >$25M.

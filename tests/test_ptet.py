@@ -635,3 +635,90 @@ def test_cli_blocks_path_traversal(tmp_path):
     res = _run_cli(["--workspace", str(ws), "--year", "2026; rm -rf /",
                     "--income", "CA=1"])
     assert res.returncode == 1
+
+
+# --------------------------------------------------------------------------
+# N4 — fetched PTET schedules (tax_law.ptet.<entity-state>), fetched-wins,
+# loud-degrade fallback, corrupt hard-error, per-entity-state keying.
+# --------------------------------------------------------------------------
+def test_fetched_schedule_wins_over_builtin():
+    """A fetched tax_law.ptet.CA schedule is used verbatim (10% here, not the
+    built-in 9.3%), with NO unfetched-schedule warning."""
+    cfg = {"CA": {"schedule": [[0, 0.10, 0]], "vintage": "test 10%"}}
+    tax, _ = ptet.ptet_tax("CA", 200000, tax_year=2026, ptet_cfg=cfg)
+    assert tax == 20000.0  # 10% of 200k, the fetched rate
+    sched, warn = ptet._resolve_schedule("CA", 2026, cfg)
+    assert warn is None
+
+
+def test_absent_schedule_falls_back_with_loud_vintage_warning():
+    """No fetched block → built-in CA 9.3% + a LOUD warning naming the vintage."""
+    tax, _ = ptet.ptet_tax("CA", 200000, tax_year=2026, ptet_cfg=None)
+    assert tax == 18600.0  # 9.3% built-in
+    _, warn = ptet._resolve_schedule("CA", 2026, None)
+    assert warn is not None
+    assert "not fetched" in warn and "R&TC §19900" in warn
+
+
+def test_nj_legacy_vintage_named_in_fallback_pre_2022():
+    _, warn = ptet._resolve_schedule("NJ", 2021, None)
+    assert "legacy" in warn.lower()
+    _, warn2022 = ptet._resolve_schedule("NJ", 2022, None)
+    assert "P.L. 2021 c.419" in warn2022
+
+
+@pytest.mark.parametrize("bad", [
+    {"CA": {"schedule": "notalist"}},          # schedule not a list
+    {"CA": {"schedule": []}},                   # empty schedule
+    {"CA": {"schedule": [[0, 1.5, 0]]}},        # rate > 1
+    {"CA": {"schedule": [[0, float("nan"), 0]]}},  # NaN rate
+    {"CA": {"schedule": [[100, 0.09, 0]]}},     # first bracket lower != 0
+    {"CA": {"schedule": [[0, 0.05, 0], [0, 0.09, 0]]}},  # non-increasing lowers
+    {"CA": {"schedule": [[0, 0.09]]}},          # wrong tuple arity
+    {"CA": "notadict"},                          # block not a dict
+])
+def test_corrupt_fetched_schedule_hard_errors(bad):
+    with pytest.raises(PtetError):
+        ptet._resolve_schedule("CA", 2026, bad)
+
+
+def test_per_entity_state_keying_tx_resident_ca_and_nj_k1s():
+    """A fetched cfg carrying CA + NJ (entity states) prices each from its own
+    fetched schedule; a state ABSENT from cfg (NY) falls back with a warning."""
+    cfg = {
+        "CA": {"schedule": [[0, 0.10, 0]]},          # fetched 10%
+        "NJ": {"schedule": [[0, 0.06, 0], [1_000_000, 0.11, 60000]]},
+    }
+    ca, _ = ptet.ptet_tax("CA", 100000, tax_year=2026, ptet_cfg=cfg)
+    nj, _ = ptet.ptet_tax("NJ", 100000, tax_year=2026, ptet_cfg=cfg)
+    assert ca == 10000.0  # 10% fetched
+    assert nj == 6000.0   # 6% fetched first bracket
+    _, ca_warn = ptet._resolve_schedule("CA", 2026, cfg)
+    _, ny_warn = ptet._resolve_schedule("NY", 2026, cfg)  # not in cfg
+    assert ca_warn is None          # CA fetched → no warning
+    assert ny_warn is not None      # NY absent → loud fallback
+
+
+def test_fetched_schedule_case_insensitive_key():
+    cfg = {"ca": {"schedule": [[0, 0.10, 0]]}}  # lowercase key
+    sched, warn = ptet._resolve_schedule("CA", 2026, cfg)
+    assert warn is None
+    assert sched == [(0.0, 0.10, 0.0)]
+
+
+def test_analyze_surfaces_unfetched_warning_in_caveats():
+    """End-to-end: analyze with no ptet_cfg attaches the loud unfetched-schedule
+    warning to the state's caveats; a rate override suppresses it."""
+    report = analyze(
+        baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+        state_incomes={"CA": 100000}, tax_year=2026, filing_status="MFJ",
+        ptet_cfg=None)
+    ca = next(s for s in report.states if s.state == "CA")
+    assert any("not fetched" in c for c in ca.caveats)
+    # override bypasses the schedule → no unfetched warning
+    report2 = analyze(
+        baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+        state_incomes={"CA": 100000}, tax_year=2026, filing_status="MFJ",
+        rate_overrides={"CA": 0.10}, ptet_cfg=None)
+    ca2 = next(s for s in report2.states if s.state == "CA")
+    assert not any("not fetched" in c for c in ca2.caveats)

@@ -292,6 +292,16 @@ def create_empty_tax_law(year: int) -> dict:
             "qbi_minimum": {"income_threshold": None, "amount": None},
         },
         "state": {},  # Populated per-state by /tax-setup
+        # PTET (pass-through entity tax) rate schedules, keyed by K-1 ENTITY
+        # state (NOT the taxpayer's resident state — a TX resident with a CA
+        # K-1 needs the CA schedule). Each entry: {"schedule": [[lower, rate,
+        # base_tax], ...], "vintage": "<cite>"}. Empty until fetched — ptet.py
+        # PREFERS a fetched schedule and falls back to its built-in statutory
+        # schedule with a LOUD unfetched-schedule warning naming the vintage
+        # (never a silent price); a corrupt block hard-errors. Fetched per
+        # entity state by /tax-setup when the taxpayer has K-1 income; pinned
+        # under _sources as "ptet.<STATE>". CA/NY/NJ modeled.
+        "ptet": {},
         "exchange_rates": {},  # e.g., {"EUR": <annual_avg_rate>} — fetched from IRS.gov yearly average rates
         # H4 source pinning: block-path → authoritative URL the figure was
         # fetched from (e.g. "federal.filing_statuses": "https://www.irs.gov/...").

@@ -464,6 +464,17 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   all-null for a non-ISO CA return.
 - For NY: Search `"New York {year} income tax brackets"`
 - For other states: Search `"{state} {year} income tax rates"`
+- **PTET rate schedules when the taxpayer has K-1 income** (`has_k1_income`,
+  for EACH state in `flags.k1_states` that is CA/NY/NJ — the K-1 ENTITY state,
+  not the resident state): Search `"{state} pass-through entity tax PTET rate
+  schedule {year}"` → populate `ptet.<STATE>` (top-level, keyed by entity
+  state) as `{"schedule": [[lower, rate, base_tax], ...], "vintage": "<cite>"}`.
+  The first bracket must start at `lower: 0`; CA is a single flat bracket
+  (`[[0, 0.093, 0]]`), NY/NJ are graduated. Record the URL under `_sources` as
+  `ptet.<STATE>`. Unfetched is NOT fatal — `/tax-ptet` falls back to its
+  built-in statutory schedule with a LOUD unfetched-schedule warning naming the
+  vintage (the NJ BAIT overhaul is the drift precedent); a corrupt block
+  hard-errors. Fetch it so the price is version-controlled per year.
 
 **Exchange rates (if foreign income):**
 - Search: `"IRS yearly average exchange rate {year} {currency}"`

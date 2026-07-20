@@ -140,7 +140,9 @@ _NJ_SCHEDULE_LEGACY_2020 = [
 
 
 def _schedule_for(state: str, tax_year: "int | None") -> list:
-    """Return the graduated PTET schedule for a state in a given tax year.
+    """Return the built-in statutory PTET schedule for a state in a given tax
+    year. The FALLBACK when no fetched schedule is present (see
+    _resolve_schedule).
 
     Only NJ's schedule is year-dependent (the 2022 BAIT bracket collapse); CA's
     flat 9.3% and NY's graduated rates have been stable across their windows.
@@ -148,6 +150,83 @@ def _schedule_for(state: str, tax_year: "int | None") -> list:
     if state == "NJ" and tax_year is not None and tax_year < 2022:
         return _NJ_SCHEDULE_LEGACY_2020
     return _PTET_RATE_SCHEDULES[state]
+
+
+# Statutory vintage of each built-in fallback schedule — named in the
+# loud-degrade warning so a reader knows exactly which un-fetched schedule
+# priced their PTET and can verify it against the state authority.
+_SCHEDULE_VINTAGE = {
+    "CA": "CA R&TC §19900 flat 9.3%",
+    "NY": "NY Tax Law §860/§864 graduated (≤$2M 6.85% … >$25M 10.9%)",
+    "NJ": "NJ BAIT N.J.S.A. 54A:12-3 as amended by P.L. 2021 c.419 (TY2022+, top 10.9% over $1M)",
+    "NJ_LEGACY": "NJ BAIT legacy TY2020-2021 4-bracket schedule",
+}
+
+
+def _validate_fetched_schedule(state: str, block) -> list:
+    """Validate a fetched tax_law.ptet.<state> block into a
+    [(lower, rate, base_tax)] schedule. A PRESENT block that is malformed is a
+    hard error (a corrupt cache must never silently price the wrong PTET) — the
+    salt_cap corrupt-value precedent, applied to the whole schedule.
+    """
+    if not isinstance(block, dict):
+        raise PtetError(f"tax_law.ptet.{state} must be an object, "
+                        f"got {type(block).__name__}")
+    rows = block.get("schedule")
+    if not isinstance(rows, list) or not rows:
+        raise PtetError(f"tax_law.ptet.{state}.schedule must be a non-empty list")
+    schedule: list = []
+    prev_lower = None
+    for i, row in enumerate(rows):
+        where = f"tax_law.ptet.{state}.schedule[{i}]"
+        if not isinstance(row, (list, tuple)) or len(row) != 3:
+            raise PtetError(f"{where} must be [lower, rate, base_tax]")
+        lower, rate, base = row
+        lower = _strict_non_negative(lower, f"{where}.lower")
+        base = _strict_non_negative(base, f"{where}.base_tax")
+        # rate: finite fraction in [0, 1]; reuse the non-negative gate then bound.
+        rate = _strict_non_negative(rate, f"{where}.rate")
+        if rate > 1:
+            raise PtetError(f"{where}.rate must be a fraction ≤ 1, got {rate}")
+        if i == 0 and lower != 0:
+            raise PtetError(f"{where}: the first bracket must start at lower=0")
+        if prev_lower is not None and lower <= prev_lower:
+            raise PtetError(f"{where}: bracket lowers must strictly increase")
+        prev_lower = lower
+        schedule.append((lower, rate, base))
+    return schedule
+
+
+def _resolve_schedule(state: str, tax_year: "int | None",
+                      ptet_cfg: "dict | None") -> "tuple[list, str | None]":
+    """Resolve the PTET schedule for `state`, preferring a fetched
+    tax_law.ptet.<state> block over the built-in statutory schedule.
+
+    Returns (schedule, degrade_note). degrade_note is None when a fetched
+    schedule was used (or the state has no fallback); it is a LOUD warning
+    naming the statutory vintage when the built-in schedule was used because
+    nothing was fetched — never a silent price. A present-but-corrupt fetched
+    block hard-errors (via _validate_fetched_schedule).
+    """
+    if isinstance(ptet_cfg, dict):
+        # Case-normalize keys so a fetched {"ca": ...} still matches "CA".
+        block = None
+        for k, v in ptet_cfg.items():
+            if isinstance(k, str) and k.strip().upper() == state:
+                block = v
+                break
+        if block is not None:
+            return _validate_fetched_schedule(state, block), None
+    # Fallback: built-in statutory schedule + loud vintage warning.
+    vintage_key = "NJ_LEGACY" if (
+        state == "NJ" and tax_year is not None and tax_year < 2022) else state
+    vintage = _SCHEDULE_VINTAGE.get(vintage_key, f"{state} built-in schedule")
+    note = (f"PTET rate schedule for {state} was not fetched into "
+            f"tax_law.ptet.{state} — priced from the built-in statutory schedule "
+            f"({vintage}). Rates may have been amended; verify against the state "
+            f"authority for TY{tax_year if tax_year is not None else '?'} "
+            f"(the NJ BAIT overhaul is the precedent for silent drift).")
+    return _schedule_for(state, tax_year), note
 
 
 def _obs_date(year: int, month: int, day: int) -> str:
@@ -321,13 +400,17 @@ def _normalize_state(code: str) -> str:
 
 def ptet_tax(state: str, qualifying_income: float,
              *, rate_override: "float | None" = None,
-             tax_year: "int | None" = None) -> "tuple[float, str]":
+             tax_year: "int | None" = None,
+             ptet_cfg: "dict | None" = None) -> "tuple[float, str]":
     """Compute the entity-level PTET on `qualifying_income`.
 
     Returns (ptet_paid, basis_note). With `rate_override` the rate is applied
-    flat; otherwise the state's graduated schedule for `tax_year` is used (only
-    NJ's schedule is year-dependent). Caller validates the state is in
-    `_PTET_STATES`.
+    flat; otherwise the schedule is resolved via `_resolve_schedule` — a fetched
+    tax_law.ptet.<state> block (ptet_cfg) is PREFERRED, else the built-in
+    statutory schedule for `tax_year` is used. Caller validates the state is in
+    `_PTET_STATES`. The unfetched-schedule warning is surfaced through
+    `analyze`'s caveats (see _resolve_schedule); this function returns only the
+    rate description so its 2-tuple contract is unchanged.
     """
     income = _strict_non_negative(qualifying_income, "qualifying_income")
     if rate_override is not None:
@@ -337,7 +420,7 @@ def ptet_tax(state: str, qualifying_income: float,
         tax = round(income * rate, 2)
         return tax, f"flat {rate:.3%} (user override)"
 
-    schedule = _schedule_for(state, tax_year)
+    schedule, _ = _resolve_schedule(state, tax_year, ptet_cfg)
     bracket = schedule[0]
     for entry in schedule:
         if income >= entry[0]:
@@ -411,6 +494,7 @@ def analyze(
     itemizes: bool = True,
     passthrough_income: "float | None" = None,
     salt_cap_cfg: "dict | None" = None,
+    ptet_cfg: "dict | None" = None,
 ) -> PtetReport:
     """Estimate the federal PTET benefit per K-1 entity state.
 
@@ -494,13 +578,19 @@ def analyze(
             continue
         override = rate_overrides.get(state)
         ptet_paid, rate_desc = ptet_tax(state, income, rate_override=override,
-                                        tax_year=tax_year)
+                                        tax_year=tax_year, ptet_cfg=ptet_cfg)
+        # Capture the unfetched-schedule LOUD warning for the caveats (only when
+        # a schedule was actually used — a rate override bypasses the schedule).
+        schedule_note = None
+        if override is None:
+            _, schedule_note = _resolve_schedule(state, tax_year, ptet_cfg)
         qbi_eligible = state in qbi_eligible_states
         income_reduction = round(ptet_paid * (1 - qbi_rate), 2) if qbi_eligible else ptet_paid
         modeled_states.append(dict(
             state=state, income=income, ptet_paid=ptet_paid, rate_desc=rate_desc,
             deadline=deadline, deadline_note=deadline_note,
-            qbi_eligible=qbi_eligible, income_reduction=income_reduction))
+            qbi_eligible=qbi_eligible, income_reduction=income_reduction,
+            schedule_note=schedule_note))
 
     total_ptet = round(sum(m["ptet_paid"] for m in modeled_states), 2)
     total_reduction = round(sum(m["income_reduction"] for m in modeled_states), 2)
@@ -579,6 +669,8 @@ def analyze(
             caveats.append(
                 "Graduated rate applied to YOUR share; multi-owner entities are "
                 "taxed on the entity-level pool — pass --ptet-rate to override.")
+        if m.get("schedule_note"):
+            caveats.append(m["schedule_note"])
         results.append(StatePtetResult(
             state=state, qualifying_income=income, ptet_paid=ptet_paid,
             rate_desc=m["rate_desc"], gross_fed_benefit=gross, lost_salt_offset=offset,
@@ -838,7 +930,8 @@ def _main(argv: list) -> int:
             rate_overrides=rate_overrides, qbi_eligible_states=qbi_eligible,
             itemizes=not args.standard_deduction,
             passthrough_income=passthrough_income,
-            salt_cap_cfg=(tax_law.get("federal", {}) or {}).get("salt_cap"))
+            salt_cap_cfg=(tax_law.get("federal", {}) or {}).get("salt_cap"),
+            ptet_cfg=(tax_law.get("ptet") if isinstance(tax_law, dict) else None))
         print(render_markdown(report))
         return 0
     except (PtetError, ScenarioError, RolloverError) as e:
