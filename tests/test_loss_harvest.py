@@ -1397,3 +1397,20 @@ def test_cli_rejects_holdings_outside_workspace(tmp_path):
         capture_output=True, text=True, cwd=str(REPO),
     )
     assert out.returncode != 0
+
+
+def test_render_surfaces_1091d_basis_shift_for_fully_blocked():
+    """O3: a fully wash-sale-blocked lot's render must say the disallowed loss
+    is DEFERRED (added to replacement-share basis per §1091(d), holding period
+    tacks per §1223), not lost — with the IRA permanent-loss exception."""
+    h = _holdings_with(
+        lots=[{"id": "X", "ticker": "ABC", "account": "A",
+               "acquired": "2024-01-01", "quantity": 50,
+               "cost_basis": 5000, "current_value": 3000}],
+        txns=[{"ticker": "ABC", "date": "2026-12-10", "kind": "buy", "quantity": 50}],
+    )
+    md = lh.render_markdown(_build(holdings=h))
+    assert "DEFERRED, not lost" in md
+    assert "§1091(d)" in md
+    assert "§1223" in md
+    assert "PERMANENTLY lost" in md  # the IRA exception

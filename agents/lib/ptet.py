@@ -463,20 +463,30 @@ class PtetReport:
     notes: "tuple[str, ...]" = field(default_factory=tuple)
 
 
+_MARGINAL_PROBE = 100.0  # small, to stay local near AGI cliffs (O3)
+
+
 def _est_marginal_fed(baseline_inputs: dict, rate_kwargs: dict) -> float:
-    """Probe the keystone with +$1,000 of ORDINARY non-wage income to estimate the
-    marginal rate at which a forgone SALT itemized deduction dollar is valued.
+    """Probe the keystone with a SMALL bump of ORDINARY non-wage income to
+    estimate the marginal rate at which a forgone SALT itemized deduction dollar
+    is valued.
 
     Probing `other_income` (not `wages`) deliberately: a lost SALT itemized
     deduction only changes taxable income, NOT Medicare wages, so a wage probe
     would fold the 0.9% Additional Medicare Tax into the rate for high earners and
     overstate the offset (understating PTET savings). other_income carries no
-    payroll/Medicare component, giving the clean ordinary-bracket rate."""
+    payroll/Medicare component, giving the clean ordinary-bracket rate.
+
+    The probe is a SMALL $100 (O3) rather than $1,000 so it stays LOCAL near an
+    AGI cliff (CTC/education-credit/IRA/NIIT phase-outs) — a large probe can jump
+    the cliff and overstate the marginal rate (understating PTET savings). It is
+    still an estimate; near a cliff, pass an explicit --marginal-fed (caveated in
+    the output)."""
     base = compute_scenario(baseline_inputs, {}, **rate_kwargs)["total_federal_tax"]
     bumped = compute_scenario(
-        baseline_inputs, {"other_income": 1000.0}, **rate_kwargs
+        baseline_inputs, {"other_income": _MARGINAL_PROBE}, **rate_kwargs
     )["total_federal_tax"]
-    return max(0.0, round((bumped - base) / 1000.0, 4))
+    return max(0.0, round((bumped - base) / _MARGINAL_PROBE, 4))
 
 
 def analyze(
@@ -634,8 +644,10 @@ def analyze(
     # the cap, so there is nothing to net out and the full PTET is incremental
     # (Codex P2: applying the offset to a non-itemizer understates the benefit).
     est_marg = marginal_fed
+    marginal_auto_estimated = False
     if itemizes and salt_room > 0 and est_marg is None:
         est_marg = _est_marginal_fed(baseline_inputs, rate_kwargs)
+        marginal_auto_estimated = True
     salt_credited = min(salt_room, total_ptet)
     lost_salt_total = (round((est_marg or 0.0) * salt_credited, 2)
                        if (itemizes and salt_room > 0) else 0.0)
@@ -711,6 +723,12 @@ def analyze(
             f"{(est_marg or 0):.1%} marginal rate — that portion of state tax was "
             f"federally deductible anyway (you itemize), so it is netted out of the "
             f"benefit.")
+        if marginal_auto_estimated:
+            notes.append(
+                "The SALT-offset marginal rate was AUTO-ESTIMATED from a small "
+                "$100 income probe. Near an AGI cliff (CTC / education-credit / "
+                "IRA / NIIT phase-outs) the true marginal rate can differ — pass "
+                "an explicit --marginal-fed for a precise offset.")
     if itemizes and 2025 <= tax_year <= 2029:
         notes.append(
             f"The OBBBA ${salt_cap:,.0f} cap is indexed ~1%/yr (2026-2029) and "

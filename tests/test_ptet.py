@@ -143,6 +143,21 @@ def test_analyze_salt_room_auto_estimates_marginal():
     assert r.states[0].lost_salt_offset == 1500.0
 
 
+def test_analyze_auto_estimated_marginal_carries_agi_cliff_caveat():
+    # O3: when the SALT-offset marginal rate is auto-estimated from the small
+    # probe, the report must surface the AGI-cliff caveat pointing at
+    # --marginal-fed; an EXPLICIT marginal rate must NOT emit that caveat.
+    r_auto = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                     state_incomes={"CA": 200000}, tax_year=2026,
+                     filing_status="MFJ", salt_room=5000)
+    assert any("AUTO-ESTIMATED" in n and "--marginal-fed" in n for n in r_auto.notes)
+
+    r_explicit = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                         state_incomes={"CA": 200000}, tax_year=2026,
+                         filing_status="MFJ", salt_room=5000, marginal_fed=0.30)
+    assert not any("AUTO-ESTIMATED" in n for n in r_explicit.notes)
+
+
 def test_analyze_two_states_aggregate_and_allocate():
     r = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                 state_incomes={"CA": 200000, "NY": 100000}, tax_year=2026,

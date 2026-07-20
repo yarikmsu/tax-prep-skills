@@ -1062,6 +1062,14 @@ def render_markdown(r: HarvestReport) -> str:
                   "share count in the ±30-day §1091 window — 100% of the loss is "
                   "disallowed this year. Wait 31 days past the last/next buy, or harvest "
                   "other lots instead._", "",
+                  "_**The disallowed loss is DEFERRED, not lost** (§1091(d)): it is added "
+                  "to the cost basis of the replacement shares, and the original holding "
+                  "period tacks on (§1223), so the tax benefit is recovered when those "
+                  "replacement shares are later sold in a non-wash transaction. This "
+                  "future-year basis adjustment is NOT modeled here (it affects a later "
+                  "Schedule D). **Exception:** if the replacement was bought inside an "
+                  "IRA/Roth (Rev. Rul. 2008-5), the loss is PERMANENTLY lost — an IRA has "
+                  "no adjustable basis to absorb it._", "",
                   "| Lot | Ticker | Account | Loss | Blocked by |",
                   "|---|---|---|---:|---|"]
         for l in blocked:
