@@ -224,6 +224,13 @@ def create_empty_tax_law(year: int) -> dict:
             # compute_qbi_deduction does NOT model — it flags `over_threshold`
             # so /tax-compute can warn instead of silently overstating.
             "qbi_threshold": {"single": None, "mfj": None},
+            # §199A(b)(3) phase-in range (the band above qbi_threshold over which
+            # the Form 8995-A W-2/UBIA limit phases in and an SSTB phases out).
+            # OPTIONAL override — compute_form_8995a uses a year-aware statutory
+            # default ($50k/$100k-MFJ ≤2025, $75k/$150k-MFJ TY2026+ per OBBBA
+            # §70105), so this is null unless a fetched figure must correct it
+            # (the amt.phaseout_rate precedent). Keyed non-MFJ ("other") / mfj.
+            "qbi_phase_in_range": {"other": None, "mfj": None},
             # Federal SALT itemized-deduction cap for THIS cache's year, fetched
             # per-year because the OBBBA base ($40,000 / $20,000 MFS for
             # TY2025-2029, reverting to $10,000 / $5,000 in TY2030) is indexed
@@ -689,6 +696,11 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 # functions degrade/hard-error at the point of use. Skip both.
                 if k in ("charitable_non_itemizer", "qbi_minimum") \
                         and isinstance(v, dict):
+                    continue
+                # federal.qbi_phase_in_range is an OPTIONAL override — null is
+                # the DEFAULT (compute_form_8995a uses the year-aware statutory
+                # range), like amt.phaseout_rate. Skip when unfetched.
+                if k == "qbi_phase_in_range" and isinstance(v, dict):
                     continue
                 child_path = f"{path}.{k}" if path else k
                 if v is None:

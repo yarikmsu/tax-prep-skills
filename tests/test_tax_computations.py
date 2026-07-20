@@ -25,6 +25,8 @@ from agents.lib.tax_computations import (
     compute_child_tax_credit,
     compute_education_credits,
     compute_qbi_deduction,
+    compute_form_8995a,
+    _qbi_phase_in_range,
     compute_niit,
     compute_form_8606,
     compute_taxable_ss,
@@ -3726,3 +3728,131 @@ class TestCaSchedulePMfsCaveat:
             filing_status="MFS", exemption=58111, phaseout_start=217924,
             iso_bargain_element=50000)
         assert not any("recapture" in n for n in r["notes"])
+
+
+class TestForm8995A:
+    """Form 8995-A (N2) — §199A wage/UBIA limitation + SSTB phase-out. Expected
+    values hand-computed from the 8995-A worksheet. 2024 MFJ threshold 383,900,
+    pre-2026 phase-in range 100,000."""
+
+    def test_nonsstb_above_range_wage_limited(self):
+        """qbi 300k, wages 100k, ubia 500k, TI 500k (excess 116,100 ≥ 100k range).
+        limit = max(50k, 25k+12.5k)=50k; tentative 60k → min(60k, 50k)=50k."""
+        r = compute_form_8995a(300000, 100000, 500000, False, 500000, 383900, 100000)
+        assert r["qbi_component"] == 50000.0
+        assert r["regime"] == "wage_ubia_limited"
+
+    def test_nonsstb_above_range_ubia_branch_wins(self):
+        """Low wages, high UBIA: 25%×40k + 2.5%×2M = 10k+50k=60k > 50%×40k=20k."""
+        r = compute_form_8995a(400000, 40000, 2000000, False, 600000, 383900, 100000)
+        assert r["wage_ubia_limit"] == 60000.0
+
+    def test_sstb_above_range_zero(self):
+        r = compute_form_8995a(300000, 100000, 500000, True, 500000, 383900, 100000)
+        assert r["qbi_component"] == 0.0
+        assert r["regime"] == "sstb_fully_excluded"
+
+    def test_nonsstb_within_range_phases_in_limit(self):
+        """qbi 300k, wages 40k, ubia 0, TI 420k. excess 36,100/100k = 0.361.
+        tentative 60k; limit max(20k,10k)=20k; reduction (60k−20k)×0.361=14,440;
+        component 60k−14,440 = 45,560."""
+        r = compute_form_8995a(300000, 40000, 0, False, 420000, 383900, 100000)
+        assert r["qbi_component"] == 45560.0
+        assert r["regime"] == "phase_in"
+
+    def test_sstb_within_range_double_haircut(self):
+        """SSTB same inputs: applicable% = 1−0.361 = 0.639. Reduce first:
+        qbi 191,700, wages 25,560. tentative 38,340; limit max(12,780,6,390)=12,780;
+        reduction (38,340−12,780)×0.361=9,227.16; component 29,112.84."""
+        r = compute_form_8995a(300000, 40000, 0, True, 420000, 383900, 100000)
+        assert r["qbi_component"] == 29112.84
+        assert r["applicable_percentage"] == 0.639
+        assert r["regime"] == "sstb_phase_in"
+
+    def test_below_threshold_no_limit(self):
+        r = compute_form_8995a(100000, 0, 0, False, 150000, 383900, 100000)
+        assert r["qbi_component"] == 20000.0
+        assert r["regime"] == "below_threshold"
+
+    def test_overall_cap_binds(self):
+        """Deduction ≤ 20% of (TI − net cap gain)."""
+        r = compute_form_8995a(300000, 200000, 0, False, 80000, 60000, 50000,
+                               net_capital_gain=0)
+        assert r["overall_cap"] == 16000.0
+        assert r["deduction"] == 16000.0
+        assert r["income_limited"] is True
+
+    def test_is_sstb_must_be_bool(self):
+        with pytest.raises(ValueError, match="is_sstb"):
+            compute_form_8995a(300000, 100000, 0, None, 500000, 383900, 100000)
+
+    def test_nan_input_rejected(self):
+        with pytest.raises(ValueError):
+            compute_form_8995a(float("nan"), 100000, 0, False, 500000, 383900, 100000)
+
+    def test_zero_range_rejected(self):
+        with pytest.raises(ValueError):
+            compute_form_8995a(300000, 100000, 0, False, 500000, 383900, 0)
+
+    def test_negative_qbi_loss_floors_component_no_crash(self):
+        """Self-review catch: a QBI LOSS over the threshold must not crash — the
+        loss carries forward, so the component floors at 0 (not a hard error)."""
+        r = compute_form_8995a(-50000, 100000, 0, False, 500000, 383900, 100000)
+        assert r["qbi_component"] == 0.0
+
+    # --- year-aware phase-in range (OBBBA §70105 expansion TY2026+) ---
+    def test_phase_in_range_pre_2026(self):
+        assert _qbi_phase_in_range(2025, True) == 100000.0
+        assert _qbi_phase_in_range(2025, False) == 50000.0
+
+    def test_phase_in_range_2026_expanded(self):
+        assert _qbi_phase_in_range(2026, True) == 150000.0
+        assert _qbi_phase_in_range(2026, False) == 75000.0
+
+    def test_phase_in_range_override_wins(self):
+        assert _qbi_phase_in_range(2025, True, override=120000) == 120000.0
+
+    def test_phase_in_range_bad_override_rejected(self):
+        with pytest.raises(ValueError):
+            _qbi_phase_in_range(2025, True, override=-1)
+
+
+class TestQBIDeductionForm8995AIntegration:
+    """compute_qbi_deduction delegates to Form 8995-A when over threshold +
+    wage/UBIA/SSTB inputs are supplied; keeps the simplified path + warning
+    otherwise."""
+
+    def test_over_threshold_with_wage_inputs_applies_8995a(self):
+        r = compute_qbi_deduction(
+            300000, 0, taxable_income_before_qbi=500000, net_capital_gain=0,
+            threshold=383900, w2_wages=100000, ubia=500000, is_sstb=False,
+            filing_status="MFJ")
+        assert r["form_8995a_applied"] is True
+        assert r["qbi_component"] == 50000.0
+        assert "warning" not in r  # limit modeled → no unmodeled warning
+
+    def test_over_threshold_without_wage_inputs_keeps_warning(self):
+        r = compute_qbi_deduction(
+            300000, 0, taxable_income_before_qbi=500000, net_capital_gain=0,
+            threshold=383900)
+        assert r.get("form_8995a_applied") is None
+        assert "warning" in r
+        assert r["over_threshold"] is True
+
+    def test_sstb_excluded_not_resurrected_by_70105_minimum(self):
+        """An SSTB above the phase-out is $0 and the §70105 active-trade minimum
+        must NOT lift it (an SSTB above the range is not a qualified trade)."""
+        r = compute_qbi_deduction(
+            300000, 0, taxable_income_before_qbi=500000, net_capital_gain=0,
+            threshold=383900, tax_year=2025, active_qualified_trade=True,
+            qbi_minimum={"income_threshold": 1000, "amount": 400},
+            w2_wages=100000, ubia=0, is_sstb=True, filing_status="MFJ")
+        assert r["total_deduction"] == 0.0
+        assert r["qbi_minimum_applied"] is False
+
+    def test_below_threshold_uses_simplified(self):
+        r = compute_qbi_deduction(
+            100000, 0, taxable_income_before_qbi=150000, net_capital_gain=0,
+            threshold=383900, w2_wages=0, ubia=0, is_sstb=False)
+        assert r.get("form_8995a_applied") is None
+        assert r["qbi_component"] == 20000.0

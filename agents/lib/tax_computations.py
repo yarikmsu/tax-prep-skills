@@ -851,6 +851,147 @@ def net_capital_gains(net_st: float, net_lt: float) -> "tuple[float, float]":
 
 _QBI_MINIMUM_FROM = 2026  # §70105 minimum QBI deduction, OBBBA — TY2026+
 
+# §199A(b)(3)(B) / (e)(2) phase-in range — the band above the threshold over
+# which the W-2/UBIA limit phases in and an SSTB phases out. YEAR-DEPENDENT:
+# OBBBA §70105 expanded it for TY2026+. Statutory schedule with an optional
+# cache override (federal.qbi_phase_in_range), the _resolve_amt_phaseout_rate
+# precedent. Only MFJ vs non-MFJ matters (QSS→non-MFJ, like the threshold key).
+_QBI_PHASE_IN_RANGE_OBBBA_FROM = 2026
+_QBI_PHASE_IN_RANGE_PRE_2026 = {"mfj": 100000.0, "other": 50000.0}
+_QBI_PHASE_IN_RANGE_2026 = {"mfj": 150000.0, "other": 75000.0}
+
+
+def _qbi_phase_in_range(tax_year, is_mfj: bool, override=None) -> float:
+    """Resolve the §199A phase-in range: a cache override wins, else the
+    statutory schedule by year ($50k/$100k-MFJ ≤2025, $75k/$150k-MFJ TY2026+)."""
+    if override is not None:
+        if isinstance(override, bool) or not isinstance(override, (int, float)) \
+                or not math.isfinite(float(override)) or float(override) <= 0:
+            raise ValueError(
+                f"qbi_phase_in_range override must be a positive number, got {override!r}")
+        return float(override)
+    key = "mfj" if is_mfj else "other"
+    if isinstance(tax_year, int) and not isinstance(tax_year, bool) \
+            and tax_year >= _QBI_PHASE_IN_RANGE_OBBBA_FROM:
+        return _QBI_PHASE_IN_RANGE_2026[key]
+    return _QBI_PHASE_IN_RANGE_PRE_2026[key]
+
+
+def compute_form_8995a(
+    qbi: float,
+    w2_wages: float,
+    ubia: float,
+    is_sstb: bool,
+    taxable_income_before_qbi: float,
+    threshold: float,
+    phase_in_range: float,
+    net_capital_gain: float = 0.0,
+    reit_dividends: float = 0.0,
+    rate: float = 0.20,
+) -> dict:
+    """Form 8995-A QBI deduction with the §199A(b)(2) W-2-wage/UBIA limitation
+    and the §199A(d)(3) SSTB phase-out, for ONE qualified trade or business (N2).
+
+    Inputs are keyed at the TRADE-OR-BUSINESS level — §199A limits apply per
+    trade; a single K-1 can report multiple trades whose combination requires a
+    Reg. §1.199A-4 aggregation election (its own tests). v1 models one trade (or
+    a caller-aggregated combined figure); pass one trade at a time otherwise.
+
+    Regimes (`excess = TI − threshold`, `ratio = min(1, excess/range)`):
+      - excess ≤ 0 → 20% of QBI (no limit; caller usually uses the simplified path).
+      - excess ≥ range (ratio 1): SSTB → $0; non-SSTB → min(20%QBI, wage/UBIA limit).
+      - within range: non-SSTB → 20%QBI reduced by (20%QBI − limit) × ratio; SSTB →
+        reduce QBI/wages/UBIA by (1 − ratio) FIRST (Schedule A), then the same
+        within-range formula (the double haircut).
+    Wage/UBIA limit = max(50% W-2 wages, 25% W-2 wages + 2.5% UBIA).
+    The §199A(a) overall cap (20% × (TI − net capital gain)) applies to the sum.
+
+    Verified vs IRS Form 8995-A instructions + §199A(b)(2)/(3), §199A(d)(3).
+    """
+    if not isinstance(is_sstb, bool):
+        raise ValueError(f"is_sstb must be a bool, got {is_sstb!r}")
+    # QBI may be NEGATIVE (a qualified business loss): accept it and FLOOR the
+    # component at 0 — the loss is carried forward (handled by the caller's
+    # loss_carryforward), never a hard error. _sched_a_amount would wrongly
+    # reject a loss, crashing an over-threshold filer whose trade ran a loss.
+    q = max(0.0, _f2210_amount(qbi, "qbi", allow_negative=True))
+    w = _sched_a_amount(w2_wages, "w2_wages")
+    u = _sched_a_amount(ubia, "ubia")
+    ti = _sched_a_amount(taxable_income_before_qbi, "taxable_income_before_qbi")
+    thr = _sched_a_amount(threshold, "threshold")
+    rng = _sched_a_amount(phase_in_range, "phase_in_range")
+    ncg = _sched_a_amount(net_capital_gain, "net_capital_gain")
+    reit = _sched_a_amount(reit_dividends, "reit_dividends")
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)) \
+            or not math.isfinite(float(rate)) or not (0 < float(rate) <= 1):
+        raise ValueError(f"rate must be a finite fraction in (0, 1], got {rate!r}")
+    rate = float(rate)
+    if rng <= 0:
+        raise ValueError("phase_in_range must be positive")
+
+    excess = max(0.0, ti - thr)
+    ratio = min(1.0, excess / rng) if excess > 0 else 0.0
+    applicable_pct = None
+
+    def _wage_limit(wages, ubia_):
+        return max(0.5 * wages, 0.25 * wages + 0.025 * ubia_)
+
+    if excess <= 0:
+        qbi_component = rate * q
+        wage_ubia_limit = None
+        regime = "below_threshold"
+    elif is_sstb and ratio >= 1.0:
+        qbi_component = 0.0
+        wage_ubia_limit = 0.0
+        regime = "sstb_fully_excluded"
+    else:
+        eff_q, eff_w, eff_u = q, w, u
+        if is_sstb:  # 0 < ratio < 1 — Schedule A applicable-% haircut first
+            applicable_pct = 1.0 - ratio
+            eff_q, eff_w, eff_u = q * applicable_pct, w * applicable_pct, u * applicable_pct
+        tentative = rate * eff_q
+        wage_ubia_limit = _wage_limit(eff_w, eff_u)
+        if ratio >= 1.0:  # non-SSTB above the range: full wage/UBIA limit
+            qbi_component = min(tentative, wage_ubia_limit)
+            regime = "wage_ubia_limited"
+        else:  # within the range: the limit phases in proportionally
+            reduction = max(0.0, tentative - wage_ubia_limit) * ratio
+            qbi_component = tentative - reduction
+            regime = "sstb_phase_in" if is_sstb else "phase_in"
+
+    reit_component = round(rate * reit, 2)
+    total = round(qbi_component + reit_component, 2)
+    overall_cap = round(rate * max(0.0, ti - ncg), 2)
+    deduction = min(total, overall_cap)
+    income_limited = total > overall_cap
+
+    notes = [
+        "Form 8995-A: models ONE qualified trade or business (§199A limits are "
+        "per-trade). Multiple un-aggregated trades are NOT combined here — run "
+        "per trade or make the Reg. §1.199A-4 aggregation election and pass the "
+        "combined QBI / W-2 wages / UBIA. Patron reduction (§199A(b)(7)) and "
+        "§199A(g) DPAD not modeled.",
+    ]
+    if is_sstb and excess > 0:
+        notes.append(
+            "SSTB: fully qualified below the threshold, phased out across the "
+            "range, and $0 above threshold + range. is_sstb is an attested fact "
+            "— a wrong False on an actual SSTB overstates the deduction.")
+
+    return {
+        "qbi_component": round(qbi_component, 2),
+        "wage_ubia_limit": round(wage_ubia_limit, 2) if wage_ubia_limit is not None else None,
+        "reit_component": reit_component,
+        "overall_cap": overall_cap,
+        "income_limited": income_limited,
+        "deduction": round(deduction, 2),
+        "regime": regime,
+        "ratio": round(ratio, 6),
+        "applicable_percentage": round(applicable_pct, 6) if applicable_pct is not None else None,
+        "is_sstb": is_sstb,
+        "notes": notes,
+    }
+
 
 def compute_qbi_deduction(
     qbi_income: float,
@@ -865,8 +1006,14 @@ def compute_qbi_deduction(
     half_se_tax: float = 0.0,
     se_health_insurance: float = 0.0,
     se_retirement: float = 0.0,
+    w2_wages: float = None,
+    ubia: float = None,
+    is_sstb: bool = None,
+    filing_status: str = None,
+    phase_in_range: float = None,
 ) -> dict:
-    """Compute QBI deduction (Form 8995 simplified).
+    """Compute QBI deduction (Form 8995 simplified, or Form 8995-A when over the
+    §199A threshold and the trade's W-2 wages / UBIA / SSTB status are supplied).
 
     Applies the Form 8995 OVERALL cap (lines 11-14): the deduction cannot exceed
     rate x (taxable income before QBI - net capital gain). This cap is on the
@@ -955,9 +1102,36 @@ def compute_qbi_deduction(
     qbi_income_net = qbi_income - se_reductions
 
     qbi_component = max(0, qbi_income_net * rate)
+    loss_carryforward = min(0, qbi_income_net)
+
+    # Form 8995-A (N2): when the filer is OVER the §199A threshold AND the
+    # trade's W-2 wages / UBIA / SSTB status are supplied, replace the simplified
+    # 20%-of-QBI component with the wage/UBIA-limited (and SSTB-phased) component.
+    # Needs taxable income + threshold; absent the wage inputs, the simplified
+    # path + the `over_threshold` warning below is kept (backward compatible).
+    form_8995a = None
+    if (threshold is not None and taxable_income_before_qbi is not None
+            and w2_wages is not None and ubia is not None and is_sstb is not None
+            and qbi_income_net > 0):  # a QBI loss → 0 component (simplified path)
+        _thr8995 = _coerce_numeric(threshold, default=None)
+        _ti8995 = _coerce_numeric(taxable_income_before_qbi, default=None)
+        if _thr8995 is not None and _ti8995 is not None \
+                and math.isfinite(_thr8995) and math.isfinite(_ti8995) \
+                and _ti8995 > _thr8995:
+            is_mfj = _normalize_filing_status(filing_status) == "MFJ" \
+                if filing_status is not None else False
+            rng = phase_in_range if phase_in_range is not None \
+                else _qbi_phase_in_range(tax_year, is_mfj)
+            form_8995a = compute_form_8995a(
+                qbi=qbi_income_net, w2_wages=w2_wages, ubia=ubia, is_sstb=is_sstb,
+                taxable_income_before_qbi=_ti8995, threshold=_thr8995,
+                phase_in_range=rng,
+                net_capital_gain=net_capital_gain if net_capital_gain is not None else 0.0,
+                reit_dividends=0.0, rate=rate)
+            qbi_component = form_8995a["qbi_component"]
+
     reit_component = round(reit_dividends * rate, 2)
     total_deduction = qbi_component + reit_component
-    loss_carryforward = min(0, qbi_income_net)
 
     income_cap = None
     income_limited = False
@@ -988,11 +1162,15 @@ def compute_qbi_deduction(
     if not isinstance(active_qualified_trade, bool):
         raise ValueError(
             f"active_qualified_trade must be a bool, got {active_qualified_trade!r}")
+    # An SSTB above the §199A phase-out is NOT a qualified trade at all, so the
+    # §70105 "active qualified trade" minimum cannot resurrect its $0 deduction.
+    _sstb_excluded = form_8995a is not None and form_8995a["regime"] == "sstb_fully_excluded"
     qbi_minimum_applied = False
     qbi_minimum_note = None
     if (isinstance(tax_year, int) and not isinstance(tax_year, bool)
             and tax_year >= _QBI_MINIMUM_FROM
-            and active_qualified_trade and qbi_income_net > 0):
+            and active_qualified_trade and qbi_income_net > 0
+            and not _sstb_excluded):
         if isinstance(qbi_minimum, dict) \
                 and qbi_minimum.get("income_threshold") is not None \
                 and qbi_minimum.get("amount") is not None:
@@ -1045,12 +1223,18 @@ def compute_qbi_deduction(
     }
     if qbi_minimum_note:
         result["qbi_minimum_note"] = qbi_minimum_note
-    if over_threshold:
+    if form_8995a is not None:
+        # 8995-A was computed — expose its detail and DO NOT emit the
+        # unmodeled-limit warning (the limit is now modeled).
+        result["form_8995a"] = form_8995a
+        result["form_8995a_applied"] = True
+    elif over_threshold:
         result["warning"] = (
             "Taxable income exceeds the Section 199A threshold: Form 8995-A "
             "W-2-wage/UBIA limits and the SSTB phase-out apply but are NOT modeled "
-            "here — the deduction may be overstated (an SSTB phases to $0). "
-            "Verify against Form 8995-A."
+            "here — the deduction may be overstated (an SSTB phases to $0). Supply "
+            "the trade's W-2 wages, UBIA, and SSTB status to compute the limit, "
+            "or verify against Form 8995-A."
         )
     return result
 

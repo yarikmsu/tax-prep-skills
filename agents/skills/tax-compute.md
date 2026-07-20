@@ -531,10 +531,23 @@ Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
   because omitting it for a genuine active business OVERSTATES tax. Taxpayer-
   favorable: it DEGRADES (no floor, `qbi_minimum_note` surfaced) when the cache
   is unfetched — never guess. Surface `qbi_minimum_note` when present.
-- If the result has `over_threshold: true`, surface its `warning`: above the §199A
-  threshold the Form 8995-A W-2-wage/UBIA limits and SSTB phase-out apply and are
-  NOT modeled — the deduction may be overstated (an SSTB phases to $0). Verify
-  against Form 8995-A / tax software before filing.
+- **Over the §199A threshold — compute Form 8995-A (N2).** When `over_threshold`
+  would be true, supply the trade's **W-2 wages, UBIA of qualified property, and
+  SSTB status** so the wage/UBIA limitation and SSTB phase-out are COMPUTED, not
+  warned. Pass `w2_wages`, `ubia`, `is_sstb` (an attested bool — the trade's
+  SSTB determination per §199A(d)(2)), and `filing_status` (drives the phase-in
+  range: $50k/$100k-MFJ ≤TY2025, $75k/$150k-MFJ TY2026+ per OBBBA §70105; a
+  fetched `federal.qbi_phase_in_range.{other,mfj}` override may be passed as
+  `phase_in_range`). Inputs are per **trade or business** — §199A limits are
+  per-trade; a single K-1 with multiple trades needs a Reg. §1.199A-4
+  aggregation election (combine the QBI/wages/UBIA first) or one call per trade.
+  The result carries a `form_8995a` block (regime, wage_ubia_limit,
+  applicable_percentage for an SSTB in the range) and `form_8995a_applied: true`,
+  and the unmodeled-limit `warning` is suppressed.
+- If `over_threshold: true` but the wage/UBIA/SSTB inputs are NOT available,
+  the simplified path is kept and the `warning` is surfaced: the deduction may
+  be overstated (an SSTB phases to $0) — verify against Form 8995-A / tax
+  software before filing, or supply the trade's wages/UBIA to compute it.
 
 ### Step 6: Compute Tax (Form 1040 Line 16)
 
