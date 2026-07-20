@@ -453,6 +453,15 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   indexed annually — R&TC §17077; FTB publishes them with the exemption
   credits). Unfetched → `compute_ca_itemized` skips the phase-out with a
   loud overstatement note for high-AGI itemizers.
+- For CA **when the taxpayer has an ISO exercise** (`has_iso_exercise`): Search
+  `"California Schedule P 540 {year} AMT exemption amount phase-out"` → populate
+  `state.amt.exemption` and `state.amt.phaseout_start` (both keyed
+  `single`/`mfj`/`mfs`/`hoh`, indexed annually — FTB publishes them in the
+  Schedule P instructions). Record the URL under `_sources` (K2). The 7% TMT
+  rate and 25% phase-out are statutory and coded in `compute_ca_schedule_p`;
+  only these indexed figures are fetched. Unfetched HARD-ERRORS at compute for a
+  CA ISO exerciser (never a guessed exemption that would zero the CA AMT). Leave
+  all-null for a non-ISO CA return.
 - For NY: Search `"New York {year} income tax brackets"`
 - For other states: Search `"{state} {year} income tax rates"`
 

@@ -402,6 +402,16 @@
     },
     "ca_tax_after_credits": 0,
     "ca_mental_health_surcharge": 0,
+    "schedule_p": {
+      "_include_if": "has_iso_exercise (CA AMT)",
+      "_note": "CA Schedule P (540) AMT — compute_ca_schedule_p (7% TMT, 25% exemption phase-out per R&TC §17062, exemption/phaseout_start from state.amt). ca_amt is ADDED to ca_total_tax. carryforward_to_next_year is the deferral-attributable (ISO) CA AMT credit rolled forward by /tax-rollover (a SEPARATE carryforward from the federal Form 8801).",
+      "ca_amti": 0,
+      "ca_exemption_allowed": 0,
+      "ca_tmt": 0,
+      "ca_amt": 0,
+      "iso_bargain_element": 0,
+      "carryforward_to_next_year": 0
+    },
     "ca_total_tax": 0,
     "ca_withholding_box17": 0,
     "ca_sdi_box14": 0,

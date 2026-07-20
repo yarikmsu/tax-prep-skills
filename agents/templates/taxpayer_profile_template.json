@@ -118,7 +118,9 @@
     "estimated_payments_applied": 0,
     "ira_basis": 0,
     "amt_credit_carryforward": 0,
+    "ca_amt_credit_carryforward": 0,
     "_comment_amt_credit": "Form 8801 minimum tax credit from prior-year deferral-item AMT (ISO exercises). Rolled forward by /tax-rollover from prior result.json form_6251.form_8801_carryforward_to_next_year; consumed via compute_form_8801_credit (Schedule 3 line 6b).",
+    "_comment_ca_amt_credit": "CA Schedule P (540) AMT credit from prior-year deferral-item CA AMT (ISO exercises). A SEPARATE carryforward from the federal one (CA exemption/TMT differ). Rolled forward by /tax-rollover from prior result.json california_540.schedule_p.carryforward_to_next_year.",
     "_comment_ira_basis": "Form 8606 line 14 nondeductible traditional-IRA basis carried from the prior year. Rolled forward by /tax-rollover from prior result.json form_8606.basis_remaining."
   },
   "estimated_payments": {

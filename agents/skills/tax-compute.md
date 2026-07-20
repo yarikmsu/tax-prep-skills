@@ -601,8 +601,9 @@ $250-450K band):
   Worksheet A base in Step 7 is line 18 = line 16 + Schedule 2 line 1 —
   omitting the AMT from it under-allows nonrefundable CTC and spills the
   difference into refundable ACTC. Copy the result into the `form_6251`
-  section; surface the CA Schedule P note VERBATIM (CA AMT is NOT computed
-  — a CA ISO exerciser must verify in software).
+  section. **CA AMT is now computed** — a CA ISO exerciser's Schedule P (540)
+  runs in the Step 10 California sub-steps (`compute_ca_schedule_p`), so the CA
+  side is no longer a verify-in-software note.
 - **Form 8801 prior credit:** when `prior_year.amt_credit_carryforward` >
   0, run `compute_form_8801_credit(prior_carryforward, regular_tax, tmt,
   nonrefundable_credits)` where `nonrefundable_credits` = ALL nonrefundable
@@ -869,7 +870,26 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
 7. CA exemption credits (personal + dependent, amounts from tax_law JSON)
 8. CA tax after credits
 9. Mental health surcharge (1% on income > $1M)
+9.5. **CA Schedule P (540) AMT** — run `compute_ca_schedule_p()` whenever
+    `has_iso_exercise` (the same trigger as federal Form 6251). The CA analogue
+    of Form 6251: pass `ca_taxable_income` (Form 540 line 19), `ca_regular_tax`
+    (the CA tax before AMT — step 8's tax after credits), the CA
+    `filing_status`, and `exemption` / `phaseout_start` from **`state.amt`**
+    keyed by status (map MFS→`mfs`, QSS→`mfj`) — unfetched HARD-ERRORS (never a
+    guessed exemption). Pass `iso_bargain_element` (same CA-conforming spread as
+    federal — CA conforms to the ISO adjustment) and any other CA Schedule P
+    preference/adjustment items via `ca_preference_adjustments`. The 7% TMT rate
+    and 25% phase-out are statutory (in the function). **`ca_amt` is ADDED to
+    the CA tax** (write the `schedule_p` block: ca_amti / ca_exemption_allowed /
+    ca_tmt / ca_amt / iso_bargain_element / carryforward_to_next_year). The
+    `schedule_p_carryforward` is the deferral-attributable (ISO) CA AMT credit —
+    write it to `california_540.schedule_p.carryforward_to_next_year` so
+    /tax-rollover carries it to `prior_year.ca_amt_credit_carryforward` (a
+    SEPARATE carryforward from the federal Form 8801). A non-ISO CA return skips
+    this step (no `schedule_p` block).
 10. CA withholding from W-2 Box 17
+    (`ca_total_tax` = CA tax after credits + mental-health surcharge + `ca_amt`
+    from step 9.5 when present.)
 11. Excess SDI/VPDI credit (Form 540 line 74): run `compute_excess_sdi()`
     for EVERY person with any CA-wage W-2 — no trigger condition (cheap pure
     function, zeros when nothing is wrong; conditional triggers miss

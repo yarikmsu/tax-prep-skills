@@ -68,6 +68,18 @@ FIELD_MAP: dict[str, dict] = {
         "target_path": "prior_year.amt_credit_carryforward",
         "transform": "abs",
     },
+    "ca_amt_credit_carryforward": {
+        "category": "carryforwards",
+        # CA Schedule P (540) analogue of the federal Form 8801 carryforward
+        # (N1): this year's deferral-attributable CA AMT
+        # (compute_ca_schedule_p schedule_p_carryforward) PLUS any unused prior
+        # CA credit. A separate carryforward from the federal one — the CA
+        # exemption and TMT differ, so the CA deferral AMT is its own figure.
+        "source_path": "california_540.schedule_p.carryforward_to_next_year",
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.ca_amt_credit_carryforward",
+        "transform": "abs",
+    },
     # Category 2: Static identity
     "primary_first_name": {
         "category": "identity",

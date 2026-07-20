@@ -31,6 +31,7 @@ from agents.lib.tax_computations import (
     compute_form_2210,
     compute_schedule_a,
     compute_ca_itemized,
+    compute_ca_schedule_p,
     compute_schedule_1a,
     compute_charitable_non_itemizer,
     compute_espp_disposition,
@@ -3587,3 +3588,141 @@ class TestComputeUnderpaymentInterest:
         assert r["computed"] is True
         assert r["interest"] == 409.20
         assert r["due_date"] == "2026-04-15"
+
+
+class TestCaSchedulePAMT:
+    """CA Schedule P (540) AMT (N1) — compute_ca_schedule_p. Expected values
+    hand-computed from R&TC §17062 (7% flat TMT, 25% exemption phase-out) with
+    representative CA 2025 indexed figures (single exemption $92,749, phase-out
+    start $347,808; MFJ exemption $123,667, phase-out start $463,809)."""
+
+    def test_iso_exercise_triggers_ca_amt(self):
+        """CA taxable $300K + ISO spread $200K, CA regular tax $25K.
+        AMTI = 500,000; exemption 92,749 − 0.25×(500,000−347,808) = 54,701;
+        TMT = 0.07×(500,000−54,701) = 31,170.93; CA AMT = 31,170.93 − 25,000
+        = 6,170.93 (all deferral-attributable)."""
+        r = compute_ca_schedule_p(
+            ca_taxable_income=300000, ca_regular_tax=25000,
+            filing_status="Single", exemption=92749, phaseout_start=347808,
+            iso_bargain_element=200000)
+        assert r["ca_amti"] == 500000.0
+        assert r["ca_exemption_allowed"] == 54701.0
+        assert r["ca_tmt"] == 31170.93
+        assert r["ca_amt"] == 6170.93
+        assert r["schedule_p_carryforward"] == 6170.93
+
+    def test_no_iso_no_ca_amt(self):
+        """Same regular tax, no ISO: TMT (14,507.57) < regular tax (25,000) →
+        $0 CA AMT and $0 carryforward. Pins the 'no-ISO CA return unchanged'
+        acceptance."""
+        r = compute_ca_schedule_p(
+            ca_taxable_income=300000, ca_regular_tax=25000,
+            filing_status="Single", exemption=92749, phaseout_start=347808,
+            iso_bargain_element=0)
+        assert r["ca_amt"] == 0.0
+        assert r["schedule_p_carryforward"] == 0.0
+
+    def test_exemption_fully_phased_out(self):
+        """AMTI far above the phase-out ceiling zeroes the exemption. Single
+        ceiling = 347,808 + 92,749/0.25 = 718,804. AMTI 800,000 → exemption 0;
+        TMT = 0.07×800,000 = 56,000."""
+        r = compute_ca_schedule_p(
+            ca_taxable_income=600000, ca_regular_tax=40000,
+            filing_status="Single", exemption=92749, phaseout_start=347808,
+            iso_bargain_element=200000)
+        assert r["ca_exemption_allowed"] == 0.0
+        assert r["ca_tmt"] == 56000.0
+        assert r["ca_amt"] == 16000.0
+
+    def test_mfj_status_uses_its_exemption(self):
+        r = compute_ca_schedule_p(
+            ca_taxable_income=400000, ca_regular_tax=30000,
+            filing_status="MFJ", exemption=123667, phaseout_start=463809,
+            iso_bargain_element=200000)
+        # AMTI 600,000; exemption 123,667 − 0.25×(600,000−463,809)=123,667−34,047.75
+        # = 89,619.25; TMT 0.07×(600,000−89,619.25)=0.07×510,380.75=35,726.65;
+        # CA AMT 35,726.65 − 30,000 = 5,726.65
+        assert r["ca_exemption_allowed"] == 89619.25
+        assert r["ca_tmt"] == 35726.65
+        assert r["ca_amt"] == 5726.65
+
+    def test_deferral_split_isolates_iso_portion(self):
+        """When there are non-ISO CA preferences too, only the ISO-attributable
+        AMT is the carryforward. Adjustments 50K (exclusion) + ISO 200K, regular
+        tax 15K so the exclusion part alone produces AMT.
+        Without ISO: AMTI 350,000 (just over the 347,808 phase-out start);
+        exemption 92,749−0.25×(350,000−347,808)=92,201; TMT 0.07×(350,000−92,201)
+        =18,045.93; AMT_excl 18,045.93−15,000=3,045.93.
+        Full: AMTI 550,000; exemption 92,749−0.25×(550,000−347,808)=42,201;
+        TMT 0.07×(550,000−42,201)=35,545.93; AMT 35,545.93−15,000=20,545.93.
+        Carryforward = 20,545.93 − 3,045.93 = 17,500.00 (only the ISO delta)."""
+        r = compute_ca_schedule_p(
+            ca_taxable_income=300000, ca_regular_tax=15000,
+            filing_status="Single", exemption=92749, phaseout_start=347808,
+            ca_preference_adjustments=50000, iso_bargain_element=200000)
+        assert r["ca_amt"] == 20545.93
+        assert r["schedule_p_carryforward"] == 17500.00
+        assert r["ca_amt"] > r["schedule_p_carryforward"]  # exclusion part not in cf
+
+    def test_unfetched_exemption_hard_errors(self):
+        with pytest.raises(ValueError, match="unfetched"):
+            compute_ca_schedule_p(
+                300000, 25000, "Single", None, 347808, iso_bargain_element=200000)
+
+    def test_unfetched_phaseout_start_hard_errors(self):
+        with pytest.raises(ValueError, match="unfetched"):
+            compute_ca_schedule_p(
+                300000, 25000, "Single", 92749, None, iso_bargain_element=200000)
+
+    def test_negative_ca_taxable_income_accepted(self):
+        """Deductions exceeding CA AGI → negative line 19; AMTI still adds the
+        ISO spread. AMTI = −5,000 + 150,000 = 145,000; exemption 123,667 (no
+        phase-out); TMT 0.07×(145,000−123,667) = 1,493.31; regular 0 → AMT."""
+        r = compute_ca_schedule_p(
+            ca_taxable_income=-5000, ca_regular_tax=0, filing_status="MFJ",
+            exemption=123667, phaseout_start=463809, iso_bargain_element=150000)
+        assert r["ca_amt"] == 1493.31
+
+    def test_nan_rate_rejected(self):
+        with pytest.raises(ValueError):
+            compute_ca_schedule_p(
+                300000, 25000, "Single", 92749, 347808,
+                iso_bargain_element=200000, tmt_rate=float("nan"))
+
+    def test_iso_bargain_echoed(self):
+        r = compute_ca_schedule_p(
+            300000, 25000, "Single", 92749, 347808, iso_bargain_element=200000)
+        assert r["iso_bargain_element"] == 200000.0
+
+    def test_breakdown_reconciles(self):
+        """Self-review: the returned breakdown must reconcile — ca_amt ==
+        round(ca_tmt − ca_regular_tax) exactly (rounded at source), even at a
+        rounding boundary. Odd figures that leave a half-cent in the raw TMT."""
+        r = compute_ca_schedule_p(
+            ca_taxable_income=321433, ca_regular_tax=18761.07,
+            filing_status="Single", exemption=92749, phaseout_start=347808,
+            iso_bargain_element=133337)
+        assert r["ca_amt"] == round(r["ca_tmt"] - r["ca_regular_tax"], 2)
+
+
+class TestCaSchedulePMfsCaveat:
+    """MFS-past-ceiling caveat (self-review addition) — CA exemption phases to
+    $0 (modeled), but the §55(d)(3) MFS recapture add-back is flagged not
+    modeled (unconfirmed on Schedule P; inventing it would overstate)."""
+
+    def test_mfs_past_ceiling_flags_recapture_caveat(self):
+        # MFS 2024: exemption 58,111, phase-out start 217,924, ceiling
+        # 217,924 + 58,111/0.25 = 450,368. AMTI 500,000 > ceiling.
+        r = compute_ca_schedule_p(
+            ca_taxable_income=300000, ca_regular_tax=10000,
+            filing_status="MFS", exemption=58111, phaseout_start=217924,
+            iso_bargain_element=200000)
+        assert r["ca_exemption_allowed"] == 0.0  # fully phased out (modeled)
+        assert any("§55(d)(3)" in n and "recapture" in n for n in r["notes"])
+
+    def test_mfs_below_ceiling_no_caveat(self):
+        r = compute_ca_schedule_p(
+            ca_taxable_income=150000, ca_regular_tax=5000,
+            filing_status="MFS", exemption=58111, phaseout_start=217924,
+            iso_bargain_element=50000)
+        assert not any("recapture" in n for n in r["notes"])

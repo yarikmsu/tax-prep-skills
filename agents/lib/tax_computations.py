@@ -2702,6 +2702,146 @@ def compute_form_6251(
     }
 
 
+# CA Schedule P (540) statutory-structural constants (R&TC §17062, §17062.1
+# conforming to IRC §§55-59 as of 2015-01-01). The 7% tentative-minimum-tax
+# rate and the 25% exemption phase-out are set in statute and NOT indexed —
+# inline with citation, like the 1% mental-health surcharge. CA does NOT adopt
+# OBBBA §70107 (the federal 50% phase-out from TY2026) — its conformity date is
+# fixed at 2015, so CA stays 25% in every year.
+_CA_AMT_TMT_RATE = 0.07
+_CA_AMT_PHASEOUT_RATE = 0.25
+
+
+def compute_ca_schedule_p(
+    ca_taxable_income: float,
+    ca_regular_tax: float,
+    filing_status: str,
+    exemption: float,
+    phaseout_start: float,
+    ca_preference_adjustments: float = 0.0,
+    iso_bargain_element: float = 0.0,
+    tmt_rate: float = _CA_AMT_TMT_RATE,
+    phaseout_rate: float = _CA_AMT_PHASEOUT_RATE,
+) -> dict:
+    """California Schedule P (540) alternative minimum tax (N1).
+
+    The CA analogue of federal Form 6251 — v1 models the same ISO-exerciser
+    path, since a CA equity-comp filer who triggers federal AMT on an ISO
+    exercise almost always triggers CA AMT on the SAME spread (CA conforms to
+    the ISO adjustment). CA differs from the federal computation in three ways,
+    all reflected here: a FLAT 7% tentative-minimum-tax rate (no 26/28 tiers, so
+    no rate_28 breakpoint), NO Part III capital-gains coordination (CA taxes
+    capital gains as ordinary income), and a fixed 25% exemption phase-out that
+    does NOT follow OBBBA §70107 (CA's conformity date is 2015).
+
+    Args:
+        ca_taxable_income: Form 540 line 19 (CA regular taxable income) — the
+            Schedule P Part I line 1 starting point. May be negative (accepted).
+        ca_regular_tax: the CA regular tax before AMT (the Schedule P comparison
+            base) — CA AMT is the excess of TMT over this.
+        exemption / phaseout_start: the CA AMT exemption and its phase-out
+            threshold for the filing status, from state.amt in the tax_law
+            cache (INDEXED annually — REQUIRED, never hardcoded; an unfetched
+            table hard-errors rather than zeroing a CA ISO exerciser's AMT).
+        ca_preference_adjustments: net CA Schedule P Part I adjustments and
+            preference items OTHER than the ISO spread (signed) — scoped v1 to
+            what the workspace already carries. Excludes the ISO spread, which
+            is passed separately so the deferral/exclusion carryforward split
+            can be computed.
+        iso_bargain_element: the ISO exercise spread (FMV − strike for shares
+            not sold in the same year) — the CA deferral item that generates the
+            Schedule P AMT credit carryforward.
+
+    Returns dict: ca_amti, ca_exemption_allowed, ca_tmt, ca_regular_tax,
+    ca_amt (added to Form 540 tax), schedule_p_carryforward (deferral-
+    attributable CA AMT — persists to next year via /tax-rollover, the Form
+    8801 pattern), iso_bargain_element echo, notes.
+    """
+    fs = _normalize_filing_status(filing_status)
+    for what, v in (("exemption", exemption), ("phaseout_start", phaseout_start)):
+        if v is None:
+            raise ValueError(
+                f"state.amt.{what} is unfetched — refusing to compute CA "
+                "Schedule P without the indexed table (a guessed exemption "
+                "would silently zero the CA AMT for an ISO exerciser); fetch "
+                "via /tax-setup")
+    ti = _f2210_amount(ca_taxable_income, "ca_taxable_income", allow_negative=True)
+    rtax = _sched_a_amount(ca_regular_tax, "ca_regular_tax")
+    ex = _sched_a_amount(exemption, "exemption")
+    ph_start = _sched_a_amount(phaseout_start, "phaseout_start")
+    adj = _f2210_amount(ca_preference_adjustments,
+                        "ca_preference_adjustments", allow_negative=True)
+    iso = _sched_a_amount(iso_bargain_element, "iso_bargain_element")
+    for what, r in (("tmt_rate", tmt_rate), ("phaseout_rate", phaseout_rate)):
+        if isinstance(r, bool) or not isinstance(r, (int, float)) \
+                or not math.isfinite(float(r)) or not (0 < float(r) <= 1):
+            raise ValueError(f"{what} must be a finite fraction in (0, 1], got {r!r}")
+    tmt_rate = float(tmt_rate)
+    phaseout_rate = float(phaseout_rate)
+
+    def _tmt(iso_amount: float) -> float:
+        amti = ti + adj + iso_amount
+        exemption_allowed = max(0.0, ex - phaseout_rate * max(0.0, amti - ph_start))
+        return tmt_rate * max(0.0, amti - exemption_allowed)
+
+    # Round the TMT and the regular tax at source so the returned breakdown
+    # reconciles: ca_amt == round(ca_tmt − ca_regular_tax) exactly (the §6651
+    # breakdown-reconciliation lesson — deriving ca_amt from the UNROUNDED tmt
+    # while displaying a rounded ca_tmt can drift a cent at a boundary). The tax
+    # form itself works with the rounded TMT, so this is also more form-accurate.
+    rtax_r = round(rtax, 2)
+    tmt_r = round(_tmt(iso), 2)
+    ca_amt = round(max(0.0, tmt_r - rtax_r), 2)
+    # Schedule P AMT credit: like Form 8801, the credit equals CA AMT
+    # attributable to DEFERRAL items — refigure with exclusion items only (v1's
+    # only deferral item is the ISO spread), so the split is the with/without-
+    # ISO delta. Both AMT figures come from rounded TMTs for the same reason.
+    amt_exclusion_only = round(max(0.0, round(_tmt(0.0), 2) - rtax_r), 2)
+    carryforward = round(max(0.0, ca_amt - amt_exclusion_only), 2)
+
+    amti_full = ti + adj + iso
+    exemption_allowed = max(0.0, ex - phaseout_rate * max(0.0, amti_full - ph_start))
+    notes = [
+        "v1 models the CA ISO-exerciser path (7% flat TMT, 25% exemption "
+        "phase-out per R&TC §17062); other CA Schedule P preference/adjustment "
+        "items go through ca_preference_adjustments and are the caller's to "
+        "supply. CA taxes capital gains as ordinary income, so there is no "
+        "federal-style Part III coordination.",
+    ]
+    # MFS caveat: the federal §55(d)(3) MFS exemption-RECAPTURE addback (AMTI
+    # increased past the phase-out ceiling, which compute_form_6251 models) is
+    # NOT applied here — CA's exemption still phases to $0 at the ceiling
+    # (modeled), but whether Schedule P carries the additional AMTI add-back is
+    # not confirmed in the FTB instructions, so it is flagged rather than
+    # invented (inventing it would OVERstate; the exemption-to-zero is the
+    # modeled, verified part). Fires only for an MFS filer past the ceiling.
+    if fs == "MFS":
+        ceiling = ph_start + ex / phaseout_rate
+        if amti_full > ceiling:
+            notes.append(
+                "MFS filer past the exemption phase-out ceiling: the CA "
+                "exemption is fully phased out (modeled), but any federal-style "
+                "§55(d)(3) MFS AMTI recapture add-back is NOT modeled — verify "
+                "the MFS exemption worksheet on Schedule P; the CA AMT may be "
+                "understated.")
+    if ca_amt > 0:
+        notes.append(
+            f"CA AMT of ${ca_amt:,.2f} applies (added to the Form 540 tax). "
+            f"${carryforward:,.2f} of it is deferral-attributable (ISO) and "
+            "becomes a Schedule P AMT credit carryforward — record it via "
+            "/tax-rollover; losing it forfeits the money permanently.")
+    return {
+        "ca_amti": round(amti_full, 2),
+        "ca_exemption_allowed": round(exemption_allowed, 2),
+        "ca_tmt": tmt_r,
+        "ca_regular_tax": rtax_r,
+        "ca_amt": ca_amt,
+        "schedule_p_carryforward": carryforward,
+        "iso_bargain_element": round(iso, 2),
+        "notes": notes,
+    }
+
+
 def compute_form_8801_credit(
     prior_carryforward: float,
     regular_tax: float,
@@ -4122,3 +4262,11 @@ if __name__ == "__main__":
         [{"effective_from": "2026-04-01", "annual_rate": 0.08}])
     print(f"Partial (only Q2 cached): ${_part['interest']:,.2f} through "
           f"{_part['covered_through']} (complete={_part['complete']})")
+
+    print("\n=== CA Schedule P (540) AMT Test (N1) ===")
+    _cap = compute_ca_schedule_p(
+        ca_taxable_income=300000, ca_regular_tax=25000, filing_status="Single",
+        exemption=92749, phaseout_start=347808, iso_bargain_element=200000)
+    print(f"CA taxable $300K, ISO spread $200K, CA regular tax $25K: "
+          f"CA AMT ${_cap['ca_amt']:,.2f}, carryforward "
+          f"${_cap['schedule_p_carryforward']:,.2f}")

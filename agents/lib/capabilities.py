@@ -107,12 +107,16 @@ RULES: "tuple[Rule, ...]" = (
          "modeled (and the dependent may have their own filing requirement)."),
     # --- MANUAL: the skills hand-compute these from worksheets; flag loudly ---
     Rule("iso_exercise", "has_iso_exercise", MANUAL,
-         "ISO exercise (incentive stock options)", "CA Schedule P (CA AMT)",
+         "ISO exercise (incentive stock options)", "Form 6251 + CA Schedule P",
          "Federal Form 6251 AMT (incl. the ISO bargain element and the Form "
-         "8801 credit carryforward) IS computed by /tax-compute — but CA has "
-         "its own AMT (Schedule P, 7% flat, different exemption) which is "
-         "NOT computed; a CA ISO exerciser must verify the CA side in tax "
-         "software."),
+         "8801 credit carryforward) AND CA Schedule P (540) AMT (7% flat TMT, "
+         "25% exemption phase-out, the CA Schedule P AMT credit carryforward) "
+         "ARE both computed by /tax-compute from the fetched federal.amt and "
+         "state.amt tables. Scope: the ISO-exerciser path — other Form 6251 / "
+         "Schedule P preference and adjustment items (depreciation, NOL, "
+         "private-activity-bond interest, other CA adjustments) are the "
+         "caller's to supply and are otherwise not modeled; verify a complex "
+         "AMT return in tax software."),
     Rule("education_credits", "has_education_expenses", MANUAL,
          "Education expenses", "Form 8863",
          "AOTC/LLC amounts and MAGI phase-outs ARE computed by /tax-compute "
