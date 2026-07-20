@@ -20,6 +20,7 @@ from agents.lib.tax_computations import (
     compute_se_tax,
     compute_additional_medicare,
     compute_excess_sdi,
+    compute_form_8889,
     compute_excess_ss_withholding,
     compute_ftc_limitation,
     compute_child_tax_credit,
@@ -3856,3 +3857,75 @@ class TestQBIDeductionForm8995AIntegration:
             threshold=383900, w2_wages=0, ubia=0, is_sstb=False)
         assert r.get("form_8995a_applied") is None
         assert r["qbi_component"] == 20000.0
+
+
+class TestForm8889HSA:
+    """Form 8889 return-side HSA limit test (N3a). 2025 limits: self-only
+    $4,300, family $8,550, catch-up $1,000. Hand-computed from §223(b)."""
+
+    def test_full_year_no_excess(self):
+        r = compute_form_8889("family", 12, 5000, 3000, 4300, 8550)
+        assert r["allowed_limit"] == 8550.0
+        assert r["hsa_deduction"] == 5000.0
+        assert r["excess_contribution"] == 0.0
+
+    def test_partial_year_full_contribution_catches_excess(self):
+        """THE bias inversion: 6 months eligible, contributed the full $4,300
+        self-only limit → $2,150 excess + $129 §4973 excise that a full-year
+        assumption would MISS (understatement)."""
+        r = compute_form_8889("self_only", 6, 4300, 0, 4300, 8550)
+        assert r["allowed_limit"] == 2150.0
+        assert r["excess_contribution"] == 2150.0
+        assert r["excise_tax"] == 129.0
+
+    def test_last_month_rule_full_limit_with_testing_period(self):
+        r = compute_form_8889("self_only", 1, 4300, 0, 4300, 8550,
+                              last_month_rule=True)
+        assert r["allowed_limit"] == 4300.0
+        assert r["excess_contribution"] == 0.0
+        assert r["last_month_rule_applied"] is True
+        assert any("TESTING PERIOD" in n for n in r["notes"])
+
+    def test_catch_up_full_year(self):
+        r = compute_form_8889("self_only", 12, 5300, 0, 4300, 8550, age_55_plus=True)
+        assert r["allowed_limit"] == 5300.0
+
+    def test_catch_up_prorated_partial_year(self):
+        """(4,300 + 1,000) × 6/12 = 2,650; contributed 3,000 → 350 excess."""
+        r = compute_form_8889("self_only", 6, 3000, 0, 4300, 8550, age_55_plus=True)
+        assert r["allowed_limit"] == 2650.0
+        assert r["excess_contribution"] == 350.0
+
+    def test_family_split_between_spouses(self):
+        r = compute_form_8889("family", 12, 4000, 0, 4300, 8550, family_limit_share=0.5)
+        assert r["allowed_limit"] == 4275.0
+
+    def test_family_no_split_caveat(self):
+        r = compute_form_8889("family", 12, 4000, 0, 4300, 8550)
+        assert any("SPLIT between them" in n for n in r["notes"])
+
+    def test_employer_over_contribution_taxable(self):
+        r = compute_form_8889("self_only", 12, 0, 5000, 4300, 8550)
+        assert r["excess_contribution"] == 700.0
+        assert r["excess_employer_taxable"] == 700.0
+
+    def test_none_coverage_zero_limit(self):
+        r = compute_form_8889("none", 0, 1000, 0, 4300, 8550)
+        assert r["allowed_limit"] == 0.0
+        assert r["excess_contribution"] == 1000.0
+
+    def test_bad_coverage_type_rejected(self):
+        with pytest.raises(ValueError, match="coverage_type"):
+            compute_form_8889("bogus", 12, 0, 0, 4300, 8550)
+
+    def test_bad_months_rejected(self):
+        with pytest.raises(ValueError, match="eligible_months"):
+            compute_form_8889("self_only", 13, 0, 0, 4300, 8550)
+
+    def test_bool_month_rejected(self):
+        with pytest.raises(ValueError):
+            compute_form_8889("self_only", True, 0, 0, 4300, 8550)
+
+    def test_nan_contribution_rejected(self):
+        with pytest.raises(ValueError):
+            compute_form_8889("self_only", 12, float("nan"), 0, 4300, 8550)

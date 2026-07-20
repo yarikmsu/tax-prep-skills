@@ -318,10 +318,25 @@ not fully. A clean backdoor (no other pre-tax traditional IRA) converts tax-free
 Line 10: Adjustments to income from Schedule 1 Part II:
   - IRA deduction (check eligibility based on employer plan, MAGI, filing status)
   - SE tax deduction (half of SE tax, if Schedule C profit)
-  - HSA deduction (personal contributions beyond employer)
+  - HSA deduction (personal contributions beyond employer) — see the Form 8889
+    return-side test below
   - Student loan interest (if applicable)
 Line 11: AGI = Line 9 - Line 10
 ```
+
+**Form 8889 HSA return-side test (`has_hsa`):** run `compute_form_8889()` from
+`agents/lib/tax_computations.py` to get the HSA deduction (line 13) AND catch an
+EXCESS contribution + its §4973 6% excise. Pass `coverage_type` /
+`eligible_months` / `last_month_rule` / `family_limit_share` from
+`hsa_detail`, the employee + employer (W-2 box 12 code W) contributions, and the
+`hsa_limits` (self_only / family / catch_up_55_plus) from `tax_law_{year}.json`.
+**Do NOT assume full-year eligibility:** on the return side, comparing
+contributions against the FULL annual limit when the taxpayer was covered only
+part of the year MISSES a real excess + its excise (an understatement — the
+inverse of the planning-side bias). If `hsa_detail.eligible_months` is not
+available, keep the HSA excess check MANUAL (note it) rather than assume 12.
+Surface `excess_contribution` / `excise_tax` / the testing-period note; the
+`hsa_deduction` feeds Schedule 1 line 13.
 
 ⚠️ **OBBBA tips / overtime / car-loan / senior are NOT here.** They are
 **Schedule 1-A deductions taken BELOW AGI** (Form 1040 line 13b), computed in

@@ -1716,6 +1716,145 @@ def _prorated_mortgage_interest(interest: float, avg_balance, limit: float,
     return interest * limit / bal
 
 
+# §4973 excise tax on excess HSA contributions — statutory 6%, not indexed.
+_HSA_EXCISE_RATE = 0.06
+
+
+def compute_form_8889(
+    coverage_type: str,
+    eligible_months: int,
+    employee_contributions: float,
+    employer_contributions: float,
+    self_only_limit: float,
+    family_limit: float,
+    age_55_plus: bool = False,
+    catch_up_amount: float = 1000.0,
+    last_month_rule: bool = False,
+    family_limit_share: float = None,
+) -> dict:
+    """Form 8889 return-side HSA limit test (N3): the §223(b) contribution limit
+    vs actual contributions, the HSA deduction (line 13), and any EXCESS
+    contribution + its §4973 6% excise.
+
+    The load-bearing point (bias inversion): on the RETURN side, assuming
+    full-year HDHP eligibility when the taxpayer was covered only part of the
+    year OVERSTATES the limit and MISSES a real excess + its excise (an
+    understatement). So the limit here is computed from the ACTUAL eligible
+    MONTHS (§223(b)(1)–(3) monthly limitation), NOT the full annual limit —
+    unless the §223(b)(8) last-month rule is attested (eligible on Dec 1 → full
+    annual limit, with the testing-period trap flagged). The caller must supply
+    `eligible_months` or `last_month_rule`; a full-year filer passes
+    `eligible_months=12`.
+
+    Args:
+        coverage_type: "self_only" | "family" | "none" (none → $0 limit).
+        eligible_months: months (0–12) the taxpayer was an eligible individual
+            (HDHP coverage on the FIRST of the month, no disqualifying coverage).
+        employee_contributions: contributions the taxpayer made directly (Form
+            8889 line 2 — the deductible ones).
+        employer_contributions: employer + cafeteria-plan contributions (W-2 box
+            12 code W, line 9) — already excluded from income, not deductible.
+        self_only_limit / family_limit: the annual §223(b)(2) limits for the year
+            (fetched federal.hsa_limits — REQUIRED, indexed, never guessed).
+        age_55_plus: the §223(b)(3) $1,000 catch-up (also monthly-prorated).
+        last_month_rule: §223(b)(8) — eligible on Dec 1 → treated eligible all
+            year (full annual limit). Flags the testing-period trap.
+        family_limit_share: for married-both-HDHP with family coverage, the
+            portion of the family limit allocated to THIS spouse (a fraction
+            0–1). Default None → full family limit (single-HSA-holder case);
+            a couple must split it and this is caveated.
+
+    Returns dict: allowed_limit, total_contributions, hsa_deduction (line 13),
+    excess_contribution, excise_tax (§4973 6%), excess_employer_taxable, notes.
+    """
+    ct = (coverage_type or "").strip().lower()
+    if ct not in ("self_only", "family", "none"):
+        raise ValueError(
+            f"coverage_type must be self_only / family / none, got {coverage_type!r}")
+    if isinstance(eligible_months, bool) or not isinstance(eligible_months, int) \
+            or not (0 <= eligible_months <= 12):
+        raise ValueError(
+            f"eligible_months must be an int 0–12, got {eligible_months!r}")
+    for name, flag in (("age_55_plus", age_55_plus),
+                       ("last_month_rule", last_month_rule)):
+        if not isinstance(flag, bool):
+            raise ValueError(f"{name} must be a bool, got {flag!r}")
+    emp = _sched_a_amount(employee_contributions, "employee_contributions")
+    er = _sched_a_amount(employer_contributions, "employer_contributions")
+    so_limit = _sched_a_amount(self_only_limit, "self_only_limit")
+    fam_limit = _sched_a_amount(family_limit, "family_limit")
+    catch = _sched_a_amount(catch_up_amount, "catch_up_amount")
+
+    base_annual = {"self_only": so_limit, "family": fam_limit, "none": 0.0}[ct]
+    if ct == "family" and family_limit_share is not None:
+        share = _sched_a_amount(family_limit_share, "family_limit_share")
+        if share > 1:
+            raise ValueError(f"family_limit_share must be a fraction ≤ 1, got {share}")
+        base_annual = round(base_annual * share, 2)
+
+    notes = []
+    if last_month_rule and ct != "none":
+        # §223(b)(8): full annual limit regardless of partial-year eligibility.
+        allowed_limit = round(base_annual + (catch if age_55_plus else 0.0), 2)
+        notes.append(
+            "§223(b)(8) last-month rule applied: full annual limit despite "
+            "partial-year eligibility. TESTING PERIOD — you must remain an "
+            "eligible individual through the last day of the 12th month after "
+            "this December, or the excess is included in income + a 10% "
+            "additional tax (a separate exposure not computed here).")
+    else:
+        # Monthly limitation: 1/12 of the annual limit (and catch-up) per
+        # eligible month (§223(b)(1)–(3)). A constant coverage type is assumed;
+        # a mid-year self↔family change is caveated.
+        allowed_limit = round(base_annual * eligible_months / 12.0, 2)
+        if age_55_plus:
+            allowed_limit = round(allowed_limit + catch * eligible_months / 12.0, 2)
+        if 0 < eligible_months < 12:
+            notes.append(
+                "Partial-year HDHP eligibility: the limit is prorated to "
+                f"{eligible_months}/12 (§223(b) monthly limitation). Assumes a "
+                "CONSTANT coverage type across the eligible months — a mid-year "
+                "self-only↔family change needs the month-by-month worksheet. If "
+                "you were eligible on Dec 1, the last-month rule may allow the "
+                "FULL annual limit (pass last_month_rule=True).")
+
+    total_contributions = round(emp + er, 2)
+    excess_contribution = round(max(0.0, total_contributions - allowed_limit), 2)
+    excise_tax = round(_HSA_EXCISE_RATE * excess_contribution, 2)
+    # Line 12/13: the deduction is the taxpayer's own contributions, capped at
+    # the limit remaining after employer contributions (which are already
+    # income-excluded, never deducted).
+    limit_after_employer = max(0.0, allowed_limit - er)
+    hsa_deduction = round(min(emp, limit_after_employer), 2)
+    # Employer contributions ABOVE the limit are taxable income (line 9 excess).
+    excess_employer_taxable = round(max(0.0, er - allowed_limit), 2)
+
+    if excess_contribution > 0:
+        notes.append(
+            f"EXCESS HSA contribution of ${excess_contribution:,.2f}: a §4973 6% "
+            f"excise (${excise_tax:,.2f}) applies for EACH year it stays in the "
+            "account. Withdraw the excess (plus its earnings) by the return due "
+            "date to avoid the excise; otherwise report it on Form 5329.")
+    if ct == "family" and family_limit_share is None:
+        notes.append(
+            "Family coverage: if BOTH spouses have HSAs the family limit must be "
+            "SPLIT between them (§223(b)(5)) — pass family_limit_share. This "
+            "assumes the full family limit belongs to this person (single HSA "
+            "holder).")
+
+    return {
+        "allowed_limit": allowed_limit,
+        "total_contributions": total_contributions,
+        "hsa_deduction": hsa_deduction,
+        "excess_contribution": excess_contribution,
+        "excise_tax": excise_tax,
+        "excess_employer_taxable": excess_employer_taxable,
+        "eligible_months": eligible_months,
+        "last_month_rule_applied": bool(last_month_rule and ct != "none"),
+        "notes": notes,
+    }
+
+
 def compute_schedule_a(
     agi: float,
     filing_status: str,
@@ -4454,3 +4593,9 @@ if __name__ == "__main__":
     print(f"CA taxable $300K, ISO spread $200K, CA regular tax $25K: "
           f"CA AMT ${_cap['ca_amt']:,.2f}, carryforward "
           f"${_cap['schedule_p_carryforward']:,.2f}")
+
+    print("\n=== Form 8889 HSA Return-Side Limit Test (N3a) ===")
+    _hsa = compute_form_8889("self_only", 6, 4300, 0, 4300, 8550)
+    print(f"6-month eligibility, contributed full $4,300: limit "
+          f"${_hsa['allowed_limit']:,.2f}, EXCESS ${_hsa['excess_contribution']:,.2f}, "
+          f"§4973 excise ${_hsa['excise_tax']:,.2f} (a full-year assumption misses it)")

@@ -107,6 +107,13 @@
   },
   "acknowledged_limitations": [],
   "_comment_acknowledged_limitations": "Rule ids from agents/lib/capabilities.py the taxpayer has EXPLICITLY accepted proceeding without (decision recorded in answers.md). An id here downgrades that blocking gap to a limitations-manifest entry. Unknown ids hard-error so a typo cannot silently unblock nothing.",
+  "hsa_detail": {
+    "_comment": "Form 8889 return-side HSA test (N3a). eligible_months = # months you were an HSA-eligible individual (HDHP coverage on the 1st, no disqualifying coverage). coverage_type = self_only | family | none. last_month_rule = eligible on Dec 1 (full annual limit, but a testing period applies). REQUIRED for the return-side excess check when has_hsa — without eligible_months the case stays MANUAL (a full-year assumption would MISS a partial-year excess + its 6% excise). family_limit_share: for married-both-HDHP, this spouse's fraction of the family limit.",
+    "coverage_type": null,
+    "eligible_months": null,
+    "last_month_rule": false,
+    "family_limit_share": null
+  },
   "prior_year": {
     "filing_status": null,
     "state_residency_changes": null,

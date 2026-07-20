@@ -199,7 +199,15 @@ interview never captures is invisible to every downstream check.
     Ask explicitly whenever `has_self_employment` or `has_k1_income` is set.
 - Do you have rental income? → sets `has_rental_income` (Schedule E is NOT
   modeled — the `/tax-compute` capability gate will block; tell the user now)
-- Do you have an HSA (Health Savings Account)?
+- Do you have an HSA (Health Savings Account)? **If yes**, for the Form 8889
+  return-side excess check (`hsa_detail`): what was your HDHP coverage
+  (`self_only`/`family`), and for **how many months** were you an HSA-eligible
+  individual (HDHP on the 1st of the month, no disqualifying coverage)? Were you
+  eligible on **December 1** (the §223(b)(8) last-month rule → full annual limit,
+  but a testing period applies)? If married and BOTH spouses have HSAs with
+  family coverage, what share of the family limit is yours? (A partial-year
+  filer who contributed the full annual limit has an EXCESS + a 6% excise — the
+  months matter.)
 - Do you have a 401(k) or employer retirement plan?
 - Did you make IRA contributions this year?
 - Did you have a 401(k) rollover (Form 1099-R)?
