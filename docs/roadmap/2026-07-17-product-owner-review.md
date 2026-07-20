@@ -1,5 +1,10 @@
 # Product-Owner Review + Next Backlog — 2026-07-17
 
+> **Successor:** every scheduled item below is shipped (PRs #43–#52 — Epics I, J, K,
+> and L, tests 1506 → 1646). The active backlog is now
+> `2026-07-20-product-owner-review.md` (TY2026 season readiness Epic M, coverage
+> tier 2 Epic N, hygiene Epic O).
+
 Reviewer lenses: product owner with tax-adviser / CPA / IRS-compliance / enrolled-agent /
 investor background. Every engine-defect claim below was verified against source
 (file:line checked) before being written down.
