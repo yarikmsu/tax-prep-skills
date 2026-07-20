@@ -74,6 +74,14 @@ The toolkit follows a 7-step pipeline. Each step is a separate skill that can be
 | `/tax-review` | Dual-perspective review: Enrolled Agent (missed deductions, optimization) + IRS officer (audit risk, red flags) | `/tax-compute` (recommended: `/tax-verify` first) |
 | `/tax-fbar` | Prepare FBAR (FinCEN 114) filing document for foreign bank accounts | `/tax-compute`, foreign account data |
 
+Beyond the core pipeline, the toolkit ships lifecycle and planning skills:
+`/tax-archive` and `/tax-rollover` (year-over-year carryforwards),
+`/tax-extend` (Form 4868) and `/tax-amend` (1040-X), `/tax-calendar`
+(quarterly reminder `.ics`), and the read-only planners `/tax-project`,
+`/tax-withholding`, `/tax-scenario`, `/tax-roth-convert`, `/tax-harvest`,
+`/tax-retirement`, and `/tax-ptet`, plus `/tax-parse-crypto` for exchange CSVs.
+See `CLAUDE.md` for the full architecture.
+
 ### Useful Options
 
 These are natural-language instructions interpreted by Claude, not parsed CLI flags. You can also express the same intent conversationally (e.g., "only parse the foreign documents").
@@ -184,7 +192,8 @@ agents/
 scripts/
 └── pre-commit-pii-scan.sh   # File type blocker (called by pre-commit hook)
 tests/
-└── test_tax_computations.py  # 90 tests for tax math functions
+├── test_tax_computations.py     # tax math functions (the largest suite)
+└── test_*.py                    # per-module suites (rollover, projection, ptet, …)
 .claude/
 └── hooks.json        # Claude Code PreCommit hook (regex PII scanner)
 .github/
