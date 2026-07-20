@@ -38,6 +38,7 @@ from agents.lib.tax_computations import (
     compute_form_8801_credit,
     check_form_8938_required,
     compute_late_filing_penalty,
+    compute_underpayment_interest,
     SE_TAX_THRESHOLD,
 )
 
@@ -3423,3 +3424,166 @@ class TestComputeLateFilingPenalty:
         # No minimum here, so ftf_penalty == the percentage figure.
         assert r["ftf_penalty"] == r["ftf_penalty_before_minimum"]
         assert round(r["ftf_penalty"] + r["ftp_penalty"], 2) == r["total_penalty"]
+
+
+# 8%/365 daily compounding over 183 days (2026, non-leap) on $10,000
+# = 10000*(1+0.08/365)**183 − 10000 = $409.20 (hand-computed).
+_RATES_8PCT_2026 = [
+    {"effective_from": "2026-04-01", "annual_rate": 0.08},
+    {"effective_from": "2026-07-01", "annual_rate": 0.08},
+    {"effective_from": "2026-10-01", "annual_rate": 0.08},
+]
+
+
+class TestComputeUnderpaymentInterest:
+    """Tests for compute_underpayment_interest — §6601/§6622 daily-compounded
+    interest on a late-paid balance (M3). Expected figures are hand-computed
+    from the daily-compounding closed form (1 + r/D)**n."""
+
+    def test_full_coverage_daily_compounded(self):
+        """TY2025 $10,000 balance, due 2026-04-15, paid 2026-10-15 (183 days),
+        8% all three quarters. Daily-compounded interest = $409.20."""
+        r = compute_underpayment_interest(
+            10000, "2026-04-15", "2026-10-15", _RATES_8PCT_2026)
+        assert r["computed"] is True
+        assert r["complete"] is True
+        assert r["interest"] == 409.20
+        assert r["days"] == 183
+        assert r["covered_through"] == "2026-10-15"
+
+    def test_rate_change_mid_period_splits_daily(self):
+        """7% Q2 then 9% Q3: Apr15→Jul1 (77d @7%) then Jul1→Aug15 (45d @9%),
+        compounded across the change = $261.98."""
+        rates = [
+            {"effective_from": "2026-04-01", "annual_rate": 0.07},
+            {"effective_from": "2026-07-01", "annual_rate": 0.09},
+        ]
+        r = compute_underpayment_interest(10000, "2026-04-15", "2026-08-15", rates)
+        assert r["complete"] is True
+        assert r["interest"] == 261.98
+
+    def test_leap_year_uses_366_denominator(self):
+        """2024 is a leap year: 8% over Apr15→Jul15 (91 days) uses /366 →
+        $200.88 (vs $201.44 with /365)."""
+        rates = [
+            {"effective_from": "2024-04-01", "annual_rate": 0.08},
+            {"effective_from": "2024-07-01", "annual_rate": 0.08},
+        ]
+        r = compute_underpayment_interest(10000, "2024-04-15", "2024-07-15", rates)
+        assert r["interest"] == 200.88
+
+    def test_partial_coverage_stops_at_last_quarter_loudly(self):
+        """The Oct-15-extension case: only Q2 2026 is cached (the 2210 fetch
+        window stops ~Apr). Interest is reported PARTIAL through Jul 1 (the end
+        of the last cached quarter) — never extrapolating 8% across Q3/Q4."""
+        r = compute_underpayment_interest(
+            10000, "2026-04-15", "2026-10-15",
+            [{"effective_from": "2026-04-01", "annual_rate": 0.08}])
+        assert r["computed"] is True
+        assert r["complete"] is False
+        assert r["covered_through"] == "2026-07-01"
+        assert r["days"] == 77  # Apr 15 → Jul 1
+        # interest accrued only through Jul 1, not the full span
+        assert r["interest"] == 170.18
+        assert "PARTIAL" in r["note"]
+        assert "2026-07-01..2026-10-15" in r["note"]
+
+    def test_opening_gap_refuses_rather_than_understates(self):
+        """If the rate for the due-date quarter is absent (earliest cached rate
+        is a later quarter), computing from it would misstate the opening
+        interest — refuse."""
+        r = compute_underpayment_interest(
+            10000, "2026-04-15", "2026-10-15",
+            [{"effective_from": "2026-07-01", "annual_rate": 0.08}])
+        assert r["computed"] is False
+        assert r["interest"] is None
+        assert "due-date quarter" in r["note"]
+
+    def test_due_date_quarter_absent_refuses(self):
+        """Codex P1 (PR #54): a Q1-only cache does NOT cover an April (Q2) due
+        date — the Q1 rate is authoritative only for Jan-Mar. Refuse rather than
+        applying the Q1 rate to Q2."""
+        r = compute_underpayment_interest(
+            10000, "2026-04-15", "2026-10-15",
+            [{"effective_from": "2026-01-01", "annual_rate": 0.08}])
+        assert r["computed"] is False
+        assert r["interest"] is None
+        assert "2026-04-01" in r["note"]
+
+    def test_mid_timeline_gap_stops_at_gap_not_falsely_complete(self):
+        """Codex P1 (PR #54): a cache with Q2 and Q4 but NO Q3 must NOT report
+        complete=True by applying the Q2 rate through the missing Q3. Coverage
+        stops at Jul 1 (the first gap) — partial, not falsely complete."""
+        gap = [{"effective_from": "2026-04-01", "annual_rate": 0.08},
+               {"effective_from": "2026-10-01", "annual_rate": 0.08}]  # Jul missing
+        r = compute_underpayment_interest(10000, "2026-04-15", "2026-10-15", gap)
+        assert r["complete"] is False
+        assert r["covered_through"] == "2026-07-01"
+        assert r["days"] == 77  # Apr 15 → Jul 1, the Q2 rate only
+        assert r["interest"] == 170.18
+        assert "PARTIAL" in r["note"]
+
+    def test_empty_rates_degrades_not_computed(self):
+        r = compute_underpayment_interest(10000, "2026-04-15", "2026-10-15", [])
+        assert r["computed"] is False
+        assert r["interest"] is None
+        assert "unfetched" in r["note"]
+
+    def test_paid_on_due_date_zero_interest(self):
+        r = compute_underpayment_interest(
+            10000, "2026-04-15", "2026-04-15", _RATES_8PCT_2026)
+        assert r["computed"] is True
+        assert r["complete"] is True
+        assert r["interest"] == 0.0
+        assert r["days"] == 0
+
+    def test_zero_balance_zero_interest(self):
+        r = compute_underpayment_interest(
+            0, "2026-04-15", "2026-10-15", _RATES_8PCT_2026)
+        assert r["interest"] == 0.0
+
+    def test_pay_before_due_raises(self):
+        with pytest.raises(ValueError, match="before due_date"):
+            compute_underpayment_interest(
+                100, "2026-04-15", "2026-04-14", _RATES_8PCT_2026)
+
+    def test_nan_balance_raises(self):
+        with pytest.raises(ValueError):
+            compute_underpayment_interest(
+                float("nan"), "2026-04-15", "2026-10-15", _RATES_8PCT_2026)
+
+    def test_negative_balance_raises(self):
+        with pytest.raises(ValueError):
+            compute_underpayment_interest(
+                -100, "2026-04-15", "2026-10-15", _RATES_8PCT_2026)
+
+    def test_bool_balance_raises(self):
+        with pytest.raises(ValueError):
+            compute_underpayment_interest(
+                True, "2026-04-15", "2026-10-15", _RATES_8PCT_2026)
+
+    def test_corrupt_zero_rate_raises(self):
+        """§6621 can never be 0 — a 0 in the cache is a fetch bug (silent
+        understatement), hard-error like compute_form_2210."""
+        with pytest.raises(ValueError):
+            compute_underpayment_interest(
+                100, "2026-04-15", "2026-10-15",
+                [{"effective_from": "2026-04-01", "annual_rate": 0}])
+
+    def test_malformed_date_raises(self):
+        with pytest.raises(ValueError):
+            compute_underpayment_interest(
+                100, "not-a-date", "2026-10-15", _RATES_8PCT_2026)
+
+    def test_datetime_inputs_normalized_to_date(self):
+        """Codex P3 (PR #54): a datetime.datetime (subclass of date) must be
+        normalized to a date, not retained — otherwise a mixed date/datetime
+        compare raises a raw TypeError. Passing datetimes matches the ISO-string
+        result exactly."""
+        import datetime as _dt
+        r = compute_underpayment_interest(
+            10000, _dt.datetime(2026, 4, 15, 9, 30),
+            _dt.datetime(2026, 10, 15, 0, 0), _RATES_8PCT_2026)
+        assert r["computed"] is True
+        assert r["interest"] == 409.20
+        assert r["due_date"] == "2026-04-15"

@@ -3805,6 +3805,223 @@ def compute_late_filing_penalty(
     }
 
 
+# --- §6601/§6622 underpayment interest (M3) -------------------------------
+# §6621 sets the underpayment rate = federal short-term rate + 3 points,
+# announced QUARTERLY (effective Jan 1 / Apr 1 / Jul 1 / Oct 1). §6622 requires
+# the interest to be COMPOUNDED DAILY. Interest on a late-paid balance runs from
+# the return due date (unextended — an extension of time to file is not an
+# extension of time to pay) to the pay date. This shares the underpayment_rates
+# cache and the _f2210 rate/date validators with compute_form_2210, but differs
+# in two deliberate ways: (1) DAILY COMPOUNDING, not the simple-interest 2210
+# worksheet convention; (2) NO silent "last rate persists" extrapolation — a
+# quarterly rate is authoritative only for ITS quarter, so past the last cached
+# quarter the interest is reported as PARTIAL-through-a-date with a loud degrade,
+# never a guessed rate across an uncovered quarter (the Oct-15-extension case the
+# 2210 fetch window, Apr-of-TY..Apr-of-TY+1, does not reach).
+
+_QUARTER_STARTS = ((1, 1), (4, 1), (7, 1), (10, 1))
+
+
+def _quarter_start_on_or_before(d: datetime.date) -> datetime.date:
+    """The §6621 quarter start (Jan/Apr/Jul/Oct 1) that CONTAINS d — i.e. the
+    latest quarter start on or before d. The rate for d's interest period is the
+    one effective on this date."""
+    prior = [datetime.date(d.year, m, day) for (m, day) in _QUARTER_STARTS
+             if datetime.date(d.year, m, day) <= d]
+    return max(prior)  # d.year always has Jan 1 <= d, so prior is non-empty
+
+
+def _next_quarter_start(d: datetime.date) -> datetime.date:
+    """The earliest §6621 quarter start strictly after d. A rate effective on a
+    quarter start is authoritative through the day BEFORE the next quarter start,
+    so this is the coverage horizon of the last cached rate period."""
+    for (m, day) in _QUARTER_STARTS:
+        q = datetime.date(d.year, m, day)
+        if q > d:
+            return q
+    return datetime.date(d.year + 1, 1, 1)
+
+
+def _compound_daily(principal: float, start: datetime.date, end: datetime.date,
+                    periods: list) -> float:
+    """Daily-compounded interest (§6622) on `principal` across [start, end),
+    split at rate changes AND Jan 1 (the daily factor uses days-in-year for the
+    year each day falls in — 366 in a leap year). Returns the interest only
+    (balance − principal). `periods` must already cover [start, end)."""
+    if end <= start:
+        return 0.0
+    factor = 1.0
+    for i, (eff, rate) in enumerate(periods):
+        nxt = periods[i + 1][0] if i + 1 < len(periods) else None
+        s = max(start, eff)
+        e = end if nxt is None else min(end, nxt)
+        while s < e:
+            year_end = datetime.date(s.year + 1, 1, 1)
+            sub_e = min(e, year_end)
+            days = (sub_e - s).days
+            denom = 366 if calendar.isleap(s.year) else 365
+            factor *= (1.0 + rate / denom) ** days
+            s = sub_e
+    return principal * factor - principal
+
+
+def compute_underpayment_interest(
+    unpaid_tax: float,
+    due_date,
+    pay_date,
+    underpayment_rates: list = None,
+) -> dict:
+    """§6601 interest (compounded daily per §6622) on a balance paid after the
+    return due date.
+
+    This is INTEREST, separate from the §6651 additions-to-tax
+    (compute_late_filing_penalty) and from the §6654 estimated-tax penalty
+    (compute_form_2210). Use it for the /tax-extend pay-now-vs-October decision
+    and for interest on the additional tax in /tax-amend.
+
+    Args:
+        unpaid_tax: the balance on which interest runs — the tax not paid by the
+            due date. Finite, non-negative. A $0 balance carries $0 interest.
+        due_date: the UNEXTENDED return due date (ISO YYYY-MM-DD or a date) —
+            interest runs from here even with a valid extension (an extension of
+            time to FILE is not an extension of time to PAY). Pass the §7503
+            OBSERVED due date (rolled past a weekend / DC holiday via
+            irs_dates.next_business_day), NOT the statutory Apr 15 — payment is
+            timely through the observed deadline, so interest cannot start before
+            it (e.g. Apr 15 2028 is a Saturday → observed Apr 17).
+        pay_date: the date the balance is (or will be) paid (ISO or a date).
+        underpayment_rates: federal.underpayment_rates from the tax_law cache
+            (list of {effective_from, annual_rate}). §6621 quarterly rates.
+
+    Coverage contract (the load-bearing difference from compute_form_2210):
+        A §6621 rate is authoritative only for its own quarter. This function
+        NEVER extrapolates a cached rate across a NON-CONTIGUOUS or unfetched
+        quarter — a §6621 rate is authoritative only for its own quarter, so
+        coverage is a chain of contiguous quarter-start rates present in the
+        cache. It reports honestly:
+        - `underpayment_rates` empty → computed=False, interest=None (degrade).
+        - The rate for the quarter CONTAINING `due_date` is absent (earliest
+          cached rate is a later quarter, or an earlier one whose quarter doesn't
+          reach the due date) → computed=False, interest=None (refuse rather than
+          misattribute/skip the opening interest). Extend the fetch.
+        - Coverage stops at the FIRST missing quarter — either a mid-timeline gap
+          (e.g. Apr + Oct cached with no Jul → coverage stops Jul 1) or simply the
+          end of the fetched span (the Oct-15 case: a balance paid Oct 15 needs
+          the Jul + Oct quarters the 2210 fetch window stops short of) →
+          computed=True, complete=False, interest = the PARTIAL interest THROUGH
+          `covered_through`, with a loud note naming the uncovered span. The
+          headline number is explicitly partial — fetch the missing quarters
+          (see /tax-setup's M3 fetch scope).
+        - Fully covered by a contiguous chain → computed=True, complete=True,
+          interest = the full figure.
+
+    Scope: interest on the tax only. §6601(e)(2) interest on the penalties
+    themselves, and any interest-suspension provisions (§6404(g)), are not
+    modeled. Estimator — verify against an IRS notice for a filed figure.
+
+    Raises:
+        ValueError: on non-finite / negative / wrong-type `unpaid_tax`, a
+            malformed date, pay_date < due_date, or a corrupt rate entry.
+    """
+    if isinstance(unpaid_tax, bool):
+        raise ValueError("unpaid_tax must be a number, not bool")
+    ut = _coerce_numeric(unpaid_tax, default=None)
+    if ut is None or not math.isfinite(ut):
+        raise ValueError(f"unpaid_tax must be a finite number, got {unpaid_tax!r}")
+    if ut < 0:
+        raise ValueError(f"unpaid_tax cannot be negative (got {ut})")
+
+    # Normalize each input to a plain date. datetime.datetime is a SUBCLASS of
+    # datetime.date, so a naive isinstance(x, date) branch would retain a
+    # datetime and later raise a raw TypeError on a mixed date/datetime compare;
+    # collapse it to .date() so the arithmetic (and the documented ValueError
+    # contract) hold. A string goes through the ISO validator.
+    def _as_date(value, what):
+        if isinstance(value, datetime.datetime):
+            return value.date()
+        if isinstance(value, datetime.date):
+            return value
+        return _f2210_date(value, what)
+    dd = _as_date(due_date, "due_date")
+    pd = _as_date(pay_date, "pay_date")
+    if pd < dd:
+        raise ValueError(
+            f"pay_date {pd.isoformat()} is before due_date {dd.isoformat()}")
+
+    base = {
+        "unpaid_tax": round(ut, 2),
+        "due_date": dd.isoformat(),
+        "pay_date": pd.isoformat(),
+    }
+
+    if pd == dd or ut == 0:
+        return {**base, "computed": True, "complete": True,
+                "interest": 0.0, "days": 0, "covered_through": pd.isoformat(),
+                "note": "Paid on/before the due date (or $0 balance) — no interest."}
+
+    periods = _f2210_rate_periods(underpayment_rates)
+    if not periods:
+        return {**base, "computed": False, "complete": False, "interest": None,
+                "covered_through": None,
+                "note": ("federal.underpayment_rates is unfetched — §6601 "
+                         "interest cannot be computed without the §6621 quarterly "
+                         "rates (a guessed rate is never substituted). Fetch the "
+                         "rate periods spanning the due date through the pay date.")}
+
+    # A §6621 rate is authoritative ONLY for its own quarter, so coverage of the
+    # interest window is a chain of CONTIGUOUS quarter-start rates present in the
+    # cache — a missing quarter (even one bracketed by later rates) breaks it.
+    starts = {p[0] for p in periods}
+
+    # Opening gap: the rate for the quarter CONTAINING the due date must be
+    # present. If it isn't (the earliest cached rate is a later quarter, or an
+    # earlier one whose quarter doesn't reach the due date), computing from the
+    # first cached rate would misattribute or drop the opening interest — refuse.
+    q_dd = _quarter_start_on_or_before(dd)
+    if q_dd not in starts:
+        return {**base, "computed": False, "complete": False, "interest": None,
+                "covered_through": None,
+                "note": (f"the §6621 rate for the due-date quarter "
+                         f"({q_dd.isoformat()}) is not in underpayment_rates — "
+                         f"the opening interest period's rate is unavailable. "
+                         f"Fetch the quarter containing the due date; computing "
+                         f"from a later or non-adjacent cached rate would "
+                         f"misstate the interest.")}
+
+    # Closing horizon: walk forward from the due-date quarter through CONTIGUOUS
+    # cached quarters. The first missing quarter (a gap like Apr+Oct with no Jul,
+    # or simply the end of the fetched span) stops coverage there — the earlier
+    # rate is NEVER extrapolated across the gap.
+    covered_through = _next_quarter_start(q_dd)
+    while covered_through < pd and covered_through in starts:
+        covered_through = _next_quarter_start(covered_through)
+    effective_end = min(pd, covered_through)
+    interest = _compound_daily(ut, dd, effective_end, periods)
+    days = (effective_end - dd).days
+
+    if covered_through < pd:
+        return {**base, "computed": True, "complete": False,
+                "interest": round(interest, 2), "days": days,
+                "covered_through": covered_through.isoformat(),
+                "note": (f"PARTIAL: rates cover through {covered_through.isoformat()} "
+                         f"(the last cached §6621 quarter), but the balance is paid "
+                         f"{pd.isoformat()}. The interest shown accrues ONLY through "
+                         f"{covered_through.isoformat()}; MORE accrues after it. "
+                         f"Fetch the §6621 rate(s) for the quarter(s) "
+                         f"{covered_through.isoformat()}..{pd.isoformat()} — the "
+                         f"last cached rate is NOT extrapolated across an unfetched "
+                         f"quarter. Interest on the tax only; penalty interest and "
+                         f"§6404 suspensions not modeled.")}
+
+    return {**base, "computed": True, "complete": True,
+            "interest": round(interest, 2), "days": days,
+            "covered_through": pd.isoformat(),
+            "note": ("§6601 interest compounded daily (§6622) from the unextended "
+                     "due date to the pay date. Interest on the tax only — "
+                     "§6601(e)(2) interest on penalties and §6404 suspensions are "
+                     "not modeled. Estimator; verify against the IRS notice.")}
+
+
 if __name__ == "__main__":
     # Quick self-test with sample data
     print("=== Bracket Tax Test (MFJ 2025 OBBBA) ===")
@@ -3892,3 +4109,16 @@ if __name__ == "__main__":
                                       min_penalty_floor=485)
     print(f"FTF ${pen['ftf_penalty']:,.2f} + FTP ${pen['ftp_penalty']:,.2f} "
           f"= ${pen['total_penalty']:,.2f} (overlap −${pen['overlap_reduction']:,.2f})")
+
+    print("\n=== §6601/§6622 Underpayment Interest Test (M3) ===")
+    _uprates = [{"effective_from": "2026-04-01", "annual_rate": 0.08},
+                {"effective_from": "2026-07-01", "annual_rate": 0.08},
+                {"effective_from": "2026-10-01", "annual_rate": 0.08}]
+    _int = compute_underpayment_interest(10000, "2026-04-15", "2026-10-15", _uprates)
+    print(f"$10,000 balance, due 2026-04-15, paid 2026-10-15 (8% daily): "
+          f"${_int['interest']:,.2f} over {_int['days']} days")
+    _part = compute_underpayment_interest(
+        10000, "2026-04-15", "2026-10-15",
+        [{"effective_from": "2026-04-01", "annual_rate": 0.08}])
+    print(f"Partial (only Q2 cached): ${_part['interest']:,.2f} through "
+          f"{_part['covered_through']} (complete={_part['complete']})")

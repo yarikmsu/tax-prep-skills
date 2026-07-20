@@ -423,14 +423,24 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   both indexed). ONLY needed for a TY2026+ filer with a small ACTIVE qualified
   trade — leave all-null otherwise (the minimum is taxpayer-favorable, so
   `compute_qbi_deduction` DEGRADES with a note rather than guessing).
-- Search: `"IRS quarterly interest rates underpayment {year}"` (and `{year+1}` Q1-Q2
-  when published) — populate `federal.underpayment_rates` as a list of
+- Search: `"IRS quarterly interest rates underpayment {year}"` (and `{year+1}`
+  quarters as published) — populate `federal.underpayment_rates` as a list of
   `{"effective_from": "YYYY-MM-DD", "annual_rate": 0.08}` covering every §6621
-  rate period from Apr 15 of {year} through Apr 15 of {year+1} (the Form 2210
-  accrual span — the irs.gov quarterly interest-rate news releases are the
-  source). Rates for future quarters aren't published yet at setup time —
-  `/tax-compute` re-checks at filing and `compute_form_2210` refuses to guess
-  missing periods.
+  rate period. **Fetch scope — two consumers with DIFFERENT windows:**
+  - `compute_form_2210` (estimated-tax penalty) accrues Apr 15 of {year} through
+    Apr 15 of {year+1}.
+  - `compute_underpayment_interest` (§6601/§6622 interest on a late-paid balance,
+    M3) accrues from the {year+1} Apr-15 DUE DATE forward to the pay date — so an
+    October extension filer needs the {year+1} Q2/Q3/Q4 quarters (Apr/Jul/Oct),
+    which are BEYOND the 2210 window. Extend the fetch forward through the quarter
+    containing the anticipated pay date whenever an extension is in play.
+
+  The irs.gov quarterly interest-rate news releases are the source; record each
+  under `_sources` (K2). Future quarters aren't published yet at setup time —
+  both consumers refuse to guess: `compute_form_2210` degrades on missing periods,
+  and `compute_underpayment_interest` reports interest only PARTIAL-through the
+  last cached quarter with a loud note (never extrapolating the last rate across
+  an unfetched quarter). `/tax-compute` and `/tax-extend` re-check at use.
 
 **State (based on taxpayer's state):**
 - For CA: Search `"FTB California {year} tax brackets"`, `"California {year} standard deduction"`,

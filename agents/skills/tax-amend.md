@@ -134,8 +134,18 @@ $250"), never "amounts changed".
   state amendment too. CA: Schedule X with Form 540 — and CA requires
   amending within 6 months of the federal change being final when the IRS
   adjusts (R&TC §18622 reporting duty). Other states not modeled — say so.
-- Pay any amount owed WITH the amendment (interest accrues from the
-  ORIGINAL due date; the IRS bills interest — don't self-compute).
+- Pay any amount owed WITH the amendment. Interest (§6601) accrues from the
+  ORIGINAL due date on the additional tax; the IRS bills the exact figure, but
+  you can ESTIMATE it for the taxpayer with
+  `compute_underpayment_interest(additional_tax, original_due_date,
+  pay_date, federal.underpayment_rates)` (daily-compounded per §6622). It reports
+  PARTIAL-through-a-date rather than guessing when the cached rate timeline
+  doesn't reach the pay date — extend `/tax-setup`'s rate fetch if so. Estimate
+  only; the notice governs. (An amendment that REDUCES tax instead earns
+  overpayment interest — not modeled here.) Pass the §7503 OBSERVED original due
+  date (roll April 15 past a weekend / DC holiday via
+  `irs_dates.next_business_day`), not the statutory date — interest cannot start
+  before the observed deadline.
 - Add the amendment to `answers.md` (dates, documents, no dollar figures)
   and re-run `/tax-calendar` if any flag changed.
 

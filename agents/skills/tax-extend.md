@@ -112,11 +112,43 @@ Work down this ladder and TELL the user which rung was used:
    Estimate source: {computed result.json | projection | user estimate}.
    ```
 
+### 5.5. Estimate the §6601 interest cost of paying later (pay-now vs October)
+
+The 90% waiver removes the late-PAYMENT penalty for a qualifying extension
+filer, but **interest never stops** — §6601 runs on any unpaid balance from
+the April 15 due date regardless of the extension. To price the "pay the
+balance now vs at the October filing" decision, estimate the interest with
+`compute_underpayment_interest(unpaid_tax, due_date, pay_date,
+underpayment_rates)` from `agents/lib/tax_computations.py`:
+
+- `unpaid_tax` = the balance not paid by April 15 (the same figure from step 1,
+  net of any April payment being made now).
+- `due_date` = the UNEXTENDED original due date (interest runs from here even
+  with a valid extension — filing ≠ paying). Use the **§7503 OBSERVED** date, not
+  the statutory April 15: when April 15 falls on a weekend or DC legal holiday
+  the deadline rolls forward, and payment is timely through the observed date, so
+  interest cannot start before it. Roll it with
+  `irs_dates.next_business_day(datetime.date(year+1, 4, 15))` (e.g. April 15 2028
+  is a Saturday → observed April 17). Passing the statutory date would overstate
+  the interest by the rollover days.
+- `pay_date` = the anticipated payment date (e.g. October 15).
+- `underpayment_rates` = `federal.underpayment_rates` from the cache.
+
+It compounds daily (§6622). **It refuses to guess:** if the cache doesn't yet
+carry the Q3/Q4 quarters an October pay date needs (the common case — the 2210
+fetch window stops at April), it returns `complete: False` with interest
+computed only THROUGH the last cached quarter and a loud note naming the
+uncovered span. When you see that, re-run `/tax-setup`'s rate fetch extended
+through the pay-date quarter (or tell the user the figure is a floor, not the
+full interest). Federal only; CA interest (FTB) not modeled here.
+
 ### 6. Print the summary
 
 Show: the balance-due estimate (federal + CA) with its source rung, the
 recommended payment (with the 90% waiver rationale when a cushion was
-added), the how-to-pay instructions, and the two new calendar dates.
+added), the estimated §6601 interest if the balance is carried to October
+(from step 5.5, flagged partial if the rate timeline was short), the
+how-to-pay instructions, and the two new calendar dates.
 
 ## Caveats
 - Statutory dates only — when April 15 / October 15 falls on a weekend or DC
@@ -142,9 +174,9 @@ added), the how-to-pay instructions, and the two new calendar dates.
   annually — a stale value understates the mandatory minimum) — so the >60-day
   minimum is applied; omitting it degrades with a loud note rather than silently
   understating. The helper encodes the §6651(c)(1) overlap and both 25% caps; it
-  does NOT compute §6601 interest (separate) or the §6651(f) fraudulent-failure
-  15%/mo rate. It is advisory — penalties may be abated for reasonable cause /
-  first-time abatement.
+  does NOT compute §6601 interest (use `compute_underpayment_interest` — step 5.5)
+  or the §6651(f) fraudulent-failure 15%/mo rate. It is advisory — penalties may
+  be abated for reasonable cause / first-time abatement.
   - **Under-reported returns are NOT modeled.** `unpaid_tax` is the base for both
     penalties, which is right only when the return shows the full tax required. If
     the return under-reports (tax shown < tax required), the FTF base is the tax
