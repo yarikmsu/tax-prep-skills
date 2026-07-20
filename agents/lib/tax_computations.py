@@ -1855,6 +1855,178 @@ def compute_form_8889(
     }
 
 
+# §21 child- and dependent-care credit — STATUTORY-FIXED constants (unindexed
+# since EGTRRA 2001/JGTRRA 2003; the 2021 ARPA expansion was temporary and
+# expired). Inlined with citation, like the SS base amounts.
+_DCC_EXPENSE_CAP_ONE = 3000.0        # §21(c)(1) — one qualifying person
+_DCC_EXPENSE_CAP_MULTI = 6000.0      # §21(c)(2) — two or more
+_DCC_AGI_FULL_RATE_CEILING = 15000.0  # §21(a)(2) — 35% up to $15,000 AGI
+_DCC_RATE_MAX = 0.35
+_DCC_RATE_FLOOR = 0.20               # floor for AGI > $43,000
+_DCC_RATE_STEP_AGI = 2000.0          # −1% per $2,000 (or fraction) over $15,000
+_DCC_DEEMED_MONTHLY_ONE = 250.0      # §21(d)(2) — student/disabled spouse, 1 person
+_DCC_DEEMED_MONTHLY_MULTI = 500.0    # two or more
+
+
+def _dcc_applicable_percentage(agi: float) -> float:
+    """§21(a)(2): 35% for AGI ≤ $15,000, reduced 1 percentage point for each
+    $2,000 (or fraction) of AGI over $15,000, floored at 20%."""
+    if agi <= _DCC_AGI_FULL_RATE_CEILING:
+        return _DCC_RATE_MAX
+    steps = math.ceil((agi - _DCC_AGI_FULL_RATE_CEILING) / _DCC_RATE_STEP_AGI)
+    return max(_DCC_RATE_FLOOR, round(_DCC_RATE_MAX - 0.01 * steps, 2))
+
+
+def compute_form_2441(
+    qualifying_persons: int,
+    qualified_expenses: float,
+    taxpayer_earned_income: float,
+    agi: float,
+    filing_status: str,
+    spouse_earned_income: float = None,
+    dependent_care_benefits: float = 0.0,
+    taxpayer_student_disabled_months: int = 0,
+    spouse_student_disabled_months: int = 0,
+    lived_apart_exception: bool = False,
+    tax_liability: float = None,
+) -> dict:
+    """Form 2441 child- and dependent-care credit (§21, N3b). NONREFUNDABLE.
+
+    Credit = applicable_percentage × the SMALLEST of: qualified care expenses,
+    the §21(c) expense cap ($3,000 one qualifying person / $6,000 two+) reduced
+    by excluded employer dependent-care benefits (W-2 box 10, Part III before
+    Part II), and the earned income of the taxpayer AND (if married) the spouse.
+
+    The eligibility GATES are the caller's step-0 (collected by /tax-setup, per
+    the capability-registry invariant): a qualifying person (§21(b)(1) — under
+    13, or incapable of self-care, meeting the relationship/residency tests),
+    the §21(d) work-related-expense rule (both spouses working / looking for
+    work / full-time students), and provider name/TIN due diligence. This
+    function computes the credit GIVEN those facts; it does not re-test them.
+
+    Args:
+        qualifying_persons: count of qualifying persons (drives the expense cap
+            and the deemed-income amount). 0 → no credit.
+        qualified_expenses: work-related care expenses PAID (already limited to
+            expenses for qualifying persons).
+        taxpayer_earned_income / spouse_earned_income: §21(d) earned income.
+            spouse_earned_income None for an unmarried filer (no spouse limit).
+        agi: AGI for the §21(a)(2) applicable percentage.
+        dependent_care_benefits: the EXCLUDED employer DCB (Form 2441 Part III
+            result) — reduces the expense cap. The $5,000/$2,500-MFS exclusion
+            limit and any taxable excess are the caller's Part III (caveated).
+        taxpayer_student_disabled_months / spouse_student_disabled_months:
+            §21(d)(2) — a spouse who is a full-time student or incapable of
+            self-care is deemed to have $250/mo (1 person) or $500/mo (2+) of
+            earned income. Only ONE spouse may use deemed income for a month
+            both qualify, so when BOTH are flagged the deemed amount is applied
+            to the SPOUSE only (never overstates).
+        lived_apart_exception: §21(e)(2)/(e)(4) — an MFS filer is denied the
+            credit UNLESS legally separated or living apart from the spouse the
+            last 6 months while maintaining the household. Default False → an
+            MFS filer gets $0.
+        tax_liability: when supplied, the nonrefundable credit is capped at it.
+
+    Returns dict: credit, applicable_percentage, expense_cap_after_dcb,
+    earned_income_limit, qualified_expenses_used, disallowed_mfs, notes.
+    """
+    fs = _normalize_filing_status(filing_status)
+    if isinstance(qualifying_persons, bool) or not isinstance(qualifying_persons, int) \
+            or qualifying_persons < 0:
+        raise ValueError(
+            f"qualifying_persons must be a non-negative int, got {qualifying_persons!r}")
+    for name, m in (("taxpayer_student_disabled_months", taxpayer_student_disabled_months),
+                    ("spouse_student_disabled_months", spouse_student_disabled_months)):
+        if isinstance(m, bool) or not isinstance(m, int) or not (0 <= m <= 12):
+            raise ValueError(f"{name} must be an int 0–12, got {m!r}")
+    if not isinstance(lived_apart_exception, bool):
+        raise ValueError("lived_apart_exception must be a bool")
+    exp = _sched_a_amount(qualified_expenses, "qualified_expenses")
+    tp_ei = _sched_a_amount(taxpayer_earned_income, "taxpayer_earned_income")
+    agi_v = _sched_a_amount(agi, "agi")
+    dcb = _sched_a_amount(dependent_care_benefits, "dependent_care_benefits")
+    is_married = fs in ("MFJ", "MFS")
+    sp_ei = None
+    if spouse_earned_income is not None:
+        sp_ei = _sched_a_amount(spouse_earned_income, "spouse_earned_income")
+
+    notes = []
+    if qualifying_persons == 0:
+        return {"credit": 0.0, "applicable_percentage": 0.0,
+                "expense_cap_after_dcb": 0.0, "earned_income_limit": 0.0,
+                "qualified_expenses_used": 0.0, "disallowed_mfs": False,
+                "notes": ["No qualifying person — no §21 credit."]}
+
+    # §21(e)(2): an MFS filer is generally denied the credit.
+    if fs == "MFS" and not lived_apart_exception:
+        return {"credit": 0.0, "applicable_percentage": 0.0,
+                "expense_cap_after_dcb": 0.0, "earned_income_limit": 0.0,
+                "qualified_expenses_used": 0.0, "disallowed_mfs": True,
+                "notes": ["MFS filers are DENIED the §21 credit (§21(e)(2)) "
+                          "unless legally separated or living apart from the "
+                          "spouse the last 6 months while maintaining the "
+                          "household — pass lived_apart_exception=True if so."]}
+
+    deemed_monthly = (_DCC_DEEMED_MONTHLY_ONE if qualifying_persons == 1
+                      else _DCC_DEEMED_MONTHLY_MULTI)
+    # §21(d)(2) deemed earned income for a student/disabled spouse. Only ONE
+    # spouse may use it for a shared month, so when BOTH are flagged apply it to
+    # the SPOUSE only (the common non-working-student case; never overstates).
+    eff_tp = tp_ei
+    eff_sp = sp_ei
+    if is_married:
+        if spouse_student_disabled_months > 0:
+            eff_sp = max(sp_ei or 0.0, deemed_monthly * spouse_student_disabled_months)
+            if taxpayer_student_disabled_months > 0:
+                notes.append(
+                    "Both spouses flagged as student/disabled: §21(d)(2) allows "
+                    "only ONE to use deemed income for a shared month — applied "
+                    "to the spouse only (may understate if the student months do "
+                    "not overlap; verify Form 2441 line 5).")
+        elif taxpayer_student_disabled_months > 0:
+            eff_tp = max(tp_ei, deemed_monthly * taxpayer_student_disabled_months)
+        earned_income_limit = round(min(eff_tp, eff_sp if eff_sp is not None else 0.0), 2)
+    else:
+        # Unmarried: only the taxpayer's earned income limits (deemed income is a
+        # spouse concept; a single filer must actually work/look for work).
+        earned_income_limit = round(eff_tp, 2)
+
+    cap = _DCC_EXPENSE_CAP_ONE if qualifying_persons == 1 else _DCC_EXPENSE_CAP_MULTI
+    expense_cap_after_dcb = round(max(0.0, cap - dcb), 2)
+    if dcb > 0:
+        notes.append(
+            "Employer dependent-care benefits (W-2 box 10) reduce the expense "
+            "cap (Form 2441 Part III before Part II). The $5,000/$2,500-MFS "
+            "exclusion limit and any taxable excess DCB are the caller's Part III.")
+
+    qualified_used = round(min(exp, expense_cap_after_dcb, earned_income_limit), 2)
+    pct = _dcc_applicable_percentage(agi_v)
+    credit = round(pct * qualified_used, 2)
+
+    tax_limited = False
+    if tax_liability is not None:
+        tl = _sched_a_amount(tax_liability, "tax_liability")
+        if credit > tl:
+            credit = round(tl, 2)
+            tax_limited = True
+    notes.append(
+        "NONREFUNDABLE (§21) — limited to tax; no carryforward of the unused "
+        "portion. Eligibility gates (qualifying person, work-related rule, "
+        "provider TIN) are the caller's step 0.")
+    if tax_limited:
+        notes.append("Credit capped at the tax liability (nonrefundable).")
+
+    return {
+        "credit": credit,
+        "applicable_percentage": pct,
+        "expense_cap_after_dcb": expense_cap_after_dcb,
+        "earned_income_limit": earned_income_limit,
+        "qualified_expenses_used": qualified_used,
+        "disallowed_mfs": False,
+        "notes": notes,
+    }
+
+
 def compute_schedule_a(
     agi: float,
     filing_status: str,
@@ -4599,3 +4771,10 @@ if __name__ == "__main__":
     print(f"6-month eligibility, contributed full $4,300: limit "
           f"${_hsa['allowed_limit']:,.2f}, EXCESS ${_hsa['excess_contribution']:,.2f}, "
           f"§4973 excise ${_hsa['excise_tax']:,.2f} (a full-year assumption misses it)")
+
+    print("\n=== Form 2441 Dependent-Care Credit Test (N3b) ===")
+    _dcc = compute_form_2441(2, 10000, 150000, 200000, "MFJ",
+                             spouse_earned_income=80000)
+    print(f"MFJ, 2 qualifying persons, $10K expenses, AGI $200K: "
+          f"{_dcc['applicable_percentage']:.0%} × $6,000 cap = "
+          f"${_dcc['credit']:,.2f} credit")

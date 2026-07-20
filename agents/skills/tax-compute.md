@@ -741,7 +741,20 @@ When `flags.has_education_expenses` is true, use `compute_education_credits()`:
 6. Write the `form_8863` section to result.json and remember to subtract
    Schedule 3 line 3 from the CTC's Credit Limit Worksheet amount above.
 
-**Other credits:** Dependent care (Form 2441), etc. as applicable (manual worksheets — see the limitations manifest).
+**Dependent-care credit (Form 2441, `has_dependent_care`):** run
+`compute_form_2441()` from `agents/lib/tax_computations.py` (Schedule 3 line 6f
+→ nonrefundable). Pass from `dependent_care_detail`: `qualifying_persons`,
+`qualified_expenses`, `dependent_care_benefits` (= W-2 box 10 excluded), the
+`taxpayer_student_disabled_months` / `spouse_student_disabled_months`, and
+`lived_apart_exception`; plus `taxpayer_earned_income` / `spouse_earned_income`
+(computed earned income), `agi`, `filing_status`, and `tax_liability` (the
+Credit Limit Worksheet amount — it is NONREFUNDABLE). The GATES stay step 0:
+only run it when `work_related_confirmed` and a qualifying person exist, and
+confirm the provider name/TIN is on file (due diligence). MFS gets $0 unless
+`lived_apart_exception`. Surface the notes (deemed-income both-spouses caveat,
+DCB Part III, nonrefundable limit).
+
+**Other credits:** energy/EV/etc. as applicable (manual worksheets — see the limitations manifest).
 
 ### Step 8: Compute Other Taxes (Form 1040 Line 23)
 

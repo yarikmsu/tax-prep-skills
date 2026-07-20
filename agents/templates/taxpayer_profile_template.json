@@ -114,6 +114,17 @@
     "last_month_rule": false,
     "family_limit_share": null
   },
+  "dependent_care_detail": {
+    "_comment": "Form 2441 §21 credit (N3b) eligibility facts + inputs, collected by /tax-setup when has_dependent_care. GATES (attested): qualifying_persons = count of qualifying persons (under 13, OR incapable of self-care meeting relationship/residency). work_related_confirmed = both spouses (if married) worked / looked for work / were full-time students. provider_tin_on_file = provider name + TIN collected (due diligence). INPUTS: qualified_expenses paid; employer_dcb = W-2 box 10 excluded benefits; taxpayer/spouse student_disabled_months for §21(d)(2) deemed income; mfs_lived_apart_exception for the §21(e)(2) MFS carve-out. Earned income comes from the computed return.",
+    "qualifying_persons": 0,
+    "qualified_expenses": 0,
+    "employer_dcb": 0,
+    "work_related_confirmed": false,
+    "provider_tin_on_file": false,
+    "taxpayer_student_disabled_months": 0,
+    "spouse_student_disabled_months": 0,
+    "mfs_lived_apart_exception": false
+  },
   "prior_year": {
     "filing_status": null,
     "state_residency_changes": null,

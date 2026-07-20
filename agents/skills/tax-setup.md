@@ -325,7 +325,17 @@ interview never captures is invisible to every downstream check.
   fewer than 4 prior years, no felony drug conviction, TIN by the due
   date). MFS gets neither credit; QSS phases out on the SINGLE $80K-$90K
   MAGI range.
-- Child/dependent care expenses? (Form 2441) → sets `has_dependent_care`
+- Child/dependent care expenses? (Form 2441) → sets `has_dependent_care`.
+  **If yes**, collect `dependent_care_detail` for the §21 credit: how many
+  QUALIFYING persons (under 13, or a spouse/dependent incapable of self-care who
+  lived with you more than half the year)? How much did you pay in work-related
+  care? Did BOTH spouses (if married) work, look for work, or attend school
+  full-time (the §21(d) work-related rule — confirm)? Was any of it paid through
+  an employer dependent-care FSA (W-2 box 10)? For a non-working spouse who was
+  a full-time student or disabled, how many months? Do you have the care
+  provider's name and TIN (required — due diligence)? If MFS, did you live apart
+  from your spouse the last 6 months (the §21(e)(2) exception — otherwise MFS
+  gets no credit)? The credit is now COMPUTED from these facts.
 - Charitable giving? (approximate amount, cash vs property donations) → sets `has_charitable_giving`
 - Energy-efficient home improvements? (heat pump, solar, insulation — 25C/25D) → sets `has_energy_credits`
 - EV purchase or lease this year? (30D/25E) → sets `has_ev_purchase`

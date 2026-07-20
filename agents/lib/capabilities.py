@@ -128,7 +128,16 @@ RULES: "tuple[Rule, ...]" = (
          "not modeled."),
     Rule("dependent_care", "has_dependent_care", MANUAL,
          "Dependent care expenses", "Form 2441",
-         "The credit and its earned-income limitation are hand-computed."),
+         "The §21 credit IS computed by /tax-compute (compute_form_2441 — the "
+         "AGI applicable percentage, the $3,000/$6,000 expense cap reduced by "
+         "W-2 box 10 employer benefits, the earned-income limit with §21(d)(2) "
+         "deemed income for a student/disabled spouse, the MFS disallowance, "
+         "and the nonrefundable tax limit) GIVEN the attested eligibility "
+         "facts. The GATES stay the caller's step 0: a qualifying person "
+         "(§21(b)(1) — under 13 or incapable of self-care, relationship/"
+         "residency), the work-related-expense rule (both spouses working / "
+         "looking / full-time students), and provider name/TIN due diligence — "
+         "collected by the /tax-setup interview into `dependent_care_detail`."),
     Rule("energy_credits", "has_energy_credits", MANUAL,
          "Residential energy improvements", "Form 5695",
          "The 25C/25D credits are hand-computed. **OBBBA termination (both "

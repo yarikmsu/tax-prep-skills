@@ -21,6 +21,7 @@ from agents.lib.tax_computations import (
     compute_additional_medicare,
     compute_excess_sdi,
     compute_form_8889,
+    compute_form_2441,
     compute_excess_ss_withholding,
     compute_ftc_limitation,
     compute_child_tax_credit,
@@ -3929,3 +3930,84 @@ class TestForm8889HSA:
     def test_nan_contribution_rejected(self):
         with pytest.raises(ValueError):
             compute_form_8889("self_only", 12, float("nan"), 0, 4300, 8550)
+
+
+class TestForm2441DependentCare:
+    """Form 2441 §21 dependent-care credit (N3b). Statutory-fixed: 35%→20%
+    over $15k-$43k AGI, $3k/$6k caps, $250/$500 deemed income. Hand-computed."""
+
+    def test_applicable_percentage_tiers(self):
+        from agents.lib.tax_computations import _dcc_applicable_percentage as p
+        assert p(15000) == 0.35
+        assert p(20000) == 0.32   # ceil(5000/2000)=3 → 35−3
+        assert p(43000) == 0.21   # ceil(28000/2000)=14 → 35−14
+        assert p(43001) == 0.20   # floor
+        assert p(200000) == 0.20
+
+    def test_high_agi_two_persons_20pct(self):
+        r = compute_form_2441(2, 10000, 150000, 200000, "MFJ",
+                              spouse_earned_income=80000)
+        assert r["credit"] == 1200.0  # 20% × $6,000 cap
+
+    def test_one_person_mid_agi(self):
+        """HoH, 1 person, $4,000 expenses, AGI $20,000 → 32% × $3,000 = $960."""
+        r = compute_form_2441(1, 4000, 25000, 20000, "HoH")
+        assert r["applicable_percentage"] == 0.32
+        assert r["credit"] == 960.0
+
+    def test_dcb_reduces_cap(self):
+        """$5,000 excluded DCB reduces the $6,000 cap to $1,000 → 20% × 1,000."""
+        r = compute_form_2441(2, 6000, 80000, 50000, "MFJ",
+                              spouse_earned_income=80000, dependent_care_benefits=5000)
+        assert r["expense_cap_after_dcb"] == 1000.0
+        assert r["credit"] == 200.0
+
+    def test_earned_income_limit(self):
+        """Spouse earns only $2,000 → limit $2,000; 22% × 2,000 = $440."""
+        r = compute_form_2441(2, 6000, 90000, 40000, "MFJ", spouse_earned_income=2000)
+        assert r["earned_income_limit"] == 2000.0
+        assert r["credit"] == 440.0
+
+    def test_deemed_income_student_spouse(self):
+        """Non-working full-time-student spouse, 12 months, 2 persons → deemed
+        $500×12 = $6,000; 27% × $6,000 = $1,620."""
+        r = compute_form_2441(2, 6000, 90000, 30000, "MFJ",
+                              spouse_earned_income=0, spouse_student_disabled_months=12)
+        assert r["earned_income_limit"] == 6000.0
+        assert r["credit"] == 1620.0
+
+    def test_mfs_disallowed(self):
+        r = compute_form_2441(2, 6000, 50000, 50000, "MFS", spouse_earned_income=50000)
+        assert r["credit"] == 0.0
+        assert r["disallowed_mfs"] is True
+
+    def test_mfs_lived_apart_exception_allowed(self):
+        r = compute_form_2441(1, 3000, 40000, 30000, "MFS",
+                              spouse_earned_income=40000, lived_apart_exception=True)
+        assert r["disallowed_mfs"] is False
+        assert r["credit"] == 810.0  # 27% × 3,000
+
+    def test_nonrefundable_capped_at_tax(self):
+        r = compute_form_2441(1, 3000, 50000, 20000, "HoH", tax_liability=500)
+        assert r["credit"] == 500.0
+
+    def test_no_qualifying_person_zero(self):
+        r = compute_form_2441(0, 5000, 50000, 50000, "MFJ", spouse_earned_income=50000)
+        assert r["credit"] == 0.0
+
+    def test_both_spouses_students_deemed_to_spouse_only(self):
+        r = compute_form_2441(2, 6000, 0, 30000, "MFJ", spouse_earned_income=0,
+                              taxpayer_student_disabled_months=12,
+                              spouse_student_disabled_months=12)
+        # taxpayer EI 0 (not given deemed since both flagged → min with spouse
+        # deemed 6000 is min(0, 6000) = 0) → credit 0, with a caveat note
+        assert any("only ONE" in n for n in r["notes"])
+
+    def test_bad_qualifying_persons_rejected(self):
+        with pytest.raises(ValueError):
+            compute_form_2441(-1, 5000, 50000, 50000, "MFJ", spouse_earned_income=50000)
+
+    def test_bad_months_rejected(self):
+        with pytest.raises(ValueError):
+            compute_form_2441(1, 3000, 50000, 50000, "HoH",
+                              taxpayer_student_disabled_months=13)
