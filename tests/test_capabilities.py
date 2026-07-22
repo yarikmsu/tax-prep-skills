@@ -59,6 +59,7 @@ def test_iso_exercise_is_manual_not_blocking():
     ("nyc_resident", "nyc_resident"),
     ("has_household_employees", "household_employees"),
     ("has_dependent_unearned_income", "kiddie_tax"),
+    ("has_pfic_taxable_event", "pfic_taxable_event"),
 ])
 def test_each_unsupported_flag_blocks(flag, rule_id):
     r = C.evaluate(_profile({flag: True}))
@@ -73,7 +74,13 @@ def test_each_unsupported_flag_blocks(flag, rule_id):
     ("has_gambling_income", "gambling"),
     ("has_unreported_or_allocated_tips", "unreported_allocated_tips"),
     ("lives_abroad", "feie"),
-    ("has_foreign_mutual_funds", "pfic"),
+    # has_foreign_mutual_funds → pfic is MANUAL, but it now REQUIRES the
+    # has_pfic_taxable_event answer (else the fail-closed guard blocks) — so it
+    # can't ride the bare-single-flag parametrization; see
+    # test_buy_and_hold_pfic_does_not_block / test_pfic_manifest_line_carries_*.
+    ("has_foreign_financial_account", "foreign_asset_reporting"),
+    ("has_sanctioned_blocked_asset", "sanctioned_blocked_asset"),
+    ("has_foreign_bond", "foreign_bond_oid_interest"),
     # H1 life-event rules — all MANUAL, none block.
     ("married_this_year", "marriage_year"),
     ("divorced_this_year", "divorce_year"),
@@ -96,6 +103,76 @@ def test_acknowledged_unblocks_and_lands_in_manifest():
     assert [f.rule_id for f in r.acknowledged] == ["rental_income"]
     assert any("NOT COMPUTED (user acknowledged)" in line and "Schedule E" in line
                for line in r.limitations)
+
+
+# --------------------------------------------------------------------------
+# Foreign funds / PFIC + sanctioned holdings (open-question #3 slice)
+# --------------------------------------------------------------------------
+
+def test_pfic_taxable_event_is_acknowledgeable():
+    r = C.evaluate(_profile({"has_pfic_taxable_event": True},
+                            acknowledged=["pfic_taxable_event"]))
+    assert r.blocking == ()
+    assert [f.rule_id for f in r.acknowledged] == ["pfic_taxable_event"]
+    assert any("Form 8621" in line for line in r.limitations)
+
+
+def test_buy_and_hold_pfic_does_not_block():
+    """The load-bearing distinction: holding a foreign fund (has_foreign_mutual_
+    funds) with the event question EXPLICITLY answered no (buy-and-hold) is the
+    reporting-only case — it must stay a MANUAL note (pfic), never a block. Only a
+    taxable EVENT blocks. This is what keeps a small buy-and-hold holder from
+    being over-blocked."""
+    r = C.evaluate(_profile({"has_foreign_mutual_funds": True,
+                             "has_pfic_taxable_event": False}))
+    assert r.blocking == ()
+    assert "pfic" in [f.rule_id for f in r.manual]
+    assert "pfic_taxable_event" not in [f.rule_id for f in r.manual]
+
+
+def test_foreign_funds_without_event_answer_fails_closed():
+    """Codex P1: a profile holding foreign funds (has_foreign_mutual_funds) whose
+    has_pfic_taxable_event is UNANSWERED (a pre-flag profile) must BLOCK — absence
+    is not 'no', or a PFIC distribution/sale would slip through with only the
+    manual note and understate §1291 tax."""
+    r = C.evaluate(_profile({"has_foreign_mutual_funds": True}))  # event flag absent
+    assert "unanswered_pfic_event" in [f.rule_id for f in r.blocking]
+
+
+def test_unanswered_pfic_event_is_not_acknowledgeable():
+    # Like the other migration guards, the remedy is answering the question — an
+    # acknowledgment must not unblock it. (unanswered_pfic_event is not a RULES id,
+    # so it cannot even appear in acknowledged_limitations without hard-erroring.)
+    with pytest.raises(C.CapabilityError):
+        C.evaluate(_profile({"has_foreign_mutual_funds": True},
+                            acknowledged=["unanswered_pfic_event"]))
+
+
+def test_no_foreign_funds_no_pfic_event_block():
+    # The guard only fires when foreign funds are held — a clean profile is unaffected.
+    r = C.evaluate(_profile())
+    assert "unanswered_pfic_event" not in [f.rule_id for f in r.blocking]
+
+
+def test_foreign_asset_and_sanctioned_are_manual_not_block():
+    r = C.evaluate(_profile({"has_foreign_financial_account": True,
+                             "has_sanctioned_blocked_asset": True}))
+    assert r.blocking == ()
+    ids = {f.rule_id for f in r.manual}
+    assert {"foreign_asset_reporting", "sanctioned_blocked_asset"} <= ids
+    # The sanctioned note must WITHHOLD the loss (never auto-claim) and carry the
+    # verified §901(j)/treaty guidance.
+    assert any("worthless" in line.lower() and "§901(j)" in line
+               for line in r.limitations)
+
+
+def test_clean_profile_has_no_foreign_fund_findings():
+    """US-domiciled funds / US-broker custody / no sanctions → the interview
+    leaves all three flags False → none of the new rules fire."""
+    r = C.evaluate(_profile())
+    ids = {f.rule_id for f in r.blocking + r.manual}
+    assert ids.isdisjoint(
+        {"pfic_taxable_event", "foreign_asset_reporting", "sanctioned_blocked_asset"})
 
 
 def test_acknowledgment_is_per_rule_not_global():
@@ -457,7 +534,9 @@ def test_home_sale_manifest_line_carries_121_and_1099s():
 def test_pfic_manifest_line_carries_8621_and_1291():
     # K3 (G3): a foreign-fund holder's manifest must name Form 8621 and the
     # punitive §1291 default so the PFIC obligation isn't silently missed.
-    r = C.evaluate(_profile({"has_foreign_mutual_funds": True}))
+    # (Event question answered no → buy-and-hold reporting-only case.)
+    r = C.evaluate(_profile({"has_foreign_mutual_funds": True,
+                             "has_pfic_taxable_event": False}))
     assert r.blocking == ()
     lines = "\n".join(r.limitations)
     assert "8621" in lines

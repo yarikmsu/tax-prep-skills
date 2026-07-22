@@ -313,3 +313,24 @@ change once Epic M lands:
 5. **Did any current user exercise ISOs in 2025 or 2026?** (decides N1 at P1 vs P2 —
    the largest remaining in-persona dollar gap)
 6. **Is any K-1 owner over the §199A taxable-income threshold?** (decides N2 urgency)
+
+### Demand-driven reprioritization (2026-07-21)
+
+A usage review resolved the six questions above (answers held privately, not
+recorded here). Net effect on priority — the backlog is now demand-ordered:
+
+- **P1 (only active surface): foreign-fund / PFIC support.** Question #3 is the
+  one with confirmed demand. Proceed spec-first per
+  `docs/superpowers/specs/2026-07-20-foreign-funds-pfic-design.md`; near-term
+  scope is that spec's P1+P2 (capability-gate the return to fail closed with the
+  named forms) and P3 (§988 + interest/OID on directly-held bonds). The spec's
+  heavy §1291 engine (its P4) stays demand-gated on the fund-domicile / custody
+  facts still open there.
+- **No active demand (stay unscheduled / community-track):** rental Schedule E
+  (D8), kiddie tax, crypto (G1 — reactivation trigger has not fired), and the
+  ISO→CA-Schedule-P and K-1→§199A surfaces (N1/N2 already shipped in Epic N; no
+  current user need sits behind them).
+
+**Posture confirmed:** the Part-5 recommendation holds — feature sprints end,
+season-driven ops begin, and the single demand-driven surface proceeds
+spec-first.

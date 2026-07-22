@@ -4657,6 +4657,116 @@ def compute_underpayment_interest(
                      "not modeled. Estimator; verify against the IRS notice.")}
 
 
+def _fx_rate(value, what: str) -> float:
+    """A spot exchange rate: finite, strictly positive (USD per 1 unit of the
+    foreign currency). A zero/negative rate is a data error, not a valid rate."""
+    v = _sched_a_amount(value, what)
+    if v == 0:
+        raise ValueError(f"{what} must be > 0 (a spot exchange rate), got 0")
+    return v
+
+
+def compute_section_988(
+    fc_cost: float,
+    fc_proceeds: float,
+    rate_acquisition: float,
+    rate_disposition: float,
+    long_term: "bool | None" = None,
+) -> dict:
+    """§988 foreign-currency debt (bond) disposition: split the total USD
+    gain/loss into its ORDINARY exchange component (§988(a)(1)) and its CAPITAL
+    market component (Reg. §1.988-2(b)).
+
+    A directly-held non-USD bond — a bond is DEBT, never a PFIC — bought for
+    `fc_cost` units of foreign currency and sold/redeemed for `fc_proceeds`
+    units, at spot rates `rate_acquisition` / `rate_disposition` (USD per 1 unit
+    of the foreign currency on each date).
+
+    Reg. §1.988-2(b) bifurcation (reconciles EXACTLY to the total):
+        basis_usd    = fc_cost     × rate_acquisition
+        proceeds_usd = fc_proceeds × rate_disposition
+        exchange gain/loss (ORDINARY §988) = fc_cost × (rate_disposition − rate_acquisition)
+        market   gain/loss (CAPITAL)       = (fc_proceeds − fc_cost) × rate_disposition
+        total = proceeds_usd − basis_usd  = exchange + market
+
+    The exchange component is ORDINARY (→ 1040 Schedule 1) regardless of holding
+    period; the market component is CAPITAL (→ Schedule D, short- or long-term
+    per `long_term`). They are NOT netted — an exchange gain and a market loss of
+    opposite sign land on different lines with different character and do not
+    cancel. That non-netting is the whole reason this split exists: reporting the
+    lump total as one capital figure would misclassify (and often understate) the
+    ordinary FX piece.
+
+    Sourcing (§988(a)(3)): for a US-resident taxpayer the exchange gain/loss is
+    sourced by the taxpayer's RESIDENCE, so it is generally US-SOURCE — it must
+    NOT be added to Form 1116 foreign-source income (doing so would overstate the
+    FTC and understate US tax). The market component's source follows the normal
+    capital-gain sourcing.
+
+    `long_term` (the caller derives it from the holding dates) routes the capital
+    piece. Long-term means held MORE THAN ONE YEAR by the calendar anniversary
+    (§1222) — NOT a 365-day count: a bond bought 2023-07-01 and sold 2024-07-01
+    is held exactly one year → SHORT-term (even though 366 days elapsed across the
+    leap day). None → term-unknown note.
+
+    v1 scope (caveated, not silently wrong): the FX component on ACCRUED INTEREST
+    / OID is not modeled — this is the principal disposition, the common case
+    (annual §1272 OID accrual while held is surfaced by the foreign_bond_oid_
+    interest capability rule, not computed here).
+    """
+    cost = _sched_a_amount(fc_cost, "fc_cost")
+    proceeds = _sched_a_amount(fc_proceeds, "fc_proceeds")
+    r_acq = _fx_rate(rate_acquisition, "rate_acquisition")
+    r_disp = _fx_rate(rate_disposition, "rate_disposition")
+    if long_term is not None and not isinstance(long_term, bool):
+        raise ValueError(f"long_term must be a bool or None, got {long_term!r}")
+
+    basis_usd = cost * r_acq
+    proceeds_usd = proceeds * r_disp
+    exchange = cost * (r_disp - r_acq)
+    market = (proceeds - cost) * r_disp
+
+    # Round the two REPORTABLE components (each is an independently-rounded form
+    # line), then derive the total FROM the rounded reportables so the returned
+    # contract "total = exchange + market" holds to the cent (never an off-by-one
+    # reconciliation drift that would accumulate across dispositions).
+    exchange_r = round(exchange, 2)
+    market_r = round(market, 2)
+    total_r = round(exchange_r + market_r, 2)
+
+    if long_term is None:
+        term = None
+    else:
+        term = "long" if long_term else "short"
+
+    notes = [
+        "§988 disposition: exchange gain/loss is ORDINARY (Schedule 1), market "
+        "gain/loss is CAPITAL (Schedule D) — they are reported separately, not "
+        "netted (Reg. §1.988-2(b)).",
+        "Exchange gain/loss is US-SOURCE for a US resident (§988(a)(3) residence "
+        "rule) — do NOT add it to Form 1116 foreign-source income.",
+    ]
+    if term is None:
+        notes.append(
+            "Capital term not specified — supply long_term (held MORE THAN ONE "
+            "YEAR by calendar anniversary, §1222, not a 365-day count) so the "
+            "market component routes to the correct Schedule D section.")
+    notes.append(
+        "v1: FX on accrued interest/OID is not modeled (principal disposition "
+        "only); annual §1272 OID while held is surfaced separately. Verify a "
+        "complex §988 position.")
+
+    return {
+        "basis_usd": round(basis_usd, 2),
+        "proceeds_usd": round(proceeds_usd, 2),
+        "exchange_gain_ordinary": exchange_r,
+        "market_gain_capital": market_r,
+        "capital_term": term,
+        "total_gain": total_r,
+        "notes": notes,
+    }
+
+
 if __name__ == "__main__":
     # Quick self-test with sample data
     print("=== Bracket Tax Test (MFJ 2025 OBBBA) ===")
@@ -4713,6 +4823,18 @@ if __name__ == "__main__":
     print("\n=== QBI Test ===")
     qbi = compute_qbi_deduction(-1000, 50)
     print(json.dumps(qbi, indent=2))
+
+    print("\n=== §988 FX Bond Test (ruble bond, market gain + FX loss) ===")
+    # 100k FC cost @ 0.013, 110k FC proceeds @ 0.011:
+    #   exchange (ordinary) = 100000 × (0.011 − 0.013) = −$200
+    #   market   (capital)  = (110000 − 100000) × 0.011 =  $110
+    #   total = 1210 − 1300 = −$90 = −200 + 110  ✓
+    s988 = compute_section_988(100000, 110000, 0.013, 0.011, long_term=True)
+    print(f"exchange(ordinary)=${s988['exchange_gain_ordinary']}, "
+          f"market(capital)=${s988['market_gain_capital']}, total=${s988['total_gain']}")
+    assert s988["exchange_gain_ordinary"] == -200.0
+    assert s988["market_gain_capital"] == 110.0
+    assert s988["total_gain"] == -90.0
 
     print("\n=== Form 8938 String Coercion Test ===")
     f8938 = check_form_8938_required(

@@ -267,6 +267,33 @@ shares) + the sale proceeds and the grant/purchase/sale dates. It returns the
   (broker basis − corrected basis) — feed it through the code-B flow above so
   the ordinary component isn't taxed twice.
 
+**§988 foreign-currency bond disposition (P3):** For a directly-held
+foreign-currency (non-USD) BOND that was sold or redeemed — NOT a fund (a fund
+is a PFIC and is BLOCKED by the capability gate, `pfic_taxable_event`) — call
+`compute_section_988()` from `agents/lib/tax_computations.py` with the
+foreign-currency cost/proceeds and the spot rates on the acquisition and
+disposition dates (from `foreign_holdings_detail.holdings`). It returns the
+Reg. §1.988-2(b) split:
+- **`exchange_gain_ordinary` → Schedule 1 (ordinary), regardless of holding
+  period** — this is §988(a)(1) exchange gain/loss. **Source it by the
+  taxpayer's RESIDENCE (§988(a)(3)): for a US resident it is US-SOURCE, so do
+  NOT add it to Form 1116 foreign-source income** (mis-labeling it foreign-source
+  inflates the FTC and understates US tax).
+- **`market_gain_capital` → Schedule D** (short/long per `capital_term`). Set
+  `long_term` from the holding period using the **one-year calendar-anniversary
+  rule (§1222): held MORE THAN ONE YEAR, NOT a 365-day count** — a bond bought
+  2023-07-01 and sold 2024-07-01 is held exactly one year → SHORT-term (even
+  though 366 days elapsed across the leap day).
+- **Do NOT net the two** — an exchange gain and a market loss of opposite sign
+  land on different lines with different character; reporting the lump total as
+  one capital figure misclassifies (and often understates) the ordinary FX
+  piece. Write both to the `section_988_fx` result block; the coupon interest is
+  translated at each payment-date spot rate to ordinary interest on Schedule B,
+  and any §1272 OID accrues annually even while held (the `foreign_bond_oid_
+  interest` MANUAL limitation surfaces both).
+- If a spot rate is unavailable for either date, the function refuses — surface
+  the FX component as MANUAL rather than compute a wrong ordinary amount.
+
 **Form 8606 — Nondeductible IRA basis & Roth conversions (lines 4a/4b):**
 
 Compute this BEFORE finalizing line 4b whenever the taxpayer has any of: a Roth

@@ -105,6 +105,22 @@ RULES: "tuple[Rule, ...]" = (
          "Form 8615",
          "Tax at the parents' rate on a child's unearned income is not "
          "modeled (and the dependent may have their own filing requirement)."),
+    Rule("pfic_taxable_event", "has_pfic_taxable_event", UNSUPPORTED,
+         "Foreign-fund (PFIC) distribution or disposition", "Form 8621 (§1291)",
+         "A non-US-domiciled mutual fund or ETF (a PFIC, §1291-1298) had a "
+         "distribution OR was sold this year. The default §1291 regime is "
+         "PUNITIVE and is NOT computed: an excess distribution or gain on sale "
+         "is spread across the holding period, taxed at the top ordinary rate "
+         "for each prior year PLUS a compounding interest charge — so routing it "
+         "through the normal qualified-dividend / long-term-capital-gain path "
+         "would UNDERSTATE the tax. A timely QEF (§1295) or mark-to-market "
+         "(§1296) election changes the treatment but is not modeled either, and "
+         "for a delisted/sanctioned fund the marketable-stock test for MTM may "
+         "fail, leaving §1291 unavoidable. Compute Form 8621 per fund in "
+         "specialized software / with a preparer. (Buy-and-hold with NO "
+         "distribution or sale is not blocked here — the reporting-only "
+         "§1298(f) obligation, with its $25K/$50K-MFJ de-minimis exception, is "
+         "carried on the has_foreign_mutual_funds manifest note instead.)"),
     # --- MANUAL: the skills hand-compute these from worksheets; flag loudly ---
     Rule("iso_exercise", "has_iso_exercise", MANUAL,
          "ISO exercise (incentive stock options)", "Form 6251 + CA Schedule P",
@@ -196,6 +212,48 @@ RULES: "tuple[Rule, ...]" = (
          "modeled here — the flag surfaces the possible obligation so it is not "
          "silently missed alongside the FBAR/8938 reporting on the same "
          "accounts. Compute in specialized software / with a preparer."),
+    Rule("foreign_asset_reporting", "has_foreign_financial_account", MANUAL,
+         "Foreign financial account / specified foreign assets", "Form 8938 (§6038D)",
+         "Specified foreign financial assets held OUTSIDE a US financial "
+         "institution (a foreign broker/custodian, or directly-registered "
+         "foreign securities) must be reported on Form 8938 once their value "
+         "exceeds the filing-status/residence threshold ($50K single / $100K "
+         "MFJ at year-end for US residents; higher any-time-in-year and abroad "
+         "thresholds). The valuation and form are NOT computed here — this "
+         "complements the FBAR (FinCEN 114) prepared by /tax-fbar (whose $10K "
+         "aggregate trigger and max-value basis differ). Assets held in a US "
+         "brokerage account are generally EXCLUDED from Form 8938."),
+    Rule("sanctioned_blocked_asset", "has_sanctioned_blocked_asset", MANUAL,
+         "Sanctioned / OFAC-blocked holding",
+         "Manual — blocked-income & §165(g) worthlessness analysis",
+         "A holding under OFAC sanctions (frozen/blocked — unable to sell or "
+         "receive distributions). Two hand-analyses, NOT modeled: (1) do NOT "
+         "auto-claim a §165(g) worthlessness loss — a blocked/illiquid security "
+         "is NOT 'worthless' without an identifiable event fixing zero value, so "
+         "the loss needs documentation, not mere inability to trade (claiming it "
+         "on a merely-frozen asset OVERSTATES the loss and understates tax); "
+         "(2) blocked-income constructive-receipt / the Rev. Rul. 74-351 "
+         "blocked-income deferral is hand-determined. On the credit side: a "
+         "SUSPENDED income-tax treaty removes treaty-reduced withholding, and a "
+         "§901(j)-listed country denies the foreign tax credit ENTIRELY — verify "
+         "the specific country's current status per tax year. (Example: as of "
+         "2026-07 Russia is NOT a §901(j) country, so its taxes remain creditable "
+         "under general §901, but the US-Russia treaty is SUSPENDED effective "
+         "2024-08-16 — Announcement 2024-26.) Any FX gain/loss on foreign-"
+         "currency debt is ordinary §988, computed separately by /tax-compute."),
+    Rule("foreign_bond_oid_interest", "has_foreign_bond", MANUAL,
+         "Directly-held foreign-currency bond (interest / OID)",
+         "Schedule B — foreign interest + §1272 OID accrual",
+         "A directly-held foreign-currency bond (debt, NOT a PFIC). Two "
+         "income items fire EVERY YEAR THE BOND IS HELD, independent of any "
+         "sale, and are NOT auto-computed: (1) coupon INTEREST, translated to "
+         "USD at each payment-date spot rate → ordinary interest on Schedule B "
+         "(foreign-source); (2) if bought at a discount, ANNUAL ORIGINAL ISSUE "
+         "DISCOUNT (§1272) accrues into income each year on a constant-yield "
+         "basis EVEN WITH NO SALE — omitting it understates income. A DISPOSITION "
+         "additionally splits into ordinary §988 exchange gain/loss + capital "
+         "market gain/loss (compute_section_988, /tax-compute). Hand-accrue OID "
+         "and translate coupons; verify a complex §988/OID position."),
     # --- H1 life-event rules: interview flags → manifest lines. All MANUAL
     # (hand-worked from worksheets / decree documents), and all read False
     # when absent — legacy profiles predating the life-event interview pass
@@ -456,6 +514,30 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
                              "— re-answer by setting flags.moved_states_this_year "
                              "explicitly true/false)",
             rule.form, rule.note, rule.rule_id in acknowledged_ids))
+
+    # PFIC taxable-event fail-closed (Codex P1): a profile that records foreign
+    # funds (has_foreign_mutual_funds) but PREDATES has_pfic_taxable_event reads
+    # the new flag as absent → False, so a holder who took a distribution or sold
+    # would slip through with only the manual PFIC note, dodging the
+    # pfic_taxable_event BLOCK and understating §1291 tax. When the fund flag is
+    # true and the event flag is unanswered (absent OR null), require the answer.
+    # A NEW profile carries has_pfic_taxable_event=false (template), so this fires
+    # only for pre-flag profiles — backward-compat is preserved for buy-and-hold.
+    # Not acknowledgeable: the remedy is answering the yes/no, not accepting a gap.
+    if _flag_value(flags, "has_foreign_mutual_funds") and \
+            flags.get("has_pfic_taxable_event") is None:
+        _place(Finding(
+            "unanswered_pfic_event", UNSUPPORTED,
+            "Holds foreign funds but the PFIC taxable-event question is unanswered",
+            "Form 8621 (§1291) screening",
+            "This profile records foreign mutual funds/ETFs "
+            "(has_foreign_mutual_funds) but predates has_pfic_taxable_event. Set "
+            "it explicitly true/false: did any foreign-domiciled fund pay a "
+            "distribution OR get sold this year? Absence is not treated as 'no' — "
+            "a PFIC taxable event would otherwise slip through with only the "
+            "manual note and understate the punitive §1291 tax. This blocker "
+            "cannot be acknowledged; answer the question.",
+            acknowledged=False))
 
     # Form 8958 community-property income splitting applies to EVERY MFS
     # filer domiciled in a community-property state — not just marriage-year

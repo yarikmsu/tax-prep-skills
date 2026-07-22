@@ -42,6 +42,11 @@
     "has_foreign_accounts": false,
     "signature_authority_foreign_accounts": false,
     "has_foreign_mutual_funds": false,
+    "has_pfic_taxable_event": false,
+    "has_foreign_financial_account": false,
+    "has_sanctioned_blocked_asset": false,
+    "has_foreign_bond": false,
+    "_comment_foreign_funds": "Foreign-fund/PFIC + sanctioned-holding gate (see foreign_holdings_detail). has_pfic_taxable_event = a NON-US-domiciled fund/ETF had a distribution OR was sold this year → BLOCKS (the §1291 tax is punitive and NOT computed; the normal qualified-dividend/LTCG path would understate). If has_foreign_mutual_funds is true this MUST be answered explicitly (absent → capability gate blocks, not a silent 'no'). has_foreign_financial_account = holdings at a foreign (non-US) broker/custodian → Form 8938 reporting surface (complements FBAR). has_sanctioned_blocked_asset = an OFAC-blocked/frozen holding → blocked-income + §165(g) worthlessness are hand-analyzed (do NOT auto-claim a loss). has_foreign_bond = directly-held foreign-currency bond → §1272 OID accrues + coupon interest translates to Schedule B EVERY year held (MANUAL), and a disposition splits via compute_section_988. All read False when absent (legacy profiles pass); the broader has_foreign_mutual_funds MANUAL note remains the net.",
     "has_self_employment": false,
     "has_rental_income": false,
     "has_hsa": false,
@@ -124,6 +129,10 @@
     "taxpayer_student_disabled_months": 0,
     "spouse_student_disabled_months": 0,
     "mfs_lived_apart_exception": false
+  },
+  "foreign_holdings_detail": {
+    "_comment": "Structured foreign-holding facts feeding the capability gate + the §988 bond computation (P3). One entry per holding in `holdings`. kind = fund | bond | other_security (fund vs debt is load-bearing: a fund can be a PFIC, a bond cannot). fund_domicile = 2-letter country of the FUND's registration (PFIC test is domicile, NOT holdings — a US fund of foreign stocks is NOT a PFIC). custody = foreign_broker | us_broker | direct_registered (drives Form 8938 / FBAR — a US-broker account is generally excluded). currency = ISO-4217 (non-USD debt → §988 ordinary FX gain/loss). blocked_by_sanctions + blocking_event_date = OFAC path. pfic_election = none | qef | mtm (+ election_first_year) — a timely election changes the §1291 default. received_distribution / disposed = the §1291 taxable-event triggers (drive has_pfic_taxable_event) and the §1298(f) reporting test with aggregate_pfic_value. The gate reads the derived flags; compute_section_988 reads the bond entries (currency, fc_cost/fc_proceeds, acquisition/disposition spot rates).",
+    "holdings": []
   },
   "prior_year": {
     "filing_status": null,

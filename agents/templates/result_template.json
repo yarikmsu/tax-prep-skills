@@ -268,6 +268,14 @@
     "line_15_taxable_distributions": 0
   },
 
+  "section_988_fx": {
+    "_include_if": "a directly-held foreign-currency (non-USD) BOND was disposed of — compute_section_988 ran. One entry per bond in `dispositions`. NOT for funds (a fund is a PFIC — see the capability gate).",
+    "_note": "§988/Reg. §1.988-2(b) split: exchange_gain_ordinary → Schedule 1 (ordinary, regardless of holding period — and US-SOURCE for a US resident per §988(a)(3), so NOT Form 1116 foreign-source income); market_gain_capital → Schedule D (short/long per capital_term, the >1-year calendar-anniversary rule §1222). The two are reported SEPARATELY — never netted into one figure. total_gain is derived from the two rounded reportables so they reconcile to the cent.",
+    "dispositions": [],
+    "total_exchange_ordinary": 0,
+    "total_market_capital": 0
+  },
+
   "form_1116_ftc": {
     "_include_if": "has_foreign_tax_paid flag is true",
     "category": "General category income (passive)",

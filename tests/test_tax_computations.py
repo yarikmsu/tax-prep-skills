@@ -44,6 +44,7 @@ from agents.lib.tax_computations import (
     check_form_8938_required,
     compute_late_filing_penalty,
     compute_underpayment_interest,
+    compute_section_988,
     SE_TAX_THRESHOLD,
 )
 
@@ -4011,3 +4012,69 @@ class TestForm2441DependentCare:
         with pytest.raises(ValueError):
             compute_form_2441(1, 3000, 50000, 50000, "HoH",
                               taxpayer_student_disabled_months=13)
+
+
+class TestSection988FXBond:
+    """§988 foreign-currency bond disposition: ordinary exchange vs capital
+    market split (Reg. §1.988-2(b)). Hand-computed."""
+
+    def test_par_bond_pure_fx_gain_is_all_ordinary(self):
+        # Bought & redeemed at the SAME foreign-currency amount (par, no market
+        # move); FX rose 0.010 → 0.012. Entire gain is EXCHANGE (ordinary).
+        #   exchange = 100000 × (0.012 − 0.010) = $200
+        #   market   = (100000 − 100000) × 0.012 = $0
+        r = compute_section_988(100000, 100000, 0.010, 0.012, long_term=True)
+        assert r["exchange_gain_ordinary"] == 200.0
+        assert r["market_gain_capital"] == 0.0
+        assert r["total_gain"] == 200.0
+        assert r["capital_term"] == "long"
+
+    def test_market_gain_and_fx_loss_do_not_cancel(self):
+        # The load-bearing case: FX FELL (ordinary loss) while the bond's FC
+        # price ROSE (capital gain). They must NOT net — different lines/character.
+        #   exchange = 100000 × (0.011 − 0.013) = −$200 (ordinary loss)
+        #   market   = (110000 − 100000) × 0.011 = $110 (capital gain)
+        #   total    = 110000×0.011 − 100000×0.013 = 1210 − 1300 = −$90
+        r = compute_section_988(100000, 110000, 0.013, 0.011, long_term=False)
+        assert r["exchange_gain_ordinary"] == -200.0
+        assert r["market_gain_capital"] == 110.0
+        assert r["total_gain"] == -90.0
+        assert r["capital_term"] == "short"
+        # reconciliation: the two pieces sum to the total
+        assert round(r["exchange_gain_ordinary"] + r["market_gain_capital"], 2) == r["total_gain"]
+
+    def test_reconciles_to_usd_basis_and_proceeds(self):
+        r = compute_section_988(50000, 48000, 0.012, 0.014)
+        assert r["basis_usd"] == round(50000 * 0.012, 2)
+        assert r["proceeds_usd"] == round(48000 * 0.014, 2)
+        assert r["total_gain"] == round(r["proceeds_usd"] - r["basis_usd"], 2)
+
+    def test_rounded_components_always_sum_to_total(self):
+        # Codex P2: messy inputs must not leave a 1-cent reconciliation drift —
+        # total_gain is DERIVED from the two rounded reportables, not rounded
+        # independently. This exact case drifted before the fix (−86.95 vs −86.94).
+        r = compute_section_988(12345.67, 99, 0.0071, 0.0072)
+        assert r["exchange_gain_ordinary"] + r["market_gain_capital"] == r["total_gain"]
+
+    def test_exchange_component_flagged_us_source(self):
+        # Codex P1: §988(a)(3) sources exchange gain by residence → US-source for
+        # a US resident; the note must warn against Form 1116 foreign-source use.
+        r = compute_section_988(1000, 1000, 1.0, 1.1)
+        assert any("US-SOURCE" in n and "1116" in n for n in r["notes"])
+
+    def test_term_unknown_when_long_term_none(self):
+        r = compute_section_988(1000, 1000, 1.0, 1.0)
+        assert r["capital_term"] is None
+        assert any("term not specified" in n.lower() for n in r["notes"])
+
+    def test_zero_or_negative_rate_rejected(self):
+        with pytest.raises(ValueError):
+            compute_section_988(1000, 1000, 0.0, 1.0)
+        with pytest.raises(ValueError):
+            compute_section_988(1000, 1000, 1.0, -1.0)
+
+    def test_nan_and_bool_rejected(self):
+        with pytest.raises(ValueError):
+            compute_section_988(float("nan"), 1000, 1.0, 1.0)
+        with pytest.raises(ValueError):
+            compute_section_988(1000, 1000, 1.0, 1.0, long_term="yes")

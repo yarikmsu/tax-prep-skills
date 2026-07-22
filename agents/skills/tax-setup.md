@@ -182,6 +182,38 @@ interview never captures is invisible to every downstream check.
   limitations manifest and is flagged in `/tax-review`. US-domiciled funds
   (even ones holding foreign stocks) are NOT PFICs — this is about the FUND's
   domicile, not what it invests in.
+  - **If yes — did any of those foreign-domiciled funds/ETFs pay a
+    DISTRIBUTION or get SOLD this year?** → sets `has_pfic_taxable_event`. This
+    is the load-bearing follow-up: a PFIC with a taxable event owes §1291 tax
+    (excess-distribution spreading + top-rate-per-year + a compounding interest
+    charge) that is PUNITIVE and NOT computed — routing it through the normal
+    qualified-dividend / LTCG path would UNDERSTATE tax, so it BLOCKS (Form
+    8621, acknowledgeable). Buy-and-hold with no distribution/sale does NOT set
+    this — that stays the reporting-only `has_foreign_mutual_funds` note.
+    Populate `foreign_holdings_detail.holdings` (kind/domicile/currency/
+    election/distribution/disposal) so the fund-vs-bond and PFIC facts are on
+    record.
+- Do you hold any foreign securities at a NON-US broker/custodian, or
+  directly-registered foreign securities (not in a US brokerage account)? →
+  sets `has_foreign_financial_account` (Form 8938 §6038D specified-foreign-
+  asset reporting over the threshold; complements FBAR — assets in a US
+  brokerage are generally excluded). Record the custody in
+  `foreign_holdings_detail`.
+- Is any holding under OFAC SANCTIONS — frozen/blocked so you cannot sell it or
+  receive distributions (e.g. certain Russian securities post-2022)? → sets
+  `has_sanctioned_blocked_asset` (blocked-income + §165(g) worthlessness are
+  hand-analyzed — do NOT claim a loss on a merely-frozen asset; and the treaty/
+  §901(j) FTC status of the sanctioning country is verified per year).
+- Did you HOLD or dispose of any FOREIGN-CURRENCY BOND (non-USD debt) directly
+  (not a fund)? → sets `has_foreign_bond` and records it in
+  `foreign_holdings_detail.holdings` with kind `bond`, the currency, the
+  foreign-currency cost/proceeds, and the acquisition/disposition spot rates. A
+  bond is DEBT, NOT a PFIC. Ask about HOLDING (not just selling): coupon
+  interest translates to Schedule B and, if bought at a discount, §1272 OID
+  accrues into income EVERY year even with no sale (MANUAL — omitting it
+  understates income). On a disposition, `/tax-compute` also splits the §988
+  ordinary FX gain/loss from the capital market gain/loss via
+  `compute_section_988`.
 - Did you LIVE abroad (tax home outside the US) during the year? → sets
   `lives_abroad` (raises the Form 8938 thresholds; the FEIE / Form 2555
   election is NOT modeled — only the FTC path — so this lands on the
