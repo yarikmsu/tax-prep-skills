@@ -1,6 +1,6 @@
 ---
 name: tax-rollover
-description: Pull prior-year carryforwards, identity, dependents (age-ticked), and recurring payers from archive/{year}/ into the current-year workspace
+description: Pull prior-year carryforwards, identity, dependents (age-ticked), recurring payers, and foreign-holding (PFIC/§988) history from archive/{year}/ into the current-year workspace
 ---
 
 # /tax-rollover
@@ -40,11 +40,13 @@ Where `{current_year}` is read from `result.json` `meta.tax_year`. Parse the JSO
 
 ### 3. Present each category via AskUserQuestion
 
-For each of the four categories (`carryforwards`, `identity`, `dependents`, `expected_sources`) that has at least one change in the diff:
+For each of the five categories (`carryforwards`, `identity`, `dependents`, `expected_sources`, `foreign_holdings`) that has at least one change in the diff:
 
 1. Render a brief preview of the changes (3–8 lines): show `json_path`, `prior_value`, `current_value`, `action_suggested`, `reason` for each change.
 2. Highlight any change with `action_suggested == "ask"` — these are the ones with warnings (filing-status change, age tick crossings, non-zero current values, etc.).
 3. Use **AskUserQuestion** with options: `Apply all`, `Skip category`.
+
+The `foreign_holdings` category carries each prior-year PFIC/§988 fund forward so the §1291 base history (the full zero-inclusive `distributions_by_year` and the correct `preceding_holding_years`) is not lost — it always surfaces as `ask`: `preceding_holding_years` is incremented and the per-year event fields (`event_date`, `received_distribution`, `disposed`, `disposition_gain_usd`) are reset, so the preparer MUST confirm each fund is still held and fold THIS year's distribution total into `distributions_by_year` before `/tax-compute` runs §1291. A rolled fund with a QEF/MTM election, or one blocked, stays as recorded.
 
 If every change in a category has `action_suggested == "skip"`, do not ask — just note it in the summary.
 

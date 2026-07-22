@@ -116,11 +116,20 @@ RULES: "tuple[Rule, ...]" = (
          "would UNDERSTATE the tax. A timely QEF (§1295) or mark-to-market "
          "(§1296) election changes the treatment but is not modeled either, and "
          "for a delisted/sanctioned fund the marketable-stock test for MTM may "
-         "fail, leaving §1291 unavoidable. Compute Form 8621 per fund in "
-         "specialized software / with a preparer. (Buy-and-hold with NO "
-         "distribution or sale is not blocked here — the reporting-only "
-         "§1298(f) obligation, with its $25K/$50K-MFJ de-minimis exception, is "
-         "carried on the has_foreign_mutual_funds manifest note instead.)"),
+         "fail, leaving §1291 unavoidable. /tax-compute now COMPUTES the §1291 "
+         "excess-distribution / disposition tax (compute_pfic_1291: ratable "
+         "holding-period allocation, each prior PFIC year at that year's highest "
+         "ordinary rate + the §6621 interest charge) — but only from the attested "
+         "foreign_holdings_detail facts (distributions by year, holding dates, the "
+         "fetched historical top-rate table) AND only when the computation returns "
+         "complete=True; a missing rate, an uncovered interest quarter, or absent "
+         "distribution history leaves it INCOMPLETE. Because the regime is "
+         "punitive and easy to under-state, this stays a hard stop by default: "
+         "acknowledge it (recording the computed compute_pfic_1291 result in "
+         "answers.md) to proceed, or prepare Form 8621 with a preparer. "
+         "(Buy-and-hold with NO distribution or sale is not blocked here — the "
+         "reporting-only §1298(f) obligation, with its $25K/$50K-MFJ de-minimis "
+         "exception, is carried on the has_foreign_mutual_funds manifest note.)"),
     # --- MANUAL: the skills hand-compute these from worksheets; flag loudly ---
     Rule("iso_exercise", "has_iso_exercise", MANUAL,
          "ISO exercise (incentive stock options)", "Form 6251 + CA Schedule P",

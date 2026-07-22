@@ -186,13 +186,35 @@ interview never captures is invisible to every downstream check.
     DISTRIBUTION or get SOLD this year?** → sets `has_pfic_taxable_event`. This
     is the load-bearing follow-up: a PFIC with a taxable event owes §1291 tax
     (excess-distribution spreading + top-rate-per-year + a compounding interest
-    charge) that is PUNITIVE and NOT computed — routing it through the normal
-    qualified-dividend / LTCG path would UNDERSTATE tax, so it BLOCKS (Form
-    8621, acknowledgeable). Buy-and-hold with no distribution/sale does NOT set
-    this — that stays the reporting-only `has_foreign_mutual_funds` note.
-    Populate `foreign_holdings_detail.holdings` (kind/domicile/currency/
-    election/distribution/disposal) so the fund-vs-bond and PFIC facts are on
-    record.
+    charge) that is PUNITIVE. `/tax-compute` **DOES compute it** (compute_pfic_1291)
+    once you acknowledge the block and supply the facts — but it stays a hard
+    stop by default (easy to under-state), and a fund with a QEF/MTM election, or
+    one that became a PFIC AFTER acquisition, stays blocked (not modeled). Routing
+    a PFIC distribution/gain through the normal qualified-dividend / LTCG path
+    would UNDERSTATE tax. Buy-and-hold with no distribution/sale does NOT set
+    this — that stays the reporting-only `has_foreign_mutual_funds` note. To
+    enable the computation, populate `foreign_holdings_detail.holdings` per fund
+    with the §1291 inputs: `fund_id` (a STABLE, UNIQUE per-fund identifier —
+    ISIN/CUSIP or a slug — so the tie-out can match each taxable fund to its
+    computed result), `acquisition_date`, the event date(s) — `distribution_date`
+    AND `disposition_date` (a distribution and a sale in the same year are separate
+    §1291 events with different allocation endpoints, so carry BOTH when both
+    occur), `pfic_election`, `preceding_holding_years` (REQUIRED for a non-first-year
+    distribution — without it the excess-distribution result is INCOMPLETE),
+    `distributions_by_year` (the FULL zero-inclusive base-period history — a $0
+    entry for every year with no distribution, summed per fund per year),
+    `disposition_gain_usd` for a sale — the **SIGNED** proceeds-minus-basis for EVERY
+    sale, INCLUDING a negative loss (only a POSITIVE gain is routed through §1291; a
+    loss still goes on Schedule D, but the signed amount MUST be recorded so the
+    tie-out can tell a real loss from an omitted/unknown amount — a `disposed` sale
+    with no finite value is treated as an unverifiable event and BLOCKS the return),
+    and `position_fully_closed` (true iff the sale closed the whole position — a
+    PARTIAL sale is false so /tax-rollover keeps the remaining shares + history next
+    year).
+    Absent/short facts → the computation returns `complete=False` and the return
+    stays blocked. A fund with a QEF/MTM
+    election is hand-prepared (Form 8621 Part I/II/III), not §1291-computed — record
+    it (so the event is on file) but expect no computed §1291 result for it.
 - Do you hold any foreign securities at a NON-US broker/custodian, or
   directly-registered foreign securities (not in a US brokerage account)? →
   sets `has_foreign_financial_account` (Form 8938 §6038D specified-foreign-
@@ -491,6 +513,32 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   and `compute_underpayment_interest` reports interest only PARTIAL-through the
   last cached quarter with a loud note (never extrapolating the last rate across
   an unfetched quarter). `/tax-compute` and `/tax-extend` re-check at use.
+- **ONLY when `has_pfic_taxable_event` is set** (an acknowledged PFIC §1291
+  event on a fund held across prior years): Search `"highest individual federal
+  income tax rate {Y}"` for EACH prior calendar year `Y` the fund was held (the
+  span from `acquisition_date`'s year through `event_date`'s year, per
+  `foreign_holdings_detail.holdings`) — populate `federal.historical_top_rate`
+  as `{"{Y}": 0.37, ...}` (e.g. 37% for 2018-2025, 39.6% for 2013-2017, 35% for
+  2003-2012 — verify + pin each year under `_sources`, K2). Each prior-PFIC-year
+  excess-distribution slice is taxed at THAT year's top ordinary rate
+  (§1291(c)(2)), not the taxpayer's bracket. **This fetch is REQUIRED to unblock
+  the return:** `compute_pfic_1291` marks any prior year whose rate is absent
+  `complete=False`, and the Step 12.7 tie-out gate then keeps the return blocked
+  (fail-closed — never a guessed rate). Skip entirely for a first-year-only event
+  (no prior PFIC year) and for every non-PFIC return (the table stays empty, which
+  is the default — freshness does NOT nag).
+  - **ALSO extend the `federal.underpayment_rates` (§6621) fetch BACKWARD** to
+    cover the PFIC interest span: `compute_pfic_1291` runs §6621 interest from EACH
+    prior PFIC year's UNEXTENDED return due date (≈ Apr 15 of Y+1) through the
+    current return's due date, so the cache must include every §6621 quarter from
+    the EARLIEST prior-PFIC-year due date onward — NOT just the current-year Form
+    2210 window. For a 2022 allocation that means the 2023-Q2 rate (Apr 2023) and
+    every quarter through the current due date. A missing opening quarter makes
+    `compute_underpayment_interest` return incomplete → the fund `complete=False` →
+    the return stays blocked. Search `"IRS quarterly interest rates underpayment
+    {Y}"` for each such prior year and prepend those periods to
+    `federal.underpayment_rates` (source-pin each). Historical §6621 rates are
+    published and stable, so this is a one-time backfill.
 
 **State (based on taxpayer's state):**
 - For CA: Search `"FTB California {year} tax brackets"`, `"California {year} standard deduction"`,

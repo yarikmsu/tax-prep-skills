@@ -45,6 +45,8 @@ from agents.lib.tax_computations import (
     compute_late_filing_penalty,
     compute_underpayment_interest,
     compute_section_988,
+    compute_pfic_excess_distribution,
+    compute_pfic_1291,
     SE_TAX_THRESHOLD,
 )
 
@@ -4078,3 +4080,270 @@ class TestSection988FXBond:
             compute_section_988(float("nan"), 1000, 1.0, 1.0)
         with pytest.raises(ValueError):
             compute_section_988(1000, 1000, 1.0, 1.0, long_term="yes")
+
+
+# §6621 rates covering 2024-Q1 .. 2025-Q2 (contiguous) for the interest span.
+_PFIC_RATES = [
+    {"effective_from": "2024-01-01", "annual_rate": 0.08},
+    {"effective_from": "2024-04-01", "annual_rate": 0.08},
+    {"effective_from": "2024-07-01", "annual_rate": 0.08},
+    {"effective_from": "2024-10-01", "annual_rate": 0.08},
+    {"effective_from": "2025-01-01", "annual_rate": 0.08},
+    {"effective_from": "2025-04-01", "annual_rate": 0.08},
+]
+
+
+class TestPFICExcessDistribution:
+    """§1291(b) 125%-of-prior-3-year excess-distribution threshold."""
+
+    def test_125_percent_of_three_year_average(self):
+        r = compute_pfic_excess_distribution(10000, [2000, 3000, 1000])
+        assert r["threshold"] == 2500.0          # 1.25 × 2000
+        assert r["excess_distribution"] == 7500.0
+        assert r["ordinary_now"] == 2500.0        # the non-excess portion
+
+    def test_first_year_has_zero_excess(self):
+        # §1291(b)(2)(B): first holding year → no excess distribution at all.
+        r = compute_pfic_excess_distribution(10000, [], is_first_holding_year=True)
+        assert r["excess_distribution"] == 0.0
+        assert r["ordinary_now"] == 10000.0
+
+    def test_shorter_prior_period_averages_available_years(self):
+        # Held only 1 prior year → average over that one year, not three.
+        r = compute_pfic_excess_distribution(5000, [1000])
+        assert r["threshold"] == 1250.0
+        assert r["excess_distribution"] == 3750.0
+
+    def test_distribution_below_threshold_is_all_ordinary(self):
+        r = compute_pfic_excess_distribution(2000, [2000, 2000, 2000])
+        assert r["excess_distribution"] == 0.0
+        assert r["ordinary_now"] == 2000.0
+
+    def test_nan_rejected(self):
+        with pytest.raises(ValueError):
+            compute_pfic_excess_distribution(float("inf"), [1000])
+
+    def test_zero_distribution_years_count_in_base(self):
+        # Codex P1: a 3-year base with two $0 years must average over 3, not 1.
+        # priors=[0,0,6000], preceding_holding_years=3 → avg 2000, threshold 2500.
+        r = compute_pfic_excess_distribution(10000, [0, 0, 6000], preceding_holding_years=3)
+        assert r["threshold"] == 2500.0
+        assert r["complete"] is True
+
+    def test_base_uses_most_recent_three_years_not_oldest(self):
+        # Codex round 15 P1: §1291(b)(2)(A) base = the THREE tax years IMMEDIATELY
+        # PRECEDING. prior_distributions is chronological oldest→newest, so an old
+        # $8,000 distribution followed by four $0 years must NOT inflate the base.
+        # Held 5 prior years: [8000, 0, 0, 0, 0] → most-recent-3 = [0,0,0] → avg 0,
+        # threshold 0 → the entire distribution is excess.
+        r = compute_pfic_excess_distribution(10000, [8000, 0, 0, 0, 0],
+                                             preceding_holding_years=5)
+        assert r["threshold"] == 0.0
+        assert r["excess_distribution"] == 10000.0
+        # The buggy head-slice would have averaged 8000/3 → threshold 3333.33.
+
+    def test_absent_holding_year_count_is_incomplete(self):
+        # Codex round 18 P1: without preceding_holding_years the list length can't
+        # prove the zero-inclusive base — supplying only the nonzero $6,000 for a
+        # 3-year holding would give a 1-year $7,500 threshold. Mark INCOMPLETE so
+        # the tie-out keeps the §1291 block.
+        r = compute_pfic_excess_distribution(10000, [6000])  # no count
+        assert r["complete"] is False
+        r2 = compute_pfic_excess_distribution(10000, [0, 0, 6000], preceding_holding_years=3)
+        assert r2["complete"] is True  # count supplied → verifiable
+
+    def test_incomplete_history_flags_not_complete(self):
+        # Held 3 prior years but only 1 distribution amount supplied → incomplete.
+        # Denominator is still 3 (shortfall treated as $0 → conservative), and the
+        # result is flagged complete=False so the caller keeps the block.
+        r = compute_pfic_excess_distribution(10000, [6000], preceding_holding_years=3)
+        assert r["complete"] is False
+        assert r["threshold"] == round(1.25 * 6000 / 3, 2)   # 2500, missing = $0
+        assert any("incomplete" in n.lower() for n in r["notes"])
+
+    def test_first_holding_year_flag_must_be_bool(self):
+        # Codex P2: a truthy non-bool ("false"/1) must not silently zero the excess.
+        with pytest.raises(ValueError):
+            compute_pfic_excess_distribution(10000, [], is_first_holding_year="false")
+
+    def test_zero_preceding_years_is_first_year(self):
+        r = compute_pfic_excess_distribution(10000, [], preceding_holding_years=0)
+        assert r["excess_distribution"] == 0.0 and r["ordinary_now"] == 10000.0
+
+    def test_contradictory_first_year_and_multiyear_rejected(self):
+        # Codex P1: is_first_holding_year=True against a 3-year holding must not
+        # silently zero the excess.
+        with pytest.raises(ValueError):
+            compute_pfic_excess_distribution(10000, [0, 0, 6000],
+                                             is_first_holding_year=True,
+                                             preceding_holding_years=3)
+
+    def test_first_year_with_nonzero_prior_history_rejected(self):
+        # Codex round 23 P1: is_first_holding_year=True (or preceding=0) with a
+        # NONZERO prior distribution is contradictory — a genuine first year has no
+        # preceding distributions. Trusting the stale flag would silently zero the
+        # excess for a multi-year fund. Both entry points (None count + flag, and
+        # preceding=0) must reject.
+        with pytest.raises(ValueError, match="first"):
+            compute_pfic_excess_distribution(10000, [0, 0, 6000],
+                                             is_first_holding_year=True)
+        with pytest.raises(ValueError, match="first"):
+            compute_pfic_excess_distribution(10000, [6000], preceding_holding_years=0)
+
+    def test_first_year_with_all_zero_prior_history_ok(self):
+        # A first year with an all-ZERO prior list (or empty) is consistent — no
+        # excess, whole distribution ordinary.
+        r = compute_pfic_excess_distribution(10000, [0, 0],
+                                             is_first_holding_year=True)
+        assert r["excess_distribution"] == 0.0 and r["ordinary_now"] == 10000.0
+        assert r["complete"] is True
+
+
+class TestPFIC1291:
+    """§1291 allocation + deferred tax at each prior year's highest rate + §6621
+    interest. Verified vs IRS Instructions for Form 8621 (Part V)."""
+
+    def test_allocation_split_ordinary_vs_prior_pfic(self):
+        # PFIC from acquisition, held 2022-01-02..2025-12-31 (holding period = day
+        # AFTER acq = 1460 days), $40k excess. 2025 (current) → ordinary (365 days).
+        r = compute_pfic_1291(40000, "2022-01-01", "2025-12-31", 2025,
+                              {2022: 0.37, 2023: 0.37, 2024: 0.37}, underpayment_rates=None)
+        assert r["ordinary_income_current"] == round(40000 * 365 / 1460, 2)  # 10000.0
+        # 2022(364)+2023(365)+2024(366) deferred at 37%, per-year rounded sum
+        assert r["deferred_tax_total"] == 11100.0
+        assert r["complete"] is False  # no §6621 rates → interest incomplete
+
+    def test_full_computation_with_rates_is_complete(self):
+        # Held 2023-01-02..2024-12-31 (day after acq); 2023 is the one prior year.
+        r = compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.37}, underpayment_rates=_PFIC_RATES)
+        assert r["complete"] is True
+        # 2023 allocated 364/730 of $20k (day-after-acq), taxed at 37%
+        deferred = round(20000 * 364 / 730 * 0.37, 2)
+        assert r["deferred_tax_total"] == deferred
+        assert r["interest_total"] > 0            # a full year of §6621 interest
+        assert r["total_1291_addon"] == round(r["deferred_tax_total"] + r["interest_total"], 2)
+        # 2024 (current) portion is ordinary now (366 days)
+        assert r["ordinary_income_current"] == round(20000 * 366 / 730, 2)
+
+    def test_disposition_whole_gain_is_excess(self):
+        r = compute_pfic_1291(30000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.37}, underpayment_rates=_PFIC_RATES,
+                              is_disposition=True)
+        assert r["is_disposition"] is True
+        assert any("entire gain" in n.lower() for n in r["notes"])
+
+    def test_datetime_inputs_normalized(self):
+        # Codex round 27 P2: datetime.datetime is a subclass of datetime.date, so a
+        # datetime acquisition date must be normalized to a pure date — otherwise a
+        # later `date(y, ...) < datetime` comparison raises TypeError and blocks the
+        # documented date-input API. A datetime acq + date event must compute the
+        # same as the ISO-string form.
+        import datetime as _dt
+        r_dt = compute_pfic_1291(20000, _dt.datetime(2023, 1, 1, 9, 30),
+                                 _dt.date(2024, 12, 31), 2024,
+                                 {2023: 0.37}, underpayment_rates=_PFIC_RATES)
+        r_str = compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                                  {2023: 0.37}, underpayment_rates=_PFIC_RATES)
+        assert r_dt["ordinary_income_current"] == r_str["ordinary_income_current"]
+        assert r_dt["total_1291_addon"] == r_str["total_1291_addon"]
+
+    def test_holding_period_excludes_acquisition_day(self):
+        # Codex P2: the holding period starts the DAY AFTER acquisition (§1223).
+        # Bought 2023-01-01, sold 2024-12-31 → 2023 has 364 allocated days (Jan 2–
+        # Dec 31), 2024 has 366, total 730 — not 365/366/731.
+        r = compute_pfic_1291(7300, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.50}, underpayment_rates=_PFIC_RATES)
+        assert r["per_year"][0]["year"] == 2023 and r["per_year"][0]["days"] == 364
+        assert r["per_year"][1]["year"] == 2024 and r["per_year"][1]["days"] == 366
+
+    def test_mid_holding_pfic_transition_is_blocked(self):
+        # Codex P1 (v1 scope): a fund that became a PFIC AFTER acquisition (a
+        # mid-holding transition) is unsupported — fail closed rather than compute
+        # the pre-PFIC-period case either direction.
+        with pytest.raises(ValueError):
+            compute_pfic_1291(40000, "2022-01-01", "2024-12-31", 2024,
+                              {2023: 0.37}, underpayment_rates=_PFIC_RATES,
+                              pfic_start_date="2023-07-01")
+
+    def test_return_due_date_models_covid_postponements(self):
+        # Codex P2: §1291 interest runs from the ACTUAL unextended due date. The
+        # IRS-wide COVID postponements (TY2019→Jul 15 2020, TY2020→May 17 2021)
+        # are modeled so interest doesn't start too early; other years use Apr 15.
+        import datetime as _dt
+        from agents.lib.tax_computations import _return_due_date
+        assert _return_due_date(2019) == _dt.date(2020, 7, 15)
+        assert _return_due_date(2020) == _dt.date(2021, 5, 17)
+        # Apr 15 2023 = Sat; Apr 17 = DC Emancipation Day (observed) → Tue Apr 18.
+        assert _return_due_date(2022) == _dt.date(2023, 4, 18)
+
+    def test_pfic_from_acquisition_is_supported(self):
+        # pfic_start_date == acquisition (the default / common case) computes fine.
+        r = compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.37}, underpayment_rates=_PFIC_RATES,
+                              pfic_start_date="2023-01-01")
+        assert r["complete"] is True and r["deferred_tax_total"] > 0
+
+    def test_zero_historical_rate_rejected(self):
+        # Codex P2: a 0 rate is malformed (every year has a positive top rate) —
+        # accepting it would zero the deferred tax while reading complete.
+        with pytest.raises(ValueError):
+            compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.0}, underpayment_rates=_PFIC_RATES)
+
+    def test_is_disposition_must_be_bool(self):
+        with pytest.raises(ValueError):
+            compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.37}, underpayment_rates=_PFIC_RATES,
+                              is_disposition="yes")
+
+    def test_zero_amount_is_complete_without_rates(self):
+        # Codex P2: a below-threshold (non-excess) distribution → amount=0 has no
+        # deferred tax/interest, so missing historical rates must NOT mark it
+        # incomplete (which would block a below-threshold ordinary distribution).
+        r = compute_pfic_1291(0, "2020-01-01", "2024-12-31", 2024,
+                              {}, underpayment_rates=None)
+        assert r["complete"] is True
+        assert r["total_1291_addon"] == 0.0
+        assert r["deferred_tax_total"] == 0.0
+
+    def test_negative_amount_rejected_loss_goes_to_schedule_d(self):
+        # A PFIC disposition at a LOSS is a Schedule D capital loss, not a §1291
+        # event — compute_pfic_1291 correctly rejects a negative amount so a loss
+        # can't be run through the excess-distribution path.
+        with pytest.raises(ValueError):
+            compute_pfic_1291(-5000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.37}, underpayment_rates=_PFIC_RATES,
+                              is_disposition=True)
+
+    def test_pfic_start_after_event_rejected(self):
+        # Codex P2: a start date after the event would zero the §1291 tax (all
+        # days pre-PFIC) — impossible for an attested taxable event → fail closed.
+        with pytest.raises(ValueError):
+            compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 0.37}, underpayment_rates=_PFIC_RATES,
+                              pfic_start_date="2025-01-01")
+
+    def test_missing_prior_year_rate_degrades_not_silent(self):
+        # Rate for 2023 absent → that year's deferred tax not computed, complete False.
+        r = compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                              {}, underpayment_rates=_PFIC_RATES)
+        assert r["complete"] is False
+        assert any("highest ordinary rate missing" in n.lower() for n in r["notes"])
+
+    def test_event_year_must_equal_current_year(self):
+        with pytest.raises(ValueError):
+            compute_pfic_1291(1000, "2023-01-01", "2024-06-01", 2025, {2023: 0.37})
+
+    def test_event_before_acquisition_rejected(self):
+        with pytest.raises(ValueError):
+            compute_pfic_1291(1000, "2024-06-01", "2024-01-01", 2024, {})
+
+    def test_rate_above_one_rejected(self):
+        with pytest.raises(ValueError):
+            compute_pfic_1291(20000, "2023-01-01", "2024-12-31", 2024,
+                              {2023: 37}, underpayment_rates=_PFIC_RATES)
+
+    def test_nan_amount_rejected(self):
+        with pytest.raises(ValueError):
+            compute_pfic_1291(float("nan"), "2023-01-01", "2024-12-31", 2024, {2023: 0.37})

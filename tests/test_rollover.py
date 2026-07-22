@@ -541,3 +541,179 @@ def test_compute_diff_amt_credit_zero_skipped():
     diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
     assert not [c for c in diff["carryforwards"]
                 if c.json_path == "prior_year.amt_credit_carryforward"]
+
+
+# --- foreign_holdings (PFIC / §988) history rollover -------------------------
+
+from agents.lib.rollover import _roll_foreign_holdings_forward, _diff_foreign_holdings
+
+
+def _pfic_holding(**over):
+    h = {
+        "kind": "fund",
+        "fund_domicile": "RU",
+        "custody": "foreign_broker",
+        "currency": "RUB",
+        "pfic_election": "none",
+        "acquisition_date": "2021-03-01",
+        "preceding_holding_years": 3,
+        "distributions_by_year": {"2022": 0, "2023": 500, "2024": 700},
+        "event_date": "2024-06-15",
+        "received_distribution": True,
+        "disposed": False,
+        "disposition_gain_usd": None,
+    }
+    h.update(over)
+    return h
+
+
+def test_roll_foreign_holdings_increments_count_and_resets_events():
+    rolled = _roll_foreign_holdings_forward([_pfic_holding()], prior_year=2024)
+    assert len(rolled) == 1
+    r = rolled[0]
+    # preceding_holding_years incremented: the just-completed 2024 becomes a preceding year.
+    assert r["preceding_holding_years"] == 4
+    # Static facts + cumulative history preserved.
+    assert r["acquisition_date"] == "2021-03-01"
+    assert r["distributions_by_year"] == {"2022": 0, "2023": 500, "2024": 700}
+    assert r["pfic_election"] == "none"
+    # Per-year event fields RESET (a stale prior-year distribution/sale must not carry).
+    assert r["event_date"] is None
+    assert r["received_distribution"] is False
+    assert r["disposed"] is False
+    assert r["disposition_gain_usd"] is None
+
+
+def test_roll_foreign_holdings_drops_full_close_only():
+    # Codex round 9 P2 + round 18 P1: a FULLY-closed position is dropped, but a
+    # PARTIAL disposition (or an unknown/absent full-close flag) is CARRIED FORWARD
+    # so its retained shares + history are not silently lost.
+    holdings = [
+        _pfic_holding(disposed=True, position_fully_closed=True, fund_domicile="FULL"),
+        _pfic_holding(disposed=True, position_fully_closed=False, fund_domicile="PARTIAL"),
+        _pfic_holding(disposed=True, fund_domicile="UNKNOWN"),  # no flag → carried
+        _pfic_holding(fund_domicile="IE"),
+    ]
+    rolled = _roll_foreign_holdings_forward(holdings, prior_year=2024)
+    domiciles = {r["fund_domicile"] for r in rolled}
+    assert domiciles == {"PARTIAL", "UNKNOWN", "IE"}  # FULL dropped, rest carried
+    # A carried partial disposition has its `disposed` flag reset for the new year.
+    partial = next(r for r in rolled if r["fund_domicile"] == "PARTIAL")
+    assert partial["disposed"] is False
+
+
+def test_roll_foreign_holdings_resets_per_event_dates():
+    # Codex round 19 P2: the new per-event date fields must be reset on carry —
+    # a stale distribution_date/disposition_date would misdate next year's event
+    # (or be rejected as prior to current_year by compute_pfic_1291).
+    h = _pfic_holding(distribution_date="2024-06-15", disposition_date="2024-09-01",
+                      position_fully_closed=False)
+    rolled = _roll_foreign_holdings_forward([h], prior_year=2024)
+    assert len(rolled) == 1
+    assert rolled[0]["distribution_date"] is None
+    assert rolled[0]["disposition_date"] is None
+    assert rolled[0]["position_fully_closed"] is None
+
+
+def test_roll_foreign_holdings_adds_zero_distribution_for_carried_year():
+    # Codex round 22: the fund was held THROUGH prior_year; that year is now a
+    # preceding base-period year. If it had NO distribution, distributions_by_year
+    # lacks an entry — a later distribution would then see a short zero-inclusive
+    # history and compute_pfic_excess_distribution would mark the result INCOMPLETE.
+    # An explicit {prior_year: 0} is added when absent.
+    h = _pfic_holding(distributions_by_year={"2022": 0, "2023": 500},
+                      received_distribution=False)
+    rolled = _roll_foreign_holdings_forward([h], prior_year=2024)
+    assert rolled[0]["distributions_by_year"] == {"2022": 0, "2023": 500, "2024": 0}
+    # Idempotent: a year already present (even as 0) is not clobbered.
+    h2 = _pfic_holding(distributions_by_year={"2024": 700})
+    rolled2 = _roll_foreign_holdings_forward([h2], prior_year=2024)
+    assert rolled2[0]["distributions_by_year"]["2024"] == 700
+
+
+def test_roll_foreign_holdings_inits_absent_distribution_history():
+    # Codex round 31: a fund with NO prior distributions can validly have no
+    # distributions_by_year mapping at all. On rollover it must be INITIALIZED with
+    # {prior_year: 0} so a later distribution has the zero-inclusive base (not left
+    # empty, which would mark the §1291 result incomplete forever).
+    h = _pfic_holding()
+    del h["distributions_by_year"]  # no mapping at all
+    rolled = _roll_foreign_holdings_forward([h], prior_year=2024)
+    assert rolled[0]["distributions_by_year"] == {"2024": 0}
+
+
+def test_roll_foreign_holdings_deepcopies_nested_history():
+    src = _pfic_holding()
+    rolled = _roll_foreign_holdings_forward([src], prior_year=2024)
+    rolled[0]["distributions_by_year"]["2024"] = 99999
+    # Mutating the rolled copy must not touch the source (deepcopy).
+    assert src["distributions_by_year"]["2024"] == 700
+
+
+def test_roll_foreign_holdings_skips_non_dict_and_bad_count():
+    holdings = [_pfic_holding(preceding_holding_years=None), "junk", 42,
+                _pfic_holding(preceding_holding_years=0)]
+    rolled = _roll_foreign_holdings_forward(holdings, prior_year=2024)
+    assert len(rolled) == 2
+    # A None/absent count is left as-is (no crash); a valid 0 increments to 1.
+    assert rolled[0]["preceding_holding_years"] is None
+    assert rolled[1]["preceding_holding_years"] == 1
+
+
+def test_roll_foreign_holdings_empty_or_missing():
+    assert _roll_foreign_holdings_forward([], 2024) == []
+    assert _roll_foreign_holdings_forward(None, 2024) == []
+    assert _roll_foreign_holdings_forward("not a list", 2024) == []
+
+
+def test_diff_foreign_holdings_surfaces_ask_change():
+    prior = PriorReturn(
+        year=2024,
+        result={"meta": {"tax_year": 2024}},
+        profile={"foreign_holdings_detail": {"holdings": [_pfic_holding()]}},
+    )
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"foreign_holdings"}, tax_law_new=current.tax_law)
+    changes = diff["foreign_holdings"]
+    assert len(changes) == 1
+    c = changes[0]
+    assert c.json_path == "foreign_holdings_detail.holdings"
+    assert c.action_suggested == "ask"
+    assert c.prior_value[0]["preceding_holding_years"] == 4
+    assert c.prior_value[0]["event_date"] is None
+
+
+def test_diff_foreign_holdings_no_prior_holdings_no_change():
+    prior = PriorReturn(
+        year=2024,
+        result={"meta": {"tax_year": 2024}},
+        profile={"foreign_holdings_detail": {"holdings": []}},
+    )
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"foreign_holdings"}, tax_law_new=current.tax_law)
+    assert diff["foreign_holdings"] == []
+
+
+def test_apply_foreign_holdings_writes_rolled_list(tmp_path):
+    """End-to-end: the carried holdings list lands in the new profile."""
+    profile = {"foreign_holdings_detail": {"holdings": []}}
+    result = {"meta": {"tax_year": 2025}}
+    ppath = tmp_path / "taxpayer_profile.json"
+    rpath = tmp_path / "result.json"
+    ppath.write_text(json.dumps(profile))
+    rpath.write_text(json.dumps(result))
+    change = Change(
+        category="foreign_holdings",
+        json_path="foreign_holdings_detail.holdings",
+        target_file="taxpayer_profile.json",
+        prior_value=_roll_foreign_holdings_forward([_pfic_holding()], 2024),
+        current_value=[],
+        action_suggested="ask",
+        reason="carry",
+    )
+    apply_changes({"foreign_holdings": [change]}, {"foreign_holdings": "apply"},
+                  WritePaths(result=rpath, profile=ppath))
+    written = json.loads(ppath.read_text())
+    holdings = written["foreign_holdings_detail"]["holdings"]
+    assert len(holdings) == 1
+    assert holdings[0]["preceding_holding_years"] == 4

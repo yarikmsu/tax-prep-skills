@@ -276,6 +276,30 @@
     "total_market_capital": 0
   },
 
+  "form_8621_pfic": {
+    "_include_if": "has_pfic_taxable_event AND the §1291 computation was run (acknowledged + foreign_holdings_detail facts present). One entry per fund in `funds` from compute_pfic_1291. NOT for a buy-and-hold PFIC (reporting-only §1298(f)).",
+    "_note": "§1291 excess-distribution / disposition tax (compute_pfic_1291, Form 8621 Part V). ordinary_income_current → 1040 ordinary income (taxed at normal rates); deferred_tax_total (prior PFIC years at each year's highest ordinary rate, §1291(c)(2)) + interest_total (§6621 daily, §1291(c)(3)) → total_1291_addon, an ADD-ON to Form 1040 TOTAL TAX line 24 (deferred tax to the LEFT of line 24, interest via Schedule 2 line 17p → line 23) — added AFTER nonrefundable credits, NOT folded into line 16 (which credits reduce) and NOT re-run through brackets. If any fund's `complete` is False (missing historical top rate / uncovered §6621 quarter / absent distribution history), the return is INCOMPLETE — do not file; keep the capability BLOCK.",
+    "_funds_schema": "Each entry in `funds`: {fund_id (STABLE, DISTINCT id matching the foreign_holdings_detail.holdings entry — the Step 12.7 tie-out matches taxable no-election funds to computed results BY fund_id, so a taxable fund with no matching complete entry FAILS the gate), complete (bool), is_disposition (bool), total_1291_addon (deferred tax + interest), ordinary_income_current (the EXCESS-distribution current-year allocation, ordinary now), nonexcess_ordinary (the NON-excess normal-dividend portion of a distribution — compute_pfic_excess_distribution's ordinary_now — 0 for a disposition), disposition_ordinary_income (REQUIRED + > 0 for EVERY fund sold at a POSITIVE gain — pure-disposition AND same-year distribution+sale alike: the sale leg's compute_pfic_1291 ordinary_income_current (current-year + pre-PFIC ordinary from the sale, always > 0 for a gain), recorded separately so the tie-out can prove the sale itself was run through §1291 and not masked by a stray nonexcess_ordinary or a small distribution result; 0/omitted for a distribution-only fund or a loss/zero-gain sale), ...}. ALL THREE amount fields (total_1291_addon, ordinary_income_current, nonexcess_ordinary) MUST be present + finite + >=0 on every complete fund (0 valid). A loss disposition still writes a fund entry: {fund_id, is_disposition: true, disposition_result: 'loss', total_1291_addon: 0, ordinary_income_current: 0, nonexcess_ordinary: 0, complete: true}.",
+    "funds": [],
+    "total_ordinary_income_current": 0,
+    "total_nonexcess_ordinary": 0,
+    "total_deferred_tax": 0,
+    "total_interest": 0,
+    "total_1291_addon": 0,
+    "reclassified_from_line_3b": 0,
+    "reclassified_from_line_3a": 0,
+    "line_9_regular_total_income": 0,
+    "line_11_regular_agi": 0,
+    "line_15_regular_taxable_income": 0,
+    "line_15_pfic_ordinary_income": 0,
+    "line_16_regular_tax": 0,
+    "line_24_regular_total_tax": 0,
+    "line_24_addon": 0,
+    "line_24_with_addon": 0,
+    "all_complete": false,
+    "_addon_placement": "The §1291 deferred tax (aggregate increases in tax for prior years) is entered on Form 1040 to the LEFT of line 24 and included in the line-24 total; the §6621 interest charge goes on Schedule 2 line 17p -> Schedule 2 Part II -> Form 1040 line 23 -> line 24. BOTH are additions to TOTAL TAX (line 24) AFTER nonrefundable credits — NEVER folded into line 16 (regular tax), which credits reduce. So line_16_regular_tax == form_1040.line_16_tax (NO add-on), and form_1040.line_24_total_tax == line_24_regular_total_tax (the counterfactual total tax WITHOUT the add-on) + total_1291_addon. Per IRS Instructions for Form 8621 (Rev. Dec 2025), Part V line 16."
+  },
+
   "form_1116_ftc": {
     "_include_if": "has_foreign_tax_paid flag is true",
     "category": "General category income (passive)",

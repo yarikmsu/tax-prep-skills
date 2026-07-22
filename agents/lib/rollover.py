@@ -5,6 +5,7 @@ from archive/{year}/ into current-year workspace files.
 Pure functions for diff/merge logic; thin I/O wrappers at edges.
 """
 
+import copy
 import json
 import os
 import sys
@@ -472,6 +473,101 @@ def _diff_expected_sources(prior: PriorReturn, current: CurrentState) -> list[Ch
     return out
 
 
+# Per-year event fields on a foreign-holding entry — TRUE only for the tax year
+# the distribution/sale happened. They MUST be re-collected from this year's
+# documents each year, never carried forward (a stale prior-year sale would
+# silently re-assert a §1291 event that didn't occur this year).
+_FOREIGN_HOLDING_EVENT_FIELDS = {
+    "event_date": None,
+    "distribution_date": None,
+    "disposition_date": None,
+    "received_distribution": False,
+    "disposed": False,
+    "disposition_gain_usd": None,
+    "position_fully_closed": None,
+}
+
+
+def _roll_foreign_holdings_forward(prior_holdings: Any, prior_year: int) -> list:
+    """Carry each prior-year foreign holding into the new year so the §1291 base
+    history is not lost (Form 8621 needs the full zero-inclusive distribution
+    history and the correct holding-period length every year the fund is held).
+
+    Preserves the STATIC per-fund facts (kind, fund_domicile, custody, currency,
+    acquisition_date, pfic_election, …) and the accumulated ``distributions_by_year``
+    cumulative history; INCREMENTS ``preceding_holding_years`` by one (the tax year
+    just completed becomes a preceding year); and RESETS the per-year event fields
+    (event_date / received_distribution / disposed / disposition_gain_usd) so this
+    year's distribution/sale is re-collected from documents rather than inherited.
+    The carried entry surfaces as an ``ask`` — the preparer confirms the fund is
+    still held and folds this year's distribution total into distributions_by_year.
+    """
+    if not isinstance(prior_holdings, list):
+        return []
+    rolled: list = []
+    for h in prior_holdings:
+        if not isinstance(h, dict):
+            continue
+        # A fund whose position was FULLY closed in the prior year is gone — do NOT
+        # carry it forward (resetting `disposed` to False would resurrect a sold
+        # fund with stale history; Codex round 9). But a PARTIAL disposition still
+        # sets `disposed: true` while shares (and their base history) remain —
+        # dropping it would silently lose that history and omit future distributions
+        # (Codex round 18). So drop ONLY on an EXPLICIT full close; a partial or an
+        # UNKNOWN (`position_fully_closed` absent) disposition is carried forward
+        # (fail-safe against understatement — the preparer confirms via the `ask`).
+        if h.get("disposed") is True and h.get("position_fully_closed") is True:
+            continue
+        nh = copy.deepcopy(h)
+        phy = nh.get("preceding_holding_years")
+        if isinstance(phy, int) and not isinstance(phy, bool) and phy >= 0:
+            nh["preceding_holding_years"] = phy + 1
+        # The fund was held THROUGH `prior_year`; that year is now a preceding
+        # base-period year. If it had NO distribution, distributions_by_year lacks
+        # an entry for it — so when the fund later distributes,
+        # compute_pfic_excess_distribution sees a short zero-inclusive history and
+        # marks the result INCOMPLETE, permanently blocking the return (Codex round
+        # 22). Add an explicit `{prior_year: 0}` when absent — INCLUDING when the
+        # mapping itself is missing (a fund with no prior distributions can validly
+        # have no `distributions_by_year` at all; initialize it, Codex round 31).
+        dby = nh.get("distributions_by_year")
+        if not isinstance(dby, dict):
+            dby = {}
+            nh["distributions_by_year"] = dby
+        if str(prior_year) not in dby and prior_year not in dby:
+            dby[str(prior_year)] = 0
+        for field_name, reset_value in _FOREIGN_HOLDING_EVENT_FIELDS.items():
+            if field_name in nh:
+                nh[field_name] = reset_value
+        rolled.append(nh)
+    return rolled
+
+
+def _diff_foreign_holdings(prior: PriorReturn, current: CurrentState) -> list[Change]:
+    """Carry foreign-holdings (PFIC / §988) per-fund history forward. Surfaces as a
+    single ``ask`` change over ``foreign_holdings_detail.holdings`` — the preparer
+    must confirm each fund is still held and add this year's events before compute."""
+    prior_holdings = _get_path(prior.profile, "foreign_holdings_detail.holdings")
+    rolled = _roll_foreign_holdings_forward(prior_holdings, prior.year)
+    if not rolled:
+        return []
+    current_value = _get_path(current.profile, "foreign_holdings_detail.holdings", default=[])
+    # If the current profile already carries holdings (the preparer re-entered
+    # them), never silently overwrite — surface for confirmation.
+    return [Change(
+        category="foreign_holdings",
+        json_path="foreign_holdings_detail.holdings",
+        target_file="taxpayer_profile.json",
+        prior_value=rolled,
+        current_value=current_value,
+        action_suggested="ask",
+        reason=("Prior-year foreign holdings carried forward (preceding_holding_years "
+                "incremented, per-year distribution/sale events reset). Confirm each "
+                "fund is still held and add THIS year's distribution total to "
+                "distributions_by_year before /tax-compute runs §1291."),
+    )]
+
+
 def compute_diff(
     prior: PriorReturn,
     current: CurrentState,
@@ -487,6 +583,8 @@ def compute_diff(
         out["dependents"] = _diff_dependents(prior, current, tax_law_new)
     if "expected_sources" in categories:
         out["expected_sources"] = _diff_expected_sources(prior, current)
+    if "foreign_holdings" in categories:
+        out["foreign_holdings"] = _diff_foreign_holdings(prior, current)
     return out
 
 
@@ -629,7 +727,7 @@ def _main(argv: list[str]) -> int:
         p.add_argument("--year", required=True)
         if cmd == "diff":
             p.add_argument("--json", action="store_true")
-            p.add_argument("--categories", default="carryforwards,identity,dependents,expected_sources")
+            p.add_argument("--categories", default="carryforwards,identity,dependents,expected_sources,foreign_holdings")
         else:
             p.add_argument("--categories", required=True)
     args = parser.parse_args(argv)

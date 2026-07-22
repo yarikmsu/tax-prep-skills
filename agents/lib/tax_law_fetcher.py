@@ -248,6 +248,16 @@ def create_empty_tax_law(year: int) -> dict:
             # rate news releases); compute_form_2210 degrades to
             # penalty-not-computed (loud note, never guessed) when empty.
             "underpayment_rates": [],
+            # Highest individual ORDINARY income tax rate by calendar year,
+            # {year: rate}. Needed ONLY for the PFIC §1291 engine
+            # (compute_pfic_1291): each excess-distribution amount allocated to a
+            # PRIOR PFIC year is taxed at THAT year's highest ordinary rate
+            # (§1291(c)(2)), not the taxpayer's bracket. Fetched on demand when a
+            # PFIC taxable event exists (e.g. 37% for 2018-2025, 39.6% for
+            # 2013-2017, 35% for 2003-2012 — verify + pin per year). Empty = the
+            # DEFAULT (no PFIC); compute_pfic_1291 marks the return INCOMPLETE and
+            # keeps the block when a needed year is absent, never guessing.
+            "historical_top_rate": {},
             # Form 6251 AMT parameters (ALL indexed annually — Rev. Proc.
             # inflation adjustments): exemption amount and its 25%-phase-out
             # start by status (HoH uses the SINGLE row — the form groups
@@ -701,6 +711,14 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 # the DEFAULT (compute_form_8995a uses the year-aware statutory
                 # range), like amt.phaseout_rate. Skip when unfetched.
                 if k == "qbi_phase_in_range" and isinstance(v, dict):
+                    continue
+                # federal.historical_top_rate is fetched ONLY when a PFIC §1291
+                # taxable event exists — an empty dict is the DEFAULT for the vast
+                # majority of returns, and compute_pfic_1291 degrades LOUDLY
+                # (INCOMPLETE, keeps the block) at the point of use when a needed
+                # prior-year rate is absent. Skip so it doesn't nag INCOMPLETE
+                # forever (the underpayment_rates precedent).
+                if k == "historical_top_rate" and isinstance(v, dict):
                     continue
                 child_path = f"{path}.{k}" if path else k
                 if v is None:

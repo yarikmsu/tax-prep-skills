@@ -15,6 +15,11 @@ from agents.lib import tie_out as T  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
+# Quarterly §6621 underpayment rates spanning the PFIC recompute test horizon.
+_PFIC_6621 = [{"effective_from": f"{y}-{m:02d}-01", "annual_rate": 0.08}
+              for y in range(2014, 2027) for m in (1, 4, 7, 10)]
+_HIST_RATE_ALL = {y: 0.37 for y in range(2014, 2026)}
+
 
 def _record(doc_id="w2-acme", file="documents/W2_Acme.pdf", form_type="W-2",
             payer="Acme", person="primary", key_boxes=None, skipped=None,
@@ -889,3 +894,1265 @@ def test_every_category_documented_in_tax_parse_skill():
             f"tie-out category {cat!r} is registered but never documented "
             f"in agents/skills/tax-parse.md — parse subagents can't emit "
             f"it, so the tie never fires (register both halves or neither)")
+
+
+# --------------------------------------------------------------------------
+# PFIC §1291 completeness gate (machine-checked fail-closed)
+# --------------------------------------------------------------------------
+
+def test_pfic_incomplete_all_complete_false_fails():
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": False,
+                                "funds": [{"complete": False}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"])
+    assert report.failed
+    assert report.pfic_incomplete
+
+
+def test_pfic_incomplete_fund_level_false_fails():
+    # all_complete missing/true but a per-fund complete=False still fails.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": True,
+                                "funds": [{"complete": True}, {"complete": False}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"])
+    assert report.failed
+    assert report.pfic_incomplete
+
+
+def test_pfic_all_complete_true_passes():
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": True,
+                                "funds": [{"complete": True, "total_1291_addon": 0,
+                                           "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"])
+    assert not report.pfic_incomplete
+    assert not report.failed
+
+
+def test_no_pfic_block_does_not_fail():
+    # A return with no PFIC event is unaffected (backward compatible).
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"])
+    assert not report.pfic_incomplete
+
+
+def test_template_scaffold_empty_funds_does_not_fail():
+    # Codex P1: result_template.json ships form_8621_pfic with all_complete:false
+    # and funds:[] on EVERY return — the empty scaffold must NOT fail the gate.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": False, "funds": []}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"])
+    assert not report.pfic_incomplete
+    assert not report.failed
+
+
+def test_acknowledged_pfic_event_with_no_fund_fails():
+    # Codex P1: a PFIC taxable event acknowledged in the profile but with NO
+    # computed fund (empty scaffold) must FAIL — the §1291 computation was skipped.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": False, "funds": []}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True)
+    assert report.failed and report.pfic_incomplete
+
+
+def test_acknowledged_pfic_event_absent_block_fails():
+    # Even if the block was removed entirely, an acknowledged event with no
+    # computation must fail closed.
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True)
+    assert report.failed and report.pfic_incomplete
+
+
+def test_acknowledged_pfic_event_with_complete_fund_passes():
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": True, "funds": [
+        {"complete": True, "total_1291_addon": 0, "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_acknowledged_pfic_event_fabricated_fund_no_holding_fails():
+    # Codex round 11 P1: a complete funds[] entry with NO recorded taxable holding
+    # must NOT pass — the attested holding facts are missing.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": True,
+                                "funds": [{"complete": True, "fund_id": "A"}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, any_taxable_pfic_recorded=False)
+    assert report.failed and report.pfic_incomplete
+
+
+def test_pfic_per_fund_coverage_one_fund_missing_fails():
+    # Codex round 9/10 P1: TWO taxable no-election funds (A, B) but only A computed —
+    # identity matching by fund_id must catch the silently-omitted B.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": True,
+                                "funds": [{"complete": True, "fund_id": "A"}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A", "B"},
+                        any_taxable_pfic_recorded=True)
+    assert report.failed and report.pfic_incomplete
+
+
+def test_pfic_per_fund_coverage_all_present_passes():
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0},
+                  {"complete": True, "fund_id": "B", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A", "B"},
+                        any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_duplicate_fund_id_does_not_cover_missing():
+    # Codex round 10 P1: two COMPLETE entries for the SAME fund A must NOT satisfy
+    # coverage of a second taxable fund B.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A"}, {"complete": True, "fund_id": "A"}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A", "B"},
+                        any_taxable_pfic_recorded=True)
+    assert report.failed and any("B" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_generic_entry_without_id_fails_coverage():
+    # Codex round 10 P1: a generic {complete: true} entry with no fund_id cannot
+    # cover an expected taxable fund.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {"all_complete": True, "funds": [{"complete": True}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"},
+                        any_taxable_pfic_recorded=True)
+    assert report.failed and report.pfic_incomplete
+
+
+def test_pfic_elected_only_event_passes_without_computed_fund():
+    # Codex round 10 P1: has_pfic_taxable_event set solely for an elected (QEF/MTM)
+    # fund — hand-prepared, no §1291 result. Recorded but no expected no-election
+    # id → must NOT fail (no fictitious result required).
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids=set(),
+                        any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_line24_addon_not_reconciled_fails():
+    # Codex round 10 P1 / round 23: a nonzero total_1291_addon that never reached
+    # TOTAL TAX (line 24) must fail — all_complete alone does not prove the charge
+    # was filed. The add-on belongs on line 24 (after credits), not line 16.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_16_tax"] = 20000.0
+    result["form_1040"]["line_24_total_tax"] = 20000.0  # add-on never added
+    result["form_8621_pfic"] = {
+        "all_complete": True, "funds": [{"complete": True, "fund_id": "A",
+            "total_1291_addon": 5000.0, "ordinary_income_current": 0,
+            "nonexcess_ordinary": 0}],
+        "total_1291_addon": 5000.0, "line_16_regular_tax": 20000.0,
+        "line_24_regular_total_tax": 20000.0, "line_24_addon": 0,
+        "line_24_with_addon": 20000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("line 24" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_line24_addon_reconciled_passes():
+    # Codex round 23: line 16 stays regular tax; the add-on lands in total tax.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_16_tax"] = 20000.0  # regular tax only — NO add-on
+    result["form_1040"]["line_24_total_tax"] = 22000.0  # reg total 17000 + add-on 5000
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 5000.0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}],
+        "total_1291_addon": 5000.0, "line_16_regular_tax": 20000.0,
+        "line_24_regular_total_tax": 17000.0, "line_24_addon": 5000.0,
+        "line_24_with_addon": 22000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_addon_on_line16_fails_credits_would_erode():
+    # Codex round 23 P1: folding the add-on into line 16 (so credits reduce it)
+    # must FAIL — line 16 must equal line_16_regular_tax with NO add-on.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_16_tax"] = 25000.0  # WRONG: regular 20000 + add-on 5000
+    result["form_1040"]["line_24_total_tax"] = 25000.0
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 5000.0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}],
+        "total_1291_addon": 5000.0, "line_16_regular_tax": 20000.0,
+        "line_24_regular_total_tax": 25000.0, "line_24_addon": 5000.0,
+        "line_24_with_addon": 25000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("line 24" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_line24_self_consistent_but_arithmetically_wrong_fails():
+    # Codex round 11 P1: line_24_addon=5000 and line_24_with_addon=17000==line_24_tax
+    # AGREE with each other, but the true total should be 22000 (reg 17000 + 5000).
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_16_tax"] = 20000.0
+    result["form_1040"]["line_24_total_tax"] = 17000.0  # add-on never actually applied
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 5000.0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}],
+        "total_1291_addon": 5000.0, "line_16_regular_tax": 20000.0,
+        "line_24_regular_total_tax": 17000.0, "line_24_addon": 5000.0,
+        "line_24_with_addon": 17000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("line 24" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_aggregate_addon_must_equal_fund_sum():
+    # total_1291_addon must equal the SUM of the per-fund add-ons.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_16_tax"] = 20000.0
+    result["form_1040"]["line_24_total_tax"] = 22000.0
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 3000.0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}],  # != 5000
+        "total_1291_addon": 5000.0, "line_16_regular_tax": 20000.0,
+        "line_24_regular_total_tax": 17000.0, "line_24_addon": 5000.0,
+        "line_24_with_addon": 22000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("line 24" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_flag_holding_contradiction_fails():
+    # Codex round 12 P1: a taxable fund recorded but flag says no event — a stale
+    # flag must not bypass Form 8621. Fail closed on the mismatch.
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=False, any_taxable_pfic_recorded=True)
+    assert report.failed and any("contradiction" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_negative_addon_fails():
+    # Codex round 12 P1: a negative add-on skips the `> 0` reconciliation — must
+    # be rejected outright (deferred tax / interest can never be negative).
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": -500.0}],
+        "total_1291_addon": -500.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("NEGATIVE" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_ordinary_income_not_in_line15_fails():
+    # Codex round 12 P1: current-year ordinary income computed but never folded
+    # into taxable income (line_15_pfic_ordinary_income absent) must fail.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "ordinary_income_current": 10000.0, "nonexcess_ordinary": 0}],
+        "total_ordinary_income_current": 10000.0}  # not reconciled into line 15
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("taxable income" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_ordinary_income_reconciled_passes():
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_15_taxable_income"] = 90000.0  # 80000 regular + 10000
+    result["form_1040"]["line_9_total_income"] = 100000.0    # +10000 into gross income
+    result["form_1040"]["line_11_agi"] = 100000.0            # +10000 into AGI
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "ordinary_income_current": 10000.0,
+                   "total_1291_addon": 0, "nonexcess_ordinary": 0}],
+        "total_ordinary_income_current": 10000.0, "total_nonexcess_ordinary": 0,
+        "line_9_regular_total_income": 90000.0, "line_11_regular_agi": 90000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "line_15_pfic_ordinary_income": 10000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_ordinary_income_line15_unchanged_fails():
+    # Codex round 15 P1: the self-reported fields agree, but line 15 was left at
+    # the pre-PFIC value (regular + ordinary != filed line 15) — must FAIL.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_15_taxable_income"] = 80000.0  # NOT increased by 10000
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "ordinary_income_current": 10000.0,
+                   "total_1291_addon": 0}],
+        "total_ordinary_income_current": 10000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "line_15_pfic_ordinary_income": 10000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("taxable income" in m for m in report.pfic_incomplete)
+
+
+def test_expected_pfic_fund_ids():
+    # Distribution OR disposition on a no-election fund yields its fund_id; a
+    # no-id taxable fund yields an unmatchable placeholder; elected counts as
+    # recorded but not expected; buy-and-hold/non-fund/junk excluded.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "received_distribution": True, "fund_id": "A"},
+        {"kind": "fund", "pfic_election": "none", "disposed": True},  # no fund_id → placeholder
+        {"kind": "fund", "pfic_election": "none"},                    # buy-and-hold
+        {"kind": "fund", "pfic_election": "qef", "disposed": True, "fund_id": "Q"},  # elected
+        {"kind": "bond", "disposed": True},                          # not a fund
+        "junk",
+    ]}}
+    ids, any_taxable, invalid = T._expected_pfic_fund_ids(profile)
+    assert "A" in ids and any(i.startswith("__unlabeled_") for i in ids) and len(ids) == 2
+    assert any_taxable is True and invalid == []
+
+
+def test_expected_pfic_fund_ids_unknown_election():
+    # Codex round 15 P1: an unrecognized election value is neither computed nor
+    # treated as valid QEF/MTM — it lands in invalid_elections.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "unknown", "disposed": True, "fund_id": "X"},
+    ]}}
+    ids, any_taxable, invalid = T._expected_pfic_fund_ids(profile)
+    assert ids == set() and any_taxable is True and len(invalid) == 1 and "X" in invalid[0]
+
+
+def test_pfic_invalid_election_fails_gate():
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, any_taxable_pfic_recorded=True,
+                        invalid_pfic_elections=["X: pfic_election='unknown'"])
+    assert report.failed and any("unrecognized" in m for m in report.pfic_incomplete)
+
+
+def test_expected_pfic_fund_ids_missing_detail():
+    assert T._expected_pfic_fund_ids({}) == (set(), False, [])
+    assert T._expected_pfic_fund_ids({"foreign_holdings_detail": {}}) == (set(), False, [])
+    assert T._expected_pfic_fund_ids({"foreign_holdings_detail": {"holdings": "x"}}) == (set(), False, [])
+
+
+def test_us_domiciled_fund_not_a_pfic_event():
+    # Codex round 13 P1: a US-domiciled fund at a foreign broker is NOT a PFIC —
+    # its distribution/sale must not be a §1291 event (would wrongly block a valid
+    # return). An absent/foreign domicile stays a PFIC event (fail-closed).
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "fund_domicile": "US", "pfic_election": "none",
+         "received_distribution": True, "fund_id": "USFUND"},
+        {"kind": "fund", "fund_domicile": "IE", "pfic_election": "none",
+         "received_distribution": True, "fund_id": "IEFUND"},
+        {"kind": "fund", "received_distribution": True, "fund_id": "UNKNOWN"},  # no domicile
+    ]}}
+    ids, any_taxable, invalid = T._expected_pfic_fund_ids(profile)
+    assert ids == {"IEFUND", "UNKNOWN"}  # US excluded; unknown treated as foreign
+    assert any_taxable is True and invalid == []
+
+
+def test_pfic_per_fund_negative_masked_by_positive_fails():
+    # Codex round 13 P1: a -500 add-on in one fund masked by +1000 in another has a
+    # positive aggregate but is still malformed — per-fund check must catch it.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_16_tax"] = 20500.0
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": -500.0},
+                  {"complete": True, "fund_id": "B", "total_1291_addon": 1000.0}],
+        "total_1291_addon": 500.0, "line_16_regular_tax": 20000.0,
+        "line_24_addon": 500.0, "line_24_with_addon": 20500.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A", "B"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("NEGATIVE" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_nan_value_treated_as_absent():
+    # Codex round 13 P1: json NaN must not slip through the reconciliation guards.
+    import math as _math
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": _math.nan}],
+        "total_1291_addon": _math.nan}
+    report = T.evaluate(_ledger(_record()), result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    # The NaN add-on is caught by the per-fund non-finite check.
+    assert report.failed and any("non-finite" in m for m in report.pfic_incomplete)
+
+
+def test_get_num_rejects_nan():
+    assert T._get_num({"x": float("nan")}, "x") is None
+    assert T._get_num({"x": float("inf")}, "x") is None
+    assert T._get_num({"x": 5.0}, "x") == 5.0
+
+
+def test_pfic_positive_per_fund_addon_with_zero_aggregate_fails():
+    # Codex round 14 P1: a positive per-fund add-on but the aggregate left at the
+    # template default 0 must NOT skip reconciliation (line 16 unchanged).
+    recs = _ledger(_record())
+    result = _result()  # line_16_tax default (unchanged)
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 5000.0}],
+        "total_1291_addon": 0}  # aggregate never updated
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("line 16" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_positive_per_fund_ordinary_with_zero_aggregate_fails():
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "ordinary_income_current": 10000.0, "nonexcess_ordinary": 0}],
+        "total_ordinary_income_current": 0}  # aggregate never updated
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("taxable income" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_nonfinite_aggregate_with_finite_funds_fails():
+    # Codex round 14 P1: NaN aggregate (→ _get_num None) while per-fund is finite
+    # must be caught as malformed, not silently skip reconciliation.
+    import math as _math
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_16_tax"] = 25000.0
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 5000.0}],
+        "total_1291_addon": _math.nan, "line_16_regular_tax": 20000.0,
+        "line_24_addon": 5000.0, "line_24_with_addon": 25000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("non-finite" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_complete_fund_missing_amount_fields_fails():
+    # Codex round 15 P1: a complete no-election fund with only a fund_id (no
+    # amount fields) lets _fund_sum read the missing amounts as 0, skipping
+    # reconciliation for a real distribution/gain. Require the fields present.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True, "funds": [{"complete": True, "fund_id": "A"}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("missing a finite amount field" in m
+                                 for m in report.pfic_incomplete)
+
+
+def test_pfic_complete_fund_zero_amounts_ok():
+    # $0 is a valid amount (a genuine zero-tax loss disposition) as long as the
+    # fields are PRESENT.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_expected_pfic_fund_ids_duplicate_ids_unmatchable():
+    # Codex round 16 P1: two distinct taxable no-election funds sharing a fund_id
+    # must NOT collapse — the duplicate gets an unmatchable placeholder so coverage
+    # fails until distinct ids are assigned.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "disposed": True, "fund_id": "DUP"},
+        {"kind": "fund", "pfic_election": "none", "received_distribution": True, "fund_id": "DUP"},
+    ]}}
+    ids, any_taxable, invalid = T._expected_pfic_fund_ids(profile)
+    assert "DUP" in ids
+    assert any(i.startswith("__duplicate_fund_id:DUP") for i in ids)
+    assert len(ids) == 2  # one real + one unmatchable duplicate
+
+
+def test_pfic_duplicate_holding_fund_id_fails_coverage():
+    # A single computed result for the shared id must NOT satisfy both funds.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "DUP", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"DUP", "__duplicate_fund_id:DUP#1"},
+                        any_taxable_pfic_recorded=True)
+    assert report.failed and any("DUP" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_nonexcess_ordinary_omitted_from_line15_fails():
+    # Codex round 17 P1: a below-threshold distribution has $0 excess (0 add-on,
+    # 0 ordinary_income_current) but a positive nonexcess_ordinary that must reach
+    # line 15. If line 15 was not increased by it, the gate must FAIL.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_15_taxable_income"] = 80000.0  # NOT increased by 2000
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 2000.0}],
+        "total_ordinary_income_current": 0, "total_nonexcess_ordinary": 2000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "line_15_pfic_ordinary_income": 2000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert report.failed and any("line 15" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_nonexcess_ordinary_reconciled_passes():
+    # Below-threshold distribution correctly folded into line 15.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_15_taxable_income"] = 82000.0  # 80000 + 2000 nonexcess
+    result["form_1040"]["line_9_total_income"] = 92000.0
+    result["form_1040"]["line_11_agi"] = 92000.0
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 2000.0}],
+        "total_ordinary_income_current": 0, "total_nonexcess_ordinary": 2000.0,
+        "line_9_regular_total_income": 90000.0, "line_11_regular_agi": 90000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "line_15_pfic_ordinary_income": 2000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True,
+                        expected_pfic_fund_ids={"A"}, any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_positive_event_ids():
+    # Codex round 20: a positive current-year distribution or a positive gain →
+    # the fund must produce a nonzero result. A loss disposition / $0 distribution
+    # does not.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "received_distribution": True,
+         "fund_id": "DIST", "distributions_by_year": {"2024": 3000}},
+        {"kind": "fund", "pfic_election": "none", "disposed": True,
+         "fund_id": "GAIN", "disposition_gain_usd": 5000},
+        {"kind": "fund", "pfic_election": "none", "disposed": True,
+         "fund_id": "LOSS", "disposition_gain_usd": -2000},
+        {"kind": "fund", "pfic_election": "none", "received_distribution": True,
+         "fund_id": "ZERO", "distributions_by_year": {"2024": 0}},
+    ]}}
+    ids, missing, disp = T._pfic_positive_event_ids(profile, 2024)
+    assert ids == {"DIST", "GAIN"} and missing == set()
+    # Only the DISPOSITION gain is disposition-positive.
+    assert disp == {"GAIN"}
+
+
+def test_pfic_missing_event_amount_ids():
+    # Codex round 21: a disposition with no gain amount, or a distribution with no
+    # current-year amount, has unknown magnitude → flagged missing.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "disposed": True, "fund_id": "NOGAIN"},
+        {"kind": "fund", "pfic_election": "none", "received_distribution": True,
+         "fund_id": "NODIST"},  # no distributions_by_year
+    ]}}
+    ids, missing, disp = T._pfic_positive_event_ids(profile, 2024)
+    assert ids == set() and missing == {"NOGAIN", "NODIST"}
+    assert disp == set()
+
+
+def test_pfic_missing_amount_fails_gate():
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, any_taxable_pfic_recorded=True,
+                        pfic_missing_amount_ids={"NOGAIN"})
+    assert report.failed and any("finite amount" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_broker_reported_distribution_all_zero_fails():
+    # Codex round 27: the unverifiable `distribution_in_parsed_docs` exemption is
+    # RETIRED — a below-threshold broker-reported distribution must record its
+    # nonexcess amount in nonexcess_ordinary (so it flows through the income
+    # reconciliation + the parse-ledger tie-out). An all-zero fund for a positive
+    # attested distribution now FAILS, even with the (obsolete) flag set.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "DIST", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0,
+                   "distribution_in_parsed_docs": True}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"DIST"},
+                        any_taxable_pfic_recorded=True,
+                        pfic_positive_event_ids={"DIST"})
+    assert report.failed and any("ALL-ZERO" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_below_threshold_records_nonexcess_ordinary_ok():
+    # The correct handling: a below-threshold broker-reported distribution records
+    # its full nonexcess amount in nonexcess_ordinary (> 0), so the fund is not
+    # all-zero and the income reconciles through lines 9/11/15.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_15_taxable_income"] = 81000.0
+    result["form_1040"]["line_9_total_income"] = 91000.0
+    result["form_1040"]["line_11_agi"] = 91000.0
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "OK", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 1000}],
+        "total_ordinary_income_current": 0, "total_nonexcess_ordinary": 1000,
+        "line_15_pfic_ordinary_income": 1000,
+        "line_9_regular_total_income": 90000.0, "line_11_regular_agi": 90000.0,
+        "line_15_regular_taxable_income": 80000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"OK"},
+                        any_taxable_pfic_recorded=True,
+                        pfic_positive_event_ids={"OK"})
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_disposition_positive_detected():
+    # Codex round 25/26: a fund with a positive disposition gain (with OR without a
+    # same-year distribution) is a disposition-positive fund.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "BOTH",
+         "preceding_holding_years": 3,
+         "received_distribution": True,
+         "distributions_by_year": {"2021": 2000, "2022": 2000, "2023": 2000,
+                                   "2024": 1000},  # below threshold
+         "disposed": True, "disposition_gain_usd": 5000},
+        {"kind": "fund", "pfic_election": "none", "fund_id": "PURE",
+         "disposed": True, "disposition_gain_usd": 3000},  # pure disposition
+        {"kind": "fund", "pfic_election": "none", "fund_id": "LOSS",
+         "disposed": True, "disposition_gain_usd": -1000},  # loss → not included
+    ]}}
+    ids, missing, disp = T._pfic_positive_event_ids(profile, 2024)
+    assert disp == {"BOTH", "PURE"} and {"BOTH", "PURE"} <= ids
+
+
+def test_pfic_pure_disposition_missing_disposition_ordinary_fails():
+    # Codex round 26 P1: a fund SOLD AT A GAIN with no same-year distribution passes
+    # the all-zero check on a stray nonexcess_ordinary=$10 even though the gain's
+    # §1291 was never computed (ordinary_income_current/add-on = 0). Requiring a
+    # positive disposition_ordinary_income for EVERY sale-at-gain fund catches it.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "PURE", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 10}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"PURE"},
+                        any_taxable_pfic_recorded=True,
+                        pfic_positive_event_ids={"PURE"},
+                        pfic_disposition_positive_ids={"PURE"})
+    assert report.failed and any("disposition_ordinary_income" in m
+                                 for m in report.pfic_incomplete)
+
+
+def test_pfic_dual_event_missing_disposition_ordinary_fails():
+    # Codex round 25 P1: a dual-event fund whose aggregate result is nonzero (from a
+    # small nonexcess distribution) but carries NO positive disposition_ordinary_
+    # income must FAIL — the sale's §1291 may have been dropped behind the
+    # distribution.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "BOTH", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 100}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"BOTH"},
+                        any_taxable_pfic_recorded=True,
+                        pfic_positive_event_ids={"BOTH"},
+                        pfic_disposition_positive_ids={"BOTH"})
+    assert report.failed and any("disposition_ordinary_income" in m
+                                 for m in report.pfic_incomplete)
+
+
+def test_pfic_dual_event_with_disposition_ordinary_passes():
+    # A dual-event fund that records the sale leg's disposition_ordinary_income > 0
+    # proves the disposition was run through §1291 → passes.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "BOTH", "total_1291_addon": 200,
+                   "ordinary_income_current": 5100, "nonexcess_ordinary": 100,
+                   "disposition_ordinary_income": 5000}]}
+    result["form_1040"]["line_15_taxable_income"] = 85200.0
+    result["form_1040"]["line_9_total_income"] = 95200.0
+    result["form_1040"]["line_11_agi"] = 95200.0
+    result["form_1040"]["line_16_tax"] = 20000.0
+    result["form_1040"]["line_24_total_tax"] = 20200.0
+    result["form_8621_pfic"].update({
+        "total_ordinary_income_current": 5100, "total_nonexcess_ordinary": 100,
+        "line_15_pfic_ordinary_income": 5200,
+        "line_9_regular_total_income": 90000.0, "line_11_regular_agi": 90000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "total_1291_addon": 200, "line_16_regular_tax": 20000.0,
+        "line_24_regular_total_tax": 20000.0, "line_24_addon": 200,
+        "line_24_with_addon": 20200.0})
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"BOTH"},
+                        any_taxable_pfic_recorded=True,
+                        pfic_positive_event_ids={"BOTH"},
+                        pfic_disposition_positive_ids={"BOTH"})
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_holding_year_checks_derives_from_dates():
+    # Codex round 28: the asserted preceding_holding_years must not be shorter than
+    # the acquisition date implies. Acquired 2020, event 2025 → derived 5 prior years;
+    # asserting 1 is a mismatch. A DISPOSITION gain held ≥ 1 prior year and a
+    # DISTRIBUTION held ≥ 1 prior year are flagged multi-year.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "UNDER",
+         "acquisition_date": "2020-03-01", "preceding_holding_years": 1,
+         "received_distribution": True, "distributions_by_year": {"2025": 10000}},
+        {"kind": "fund", "pfic_election": "none", "fund_id": "SALE",
+         "acquisition_date": "2021-01-01", "preceding_holding_years": 4,
+         "disposed": True, "disposition_gain_usd": 50000},
+        {"kind": "fund", "pfic_election": "none", "fund_id": "FIRSTYR",
+         "acquisition_date": "2025-06-01", "preceding_holding_years": 0,
+         "disposed": True, "disposition_gain_usd": 3000},  # same-year → not multi-year
+    ]}}
+    mismatch, multi_disp, multi_dist = T._pfic_holding_year_checks(profile, 2025)
+    assert mismatch == {"UNDER"}          # asserted 1 < derived 5
+    assert multi_disp == {"SALE"}         # FIRSTYR acquired same year → excluded
+    assert multi_dist == {"UNDER"}
+
+
+def test_pfic_holding_mismatch_fails_gate():
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, any_taxable_pfic_recorded=True,
+                        pfic_holding_mismatch_ids={"UNDER"})
+    assert report.failed and any("SHORTER" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_multiyear_disposition_no_addon_fails():
+    # Codex round 28: a multi-year sale-at-gain must produce a prior-year deferred-tax
+    # add-on — a $1 disposition_ordinary_income with a $0 add-on is not a complete
+    # multi-year §1291 computation.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "SALE", "total_1291_addon": 0,
+                   "ordinary_income_current": 1, "nonexcess_ordinary": 0,
+                   "disposition_ordinary_income": 1}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"SALE"},
+                        any_taxable_pfic_recorded=True,
+                        pfic_positive_event_ids={"SALE"},
+                        pfic_disposition_positive_ids={"SALE"},
+                        pfic_multiyear_disposition_ids={"SALE"})
+    assert report.failed and any("PRIOR tax year" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_reclassified_dividend_ties_ledger():
+    # Codex round 22: removing the PFIC excess from line 3b makes the (full box-1a)
+    # ledger sum exceed the reduced filed line. reclassified_from_line_3b adds the
+    # removed amount back to the result-side dividend total so the sum-check ties.
+    result = _result()
+    result["form_1040"]["line_3b_ordinary_dividends"] = 1000.0  # reduced by 400 excess
+    result["form_8621_pfic"] = {"reclassified_from_line_3b": 400.0}
+    # box 1a ledgered at the FULL 1400; result-side must reconcile to 1400.
+    assert T._result_total(result, "ordinary_dividends") == 1400.0
+    # without the reclassification field it would only see the reduced 1000.
+    del result["form_8621_pfic"]["reclassified_from_line_3b"]
+    assert T._result_total(result, "ordinary_dividends") == 1000.0
+
+
+def test_pfic_reclassified_dividend_3b_uncapped():
+    # Codex round 28: the line-3b add-back is UNCAPPED (a bookkeeping bridge), not
+    # limited to total_ordinary_income_current — a multi-year excess allocates only
+    # its current-year slice to ordinary_income_current, the rest to the deferred-tax
+    # add-on, so a cap would reject a correct multi-year return. Here a $10,000 excess
+    # with only $1,000 current allocation must still add back the full $10,000.
+    result = _result()
+    result["form_1040"]["line_3b_ordinary_dividends"] = 0.0
+    result["form_8621_pfic"] = {"reclassified_from_line_3b": 10000.0,
+                                "total_ordinary_income_current": 1000.0}
+    assert T._result_total(result, "ordinary_dividends") == 10000.0
+
+
+def test_pfic_recompute_per_fund_excess_addon_below_deferred_fails():
+    # Codex round 29/30: a distribution with a recomputed EXCESS on a multi-year fund
+    # must carry an add-on that at least covers the recomputed deferred tax (at the
+    # real historical rates). Fund XS: 2020-acquired, $10,000 all-excess 2025
+    # distribution, held 5 prior years — the prior-year allocations at 37% are
+    # thousands of dollars, so a token $1 add-on FAILS. (Requires rates for the
+    # deferred-tax magnitude check.)
+    import agents.lib.tax_computations as TC
+    rate_map = {yr: 0.37 for yr in range(2020, 2025)}
+    exc = TC.compute_pfic_excess_distribution(10000, [0, 0, 0],
+                                              preceding_holding_years=5)["excess_distribution"]
+    rc = TC.compute_pfic_1291(exc, "2020-01-01", "2025-06-15", 2025, rate_map)
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "XS",
+         "acquisition_date": "2020-01-01", "preceding_holding_years": 5,
+         "received_distribution": True, "distribution_date": "2025-06-15",
+         "distributions_by_year": {"2022": 0, "2023": 0, "2024": 0, "2025": 10000}},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "XS", "total_1291_addon": 1,
+                   "ordinary_income_current": rc["ordinary_income_current"],
+                   "nonexcess_ordinary": 0}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE,
+                                        historical_top_rate=rate_map)
+    assert any("deferred tax" in m and "XS" in m for m in failures)
+
+
+def test_pfic_recompute_missing_acquisition_date_fails():
+    # Codex round 29: a taxable fund with a positive event but no derivable acquisition
+    # date must FAIL — the holding-period allocation can't be verified.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "NODATE",
+         "disposed": True, "disposition_gain_usd": 50000},  # no acquisition_date
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "NODATE",
+                   "disposition_ordinary_income": 10000}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("no derivable" in m and "NODATE" in m for m in failures)
+
+
+def test_pfic_recompute_disposition_allocation_mismatch_fails():
+    # Codex round 29: a large multi-year gain reported as a token current-year amount
+    # must FAIL — disposition_ordinary_income is recomputed from the dates + gain.
+    # Acquired 2020-01-01, sold 2025-12-31 → ~1/6 of the $120,000 gain is current-year
+    # ordinary (~$20k); reporting $1 is a gross mismatch.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "SALE",
+         "acquisition_date": "2020-01-01", "disposition_date": "2025-12-31",
+         "disposed": True, "disposition_gain_usd": 120000},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "SALE", "total_1291_addon": 5000,
+                   "disposition_ordinary_income": 1}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("does not match" in m and "SALE" in m for m in failures)
+
+
+def test_pfic_recompute_correct_disposition_passes():
+    # A disposition whose ordinary allocation AND full add-on match the recompute
+    # (both rate sets supplied) passes.
+    import agents.lib.tax_computations as TC
+    rc = TC.compute_pfic_1291(120000, "2020-01-01", "2025-12-31", 2025, _HIST_RATE_ALL,
+                              underpayment_rates=_PFIC_6621, is_disposition=True)
+    assert rc["complete"]
+    expected = rc["ordinary_income_current"]
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "SALE",
+         "acquisition_date": "2020-01-01", "disposition_date": "2025-12-31",
+         "disposed": True, "disposition_gain_usd": 120000},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "SALE",
+                   "total_1291_addon": rc["total_1291_addon"],
+                   "ordinary_income_current": expected,  # both-legs total = disp leg
+                   "disposition_ordinary_income": expected}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE,
+                                        historical_top_rate=_HIST_RATE_ALL,
+                                        underpayment_rates=_PFIC_6621)
+    assert failures == []
+
+
+def test_pfic_recompute_disposition_income_must_reach_ordinary_total():
+    # Codex round 30 #3: a correct disposition_ordinary_income does NOT prove the
+    # sale's allocation reached ordinary_income_current (the field routed into 1040
+    # income). Here disposition_ordinary_income is right but ordinary_income_current
+    # is 0 → the current-year inclusion is omitted → FAIL.
+    import agents.lib.tax_computations as TC
+    rate_map = {yr: 0.37 for yr in range(2020, 2025)}
+    expected = TC.compute_pfic_1291(120000, "2020-01-01", "2025-12-31", 2025,
+                                    rate_map, is_disposition=True)["ordinary_income_current"]
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "SALE",
+         "acquisition_date": "2020-01-01", "disposition_date": "2025-12-31",
+         "disposed": True, "disposition_gain_usd": 120000},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "SALE", "total_1291_addon": 5000,
+                   "ordinary_income_current": 0,  # sale allocation NOT in the total
+                   "disposition_ordinary_income": expected}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("ordinary_income_current" in m and "SALE" in m for m in failures)
+
+
+def test_pfic_recompute_holding_from_acquisition_not_pfic_start():
+    # Codex round 30 #4: a fund already a PFIC in 2020 but PURCHASED in 2023 is held
+    # from 2023 (2 prior years), not 2020. _acq_year must use acquisition_date, so a
+    # correct preceding_holding_years=2 is NOT flagged as a mismatch.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "LATE",
+         "acquisition_date": "2023-04-01", "pfic_start_date": "2020-01-01",
+         "preceding_holding_years": 2, "received_distribution": True,
+         "distributions_by_year": {"2025": 100}},
+    ]}}
+    mismatch, _d, _dist = T._pfic_holding_year_checks(profile, 2025)
+    assert mismatch == set()  # derived from acquisition (2025-2023=2) == asserted 2
+
+
+def test_pfic_recompute_addon_exact_match_passes():
+    # Codex round 32 #3: the recorded add-on must EXACTLY match the recomputed deferred
+    # tax + §6621 interest (both rate sets supplied) — a correct multi-year
+    # distribution passes.
+    import agents.lib.tax_computations as TC
+    exc = TC.compute_pfic_excess_distribution(10000, [0, 0, 0],
+                                              preceding_holding_years=5)["excess_distribution"]
+    rc = TC.compute_pfic_1291(exc, "2020-01-01", "2025-06-15", 2025, _HIST_RATE_ALL,
+                              underpayment_rates=_PFIC_6621)
+    assert rc["complete"]
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "XS",
+         "acquisition_date": "2020-01-01", "preceding_holding_years": 5,
+         "received_distribution": True, "distribution_date": "2025-06-15",
+         "distributions_by_year": {"2022": 0, "2023": 0, "2024": 0, "2025": 10000}},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "XS",
+                   "total_1291_addon": rc["total_1291_addon"],  # deferred + interest, exact
+                   "ordinary_income_current": rc["ordinary_income_current"],
+                   "nonexcess_ordinary": 0}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE,
+                                        historical_top_rate=_HIST_RATE_ALL,
+                                        underpayment_rates=_PFIC_6621)
+    assert failures == []
+
+
+def test_pfic_recompute_addon_omitting_interest_fails():
+    # Codex round 32 #3: an add-on that covers only the deferred tax (omitting §6621
+    # interest) must FAIL the exact match.
+    import agents.lib.tax_computations as TC
+    exc = TC.compute_pfic_excess_distribution(10000, [0, 0, 0],
+                                              preceding_holding_years=5)["excess_distribution"]
+    rc = TC.compute_pfic_1291(exc, "2020-01-01", "2025-06-15", 2025, _HIST_RATE_ALL,
+                              underpayment_rates=_PFIC_6621)
+    assert rc["interest_total"] > T.DEFAULT_TOLERANCE
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "XS",
+         "acquisition_date": "2020-01-01", "preceding_holding_years": 5,
+         "received_distribution": True, "distribution_date": "2025-06-15",
+         "distributions_by_year": {"2022": 0, "2023": 0, "2024": 0, "2025": 10000}},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "XS",
+                   "total_1291_addon": rc["deferred_tax_total"],  # interest OMITTED
+                   "ordinary_income_current": rc["ordinary_income_current"],
+                   "nonexcess_ordinary": 0}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE,
+                                        historical_top_rate=_HIST_RATE_ALL,
+                                        underpayment_rates=_PFIC_6621)
+    assert any("add-on" in m and "XS" in m for m in failures)
+
+
+def test_pfic_recompute_no_rates_multiyear_fails_closed():
+    # Codex round 32 #1: a multi-year event with NO cached rates must FAIL closed —
+    # the untrusted result complete=True cannot substitute for verification.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "XS",
+         "acquisition_date": "2020-01-01", "preceding_holding_years": 5,
+         "received_distribution": True, "distribution_date": "2025-06-15",
+         "distributions_by_year": {"2022": 0, "2023": 0, "2024": 0, "2025": 10000}},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "XS", "total_1291_addon": 2,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("cannot be verified" in m and "XS" in m for m in failures)
+
+
+def test_pfic_recompute_below_threshold_zero_ordinary_passes():
+    # Codex round 31 #1: a fully NON-excess distribution belongs in nonexcess_ordinary
+    # with ordinary_income_current == 0 — the recompute must NOT expect the nonexcess
+    # in the §1291 current-year total. $100 vs a $2,000 three-year avg (threshold
+    # $2,500) → 0 excess, whole $100 non-excess.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "LOW",
+         "acquisition_date": "2021-01-01", "preceding_holding_years": 3,
+         "received_distribution": True, "distribution_date": "2025-06-15",
+         "distributions_by_year": {"2022": 2000, "2023": 2000, "2024": 2000,
+                                   "2025": 100}},
+    ]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "LOW", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 100}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert failures == []
+
+
+def test_pfic_recompute_partial_rates_incomplete_fails():
+    # Codex round 31 #3: a rate cache missing one prior holding year cannot verify the
+    # deferred tax — the fund must FAIL, not pass on a partial deferred. Fund held
+    # 2020-2025; rate map omits 2021.
+    partial = {2020: 0.37, 2022: 0.37, 2023: 0.37, 2024: 0.37}  # 2021 missing
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "GAP",
+         "acquisition_date": "2020-01-01", "disposition_date": "2025-12-31",
+         "disposed": True, "disposition_gain_usd": 120000}]}}
+    import agents.lib.tax_computations as TC
+    full = {yr: 0.37 for yr in range(2020, 2025)}
+    exp = TC.compute_pfic_1291(120000, "2020-01-01", "2025-12-31", 2025, full,
+                               is_disposition=True)["ordinary_income_current"]
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "GAP", "total_1291_addon": 50000,
+                   "ordinary_income_current": exp, "disposition_ordinary_income": exp}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE,
+                                        historical_top_rate=partial,
+                                        underpayment_rates=_PFIC_6621)
+    assert any("cannot be verified" in m and "GAP" in m for m in failures)
+
+
+def test_pfic_recompute_negative_distribution_fails():
+    # Codex round 32 #2: a NEGATIVE current-year distribution is malformed (distinct
+    # from a negative disposition_gain_usd, a legit sale loss) and must FAIL.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "NEG",
+         "acquisition_date": "2021-01-01", "received_distribution": True,
+         "distributions_by_year": {"2025": -5000}}]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "NEG", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("NEGATIVE current-year distribution" in m and "NEG" in m for m in failures)
+
+
+def test_pfic_recompute_last_day_acquisition_needs_no_prior_rate():
+    # Codex round 32 #4: a fund acquired on the LAST day of the prior tax year
+    # (2024-12-31) allocates NOTHING to 2024 (holding starts 2025-01-01), so the
+    # recompute must NOT demand a 2024 rate. A cache lacking 2024 still verifies (the
+    # whole gain is current-year ordinary, $0 add-on).
+    import agents.lib.tax_computations as TC
+    rc = TC.compute_pfic_1291(50000, "2024-12-31", "2025-12-31", 2025,
+                              {2025: 0.37}, underpayment_rates=_PFIC_6621,
+                              is_disposition=True)
+    assert rc["complete"] and rc["total_1291_addon"] == 0
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "EOY",
+         "acquisition_date": "2024-12-31", "disposition_date": "2025-12-31",
+         "disposed": True, "disposition_gain_usd": 50000}]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "EOY", "total_1291_addon": 0,
+                   "ordinary_income_current": rc["ordinary_income_current"],
+                   "disposition_ordinary_income": rc["ordinary_income_current"]}]}}
+    # historical cache present but WITHOUT 2024 — must still pass.
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE,
+                                        historical_top_rate={2025: 0.37},
+                                        underpayment_rates=_PFIC_6621)
+    assert failures == []
+
+
+def test_pfic_recompute_band_is_whole_dollar_not_percentage():
+    # Codex round 31 #4: the band is whole-dollar (the recompute reproduces the exact
+    # figure), NOT 2% — a $1M current-year allocation reported at $980,000 must FAIL.
+    import agents.lib.tax_computations as TC
+    full = {yr: 0.37 for yr in range(2015, 2025)}
+    exp = TC.compute_pfic_1291(6000000, "2015-01-01", "2025-12-31", 2025, full,
+                               is_disposition=True)["ordinary_income_current"]
+    assert exp > 500000  # ~ current-year allocation of a large multi-year gain
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "BIG",
+         "acquisition_date": "2015-01-01", "disposition_date": "2025-12-31",
+         "disposed": True, "disposition_gain_usd": 6000000}]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "BIG", "total_1291_addon": 900000,
+                   "ordinary_income_current": exp - 20000,  # $20k short
+                   "disposition_ordinary_income": exp - 20000}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("does not match" in m and "BIG" in m for m in failures)
+
+
+def test_pfic_recompute_nonzero_addon_when_recompute_zero_fails():
+    # Codex round 33: a wholly-current-year event (acquired and sold the same year)
+    # owes NO deferred tax — the recomputed add-on is $0. A nonzero total_1291_addon
+    # adds §1291 tax the statute does not impose and must FAIL, even though the
+    # expected add-on is zero.
+    import agents.lib.tax_computations as TC
+    rc = TC.compute_pfic_1291(30000, "2025-01-01", "2025-12-31", 2025, {2025: 0.37},
+                              underpayment_rates=_PFIC_6621, is_disposition=True)
+    assert rc["complete"] and rc["total_1291_addon"] == 0
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "SAMEYR",
+         "acquisition_date": "2025-01-01", "disposition_date": "2025-12-31",
+         "disposed": True, "disposition_gain_usd": 30000}]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "SAMEYR", "total_1291_addon": 100,
+                   "ordinary_income_current": rc["ordinary_income_current"],
+                   "disposition_ordinary_income": rc["ordinary_income_current"]}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("does not match" in m and "SAMEYR" in m for m in failures)
+
+
+def test_pfic_recompute_duplicate_fund_entries_fail():
+    # Codex round 33: two entries for the same fund_id in form_8621_pfic.funds would
+    # be summed by the aggregate/line-24 checks, doubling the fund's income + add-on,
+    # while the per-fund recompute only sees the last. Detect + fail.
+    profile = {"foreign_holdings_detail": {"holdings": [
+        {"kind": "fund", "pfic_election": "none", "fund_id": "DUP",
+         "acquisition_date": "2025-01-01", "disposed": True,
+         "disposition_gain_usd": 30000}]}}
+    result = {"meta": {"tax_year": 2025}, "form_8621_pfic": {
+        "funds": [{"complete": True, "fund_id": "DUP", "total_1291_addon": 0,
+                   "ordinary_income_current": 100},
+                  {"complete": True, "fund_id": "DUP", "total_1291_addon": 0,
+                   "ordinary_income_current": 100}]}}
+    failures = T._pfic_recompute_checks(profile, result, 2025, T.DEFAULT_TOLERANCE)
+    assert any("MORE THAN ONE entry" in m and "DUP" in m for m in failures)
+
+
+def test_pfic_recompute_failures_emitted_by_evaluate():
+    # evaluate appends passed-in recompute failures to pfic_incomplete and fails.
+    recs = _ledger(_record())
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, any_taxable_pfic_recorded=True,
+                        pfic_recompute_failures=["PFIC fund 'X': recompute mismatch"])
+    assert report.failed and any("recompute mismatch" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_reclassified_qualified_dividend_ties_ledger():
+    # Codex round 27: a PFIC dividend is NEVER qualified, so its nonexcess portion is
+    # removed from line 3a but KEPT in line 3b as ordinary. The box-1b (qualified)
+    # ledger reconciles via reclassified_from_line_3a — UNCAPPED, because the income
+    # stays in line 3b (proven by the box-1a check) and recharacterizing qualified →
+    # ordinary only RAISES tax. So no total_ordinary_income_current backing needed.
+    result = _result()
+    result["form_1040"]["line_3a_qualified_dividends"] = 600.0
+    result["form_8621_pfic"] = {"reclassified_from_line_3a": 200.0}  # no Sch-1 backing
+    assert T._result_total(result, "qualified_dividends") == 800.0
+
+
+def test_pfic_agi_not_reconciled_fails():
+    # Codex round 21: PFIC ordinary bolted onto line 15 but lines 9/11 unchanged.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_15_taxable_income"] = 90000.0
+    result["form_1040"]["line_9_total_income"] = 90000.0  # NOT increased
+    result["form_1040"]["line_11_agi"] = 90000.0          # NOT increased
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "ordinary_income_current": 10000.0,
+                   "total_1291_addon": 0, "nonexcess_ordinary": 0}],
+        "total_ordinary_income_current": 10000.0, "total_nonexcess_ordinary": 0,
+        "line_9_regular_total_income": 90000.0, "line_11_regular_agi": 90000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "line_15_pfic_ordinary_income": 10000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"A"},
+                        any_taxable_pfic_recorded=True)
+    assert report.failed and any("AGI" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_positive_event_with_zero_result_fails():
+    # A recorded positive distribution but an all-zero fund result must FAIL.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "DIST", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 0}]}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"DIST"},
+                        any_taxable_pfic_recorded=True,
+                        pfic_positive_event_ids={"DIST"})
+    assert report.failed and any("ALL-ZERO" in m for m in report.pfic_incomplete)
+
+
+def test_pfic_line15_may_grow_more_than_pfic_income():
+    # Codex round 20: routing PFIC income through AGI can raise line 15 by MORE than
+    # the PFIC amount (e.g. extra taxable SS). The >= reconciliation must accept it.
+    recs = _ledger(_record())
+    result = _result()
+    # regular 80000 + 2000 nonexcess + 1500 downstream (extra taxable SS) = 83500
+    result["form_1040"]["line_15_taxable_income"] = 83500.0
+    # AGI also rises by the 2000 PFIC + 1500 extra taxable SS.
+    result["form_1040"]["line_9_total_income"] = 93500.0
+    result["form_1040"]["line_11_agi"] = 93500.0
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 2000.0}],
+        "total_ordinary_income_current": 0, "total_nonexcess_ordinary": 2000.0,
+        "line_9_regular_total_income": 90000.0, "line_11_regular_agi": 90000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "line_15_pfic_ordinary_income": 2000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"A"},
+                        any_taxable_pfic_recorded=True)
+    assert not report.pfic_incomplete and not report.failed
+
+
+def test_pfic_line15_short_still_fails():
+    # But line 15 SHORT of regular + PFIC income (omitted) still fails.
+    recs = _ledger(_record())
+    result = _result()
+    result["form_1040"]["line_15_taxable_income"] = 80500.0  # only +500, need +2000
+    result["form_8621_pfic"] = {
+        "all_complete": True,
+        "funds": [{"complete": True, "fund_id": "A", "total_1291_addon": 0,
+                   "ordinary_income_current": 0, "nonexcess_ordinary": 2000.0}],
+        "total_ordinary_income_current": 0, "total_nonexcess_ordinary": 2000.0,
+        "line_15_regular_taxable_income": 80000.0,
+        "line_15_pfic_ordinary_income": 2000.0}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"],
+                        pfic_event_expected=True, expected_pfic_fund_ids={"A"},
+                        any_taxable_pfic_recorded=True)
+    assert report.failed and any("line 15" in m for m in report.pfic_incomplete)

@@ -294,6 +294,156 @@ Reg. §1.988-2(b) split:
 - If a spot rate is unavailable for either date, the function refuses — surface
   the FX component as MANUAL rather than compute a wrong ordinary amount.
 
+**PFIC §1291 excess-distribution / disposition tax (P4):** When
+`has_pfic_taxable_event` is set AND the user has **acknowledged** the
+`pfic_taxable_event` block (recording the decision in answers.md) AND the
+`foreign_holdings_detail.holdings` carry the §1291 facts, compute the punitive
+§1291 tax per fund — NEVER route a PFIC distribution/gain through the
+qualified-dividend or LTCG path (that understates):
+- **ELECTION GUARD (do this FIRST, per fund):** compute_pfic_1291 is the
+  no-election DEFAULT regime. Only route funds with `pfic_election == "none"`
+  here. A fund with a timely `qef` (§1295) or `mtm` (§1296) election has a
+  DIFFERENT treatment (QEF: pro-rata ordinary-earnings + LTCG inclusion; MTM:
+  mark-to-market ordinary) that is NOT modeled — keep such a fund BLOCKED (do not
+  run §1291 on it, which would over- or mis-state), and hand-prepare its Form 8621
+  Part I/II/III. (For a delisted/sanctioned fund the elections are usually
+  unavailable, so `none` is the expected value — but verify per fund, don't
+  assume.)
+- **AGGREGATE DISTRIBUTIONS PER FUND PER YEAR FIRST:** the §1291(b) 125% test is
+  on the fund's TOTAL distributions for the tax year — SUM every distribution from
+  that fund in the current year into one `current_distribution` (and each prior
+  year's total into `prior_distributions`) BEFORE calling. Running it
+  per-distribution would let two sub-threshold payouts each escape while their
+  annual total is an excess distribution. One `compute_pfic_excess_distribution` +
+  one `compute_pfic_1291` for the year's DISTRIBUTIONS, not per payout.
+- **DISPOSITIONS do NOT aggregate — each partial sale is its OWN §1291(a)(2) event.**
+  Unlike distributions (aggregated for the 125% test), each recognized GAIN is a
+  separate excess distribution with its OWN allocation endpoint (the sale date), so
+  the current-year-vs-prior-year split — and therefore the ordinary amount AND the
+  deferred-tax/interest add-on — differ per sale. The v1 holding schema carries ONE
+  `disposition_date` + `disposition_gain_usd`, so it can represent only ONE sale.
+  **If a fund was sold in MULTIPLE partial transactions in the year, do NOT collapse
+  them into one synthetic sale (that mis-dates the allocation and understates or
+  overstates the tax) — BLOCK the return and hand-prepare Form 8621 with a separate
+  §1291 computation per sale.** (v1 limitation; a per-disposition loop is future
+  work.)
+- **A DISTRIBUTION and a DISPOSITION in the SAME year are SEPARATE §1291 events —
+  compute each on its own, then aggregate into the fund entry.** `compute_pfic_1291`
+  takes one `amount` and one `event_date`; a distribution and a sale have DIFFERENT
+  allocation endpoints (the distribution ends its ratable spread at the
+  distribution date, the sale at the sale date), so you canNOT fold them into one
+  call and must NOT drop either. **The holding therefore carries BOTH
+  `distribution_date` and `disposition_date`** (not a single `event_date`) when
+  both occur — pass each to its own call. Run `compute_pfic_1291` once for the
+  aggregated excess distribution (`is_disposition=False`, `event_date` =
+  `distribution_date`) and once for the disposition gain (`is_disposition=True`,
+  `event_date` = `disposition_date`), then SUM their `total_1291_addon` /
+  `ordinary_income_current` (and carry the distribution's `nonexcess_ordinary`)
+  into the fund's totals and set the fund `complete` = AND of both. The fund's
+  `total_1291_addon` still feeds the single TOTAL-TAX line-24 add-on (Step 6c) —
+  NOT line 16. **Also record the disposition leg's ordinary allocation in the fund
+  entry as `disposition_ordinary_income`** (the sale's `compute_pfic_1291`
+  `ordinary_income_current`, always > 0 for a positive gain) — when a fund has BOTH
+  a distribution and a sale-at-gain the same year, the tie-out requires this
+  disposition-specific field to be present + positive so the sale's §1291 can't be
+  silently dropped behind a small nonexcess-distribution result.
+- `compute_pfic_excess_distribution(current_distribution, prior_distributions,
+  is_first_holding_year, preceding_holding_years)` → the excess distribution
+  (current − 125% × prior-base-period average; ZERO in the first holding year);
+  the non-excess `ordinary_now` is a normal dividend this year. **You MUST pass
+  `preceding_holding_years`** = the number of tax years the fund was held BEFORE
+  the current year (from the holding dates), and `prior_distributions` MUST list
+  the ANNUAL-TOTAL value for EACH of those base-period years **in CHRONOLOGICAL
+  order (oldest→newest)** — **including `0` for any year with no distribution**.
+  Only the MOST RECENT three entries form the §1291(b)(2)(A) base (the three tax
+  years immediately preceding), so ordering matters: an old large distribution
+  followed by recent zero years must NOT inflate the threshold. Omitting the count,
+  or supplying only the non-zero years, makes the average denominator wrong (a
+  too-high threshold → too little excess → understated tax); when the supplied
+  history is short the result returns `complete=False` — keep the block until the
+  full zero-inclusive history is in. **`preceding_holding_years` must equal the
+  actual holding length (current tax year − acquisition year), NOT a shortened
+  count** — the Step 12.7 tie-out re-derives it from `acquisition_date` and FAILS a
+  fund whose asserted count is shorter (a short count shrinks the base window and can
+  wrongly reclassify a real excess as non-excess). **A multi-year event owes
+  prior-year deferred tax:** for a fund held ≥ 1 prior tax year, a DISPOSITION gain
+  (entirely excess under §1291(a)(2)) and any EXCESS distribution allocate to the
+  prior years, so `total_1291_addon` MUST be > 0 — the tie-out FAILS a multi-year
+  gain or reclassified-out-of-line-3b excess that carries a $0 add-on.
+- **A disposition at a LOSS does NOT go through §1291** — §1291(a)(2) converts
+  only recognized GAIN to an excess distribution. A PFIC sold at a loss is an
+  ordinary CAPITAL LOSS on Schedule D/Form 8949 (normal capital-loss rules); do
+  NOT call `compute_pfic_1291` with a negative amount (it rejects it). Route the
+  loss to Schedule D and record it; no deferred tax / interest arises.
+  **You MUST still write a fund entry** to `form_8621_pfic.funds[]` documenting
+  the disposition — `{"fund_id": <the holding's fund_id>, "fund": <name>,
+  "is_disposition": true, "disposition_result": "loss", "total_1291_addon": 0,
+  "ordinary_income_current": 0, "nonexcess_ordinary": 0, "complete": true, "note":
+  "Loss disposition — §1291(a)(2) applies to gain only; loss routed to Schedule
+  D/Form 8949, no deferred tax or interest"}` — the `fund_id` MUST match the
+  `foreign_holdings_detail` holding (the identity gate matches on it), and BOTH
+  amount fields (`total_1291_addon` + `ordinary_income_current`, here 0) MUST be
+  present — so the Step 12.7 tie-out gate sees the acknowledged event WAS computed
+  (a complete, zero-tax result) rather than silently skipped.
+  A loss disposition with NO fund entry fails the gate exactly like an uncomputed
+  gain. Set `form_8621_pfic.all_complete` accounting for this fund like any other.
+- `compute_pfic_1291(amount, acquisition_date, event_date, current_year,
+  historical_top_rate, underpayment_rates, pfic_start_date, is_disposition)` —
+  `amount` = the excess distribution, or (for a **disposition at a GAIN**) the
+  whole gain (always ≥ 0).
+  `pfic_start_date` defaults to `acquisition_date` (v1 computes PFIC-FROM-
+  ACQUISITION only — a `pfic_start_date` AFTER acquisition is a mid-holding
+  transition and the call fails closed; block it / prepare Form 8621 manually).
+  The holding period runs the DAY AFTER acquisition through the event (§1223).
+  Route `ordinary_income_current` → 1040 ordinary
+  income (normal rates); `total_1291_addon` (deferred tax at each prior PFIC
+  year's highest ordinary rate + the §6621 interest charge) → an **add-on to Form
+  1040 TOTAL TAX line 24** (deferred tax to the LEFT of line 24, interest via
+  Schedule 2 line 17p → line 23), added AFTER nonrefundable credits and NOT re-run
+  through brackets — see Step 6b/6c for the exact placement (folding it into line 16
+  would let the CTC and other nonrefundable credits erode the §1291 charge). Write
+  per-fund detail to `form_8621_pfic`. **For EVERY fund sold at a positive gain
+  (pure disposition OR same-year distribution+sale), ALSO record the sale leg's
+  `compute_pfic_1291` current-year ordinary allocation in the fund entry as
+  `disposition_ordinary_income`** (always > 0 for a gain) — the tie-out requires
+  this disposition-specific field so a sale's §1291 can't be masked by a stray
+  `nonexcess_ordinary` (a distribution-only field) or a small distribution result.
+  - **1099-B OVERLAP (a GAIN disposition) — REMOVE the gain from Schedule D/Form
+    8949 first (avoid double tax):** a PFIC sale reported on a broker 1099-B is
+    normally parsed into Form 8949/Schedule D as a capital gain. But under
+    §1291(a)(2) the ENTIRE gain is an excess distribution routed through
+    `compute_pfic_1291` (ordinary current-year allocation + deferred-tax add-on) —
+    it is NOT a Schedule D capital gain. So REMOVE (or zero) that lot's gain from
+    Form 8949/Schedule D before finalizing line 7, or it is taxed twice (once as
+    capital gain, once via §1291). Keep the row for disclosure with a $0 gain /
+    code-adjustment if your software needs it, but the gain must not remain in the
+    Schedule D total. (A LOSS disposition is the opposite — it STAYS on Schedule D;
+    §1291 doesn't touch losses.)
+- `historical_top_rate` = `federal.historical_top_rate` (fetched); `underpayment_
+  rates` = the §6621 cache (same one Form 2210 / underpayment-interest use).
+- Write each fund's `complete` flag = **the AND of BOTH computations' `complete`**
+  (`compute_pfic_excess_distribution["complete"]` AND `compute_pfic_1291["complete"]`)
+  to `form_8621_pfic.funds[]`, and set `form_8621_pfic.all_complete` = (every fund
+  complete). A short distribution history makes the excess-distribution result
+  `complete=False` even when rates/interest are fully covered — so writing only
+  the `compute_pfic_1291` flag would wrongly pass the gate. **Every fund entry MUST
+  carry the same `fund_id` as its `foreign_holdings_detail` holding** — the tie-out
+  matches taxable no-election funds to computed results BY `fund_id`, so a taxable
+  fund with no complete matching entry FAILS (a bare count let two entries for one
+  fund hide a second omitted fund). **This is MACHINE-checked:** the Step 12.7
+  tie-out gate (`tie_out.py`) FAILS (exit 2, return NOT complete) when a taxable
+  no-election fund has no complete matching `fund_id`, when `form_8621_pfic` is
+  present but not all-complete, OR when a nonzero `total_1291_addon` was not
+  reconciled into TOTAL TAX line 24 (below) — so an acknowledged
+  `pfic_taxable_event` cannot exit cleanly with an incomplete or unincorporated
+  §1291 figure.
+- **Bias — punitive regime, never under-compute:** if any fund returns
+  `complete=False` (a missing historical top rate, an uncovered §6621 quarter, or
+  incomplete distribution history), the return is INCOMPLETE — do NOT file it and
+  keep the block; fetch the missing law. Frozen/blocked funds: do not assume a
+  blocked distribution was received (the `sanctioned_blocked_asset` constructive-
+  receipt question stays MANUAL); a frozen fund is not a disposition.
+
 **Form 8606 — Nondeductible IRA basis & Roth conversions (lines 4a/4b):**
 
 Compute this BEFORE finalizing line 4b whenever the taxpayer has any of: a Roth
@@ -604,6 +754,104 @@ Use `compute_qdcg_tax()` from `agents/lib/tax_computations.py`:
 - cg_zero_limit / cg_fifteen_limit: from `tax_law_{year}.json`
 
 If no qualified dividends and no net capital gain: use regular bracket tax via `compute_bracket_tax()`.
+
+**PFIC §1291 — order matters (ordinary income BEFORE the tax calc; the add-on
+AFTER):** if `form_8621_pfic` carries computed funds (Step for PFIC above), do
+these IN ORDER:
+
+**6a. In the INCOME phase (back at Steps 3-4, BEFORE AGI and every AGI/MAGI-gated
+calc) — route the PFIC current-year ordinary income through GROSS INCOME, not
+bolted onto line 15.** BOTH current-year ordinary components are ordinary income
+this year and must be in GROSS income → line 9 total income → line 11 AGI so that
+every AGI/MAGI-dependent item (NIIT/Form 8960 MAGI, taxable Social Security,
+education credits, IRMAA, IRA-deduction phase-outs, etc.) sees them; adding them
+only at line 15 leaves AGI pre-PFIC and those items understated:
+   - `ordinary_income_current` = the EXCESS-distribution current-year allocation
+     (from `compute_pfic_1291`) → **Schedule 1 line 8 other income** (Form 8621
+     Part V current-year inclusion), which flows to line 9/line 11; and
+   - `nonexcess_ordinary` = the NON-excess normal-dividend portion
+     (`compute_pfic_excess_distribution`'s `ordinary_now`) → an **ordinary dividend
+     (line 3b, NOT qualified)** — $0 for a disposition, but for a BELOW-THRESHOLD
+     distribution the excess is $0 and this is the ENTIRE distribution. **ALWAYS
+     record `nonexcess_ordinary` at its true value (> 0 for any nonzero
+     distribution), even when the distribution was already reported on a parsed
+     1099-DIV** — there is NO broker-reported all-zero exemption (an unverifiable
+     "it's already in line 3b" claim let a foreign-statement distribution be omitted
+     entirely; Codex round 27 retired it). The value flows through the line-9/11/15
+     reconciliation, and the 1099-DIV parse-ledger tie-out then proves the income is
+     actually on the return: if it's genuinely in a parsed 1099-DIV, line 3b (incl.
+     it) ties the box-1a ledger; if it's a foreign statement not in any parsed doc,
+     either line 3b omits it (→ line 9/11/15 fail the reconciliation) or line 3b
+     includes it without a matching parsed doc (→ the box-1a parse-ledger fails).
+   - **PFIC dividends are NEVER qualified (remove from line 3a).** Even the
+     non-excess portion is ordinary income — it must NOT sit in line 3a (qualified
+     dividends), or the QDCG worksheet applies the preferential rate and understates
+     tax. If a broker reported the PFIC distribution as qualified (box 1b → line 3a),
+     **REMOVE the full PFIC amount from line 3a while KEEPING it in line 3b** (still
+     an ordinary dividend). Record the removed qualified amount in
+     **`form_8621_pfic.reclassified_from_line_3a`** so the box-1b parse-ledger ties
+     (the tie-out adds it back UNCAPPED — the income stays in line 3b, proven by the
+     box-1a check, and recharacterizing qualified→ordinary only raises tax).
+   - **1099-DIV EXCESS OVERLAP (avoid double-count).** If the distribution was
+     parsed into line 3b and it has an EXCESS portion, **REMOVE the FULL excess from
+     line 3b** (and line 3a if it was there) and record the **FULL amount removed** in
+     **`form_8621_pfic.reclassified_from_line_3b`** — this is the entire excess
+     distribution, NOT just its current-year allocation. (Under §1291 the excess is
+     allocated across the holding period: only the current-year slice is
+     `ordinary_income_current` on Schedule 1; the prior-year slices are taxed via the
+     deferred-tax add-on, not reported as current income. So the amount removed from
+     line 3b exceeds `ordinary_income_current` for a multi-year distribution.) The
+     tie-out adds the full `reclassified_from_line_3b` back to the result-side
+     ordinary-dividend total **UNCAPPED** — the box-1a ledger reflects the broker's
+     full distribution, and that the excess was actually run through §1291 (not just
+     erased) is verified by the per-fund recompute (the deferred-tax add-on must cover
+     the recomputed prior-year tax). Set `reclassified_from_line_3b`/`_3a` to 0 when
+     nothing was removed from that line.
+   After AGI is rebuilt, record the COUNTERFACTUAL baselines (each recomputed
+   WITHOUT the PFIC ordinary income, everything else held):
+   `form_8621_pfic.line_9_regular_total_income`, `line_11_regular_agi`, and
+   `line_15_regular_taxable_income`. Then the filed `form_1040.line_9_total_income`,
+   `line_11_agi`, and `line_15_taxable_income` include the PFIC income AND any
+   downstream effects. Record `total_ordinary_income_current` = Σ
+   `ordinary_income_current`, `total_nonexcess_ordinary` = Σ `nonexcess_ordinary`,
+   `line_15_pfic_ordinary_income` = their SUM. **The tie-out FAILS** unless those
+   aggregates == the per-fund sums AND EACH of `form_1040.line_9_total_income`,
+   `line_11_agi`, `line_15_taxable_income` **>=** its `*_regular_*` counterfactual +
+   the PFIC ordinary income. Each must grow by AT LEAST the PFIC ordinary income
+   (the >= — MORE is valid, since routing it through AGI can raise taxable Social
+   Security or shrink AGI-limited items; an exact-equality check would wrongly
+   reject a correctly-recomputed threshold return, and checking only line 15 would
+   miss income bolted onto taxable income but absent from AGI). **Every computed
+   fund MUST carry `total_1291_addon`, `ordinary_income_current`, AND
+   `nonexcess_ordinary`** (0
+   valid, but present).
+
+**6b. Compute the QDCG/bracket regular tax on the AUGMENTED line 15** (which already
+includes the PFIC ordinary income from 6a, and AGI/MAGI-dependent items already
+recomputed) → this is `form_8621_pfic.line_16_regular_tax`, and it is ALSO
+`form_1040.line_16_tax` **unchanged**: the §1291 deferred-tax/interest add-on does
+NOT go on line 16. Then finish the return NORMALLY through the nonrefundable credits
+(line 22) and the Schedule 2 Part II other taxes (line 23) to get the counterfactual
+**`line_24_regular_total_tax`** = Form 1040 line 24 total tax computed WITHOUT the
+§1291 add-on.
+
+**6c. AFTER 6b — apply the §1291 add-on to TOTAL TAX (line 24), NOT line 16.** The
+aggregate `total_1291_addon` (Σ funds' deferred tax at each prior PFIC year's top
+rate + the §6621 interest charge) is an ADDITIONAL TAX added AFTER nonrefundable
+credits: per the IRS Instructions for Form 8621 (Rev. Dec 2025, Part V line 16), the
+deferred tax is entered to the LEFT of Form 1040 line 24 and the interest on Schedule
+2 line 17p (→ Schedule 2 Part II → Form 1040 line 23 → line 24). **Do NOT add it to
+line 16** — line 16 feeds the pre-credit base (line 22 = line 16 + line 17 − credits),
+so a §1291 charge on line 16 would be reduced by the CTC and other nonrefundable
+credits and UNDERSTATE the tax. Set **`form_1040.line_24_total_tax` =
+`line_24_regular_total_tax` + the add-on**, and record `line_24_addon` = the add-on
+and `line_24_with_addon` = the same `form_1040.line_24_total_tax`. **The tie-out
+FAILS** unless, when `total_1291_addon` is nonzero: `total_1291_addon` == Σ funds'
+`total_1291_addon` == `line_24_addon`, `form_1040.line_16_tax` == `line_16_regular_tax`
+(the add-on is NOT on line 16), `line_24_regular_total_tax` + add-on ==
+`form_1040.line_24_total_tax`, and `line_24_with_addon` == `form_1040.line_24_total_tax`.
+(All §1291 figures are ≥ 0; a NEGATIVE or non-finite amount is malformed and also
+FAILS — a loss disposition is a Schedule D capital loss, not a §1291 entry.)
 
 ### Step 6.5: AMT (Form 6251 → Schedule 2 line 1 → 1040 line 17)
 
