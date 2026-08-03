@@ -47,6 +47,7 @@ from agents.lib.tax_computations import (
     compute_section_988,
     compute_pfic_excess_distribution,
     compute_pfic_1291,
+    compute_sales_tax_deduction,
     SE_TAX_THRESHOLD,
 )
 
@@ -4347,3 +4348,118 @@ class TestPFIC1291:
     def test_nan_amount_rejected(self):
         with pytest.raises(ValueError):
             compute_pfic_1291(float("nan"), "2023-01-01", "2024-12-31", 2024, {2023: 0.37})
+
+
+class TestComputeSalesTaxDeduction:
+    """IRS Schedule A Optional State Sales Tax Tables method (line 5a input).
+
+    deduction = table_amount + table_amount x local_rate/state_rate
+              + actual sales tax on specified big-ticket items.
+    Output feeds compute_schedule_a(state_local_sales_taxes=...) — the
+    income-vs-sales election and SALT cap live THERE, not here.
+    """
+
+    def test_table_only(self):
+        r = compute_sales_tax_deduction(1000.0, 0.06)
+        assert r == {"table_amount": 1000.0, "local_addition": 0.0,
+                     "big_ticket_tax": 0.0, "total": 1000.0}
+
+    def test_local_proration_fl_county(self):
+        # 1% county surtax on FL's 6% state rate: 1000 x (0.01/0.06) = 166.67
+        r = compute_sales_tax_deduction(1000.0, 0.06, local_rate=0.01)
+        assert r["local_addition"] == 166.67
+        assert r["total"] == 1166.67
+
+    def test_big_ticket_added(self):
+        r = compute_sales_tax_deduction(1000.0, 0.06, local_rate=0.01,
+                                        big_ticket_tax=450.0)
+        assert r["total"] == 1616.67
+
+    def test_zero_state_rate_rejected(self):
+        with pytest.raises(ValueError):
+            compute_sales_tax_deduction(1000.0, 0.0)
+
+    def test_negative_rejected(self):
+        for kwargs in ({"table_amount": -1.0, "state_rate": 0.06},
+                       {"table_amount": 1000.0, "state_rate": 0.06, "local_rate": -0.01},
+                       {"table_amount": 1000.0, "state_rate": 0.06, "big_ticket_tax": -5.0}):
+            with pytest.raises(ValueError):
+                compute_sales_tax_deduction(**kwargs)
+
+    def test_bool_and_nonfinite_rejected(self):
+        with pytest.raises(ValueError):
+            compute_sales_tax_deduction(True, 0.06)
+        for bad in (float("nan"), float("inf")):
+            with pytest.raises(ValueError):
+                compute_sales_tax_deduction(bad, 0.06)
+            with pytest.raises(ValueError):
+                compute_sales_tax_deduction(1000.0, 0.06, local_rate=bad)
+
+    def test_state_rate_percentage_form_rejected(self):
+        # A WebSearch-transcribed "6" (meaning 6%) instead of 0.06 must be
+        # rejected outright — silently accepting it would compute at 100x
+        # the real rate (worst-direction overstatement).
+        with pytest.raises(ValueError, match="decimal fraction"):
+            compute_sales_tax_deduction(1000.0, 1.0)
+        with pytest.raises(ValueError, match="decimal fraction"):
+            compute_sales_tax_deduction(1000.0, 6.0)
+
+    def test_local_rate_percentage_form_rejected(self):
+        # local_rate=1 (meaning "1%") would otherwise compute a 100x local
+        # addition: 1000 * 1/0.06 = 16,666.67 instead of 1000 * 0.01/0.06.
+        with pytest.raises(ValueError, match="decimal fraction"):
+            compute_sales_tax_deduction(1000.0, 0.06, local_rate=1.0)
+
+    def test_state_rate_just_under_one_accepted(self):
+        # Boundary check: rates strictly between 0 and 1 remain valid.
+        r = compute_sales_tax_deduction(1000.0, 0.99)
+        assert r["table_amount"] == 1000.0
+
+    def test_local_rate_zero_accepted(self):
+        # Boundary check: local_rate=0 (no county surtax) remains valid.
+        r = compute_sales_tax_deduction(1000.0, 0.06, local_rate=0.0)
+        assert r["local_addition"] == 0.0
+
+    def test_docstring_enumerates_qualifying_big_ticket_classes(self):
+        # Codex round-2 P2: the docstring must name the IRS-qualifying
+        # purchase classes (Schedule A instructions) so a caller doesn't
+        # feed in "furniture/jewelry/electronics" sales tax, which is
+        # already priced into table_amount and would double-count. Doc-only
+        # pin — no behavior change.
+        doc = compute_sales_tax_deduction.__doc__
+        for term in ("motor vehicles", "boats", "aircraft",
+                     "home", "renovation"):
+            assert term in doc, f"{term!r} missing from docstring"
+        assert "already priced into table_amount" in doc \
+            or "double-count" in doc
+
+
+class TestBigTicketQualifyingClassesDoc:
+    """Codex round-2 P2: the optional-tables method only allows ADDING
+    actual sales tax on specific IRS-enumerated purchase classes (motor
+    vehicles, boats, aircraft, homes/substantial additions/major
+    renovations' building materials) — anything else (furniture, jewelry,
+    electronics) is already inside the table amount, so recording it as
+    "big-ticket" would double-count. Both interview-facing surfaces
+    (tax-setup.md, tax-compute.md) must enumerate the classes and warn
+    against ordinary purchases, not just invite "other big-ticket item."""
+
+    def _repo(self):
+        return Path(__file__).resolve().parent.parent
+
+    def test_setup_md_enumerates_classes_and_warns_against_ordinary_purchases(self):
+        setup_md = (self._repo() / "agents/skills/tax-setup.md").read_text()
+        for term in ("motor vehicle", "boat", "aircraft", "renovation"):
+            assert term in setup_md, f"{term!r} missing from tax-setup.md"
+        # The old open-ended invitation must be gone.
+        assert "or other big-ticket item" not in setup_md
+        # And ordinary purchase classes must be explicitly excluded.
+        assert "furniture" in setup_md and "jewelry" in setup_md
+        assert "double-count" in setup_md
+
+    def test_compute_md_references_same_enumerated_classes(self):
+        compute_md = (self._repo() / "agents/skills/tax-compute.md").read_text()
+        for term in ("motor vehicle", "boat", "aircraft", "renovation"):
+            assert term in compute_md, f"{term!r} missing from tax-compute.md"
+        assert "furniture" in compute_md
+        assert "double-count" in compute_md

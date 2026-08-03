@@ -93,6 +93,69 @@ The generator:
   - If `has_k1_income` is true but `k1_states` is empty/missing, a
     "K-1 entity states not specified" guidance note is emitted instead
     of silently dropping PTET reminders
+- **FL property deadlines** — ALL flag-driven, independent of the owner's
+  `address.state` (Codex round-25 P2 replaced the earlier residence gate):
+  - **Homestead DR-501** is **flag-driven** (`fl_new_homestead`,
+    `fl_homestead_unfiled`), NOT residence-gated: F.S. 196.031 extends the
+    homestead exemption to property maintained as the permanent residence
+    of someone legally or naturally DEPENDENT upon the owner, so a
+    non-FL-resident owner can hold an eligible FL homestead — a residence
+    gate would suppress that owner's real DR-501 deadline. `/tax-setup`
+    owns the eligibility screening (including the non-resident
+    FL-property elicitation question); the calendar trusts the asserted
+    flags.
+  - **Tangible personal property DR-405** (Apr 1, `flags.
+    fl_business_tangible_property`, no look-ahead — property located in
+    Florida on Jan 1 of `{year}`) is **situs-gated, NOT resident-gated**:
+    tangible personal property tax is assessed where the assets physically
+    sit, so it fires independent of `address.state` — a Georgia resident
+    with business OR RENTAL equipment (e.g. furnishings/appliances in a
+    Florida rental unit, not just a sole proprietorship's business
+    equipment) located in Florida still gets the reminder.
+  - **Continuing-filer waiver (F.S. 196.183):** after a timely INITIAL
+    DR-405 establishes the $25,000 exemption, subsequent annual returns
+    are generally waived while the property's value stays at or below
+    $25,000 — unless the county property appraiser requests one. This
+    module has no per-taxpayer filing-history/value input, so it cannot
+    decide whether a filing is actually owed THIS year; that decision (and
+    whether `flags.fl_business_tangible_property` is set at all) is made
+    during `/tax-setup`'s interview, which asks whether the initial return
+    was already filed, whether value exceeds $25,000, and whether the
+    appraiser requested one, and only sets the flag when a filing is
+    actually expected. The DR-405 event description itself notes the
+    waiver so a taxpayer who does see the reminder isn't told they must
+    file every single year regardless.
+  - Both are county filings, not DOR — and unlike every other state event
+    they do **NOT roll at all**: the event stays ON the statutory March 1 /
+    April 1 even when it falls on a weekend (Codex round-19 P2 replaced
+    the earlier weekend roll). No governing Florida rollover rule has been
+    verified for county property filings — only the observation that most
+    county offices accept the next business day — and an alert moved to
+    Monday would have a taxpayer in a non-rolling county file late. The
+    event description carries a confirmation caveat naming the common
+    next-business-day practice without adopting it; never describe Monday
+    as the actionable deadline. This flag/situs gating is itself the
+    opposite of PTET's gating below, which follows `flags.k1_states`
+    (entity states) rather than either residence or physical situs.
+  - Homestead DR-501 is due **Mar 1 of `{year}+1`** — like FBAR, the event
+    date is a year ahead of the flag year: FL homestead eligibility is
+    determined as of January 1 (F.S. 196.011), so a homestead
+    `flags.fl_new_homestead` marks as newly established DURING `{year}` is
+    first eligible for exemption year `{year}+1` and the DR-501 filing
+    deadline is March 1, `{year}+1` (clear the flag after — first year
+    only; renewals are automatic in most counties).
+  - `flags.fl_homestead_unfiled` covers the gap `fl_new_homestead` misses:
+    a homestead already owned/occupied as of January 1 of `{year}` (e.g.
+    established late in `{year}-1`) that hasn't yet had its INITIAL DR-501
+    filed needs a **CURRENT-year** March 1, `{year}` reminder, not a
+    look-ahead one. Distinct UID (`state-property-fl-homestead-initial-
+    {year}@…`) so it coexists with `fl_new_homestead`'s event without
+    colliding; clear the flag once filed.
+  - The weekend-roll note for both homestead events and DR-405 does NOT
+    cite §7503 (that IRC section governs federal filing/paying acts, not
+    county property-appraiser deadlines) — it says the statutory date falls
+    on a weekend and most county offices observe the next business day,
+    and tells the taxpayer to confirm with their county property appraiser.
 
 ### 4. Report
 

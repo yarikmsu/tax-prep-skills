@@ -52,8 +52,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.projection import (  # noqa: E402
     ProjectionError,
     _binary_status_key,
+    _cache_state_code_present_but_invalid,
     _full_status_key,
     _money,
+    _none_type_allowed,
+    _normalize_state_code,
     _num,
     _read_json,
 )
@@ -588,12 +591,207 @@ def _state_marginal_rate(tax_law: dict, filing_status: 'str | None',
     Returns (False, None) when there are no state brackets — caller renders the
     "state not modeled" banner and reports $0 state savings instead of guessing.
     The taxpayer's state of residence may simply have no income tax (TX, FL, …).
+
+    `state.type == "none"` ALWAYS wins over brackets content (Codex
+    round-12 P1, the harvest twin of projection.project_state_tax's same
+    fix): round-11 taught tax_law_fetcher.check_freshness to flag a
+    type-none cache carrying leftover real brackets as a contradiction, but
+    this function reads the cache directly and never calls check_freshness
+    — build_harvest's `cache_mismatch` guard (from _resolve_state_no_income
+    _tax) is None for a MATCHING code/year, so a `code: "FL", type: "none"`
+    cache with leftover CA brackets (copied/partially replaced, never
+    stripped) would otherwise reach `_ordinary_marginal_rate` and fabricate
+    state harvest savings. Checked FIRST so contradictory brackets can
+    never be reached.
+
+    The INVERSE regime contradiction is also rejected (Codex round-15 P2,
+    projection.project_state_tax's twin fix): a `code` that IS a
+    legitimate no-tax state for this cache's OWN declared year (per
+    `_none_type_allowed`) must never be trusted for bracket-based rate
+    math regardless of what `type` claims — a
+    `code: "FL", type: "graduated_income"` cache with leftover CA brackets
+    would otherwise sail past the `type == "none"` guard above (which only
+    fires when type actually says "none") and fabricate state harvest
+    savings from CA's real brackets under an FL taxpayer.
     """
     state = tax_law.get("state") or {}
+    if state.get("type") == "none":
+        return False, None
+    _regime_code = _normalize_state_code(state.get("code"))
+    if _regime_code is not None and _none_type_allowed(
+            _regime_code, tax_law.get("tax_year")):
+        return False, None
+    # TN NEVER gets generic bracket math (Codex round-23 P2, projection.
+    # project_state_tax's twin fix): post-repeal (TY2021+) TN is type
+    # "none" and already short-circuits via _none_type_allowed above, so a
+    # TN-coded cache reaching this point is pre-repeal (or year-corrupt)
+    # and carries the Hall-tax rate as brackets. The Hall tax applied ONLY
+    # to interest and dividends — applying its rate to harvested capital
+    # losses would fabricate state savings that Tennessee law never
+    # offered. Pre-repeal TN is UNSUPPORTED (degrade to not-modeled, the
+    # safe under-statement direction) rather than mismodeled.
+    if _regime_code == "TN":
+        return False, None
     brackets = state.get("brackets") or []
     if not brackets:
         return False, None
     return True, _ordinary_marginal_rate(brackets, agi_proxy)
+
+
+def state_no_income_tax(tax_law: dict) -> bool:
+    """True only when the fetched state block POSITIVELY declares no income
+    tax (state.type == "none" — FL). Absent/unknown type returns False so an
+    unfetched cache keeps the "not modeled" warning: absence of data must
+    never read as absence of tax (bias-direction rule)."""
+    state = tax_law.get("state") or {}
+    return state.get("type") == "none"
+
+
+def _resolve_state_no_income_tax(tax_law: dict, resident_code: "str | None",
+                                  year: int):
+    """Decide the no-income-tax flag, guarded against a STALE cache for a
+    different state than the taxpayer's resident state (round-6 P2 — the
+    loss_harvest twin of projection._resolve_state_no_income_tax: a leftover
+    FL state.type == "none" cache left beside a CA taxpayer's workspace must
+    not print "$0 — correct and complete") AND against a cache saved for the
+    wrong YEAR (round-9 P2, projection's twin fix: `tax_law_{year}.json` is
+    read directly by this module's CLI with no freshness check of its own).
+
+    The year check below is now also enforced EARLIER and HARDER by
+    `build_harvest`'s own top-level cache-year guard (Codex round-11 P2,
+    right after `read_tax_year`), which raises before this function — or
+    `_rate_kwargs`/`compute_scenario` — ever runs, so `build_harvest`
+    callers never actually reach the year-mismatch branch here. It stays as
+    defense in depth for any other/future caller of this function directly.
+
+    Returns (no_income_tax, mismatch_note):
+    - cache's declared `tax_year` is missing, malformed, or != `year`: flag
+      False + a loud mismatch note, checked FIRST and applying to EVERY
+      branch below — including resident-state-unknown, since that branch
+      trusts `cache_says_none` affirmatively with no other cross-check at
+      all, and a wrong-year cache can't be trusted to declare "no state
+      tax" for THIS year (e.g. a cache actually built for a repeal year
+      reused against a pre-repeal year would otherwise mask a real Hall-tax
+      obligation).
+    - resident state UNKNOWN (no profile / absent address.state) AND year
+      matches: flag False, no mismatch note (Codex round-22 P2 — this
+      REPLACED the pre-round-22 "legacy cache-only" behavior that mirrored
+      state_no_income_tax(tax_law) on trust). "$0 — correct and complete"
+      is an affirmative claim about the TAXPAYER's state, and with no
+      resident state there is no one to attribute the cache's no-tax
+      declaration to — a stale FL cache beside a profile whose address
+      block was lost would otherwise print the confident claim for a
+      taxpayer who may well live in CA. projection's
+      _resolve_state_no_income_tax already degrades quietly here
+      (False, None, None); this brings loss_harvest in line. The quiet
+      (no-mismatch) degrade is deliberate: absence of an address is not
+      evidence of cache corruption, so the banner falls back to the
+      ordinary "not modeled" path rather than a fabricated warning.
+    - resident known AND year matches AND cache code known AND they DIFFER:
+      flag False + a loud mismatch note, regardless of what the mismatched
+      cache claims — a cache for the wrong state can't be trusted either
+      way.
+    - resident known AND year matches AND cache code MATCHES: flag mirrors
+      the cache's declared state.type == "none".
+    - resident known AND year matches AND cache code ABSENT (round-7 P2):
+      flag is False, no mismatch note. A KNOWN resident is fresh evidence a
+      code-less cache can't be checked against, so it can no longer affirm
+      "$0 — correct and complete" on trust alone — mirrors
+      projection._resolve_state_no_income_tax's asymmetry (that function
+      requires a resolvable code before the affirmative claim; this brought
+      loss_harvest in line with it). The banner falls back to the ordinary
+      "not modeled" path instead of either a false mismatch warning or a
+      false affirmation. Unknown-resident + code-less cache is unaffected —
+      that's the branch above.
+    - cache code KNOWN AND cache_says_none AND `type: "none"` isn't a
+      regime that code can legitimately carry for `year` (round-10 P2,
+      projection's twin fix): flag False + a loud mismatch note,
+      regardless of whether the resident state is known — a code-matching
+      CA cache with a corrupted `type: "none"` (no brackets to fall back
+      on) would otherwise print "$0 — correct and complete" for a state
+      that very much taxes capital gains. Checked via `_none_type_allowed`
+      (tax_law_fetcher's single source of truth for the code<->regime
+      allowlist) BEFORE the resident-unknown branch, since that branch
+      would otherwise trust the corrupted claim just as readily as a
+      genuine one.
+    - `state.code` is PRESENT but does not normalize to a valid 2-letter
+      code (Codex round-14 P2, e.g. "FLA"): flag False + a loud mismatch
+      note, checked FIRST of all (before even the year check) — this is a
+      property of the cache itself and needs no resident/year to compare
+      against. `_normalize_state_code` collapses this to the same `None`
+      an ABSENT code produces, which the code-mismatch branch above
+      treats as "nothing to compare, safe to let brackets through" — a
+      CA-bracket cache whose code was corrupted to "FLA" would otherwise
+      skip that check (both sides must be non-None) and reach
+      `_state_marginal_rate`, fabricating state harvest savings from CA's
+      real brackets under a taxpayer whose actual resident state never
+      gets compared against anything.
+    """
+    state_cfg = tax_law.get("state") or {}
+
+    if _cache_state_code_present_but_invalid(state_cfg):
+        mismatch = (f"state law cache has a malformed state.code "
+                    f"({state_cfg.get('code')!r} — not a valid 2-letter "
+                    f"USPS code); re-run /tax-setup; state savings not "
+                    f"modeled")
+        return False, mismatch
+
+    cache_code = _normalize_state_code(state_cfg.get("code"))
+    cache_says_none = state_no_income_tax(tax_law)
+
+    cache_tax_year = tax_law.get("tax_year")
+    if isinstance(cache_tax_year, bool) or not isinstance(cache_tax_year, int) \
+            or cache_tax_year != year:
+        mismatch = (f"state law cache does not declare tax_year {year} "
+                    f"(found {cache_tax_year!r}) — re-run /tax-setup; "
+                    f"state savings not modeled")
+        return False, mismatch
+
+    if cache_code is not None and cache_says_none \
+            and not _none_type_allowed(cache_code, year):
+        mismatch = (f"state law cache declares type \"none\" for "
+                    f"{cache_code}, but {cache_code} is not a recognized "
+                    f"no-income-tax state for tax year {year} (cache is "
+                    f"corrupted or was hand-edited) — re-run /tax-setup; "
+                    f"state savings not modeled")
+        return False, mismatch
+
+    # INVERSE regime contradiction (Codex round-15 P2, projection's twin
+    # fix): a code that IS a legitimate no-tax state for `year` but is
+    # typed something OTHER than "none" while carrying real leftover
+    # brackets (e.g. code: "FL", type: "graduated_income") is just as
+    # corrupted as the opposite case above — without this, no_income_tax
+    # below would silently resolve to False with NO mismatch note
+    # (cache_says_none is False), leaving the caller to show a generic
+    # "not modeled" banner instead of flagging the actual data corruption.
+    # Gated on non-empty brackets — a merely untyped-but-bracket-less cache
+    # isn't the dangerous case this guards. Checked before the
+    # resident-unknown branch, matching this function's existing ordering
+    # for cache-vs-year-vs-regime checks.
+    if cache_code is not None and not cache_says_none \
+            and _none_type_allowed(cache_code, year) \
+            and (state_cfg.get("brackets") or []):
+        mismatch = (f"state law cache declares type "
+                    f"{state_cfg.get('type')!r} for {cache_code}, but "
+                    f"{cache_code} is a recognized no-income-tax state for "
+                    f"tax year {year} (cache is corrupted or was "
+                    f"hand-edited) — re-run /tax-setup; state savings not "
+                    f"modeled")
+        return False, mismatch
+
+    if resident_code is None:
+        # Round-22 P2: never make the affirmative no-tax claim without a
+        # resident state to attribute it to — degrade like projection does.
+        return False, None
+
+    if cache_code is not None and cache_code != resident_code:
+        mismatch = (f"state law cache is for {cache_code} but the taxpayer "
+                    f"resides in {resident_code} — re-run /tax-setup; "
+                    f"state savings not modeled")
+        return False, mismatch
+
+    no_income_tax = cache_code is not None and cache_says_none
+    return no_income_tax, None
 
 
 # --------------------------------------------------------------------------
@@ -686,6 +884,51 @@ class HarvestReport:
     fed_ordinary_mtr: float
     fed_ltcg_mtr: float
 
+    # True when tax_law.state.type == "none" (FL, TX, …) — distinguishes
+    # "this state has no income tax, $0 is correct" from "state data was
+    # never fetched" for the not-modeled banner in render_markdown. Guarded
+    # against a stale cache for the WRONG state (round-6 P2) — see
+    # _resolve_state_no_income_tax.
+    state_no_income_tax: bool = False
+    # Set when tax_law.state.code (normalized) and the taxpayer's resident
+    # state (taxpayer_profile.json address.state) are BOTH known and
+    # DIFFERENT — a stale cache for the wrong state (round-6 P2, the
+    # loss_harvest twin of projection.ProjectionReport.state_cache_mismatch).
+    # None when there's nothing to warn about (codes match, or one/both
+    # sides are unknown).
+    state_cache_mismatch: "str | None" = None
+    # Codex round-23 P2 (the harvest twin of projection.ProjectionReport.
+    # nonresident_income_warning, round-8 finding F there): set whenever
+    # profile flags.has_nonresident_source_income is True, REGARDLESS of
+    # which state path resolved — a resident-state no-tax claim (or a
+    # modeled resident-state rate) says nothing about a SEPARATE source
+    # state's unmodeled tax on the harvested gains/losses, which can change
+    # both the value and the ranking of harvested lots. Advisory read:
+    # absent/None flags read False (this module never blocks a harvest
+    # over an unanswered screening question).
+    nonresident_income_warning: "str | None" = None
+
+
+_NONRESIDENT_INCOME_WARNING = (
+    "Another state's nonresident liability is not modeled — the source "
+    "state's tax on harvested gains/losses is missing from these savings "
+    "figures and can change both the value and the ranking of harvested "
+    "lots."
+)
+
+
+def _nonresident_income_flag(profile: dict) -> bool:
+    """Advisory read of flags.has_nonresident_source_income (Codex round-23
+    P2, mirrors projection._nonresident_income_flag): absent, None, or a
+    non-dict flags block all read as False. Deliberately NOT the
+    capabilities gate's fail-closed rule — /tax-harvest is read-only/
+    advisory and must never block over an unanswered screening question;
+    only an explicit `true` turns the warning on."""
+    flags = profile.get("flags")
+    if not isinstance(flags, dict):
+        return False
+    return flags.get("has_nonresident_source_income") is True
+
 
 # --------------------------------------------------------------------------
 # Core build
@@ -711,6 +954,27 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     """
     read_tax_year(result, year)
     _validate_name(name)
+
+    # Cache-year hard-stop guard (Codex round-11 P2, loss_harvest's twin of
+    # projection._validate_tax_law_year): a wrong-year tax_law_{year}.json
+    # (missing/malformed/mismatched top-level tax_year) must be rejected
+    # BEFORE _rate_kwargs/compute_scenario ever consume its federal ordinary
+    # brackets, capital-gains thresholds, NIIT inputs, or deductions — the
+    # round-9 year check inside _resolve_state_no_income_tax (below) only
+    # disables the STATE portion, but by the time it runs `fed_savings` has
+    # already been computed off the stale FEDERAL cache, so the report and
+    # any saved scenario would recommend trades using a wrong dollar amount
+    # while displaying only a state-cache warning.
+    cache_tax_year = tax_law.get("tax_year")
+    if isinstance(cache_tax_year, bool) or not isinstance(cache_tax_year, int) \
+            or cache_tax_year != year:
+        raise LossHarvestError(
+            f"tax_law_{year}.json does not declare tax_year {year} "
+            f"(found {cache_tax_year!r}) — this cache cannot be trusted for "
+            f"federal harvest math (wrong brackets/capital-gains thresholds/"
+            f"NIIT inputs/deductions). Re-run /tax-setup to fetch a {year} "
+            f"cache."
+        )
 
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
@@ -760,8 +1024,26 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     ltcg_mtr = _ltcg_marginal_rate(base_out["taxable_income"],
                                    rate_kwargs.get("cg_zero_limit"),
                                    rate_kwargs.get("cg_fifteen_limit"))
-    state_modeled, state_mtr = _state_marginal_rate(tax_law, filing_status,
-                                                    base_out["taxable_income"])
+
+    # Cross-check the cache's declared state against the taxpayer's resident
+    # state BEFORE deriving any state-rate figure (round-7 P1 — round-6 only
+    # recorded the mismatch as a warning, but `_state_marginal_rate` and
+    # `state_savings` had already consumed the STALE brackets sitting right
+    # next to it: an FL resident with a leftover CA cache showed real CA
+    # dollars in `total_savings`). On a known mismatch, state is forced
+    # unmodeled entirely — no rate, no ranking weight, no savings — rather
+    # than trusting a cache that admits it's for the wrong state.
+    address = profile.get("address") if isinstance(profile, dict) else None
+    resident_state = address.get("state") if isinstance(address, dict) else None
+    resident_code = _normalize_state_code(resident_state)
+    no_income_tax, cache_mismatch = _resolve_state_no_income_tax(
+        tax_law, resident_code, year)
+
+    if cache_mismatch is not None:
+        state_modeled, state_mtr = False, None
+    else:
+        state_modeled, state_mtr = _state_marginal_rate(tax_law, filing_status,
+                                                        base_out["taxable_income"])
     state_rate_for_ranking = state_mtr or 0.0
 
     # Fill est_value_per_dollar — ST losses rank above LT losses because they can
@@ -904,6 +1186,11 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         state_savings=state_savings,
         total_savings=round(fed_savings + state_savings, 2),
         fed_ordinary_mtr=ord_mtr, fed_ltcg_mtr=ltcg_mtr,
+        state_no_income_tax=no_income_tax,
+        state_cache_mismatch=cache_mismatch,
+        nonresident_income_warning=(
+            _NONRESIDENT_INCOME_WARNING if _nonresident_income_flag(profile)
+            else None),
     )
 
 
@@ -943,6 +1230,9 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "state_modeled": r.state_modeled, "state_mtr": r.state_mtr,
         "state_savings": r.state_savings, "total_savings": r.total_savings,
         "fed_ordinary_mtr": r.fed_ordinary_mtr, "fed_ltcg_mtr": r.fed_ltcg_mtr,
+        "state_no_income_tax": r.state_no_income_tax,
+        "state_cache_mismatch": r.state_cache_mismatch,
+        "nonresident_income_warning": r.nonresident_income_warning,
     }
 
 
@@ -962,11 +1252,37 @@ def render_markdown(r: HarvestReport) -> str:
               f"`result.json` line 24 ({_money(r.baseline_fed_tax)}); only the "
               "marginal effect of harvesting is computed.", ""]
 
-    if not r.state_modeled:
-        lines += ["> **State savings not modeled** — `tax_law.state.brackets` is empty "
-                  "(no income tax, or `/tax-setup` did not fetch state brackets). The "
-                  "fed_savings figure is correct, but a state-tax taxpayer is leaving "
-                  "additional savings on the table. Run `/tax-setup` to fetch them.", ""]
+    if r.nonresident_income_warning:
+        lines += [f"> **⚠ Nonresident income exposure:** "
+                  f"{r.nonresident_income_warning}", ""]
+    if r.state_cache_mismatch:
+        # A known cache-vs-resident mismatch always wins over any stale claim
+        # the cache makes (mirrors /tax-project's precedence rule) — never
+        # print "$0 — correct and complete" for the wrong state's cache.
+        lines += [f"> **⚠ State cache mismatch:** {r.state_cache_mismatch}.", ""]
+    elif not r.state_modeled:
+        if r.state_no_income_tax and r.nonresident_income_warning:
+            # Codex round-23 P2: with nonresident source-state exposure the
+            # resident-state no-tax fact still holds, but "complete" does
+            # NOT — the source state's unmodeled tax can change the value
+            # and ranking of harvested lots.
+            lines += ["> **State savings: $0 for the RESIDENT state (no "
+                      "individual income tax) — NOT the complete picture.** "
+                      "`flags.has_nonresident_source_income` is set: another "
+                      "state's tax on this income is not modeled here, so "
+                      "the fed_savings figure alone understates what a "
+                      "harvest decision should weigh.", ""]
+        elif r.state_no_income_tax:
+            lines += ["> **State savings: $0 — correct and complete.** This "
+                      "state levies no individual income tax "
+                      "(`tax_law.state.type = \"none\"`), so there are no "
+                      "state-side savings to model; the fed_savings figure "
+                      "is the complete picture.", ""]
+        else:
+            lines += ["> **State savings not modeled** — `tax_law.state.brackets` is empty "
+                      "(no income tax, or `/tax-setup` did not fetch state brackets). The "
+                      "fed_savings figure is correct, but a state-tax taxpayer is leaving "
+                      "additional savings on the table. Run `/tax-setup` to fetch them.", ""]
     if not r.niit_modeled:
         lines += [f"> **⚠ NIIT NOT MODELED** — no `federal.niit.threshold` in "
                   f"`tax_law_{r.tax_year}.json`. The 3.8% surtax (§1411) is **excluded "
@@ -1006,9 +1322,15 @@ def render_markdown(r: HarvestReport) -> str:
         ]
     else:
         lines.append(f"| Federal tax savings | **{_money(r.fed_savings)}** |")
+    if r.state_modeled:
+        state_savings_suffix = ""
+    elif r.state_no_income_tax:
+        state_savings_suffix = " (no state income tax)"
+    else:
+        state_savings_suffix = " (not modeled)"
     lines += [f"| State tax savings (est.) | "
               f"{_money(r.state_savings)}"
-              f"{'' if r.state_modeled else ' (not modeled)'} |",
+              f"{state_savings_suffix} |",
               f"| **Total savings** | **{_money(r.total_savings)}** |",
               f"| Capital-loss carryforward to next year | "
               f"{_money(r.capital_loss_carryforward)} |", ""]

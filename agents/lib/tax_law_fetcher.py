@@ -23,6 +23,12 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib.capabilities import (  # noqa: E402
+    _NO_INCOME_TAX_STATES,
+    _TN_HALL_REPEAL_YEAR,
+)
+
 
 def get_tax_law_path(year: int, workspace: str = ".") -> Path:
     """Return path to tax law cache file.
@@ -329,8 +335,26 @@ def create_empty_tax_law(year: int) -> dict:
     }
 
 
-def create_state_template(state: str) -> dict:
-    """Create empty state tax law structure. Filled by WebSearch."""
+def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
+    """Create empty state tax law structure. Filled by WebSearch.
+
+    `tax_year` is OPTIONAL and fully backward compatible (defaults to None,
+    the prior no-arg behavior/signature). It is consulted ONLY to resolve
+    the year-gated TN case below — CA/NY/FL and the always-none states are
+    unaffected by it.
+
+    Round-3 finding D: a state on the closed type-none allowlist
+    (capabilities._NO_INCOME_TAX_STATES) that isn't already pre-built above
+    (CA/NY/FL) used to fall through to the generic type-less fallback at the
+    bottom — nagging INCOMPLETE forever for `standard_deduction`/`brackets`
+    fields the design never fetches for a no-tax state (the same problem the
+    FL template above was built to avoid). AK/NV/SD/TX/WY get the minimal
+    none-template unconditionally; TN is year-gated by
+    capabilities._TN_HALL_REPEAL_YEAR (Hall tax repeal, effective TY2021) —
+    without a resolvable `tax_year >= 2021` there's no way to confirm "none"
+    is correct for THAT specific return, so a year-unknown or pre-2021 TN
+    call falls through to the generic fallback rather than guessing.
+    """
     state_templates = {
         "CA": {
             # 2-letter USPS code — load-bearing for /tax-project's CA 540-ES
@@ -338,6 +362,13 @@ def create_state_template(state: str) -> dict:
             "code": "CA",
             "name": "California",
             "authority": "Franchise Tax Board (FTB)",
+            # Regime discriminator: "graduated_income" (bracket income tax) |
+            # "none" (no individual income tax — FL). Lets consumers
+            # (loss_harvest banner, skills' step-10/generate/parse branches)
+            # distinguish "no tax" from "not fetched". Generic fallback
+            # carries NO type key — regimes are typed one modeled state at
+            # a time (see docs/contributing/state-module-playbook.md).
+            "type": "graduated_income",
             "conforms_to_federal": False,
             "standard_deduction": {"single": None, "mfj": None, "hoh": None},
             "brackets": [],  # [{"rate": 0.01, "min": 0, "max": 10412}, ...]
@@ -384,19 +415,73 @@ def create_state_template(state: str) -> dict:
             "code": "NY",
             "name": "New York",
             "authority": "Department of Taxation and Finance",
+            "type": "graduated_income",
             "conforms_to_federal": True,
             "standard_deduction": {"single": None, "mfj": None},
             "brackets": [],
             "nyc_tax": {"applies": None, "brackets": []},
         },
+        "FL": {
+            "code": "FL",
+            "name": "Florida",
+            "authority": "Florida Department of Revenue",
+            "type": "none",
+            "no_income_tax": True,
+            "note": (
+                "Florida imposes no personal income tax (Fla. Const. Art. "
+                "VII, §5) — no state individual income tax return exists. "
+                "Deliberately NO brackets/standard_deduction keys: the "
+                "freshness walker flags every empty list, and a field the "
+                "design never fetches would nag INCOMPLETE forever. The only "
+                "fetched field is the taxpayer's county discretionary sales "
+                "surtax rate, feeding the federal Schedule A line 5a "
+                "sales-tax election (compute_sales_tax_deduction → "
+                "compute_schedule_a state_local_sales_taxes)."
+            ),
+            "sales_tax": {
+                # F.S. 212.05 general rate — statutory-structural constant
+                # with citation, per the CA mental_health_surcharge precedent.
+                "state_rate": 0.06,
+                "county_surtax_rate": None,  # taxpayer's county rate — /tax-setup fetches
+            },
+        },
     }
-    return state_templates.get(state, {
+    if state in state_templates:
+        return state_templates[state]
+
+    is_tn_repealed = (
+        state == "TN" and isinstance(tax_year, int)
+        and not isinstance(tax_year, bool) and tax_year >= _TN_HALL_REPEAL_YEAR
+    )
+    if state in _TYPE_NONE_TEMPLATE_ALWAYS or is_tn_repealed:
+        name = _STATE_CODE_TO_NAME.get(state, state)
+        return {
+            "code": state,
+            "name": name,
+            "type": "none",
+            "no_income_tax": True,
+            "note": (
+                f"{name} imposes no individual income tax "
+                "(capabilities._NO_INCOME_TAX_STATES) — no state individual "
+                "income tax return exists. Deliberately NO brackets/"
+                "standard_deduction keys, mirroring the FL template above: "
+                "the freshness walker flags every empty list, and a field "
+                "the design never fetches would nag INCOMPLETE forever. The "
+                "Schedule A optional-sales-tax-table election (if "
+                "itemizing) uses this state's own IRS table amount, looked "
+                "up manually in v1 — compute_sales_tax_deduction's county-"
+                "surtax modeling (state_rate/county_surtax_rate) is FL-"
+                "specific and is not extended to other no-tax states here."
+            ),
+        }
+
+    return {
         "code": state,
         "name": state,
         "note": "State template not pre-built. Fetch rates via WebSearch.",
         "standard_deduction": {"single": None, "mfj": None},
         "brackets": [],
-    })
+    }
 
 
 _FRESHNESS_DAYS = 14  # Data older than this is considered STALE
@@ -416,6 +501,9 @@ _FRESHNESS_DAYS = 14  # Data older than this is considered STALE
 # `.gov`, so it is correctly rejected.
 _AUTHORITATIVE_NONGOV_DOMAINS = frozenset({
     "law.cornell.edu",    # LII U.S. Code
+    # Florida DOR does not use a .gov domain — floridarevenue.com IS the
+    # primary state tax authority (verified via myflorida.com directory).
+    "floridarevenue.com",
 })
 
 # US state/territory display-name → USPS code, so a legacy state cache with only
@@ -438,6 +526,19 @@ _STATE_NAME_TO_CODE = {
     "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
 }
 
+# Inverse of the map above (code → display name), for create_state_template's
+# minimal none-template (round-3 finding D). Every code this module ever
+# assigns "name" to via that inverse is a single-word or two-word state name,
+# so a plain .title() is exact (no "district of columbia"-style multi-word
+# capitalization edge case in play — DC is never on the type-none allowlist).
+_STATE_CODE_TO_NAME = {code: name.title() for name, code in _STATE_NAME_TO_CODE.items()}
+
+# States on the closed type-none allowlist (capabilities._NO_INCOME_TAX_STATES)
+# that get create_state_template's minimal none-template UNCONDITIONALLY (no
+# tax_year needed) — TN is the one exception, year-gated separately in
+# create_state_template via capabilities._TN_HALL_REPEAL_YEAR.
+_TYPE_NONE_TEMPLATE_ALWAYS = _NO_INCOME_TAX_STATES - {"FL", "TN"}
+
 
 def _state_pin_code(state: dict) -> str:
     """The documented `state.<CODE>` pin suffix for a single-state cache block:
@@ -453,6 +554,58 @@ def _state_pin_code(state: dict) -> str:
         if mapped:
             return mapped
     return "state"
+
+
+def _expected_state_regime(code: str, tax_year) -> "str | None":
+    """The statutorily-settled `state.type` regime for `code`, or None when
+    `code` isn't in this closed expected-regime map — everything outside the
+    map keeps the vocabulary-only validation in check_freshness (regimes are
+    typed one modeled state at a time per the state-module playbook, so an
+    unmodeled code like CO is unconstrained here).
+
+    Round-3 finding C: vocabulary-only checking (is "type" a recognized WORD)
+    lets a CA cache carry type "none" and pass, because "none" is itself a
+    valid word — just wrong for CA. This resolves the regime a real state
+    code is EXPECTED to carry so the two can be cross-checked.
+
+    CA/NY are graduated_income. FL and the rest of
+    capabilities._NO_INCOME_TAX_STATES (AK/NV/SD/TX/WY, plus TN) are "none"
+    — EXCEPT TN is year-gated the same way capabilities._tn_hall_repealed
+    gates the taxpayer-facing note: TN's Hall tax on interest/dividends was
+    still live through TY2020 and was only fully repealed effective TY2021,
+    so a pre-2021 (or year-unknown) TN cache is expected graduated_income,
+    matching the conservative "not yet repealed" default `_tn_hall_repealed`
+    uses when the year can't be resolved.
+    """
+    if code in ("CA", "NY"):
+        return "graduated_income"
+    if code == "TN":
+        year = tax_year
+        if isinstance(year, bool) or not isinstance(year, int):
+            return "graduated_income"
+        return "none" if year >= _TN_HALL_REPEAL_YEAR else "graduated_income"
+    if code in _NO_INCOME_TAX_STATES:  # AK, FL, NV, SD, TX, WY (TN handled above)
+        return "none"
+    return None
+
+
+def _none_type_allowed(code: str, tax_year) -> bool:
+    """Round-4 finding A: `state.type == "none"` is an AFFIRMATIVE claim
+    that `code` has NO individual income tax — unlike `graduated_income`
+    (the safe default for an unmodeled/unknown code), asserting "none" for
+    a code that ISN'T a real no-tax state (CO, WA, a typo) is itself an
+    over-statement bug the round-3 fix missed: that fix only compared
+    "none" against a KNOWN different expected regime, so an unmodeled code
+    sailed through because `_expected_state_regime` returns None for it and
+    the old comparison skipped whenever the expectation was None.
+
+    This is a strict allowlist check, not a "matches expected" check. The
+    single source of truth is `_expected_state_regime` above, which itself
+    reads capabilities._NO_INCOME_TAX_STATES (AK/FL/NV/SD/TX/WY, plus TN)
+    and gates TN on capabilities._TN_HALL_REPEAL_YEAR (2021) — those two
+    constants move together; do not duplicate the allowlist here.
+    """
+    return _expected_state_regime(code, tax_year) == "none"
 
 # Federal blocks that SHOULD carry a `_sources` pin are DERIVED from the cache
 # (every populated structured `federal.<block>`), not a fixed short list — a
@@ -654,9 +807,13 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # hsa_note, authority, conforms_to_federal, no_city_income_tax, hsa_conformity).
     # When adding a new state template, audit its descriptive keys and add them here.
     # Missing a descriptive field → false INCOMPLETE; adding a rate field → silent gap.
+    # "type" is deliberately NOT in this set (Codex P2): it's the
+    # graduated_income/none regime discriminator, not a purely descriptive
+    # field — a deleted/null/misspelled value must be caught, not skipped.
+    # See the explicit state.type validation below the walk.
     _SKIP_KEYS = {"note", "hsa_note", "name", "authority",
                   "conforms_to_federal", "no_city_income_tax", "twenty_pct_above",
-                  "applies", "hsa_conformity"}
+                  "applies", "hsa_conformity", "no_income_tax"}
 
     # Keys whose values must be dicts or lists, never scalars.
     # A scalar value here (int, float, str, bool) indicates either data corruption
@@ -664,7 +821,19 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     _EXPECT_STRUCTURED = {"brackets", "threshold", "phaseout",
                           "phase_out_start", "roth_income_phaseout",
                           "traditional_deduction_phaseout", "filing_statuses",
-                          "itemized_phaseout"}
+                          "itemized_phaseout",
+                          # FL-only (Codex round-17 P2): the FL-specific
+                          # absent-key guard below (`"sales_tax" not in
+                          # state_block`) only fires when the key is
+                          # entirely ABSENT, and its `isinstance(..., dict)`
+                          # elif only fires when the value IS a dict — a
+                          # PRESENT scalar (e.g. "sales_tax": "oops") slips
+                          # through both, and the generic walker's `else:
+                          # _walk(v, child_path)` branch does nothing for a
+                          # bare non-dict/non-list scalar either. Listing it
+                          # here makes the generic walker itself flag a
+                          # non-dict/non-list sales_tax value.
+                          "sales_tax"}
 
     def _walk(obj, path=""):
         if isinstance(obj, dict):
@@ -768,6 +937,143 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
             "state.itemized_phaseout (key absent — the R&TC §17077 "
             "thresholds are required for the CA itemized phase-out)")
 
+    # FL sales_tax block absent-key guard (Codex round-13 P2): a FL cache
+    # with the WHOLE sales_tax block deleted contributes no state-specific
+    # null_fields at all — the recursive walker only examines PRESENT keys,
+    # and the type-absent-key guard below covers `type`, not this separate
+    # required block. `/tax-compute` must read
+    # `state.sales_tax.county_surtax_rate` to produce the mandatory
+    # Schedule A line 5a candidate (`compute_sales_tax_deduction`), so a
+    # partially migrated or hand-edited cache missing the block (or missing
+    # just the sub-key) must be refetched rather than silently read as
+    # fresh — which would otherwise let `/tax-compute` either hard-fail
+    # with no earlier refetch prompt or, worse, silently omit the
+    # deduction. Same absent-key precedent as sdi_wage_limit/
+    # itemized_phaseout above. FL-specific: no other type-none state models
+    # a sales_tax block in v1 (see tax-compute.md step 2 — the automated
+    # computation is FL-only).
+    if isinstance(state_block, dict) and _state_pin_code(state_block) == "FL":
+        if "sales_tax" not in state_block:
+            null_fields.append(
+                "state.sales_tax (key absent — required for FL's Schedule A "
+                "line 5a sales-tax election)")
+        elif (isinstance(state_block["sales_tax"], dict)
+                and "county_surtax_rate" not in state_block["sales_tax"]):
+            null_fields.append(
+                "state.sales_tax.county_surtax_rate (key absent — required "
+                "for FL's Schedule A line 5a sales-tax election)")
+
+    # state.type regime-discriminator guard (Codex P2): "type" was removed
+    # from _SKIP_KEYS above so a PRESENT-but-null or misspelled value is no
+    # longer skipped over silently — a deleted/corrupted discriminator must
+    # not pass freshness. A present type is validated against the two
+    # recognized regimes; a null value is already caught by the walker
+    # itself (present key + None value -> "state.type" in null_fields), so
+    # this only needs to catch a present NON-None value that isn't
+    # recognized. A cache with NO "type" key at all is legacy/generic (the
+    # key is typed one modeled state at a time per the playbook) and is
+    # deliberately NOT flagged here.
+    if (isinstance(state_block, dict) and "type" in state_block
+            and state_block["type"] is not None
+            and state_block["type"] not in ("graduated_income", "none")):
+        null_fields.append(
+            "state.type (unrecognized regime — expected "
+            "graduated_income|none)")
+
+    # Inverse of the guard above (Codex round-2 P2): deleting the "type" key
+    # ENTIRELY still passed the previous guard, because it only fires when
+    # "type" IS present. That's fine for a generic/legacy state (regimes are
+    # typed one modeled state at a time), but a MODELED typed state must
+    # always carry the discriminator; a hand-edited or half-migrated cache
+    # missing it would silently degrade to "generic, not flagged" for a
+    # state /tax-compute/harvest/etc. actively branch on. Same absent-key
+    # precedent as sdi_wage_limit / itemized_phaseout / federal.amt above.
+    #
+    # Round-5 finding B: this used to hardcode ("CA", "NY", "FL"), but
+    # create_state_template now also generates typed "none" caches for
+    # AK/NV/SD/TX/WY and (year-gated) TN — those were silently exempt from
+    # the absent-key requirement even though they're just as modeled as FL.
+    # Reuses `_none_type_allowed` (itself backed by the single
+    # `_expected_state_regime` table, which already gates TN on
+    # `_TN_HALL_REPEAL_YEAR`) instead of duplicating that allowlist here —
+    # CA/NY are the only two states with a permanently-known regime that
+    # ISN'T "none", so they're still named explicitly.
+    if isinstance(state_block, dict) and "type" not in state_block:
+        _absent_type_code = _state_pin_code(state_block)
+        if (_absent_type_code in ("CA", "NY")
+                or _none_type_allowed(_absent_type_code, data.get("tax_year"))):
+            null_fields.append(
+                "state.type (key absent — required for modeled states "
+                "CA/NY (graduated_income) and FL/AK/NV/SD/TX/WY/TN "
+                "(none, once TN's year-aware regime resolves to none))")
+
+    # state.type vs state.code cross-check (Codex round-3 P1 finding C,
+    # sharpened by round-4 finding A): the two guards above only validate
+    # VOCABULARY — "none" and "graduated_income" are both recognized words,
+    # so a CA cache carrying type "none" (or an FL cache carrying
+    # "graduated_income") passes them silently.
+    #
+    # "none" is checked as a strict ALLOWLIST membership (_none_type_allowed
+    # — code in point-3 that gates TN on _TN_HALL_REPEAL_YEAR): round-3 only
+    # flagged "none" when it conflicted with a KNOWN different expected
+    # regime, so an unmodeled/unknown code (CO, WA, a typo) typed "none"
+    # sailed through silently, because that check skipped whenever
+    # _expected_state_regime returned None. "none" is an affirmative
+    # no-tax claim, so EVERY code outside the closed allowlist is flagged
+    # here — known-wrong (CA, pre-2021 TN) and unmodeled (CO, WA) alike.
+    #
+    # "graduated_income" keeps the ORIGINAL vocabulary-only-unless-known
+    # behavior (safe direction — it's the conservative default for an
+    # unmodeled code): only flagged when _expected_state_regime resolves to
+    # a DIFFERENT known regime (e.g. FL typed graduated_income; FL's
+    # expected regime is "none"). An unmodeled code (CO) typed
+    # graduated_income stays unconstrained.
+    if (isinstance(state_block, dict)
+            and state_block.get("type") in ("graduated_income", "none")):
+        _regime_code = _state_pin_code(state_block)
+        _type = state_block["type"]
+        if _type == "none":
+            if not _none_type_allowed(_regime_code, data.get("tax_year")):
+                null_fields.append(
+                    f'state.type ("none" not allowed for state.code '
+                    f'"{_regime_code}" — not a recognized no-income-tax '
+                    f'state)')
+            # Contradiction guard (Codex round-11 P1): an ALLOWED no-tax
+            # code can still carry leftover income-tax computation fields
+            # from a copied/partially-replaced graduated_income cache (e.g.
+            # a CA cache hand-edited to code: "FL", type: "none" without
+            # stripping CA's real brackets/standard_deduction). Every
+            # type-none consumer (project_state_tax, loss_harvest's
+            # _state_marginal_rate) only checks `if brackets:` before using
+            # them — it has no reason to also distrust a "none" cache that
+            # happens to carry brackets — so leftover REAL data here would
+            # silently produce invented state tax/harvest savings for a
+            # state that has none. A genuinely no-tax state's brackets/
+            # standard_deduction are never fetched AT ALL (see
+            # create_state_template's FL/AK/NV/SD/TX/WY/TN templates —
+            # deliberately no such keys), so any REAL data (not just an
+            # empty scaffold list/all-None dict — `_has_real_data`) here is
+            # self-contradictory with the "none" declaration.
+            if _has_real_data(state_block.get("brackets")):
+                null_fields.append(
+                    f'state.brackets (non-empty, but state.code '
+                    f'"{_regime_code}" is type "none" — a no-income-tax '
+                    f'state has no brackets; this is leftover/contradictory '
+                    f'data, likely from a different state\'s cache)')
+            if _has_real_data(state_block.get("standard_deduction")):
+                null_fields.append(
+                    f'state.standard_deduction (populated, but state.code '
+                    f'"{_regime_code}" is type "none" — a no-income-tax '
+                    f'state has no standard deduction; this is leftover/'
+                    f'contradictory data, likely from a different state\'s '
+                    f'cache)')
+        else:
+            _expected = _expected_state_regime(_regime_code, data.get("tax_year"))
+            if _expected is not None and _type != _expected:
+                null_fields.append(
+                    f'state.type ("{_type}" conflicts with '
+                    f'state.code "{_regime_code}" — expected {_expected})')
+
     # federal.amt absent-key guard (same class): a pre-D9 cache has no amt
     # key, so the walker reported FRESH while compute_form_6251 would only
     # hard-error at point of need with no earlier refetch prompt. No year
@@ -785,6 +1091,27 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # Flag empty state section if state data was expected
     if isinstance(data.get("state"), dict) and not data["state"]:
         null_fields.append("state (no state tax data configured)")
+
+    # Cache-year mismatch guard (Codex round-8 finding C): every year-gated
+    # check above (_none_type_allowed, the TN Hall-tax repeal boundary,
+    # _sdi_null_is_valid) trusts data.get("tax_year") — none of them compare
+    # it against the YEAR THE CACHE WAS LOADED FOR (the `year` argument). A
+    # mis-saved/misnamed cache (e.g. `tax_law_2020.json` whose body still
+    # declares `"tax_year": 2021` from a copy/paste) would silently defeat
+    # that year gating: check_freshness would read the WRONG year's rules
+    # (TN's Hall tax, the SDI ceiling, etc.) while reporting FRESH. Flag any
+    # mismatch — and a missing key too, since the walk above treats a
+    # missing tax_year as "no year info" and several of the year-gated
+    # checks above degrade to a conservative default rather than erroring.
+    _cache_tax_year = data.get("tax_year")
+    if isinstance(_cache_tax_year, bool) or not isinstance(_cache_tax_year, int):
+        null_fields.append(
+            f"tax_year (missing or invalid — cache has no valid tax_year "
+            f"but was loaded for {year} — refetch or fix the filename)")
+    elif _cache_tax_year != year:
+        null_fields.append(
+            f"tax_year (cache declares {_cache_tax_year} but was loaded "
+            f"for {year} — refetch or fix the filename)")
 
     # H4 source pinning: a recorded but NON-AUTHORITATIVE source is INCOMPLETE
     # (a non-primary URL affirmatively taints the figure); populated-but-
@@ -878,7 +1205,12 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2))
     elif cmd == "state":
         state = sys.argv[3] if len(sys.argv) > 3 else "CA"
-        template = create_state_template(state)
+        # `year` (parsed above from argv[2], defaulting to last calendar
+        # year) is now threaded through as tax_year — round-3 finding D:
+        # create_state_template needs the year to resolve TN's Hall-tax
+        # repeal gate (pre-2021 vs 2021+). CA/NY/FL and the always-none
+        # states (AK/NV/SD/TX/WY) are unaffected by it.
+        template = create_state_template(state, tax_year=year)
         print(json.dumps(template, indent=2))
     else:
         print(f"Error: Unknown command '{cmd}'. Valid commands: create, load, freshness, state",

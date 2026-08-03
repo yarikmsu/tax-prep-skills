@@ -14,8 +14,21 @@ Federal savings is **anchored** to the real `result.json` line 24 (same contract
 as `/tax-scenario` and `/tax-roth-convert`): only the marginal effect of the
 harvest is computed against the keystone, so the rendered savings is the actual
 $ delta around your real tax. State savings is a simplified estimate
-(`state_ordinary_marginal_rate × federal_taxable_income_reduction`); degrades to
-"state not modeled" when `tax_law.state.brackets` is empty.
+(`state_ordinary_marginal_rate × federal_taxable_income_reduction`), and is one
+of three states depending on `tax_law.state`:
+- **Modeled** — `state.brackets` is populated: state savings is the estimate above.
+- **No state income tax** — `state.type == "none"` (FL, TX, ...) AND the full
+  residence chain holds (a KNOWN resident state matching the cache's code and
+  year): state savings is reported as **$0 — correct and complete**, not a gap
+  to fill; there is no state tax to save. An UNKNOWN resident state (no
+  `address.state`) degrades to "not modeled" instead of affirming — the claim
+  needs a resident to attribute it to. When
+  `flags.has_nonresident_source_income` is set, the claim degrades to
+  "$0 for the RESIDENT state — NOT the complete picture" and a nonresident
+  income exposure warning renders: the source state's unmodeled tax can
+  change both the value and the ranking of harvested lots.
+- **Not fetched** — `state.brackets` is empty and `state.type` is not `"none"`:
+  degrades to "state savings not modeled" with a warning to run `/tax-setup`.
 
 Read-only with respect to the baseline: never modifies `result.json` or
 `taxpayer_profile.json`. Writes a single `scenarios/<name>.json` (chmod 600) via
@@ -29,7 +42,10 @@ the same guarded writer `/tax-scenario` uses.
   to run when these are missing AND the baseline has LT cap gains or qualified dividends —
   the keystone would otherwise silently price preferential income at ordinary rates,
   inflating fed_savings. Run `/tax-setup` if `/tax-harvest` errors out with this message.
-  State brackets are optional (state savings degrades to "$0 — not modeled" if absent).
+  State brackets are optional: absent AND `state.type == "none"` (FL, TX, ...) reports
+  "$0 — correct and complete" when the resident state is known and matches the cache
+  (degraded when unknown, or when `flags.has_nonresident_source_income` is set);
+  absent otherwise degrades to "state savings not modeled".
 - `holdings.json` in the workspace — see schema below.
 
 ## Schema: `holdings.json`

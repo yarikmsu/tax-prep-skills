@@ -17,8 +17,9 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _profile(flags=None, acknowledged=None, state="CA"):
-    """A post-migration profile: the five gate-era flags are explicitly
-    present (False) as /tax-setup writes them — absence fails closed."""
+    """A post-migration profile: the gate-era flags (incl.
+    has_nonresident_source_income, Codex round 3) are explicitly present
+    (False) as /tax-setup writes them — absence fails closed."""
     merged = {f: False for f in C._REQUIRED_GATE_FLAGS}
     merged.update(flags or {})
     p = {
@@ -57,6 +58,7 @@ def test_iso_exercise_is_manual_not_blocking():
     ("has_marketplace_insurance", "marketplace_insurance"),
     ("moved_states_this_year", "part_year_residency"),
     ("nyc_resident", "nyc_resident"),
+    ("has_nonresident_source_income", "nonresident_source_income"),
     ("has_household_employees", "household_employees"),
     ("has_dependent_unearned_income", "kiddie_tax"),
     ("has_pfic_taxable_event", "pfic_taxable_event"),
@@ -369,9 +371,12 @@ def test_state_ca_noted_in_depth():
 
 
 def test_state_other_noted_estimate_only():
-    r = C.evaluate(_profile(state="TX"))
+    # NY (not TX): TX is now in _NO_INCOME_TAX_STATES and gets the
+    # affirmative no-tax note (see TestNoIncomeTaxStateNote) — this test
+    # needs a state that still falls through to the bracket-based estimate.
+    r = C.evaluate(_profile(state="NY"))
     assert "ESTIMATE only" in r.state_note
-    assert "(TX)" in r.state_note
+    assert "(NY)" in r.state_note
 
 
 def test_state_missing_noted():
@@ -631,3 +636,249 @@ def test_post2018_alimony_notes_ca_nonconformity():
     lines = "\n".join(r.limitations)
     assert "CA does" in lines and "NOT conform" in lines
     assert "Schedule CA" in lines
+
+
+class TestNonresidentSourceIncome:
+    """A full-year resident (esp. a no-tax-state resident like FL) with
+    out-of-state W-2/K-1/rental income has real nonresident exposure that
+    `moved_states_this_year`/`part_year_residency` does not catch."""
+
+    def test_flag_true_blocks(self):
+        r = C.evaluate(_profile({"has_nonresident_source_income": True}))
+        assert "nonresident_source_income" in [f.rule_id for f in r.blocking]
+
+    def test_flag_false_not_present(self):
+        r = C.evaluate(_profile({"has_nonresident_source_income": False}))
+        assert "nonresident_source_income" not in [f.rule_id for f in r.blocking]
+        assert "nonresident_source_income" not in [f.rule_id for f in r.manual]
+        assert "unanswered_gate_questions" not in [f.rule_id for f in r.blocking]
+
+    def test_flag_absent_fails_closed(self):
+        """Codex round 3 (state-engine-florida PR #65, P1): has_nonresident_
+        source_income now joins _REQUIRED_GATE_FLAGS — reversing the earlier
+        judgment call for consistency with moved_states_this_year et al. An
+        ABSENT key (not the helper's default-False) must block via the
+        generic unanswered_gate_questions migration guard with a fix-the-
+        profile message, exactly like the original gate-era five — a full-
+        year no-tax-state resident's nonresident exposure is the same class
+        of load-bearing unsupported situation, not a benign default."""
+        p = _profile()
+        del p["flags"]["has_nonresident_source_income"]
+        r = C.evaluate(p)
+        ids = [f.rule_id for f in r.blocking]
+        assert "unanswered_gate_questions" in ids
+        assert "nonresident_source_income" not in ids
+        blocker = next(f for f in r.blocking if f.rule_id == "unanswered_gate_questions")
+        assert "has_nonresident_source_income" in blocker.note
+
+    def test_flag_null_fails_closed(self):
+        """A present-but-null value is an unanswered question too, not an
+        explicit 'no' — mirrors test_null_gate_flag_counts_as_unanswered."""
+        r = C.evaluate(_profile({"has_nonresident_source_income": None}))
+        assert "unanswered_gate_questions" in [f.rule_id for f in r.blocking]
+
+    def test_distinct_from_part_year_residency(self):
+        # A full-year FL resident (no move) with nonresident source income
+        # must still block — part_year_residency alone would miss this.
+        r = C.evaluate(_profile({"moved_states_this_year": False,
+                                 "has_nonresident_source_income": True},
+                                state="FL"))
+        ids = [f.rule_id for f in r.blocking]
+        assert "nonresident_source_income" in ids
+        assert "part_year_residency" not in ids
+
+
+class TestNoIncomeTaxStateNote:
+    def _profile(self, code, tax_year=2025):
+        return {"flags": {}, "address": {"state": code}, "tax_year": tax_year}
+
+    def test_fl_gets_affirmative_no_tax_note(self):
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("FL"))
+        assert "no individual income tax" in note
+        assert "ESTIMATE" not in note
+        # Round-9 P2: FL's sales-tax note must say the election is
+        # AUTOMATED (compute_sales_tax_deduction actually runs for FL) —
+        # distinct from the manual instruction non-FL no-tax states get.
+        assert "computed automatically" in note
+        assert "MANUALLY" not in note
+
+    def test_tx_gets_manual_sales_tax_note_not_fl_automated_wording(self):
+        # Round-9 P2: reusing FL's "handled on the federal side" wording for
+        # a non-FL no-tax state implied the sales-tax election was taken
+        # care of, when /tax-compute explicitly SKIPS the automated
+        # computation for every no-tax state other than FL. TX must get an
+        # explicit MANUAL-computation instruction instead.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("TX"))
+        assert "no individual income tax" in note
+        assert "MANUALLY" in note
+        assert "computed automatically" not in note
+
+    def test_tx_note_does_not_name_florida_forms(self):
+        # Codex round-17 P2: the property/use-tax parenthetical named FL's
+        # specific forms (DR-405/DR-15MO) for EVERY no-tax state — a TX or
+        # NV taxpayer's manifest note is misleading when it cites Florida
+        # forms they have no nexus with. Non-FL no-tax states get a
+        # state-neutral caveat instead.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("TX"))
+        assert "DR-405" not in note
+        assert "DR-15MO" not in note
+        note_nv = _state_note(self._profile("NV"))
+        assert "DR-405" not in note_nv
+        assert "DR-15MO" not in note_nv
+
+    def test_fl_note_still_names_florida_forms(self):
+        # Regression: FL keeps its specific form citations. Round-23 P2:
+        # the use-tax form differs by dealer registration, so the static
+        # manifest line names BOTH (DR-15MO, or DR-15 for registered
+        # dealers) — it must never contradict the registration-tailored
+        # use_tax_note in the same PDF.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("FL"))
+        assert "DR-405" in note
+        assert "DR-15MO" in note
+        assert "DR-15 for registered dealers" in note
+
+    def test_ak_gets_local_table_note_not_state_table_wording(self):
+        # Codex round-23 P2: Alaska has NO statewide sales tax but IS on
+        # the IRS Optional LOCAL Sales Tax Table list (Schedule A
+        # instructions) — the generic state-table wording would have an AK
+        # filer look up a statewide table that doesn't exist and omit the
+        # locality amount, understating line 5a.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("AK"))
+        assert "no individual income tax" in note
+        assert "MANUALLY" in note
+        assert "Optional LOCAL Sales Tax Tables" in note
+        assert "Optional State Sales Tax Tables" not in note
+        assert "computed automatically" not in note
+
+    def test_tn_gets_affirmative_no_tax_note(self):
+        # TN's Hall income tax (interest & dividends only) was fully
+        # repealed effective TY2021 — TN now gets the same affirmative
+        # no-tax note as FL, not the bracket-based ESTIMATE text, for
+        # TY2021 and later.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("TN", tax_year=2025))
+        assert "no individual income tax" in note
+        assert "ESTIMATE" not in note
+
+    def test_tn_2021_boundary_gets_affirmative_no_tax_note(self):
+        # TY2021 is the FIRST repeal year (Hall tax fully gone) — >= boundary.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("TN", tax_year=2021))
+        assert "no individual income tax" in note
+
+    def test_tn_post_repeal_note_references_both_state_and_local_tables(self):
+        # Codex round-26 P2 (AK's twin): post-repeal TN is on the IRS
+        # Optional LOCAL Sales Tax Table list too, but unlike AK it also
+        # has a statewide sales tax — the worksheet path is state table
+        # PLUS local table, so a state-table-only note omits the locality
+        # amount and understates line 5a.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("TN", tax_year=2025))
+        assert "MANUALLY" in note
+        assert "Optional State Sales Tax Tables" in note
+        assert "Optional LOCAL Sales Tax Tables" in note
+        assert "computed automatically" not in note
+        assert "ESTIMATE" not in note
+
+    def test_tn_2020_gets_hall_specific_note_not_estimate(self):
+        # Pre-repeal: TN's Hall tax on interest/dividends was still live in
+        # TY2020, so a confident "no state return exists" note would
+        # silently UNDERSTATE a real filing obligation. But the generic
+        # bracket-based ESTIMATE note over-corrects the other way (the
+        # note-level twin of the round-23 consumer guards): it invites
+        # estimating tax on ALL income when the Hall regime taxed ONLY
+        # interest and dividends — a TY2020 TN wage earner would see a
+        # fabricated liability. Pre-repeal TN gets a Hall-specific
+        # not-modeled note naming Form INC 250 instead.
+        from agents.lib.capabilities import _state_note
+        note = _state_note(self._profile("TN", tax_year=2020))
+        assert "ESTIMATE" not in note
+        assert "interest and dividends" in note
+        assert "INC 250" in note
+        assert "NOT modeled" in note
+
+    def test_tn_missing_tax_year_gets_hall_specific_note(self):
+        # An unknown/missing tax_year must NOT default to "repealed" —
+        # that would risk understating a pre-2021 Hall-tax obligation. It
+        # falls to the same Hall-specific note (never the all-income
+        # bracket ESTIMATE).
+        from agents.lib.capabilities import _state_note
+        p = {"flags": {}, "address": {"state": "TN"}}
+        note = _state_note(p)
+        assert "ESTIMATE" not in note
+        assert "interest and dividends" in note
+
+    def test_nh_keeps_estimate_note(self):
+        # NH's interest & dividends tax was repealed effective TY2025, but
+        # v1 has not confirmed there's no residual filing obligation for
+        # every target tax year, so NH deliberately stays out of
+        # _NO_INCOME_TAX_STATES and keeps the safer estimate note.
+        from agents.lib.capabilities import _state_note
+        assert "ESTIMATE" in _state_note(self._profile("NH"))
+
+    def test_wa_keeps_estimate_note(self):
+        # WA is deliberately NOT in the no-income-tax set: the capital-gains
+        # excise (RCW 82.87) means "no tax at all" would be a false promise.
+        from agents.lib.capabilities import _state_note
+        assert "ESTIMATE" in _state_note(self._profile("WA"))
+
+    def test_ca_note_unchanged(self):
+        from agents.lib.capabilities import _state_note
+        assert "Form 540" in _state_note(self._profile("CA"))
+
+
+class TestTaxSetupNoIncomeTaxAllowlistDoc:
+    """Codex round-2 P1: the old open-ended tax-setup.md instruction ("if
+    research shows the state levies NO individual income tax, use the FL
+    pattern") would catch WASHINGTON — commonly (and wrongly) described as
+    no-income-tax — and silently zero its real capital-gains excise (RCW
+    82.87). The interview instruction must mirror the closed
+    `capabilities._NO_INCOME_TAX_STATES` allowlist, not an LLM's own
+    research judgment."""
+
+    def _setup_md(self):
+        return (REPO / "agents/skills/tax-setup.md").read_text()
+
+    def test_open_ended_instruction_removed(self):
+        setup_md = self._setup_md()
+        assert "if research shows the state levies NO individual income tax" \
+            not in setup_md
+
+    def test_allowlist_states_all_documented(self):
+        from agents.lib.capabilities import _NO_INCOME_TAX_STATES
+        setup_md = self._setup_md()
+        for code in _NO_INCOME_TAX_STATES:
+            assert code in setup_md, (
+                f"{code} is in capabilities._NO_INCOME_TAX_STATES but not "
+                "documented in tax-setup.md's type:none allowlist")
+
+    def test_wa_never_type_none(self):
+        setup_md = self._setup_md()
+        assert "WA is NEVER" in setup_md
+        assert "RCW 82.87" in setup_md  # WA capital-gains excise citation
+        # WA must never appear inside the closed allowlist itself
+        from agents.lib.capabilities import _NO_INCOME_TAX_STATES
+        assert "WA" not in _NO_INCOME_TAX_STATES
+
+    def test_nh_excluded_pending_confirmation(self):
+        setup_md = self._setup_md()
+        assert "NH is excluded" in setup_md
+        from agents.lib.capabilities import _NO_INCOME_TAX_STATES
+        assert "NH" not in _NO_INCOME_TAX_STATES
+
+    def test_tn_year_gate_documented(self):
+        setup_md = self._setup_md()
+        assert "TN, but only for tax_year >= 2021" in setup_md
+
+    def test_source_of_truth_pointer_present(self):
+        # Both the doc allowlist and the code constant must move together —
+        # the doc names the constant so a future edit to one prompts a check
+        # of the other.
+        setup_md = self._setup_md()
+        assert "_NO_INCOME_TAX_STATES" in setup_md
+        assert "_tn_hall_repealed" in setup_md or "_TN_HALL_REPEAL_YEAR" in setup_md

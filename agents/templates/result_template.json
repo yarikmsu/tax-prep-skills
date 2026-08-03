@@ -453,6 +453,23 @@
     "note": null
   },
 
+  "florida_state": {
+    "_include_if": "state is FL",
+    "_note": "Affirmative absence, not an empty section: a FL client must see that $0 state tax is CORRECT, not a gap. No FL return artifact exists; the only computation here is the federal Schedule A line 5a sales-tax election input (compute_sales_tax_deduction -> compute_schedule_a state_local_sales_taxes). No computed-evidence pair on purpose — there is no computed state tax to protect from scaffold-reads (see docs/superpowers/specs/2026-08-01-fl-state-module-design.md non-goals).",
+    "_note_no_income_tax_statement": "Codex round-11 P2: this field ships null on purpose (not the affirmative sentence itself) so yoy_diff._section_present (keyed on this ONE field via INFORMATIONAL_SECTIONS) can tell a genuinely-computed FL section apart from an untouched/un-pruned template scaffold — a non-null default here would make EVERY result.json read as 'FL section present', even a CA taxpayer's file that was never pruned. /tax-compute's no-income-tax-states step writes the real statement text ('Florida imposes no personal income tax (Fla. Const. Art. VII, §5). No Florida individual income-TAX return exists or is required (Florida property and use-tax filings may still apply — see the use-tax note and property-tax items in this section for the specific forms). Wages, capital gains, retirement income, and interest/dividends are not state-taxed.') only when it actually computes for a FL (or other type-none) taxpayer. The parenthetical is deliberately form-NEUTRAL (Codex round-25 P2, matching tax-compute.md): the correct use-tax form depends on the dealer-registration answer (DR-15 for registered dealers, DR-15MO otherwise), so naming DR-15MO here unconditionally would contradict the tailored use_tax_note in the same result/PDF.",
+    "no_income_tax_statement": null,
+    "state_return_required": false,
+    "sales_tax_deduction": {
+      "method": "optional_tables",
+      "table_amount": 0,
+      "local_addition": 0,
+      "big_ticket_tax": 0,
+      "total_line_5a_candidate": 0
+    },
+    "use_tax_note": "Florida self-assesses use tax on untaxed out-of-state/online purchases (6% + county surtax; the discretionary county surtax applies only to the first $5,000 of a single item, F.S. 212.054(2)(b)). Review whether any apply. If you are REGISTERED as a Florida sales-and-use-tax dealer, report and pay it on your regular Form DR-15 (registered dealers must NOT use DR-15MO, per floridarevenue.com's consumer use-tax guidance); otherwise use Form DR-15MO, the Out-of-State Purchase Return.",
+    "note": null
+  },
+
   "income_summary_by_person": {
     "_include_if": "always — helps with review",
     "_note": "IMPORTANT: Replace 'primary'/'spouse' keys with actual lowercase first names (e.g., 'john'/'jane'). generate_tax_pdf.py reads DATA['income_summary_by_person']['john'] — keys MUST match. Sub-fields are taxpayer-specific: add only income types that apply (e.g., 'interest_foreign' for foreign interest, 'consulting_gross' for Schedule C). The PDF generator uses .get(key, 0) so missing sub-fields default to $0.",
@@ -526,6 +543,7 @@
     "phaseout_start": 0,
     "federal_savings": 0,
     "ca_savings": 0,
+    "_note_ca_savings": "CA-only field — /tax-setup removes it for non-CA taxpayers.",
     "total_savings": 0,
     "note": null
   },
@@ -533,6 +551,7 @@
   "balance_due_summary": {
     "federal_refund": 0,
     "california_refund": 0,
+    "_note_california_refund": "CA-only legacy field — /tax-setup removes it for non-CA taxpayers; other states' balances live in their own state section.",
     "net_refund": 0,
     "note": null
   }

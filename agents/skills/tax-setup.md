@@ -150,6 +150,210 @@ interview never captures is invisible to every downstream check.
   block; tell the user now, not at compute time)
 - If state is NY: are you a New York City resident? → sets `nyc_resident`
   (NYC resident tax is NOT computed — same gate)
+- Do you have ANY income SOURCED to a state other than your resident state
+  (even if your resident state has no income tax)? **Ask broadly — do not
+  stop at W-2/K-1/rental** (Codex round-15 P1): those three are EXAMPLES,
+  not an exhaustive list. Also prompt specifically for (1) self-employment
+  / Schedule C work actually PERFORMED in another state (a consultant who
+  lives in FL but does client work on-site in another state sources that
+  income there) and (2) the SALE of real property LOCATED in another state
+  (a nonresident capital-gain filing trigger, separate from rental
+  income). **Capture WHICH state the income is sourced to and gate the
+  flag on that state (Codex round-16 P2)** — set
+  `flags.has_nonresident_source_income` ONLY when the source state is NOT
+  on the no-income-tax allowlist
+  (`capabilities._NO_INCOME_TAX_STATES`: AK, FL, NV, SD, TX, WY, plus TN
+  for `tax_year >= 2021`). A source state with NO individual income tax at
+  all cannot impose a nonresident filing obligation on any of these income
+  types, regardless of amount — setting the flag anyway would false-block
+  `/tax-compute` on an unmodeled return that was never actually owed (e.g.
+  a CA resident's NV consulting gig, or an FL resident's TX K-1). Every
+  OTHER source state — including WA, which is deliberately NOT on that
+  allowlist despite taxing no wages (its capital-gains excise is a
+  separate, narrower tax) — keeps the flag set: fail-closed for anything
+  not affirmatively no-tax, since an unmodeled real income-tax state's
+  filing obligation is the dangerous direction to miss. This is DISTINCT
+  from `moved_states_this_year` (which only fires on a mid-year move): a
+  full-year resident of a no-tax state like FL can still owe a nonresident
+  return on out-of-state income, with no resident-state credit mechanism
+  to offset it. Nonresident state returns are NOT prepared — the source
+  state's tax on that income is unmodeled (`/tax-compute` capability gate
+  will block; tell the user now, not at compute time).
+- **Ask EVERY taxpayer, regardless of resident state:** "Do you own tangible
+  personal property (equipment, furniture, fixtures, etc.) used in any
+  business OR rental activity, and where is that property physically
+  LOCATED as of January 1?" — DR-405 tangible personal property tax follows
+  property SITUS, not the taxpayer's residence, and covers property used in
+  RENTAL activity (furnishings/appliances/equipment in a rental unit) just
+  as much as a sole proprietorship's business equipment — narrowing the
+  question to "sole proprietorship" would silently miss a landlord's rental
+  furnishings. This is NOT a Florida-resident-only question — a Georgia
+  resident with Florida business or rental equipment still owes DR-405 and
+  would never be asked if this lived in the Florida-resident block below.
+  Ask where the assets sit, not just whether they exist. Property located in
+  a DIFFERENT state (not Florida) → do NOT set the flag; record that other
+  state as a limitations note in `answers.md` (that state's own
+  tangible-property tax, if any, is unmodeled — v1's calendar covers FL
+  DR-405 only, out of scope for every other state).
+  - **If the property is located in Florida, first ask: "Do you have
+    property in more than one Florida county (or more than one business
+    site/account within a county)?"** (Codex round-16 P2, verified against
+    floridarevenue.com's TPP taxpayer guidance: "You must file a single
+    return for each site in the county where you transact business," the
+    $25,000 exemption is tracked "per return" not per taxpayer statewide,
+    and the F.S. 196.183 continuing-filer waiver is granted/tracked "at
+    the individual return level" — DR-405 is filed PER COUNTY/PER ACCOUNT
+    with that county's property appraiser, so filing history, the January
+    1 value test, and appraiser-request status can all differ by county:
+    equipment in one county may already be covered by the waiver while a
+    second county's rental furnishings still need an initial return).
+    **Repeat the three follow-ups below for EACH Florida county/account
+    separately** — do not answer them once for "the property" as a whole:
+    (1) "Was the INITIAL DR-405 already filed in a prior year for THIS
+    county's/account's property?", (2) "What was THIS county's/account's
+    property value AS OF JANUARY 1 of {tax_year} — not its value today —
+    did it exceed $25,000?" (DR-405's $25,000 exemption, F.S. 196.183, and
+    the filing obligation itself are both determined by the property's
+    assessed value on the January 1 assessment date, not its value at
+    interview time — a taxpayer whose exempt equipment was worth over
+    $25,000 on January 1 but was later sold or depreciated below that
+    threshold before this interview must still get the filing reminder,
+    not a false pass from reporting "current value", Codex round-9 P2),
+    and (3) "Has THIS county's property appraiser specifically requested a
+    return this year?" — the statute's one override on the waiver, and the
+    taxpayer may know this even without prompting. Set
+    `flags.fl_business_tangible_property` (the DR-405 Apr 1 calendar
+    reminder) if ANY ONE county/account requires a filing THIS year: its
+    initial return has NOT yet been filed, OR its January-1 value exceeded
+    $25,000, OR its appraiser requested one. **Record WHICH counties/
+    accounts require a return (and which are covered by the waiver) in
+    `answers.md`** — the calendar reminder itself stays a single generic
+    "check whether you owe DR-405 this year" prompt (round-7 finding D),
+    but the per-county detail is what tells the taxpayer/preparer which
+    specific county property appraiser(s) actually need a return filed.
+    Only when EVERY county/account clears the waiver (initial already
+    filed, value ≤ $25,000, no appraiser request, for ALL of them) do NOT
+    set the flag; instead record a note in `answers.md` that no DR-405
+    filing is expected this year under the F.S. 196.183 continuing-filer
+    waiver (re-ask next year for every county — value and appraiser
+    requests can change independently per county).
+
+**For NON-Florida residents, first ask (Codex round-26 P2):** "Do you own
+any residential real property located in Florida?" — nothing else in this
+interview elicits non-business FL residential ownership from a
+non-resident, so without this question the F.S. 196.031
+dependent-residence homestead path below is UNREACHABLE (a GA resident
+whose otherwise-unreported FL home is a dependent's permanent residence
+would never be screened, both homestead flags would stay false, and the
+DR-501 reminder would be suppressed). If YES, run the homestead question
+below for them (the dependent-residence screening in its note); if NO,
+skip the homestead question and this whole FL block.
+
+**For Florida residents additionally ask** (EXCEPTION — the homestead
+question below is NOT residents-only: ask it of ANY taxpayer who owns
+Florida residential property, per the non-resident elicitation question
+above and its F.S. 196.031 dependent-residence
+note; the county/surtax and sales-tax questions here remain FL-residents
+questions because the Schedule A sales-tax election follows the taxpayer's
+own state of residence)**:**
+- "Which Florida county do you live in?" → record the county in
+  `answers.md` (ZIP codes can span multiple counties — confirm the county
+  explicitly with the taxpayer, don't infer it from the ZIP). Feeds the
+  county discretionary sales surtax rate fetch in the State section below.
+  - **Follow-up:** "Did you live in more than one Florida county this year,
+    or did your county's discretionary surtax rate change mid-year?" If yes,
+    a single county's rate is wrong for the whole year — per the IRS
+    Optional Sales Tax Tables / Schedule A locality worksheet, compute a
+    TIME-WEIGHTED local rate instead: `local_rate = Σ(rate_i × days_i) / 365`
+    (366 in a leap year), summed over each county/rate period `i` the
+    taxpayer lived under during the tax year. Show the arithmetic (each
+    period's rate, days, and the weighted sum) in `answers.md` so it's
+    auditable, and pass the RESULT as `COUNTY_SURTAX_RATE` — never a single
+    county's rate when more than one applied. A same-county, same-rate,
+    full-year taxpayer just uses that county's rate directly (no weighting
+    needed).
+- "Did you buy **or lease** a motor vehicle, buy a boat or aircraft, buy a
+  MOBILE or PREFABRICATED home, or buy building MATERIALS to build a home
+  (or for a substantial addition / major renovation) this year?" → the IRS
+  Optional Sales Tax Tables method (Schedule A
+  instructions) allows adding ACTUAL sales tax paid on top of the table
+  amount ONLY for these specific purchase classes — motor vehicles
+  (**including sales tax paid on a LEASED motor vehicle** — the Schedule A
+  instructions include leased vehicles explicitly; a lessee pays FL sales
+  tax on each lease payment, so a purchase-only question would miss it and
+  understate line 5a; Codex round-24 P2), boats, aircraft, and the home
+  class, at the general sales tax rate. **The home class qualifies ONLY
+  when GENERAL SALES TAX was actually charged** (Codex round-25 P2): a
+  mobile/prefabricated home purchase, or building materials for building
+  a home / a substantial addition / a major renovation. A CONVENTIONAL
+  existing-home purchase carries documentary stamp tax, NOT sales tax —
+  documentary stamps, intangible tax, and other closing taxes NEVER
+  qualify, and recording them as big-ticket sales tax would overstate
+  line 5a. Record actual sales tax paid on a qualifying
+  purchase or vehicle lease in `answers.md` (feeds the Schedule A line 5a
+  sales-tax election in /tax-compute). Do **NOT** record ordinary
+  purchases here (furniture, jewelry, electronics, appliances, clothing,
+  etc.) — those are already inside the table amount, and adding them on
+  top would double-count.
+- "Did you newly establish a Florida homestead this year — and if so, on
+  what date?" **Also ask this of a NON-FL-resident taxpayer who owns
+  Florida residential property** (Codex round-25 P2): F.S. 196.031 extends
+  the homestead exemption to property maintained as the permanent
+  residence of someone legally or naturally DEPENDENT upon the owner — a
+  GA-resident owner whose FL home is their dependent parent's or child's
+  permanent residence can hold an eligible FL homestead, so this screening
+  (and the flags it sets) must not be skipped just because
+  `address.state` isn't FL; the calendar emits the DR-501 reminder from
+  the asserted flags alone. **Ask for the specific date, don't stop at
+  "this year"**
+  (Codex round-10 P2): F.S. 196.011 eligibility is determined by ownership
+  AND occupancy as of January 1, so a taxpayer who first owned/occupied on
+  January 1 of *this* tax year already satisfies THIS year's eligibility
+  test — routing them into the forward-looking next-year flag below would
+  skip the deadline that's actually due now. Branch on the date:
+  - Established EXACTLY on January 1 of this tax year: this is a
+    CURRENT-year eligibility case, not a forward-looking one. **Ask a
+    follow-up before setting any flag** (Codex round-11 P2): "Have you
+    already filed the initial DR-501 for this homestead?" If NOT yet
+    filed, set `flags.fl_homestead_unfiled` (the same flag used for a
+    prior-year establishment that's still unfiled; a January 1-this-year
+    establisher is unfiled for the same current exemption year), which
+    sets the CURRENT-year March 1 reminder. If ALREADY filed, do NOT set
+    `fl_homestead_unfiled` — no filing remains due, and setting it anyway
+    would show a phantom current-year deadline (with a description that
+    incorrectly implies the homestead was established before this year).
+    Do NOT set `fl_new_homestead` for this date either way.
+  - Established on any OTHER date during this tax year (after January 1):
+    **ask the same already-filed follow-up before setting the flag**
+    (Codex round-16 P2, verified: Fla. Admin. Code Ann. R. 12D-7.001 —
+    "Property appraisers are permitted, at their option, to grant
+    homestead exemptions upon proper application throughout the year for
+    the succeeding year" — pre-filing the initial DR-501 for the UPCOMING
+    exemption year is legally authorized county-appraiser practice, not
+    hypothetical): "Have you already filed the initial DR-501 for next
+    year's exemption?" If NOT yet filed, set `flags.fl_new_homestead`
+    (homestead eligibility is determined as of January 1, so a homestead
+    newly established after January 1 is first eligible next year — this
+    sets a DR-501 reminder due March 1 of *next* year; clear the flag
+    after the first year — renewals are automatic in most counties). If
+    ALREADY filed (pre-filed), do NOT set `fl_new_homestead` — the filing
+    is done and a reminder would be phantom (note: pre-filing is "at
+    [the property appraiser's] option" per the rule above, so a "no" answer
+    may also mean the taxpayer's county doesn't offer it — the reminder
+    stays the safe default in that case).
+- "Do you already own and occupy a Florida homestead as of January 1 THIS
+  year, but have NOT yet filed the initial DR-501?" → `flags.
+  fl_homestead_unfiled` (covers BOTH a homestead established late in a
+  PRIOR year that was never claimed, AND a homestead established EXACTLY
+  on January 1 of this tax year per the branch above — both share the same
+  CURRENT-year March 1 reminder; distinct from `fl_new_homestead`'s
+  forward-looking next-year event, which only covers a homestead
+  established AFTER January 1 during this year; clear the flag once filed
+  — renewals are automatic in most counties).
+
+**Section pruning for no-income-tax states:** remove `california_540`,
+`ira_contribution.ca_savings`, and `balance_due_summary.california_refund`
+(see their `_note`s); KEEP `florida_state` for FL.
 
 **Group 3 — Dependents:**
 - Number of dependents (0 = skip)
@@ -541,6 +745,16 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
     published and stable, so this is a one-time backfill.
 
 **State (based on taxpayer's state):**
+- **The `state` block is SINGLE-STATE, not multi-state**: `tax_law_<year>.json`
+  holds only one state's rates/type/code at a time. If the taxpayer's
+  `address.state` changes after this cache was fetched (a mid-interview
+  correction, a move, or re-running `/tax-setup` for a different taxpayer in
+  the same workspace by mistake), re-run this fetch step for the NEW state —
+  a stale cache left over from a different state is internally consistent by
+  itself and will otherwise pass freshness. `/tax-compute` step 10 hard-stops
+  when `tax_law.state.code` doesn't match the validated `address.state`
+  (round-4 finding E) rather than silently computing the wrong state's
+  branch, but the fix at that point is to come back here and re-fetch.
 - For CA: Search `"FTB California {year} tax brackets"`, `"California {year} standard deduction"`,
   and `"California SDI rate {year}"` → populate `state.sdi_rate`. Populate
   `state.sdi_wage_limit` ONLY for pre-2024 years (SB 951 removed the SDI wage
@@ -561,7 +775,50 @@ Use **WebSearch** to fetch tax rates for the specified year from authoritative s
   CA ISO exerciser (never a guessed exemption that would zero the CA AMT). Leave
   all-null for a non-ISO CA return.
 - For NY: Search `"New York {year} income tax brackets"`
-- For other states: Search `"{state} {year} income tax rates"`
+- **No-income-tax states (template `type: "none"` — FL):** do NOT search for
+  income brackets; there are none, and an empty bracket list would keep the
+  cache permanently INCOMPLETE. Record the pre-built FL template and fetch
+  only its `null` field:
+  - FL: Search `"Florida {county recorded in answers.md} county discretionary
+    sales surtax rate {year} site:floridarevenue.com"` — use the county the
+    taxpayer named in the Group 2 FL interview above (never infer it from the
+    ZIP) → `state.sales_tax.county_surtax_rate` (decimal, e.g. 0.01; 0.0 for
+    no-surtax counties). Pin the source: `_sources["state.FL"]` →
+    the floridarevenue.com page (allowlisted authoritative host).
+- For other states: Search `"{state} {year} income tax rates"`. `type:
+  "none"` (the FL pattern — a positive declaration, never an empty bracket
+  list) may be assigned ONLY to a state on this closed allowlist: **AK, FL,
+  NV, SD, TX, WY** — plus **TN, but only for tax_year >= 2021** (Hall
+  income-tax repeal; a pre-2021 TN profile still owed the Hall tax on
+  interest/dividends, so a pre-2021 TN return keeps the generic
+  estimate/unmodeled path, never `type: "none"`). **Generate the block with
+  `create_state_template(state, tax_year=year)` — do NOT hand-build it.**
+  For AK/NV/SD/TX/WY (unconditionally) and TN (only when `tax_year >= 2021`)
+  this now returns a MINIMAL none-template (round-3 finding D — code, name,
+  `type: "none"`, `no_income_tax: True`, an affirmative note; deliberately
+  NO `brackets`/`standard_deduction`/`sales_tax` keys, the `sales_tax` county-
+  surtax block stays FL-only) instead of the generic type-less fallback, so
+  the cache doesn't nag INCOMPLETE forever for fields the design never
+  fetches. Passing `tax_year=None` (or omitting it) for TN falls back to the
+  generic fallback — never guess `type: "none"` for TN without a resolvable
+  year. Every other state — **regardless of what a web search claims** —
+  keeps the generic estimate/unmodeled path (fetch brackets normally; if
+  none are found, leave the state block as an unfetched generic block, NOT
+  `type: "none"`).
+  **WA is NEVER `type: "none"`**: WA is commonly (and misleadingly)
+  described as having no income tax, but it levies a real capital-gains
+  excise tax on long-term gains (RCW 82.87) — declaring WA `type: "none"`
+  would silently zero that liability. Keep WA on the generic
+  estimate/unmodeled path until a dedicated WA capital-gains-excise module
+  exists. **NH is excluded** pending confirmation that its repealed
+  interest-and-dividends tax (RSA 77, repeal effective TY2025) leaves no
+  residual filing obligation for every year this tool targets — NH keeps
+  the estimate note until that's verified and its own module lands.
+  This allowlist's single source of truth is
+  `agents/lib/capabilities.py`'s `_NO_INCOME_TAX_STATES` set (plus its
+  `_tn_hall_repealed`/`_TN_HALL_REPEAL_YEAR` TN year gate) — the two MUST
+  be changed together; do not add a state here without adding it there
+  (and vice versa).
 - **PTET rate schedules when the taxpayer has K-1 income** (`has_k1_income`,
   for EACH state in `flags.k1_states` that is CA/NY/NJ — the K-1 ENTITY state,
   not the resident state): Search `"{state} pass-through entity tax PTET rate

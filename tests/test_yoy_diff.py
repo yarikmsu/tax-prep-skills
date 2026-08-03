@@ -385,3 +385,79 @@ def test_cli_current_year_mismatch_exits_nonzero(tmp_path):
                     "--current", str(tmp_path), "--year", "2026"])
     assert res.returncode == 1
     assert "ERROR" in res.stderr
+
+
+class TestFloridaOptionalSection:
+    def test_florida_state_in_optional_sections(self):
+        from agents.lib.yoy_diff import OPTIONAL_SECTIONS, STATE_MOVER_FIELDS
+        assert "florida_state" in OPTIONAL_SECTIONS
+        assert "california_540" in OPTIONAL_SECTIONS  # regression pin
+        # FL contributes NO movers — the flat CA-only mover list is untouched
+        # (per-section restructure is the NY module's job).
+        assert all("florida" not in path for _, path in STATE_MOVER_FIELDS)
+
+    def test_florida_state_informational_section_reads_present(self):
+        # A typical non-itemizing FL filer: the statement string is the only
+        # real content — state_return_required is False (a bool) and the
+        # sales-tax-deduction block is all zeros. The generic _is_nonempty
+        # scan would otherwise never see this as "present".
+        from agents.lib.yoy_diff import _section_present
+        doc = {"florida_state": {
+            "no_income_tax_statement": "Florida imposes no personal income tax.",
+            "state_return_required": False,
+            "sales_tax_deduction": {"table_amount": 0, "local_addition": 0,
+                                    "big_ticket_tax": 0, "total_line_5a_candidate": 0},
+            "use_tax_note": None,
+            "note": None,
+        }}
+        assert _section_present(doc, "florida_state") is True
+
+    def test_florida_state_empty_scaffold_not_present(self):
+        # A retained-but-unpopulated template block (statement never filled
+        # in) must NOT count as present.
+        from agents.lib.yoy_diff import _section_present
+        doc = {"florida_state": {
+            "_include_if": "state is FL",
+            "no_income_tax_statement": None,
+            "state_return_required": False,
+            "sales_tax_deduction": {"table_amount": 0, "local_addition": 0,
+                                    "big_ticket_tax": 0, "total_line_5a_candidate": 0},
+            "use_tax_note": None,
+            "note": None,
+        }}
+        assert _section_present(doc, "florida_state") is False
+
+    def test_untouched_result_template_florida_section_not_present(self):
+        # Codex round-11 P2: result_template.json used to ship the real
+        # affirmative sentence as no_income_tax_statement's DEFAULT value,
+        # so an un-pruned scaffold in a non-FL taxpayer's result.json (or a
+        # current-year result predating a /tax-compute run) would already
+        # read as "FL section present". Load the ACTUAL template — not a
+        # hand-built doc — to pin that its shipped default reads as absent.
+        from agents.lib.yoy_diff import _section_present
+        template = json.load(open(
+            Path(__file__).resolve().parent.parent / "agents" / "templates"
+            / "result_template.json"))
+        assert _section_present(template, "florida_state") is False
+
+    def test_florida_state_appear_disappear_via_informational_key(self):
+        # End-to-end through compute_section_changes: a NY -> FL move year
+        # must register florida_state as "appeared".
+        p = _prior()  # no florida_state
+        c = _current()
+        c["florida_state"] = {
+            "no_income_tax_statement": "Florida imposes no personal income tax.",
+            "state_return_required": False,
+        }
+        changes = compute_section_changes(p, c)
+        assert any(ch.section == "florida_state" and ch.kind == "appeared"
+                  for ch in changes)
+
+    def test_california_section_presence_unchanged_by_informational_map(self):
+        # CA is NOT in INFORMATIONAL_SECTIONS — its presence logic must stay
+        # on the generic numeric/list scan (regression pin).
+        from agents.lib.yoy_diff import _section_present
+        doc = {"california_540": {"ca_total_tax": 0, "_include_if": "state is CA"}}
+        assert _section_present(doc, "california_540") is False
+        doc2 = {"california_540": {"ca_total_tax": 9000}}
+        assert _section_present(doc2, "california_540") is True

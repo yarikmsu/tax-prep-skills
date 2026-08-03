@@ -1651,7 +1651,7 @@ def test_ca_es_events_serialize_with_category_and_current_prodid():
     p = _profile(address={"state": "CA"})
     ics = cal.to_ics(cal.build_events(p, 2026))
     assert "CATEGORIES:STATE_ESTIMATED_TAX" in ics
-    assert "tax-calendar v4" in ics  # v4: §7503 next-business-day rollover (L1)
+    assert "tax-calendar v5" in ics  # v5: added the state_property category
 
 
 def test_build_events_ca_resident_uids_unique_against_federal():
@@ -1782,3 +1782,219 @@ def test_ptet_ny_election_matches_ptet_module_rolled_date():
     assert cal_election.date == datetime.date(2026, 3, 16)
     ptet_date, _ = ptet._election_deadline("NY", 2026)
     assert ptet_date == "March 16, 2026"
+
+
+# ---------------------------------------------------------------------------
+# FL county property-tax deadline events (state_property category)
+# ---------------------------------------------------------------------------
+
+def test_fl_property_both_flags_emit_two_events():
+    evs = cal.events_fl_property(2026, business_tpp=True, new_homestead=True)
+    assert len(evs) == 2
+    by_uid = {e.uid: e for e in evs}
+    home = by_uid["state-property-fl-homestead-2026@tax-prep-skills"]
+    dr405 = by_uid["state-property-fl-dr405-2026@tax-prep-skills"]
+    # Homestead eligibility is determined as of Jan 1 (F.S. 196.011): a
+    # homestead newly established during tax_year=2026 is first eligible
+    # for exemption year 2027, due March 1, 2027 — a Monday, so no roll.
+    assert home.date == datetime.date(2027, 3, 1)
+    assert "2027" in home.summary
+    assert "March 1, 2027" in home.description
+    assert "January 1, 2027" in home.description
+    # Apr 1 2026 is a Wednesday — no roll. DR-405 has no eligibility
+    # look-ahead, so it stays keyed to tax_year.
+    assert dr405.date == datetime.date(2026, 4, 1)
+    assert {e.category for e in evs} == {"state_property"}
+    assert all(e.quarter_label == "" for e in evs)
+
+
+def test_fl_property_dr405_exemption_present_2008_plus():
+    # Round-4 finding D: the $25,000 DR-405 exemption (F.S. 196.183) took
+    # effect for TY2008 (Fla. Amendment 1, approved Jan 2008) — 2008 is the
+    # first year the exemption promise is accurate.
+    dr405 = cal.events_fl_property(2008, business_tpp=True,
+                                   new_homestead=False)[0]
+    assert "$25,000 exemption" in dr405.description
+    assert "F.S. 196.183" in dr405.description
+    # Filing deadline + penalty language is present regardless of year.
+    assert "F.S. 193.062" in dr405.description
+    assert "Late filing: 5%/month penalty up to 25%" in dr405.description
+    # Round-7 finding D: the continuing-filer waiver must be stated so the
+    # annual reminder doesn't misread as "you owe this every single year."
+    assert "waived" in dr405.description.lower()
+    assert "appraiser requests" in dr405.description
+
+
+def test_fl_property_dr405_no_exemption_pre_2008():
+    # The exemption did not exist yet for TY2007 — the description must not
+    # promise it, but the filing deadline + penalties still apply (DR-405
+    # itself long predates the 2008 exemption).
+    dr405 = cal.events_fl_property(2007, business_tpp=True,
+                                   new_homestead=False)[0]
+    assert "$25,000 exemption" not in dr405.description
+    assert "F.S. 196.183" not in dr405.description
+    assert "F.S. 193.062" in dr405.description
+    assert "Late filing: 5%/month penalty up to 25%" in dr405.description
+    # The waiver is a corollary of the exemption — no exemption yet in 2007
+    # means no waiver language either (F.S. 196.183 hasn't been enacted).
+    assert "waived" not in dr405.description.lower()
+
+
+def test_fl_property_homestead_weekend_stays_statutory():
+    # tax_year=2025 → eligibility year 2026 → statutory Mar 1, 2026 is a
+    # Sunday. Codex round-19 P2: unlike CA 540-ES/PTET (weekend-only roll),
+    # FL COUNTY property deadlines stay ON the statutory date — no governing
+    # FL rollover rule was verified, and an alert moved to Monday would have
+    # a taxpayer in a non-rolling county file a day late. The description
+    # names the next business day as the common-but-unverified practice.
+    evs = cal.events_fl_property(2025, business_tpp=False, new_homestead=True)
+    assert len(evs) == 1
+    home = evs[0]
+    assert home.uid == "state-property-fl-homestead-2025@tax-prep-skills"
+    assert home.date == datetime.date(2026, 3, 1)  # NOT rolled to Mar 2
+    assert "March 1, 2026" in home.description
+    assert "deliberately kept ON the statutory date" in home.description
+    assert "March 2, 2026" in home.description  # practice named, not adopted
+    assert "no governing rollover rule has been verified" in home.description
+
+
+def test_fl_property_flags_off_emit_nothing():
+    assert cal.events_fl_property(2026, business_tpp=False,
+                                  new_homestead=False) == []
+
+
+def test_fl_property_weekend_note_does_not_cite_7503():
+    # Codex P2: county DR-501/DR-405 filings are not a federal §7503 act —
+    # citing it would be a false procedural claim. events_fl_property must
+    # use the FL-specific note, not the shared federal/state _observed_note.
+    home = cal.events_fl_property(2025, business_tpp=False,
+                                  new_homestead=True)[0]
+    assert "7503" not in home.description
+    assert "county property appraiser" in home.description
+    assert "observe the next business day" in home.description
+
+    # Apr 1, 2028 is a Saturday — the DR-405 event must also stay ON the
+    # statutory weekend date (round-19 P2), with the caveat and no §7503.
+    dr405_wknd = cal.events_fl_property(2028, business_tpp=True,
+                                        new_homestead=False)[0]
+    assert datetime.date(2028, 4, 1).weekday() == 5  # fixture assumption
+    assert dr405_wknd.date == datetime.date(2028, 4, 1)  # NOT rolled
+    assert "deliberately kept ON the statutory date" in dr405_wknd.description
+    assert "7503" not in dr405_wknd.description
+
+
+def test_fl_property_homestead_unfiled_emits_current_year_event():
+    # A homestead established BEFORE tax_year but never filed needs a
+    # CURRENT-year (not next-year) March 1 reminder. tax_year=2027: Mar 1,
+    # 2027 is a Monday — no weekend roll, isolating the "current year, not
+    # next year" behavior from the roll logic (covered separately below).
+    evs = cal.events_fl_property(2027, business_tpp=False, new_homestead=False,
+                                 homestead_unfiled=True)
+    assert len(evs) == 1
+    ev = evs[0]
+    assert ev.uid == "state-property-fl-homestead-initial-2027@tax-prep-skills"
+    assert ev.date == datetime.date(2027, 3, 1)
+    assert "2027" in ev.summary
+    assert "initial filing" in ev.summary
+    assert "January 1, 2027" in ev.description
+    assert ev.category == "state_property"
+
+
+def test_fl_property_new_homestead_and_unfiled_coexist_with_unique_uids():
+    # Both flags can legitimately be true at once (forgot last year's filing
+    # AND newly eligible again this year) — UIDs must not collide.
+    evs = cal.events_fl_property(2026, business_tpp=False, new_homestead=True,
+                                 homestead_unfiled=True)
+    assert len(evs) == 2
+    uids = {e.uid for e in evs}
+    assert uids == {
+        "state-property-fl-homestead-2026@tax-prep-skills",
+        "state-property-fl-homestead-initial-2026@tax-prep-skills",
+    }
+    assert len(uids) == len(evs)  # uniqueness
+
+
+def test_fl_property_homestead_unfiled_weekend_stays_statutory():
+    # tax_year=2026: statutory Mar 1, 2026 IS a Sunday — the current-year
+    # initial-filing event also stays ON the statutory date (round-19 P2).
+    ev = cal.events_fl_property(2026, business_tpp=False, new_homestead=False,
+                               homestead_unfiled=True)[0]
+    assert datetime.date(2026, 3, 1).weekday() == 6  # confirm fixture assumption
+    assert ev.date == datetime.date(2026, 3, 1)  # NOT rolled to Mar 2
+    assert "March 1, 2026" in ev.description
+    assert "deliberately kept ON the statutory date" in ev.description
+    assert "7503" not in ev.description
+
+
+def test_build_events_wires_homestead_unfiled_flag():
+    profile = {"tax_year": 2026, "address": {"state": "FL"},
+               "flags": {"fl_homestead_unfiled": True}}
+    evs = cal.build_events(profile, 2026)
+    assert any(e.uid == "state-property-fl-homestead-initial-2026@tax-prep-skills"
+              for e in evs)
+
+
+def test_build_events_malformed_homestead_unfiled_flag_hard_errors():
+    profile = {"tax_year": 2026, "address": {"state": "FL"},
+               "flags": {"fl_homestead_unfiled": "yes"}}
+    with pytest.raises(cal.CalendarError):
+        cal.build_events(profile, 2026)
+
+
+def test_build_events_fl_resident_all_property_flags_emit_two_events():
+    profile = {"tax_year": 2026, "address": {"state": "FL"},
+               "flags": {"fl_business_tangible_property": True,
+                         "fl_new_homestead": True}}
+    evs = cal.build_events(profile, 2026)
+    assert sum(1 for e in evs if e.category == "state_property") == 2
+
+
+def test_build_events_non_fl_resident_homestead_flag_still_emits_reminder():
+    # Codex round-25 P2 (REPLACED the pre-round-25 residence gate this test
+    # used to pin): F.S. 196.031 extends the homestead exemption to
+    # property maintained as the permanent residence of someone legally or
+    # naturally dependent upon the OWNER — a CA-resident owner whose FL
+    # home is a dependent's permanent residence can hold an eligible FL
+    # homestead, so the asserted flag must emit the DR-501 reminder
+    # independent of address.state (flag-driven, like DR-405's situs gate).
+    profile = {"tax_year": 2026, "address": {"state": "CA"},
+               "flags": {"fl_new_homestead": True}}
+    evs = [e for e in cal.build_events(profile, 2026)
+           if e.category == "state_property"]
+    assert len(evs) == 1
+    assert evs[0].uid == "state-property-fl-homestead-2026@tax-prep-skills"
+
+
+def test_build_events_dr405_gated_on_situs_not_residence():
+    # Codex round-2 P2: DR-405 tangible-personal-property tax follows where
+    # the ASSETS sit, not where the taxpayer lives — a non-FL resident (e.g.
+    # a GA resident with FL business equipment) still needs the reminder.
+    profile = {"tax_year": 2026, "address": {"state": "GA"},
+               "flags": {"fl_business_tangible_property": True}}
+    evs = cal.build_events(profile, 2026)
+    state_property = [e for e in evs if e.category == "state_property"]
+    assert len(state_property) == 1
+    assert state_property[0].uid == "state-property-fl-dr405-2026@tax-prep-skills"
+
+
+def test_build_events_fl_resident_without_flags_emits_no_state_property():
+    profile = {"tax_year": 2026, "address": {"state": "FL"}, "flags": {}}
+    assert not any(e.category == "state_property"
+                   for e in cal.build_events(profile, 2026))
+
+
+def test_build_events_malformed_fl_property_flag_hard_errors():
+    profile = {"tax_year": 2026, "address": {"state": "FL"},
+               "flags": {"fl_business_tangible_property": "yes"}}
+    with pytest.raises(cal.CalendarError):
+        cal.build_events(profile, 2026)
+
+
+def test_build_events_malformed_fl_property_flag_hard_errors_non_fl_resident():
+    # The situs gate evaluates fl_business_tangible_property regardless of
+    # residence, so validation must run for a non-FL resident too — not just
+    # inside the (now separate) FL-residence homestead block.
+    profile = {"tax_year": 2026, "address": {"state": "GA"},
+               "flags": {"fl_business_tangible_property": "yes"}}
+    with pytest.raises(cal.CalendarError):
+        cal.build_events(profile, 2026)

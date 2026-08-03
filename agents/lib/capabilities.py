@@ -97,6 +97,21 @@ RULES: "tuple[Rule, ...]" = (
     Rule("nyc_resident", "nyc_resident", UNSUPPORTED,
          "New York City residency", "NYC resident tax (Form IT-201)",
          "NYC's resident income tax (~3.1-3.9%) is not computed."),
+    Rule("nonresident_source_income", "has_nonresident_source_income",
+         UNSUPPORTED,
+         "Out-of-state source income (W-2, K-1, or rental) while resident "
+         "elsewhere",
+         "Nonresident state return",
+         "Wages, K-1 pass-through income, or rental income sourced to a "
+         "state other than the resident state can create a nonresident "
+         "filing obligation there — and, with no resident-state income tax "
+         "to credit it against (e.g. a no-tax-state resident), that other "
+         "state's tax is a pure cost with no offsetting mechanism. This is "
+         "DISTINCT from `moved_states_this_year`/`part_year_residency`, "
+         "which only fires on a mid-year move — a full-year resident with "
+         "out-of-state source income is not otherwise caught. Nonresident "
+         "state returns are not prepared; the source state's tax on that "
+         "income is unmodeled."),
     Rule("household_employees", "has_household_employees", UNSUPPORTED,
          "Household employees (nanny tax)", "Schedule H",
          "Household-employment payroll taxes are not modeled."),
@@ -334,10 +349,18 @@ _RULES_BY_ID = {r.rule_id: r for r in RULES}
 # absence-as-False would silently DROP real income + payroll tax — a materially
 # wrong return, not merely an omitted hand-worked credit like the other MANUAL
 # rules (this is the same reason `has_iso_exercise`, itself a MANUAL rule, is
-# required-present). Each must be EXPLICITLY answered (true/false): absence
-# fails closed as the `unanswered_gate_questions` blocker, which is deliberately
-# NOT in the rule registry so it cannot be acknowledged away — the remedy is
-# answering the yes/no questions, not accepting a gap.
+# required-present) — plus `has_nonresident_source_income` (Codex round-3 P1,
+# state-engine-florida PR: reverses an earlier judgment call for consistency
+# with this precedent). A full-year resident of a no-tax state (FL) with
+# out-of-state W-2/K-1/rental income has a real nonresident filing obligation
+# and NO resident-state credit mechanism to offset it — absence-as-False would
+# silently wave that obligation through exactly like an unscreened ISO/NYC/
+# household situation, so it belongs in the same load-bearing-unsupported-
+# situation bucket, not the "defaults to False" one. Each must be EXPLICITLY
+# answered (true/false): absence fails closed as the `unanswered_gate_
+# questions` blocker, which is deliberately NOT in the rule registry so it
+# cannot be acknowledged away — the remedy is answering the yes/no questions,
+# not accepting a gap.
 _REQUIRED_GATE_FLAGS = (
     "has_iso_exercise",
     "moved_states_this_year",
@@ -345,6 +368,7 @@ _REQUIRED_GATE_FLAGS = (
     "has_household_employees",
     "has_dependent_unearned_income",
     "has_unreported_or_allocated_tips",
+    "has_nonresident_source_income",
 )
 _MIGRATION_RULE_ID = "unanswered_gate_questions"
 
@@ -420,6 +444,43 @@ _COMMUNITY_PROPERTY_STATES = frozenset(
     {"AZ", "CA", "ID", "LA", "NV", "NM", "TX", "WA", "WI"})
 _COMMUNITY_PROPERTY_RULE_ID = "community_property_mfs"
 
+# States with NO individual income tax of any kind — the capability note
+# declares this affirmatively instead of the "bracket-based ESTIMATE" text.
+# TN's Hall income tax (interest & dividends only) was fully repealed
+# effective TY2021 (2016 Pub. Ch. 507), so TN now belongs alongside the
+# states with no individual income tax of any kind — but ONLY for TY2021+
+# (see _tn_hall_repealed below). A pre-2021 TN profile still had a real
+# Hall-tax filing obligation; giving it the affirmative "no state return
+# exists" note would silently UNDERSTATE that obligation.
+# WA and NH are DELIBERATELY excluded: WA levies the capital-gains excise
+# (RCW 82.87), a real state-level tax some residents owe, so a blanket
+# "no tax" note would be a false promise there. NH's interest & dividends
+# tax was repealed effective TY2025 (RSA 77), but v1 has not confirmed
+# there's no residual filing obligation (e.g. a transition-year return) for
+# every tax year this tool targets — NH keeps the safer estimate note until
+# that's verified and its module lands. tax_law's state.type="none" (FL
+# template) is the cache-side twin of this set; both are code-reviewed
+# constants.
+_NO_INCOME_TAX_STATES = frozenset({"AK", "FL", "NV", "SD", "TN", "TX", "WY"})
+
+# TN's Hall income tax was repealed effective TY2021 — see the set comment
+# above. Kept as a named constant (not inlined) so the year is easy to spot
+# and cite.
+_TN_HALL_REPEAL_YEAR = 2021
+
+
+def _tn_hall_repealed(profile: dict) -> bool:
+    """True only when the profile's tax_year is a valid int >= the TN Hall
+    repeal year. A missing/None/non-int tax_year does NOT default to
+    'repealed' — asserting 'no state return exists' for an unknown year
+    would risk silently understating a real pre-2021 Hall-tax filing
+    obligation (the bias-direction rule: an understatement of a real
+    obligation must degrade, not guess affirmatively)."""
+    year = profile.get("tax_year")
+    if isinstance(year, bool) or not isinstance(year, int):
+        return False
+    return year >= _TN_HALL_REPEAL_YEAR
+
 
 def _profile_state(profile: dict) -> "str | None":
     """Validated 2-letter USPS state code from address.state, or None when
@@ -453,6 +514,115 @@ def _state_note(profile: dict) -> str:
         return "State: none configured — no state return computed."
     if code == "CA":
         return "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
+    no_tax = code in _NO_INCOME_TAX_STATES and (
+        code != "TN" or _tn_hall_repealed(profile)
+    )
+    if no_tax:
+        # The Schedule A line-5a sales-tax election is only AUTOMATED for FL
+        # (compute_sales_tax_deduction + the FL Optional Sales Tax Table
+        # lookup, per tax-compute.md step 2). Every other no-tax state
+        # (TX/TN/WY/AK/NV/SD) explicitly SKIPS that computation — reusing
+        # FL's generic "handled on the federal side" phrase there implied
+        # the election was taken care of when it was actually never run,
+        # which let a review pass a return with neither a computed amount
+        # nor a warning (Codex round-9 P2). Non-FL states get an explicit
+        # MANUAL-computation instruction instead, distinct wording from
+        # FL's automated note so /tax-review can tell the two apart.
+        # The property/use-tax parenthetical named FL's specific forms
+        # (DR-405/DR-15MO) for EVERY no-tax state, but this branch is
+        # shared by AK/NV/SD/TX/WY/post-repeal-TN too — an ordinary TX or
+        # NV taxpayer's manifest note is misleading when it cites Florida
+        # forms they have no nexus with (Codex round-17 P2). Scope the
+        # named forms to code == "FL"; every other no-tax state gets a
+        # state-NEUTRAL caveat instead of an invented per-state form list
+        # (that's WA-epic/future-state-module territory, not this fix).
+        if code == "FL":
+            # The use-tax form differs by dealer registration (round-16 P2:
+            # registered FL dealers use DR-15, everyone else DR-15MO) — name
+            # both here so this static manifest line never contradicts the
+            # registration-tailored florida_state.use_tax_note in the same
+            # PDF (Codex round-23 P2).
+            property_use_tax_note = (
+                "property/use-tax filings such as FL DR-405 / DR-15MO "
+                "(or DR-15 for registered dealers) may still apply"
+            )
+            sales_tax_note = (
+                "Verified affirmatively (Fla. Const. Art. VII, §5); the "
+                "Schedule A sales-tax election is computed automatically "
+                "(florida_state.sales_tax_deduction, FL Optional Sales Tax "
+                "Table)."
+            )
+        else:
+            property_use_tax_note = (
+                "this state's own property/use-tax filings, if any, are "
+                "not modeled here"
+            )
+            if code == "AK":
+                # Codex round-23 P2: Alaska levies NO statewide sales tax
+                # but IS on the IRS Optional LOCAL Sales Tax Table list
+                # (see the compute_sales_tax_deduction docstring's
+                # worksheet citation) — the generic state-table wording
+                # would have an AK filer look up a statewide table that
+                # doesn't exist and omit the locality amount, understating
+                # Schedule A line 5a.
+                sales_tax_note = (
+                    "Verified affirmatively; Alaska levies no statewide "
+                    "sales tax, but many AK localities do — the Schedule A "
+                    "sales-tax election must be computed MANUALLY from the "
+                    "IRS Optional LOCAL Sales Tax Tables for the taxpayer's "
+                    "locality (AK is on the IRS local-table list in the "
+                    "Schedule A instructions) — v1 automates the sales-tax "
+                    "table lookup for FL only, so nothing computes this "
+                    "automatically here."
+                )
+            elif code == "TN":
+                # Codex round-26 P2 (AK's twin): post-repeal TN is ALSO on
+                # the IRS Optional LOCAL Sales Tax Table list (see the
+                # compute_sales_tax_deduction docstring's worksheet
+                # citation) — but unlike AK, TN has a statewide sales tax
+                # too, so the worksheet path is state table PLUS local
+                # table; the generic state-table-only wording would omit
+                # the locality amount and understate line 5a. (Only
+                # reachable for TY2021+ — pre-repeal TN takes the
+                # Hall-specific note below, before this branch.)
+                sales_tax_note = (
+                    "Verified affirmatively; the Schedule A sales-tax "
+                    "election must be computed MANUALLY for TN from BOTH "
+                    "the IRS Optional State Sales Tax Tables AND the IRS "
+                    "Optional LOCAL Sales Tax Tables for the taxpayer's "
+                    "locality (TN is on the IRS local-table list in the "
+                    "Schedule A instructions — a state-table-only "
+                    "computation omits the locality amount) — v1 automates "
+                    "the sales-tax table lookup for FL only, so nothing "
+                    "computes this automatically here."
+                )
+            else:
+                sales_tax_note = (
+                    "Verified affirmatively; the Schedule A sales-tax election "
+                    "must be computed MANUALLY from the IRS Optional State Sales "
+                    "Tax Tables for this state — v1 automates the sales-tax "
+                    "table lookup for FL only, so nothing computes this "
+                    "automatically here."
+                )
+        return (f"State ({code}): no individual income tax — no individual "
+                f"income-tax return exists or is required ({property_use_tax_note}). "
+                f"{sales_tax_note}")
+    if code == "TN":
+        # Reaching here means _tn_hall_repealed was False: a pre-2021 (or
+        # unresolvable) tax_year. The Hall income tax applied ONLY to
+        # interest and dividends — the generic "bracket-based ESTIMATE"
+        # text below would invite estimating tax on ALL income (wages/SE/
+        # capital gains), fabricating a liability the Hall regime never
+        # imposed. This is the note-level twin of the round-23 consumer
+        # guards (projection.project_state_tax and
+        # loss_harvest._state_marginal_rate refuse TN bracket math).
+        return ("State (TN): this tax year predates the Hall-tax repeal "
+                "(effective TY2021) — the TN Hall income tax applied ONLY "
+                "to interest and dividends and is NOT modeled. Do NOT "
+                "bracket-estimate TN tax over all income; if taxable "
+                "interest/dividend income exceeded the filing threshold, "
+                "prepare the pre-2021 TN Hall return (Form INC 250) "
+                "manually.")
     return (f"State ({code}): bracket-based ESTIMATE only — state-specific "
             "additions/subtractions, credits, and local taxes are not modeled. "
             "CA is the only deeply-supported state; contributions welcome.")

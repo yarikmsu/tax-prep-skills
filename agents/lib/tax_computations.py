@@ -2027,6 +2027,120 @@ def compute_form_2441(
     }
 
 
+def compute_sales_tax_deduction(
+    table_amount: float,
+    state_rate: float,
+    local_rate: float = 0.0,
+    big_ticket_tax: float = 0.0,
+) -> dict:
+    """Schedule A line 5a sales-tax INPUT — IRS Optional State Sales Tax
+    Tables method (Schedule A instructions).
+
+    For no-income-tax states (FL/TX/...) the SALT line-5a election is
+    effectively always general sales tax — there is no state income tax to
+    elect and W-2 Box 17 is empty. This computes the elective figure:
+
+        total = table_amount                                (IRS table lookup)
+              + table_amount * local_rate / state_rate      (local addition)
+              + big_ticket_tax    (actual tax on specified items — motor
+                                   vehicles, boats, etc., general rate only)
+
+    The result feeds compute_schedule_a(state_local_sales_taxes=total) —
+    the income-vs-sales election, the SALT cap (federal.salt_cap), and all
+    Schedule A interactions live THERE, deliberately not here.
+
+    Codex round-15 P1 pushback (web-verified, not implemented — the ratio
+    method below IS the IRS-prescribed FL treatment): Codex claimed the
+    local addition must be capped at "the smaller of table_amount *
+    local_rate/state_rate and the applicable Optional Local Sales Tax
+    Tables amount." Verified against the CURRENT IRS "State and Local
+    General Sales Tax Deduction Worksheet—Line 5a" (2025 Instructions for
+    Schedule A (Form 1040), irs.gov/pub/irs-pdf/i1040sca.pdf, revision
+    dated 2025-12-08) — worksheet line 2 lists the states with a published
+    Optional Local Sales Tax Table: Alabama, Alaska, Arizona, Arkansas,
+    Colorado, Georgia, Illinois, Kansas, Louisiana, Mississippi, Missouri,
+    New York, North Carolina, South Carolina, Tennessee, Utah, and
+    Virginia (confirmed independently by the instructions' own "Which
+    Optional Local Sales Tax Table Should I Use?" reference table).
+    FLORIDA IS NOT ON EITHER LIST. For a state not on that list (line 2 =
+    "No, enter -0-"), the worksheet's ONLY local-addition method is line 6
+    "Multiply line 1 by line 5" — i.e. exactly `table_amount *
+    local_rate/state_rate`, with no local-table figure to compare against
+    at all. (Separately: even for a state that DOES have a published local
+    table, the worksheet is a mutually-exclusive EITHER/OR by state, never
+    a lesser-of comparison per taxpayer — Codex's "smaller of" framing
+    doesn't describe the worksheet's actual mechanics for any state.) v1
+    models FL only (see the FL-vs-other-no-tax-state note in
+    tax-compute.md step 2), so this function's ratio-only method is
+    correct as written; no local-table parameter is needed unless/until a
+    state ON that list is modeled.
+
+    Args:
+        table_amount: IRS optional-tables amount for the taxpayer's income
+            band / exemptions / state (looked up by /tax-compute from the
+            current-year Schedule A instructions).
+        state_rate: state general sales-tax rate as a decimal (FL 0.06,
+            F.S. 212.05). Must be > 0.
+        local_rate: county/local general surtax rate as a decimal. Time-
+            weighted across localities when the taxpayer moved counties or
+            the rate changed mid-year — see /tax-setup.
+        big_ticket_tax: actual sales tax paid, at the GENERAL sales tax
+            rate, on IRS-QUALIFYING big-ticket purchase classes ONLY (per
+            the Schedule A Optional Sales Tax Tables instructions):
+            motor vehicles (bought OR leased — the instructions include
+            leased vehicles), boats, aircraft, a mobile/prefabricated
+            home purchase that carried general sales tax, and building
+            materials for a home/substantial addition/major home
+            renovation. A conventional existing-home purchase is NOT in
+            the class — documentary stamps and closing taxes never
+            qualify. Ordinary
+            purchases (furniture, jewelry, electronics, appliances,
+            clothing, etc.) are already priced into table_amount — do not
+            fold their sales tax in here, or the deduction double-counts.
+
+    Returns:
+        {"table_amount", "local_addition", "big_ticket_tax", "total"} — 2 dp.
+
+    Raises:
+        ValueError: bool/NaN/Infinity/negative input, state_rate not in
+            (0, 1), or local_rate not in [0, 1) — rates must be decimal
+            fractions (e.g. 0.06 for 6%), not percentages.
+    """
+    vals = {}
+    for name, v in (("table_amount", table_amount), ("state_rate", state_rate),
+                    ("local_rate", local_rate), ("big_ticket_tax", big_ticket_tax)):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(
+                f"compute_sales_tax_deduction: {name} must be numeric, got {v!r}")
+        if not math.isfinite(float(v)):
+            raise ValueError(
+                f"compute_sales_tax_deduction: {name} must be finite, got {v!r}")
+        if v < 0:
+            raise ValueError(
+                f"compute_sales_tax_deduction: {name} must be >= 0, got {v!r}")
+        vals[name] = float(v)
+    if not (0 < vals["state_rate"] < 1):
+        raise ValueError(
+            "compute_sales_tax_deduction: state_rate must be > 0 and < 1 — "
+            f"rates must be decimal fractions (e.g. 0.06 for 6%), not "
+            f"percentages, got {vals['state_rate']!r}")
+    if not (vals["local_rate"] < 1):
+        raise ValueError(
+            "compute_sales_tax_deduction: local_rate must be < 1 — rates "
+            f"must be decimal fractions (e.g. 0.06 for 6%), not "
+            f"percentages, got {vals['local_rate']!r}")
+    local_addition = round(
+        vals["table_amount"] * vals["local_rate"] / vals["state_rate"], 2)
+    total = round(round(vals["table_amount"], 2) + local_addition
+                  + round(vals["big_ticket_tax"], 2), 2)
+    return {
+        "table_amount": round(vals["table_amount"], 2),
+        "local_addition": local_addition,
+        "big_ticket_tax": round(vals["big_ticket_tax"], 2),
+        "total": total,
+    }
+
+
 def compute_schedule_a(
     agi: float,
     filing_status: str,
@@ -5301,3 +5415,9 @@ if __name__ == "__main__":
     print(f"MFJ, 2 qualifying persons, $10K expenses, AGI $200K: "
           f"{_dcc['applicable_percentage']:.0%} × $6,000 cap = "
           f"${_dcc['credit']:,.2f} credit")
+
+    print("\n=== Sales Tax Deduction Test (FL 6% + 1% county + $450 vehicle tax) ===")
+    # compute_sales_tax_deduction — FL 6% + 1% county + $450 vehicle tax
+    _stx = compute_sales_tax_deduction(1000.0, 0.06, 0.01, 450.0)
+    assert _stx["total"] == 1616.67, _stx
+    assert _stx["local_addition"] == 166.67, _stx

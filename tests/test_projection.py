@@ -661,6 +661,275 @@ def test_render_markdown_degraded_banner_and_state_skip_note():
     assert "skipped" in md.lower()
 
 
+def test_render_markdown_no_income_tax_state_note():
+    # A type="none" state (FL) must render a "no income tax" note, not the
+    # generic "no baseline / no brackets" skip note — the two mean very
+    # different things to the taxpayer (there's nothing to fetch for FL).
+    law = dict(_tax_law_2026())
+    law["state"] = {"type": "none", "code": "FL"}
+    r = P.build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile={"filing_status": "MFJ", "dependents": [],
+                 "address": {"state": "FL"}},
+        tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+    assert r.state is None
+    assert r.state_no_income_tax is True
+    assert r.no_income_tax_state_code == "FL"
+    assert r.state_cache_mismatch is None
+    md = P.render_markdown(r)
+    assert ('State projection: none — FL levies no individual income tax '
+            '(state.type = "none").') in md
+    assert "no prior-year state baseline" not in md
+
+
+def test_build_report_state_cache_mismatch_blocks_no_income_tax_claim():
+    # Codex round-5 P1: a stale FL type="none" cache left beside a CA
+    # taxpayer must NOT claim "no state tax required" — build_report must
+    # compare tax_law.state.code against the resident state (both known,
+    # both known-different) and keep the flag False + surface a loud
+    # mismatch note instead.
+    law = dict(_tax_law_2026())
+    law["state"] = {"type": "none", "code": "FL"}
+    r = P.build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile={"filing_status": "MFJ", "dependents": [],
+                 "address": {"state": "CA"}},
+        tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+    assert r.state is None
+    assert r.state_no_income_tax is False
+    assert r.no_income_tax_state_code is None
+    assert r.state_cache_mismatch is not None
+    assert "FL" in r.state_cache_mismatch and "CA" in r.state_cache_mismatch
+    md = P.render_markdown(r)
+    assert "State cache mismatch" in md
+    assert 'levies no individual income tax' not in md
+    d = P._report_to_dict(r)
+    assert d["state_no_income_tax"] is False
+    assert d["state_cache_mismatch"] == r.state_cache_mismatch
+
+
+def test_build_report_state_year_mismatch_hard_errors():
+    # Codex round-9 P2 introduced this check inside _resolve_state_no_income
+    # _tax; Codex round-11 P1 found that project_federal_tax/project_state_
+    # tax already consume the (possibly wrong-year) cache's brackets BEFORE
+    # that check ever ran, silently publishing a wrong federal number with
+    # only a STATE-labeled warning. build_report now hard-errors on a
+    # tax_year mismatch BEFORE any computation runs — e.g. a tax_law_2020
+    # .json body that actually says "tax_year": 2026 must not silently
+    # price a TY2020 projection off 2026 rates.
+    law = dict(_tax_law_2026())
+    law["state"] = {"type": "none", "code": "FL"}
+    with pytest.raises(P.ProjectionError, match="tax_year"):
+        P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile={"filing_status": "MFJ", "dependents": [],
+                     "address": {"state": "FL"}},
+            tax_law=law, prior=None, year=2020, as_of=datetime.date(2020, 7, 2))
+
+
+def test_build_report_missing_tax_year_hard_errors():
+    # A cache with no top-level tax_year key at all (missing, not just
+    # mismatched) must be rejected the same way — "no year info" is not
+    # evidence the year is right.
+    law = dict(_tax_law_2026())
+    del law["tax_year"]
+    law["state"] = {"type": "none", "code": "FL"}
+    with pytest.raises(P.ProjectionError, match="tax_year"):
+        P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile={"filing_status": "MFJ", "dependents": [],
+                     "address": {"state": "FL"}},
+            tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+
+
+def test_build_report_bool_tax_year_hard_errors():
+    # json.loads never produces a bool for a numeric-looking field on its
+    # own, but a hand-edited/corrupted cache could — isinstance(x, int)
+    # is True for bool in Python, so this must be checked explicitly.
+    law = dict(_tax_law_2026())
+    law["tax_year"] = True
+    law["state"] = {"type": "none", "code": "FL"}
+    with pytest.raises(P.ProjectionError, match="tax_year"):
+        P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile={"filing_status": "MFJ", "dependents": [],
+                     "address": {"state": "FL"}},
+            tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+
+
+def test_build_report_corrupted_ca_none_type_blocks_no_income_tax_claim():
+    # Codex round-10 P1: a same-year, code-matching CA cache with a
+    # corrupted "type": "none" (hand-edited or a fetch bug) must NOT pass
+    # the code/year cross-checks and claim California has no individual
+    # income tax — CA is graduated_income, never "none", for any year.
+    law = dict(_tax_law_2026())
+    law["state"] = {"type": "none", "code": "CA"}
+    r = P.build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile={"filing_status": "MFJ", "dependents": [],
+                 "address": {"state": "CA"}},
+        tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+    assert r.state_no_income_tax is False
+    assert r.no_income_tax_state_code is None
+    assert r.state_cache_mismatch is not None
+    assert "CA" in r.state_cache_mismatch and "none" in r.state_cache_mismatch
+    md = P.render_markdown(r)
+    assert "State cache mismatch" in md
+    assert 'levies no individual income tax' not in md
+
+
+def test_build_report_pre_repeal_tn_none_type_blocks_no_income_tax_claim():
+    # TN is only a legitimate "none" state for TY2021+ (Hall tax repeal) —
+    # a TY2020 cache claiming TN "none" is exactly as corrupted as CA
+    # "none" and must be rejected the same way.
+    law = dict(_tax_law_2026())
+    law["tax_year"] = 2020
+    law["state"] = {"type": "none", "code": "TN"}
+    r = P.build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile={"filing_status": "MFJ", "dependents": [],
+                 "address": {"state": "TN"}},
+        tax_law=law, prior=None, year=2020, as_of=datetime.date(2020, 7, 2))
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is not None
+
+
+def test_build_report_unknown_resident_state_no_false_no_tax_claim():
+    # Codex round-5 P1 (safe-direction branch): when the resident state
+    # can't be determined at all, the flag must stay False (can't verify
+    # the cache against anything) AND no mismatch warning should fire —
+    # this is legacy/degraded behavior, not a new false-positive.
+    law = dict(_tax_law_2026())
+    law["state"] = {"type": "none", "code": "FL"}
+    r = P.build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile={"filing_status": "MFJ", "dependents": []},  # no address
+        tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+    assert r.state is None
+    assert r.state_no_income_tax is False
+    assert r.no_income_tax_state_code is None
+    assert r.state_cache_mismatch is None
+    md = P.render_markdown(r)
+    assert "State cache mismatch" not in md
+    assert 'levies no individual income tax' not in md
+    assert "Skipped — no prior-year state baseline" in md
+
+
+def test_project_state_tax_blocks_known_mismatch_despite_prior_state_section():
+    # Codex round-6 P1: FL resident + FL prior-year state section (so
+    # has_prior_state is True) + a stale CA cache with real graduated
+    # brackets must NOT project CA tax onto FL income — has_prior_state is
+    # only a "files a state return" proxy, not proof the cache matches the
+    # taxpayer's actual resident state. Unlike the round-5 fixtures (a
+    # type="none" cache with no brackets, which already returns None via
+    # the `if not brackets` guard), this cache has real CA brackets, so the
+    # bracket-projection path itself must reject the mismatch.
+    prior = _Prior({"florida_state": {"state_return_required": False}})
+    law = _tax_law_2026()  # state.code == "CA", graduated brackets present
+    out = P.project_state_tax(_proj(), prior, law, "MFJ", resident_state="FL")
+    assert out is None
+
+
+def test_project_state_tax_unaffected_when_cache_matches_resident():
+    # Regression: CA resident + matching CA cache + CA prior section still
+    # projects normally — the new guard only fires on a known mismatch.
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    law = _tax_law_2026()
+    out = P.project_state_tax(_proj(), prior, law, "MFJ", resident_state="CA")
+    assert out is not None
+    assert out.code == "CA"
+
+
+def test_project_state_tax_legacy_no_code_cache_with_prior_section_unchanged():
+    # A legacy cache with no `state.code` field can't be proven to mismatch
+    # anything — the pre-existing resident-state fallback still applies,
+    # since the new guard only fires when BOTH the cache code and the
+    # resident state are known.
+    prior = _Prior({"florida_state": {"state_return_required": False}})
+    law = _tax_law_2026()
+    del law["state"]["code"]
+    out = P.project_state_tax(_proj(), prior, law, "MFJ", resident_state="FL")
+    assert out is not None
+    assert out.code == "FL"
+
+
+def test_detect_prior_state_code_maps_section_to_code():
+    from agents.lib.projection import _detect_prior_state_code
+    assert _detect_prior_state_code({"florida_state": {}}) == "FL"
+    assert _detect_prior_state_code({"california_540": {}}) == "CA"
+    assert _detect_prior_state_code({}) is None
+    assert _detect_prior_state_code(None) is None
+
+
+def test_prior_florida_section_does_not_authorize_unrelated_ca_cache():
+    # Codex round-15 P2: adding florida_state to STATE_SECTION_KEYS made
+    # "has_prior_state" treat ANY known section as interchangeable proof
+    # of residency. A prior FL section is evidence for FL, not for a
+    # completely unrelated current-year CA cache — with no usable
+    # resident_state, this must NOT bypass the residency check and publish
+    # CA's liability.
+    prior = _Prior({"florida_state": {"state_return_required": False}})
+    law = _tax_law_2026()  # state.code == "CA", real graduated brackets
+    out = P.project_state_tax(_proj(), prior, law, "MFJ", resident_state=None)
+    assert out is None
+
+
+def test_prior_california_section_still_authorizes_matching_ca_cache():
+    # Regression: the ORIGINAL, still-valid case — a prior CA section
+    # matching the current CA cache's code still projects, even with no
+    # resident_state passed (the pre-FL, pre-round-15 behavior for CA).
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    law = _tax_law_2026()  # state.code == "CA"
+    out = P.project_state_tax(_proj(), prior, law, "MFJ", resident_state=None)
+    assert out is not None
+    assert out.code == "CA"
+
+
+def test_build_report_state_none_on_known_mismatch_despite_prior_state_section():
+    # End-to-end companion to the unit test above: build_report must
+    # surface the mismatch note (not a CA tax table) for the same
+    # FL-resident/FL-prior-section/stale-CA-cache scenario, and the existing
+    # state_cache_mismatch plumbing (round-5) must actually be visible now
+    # that project_state_tax returns None instead of a CA StateProjection.
+    law = _tax_law_2026()  # code "CA", graduated brackets
+    r = P.build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile={"filing_status": "MFJ", "dependents": [],
+                 "address": {"state": "FL"}},
+        tax_law=law,
+        prior=_Prior({"florida_state": {"state_return_required": False}}),
+        year=2026, as_of=datetime.date(2026, 7, 2))
+    assert r.state is None
+    assert r.ca_safe_harbor is None
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is not None
+    assert "CA" in r.state_cache_mismatch and "FL" in r.state_cache_mismatch
+    md = P.render_markdown(r)
+    assert "State cache mismatch" in md
+    assert "| State (" not in md  # no CA tax table rendered
+    d = P._report_to_dict(r)
+    assert d["state"] is None
+    assert d["state_cache_mismatch"] == r.state_cache_mismatch
+
+
 def test_render_markdown_no_crash_on_zeros():
     r = P.build_report(
         inputs={"pay_frequency": "monthly", "ytd": {"wages": 1},
@@ -674,6 +943,33 @@ def test_render_markdown_no_crash_on_zeros():
 def test_report_to_dict_is_json_serializable():
     r = _build_sample_report()
     json.dumps(P._report_to_dict(r))  # must not raise
+
+
+def test_report_to_dict_includes_no_income_tax_fields():
+    # False direction: a CA report (state configured, graduated brackets).
+    d_ca = P._report_to_dict(_build_sample_report())
+    assert "state_no_income_tax" in d_ca
+    assert "no_income_tax_state_code" in d_ca
+    assert "state_cache_mismatch" in d_ca
+    assert d_ca["state_no_income_tax"] is False
+    assert d_ca["no_income_tax_state_code"] is None
+    assert d_ca["state_cache_mismatch"] is None
+
+    # True direction: a type="none" (FL) report — --json output must not
+    # stay ambiguous about why `state` is null (same defect class fixed in
+    # loss_harvest.state_no_income_tax).
+    law = dict(_tax_law_2026())
+    law["state"] = {"type": "none", "code": "FL"}
+    r_fl = P.build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile={"filing_status": "MFJ", "dependents": [],
+                 "address": {"state": "FL"}},
+        tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+    d_fl = P._report_to_dict(r_fl)
+    assert d_fl["state_no_income_tax"] is True
+    assert d_fl["no_income_tax_state_code"] == "FL"
 
 
 FIXTURE_WS = Path(__file__).resolve().parent / "fixtures" / "projection"
@@ -901,15 +1197,21 @@ def test_build_report_no_ca_block_without_state():
 
 
 def test_build_report_no_ca_block_for_non_ca_state_code():
+    # Codex round-15 P2: a resident-matching code is the legitimate trigger
+    # here (not a leftover prior california_540 section, which — post-fix —
+    # is evidence for CA, not NY, and would no longer bypass the residency
+    # check on its own for an unrelated NY cache with no usable address).
     law = _tax_law_2026()
     law["state"]["code"] = "NY"
     prior = _Prior({"california_540": {"ca_total_tax": 5000},
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+    profile = {"filing_status": "MFJ", "dependents": [],
+               "address": {"state": "NY"}}
     r = P.build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
          "estimated_payments_made": {"federal": 0, "state": 0}},
-        _profile_mfj(), law, prior, 2026, datetime.date(2026, 7, 2))
+        profile, law, prior, 2026, datetime.date(2026, 7, 2))
     assert r.state is not None
     assert r.ca_safe_harbor is None
 
@@ -1196,3 +1498,384 @@ def test_ca_section_computed_ignores_bookkeeping_fields():
     computed_zero = {"california_540": {
         "ca_total_tax": 0, "ca_agi": 0, "ca_standard_deduction": 11080}}
     assert P._ca_section_computed(computed_zero) is True
+
+
+class TestFloridaStateSection:
+    def test_florida_in_state_section_keys(self):
+        from agents.lib.projection import STATE_SECTION_KEYS
+        assert "california_540" in STATE_SECTION_KEYS  # regression pin
+        assert "florida_state" in STATE_SECTION_KEYS
+
+    def test_fl_prior_section_never_projects_state_tax(self):
+        # FL prior section detected, but tax_law has no brackets → None
+        # (silently correct for a no-income-tax state), never an exception.
+        from agents.lib.projection import project_state_tax
+        class _Prior:
+            result = {"florida_state": {"state_return_required": False}}
+        out = project_state_tax(
+            _proj(), _Prior(),
+            {"state": {"type": "none", "code": "FL"}}, "MFJ",
+            resident_state="FL")
+        assert out is None
+
+    def test_fl_with_leftover_brackets_still_returns_none(self):
+        # Codex round-12 P1: check_freshness (round 11) flags a type-none
+        # cache carrying real leftover brackets as a contradiction, but this
+        # function reads the cache directly and never calls check_freshness
+        # — a code: "FL", type: "none" cache with leftover CA brackets
+        # (copied/partially replaced, never stripped) must NOT have this
+        # function invent a Florida tax liability from them. type == "none"
+        # wins over brackets content unconditionally.
+        from agents.lib.projection import project_state_tax
+        class _Prior:
+            result = {"florida_state": {"state_return_required": False}}
+        law = {"state": {"type": "none", "code": "FL",
+                         "brackets": [{"rate": 0.093, "min": 0, "max": None}],
+                         "standard_deduction": {"mfj": 11080}}}
+        out = project_state_tax(_proj(), _Prior(), law, "MFJ",
+                                resident_state="FL")
+        assert out is None
+
+    def test_build_report_fl_with_leftover_brackets_stays_no_income_tax(self):
+        # End-to-end companion: build_report must still resolve to the
+        # affirmative "no individual income tax" outcome (state is a
+        # legitimate FL no-tax code/year combo), not a fabricated FL tax
+        # table, even with the contradictory leftover brackets present.
+        law = dict(_tax_law_2026())
+        law["state"] = {"type": "none", "code": "FL",
+                        "brackets": [{"rate": 0.093, "min": 0, "max": None}],
+                        "standard_deduction": {"mfj": 11080}}
+        r = P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile={"filing_status": "MFJ", "dependents": [],
+                     "address": {"state": "FL"}},
+            tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+        assert r.state is None
+        assert r.state_no_income_tax is True
+        assert r.state_cache_mismatch is None
+        md = P.render_markdown(r)
+        assert "levies no individual income tax" in md
+        assert "| State (" not in md  # no fabricated state tax table
+
+    def test_fl_typed_graduated_income_with_brackets_still_returns_none(self):
+        # Codex round-15 P1: the INVERSE contradiction — a code that IS a
+        # legitimate no-tax state (FL) but typed "graduated_income" while
+        # retaining real leftover brackets/standard_deduction must not have
+        # this function invent a Florida tax liability either. Round-12
+        # only guarded the type == "none" direction.
+        from agents.lib.projection import project_state_tax
+        class _Prior:
+            result = {"florida_state": {"state_return_required": False}}
+        law = {"tax_year": 2026,
+              "state": {"type": "graduated_income", "code": "FL",
+                        "brackets": [{"rate": 0.093, "min": 0, "max": None}],
+                        "standard_deduction": {"mfj": 11080}}}
+        out = project_state_tax(_proj(), _Prior(), law, "MFJ",
+                                resident_state="FL")
+        assert out is None
+
+    def test_build_report_fl_typed_graduated_income_surfaces_mismatch(self):
+        # End-to-end companion: build_report must surface the specific
+        # contradiction note (not a fabricated FL tax table, and not a
+        # false affirmative "no individual income tax" claim either, since
+        # cache_says_none is False here).
+        law = dict(_tax_law_2026())
+        law["state"] = {"type": "graduated_income", "code": "FL",
+                        "brackets": [{"rate": 0.093, "min": 0, "max": None}],
+                        "standard_deduction": {"mfj": 11080}}
+        r = P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile={"filing_status": "MFJ", "dependents": [],
+                     "address": {"state": "FL"}},
+            tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+        assert r.state is None
+        assert r.state_no_income_tax is False
+        assert r.state_cache_mismatch is not None
+        assert "FL" in r.state_cache_mismatch
+        md = P.render_markdown(r)
+        assert "levies no individual income tax" not in md
+        assert "| State (" not in md
+
+    def test_malformed_cache_code_never_backfills_or_projects(self):
+        # Codex round-14 P2: a PRESENT-but-INVALID state.code ("FLA") must
+        # not collapse to the same "unknown, safe to backfill" None a
+        # genuinely ABSENT code produces. A CA-bracket cache whose code was
+        # corrupted to "FLA" beside an FL profile must not have this
+        # function backfill "FL" from the resident and project CA's real
+        # brackets as Florida tax.
+        from agents.lib.projection import project_state_tax
+        class _Prior:
+            result = {"florida_state": {"state_return_required": False}}
+        law = {"state": {"code": "FLA",
+                         "brackets": [{"rate": 0.093, "min": 0, "max": None}],
+                         "standard_deduction": {"mfj": 11080}}}
+        out = project_state_tax(_proj(), _Prior(), law, "MFJ",
+                                resident_state="FL")
+        assert out is None
+
+    def test_build_report_malformed_cache_code_surfaces_mismatch(self):
+        # End-to-end companion: build_report must surface a loud mismatch
+        # note (not a fabricated state tax table, and not a false "no
+        # individual income tax" claim either) for a malformed cache code.
+        law = dict(_tax_law_2026())
+        law["state"]["code"] = "FLA"
+        r = P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000,
+                            "state_withholding": 2000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile={"filing_status": "MFJ", "dependents": [],
+                     "address": {"state": "FL"}},
+            tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+        assert r.state is None
+        assert r.state_no_income_tax is False
+        assert r.state_cache_mismatch is not None
+        assert "FLA" in r.state_cache_mismatch
+        md = P.render_markdown(r)
+        assert "levies no individual income tax" not in md
+        assert "| State (" not in md
+
+    def test_explicit_null_code_is_invalid_not_absent(self):
+        # Codex round-15 P2: the round-14 predicate checked
+        # `raw is not None`, so an EXPLICIT "code": null (key present,
+        # value None) slipped through as if the key had never existed —
+        # exactly like the "FLA" case, a CA-bracket cache with code: null
+        # beside an FL profile must not be backfilled to "FL" and have CA's
+        # real brackets projected as Florida tax.
+        from agents.lib.projection import (
+            _cache_state_code_present_but_invalid, project_state_tax,
+        )
+        assert _cache_state_code_present_but_invalid({"code": None}) is True
+        assert _cache_state_code_present_but_invalid({}) is False
+        assert _cache_state_code_present_but_invalid({"code": "FL"}) is False
+
+        class _Prior:
+            result = {"florida_state": {"state_return_required": False}}
+        law = {"state": {"code": None,
+                         "brackets": [{"rate": 0.093, "min": 0, "max": None}],
+                         "standard_deduction": {"mfj": 11080}}}
+        out = project_state_tax(_proj(), _Prior(), law, "MFJ",
+                                resident_state="FL")
+        assert out is None
+
+    def test_build_report_null_code_surfaces_mismatch(self):
+        law = dict(_tax_law_2026())
+        law["state"]["code"] = None
+        r = P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000,
+                            "state_withholding": 2000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile={"filing_status": "MFJ", "dependents": [],
+                     "address": {"state": "FL"}},
+            tax_law=law, prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+        assert r.state is None
+        assert r.state_no_income_tax is False
+        assert r.state_cache_mismatch is not None
+        md = P.render_markdown(r)
+        assert "levies no individual income tax" not in md
+
+
+class TestNonresidentIncomeWarning:
+    """Codex round-8 finding F: build_report affirmed no-state-projection
+    from residence+cache alone, ignoring flags.has_nonresident_source_income
+    — a resident-state projection (or a resident no-tax note) says nothing
+    about a SEPARATE state's nonresident liability on out-of-state income.
+    The warning must fire regardless of which state-projection path ran."""
+
+    def _fl_report(self, nonresident_flag):
+        law = dict(_tax_law_2026())
+        law["state"] = {"type": "none", "code": "FL"}
+        profile = {"filing_status": "MFJ", "dependents": [],
+                   "address": {"state": "FL"}}
+        if nonresident_flag is not None:
+            profile["flags"] = {"has_nonresident_source_income": nonresident_flag}
+        return P.build_report(
+            inputs={"pay_frequency": "biweekly",
+                    "ytd": {"wages": 50000, "federal_withholding": 6000},
+                    "estimated_payments_made": {"federal": 0, "state": 0}},
+            profile=profile, tax_law=law, prior=None, year=2026,
+            as_of=datetime.date(2026, 7, 2))
+
+    def _ca_report(self, nonresident_flag):
+        law = _tax_law_2026()
+        inputs = {
+            "pay_frequency": "biweekly",
+            "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
+            "forecast_overrides": {"capital_gains": 0},
+            "recurring_from_prior": {"taxable_interest": 0},
+            "estimated_payments_made": {"federal": 0, "state": 0},
+        }
+        prior = _Prior(
+            {"california_540": {"ca_total_tax": 5000},
+             "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
+        profile = {"filing_status": "MFJ", "dependents": []}
+        if nonresident_flag is not None:
+            profile["flags"] = {"has_nonresident_source_income": nonresident_flag}
+        return P.build_report(inputs=inputs, profile=profile, tax_law=law,
+                              prior=prior, year=2026, as_of=datetime.date(2026, 7, 2))
+
+    def test_fl_path_warning_present_when_flag_true(self):
+        r = self._fl_report(True)
+        assert r.state is None and r.state_no_income_tax is True  # FL no-tax path
+        assert r.nonresident_income_warning == P._NONRESIDENT_INCOME_WARNING
+        md = P.render_markdown(r)
+        assert "Nonresident income exposure" in md
+        assert P._NONRESIDENT_INCOME_WARNING in md
+        d = P._report_to_dict(r)
+        assert d["nonresident_income_warning"] == P._NONRESIDENT_INCOME_WARNING
+
+    def test_ca_path_warning_present_when_flag_true(self):
+        r = self._ca_report(True)
+        assert r.state is not None and r.state.code == "CA"  # CA graduated path
+        assert r.nonresident_income_warning == P._NONRESIDENT_INCOME_WARNING
+        md = P.render_markdown(r)
+        assert "Nonresident income exposure" in md
+        assert P._NONRESIDENT_INCOME_WARNING in md
+        d = P._report_to_dict(r)
+        assert d["nonresident_income_warning"] == P._NONRESIDENT_INCOME_WARNING
+
+    def test_fl_path_warning_absent_when_flag_false(self):
+        r = self._fl_report(False)
+        assert r.nonresident_income_warning is None
+        md = P.render_markdown(r)
+        assert "Nonresident income exposure" not in md
+        assert P._report_to_dict(r)["nonresident_income_warning"] is None
+
+    def test_ca_path_warning_absent_when_flag_false(self):
+        r = self._ca_report(False)
+        assert r.nonresident_income_warning is None
+        md = P.render_markdown(r)
+        assert "Nonresident income exposure" not in md
+        assert P._report_to_dict(r)["nonresident_income_warning"] is None
+
+    def test_warning_absent_when_flag_key_missing_entirely(self):
+        # No flags block at all (legacy profile) — advisory read defaults to
+        # False, unlike the capabilities gate's fail-closed rule.
+        r = self._fl_report(None)
+        assert r.nonresident_income_warning is None
+        r2 = self._ca_report(None)
+        assert r2.nonresident_income_warning is None
+
+    def test_flag_value_helper_rejects_non_bool_truthy_as_false(self):
+        # Advisory read: only a literal True triggers the warning — a
+        # non-bool truthy value (e.g. a stray string) does not silently
+        # turn it on, mirroring the "value not just type" caution used
+        # elsewhere in this codebase, but staying non-blocking (no error).
+        from agents.lib.projection import _nonresident_income_flag
+        assert _nonresident_income_flag(
+            {"flags": {"has_nonresident_source_income": "true"}}) is False
+        assert _nonresident_income_flag({"flags": {}}) is False
+        assert _nonresident_income_flag({}) is False
+        assert _nonresident_income_flag(
+            {"flags": {"has_nonresident_source_income": True}}) is True
+
+
+def test_project_state_tax_refuses_pre_repeal_tn_hall_brackets():
+    # Codex round-23 P2: pre-2021 TN's Hall tax applied ONLY to interest
+    # and dividends, but project_state_tax builds taxable income from
+    # wages/SE/capital gains too — routing a TY2020 TN cache (expected
+    # regime graduated_income, Hall rate stored as a bracket) through the
+    # generic bracket path would fabricate a liability for a TN wage
+    # earner. Pre-repeal TN is UNSUPPORTED: skip, never mismodel.
+    # (Post-repeal TN is type "none" and already short-circuits via the
+    # round-15 _none_type_allowed inverse-contradiction guard.)
+    law = _tax_law_2026()
+    law["tax_year"] = 2020
+    law["state"] = {"type": "graduated_income", "code": "TN",
+                    "standard_deduction": {"mfj": 0},
+                    "brackets": [{"rate": 0.01, "min": 0, "max": None}]}
+    assert P.project_state_tax(_proj(), None, law, "MFJ",
+                               resident_state="TN") is None
+
+
+def test_project_state_tax_refuses_tn_resident_backfill_on_codeless_hall_cache():
+    # The TN guard runs AFTER the resident backfill: a code-less Hall-rate
+    # cache beside a TN resident must be caught too (code = cache_code or
+    # resident). Control: the identical code-less cache beside a GA
+    # resident still computes — proving the skip is the TN guard, not an
+    # earlier gate.
+    law = _tax_law_2026()
+    law["tax_year"] = 2020
+    law["state"] = {"type": "graduated_income",
+                    "standard_deduction": {"mfj": 0},
+                    "brackets": [{"rate": 0.01, "min": 0, "max": None}]}
+    assert P.project_state_tax(_proj(), None, law, "MFJ",
+                               resident_state="TN") is None
+    control = P.project_state_tax(_proj(), None, law, "MFJ",
+                                  resident_state="GA")
+    assert control is not None
+
+
+def test_build_report_surfaces_hall_tax_skip_note():
+    # Codex round-24 P2: the round-23 TN guard skipped silently, so
+    # render_markdown fell through to the generic "no prior-year state
+    # baseline or no state brackets" message — concealing that a real
+    # Hall-tax liability on interest/dividends needs manual handling. The
+    # skip must be NAMED. (Reachable only when the requested year itself
+    # is pre-2021 — the round-11/13 year guards reject a 2020 cache
+    # against any other requested year.)
+    law = _tax_law_2026()
+    law["tax_year"] = 2020
+    law["state"] = {"type": "graduated_income", "code": "TN",
+                    "standard_deduction": {"mfj": 0},
+                    "brackets": [{"rate": 0.01, "min": 0, "max": None}]}
+    inputs = {"pay_frequency": "biweekly",
+              "ytd": {"wages": 50000, "federal_withholding": 6000},
+              "estimated_payments_made": {"federal": 0, "state": 0}}
+    r = P.build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
+                       prior=None, year=2020, as_of=datetime.date(2020, 7, 2))
+    assert r.state is None
+    assert r.state_unsupported_note is not None
+    assert "INC 250" in r.state_unsupported_note
+    assert "interest & dividends ONLY" in r.state_unsupported_note
+    md = P.render_markdown(r)
+    assert "State not modeled" in md
+    assert "no prior-year state baseline" not in md
+    d = P._report_to_dict(r)
+    assert d["state_unsupported_note"] == r.state_unsupported_note
+
+
+def test_build_report_hall_note_absent_for_non_tn_skip():
+    # Control: a generic bracket-less skip keeps the original message and
+    # NO Hall note — the note is TN-specific, never a blanket replacement.
+    law = _tax_law_2026()
+    law["state"] = {}
+    inputs = {"pay_frequency": "biweekly",
+              "ytd": {"wages": 50000, "federal_withholding": 6000},
+              "estimated_payments_made": {"federal": 0, "state": 0}}
+    r = P.build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
+                       prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+    assert r.state is None
+    assert r.state_unsupported_note is None
+    md = P.render_markdown(r)
+    assert "State not modeled" not in md
+
+
+def test_build_report_no_hall_note_for_post_repeal_codeless_tn_cache():
+    # Codex round-27 P2: a TY2021+ TN resident with a legacy code-less
+    # bracket cache reaches the TN skip via the resident backfill, but
+    # labeling that skip "predates the Hall-tax repeal" asserts a false
+    # fact about a post-repeal year — its real problem is an unverifiable
+    # cache. The Hall note requires year < 2021; post-repeal keeps the
+    # generic skip message.
+    law = _tax_law_2026()
+    law["state"] = {"type": "graduated_income",
+                    "standard_deduction": {"mfj": 0},
+                    "brackets": [{"rate": 0.01, "min": 0, "max": None}]}
+    inputs = {"pay_frequency": "biweekly",
+              "ytd": {"wages": 50000, "federal_withholding": 6000},
+              "estimated_payments_made": {"federal": 0, "state": 0}}
+    profile = _profile_mfj()
+    profile["address"] = {"state": "TN"}
+    r = P.build_report(inputs=inputs, profile=profile, tax_law=law,
+                       prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
+    assert r.state is None
+    assert r.state_unsupported_note is None
+    md = P.render_markdown(r)
+    assert "State not modeled" not in md
+    assert "Hall" not in md

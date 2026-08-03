@@ -54,8 +54,93 @@ Before generating the PDF, verify result.json internal consistency:
      rates-unfetched note instead of silently showing $0
 
 4. **State return check:**
-   - If taxpayer is in an income-tax state: verify state return section is populated
-   - If state return is empty: warn "State return not computed — run /tax-compute first?"
+   - **Cache-vs-taxpayer cross-check — BEFORE any state branching, for ALL
+     regimes (mirrors `/tax-compute` Step 10):** `tax_law.state.code` MUST
+     equal the taxpayer's validated `taxpayer_profile.json address.state`.
+     The render branch below selects state content SOLELY from
+     `tax_law.state` — a stale-but-internally-consistent cache left over
+     from a different state (e.g. a leftover FL `type: "none"` cache
+     sitting beside a CA taxpayer's workspace after an address correction)
+     would otherwise render the FL no-income-tax statement (or any other
+     state's content) for the wrong taxpayer. If `tax_law.state.code` !=
+     `taxpayer_profile.address.state`, HARD STOP: "state cache is for
+     {cache_code} but the taxpayer resides in {profile_state} — re-run
+     /tax-setup; do not render any state content." Do not render the
+     `florida_state` block, the generic no-income-tax sentence, the Form
+     540/state-return page, or any other state branch until this check
+     passes. This check is excluded from the "proceed anyway?" prompt for
+     checks 1-5 below, for the same reason as check 6: an affirmative
+     state statement for the wrong reason is worse than no PDF at all.
+   - **Cache-year cross-check — BEFORE `_none_type_allowed` or any state
+     branch selection (Codex round-13 P2):** `tax_law_{year}.json`'s OWN
+     embedded `tax_year` field MUST equal `{year}` (the year this PDF is
+     being generated for, i.e. `result.json meta.tax_year`). The
+     regime-vs-code check below is itself year-gated (TN's Hall-tax repeal
+     boundary), so a cache that's merely FILE-named for the right year but
+     whose BODY declares a different `tax_year` can satisfy that check for
+     the WRONG year — e.g. a completed TY2020 Tennessee result generated
+     after `tax_law_2020.json` gets replaced with a body declaring
+     `"tax_year": 2021` and `"type": "none"`: TN's repeal boundary is
+     satisfied against the embedded 2021, so the next check would wrongly
+     treat "none" as legitimate and this branch would emit a federal-only
+     PDF instead of the Hall-tax state content that TY2020 actually owed.
+     If `tax_law.tax_year` is missing, malformed, or != `{year}`, HARD
+     STOP the same way as the cache-vs-taxpayer mismatch above: "state law
+     cache does not declare tax_year {year} (found {found_year}) — re-run
+     /tax-setup; do not render any state content." This check is likewise
+     excluded from the "proceed anyway?" prompt.
+   - **Regime-vs-code validation — BEFORE trusting `state.type == "none"`
+     (Codex round-10 P1):** a matching `code` alone does not prove `type`
+     is legitimate for it. A CA cache with the correct year and
+     `code: "CA"` but a corrupted (hand-edited or fetch-bug) `type: "none"`
+     passes the cross-check above and, without this step, would fall
+     straight into the no-income-tax branch below — rendering the generic
+     "no individual income tax" sentence and OMITTING the Form 540 page
+     entirely for a taxpayer who owes CA tax. `/tax-generate` never calls
+     `check_freshness` (it reads `tax_law_{year}.json` directly), so verify
+     the combination here: `type == "none"` is legitimate ONLY for a code
+     in `agents.lib.tax_law_fetcher._NO_INCOME_TAX_STATES` (AK, FL, NV, SD,
+     TX, WY, plus TN for `tax_year >= 2021` — same allowlist
+     `capabilities._state_note` and `_none_type_allowed` use). If `code` is
+     NOT on that allowlist for `tax_year` (e.g. CA, NY, WA, or a
+     pre-repeal-year TN) yet `type == "none"`, HARD STOP the same way as
+     the cache-vs-taxpayer mismatch above: "state law cache declares
+     type=none for {code}, but {code} is not a recognized no-income-tax
+     state for {tax_year} — re-run /tax-setup; do not render any state
+     content." This check is likewise excluded from the "proceed anyway?"
+     prompt.
+   - Determine the regime from `tax_law_{year}.json` `state.type`:
+     - `"none"` **AND `state.code == "FL"`**: render the affirmative
+       statement block from `florida_state` (`no_income_tax_statement` +
+       the sales-tax-deduction table when populated) instead of a state
+       return page; PDF subject/header is "Federal" only. **Rendering the
+       sales-tax block when `sales_tax_deduction.method` is
+       `"actual_receipts"`:** `total_line_5a_candidate` is the
+       actual-receipts total and the `table_amount`/`local_addition`/
+       `big_ticket_tax` components are the LOSING optional-table
+       computation kept as comparison evidence — render the total as the
+       deduction and LABEL the components as the table comparison; never
+       present them as addends of the total (they intentionally do not
+       sum to it). When `method` is `"optional_tables"` (or absent on a
+       legacy result), the components DO sum to the total and may be
+       rendered as its breakdown.
+     - `"none"` for any OTHER state code (e.g. TN once its Hall-tax-repeal
+       year gate passes, or TX/WY/AK/NV/SD): there is no `florida_state`-
+       shaped result.json section for these states — do NOT render the
+       `florida_state` block (it would show FL's constitutional citation
+       for the wrong state). Instead render the affirmative no-income-tax
+       sentence from `meta.limitations` (the capability gate's
+       `_state_note`, e.g. "State (TN): no individual income tax — no
+       individual income-tax return exists or is required (this state's
+       own property/use-tax filings, if any, are not modeled here)..." —
+       the state-NEUTRAL caveat; FL form names DR-405/DR-15MO appear ONLY
+       in FL's own note (`code == "FL"`), and `/tax-review` treats Florida
+       forms inside a non-FL limitation line as a finding (Codex round-22
+       P2 — do not copy FL wording into another state's PDF)); PDF
+       subject/header is "Federal" only.
+     - otherwise: if taxpayer is in an income-tax state, verify the state
+       return section is populated; if empty, warn "State return not
+       computed — run /tax-compute first?"
 
 5. **Missing sections check:**
    - If `has_self_employment=true` in profile but no Schedule C in result.json: warn
@@ -72,7 +157,7 @@ Before generating the PDF, verify result.json internal consistency:
      presents itself as complete coverage, which is the exact failure C2 exists
      to prevent.
 
-If any of checks 1-5 fails: print warnings and ask "Proceed with PDF generation anyway, or fix first?" (Check 6 is a hard stop and is never bypassed this way.)
+If any of checks 1-5 fails: print warnings and ask "Proceed with PDF generation anyway, or fix first?" (**Check 6, and THREE checks that open check 4, are hard stops and are never bypassed this way** (Codex round-16 P2 — a later summary line can't quietly override what the detailed bullets above already declared non-bypassable): the cache-vs-taxpayer cross-check, the cache-year cross-check (round 13), and the regime-vs-code validation (round 10) — all three fire BEFORE any state branch is selected and all three are individually marked "excluded from the 'proceed anyway?' prompt" in their own bullets above. Only the rest of check 4's state-CONTENT warnings (missing state return section, etc.) — the parts that run AFTER those three checks pass — follow the "proceed anyway?" prompt.)
 
 ### 2. Check PDF Generator
 

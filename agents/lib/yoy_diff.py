@@ -96,8 +96,24 @@ OPTIONAL_SECTIONS: list[str] = [
     "schedule_c", "schedule_d", "form_8889_hsa", "form_1116_ftc",
     "form_8938_fatca", "fbar_fincen_114", "form_1099r_401k_rollover",
     "form_8959_additional_medicare", "form_8995_qbi", "ira_contribution",
-    "california_540",
+    "california_540", "florida_state",
 ]
+
+# Sections whose real "content" is a fixed affirmative STATEMENT rather than
+# non-zero numbers/lists — the generic _is_nonempty scan (which excludes all
+# strings/booleans on purpose, since most sections' string/bool fields are
+# scaffold defaults like accounting_method="Cash") would otherwise never see
+# florida_state as "present": a typical non-itemizing FL filer's section is
+# `no_income_tax_statement` (a string) + `state_return_required: false` (a
+# bool) + an all-zero sales_tax_deduction block — every field the generic
+# scan counts is zero/bool/string, so a real, correctly-populated FL section
+# would read identically to an unpopulated template scaffold, and move-year
+# appear/disappear tracking (e.g. NY -> FL) would never fire. Map each listed
+# section to the ONE key whose non-empty-string value means "this section was
+# actually populated for this year" (not left as a null scaffold default).
+INFORMATIONAL_SECTIONS: dict[str, str] = {
+    "florida_state": "no_income_tax_statement",
+}
 
 STATE_MOVER_FIELDS: list[tuple[str, str]] = [
     ("State taxable income", "california_540.ca_taxable_income"),
@@ -228,10 +244,18 @@ def _is_nonempty(value) -> bool:
 def _section_present(doc: dict, section: str) -> bool:
     """A section 'exists' when present and holding real tax content (non-zero numbers
     or non-empty lists). Scaffold-only blocks — template string defaults and _-prefixed
-    keys — do not count. See _is_nonempty."""
+    keys — do not count. See _is_nonempty.
+
+    INFORMATIONAL_SECTIONS is the exception: for a section listed there (e.g.
+    florida_state), presence is keyed on that ONE informational string field
+    holding real (non-empty) content, since the rest of the section is
+    legitimately all zeros/booleans/strings even when correctly populated."""
     block = doc.get(section)
     if not isinstance(block, dict):
         return False
+    if section in INFORMATIONAL_SECTIONS:
+        value = block.get(INFORMATIONAL_SECTIONS[section])
+        return isinstance(value, str) and value.strip() != ""
     return any(_is_nonempty(v) for k, v in block.items() if not str(k).startswith("_"))
 
 

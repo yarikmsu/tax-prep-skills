@@ -36,6 +36,10 @@ from agents.lib.tax_computations import (  # noqa: E402
     _SCH1A_EFFECTIVE_FROM,
     _SCH1A_EFFECTIVE_THROUGH,
 )
+from agents.lib.tax_law_fetcher import (  # noqa: E402
+    _TN_HALL_REPEAL_YEAR,
+    _none_type_allowed,
+)
 
 
 class ProjectionError(Exception):
@@ -302,6 +306,41 @@ class ProjectionReport:
     # only state whose estimated-payment weighting (30/40/0/30) is modeled.
     ca_safe_harbor: "CaSafeHarbor | None" = None
     ca_vouchers: "list[Voucher]" = field(default_factory=list)
+    # True only when the fetched state block POSITIVELY declares no income
+    # tax (state.type == "none" — FL, TX, ...). Lets the renderer distinguish
+    # "this state has no income tax" from "no baseline / brackets not
+    # fetched" when `state` is None (mirrors loss_harvest.state_no_income_tax
+    # — same bias-direction rule: absence of data must never read as
+    # absence of tax, so an unfetched/unknown-type cache stays False).
+    state_no_income_tax: bool = False
+    # 2-letter state code to name in the no-income-tax skip message (from
+    # tax_law.state.code, falling back to the taxpayer's resident state).
+    # Only meaningful when state_no_income_tax is True.
+    no_income_tax_state_code: "str | None" = None
+    # Set when tax_law.state.code (normalized) and the taxpayer's resident
+    # state are BOTH known and DIFFERENT — a stale cache for the wrong
+    # state (round-5 P1). None when there's nothing to warn about (codes
+    # match, or one/both sides are unknown).
+    state_cache_mismatch: "str | None" = None
+    # Codex round-8 finding F: set whenever profile flags.
+    # has_nonresident_source_income is True, REGARDLESS of which state-
+    # projection path ran (FL no-tax / CA graduated / mismatch / skipped) —
+    # a resident-state projection (or a resident no-tax note) says nothing
+    # about a SEPARATE state's nonresident liability on out-of-state W-2/
+    # K-1/rental income. This module is read-only/advisory, so unlike the
+    # capabilities gate's fail-closed `_REQUIRED_GATE_FLAGS` rule an
+    # absent/unset flag reads as False here (never blocks a projection);
+    # only an explicit True flag ever turns this warning on.
+    nonresident_income_warning: "str | None" = None
+    # Codex round-24 P2: set when the state projection was skipped because
+    # the cache/resident resolve to pre-repeal TN — the round-23 TN guard
+    # in project_state_tax returns None (never bracket-estimate the Hall
+    # regime over all income), but a silent None made render_markdown fall
+    # through to the generic "no prior-year state baseline or no state
+    # brackets" message, CONCEALING the real limitation: a potentially
+    # real Hall-tax liability on interest/dividends needs manual handling
+    # (Form INC 250). Mirrors the capability gate's Hall-specific note.
+    state_unsupported_note: "str | None" = None
 
 
 def validate_pay_frequency(pay_frequency: str) -> str:
@@ -820,8 +859,220 @@ def _prior_tax_agi(prior):
             _prior_numeric(f1040.get("line_11_agi"), allow_negative=True))
 
 
+def _normalize_state_code(value: "str | None") -> "str | None":
+    """Uppercase/strip to a 2-letter state code, else None. Shared by
+    project_state_tax's resident-state backfill and the cache-vs-resident
+    cross-check below so the two can't drift on what counts as a valid
+    code."""
+    if isinstance(value, str):
+        cleaned = value.strip().upper()
+        if len(cleaned) == 2 and cleaned.isalpha():
+            return cleaned
+    return None
+
+
+def _cache_state_code_present_but_invalid(state_cfg: dict) -> bool:
+    """True iff `state_cfg` has a `"code"` KEY (checked via `in`, not
+    `.get() is not None`) that does NOT normalize to a valid 2-letter code
+    — this includes an explicit `"code": null` as well as a malformed
+    string/number (e.g. "FLA", 123, "").
+
+    Codex round-14 P2 (sharpened by round-15 P2): `_normalize_state_code`
+    collapses ALL of "key absent", "key present as null", and "key present
+    but malformed" to the same `None` — every consumer treats "cache code
+    unknown" as "safe to backfill the resident's state and trust this
+    cache's brackets/type," which is the right call ONLY for a genuinely
+    ABSENT key (a legacy cache that predates the `state.code` field). The
+    original round-14 fix checked `raw is not None`, which correctly caught
+    "FLA" but still let an EXPLICIT `"code": null` through as if the key
+    had never existed — a CA-bracket cache with `"code": null` beside an FL
+    taxpayer would otherwise sail through every code-mismatch check (both
+    sides need to be non-None to compare) and have its real CA brackets
+    projected and LABELED as Florida tax, exactly like the "FLA" case.
+    Checking `"code" in state_cfg` (key presence) instead of "value is not
+    None" closes that gap: absent key -> False (legacy leniency preserved),
+    key present with ANY non-normalizing value (null, malformed, wrong
+    type) -> True (hard-reject, never backfill)."""
+    if "code" not in state_cfg:
+        return False
+    return _normalize_state_code(state_cfg.get("code")) is None
+
+
+def _resolve_state_no_income_tax(tax_law: dict, resident_code: "str | None",
+                                  year: int):
+    """Decide the no-income-tax flag, guarding against a STALE cache for a
+    different state than the taxpayer's resident state (e.g. a leftover FL
+    state.type == "none" cache left beside a CA profile after an address
+    correction — Codex round-5 P1) AND against a cache saved for the wrong
+    YEAR (Codex round-9 P2). Mirrors the /tax-compute skill-level
+    cross-check (tax_law.state.code vs taxpayer_profile.address.state).
+
+    The year check below is now also enforced EARLIER and HARDER by
+    `build_report`'s `_validate_tax_law_year` call (Codex round-11 P1),
+    which raises before this function — or `project_federal_tax`/
+    `project_state_tax` — ever runs, so `build_report` callers never
+    actually reach the year-mismatch branch here. It stays as defense in
+    depth for any other/future caller of this function directly.
+
+    Returns (no_income_tax, mismatch_note, code):
+    - resident state unknown: flag False, no warning — can't verify the
+      cache against anything, so this stays the safe "no baseline" skip
+      note rather than a confident (and possibly wrong) claim (mirrors
+      loss_harvest.state_no_income_tax's bias-direction rule).
+    - resident known AND the cache's declared `tax_year` is missing,
+      malformed, or does not equal `year`: flag False + a loud mismatch
+      note, regardless of what the cache claims — this module reads
+      `tax_law_{year}.json` directly in `_main` and never calls
+      tax_law_fetcher.check_freshness (which gained an equivalent guard in
+      round 8), so a mis-saved/misnamed cache — e.g. a `tax_law_2020.json`
+      whose body still declares `"tax_year": 2021` — would otherwise reach
+      the `type == "none"` branch below and claim "no state tax" for a
+      year whose regime may have been entirely different (TN's Hall tax
+      was still live in 2020, repealed only for TY2021+).
+    - resident known AND year matches AND cache code known AND they
+      differ: flag False + a loud mismatch note, regardless of what the
+      mismatched cache claims — a cache for the wrong state can't be
+      trusted either way.
+    - resident known AND year matches AND (cache code matches OR cache
+      code is absent): flag mirrors the cache's declared
+      state.type == "none" — UNLESS `code` is known and `type: "none"`
+      isn't a regime that code can legitimately carry for `year` (Codex
+      round-10 P1): a same-year, code-matching CA cache with a corrupted
+      `type: "none"` (hand-edited or a fetch bug) would otherwise pass
+      every check above and make this module claim California has no
+      individual income tax, silently dropping the CA liability/payment
+      projection. `_none_type_allowed` (tax_law_fetcher's single source of
+      truth for the code<->regime allowlist, also used by
+      check_freshness — which this module never calls, since it reads the
+      cache file directly) is the same cross-check /tax-compute's
+      skill-level guard applies; a cache lacking a `code` field can't be
+      checked against it and keeps degrading to the generic skip note
+      (safe direction) rather than a confident no-tax claim.
+    - `state.code` is PRESENT but does not normalize to a valid 2-letter
+      code (Codex round-14 P2, e.g. "FLA"): flag False + a loud mismatch
+      note, checked FIRST (before the resident-unknown branch, since this
+      is a property of the cache itself and needs no resident to compare
+      against) — `_normalize_state_code` collapses this to the same `None`
+      an ABSENT code produces, which every other branch here treats as
+      "safe to degrade quietly," but a present-and-corrupted code is
+      affirmative evidence the cache itself is untrustworthy.
+    """
+    state_cfg = tax_law.get("state") or {}
+
+    if _cache_state_code_present_but_invalid(state_cfg):
+        mismatch = (f"state law cache has a malformed state.code "
+                    f"({state_cfg.get('code')!r} — not a valid 2-letter "
+                    f"USPS code); re-run /tax-setup; state projection "
+                    f"skipped")
+        return False, mismatch, None
+
+    cache_code = _normalize_state_code(state_cfg.get("code"))
+    cache_says_none = state_cfg.get("type") == "none"
+
+    if resident_code is None:
+        return False, None, None
+
+    cache_tax_year = tax_law.get("tax_year")
+    if isinstance(cache_tax_year, bool) or not isinstance(cache_tax_year, int) \
+            or cache_tax_year != year:
+        mismatch = (f"state law cache does not declare tax_year {year} "
+                    f"(found {cache_tax_year!r}) — re-run /tax-setup; "
+                    f"state projection skipped")
+        return False, mismatch, None
+
+    if cache_code is not None and cache_code != resident_code:
+        mismatch = (f"state law cache is for {cache_code} but the taxpayer "
+                    f"resides in {resident_code} — re-run /tax-setup; "
+                    f"state projection skipped")
+        return False, mismatch, None
+
+    if cache_code is not None and cache_says_none \
+            and not _none_type_allowed(cache_code, year):
+        mismatch = (f"state law cache declares type \"none\" for "
+                    f"{cache_code}, but {cache_code} is not a recognized "
+                    f"no-income-tax state for tax year {year} (cache is "
+                    f"corrupted or was hand-edited) — re-run /tax-setup; "
+                    f"state projection skipped")
+        return False, mismatch, None
+
+    # INVERSE regime contradiction (Codex round-15 P1's twin here): a code
+    # that IS a legitimate no-tax state for `year` but is typed something
+    # OTHER than "none" while carrying real leftover brackets (e.g.
+    # code: "FL", type: "graduated_income") is just as corrupted as the
+    # opposite case above — without this, `no_income_tax` below would
+    # silently resolve to False with NO mismatch note (cache_says_none is
+    # False, so the affirmative branch never fires either), leaving the
+    # renderer to show a generic "no baseline" skip instead of flagging the
+    # actual data corruption. Gated on non-empty brackets — a merely
+    # untyped-but-bracket-less cache isn't the dangerous case this guards.
+    if cache_code is not None and not cache_says_none \
+            and _none_type_allowed(cache_code, year) \
+            and (state_cfg.get("brackets") or []):
+        mismatch = (f"state law cache declares type "
+                    f"{state_cfg.get('type')!r} for {cache_code}, but "
+                    f"{cache_code} is a recognized no-income-tax state for "
+                    f"tax year {year} (cache is corrupted or was "
+                    f"hand-edited) — re-run /tax-setup; state projection "
+                    f"skipped")
+        return False, mismatch, None
+
+    no_income_tax = cache_code is not None and cache_says_none
+    code = cache_code if no_income_tax else None
+    return no_income_tax, None, code
+
+
+_NONRESIDENT_INCOME_WARNING = (
+    "Another state's nonresident liability is not modeled — that state's "
+    "tax and estimates are missing from this projection."
+)
+
+
+def _nonresident_income_flag(profile: dict) -> bool:
+    """Advisory read of flags.has_nonresident_source_income: absent, None,
+    or a non-dict/non-bool flags block all read as False. Deliberately NOT
+    the capabilities gate's fail-closed rule (_REQUIRED_GATE_FLAGS hard-
+    errors on an unanswered flag) — /tax-project is read-only/advisory and
+    must never block a projection over an unrelated screening question the
+    taxpayer hasn't answered yet; only an explicit `true` turns the warning
+    on."""
+    flags = profile.get("flags")
+    if not isinstance(flags, dict):
+        return False
+    return flags.get("has_nonresident_source_income") is True
+
+
+def _validate_tax_law_year(tax_law: dict, year: int) -> None:
+    """Hard-stop guard (Codex round-11 P1): `tax_law`'s OWN declared
+    `tax_year` must match the year this projection is running for, checked
+    BEFORE `project_federal_tax`/`project_state_tax` consume the cache's
+    brackets/deductions/thresholds.
+
+    The round-9 cross-check lived only inside `_resolve_state_no_income_tax`,
+    which runs at the END of `build_report` — by then `project_federal_tax`
+    and `project_state_tax` had already used the (possibly wrong-year)
+    cache, so a mismatch silently produced a wrong federal liability,
+    safe-harbor target, voucher schedule, and W-4 recommendation while only
+    a STATE-labeled `state_cache_mismatch` note appeared. This raises
+    immediately instead, before either projection runs, mirroring the
+    existing "No federal brackets for status... run /tax-setup" hard error
+    a few lines into `project_federal_tax` — a wrong-year cache is the same
+    class of unusable-cache problem as a missing one, just with data that
+    happens to be present but wrong.
+    """
+    cache_tax_year = tax_law.get("tax_year")
+    if isinstance(cache_tax_year, bool) or not isinstance(cache_tax_year, int) \
+            or cache_tax_year != year:
+        raise ProjectionError(
+            f"tax_law_{year}.json does not declare tax_year {year} "
+            f"(found {cache_tax_year!r}) — this cache cannot be trusted for "
+            f"federal OR state projection (wrong brackets/deductions/"
+            f"thresholds). Re-run /tax-setup to fetch a {year} cache."
+        )
+
+
 def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
                  year: int, as_of: datetime.date) -> ProjectionReport:
+    _validate_tax_law_year(tax_law, year)
     pay_frequency = validate_pay_frequency(inputs.get("pay_frequency", "biweekly"))
     proj = annualize(inputs.get("ytd", {}), as_of, pay_frequency,
                      inputs.get("forecast_overrides", {}),
@@ -859,12 +1110,53 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
             ca_safe_harbor.required_annual, state.withholding,
             state.estimates_paid, as_of)
 
+    resident_code = _normalize_state_code(resident_state)
+    no_income_tax, cache_mismatch, no_income_tax_code = _resolve_state_no_income_tax(
+        tax_law, resident_code, year)
+
+    nonresident_income_warning = (
+        _NONRESIDENT_INCOME_WARNING if _nonresident_income_flag(profile) else None
+    )
+
+    # Round-24 P2: name the Hall-tax skip instead of hiding it behind the
+    # generic no-baseline message. Fires only when the state projection
+    # actually skipped, the resolved state is TN, and no louder channel
+    # (cache mismatch / legitimate post-repeal no-tax claim) already
+    # explains the outcome — a post-repeal type-none TN cache takes the
+    # no_income_tax path, and a TY2021+ graduated TN cache is the round-15
+    # inverse contradiction and gets its mismatch note instead.
+    state_unsupported_note = None
+    _st_cfg = tax_law.get("state") or {}
+    _tn_resolved = _normalize_state_code(_st_cfg.get("code")) or resident_code
+    # Codex round-27 P2: the Hall label additionally requires the year to
+    # actually BE pre-repeal — a TY2021+ TN resident with a legacy
+    # code-less cache reaches here (resident backfill resolves TN, the
+    # resolver degrades quietly on the absent code), and labeling THAT
+    # skip "predates the Hall-tax repeal" asserts a false fact about a
+    # post-repeal year. The post-repeal code-less case keeps the generic
+    # skip message — its real problem is an unverifiable cache, not the
+    # Hall regime.
+    if (state is None and _tn_resolved == "TN"
+            and year < _TN_HALL_REPEAL_YEAR
+            and not no_income_tax and cache_mismatch is None):
+        state_unsupported_note = (
+            "pre-2021 TN Hall tax (interest & dividends ONLY) is not "
+            "modeled — a bracket-based projection would fabricate tax on "
+            "wages/SE/capital gains. If taxable interest/dividend income "
+            "exceeded the filing threshold, handle the TN Hall return "
+            "(Form INC 250) manually.")
+
     return ProjectionReport(
         year=year, as_of=as_of.strftime("%m-%d"), pay_frequency=pay_frequency,
         baseline_source=(f"archive/{year - 1}" if prior is not None else None),
         degraded=(prior is None), proj=proj, federal=federal, state=state,
         safe_harbor=safe_harbor, vouchers=vouchers, w4_penalty=w4_penalty, w4_zero=w4_zero,
-        ca_safe_harbor=ca_safe_harbor, ca_vouchers=ca_vouchers)
+        ca_safe_harbor=ca_safe_harbor, ca_vouchers=ca_vouchers,
+        state_no_income_tax=no_income_tax,
+        no_income_tax_state_code=no_income_tax_code,
+        state_cache_mismatch=cache_mismatch,
+        nonresident_income_warning=nonresident_income_warning,
+        state_unsupported_note=state_unsupported_note)
 
 
 def _money(v) -> str:
@@ -993,8 +1285,22 @@ def render_markdown(r: ProjectionReport) -> str:
               f"- To reach zero balance: **{_money(r.w4_zero.per_paycheck)}/paycheck**", ""]
 
     lines += ["## State projection", ""]
+    if r.nonresident_income_warning:
+        lines += [f"> **⚠ Nonresident income exposure:** "
+                  f"{r.nonresident_income_warning}", ""]
     if r.state is None:
-        lines.append("_Skipped — no prior-year state baseline or no state brackets in tax_law._")
+        if r.state_cache_mismatch:
+            lines.append(f"_⚠ **State cache mismatch:** {r.state_cache_mismatch}._")
+        elif r.state_no_income_tax:
+            code = r.no_income_tax_state_code or "This state"
+            lines.append(
+                f'_State projection: none — {code} levies no individual '
+                f'income tax (state.type = "none")._'
+            )
+        elif r.state_unsupported_note:
+            lines.append(f"_⚠ **State not modeled:** {r.state_unsupported_note}_")
+        else:
+            lines.append("_Skipped — no prior-year state baseline or no state brackets in tax_law._")
     else:
         s = r.state
         lines += ["| Item | Amount |", "|---|---:|",
@@ -1094,6 +1400,11 @@ def _report_to_dict(r: ProjectionReport) -> dict:
         "ca_safe_harbor": (vars(r.ca_safe_harbor)
                            if r.ca_safe_harbor is not None else None),
         "ca_vouchers": [vars(v) for v in r.ca_vouchers],
+        "state_no_income_tax": r.state_no_income_tax,
+        "no_income_tax_state_code": r.no_income_tax_state_code,
+        "state_cache_mismatch": r.state_cache_mismatch,
+        "nonresident_income_warning": r.nonresident_income_warning,
+        "state_unsupported_note": r.state_unsupported_note,
     }
 
 
@@ -1170,7 +1481,13 @@ def _main(argv: list) -> int:
 
 
 # State result sections known to the toolkit; extend as more states are added.
-STATE_SECTION_KEYS = ["california_540"]
+STATE_SECTION_KEYS = ["california_540", "florida_state"]
+
+# Which state CODE each section key represents — keep in sync with
+# STATE_SECTION_KEYS above. Used by _detect_prior_state_code to tell WHICH
+# state a prior section is evidence for, since the two sections are not
+# interchangeable (Codex round-15 P2).
+_STATE_SECTION_CODES: dict = {"california_540": "CA", "florida_state": "FL"}
 
 
 def _detect_prior_state(prior_result: dict) -> str | None:
@@ -1178,6 +1495,27 @@ def _detect_prior_state(prior_result: dict) -> str | None:
         if key in (prior_result or {}):
             return key
     return None
+
+
+def _detect_prior_state_code(prior_result: dict) -> "str | None":
+    """The STATE CODE implied by whichever known section is present in
+    `prior_result` (via `_STATE_SECTION_CODES`), or None if no known
+    section is present or the section isn't in the mapping.
+
+    Distinct from `_detect_prior_state` (which returns the SECTION KEY,
+    e.g. "florida_state") — Codex round-15 P2: `project_state_tax`'s
+    has-prior-state gate used to treat ANY known section as
+    interchangeable proof of "this taxpayer files a state return." Adding
+    `florida_state` to `STATE_SECTION_KEYS` made that collapse dangerous: a
+    prior `florida_state` section is evidence the taxpayer was an FL
+    resident, NOT evidence for a completely unrelated current-year CA (or
+    other) cache. With an unusable `resident_state`, the old boolean gate
+    would let a prior FL section bypass the residency check for any
+    graduated-income cache."""
+    section_key = _detect_prior_state(prior_result)
+    if section_key is None:
+        return None
+    return _STATE_SECTION_CODES.get(section_key)
 
 
 def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
@@ -1194,22 +1532,108 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
     missing-archive CA resident still needs the state projection and the
     CA 540-ES schedule (Codex P2 on PR #35) — so the projection runs
     whenever the prior return carries a state section OR the resident
-    state matches the configured state law."""
+    state matches the configured state law. A KNOWN cache-vs-resident
+    mismatch (both sides known, both different) always returns None
+    regardless of the prior-state-section gate (round-6 P1).
+
+    `state.type == "none"` ALWAYS wins over brackets content (Codex
+    round-12 P1): round-11 taught tax_law_fetcher.check_freshness to flag a
+    type-none cache carrying leftover real brackets as a contradiction, but
+    this function reads the cache directly and never calls check_freshness
+    — so a `code: "FL", type: "none"` cache with leftover CA brackets
+    (copied/partially replaced, never stripped) would sail through the
+    `if not brackets: return None` guard below and have this function
+    invent a Florida tax liability from CA's brackets. The type
+    discriminator is checked FIRST and unconditionally short-circuits to
+    None; `build_report`'s `_resolve_state_no_income_tax` is the one place
+    that decides what to say about a no-tax claim (including flagging a
+    corrupted regime-vs-code combination) — this function's only job is to
+    never compute a bracket-based liability for a state that says it has
+    none.
+
+    A PRESENT-but-INVALID `state.code` (e.g. "FLA") is rejected outright,
+    never backfilled (Codex round-14 P2): `_normalize_state_code` collapses
+    it to the same `None` a genuinely ABSENT code produces, and `None`
+    normally means "safe to backfill the resident's state and trust this
+    cache." That's correct for a legacy code-less cache, but a CA-bracket
+    cache whose code was corrupted to "FLA" beside an FL profile would
+    otherwise have `cache_code` read as unknown, skip the mismatch check
+    below (which requires BOTH sides known), get backfilled to the
+    resident's "FL", and have CA's real brackets projected and LABELED as
+    Florida tax.
+
+    The INVERSE regime contradiction is also rejected (Codex round-15 P1):
+    a `code` that IS a legitimate no-tax state for this cache's OWN
+    declared year (per `_none_type_allowed`) must never be trusted for
+    bracket-based math regardless of what `type` claims — a
+    `code: "FL", type: "graduated_income"` cache retaining real CA
+    brackets/standard_deduction would otherwise sail past the
+    `type == "none"` guard above (which only fires when type actually says
+    "none") and have this function invent a Florida tax liability from the
+    leftover CA brackets. Checked before brackets are even read."""
     state_cfg = tax_law.get("state") or {}
+    if state_cfg.get("type") == "none":
+        return None
+    if _cache_state_code_present_but_invalid(state_cfg):
+        return None
+    _regime_code = _normalize_state_code(state_cfg.get("code"))
+    if _regime_code is not None and _none_type_allowed(
+            _regime_code, tax_law.get("tax_year")):
+        return None
     brackets = state_cfg.get("brackets") or []
     if not brackets:
         return None
-    resident = None
-    if isinstance(resident_state, str):
-        cleaned = resident_state.strip().upper()
-        if len(cleaned) == 2 and cleaned.isalpha():
-            resident = cleaned
+    resident = _normalize_state_code(resident_state)
+    cache_code = _normalize_state_code(state_cfg.get("code"))
+    # A known cache-vs-resident mismatch is disqualifying regardless of the
+    # has_prior_state gate below: an FL resident with an FL prior-year
+    # state section (has_prior_state=True) but a stale CA cache left beside
+    # the workspace must NOT have CA brackets projected onto FL income —
+    # has_prior_state is only a "files a state return" proxy, not proof the
+    # cache is for the RIGHT state (round-6 P1, the graduated-brackets twin
+    # of _resolve_state_no_income_tax's no-tax-flag guard below). Unknown
+    # resident or unknown cache code falls through unchanged.
+    if resident is not None and cache_code is not None and resident != cache_code:
+        return None
     # Code resolution order: explicit cache field, then the taxpayer's
     # resident state, then a placeholder (older caches lack `state.code`).
-    code = state_cfg.get("code") or resident or "STATE"
-    has_prior_state = (prior is not None
-                       and _detect_prior_state(getattr(prior, "result", {}))
-                       is not None)
+    code = cache_code or resident or "STATE"
+    # TN NEVER gets generic bracket math (Codex round-23 P2): post-repeal
+    # (TY2021+) TN is type "none" and already short-circuits via the
+    # _none_type_allowed inverse-contradiction guard above, so reaching
+    # this point with a TN code means a pre-repeal (or year-corrupt) cache
+    # carrying the Hall-tax rate as brackets. The Hall tax applied ONLY to
+    # interest and dividends — this function builds taxable income from
+    # wages/SE/capital gains too, so routing it through ordinary
+    # graduated-state math would fabricate a liability for a TY2020 TN
+    # wage earner. Pre-repeal TN is UNSUPPORTED (skip, the safe
+    # under-statement direction) rather than mismodeled. Checked after the
+    # resident backfill so a code-less Hall cache beside a TN resident is
+    # caught too.
+    if code == "TN":
+        return None
+    # The prior-section fallback requires the PRIOR SECTION'S OWN state
+    # identity to match the cache's ACTUAL declared code, not merely "some
+    # known state section exists" (Codex round-15 P2): adding florida_state
+    # to STATE_SECTION_KEYS made "has_prior_state" collapse every modeled
+    # state into one interchangeable signal — with an unusable resident
+    # (e.g. a broken/missing address.state), a prior florida_state section
+    # would satisfy this gate for a COMPLETELY UNRELATED current-year CA
+    # (or other) cache, publishing that cache's liability with zero
+    # evidence the taxpayer is even a CA resident this year.
+    # _detect_prior_state_code resolves WHICH state the prior section
+    # actually represents. Compared against `cache_code` specifically (not
+    # the resolved `code`, which can be the generic "STATE" placeholder
+    # when the cache is code-LESS): a code-less legacy cache makes no
+    # specific state claim to contradict, so the historical permissive
+    # "any known prior section is enough" leniency still applies there —
+    # only a cache that names a SPECIFIC, conflicting state code loses it.
+    prior_state_code = (_detect_prior_state_code(getattr(prior, "result", {}))
+                        if prior is not None else None)
+    if cache_code is not None:
+        has_prior_state = prior_state_code == cache_code
+    else:
+        has_prior_state = prior_state_code is not None
     if not has_prior_state and (resident is None or resident != code):
         return None
     bin_key = _binary_status_key(filing_status)

@@ -20,14 +20,24 @@ def _load(name):
     return json.loads((FIX / name).read_text())
 
 
-def _build(holdings=None, tax_law=None, name="harvest"):
+def _build(holdings=None, tax_law=None, name="harvest", profile=None):
     return lh.build_harvest(
         _load("result.json"),
-        _load("taxpayer_profile.json"),
+        profile if profile is not None else _load("taxpayer_profile.json"),
         tax_law if tax_law is not None else _load("tax_law_2026.json"),
         holdings if holdings is not None else _load("holdings.json"),
         2026, name=name, today=TODAY,
     )
+
+
+def _fl_resident_profile():
+    # Round-22 P2: the affirmative "$0 — correct and complete" claim now
+    # requires the FULL residence chain (known resident + code-matching
+    # type-none cache) — the default fixture profile has no address, which
+    # deliberately degrades instead of affirming.
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    return profile
 
 
 def _ws(tmp_path):
@@ -1414,3 +1424,457 @@ def test_render_surfaces_1091d_basis_shift_for_fully_blocked():
     assert "§1091(d)" in md
     assert "§1223" in md
     assert "PERMANENTLY lost" in md  # the IRA exception
+
+
+# --------------------------------------------------------------------------
+# state_no_income_tax — type-aware harvest banner (no-tax != not-fetched)
+# --------------------------------------------------------------------------
+
+class TestStateNoIncomeTaxHelper:
+    def test_type_none_is_true(self):
+        from agents.lib.loss_harvest import state_no_income_tax
+        assert state_no_income_tax({"state": {"type": "none"}}) is True
+
+    def test_missing_type_is_false(self):
+        # Absence of the discriminator must NOT read as "no tax" — every
+        # pre-existing cache lacks the field.
+        from agents.lib.loss_harvest import state_no_income_tax
+        assert state_no_income_tax({"state": {"brackets": []}}) is False
+        assert state_no_income_tax({"state": {}}) is False
+        assert state_no_income_tax({}) is False
+
+    def test_graduated_income_is_false(self):
+        from agents.lib.loss_harvest import state_no_income_tax
+        assert state_no_income_tax({"state": {"type": "graduated_income"}}) is False
+
+
+def test_render_markdown_shows_no_income_tax_banner():
+    # Round-22 P2: reaching the affirmative banner requires the full
+    # residence chain — FL resident + code-matching type-none cache.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    r = _build(tax_law=law, profile=_fl_resident_profile())
+    md = lh.render_markdown(r)
+    assert "no individual income tax" in md
+    assert "correct and complete" in md
+    assert "State savings not modeled" not in md
+
+
+def test_report_to_dict_serializes_state_no_income_tax():
+    # FL-type law: the JSON artifact must carry the discriminator so a
+    # JSON-only consumer (not just the rendered markdown) can distinguish
+    # "no income tax, correctly $0" from "state data never fetched".
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    r = _build(tax_law=law, profile=_fl_resident_profile())
+    d = lh._report_to_dict(r)
+    assert "state_no_income_tax" in d
+    assert d["state_no_income_tax"] is True
+
+    # Absent type (pre-existing unfetched cache) must serialize False.
+    r2 = _build()  # default fixture tax_law has no "type" key
+    d2 = lh._report_to_dict(r2)
+    assert "state_no_income_tax" in d2
+    assert d2["state_no_income_tax"] is False
+
+
+def test_render_markdown_bottom_line_no_income_tax_suffix():
+    # Round-22 P2: full residence chain needed for the affirmative suffix.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    r = _build(tax_law=law, profile=_fl_resident_profile())
+    md = lh.render_markdown(r)
+    assert "(not modeled)" not in md
+    assert "(no state income tax)" in md
+
+
+def test_render_markdown_bottom_line_still_shows_not_modeled_when_unfetched():
+    # Regression guard: an unfetched (brackets-empty, no type) cache must
+    # keep the original "(not modeled)" bottom-line suffix.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"brackets": []}
+    r = _build(tax_law=law)
+    md = lh.render_markdown(r)
+    assert "(not modeled)" in md
+    assert "(no state income tax)" not in md
+
+
+# --------------------------------------------------------------------------
+# round-6 P2: state_no_income_tax cross-checked against resident state
+# --------------------------------------------------------------------------
+
+def test_state_no_income_tax_false_on_known_mismatch():
+    # A stale FL type="none" cache left beside a CA taxpayer's workspace
+    # must NOT claim "$0 — correct and complete": the flag stays False and
+    # a loud state_cache_mismatch note appears instead.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "CA"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="mismatch",
+                         today=TODAY)
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is not None
+    assert "FL" in r.state_cache_mismatch and "CA" in r.state_cache_mismatch
+    md = lh.render_markdown(r)
+    assert "State cache mismatch" in md
+    assert "correct and complete" not in md
+    d = lh._report_to_dict(r)
+    assert d["state_no_income_tax"] is False
+    assert d["state_cache_mismatch"] == r.state_cache_mismatch
+
+
+def test_state_no_income_tax_true_when_cache_matches_resident():
+    # Regression: FL taxpayer + matching FL type="none" cache still gets the
+    # true no-tax banner, with no mismatch note.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="match",
+                         today=TODAY)
+    assert r.state_no_income_tax is True
+    assert r.state_cache_mismatch is None
+    md = lh.render_markdown(r)
+    assert "correct and complete" in md
+    assert "State cache mismatch" not in md
+
+
+def test_state_marginal_rate_ignores_leftover_brackets_when_type_none():
+    # Codex round-12 P1 (projection's project_state_tax twin): check_
+    # freshness (round 11) flags a type-none cache carrying real leftover
+    # brackets as a contradiction, but this function reads the cache
+    # directly and never calls check_freshness — a code: "FL", type: "none"
+    # cache with leftover CA brackets must NOT have _ordinary_marginal_rate
+    # derive a rate from them. type == "none" wins unconditionally.
+    from agents.lib.loss_harvest import _state_marginal_rate
+    law = {"state": {"type": "none", "code": "FL",
+                     "brackets": [{"rate": 0.093, "min": 0, "max": None}]}}
+    modeled, rate = _state_marginal_rate(law, "MFJ", 100000)
+    assert modeled is False
+    assert rate is None
+
+
+def test_state_marginal_rate_ignores_leftover_brackets_when_type_graduated_income():
+    # Codex round-15 P2: the INVERSE contradiction — a code that IS a
+    # legitimate no-tax state (FL) but typed "graduated_income" while
+    # retaining real leftover brackets must not have this function derive
+    # a rate from them either. Round-12 only guarded the type == "none"
+    # direction.
+    from agents.lib.loss_harvest import _state_marginal_rate
+    law = {"tax_year": 2026, "state": {"type": "graduated_income", "code": "FL",
+                                       "brackets": [{"rate": 0.093, "min": 0, "max": None}]}}
+    modeled, rate = _state_marginal_rate(law, "MFJ", 100000)
+    assert modeled is False
+    assert rate is None
+
+
+def test_resolve_state_no_income_tax_inverse_contradiction_is_mismatch():
+    # End-to-end companion via the resolver: code says FL (legitimate
+    # no-tax) but type says graduated_income with real brackets -> must
+    # surface a loud mismatch, not a silent no_income_tax=False/None.
+    from agents.lib.loss_harvest import _resolve_state_no_income_tax
+    law = {"tax_year": 2026, "state": {"type": "graduated_income", "code": "FL",
+                                       "brackets": [{"rate": 0.093, "min": 0, "max": None}]}}
+    no_income_tax, mismatch = _resolve_state_no_income_tax(law, "FL", 2026)
+    assert no_income_tax is False
+    assert mismatch is not None
+    assert "FL" in mismatch
+
+
+def test_build_harvest_fl_with_leftover_brackets_stays_no_income_tax():
+    # End-to-end companion: build_harvest must still resolve to "$0 —
+    # correct and complete" (a legitimate FL no-tax code/year combo), not
+    # fabricated state savings from the contradictory leftover brackets.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL",
+                    "brackets": [{"rate": 0.093, "min": 0, "max": None}],
+                    "standard_deduction": {"mfj": 11080}}
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="flleftover",
+                         today=TODAY)
+    assert r.state_modeled is False
+    assert r.state_no_income_tax is True
+    assert r.state_cache_mismatch is None
+    assert r.state_mtr is None
+    md = lh.render_markdown(r)
+    assert "correct and complete" in md
+    assert "State cache mismatch" not in md
+
+
+def test_resolve_state_no_income_tax_malformed_code_is_mismatch():
+    # Codex round-14 P2 (projection's twin fix): a PRESENT-but-INVALID
+    # state.code ("FLA") must not collapse to the same "unknown, safe to
+    # let brackets through" None a genuinely ABSENT code produces.
+    from agents.lib.loss_harvest import _resolve_state_no_income_tax
+    law = {"tax_year": 2026, "state": {
+        "code": "FLA", "brackets": [{"rate": 0.093, "min": 0, "max": None}]}}
+    no_income_tax, mismatch = _resolve_state_no_income_tax(law, "FL", 2026)
+    assert no_income_tax is False
+    assert mismatch is not None
+    assert "FLA" in mismatch
+
+
+def test_resolve_state_no_income_tax_explicit_null_code_is_mismatch():
+    # Codex round-15 P2: an EXPLICIT "code": null (key present, value None)
+    # must not collapse to the same "absent, safe to let brackets through"
+    # path a genuinely code-less legacy cache gets.
+    from agents.lib.loss_harvest import _resolve_state_no_income_tax
+    law = {"tax_year": 2026, "state": {
+        "code": None, "brackets": [{"rate": 0.093, "min": 0, "max": None}]}}
+    no_income_tax, mismatch = _resolve_state_no_income_tax(law, "FL", 2026)
+    assert no_income_tax is False
+    assert mismatch is not None
+
+
+def test_build_harvest_malformed_cache_code_surfaces_mismatch():
+    # End-to-end companion: build_harvest must NOT fabricate state harvest
+    # savings from CA's real brackets under a "FLA"-corrupted code — the
+    # cache-code-mismatch check must fire before _state_marginal_rate runs.
+    law = _load("tax_law_2026.json")  # real CA graduated brackets
+    law["state"]["code"] = "FLA"
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="malformedcode",
+                         today=TODAY)
+    assert r.state_modeled is False
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is not None
+    assert "FLA" in r.state_cache_mismatch
+    md = lh.render_markdown(r)
+    assert "correct and complete" not in md
+
+
+def test_state_no_income_tax_unknown_resident_degrades_not_affirms():
+    # Codex round-22 P2 (REPLACES the pre-round-22 "legacy cache-only"
+    # behavior this test used to pin): "$0 — correct and complete" is an
+    # affirmative claim about the TAXPAYER's state, and with no
+    # address.state there is no one to attribute the cache's type-none
+    # declaration to — a stale FL cache beside a profile whose address
+    # block was lost must NOT produce the confident claim (the taxpayer
+    # may live in CA). Mirrors projection._resolve_state_no_income_tax,
+    # which returns (False, None, None) in the same scenario. The degrade
+    # stays QUIET (no mismatch warning) — a missing address is not
+    # evidence of cache corruption.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    profile = _load("taxpayer_profile.json")
+    assert profile.get("address") is None  # fixture precondition
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="unknown",
+                         today=TODAY)
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is None
+    md = lh.render_markdown(r)
+    assert "correct and complete" not in md
+    assert "State cache mismatch" not in md
+
+
+def test_build_harvest_year_mismatch_hard_errors():
+    # Round-9 P2 introduced this check inside _resolve_state_no_income_tax;
+    # round-11 P2 found that _rate_kwargs/compute_scenario already consume
+    # the (possibly wrong-year) cache's FEDERAL brackets/thresholds before
+    # that check ever runs, so fed_savings would be silently wrong while
+    # only a STATE-labeled warning appeared. build_harvest now hard-errors
+    # on a tax_year mismatch immediately after read_tax_year, before any
+    # rate derivation — e.g. a tax_law_2026.json body that actually says
+    # "tax_year": 2020 must not silently price a TY2026 harvest off 2020
+    # rates.
+    law = _load("tax_law_2026.json")
+    law["tax_year"] = 2020
+    law["state"] = {"type": "none", "code": "FL"}
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    with pytest.raises(lh.LossHarvestError, match="tax_year"):
+        lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="yearmismatch",
+                         today=TODAY)
+
+
+def test_build_harvest_year_mismatch_hard_errors_unknown_resident():
+    # The resident-unknown branch inside _resolve_state_no_income_tax
+    # normally trusts cache_says_none on its own (legacy behavior) — but
+    # build_harvest's top-level guard fires before that function is ever
+    # reached, regardless of whether the resident state is known.
+    law = _load("tax_law_2026.json")
+    law["tax_year"] = 2020
+    law["state"] = {"type": "none", "code": "FL"}
+    profile = _load("taxpayer_profile.json")
+    assert profile.get("address") is None  # fixture precondition
+    with pytest.raises(lh.LossHarvestError, match="tax_year"):
+        lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="yearmismatch2",
+                         today=TODAY)
+
+
+def test_build_harvest_missing_tax_year_hard_errors():
+    law = _load("tax_law_2026.json")
+    del law["tax_year"]
+    law["state"] = {"type": "none", "code": "FL"}
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    with pytest.raises(lh.LossHarvestError, match="tax_year"):
+        lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="notaxyear",
+                         today=TODAY)
+
+
+def test_state_no_income_tax_false_on_corrupted_ca_none_type():
+    # Codex round-10 P2 (projection's twin fix): a same-year, code-matching
+    # CA cache with a corrupted "type": "none" must not claim "$0 —
+    # correct and complete" — CA is graduated_income, never "none".
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "CA"}
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "CA"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="canonetype",
+                         today=TODAY)
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is not None
+    md = lh.render_markdown(r)
+    assert "correct and complete" not in md
+
+
+def test_state_no_income_tax_false_on_corrupted_none_type_unknown_resident():
+    # The type-validity guard must fire even when the resident state is
+    # unknown — that branch otherwise trusts cache_says_none on its own.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "CA"}
+    profile = _load("taxpayer_profile.json")
+    assert profile.get("address") is None  # fixture precondition
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="canonetype2",
+                         today=TODAY)
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is not None
+
+
+# --------------------------------------------------------------------------
+# round-7 P1: a known state-cache mismatch must zero state savings entirely,
+# not just flip the flag next to stale dollars.
+# --------------------------------------------------------------------------
+
+def test_state_cache_mismatch_zeroes_state_savings_not_just_flag():
+    # Round-6 recorded state_cache_mismatch as a warning, but
+    # _state_marginal_rate/state_savings had ALREADY consumed the stale
+    # brackets before that check ran: an FL resident with a leftover CA
+    # cache (real graduated brackets, not a type="none" stub) showed real
+    # CA dollars in state_savings/total_savings sitting right next to the
+    # mismatch warning. The cache-vs-resident check must run BEFORE any
+    # state-rate derivation so a known mismatch forces state_modeled=False,
+    # state_mtr=None, state_savings=0.0 — total_savings = fed only.
+    law = _load("tax_law_2026.json")  # real CA graduated brackets
+    law["state"]["code"] = "CA"
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="mismatch-brackets",
+                         today=TODAY)
+    assert r.state_cache_mismatch is not None
+    assert "CA" in r.state_cache_mismatch and "FL" in r.state_cache_mismatch
+    assert r.state_modeled is False
+    assert r.state_mtr is None
+    assert r.state_savings == 0.0
+    assert r.total_savings == r.fed_savings
+    md = lh.render_markdown(r)
+    assert "State cache mismatch" in md
+    assert "correct and complete" not in md
+
+
+def test_state_cache_match_with_real_brackets_still_prices_savings():
+    # Regression: a MATCHING cache (same real CA brackets, resident is CA)
+    # must be entirely unaffected by the round-7 reordering — state savings
+    # still prices from the cache as before.
+    law = _load("tax_law_2026.json")
+    law["state"]["code"] = "CA"
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "CA"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="match-brackets",
+                         today=TODAY)
+    assert r.state_cache_mismatch is None
+    assert r.state_modeled is True
+    assert r.state_mtr == 0.093
+    assert 520 <= r.state_savings <= 640
+
+
+# --------------------------------------------------------------------------
+# round-7 P2: a code-less none-cache no longer affirms for a KNOWN resident.
+# --------------------------------------------------------------------------
+
+def test_state_no_income_tax_known_resident_codeless_cache_stays_unaffirmed():
+    # A KNOWN resident (FL) paired with a type="none" cache that lacks a
+    # `code` field is fresh evidence the cache can't be verified against —
+    # projection.py already requires a resolvable code before the
+    # affirmative "$0 — correct and complete" claim; loss_harvest's
+    # fallthrough previously affirmed anyway. The flag must stay False (the
+    # ordinary "not modeled" banner), with no fabricated mismatch warning
+    # either (there's nothing concrete to accuse the cache of).
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none"}  # no "code" key
+    profile = _load("taxpayer_profile.json")
+    profile["address"] = {"state": "FL"}
+    r = lh.build_harvest(_load("result.json"), profile, law,
+                         _load("holdings.json"), 2026, name="codeless",
+                         today=TODAY)
+    assert r.state_no_income_tax is False
+    assert r.state_cache_mismatch is None
+    assert r.state_modeled is False
+    assert r.state_savings == 0.0
+    md = lh.render_markdown(r)
+    assert "correct and complete" not in md
+    assert "State cache mismatch" not in md
+    assert "State savings not modeled" in md
+
+
+def test_state_marginal_rate_refuses_tn_hall_cache():
+    # Codex round-23 P2 (projection.project_state_tax's twin): a pre-2021
+    # TN cache carries the Hall-tax rate as brackets, but the Hall tax
+    # applied ONLY to interest and dividends — applying its rate to
+    # harvested capital losses would fabricate state savings Tennessee law
+    # never offered. TN never gets generic bracket math here.
+    from agents.lib.loss_harvest import _state_marginal_rate
+    law = {"tax_year": 2020,
+           "state": {"type": "graduated_income", "code": "TN",
+                     "brackets": [{"rate": 0.01, "min": 0, "max": None}]}}
+    modeled, rate = _state_marginal_rate(law, "MFJ", 100000)
+    assert modeled is False
+    assert rate is None
+
+
+def test_harvest_nonresident_flag_degrades_completeness_claim():
+    # Codex round-23 P2: with flags.has_nonresident_source_income set, the
+    # resident-state no-tax fact still holds but "complete" does NOT — the
+    # source state's unmodeled tax can change both the value and ranking
+    # of harvested lots. The banner must degrade and the exposure surface.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    profile = _fl_resident_profile()
+    profile.setdefault("flags", {})["has_nonresident_source_income"] = True
+    r = _build(tax_law=law, profile=profile)
+    assert r.state_no_income_tax is True
+    assert r.nonresident_income_warning is not None
+    md = lh.render_markdown(r)
+    assert "correct and complete" not in md
+    assert "NOT the complete picture" in md
+    assert "Nonresident income exposure" in md
+    d = lh._report_to_dict(r)
+    assert d["nonresident_income_warning"] == r.nonresident_income_warning
+
+
+def test_harvest_nonresident_flag_absent_keeps_complete_claim():
+    # Advisory read: an absent flag reads False — the affirmative claim is
+    # unchanged for a taxpayer who never answered the screening question.
+    law = _load("tax_law_2026.json")
+    law["state"] = {"type": "none", "code": "FL"}
+    r = _build(tax_law=law, profile=_fl_resident_profile())
+    assert r.nonresident_income_warning is None
+    md = lh.render_markdown(r)
+    assert "correct and complete" in md
+    assert "Nonresident income exposure" not in md

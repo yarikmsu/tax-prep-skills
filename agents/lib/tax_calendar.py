@@ -108,6 +108,41 @@ def _observed_note(statutory: datetime.date, observed: datetime.date,
     return note
 
 
+def _fl_county_observed_note(statutory: datetime.date) -> str:
+    """A description suffix for FL COUNTY property deadlines (DR-501/DR-405)
+    whose statutory date falls on a weekend.
+
+    Unlike _observed_note, this does NOT cite §7503 — that IRC section
+    governs FEDERAL filing/paying acts, not county property-appraiser
+    deadlines, and inventing an analogous Florida statutory citation for a
+    weekend-roll convention would be an unverified procedural claim (a lying
+    caveat is worse than a missing one). And unlike every OTHER state event
+    in this module, the event DATE is deliberately KEPT on the statutory
+    weekend date rather than rolled to Monday (Codex round-19 P2): no
+    governing statewide Florida rollover rule has been verified for county
+    property filings — only the observation that "most" county offices
+    accept the next business day — and an alert moved to Monday would have
+    a taxpayer in a county that does NOT grant the informal rollover file a
+    day late. Rolling a deadline on unverified authority extends it in the
+    harmful direction; keeping the statutory date is at worst one day
+    early. Scoped to events_fl_property only — federal events and the
+    CA/NY/NJ PTET events keep using _observed_note."""
+    if statutory.weekday() < 5:
+        return ""
+    next_bd = statutory + datetime.timedelta(days=1)
+    while next_bd.weekday() >= 5:
+        next_bd += datetime.timedelta(days=1)
+    return (
+        f" Note: the statutory {statutory.strftime('%B')} {statutory.day} "
+        f"date is a {statutory.strftime('%A')}. This reminder is "
+        f"deliberately kept ON the statutory date: most Florida county "
+        f"offices observe the next business day "
+        f"({next_bd.strftime('%B')} {next_bd.day}, {next_bd.year}) for a "
+        f"weekend deadline, but no governing rollover rule has been "
+        f"verified, so do not rely on the extra day(s) — confirm with your "
+        f"county property appraiser.")
+
+
 # PRODID identifies this tool to calendar clients; the trailing version tracks
 # event-shape compatibility — bump when adding new categories or breaking the
 # UID slug format so calendar apps treat the file as a new feed.
@@ -115,7 +150,10 @@ def _observed_note(statutory: datetime.date, observed: datetime.date,
 # v3: added the extension category (/tax-extend, F2).
 # v4: §7503 next-business-day rollover applied to event dates (L1) — federal
 #     deadlines roll past weekends + DC holidays, state deadlines past weekends.
-_PRODID = "-//tax-prep-skills//tax-calendar v4//EN"
+# v5: added the state_property category (FL homestead DR-501 + DR-405 property
+#     deadlines; these county events stay ON their statutory dates even on a
+#     weekend — no verified FL rollover rule, see _fl_county_observed_note).
+_PRODID = "-//tax-prep-skills//tax-calendar v5//EN"
 _UID_NAMESPACE = "tax-prep-skills"
 _PTET_STATES = {"CA", "NY", "NJ"}
 # Per-state effective tax-year windows for the PTE elective tax regime.
@@ -131,9 +169,16 @@ _PTET_WINDOWS = {
     "NJ": (2020, None),
 }
 _VALID_CATEGORIES = frozenset({"federal_estimated_tax", "state_estimated_tax",
-                               "extension", "fbar", "rmd", "ptet", "note"})
+                               "extension", "fbar", "rmd", "ptet",
+                               "state_property", "note"})
 _MIN_YEAR = 2000
 _MAX_YEAR = 2099
+# The DR-405 $25,000 tangible-personal-property exemption (F.S. 196.183) took
+# effect for the 2008 tax year (Fla. Amendment 1, approved Jan 2008) — it is
+# NOT a feature of DR-405 going back to _MIN_YEAR (2000). A pre-2008
+# events_fl_property description must not promise an exemption that didn't
+# exist yet (round-4 finding D); it keeps the filing deadline + penalties.
+_FL_TPP_EXEMPTION_YEAR = 2008
 
 # Untrusted strings from taxpayer_profile.json can flow into RFC 5545 fields
 # (UID/SUMMARY/DESCRIPTION). Validate shape at the parse boundary AND escape
@@ -145,7 +190,8 @@ _STATE_CODE_RE = re.compile(r"^[A-Z]{2}$")
 _UID_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 Category = Literal["federal_estimated_tax", "state_estimated_tax",
-                   "extension", "fbar", "rmd", "ptet", "note"]
+                   "extension", "fbar", "rmd", "ptet",
+                   "state_property", "note"]
 
 # Categories that carry a per-quarter label (Q1..Q4).
 _ESTIMATED_TAX_CATEGORIES = frozenset({"federal_estimated_tax",
@@ -550,6 +596,170 @@ def events_rmd(tax_year: int, *, primary_subject_to_rmd: bool,
     return out
 
 
+def events_fl_property(tax_year: int, *, business_tpp: bool,
+                       new_homestead: bool,
+                       homestead_unfiled: bool = False) -> list[CalendarEvent]:
+    """Florida COUNTY property-tax reminders (FL has no income tax; these
+    are the FL-specific compliance dates an individual typically has).
+
+    - Homestead exemption application (Form DR-501): FL homestead
+      eligibility is determined as of JANUARY 1 (F.S. 196.011) — a taxpayer
+      who newly establishes a FL homestead AFTER January 1 of tax_year does
+      not own/occupy it as of Jan 1 of tax_year, so they are first eligible
+      for exemption year tax_year + 1 and must file DR-501 by March 1,
+      tax_year + 1. The interview flag (flags.fl_new_homestead, "newly
+      established this year") is year-N semantics; the event itself is
+      emitted for March 1 of tax_year + 1 — the same look-ahead-year
+      pattern events_fbar uses (statutory deadline computed against
+      tax_year + 1, the filing year, while the UID stays keyed to the
+      generating tax_year for regeneration stability). Renewals are
+      automatic in most counties. Round-10 P2: `/tax-setup`'s interview
+      does NOT set this flag for an establishment date of exactly January 1
+      of tax_year — that taxpayer already meets the January-1 test for
+      tax_year itself, so it's routed to fl_homestead_unfiled below
+      instead; this flag is for AFTER-January-1 establishment only.
+    - Homestead exemption application, INITIAL filing NOT YET MADE
+      (flags.fl_homestead_unfiled): a taxpayer who already owned and
+      occupied a FL homestead as of January 1 of tax_year but has not yet
+      filed DR-501 needs a CURRENT-year March 1 reminder — the gap
+      fl_new_homestead's forward-looking event misses (a homestead
+      established late in tax_year - 1, OR exactly ON January 1 of
+      tax_year itself, is eligible NOW, in tax_year, not tax_year + 1).
+      Distinct UID/flag from fl_new_homestead so both events can coexist
+      without colliding (e.g. a taxpayer who forgot to file last
+      year's newly-established homestead AND is asking about eligibility
+      again this year).
+    - Tangible personal property return (Form DR-405): due April 1 of
+      tax_year with the county property appraiser (F.S. 193.062) for
+      business tangible personal property physically located in Florida as
+      of Jan 1 of tax_year; a TIMELY initial filing is required to claim the
+      $25,000 exemption (F.S. 196.183) for tax_year >= _FL_TPP_EXEMPTION_YEAR
+      (2008) — the exemption was created by Fla. Amendment 1 (approved Jan
+      2008) and did not exist for earlier years, so a pre-2008 description
+      omits the exemption promise and keeps only the filing deadline +
+      penalties (round-4 finding D: DR-405 itself long predates 2008 and
+      this module accepts tax_year back to _MIN_YEAR=2000, so an unqualified
+      exemption sentence would misdescribe those years); late filing
+      5%/month up to 25%. Round-7 finding D: the 2008+ description also
+      notes the F.S. 196.183 CONTINUING-FILER WAIVER — after a timely
+      INITIAL DR-405 establishes the exemption, subsequent annual returns
+      are generally waived while value stays ≤ $25,000 (unless the
+      appraiser requests one), so an otherwise-truthful reader shouldn't
+      read the annual reminder as "you must file every single year." The
+      calendar module has no per-taxpayer filing-history/value input, so it
+      cannot decide whether THIS year's filing is actually required — that
+      decision (and whether flags.fl_business_tangible_property is set at
+      all) belongs to /tax-setup's interview; the reminder itself still
+      fires every year the flag is set, as a "check whether you owe DR-405
+      this year" prompt rather than an unconditional filing demand. Gated
+      on flags.fl_business_tangible_property. DR-405 has no eligibility
+      look-ahead, so it stays in tax_year.
+
+    Unlike the L1 state convention (CA 540-ES / PTET roll past weekends),
+    these COUNTY deadlines do NOT roll at all — the event stays ON the
+    statutory date even when it falls on a weekend (Codex round-19 P2): no
+    governing Florida rollover rule was verified for county property
+    filings, and an alert moved to Monday would have a taxpayer in a
+    non-rolling county file late. The weekend caveat lives in
+    _fl_county_observed_note (NOT the shared _observed_note) — these are
+    COUNTY filings, not federal acts, so citing §7503 here would be a
+    false procedural claim.
+
+    Gating (see build_events): ALL three sub-events are FLAG-driven,
+    independent of the owner's address.state. DR-405 follows property
+    SITUS (tangible personal property tax is assessed where the assets
+    sit — a non-FL-resident with business equipment in Florida still owes
+    the county filing). The two homestead events were residence-gated
+    until Codex round-25 P2: F.S. 196.031 extends the homestead exemption
+    to property maintained as the permanent residence of someone legally
+    or naturally dependent upon the OWNER, so a non-FL-resident owner can
+    hold an eligible FL homestead — the /tax-setup interview owns the
+    eligibility screening and the calendar trusts the asserted flags,
+    the same way PTET gates on entity state rather than residence (for a
+    different reason — PTET is an entity-level election).
+    """
+    _validate_tax_year(tax_year)
+    events: list[CalendarEvent] = []
+    if new_homestead:
+        elig_year = tax_year + 1
+        stat = datetime.date(elig_year, 3, 1)
+        events.append(CalendarEvent(
+            uid=f"state-property-fl-homestead-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"FL homestead exemption application due ({elig_year})",
+            date=stat,
+            description=(
+                f"Form DR-501 homestead exemption application for exemption "
+                f"year {elig_year} is due March 1, {elig_year}, based on "
+                f"ownership and occupancy as of January 1, {elig_year} "
+                f"(F.S. 196.011). First-year filing; renewals are automatic "
+                f"in most counties. Note: claiming FL homestead while "
+                f"retaining an out-of-state residency-based benefit (e.g. "
+                f"NY STAR) is disqualifying and a domicile-audit red flag."
+                + _fl_county_observed_note(stat)
+            ),
+            category="state_property",
+        ))
+    if homestead_unfiled:
+        stat = datetime.date(tax_year, 3, 1)
+        events.append(CalendarEvent(
+            uid=f"state-property-fl-homestead-initial-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"FL homestead exemption application due ({tax_year}) — initial filing",
+            date=stat,
+            description=(
+                f"Form DR-501 homestead exemption application for exemption "
+                f"year {tax_year} is due March 1, {tax_year}, based on "
+                f"ownership and occupancy as of January 1, {tax_year} "
+                f"(F.S. 196.011). This is an INITIAL filing for a homestead "
+                f"already established as of January 1, {tax_year} (whether "
+                f"established in a prior year or exactly ON January 1, "
+                f"{tax_year} — both routes set this flag) that has not yet "
+                f"been "
+                f"claimed — file now to start the exemption; renewals are "
+                f"automatic in most counties once filed. Note: claiming FL "
+                f"homestead while retaining an out-of-state residency-based "
+                f"benefit (e.g. NY STAR) is disqualifying and a "
+                f"domicile-audit red flag."
+                + _fl_county_observed_note(stat)
+            ),
+            category="state_property",
+        ))
+    if business_tpp:
+        stat = datetime.date(tax_year, 4, 1)
+        # Round-4 finding D: the $25,000 exemption (F.S. 196.183) took effect
+        # for TY2008+ (Fla. Amendment 1, approved Jan 2008) — DR-405 itself
+        # predates that, and this module accepts tax_year back to _MIN_YEAR
+        # (2000), so an unqualified exemption promise misdescribes pre-2008
+        # years. Pre-2008 keeps the filing deadline + penalties only.
+        exemption_note = (
+            f" A timely initial filing is required to claim the $25,000 "
+            f"exemption (F.S. 196.183). Once that initial return is filed, "
+            f"subsequent annual returns are generally WAIVED while the "
+            f"property's value stays at or below $25,000 — unless the "
+            f"county property appraiser requests one (F.S. 196.183); this "
+            f"reminder recurs every year regardless, since eligibility for "
+            f"the waiver can change year to year."
+        ) if tax_year >= _FL_TPP_EXEMPTION_YEAR else ""
+        events.append(CalendarEvent(
+            uid=f"state-property-fl-dr405-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"FL tangible personal property return due ({tax_year})",
+            date=stat,
+            description=(
+                f"Form DR-405 tangible personal property return for business "
+                f"tangible personal property located in Florida on January "
+                f"1, {tax_year} is due April 1 with the county property "
+                f"appraiser (F.S. 193.062). Applies based on where the "
+                f"property SITS, not where you reside — you can owe this "
+                f"even if you live outside Florida."
+                + exemption_note +
+                f" Late filing: 5%/month penalty up to 25%; "
+                f"failure to file: 25%."
+                + _fl_county_observed_note(stat)
+            ),
+            category="state_property",
+        ))
+    return events
+
+
 def events_ptet(tax_year: int, *, state: str | None,
                 has_k1_income: bool) -> list[CalendarEvent]:
     """State pass-through entity tax election reminders.
@@ -910,6 +1120,39 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
         primary_subject_to_rmd=_strict_bool(flags, "subject_to_rmd_primary"),
         spouse_subject_to_rmd=_strict_bool(flags, "subject_to_rmd_spouse"),
     ))
+
+    # FL homestead deadlines follow the ASSERTED homestead flags, NOT the
+    # owner's resident state (Codex round-25 P2 — this REPLACED the
+    # pre-round-25 residence gate): F.S. 196.031 extends the exemption to
+    # property maintained as the permanent residence of someone legally or
+    # naturally dependent upon the owner, so a non-FL-resident owner whose
+    # FL home is a dependent's permanent residence can be eligible — an
+    # address.state == "FL" gate would suppress that owner's real DR-501
+    # deadline. The flags are user-asserted at /tax-setup (like
+    # subject_to_rmd_*), so the interview owns eligibility screening; the
+    # calendar trusts the assertion — the same flag-driven pattern as
+    # DR-405's situs gate below.
+    events.extend(events_fl_property(
+        tax_year,
+        business_tpp=False,
+        new_homestead=_strict_bool(flags, "fl_new_homestead"),
+        homestead_unfiled=_strict_bool(flags, "fl_homestead_unfiled"),
+    ))
+
+    # FL tangible personal property (DR-405), by contrast, follows the
+    # property's SITUS, not the taxpayer's residence — tangible personal
+    # property tax is assessed where the assets physically sit, so a
+    # non-FL-resident (e.g. a GA resident with FL business equipment) still
+    # owes the county filing. Gated on flags.fl_business_tangible_property
+    # ALONE, independent of resident_state — deliberately NOT folded into
+    # the residence-gated block above.
+    if _strict_bool(flags, "fl_business_tangible_property"):
+        events.extend(events_fl_property(
+            tax_year,
+            business_tpp=True,
+            new_homestead=False,
+            homestead_unfiled=False,
+        ))
 
     has_k1 = _strict_bool(flags, "has_k1_income")
 

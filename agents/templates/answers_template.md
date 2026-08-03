@@ -67,6 +67,8 @@ Last updated: {{DATE}}
 | State payments | |
 | **State refund/(owed)** | |
 
+_(State rows: for no-income-tax states, replace with one row "State: none — no individual income tax".)_
+
 ---
 
 ## Resolved Questions

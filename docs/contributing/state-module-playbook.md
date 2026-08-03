@@ -23,6 +23,22 @@ else — the PDF and the verify diff — is section-generic and picks your
 state up automatically once the section exists (the YoY review is NOT:
 its state movers are registered in step 5).
 
+## Variant: no-income-tax states (`type: "none"`)
+
+FL is the worked example. The state template carries `type: "none"` +
+`no_income_tax: true` and deliberately NO `brackets`/`standard_deduction`
+keys (the freshness walker flags every empty list — structure out what you
+will never fetch). The result section is INFORMATIONAL (an affirmative
+no-return statement) with no computed-evidence pair — state that non-goal in
+your spec. Register: `STATE_SECTION_KEYS`, `OPTIONAL_SECTIONS`,
+`capabilities._NO_INCOME_TAX_STATES` (+ `_state_note`). Do NOT register a
+tie-out withholding category (no Box 17 exists — both-halves-or-neither →
+neither) or a withholding true-up block. The federal Schedule A sales-tax
+election is the state's one computation (`compute_sales_tax_deduction` →
+`compute_schedule_a state_local_sales_taxes`). States with a NON-income tax
+base (WA's capital-gains excise) are NOT `type: "none"` — they get their own
+regime type and module.
+
 ## Step 0 — Answer the state questionnaire first
 
 The CA sharp edges below all cost a review round each. Ask them about YOUR
