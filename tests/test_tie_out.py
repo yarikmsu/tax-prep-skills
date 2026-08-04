@@ -888,11 +888,11 @@ def test_every_category_documented_in_tax_parse_skill():
     from pathlib import Path
     from agents.lib.tie_out import CATEGORY_TARGETS, _INFORMATIONAL
     skill = (Path(__file__).resolve().parent.parent
-             / "agents/skills/tax-parse.md").read_text()
+             / ".agents/skills/tax-parse/SKILL.md").read_text()
     for cat in sorted(set(CATEGORY_TARGETS) | set(_INFORMATIONAL)):
         assert f"`{cat}`" in skill, (
             f"tie-out category {cat!r} is registered but never documented "
-            f"in agents/skills/tax-parse.md — parse subagents can't emit "
+            f"in .agents/skills/tax-parse/SKILL.md — parse subagents can't emit "
             f"it, so the tie never fires (register both halves or neither)")
 
 

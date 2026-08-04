@@ -2,7 +2,7 @@
 """Tax law data fetcher — provides cached tax rates/brackets/thresholds.
 
 IMPORTANT: This module provides structure and caching for tax rates that are
-fetched at runtime via WebSearch/WebFetch by Claude Code skills. The only
+fetched at runtime from the web by the tax-* skills. The only
 hardcoded values are structural constants that rarely change:
   - Additional Medicare Tax: 0.9%, thresholds $200K/$250K/$125K
   - NIIT: 3.8%, thresholds $200K/$250K/$125K
@@ -94,7 +94,7 @@ def save_tax_law(year: int, data: dict, workspace: str = ".") -> str:
     to_save["_meta"] = {
         "tax_year": year,
         "fetched": datetime.now().isoformat(),
-        "source": "IRS.gov / state tax authority / Claude Code WebSearch",
+        "source": "IRS.gov / state tax authority / web search",
     }
 
     # Ensure parent directory exists
@@ -122,7 +122,7 @@ def save_tax_law(year: int, data: dict, workspace: str = ".") -> str:
 def create_empty_tax_law(year: int) -> dict:
     """Create empty tax law structure for a given year.
 
-    Skills populate this by fetching from IRS.gov via WebSearch.
+    Skills populate this by fetching from IRS.gov over the web.
     All values are None until fetched — skills MUST fill them in.
     """
     return {
@@ -336,7 +336,7 @@ def create_empty_tax_law(year: int) -> dict:
 
 
 def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
-    """Create empty state tax law structure. Filled by WebSearch.
+    """Create empty state tax law structure. Filled from a web search.
 
     `tax_year` is OPTIONAL and fully backward compatible (defaults to None,
     the prior no-arg behavior/signature). It is consulted ONLY to resolve
@@ -478,7 +478,7 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
     return {
         "code": state,
         "name": state,
-        "note": "State template not pre-built. Fetch rates via WebSearch.",
+        "note": "State template not pre-built. Fetch rates from the web.",
         "standard_deduction": {"single": None, "mfj": None},
         "brackets": [],
     }
@@ -487,7 +487,7 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
 _FRESHNESS_DAYS = 14  # Data older than this is considered STALE
 
 # H4 source pinning: authoritative sources a fetched rate/bracket may be pinned
-# to. An LLM WebSearch can surface a blog or a stale aggregator; recording a URL
+# to. A web search can surface a blog or a stale aggregator; recording a URL
 # from a non-primary host is treated as UNVERIFIED (→ INCOMPLETE) so a
 # non-primary figure can't silently flow into a filed return.
 #
@@ -1133,7 +1133,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         status = "INCOMPLETE"
         recommendation = (
             f"Tax law data has {len(null_fields)} unfilled field(s). "
-            "Re-fetch missing values via WebSearch."
+            "Re-fetch missing values from the web."
         )
     elif age_days is None:
         status = "STALE"
@@ -1145,7 +1145,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         status = "STALE"
         recommendation = (
             f"Tax law data is {age_days} days old. "
-            "WebSearch for new legislation since fetch date, re-fetch if found."
+            "Search the web for new legislation since the fetch date, re-fetch if found."
         )
     else:
         status = "FRESH"

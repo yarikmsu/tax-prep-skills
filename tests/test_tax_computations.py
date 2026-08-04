@@ -2610,7 +2610,7 @@ class TestCharitableNonItemizer:
         assert r["allowed"] == 0.0
         # Skill side: /tax-compute must guard the tilt on mandatory itemization.
         compute_md = " ".join((Path(__file__).resolve().parent.parent
-                      / "agents/skills/tax-compute.md").read_text().split())
+                      / ".agents/skills/tax-compute/SKILL.md").read_text().split())
         assert "mfs_spouse_itemizes" in compute_md
         assert "63(c)(6)(A)" in compute_md
         assert "mandatory itemization" in compute_md.lower()
@@ -2728,7 +2728,7 @@ class TestEquityCompWiring:
             (self._repo() / "agents/templates/taxpayer_profile_template.json").read_text())
         for flag in ("has_rsu_vesting", "has_espp"):
             assert flag in template["flags"], flag
-        setup_md = (self._repo() / "agents/skills/tax-setup.md").read_text()
+        setup_md = (self._repo() / ".agents/skills/tax-setup/SKILL.md").read_text()
         assert "has_rsu_vesting" in setup_md and "has_espp" in setup_md
 
     def test_schedule_d_rows_carry_adjustment_and_code_b_note(self):
@@ -2753,7 +2753,7 @@ class TestEquityCompWiring:
         from agents.lib.tie_out import CATEGORY_TARGETS, _INFORMATIONAL
         assert "employer_stock_basis_adjustment" in CATEGORY_TARGETS
         assert "espp_purchase_info" in _INFORMATIONAL
-        parse_md = (self._repo() / "agents/skills/tax-parse.md").read_text()
+        parse_md = (self._repo() / ".agents/skills/tax-parse/SKILL.md").read_text()
         assert "employer_stock_basis_adjustment" in parse_md
         assert "espp_purchase_info" in parse_md
 
@@ -2835,9 +2835,9 @@ class TestQBIMinimum:
         template = json.loads(
             (repo / "agents/templates/taxpayer_profile_template.json").read_text())
         assert "qbi_active_trade" in template["flags"]
-        setup_md = (repo / "agents/skills/tax-setup.md").read_text()
+        setup_md = (repo / ".agents/skills/tax-setup/SKILL.md").read_text()
         assert "qbi_active_trade" in setup_md
-        compute_md = (repo / "agents/skills/tax-compute.md").read_text()
+        compute_md = (repo / ".agents/skills/tax-compute/SKILL.md").read_text()
         assert "flags.qbi_active_trade" in compute_md
 
 
@@ -4448,7 +4448,7 @@ class TestBigTicketQualifyingClassesDoc:
         return Path(__file__).resolve().parent.parent
 
     def test_setup_md_enumerates_classes_and_warns_against_ordinary_purchases(self):
-        setup_md = (self._repo() / "agents/skills/tax-setup.md").read_text()
+        setup_md = (self._repo() / ".agents/skills/tax-setup/SKILL.md").read_text()
         for term in ("motor vehicle", "boat", "aircraft", "renovation"):
             assert term in setup_md, f"{term!r} missing from tax-setup.md"
         # The old open-ended invitation must be gone.
@@ -4458,7 +4458,7 @@ class TestBigTicketQualifyingClassesDoc:
         assert "double-count" in setup_md
 
     def test_compute_md_references_same_enumerated_classes(self):
-        compute_md = (self._repo() / "agents/skills/tax-compute.md").read_text()
+        compute_md = (self._repo() / ".agents/skills/tax-compute/SKILL.md").read_text()
         for term in ("motor vehicle", "boat", "aircraft", "renovation"):
             assert term in compute_md, f"{term!r} missing from tax-compute.md"
         assert "furniture" in compute_md

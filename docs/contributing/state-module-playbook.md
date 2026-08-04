@@ -94,7 +94,7 @@ Add a state entry to `create_state_template(state)` next to `"CA"`:
 - Add absent-key guards to `check_freshness` for any block whose absence
   must nag (see the CA `itemized_phaseout` precedent) and extend the
   freshness fixtures in `tests/test_tax_law_fetcher.py`.
-- **Wire the fetch**: extend `agents/skills/tax-setup.md` step 4 with one
+- **Wire the fetch**: extend `.agents/skills/tax-setup/SKILL.md` step 4 with one
   WebSearch bullet per FETCHED field of your block, mapped to its JSON
   path (CA-precedent style — the generic other-state fallback fetches
   only brackets + standard deduction, so unfetched fields hard-error
@@ -136,7 +136,7 @@ guessed number.
 
 ## Step 4 — `/tax-compute` step 10 branch
 
-Add your state branch beside the CA one in `agents/skills/tax-compute.md`
+Add your state branch beside the CA one in `.agents/skills/tax-compute/SKILL.md`
 step 10: starting-point derivation, additions/subtractions, tax from the
 fetched brackets, credits, surtaxes, withholding, balance. Instruct writing
 every field your template defines (input echoes included — see the
@@ -151,8 +151,8 @@ Grep-verify each of these — they are the places "state" is enumerated:
 |---|---|
 | `projection.STATE_SECTION_KEYS` | your result-section key (enables the prior-year state gate) |
 | `yoy_diff` | RESTRUCTURE `STATE_MOVER_FIELDS` per-section (it is a flat CA-only list gated on `california_540` in `_state_fields_present` — appending NY fields to it would gate NY movers on CA sections) AND add your section key to `OPTIONAL_SECTIONS` |
-| `tie_out.CATEGORY_TARGETS` **paired with `agents/skills/tax-parse.md`** | a `state_withholding_<xx>` category → your section's withholding field, AND the matching `W-2 box 17 (<XX>) → state_withholding_<xx>` row in tax-parse.md's step-6.5 category table. **Both halves or neither**: the tie-out only checks categories the ledger EMITS, so a registered-but-never-emitted category is dead protection (the gate passes vacuously with your state's withholding unverified), and a parse subagent improvising the name before registration hard-errors the whole ledger. A doc-sync test enforces the pairing. |
-| `agents/skills/tax-setup.md` step 4 | per-field WebSearch fetch bullets for your block (see step 1 — the generic fallback fetches brackets + standard deduction only) |
+| `tie_out.CATEGORY_TARGETS` **paired with `.agents/skills/tax-parse/SKILL.md`** | a `state_withholding_<xx>` category → your section's withholding field, AND the matching `W-2 box 17 (<XX>) → state_withholding_<xx>` row in tax-parse.md's step-6.5 category table. **Both halves or neither**: the tie-out only checks categories the ledger EMITS, so a registered-but-never-emitted category is dead protection (the gate passes vacuously with your state's withholding unverified), and a parse subagent improvising the name before registration hard-errors the whole ledger. A doc-sync test enforces the pairing. |
+| `.agents/skills/tax-setup/SKILL.md` step 4 | per-field WebSearch fetch bullets for your block (see step 1 — the generic fallback fetches brackets + standard deduction only) |
 | `capabilities._state_note` | upgrade your state from the bracket-estimate note to a depth note — **do this LAST (step 7)** |
 | `retirement_dashboard` sets | `_HSA_NON_CONFORMING_STATES`, `_IRA_DEDUCTION_NONCONFORMING_STATES`, `_RETIREMENT_DEFERRAL_NONCONFORMING_STATES` if your state belongs |
 | `tax_calendar.py` **and** `agents/lib/ptet.py` | weighted estimated-payment events if not equal quarters (CA-ES precedent); PTET: BOTH modules carry independent `_PTET_STATES` + `_PTET_WINDOWS` copies — update both or neither |
@@ -166,8 +166,9 @@ Grep-verify each of these — they are the places "state" is enumerated:
 - Cover: bracket math, each addition/subtraction, credit ordering,
   presence/scaffold gating, validator rejections (bool/NaN/negative),
   freshness fixtures, and one end-to-end result-section shape test.
-- Update the test-count line in `CLAUDE.md` (enforced habit) and keep
-  fixtures under `tests/fixtures/` (PII-scan allowlist).
+- Update the test-count line in `docs/contributing/test-invariants.md`
+  (enforced habit) and keep fixtures under `tests/fixtures/` (PII-scan
+  allowlist).
 
 ## Step 7 — Honesty surfaces
 
@@ -192,6 +193,7 @@ Grep-verify each of these — they are the places "state" is enumerated:
 
 `pytest tests/` green with your additions; `/tax-setup` fetches your block;
 a synthetic profile computes your section end-to-end; the tie-out passes
-with your withholding category; the capability note tells the truth; CLAUDE.md
-test count + your state's depth description updated; spec written from
+with your withholding category; the capability note tells the truth; the
+`docs/contributing/test-invariants.md` test count + your state's depth
+description in `AGENTS.md` updated; spec written from
 `docs/superpowers/specs/TEMPLATE-state-module.md`.

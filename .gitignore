@@ -41,7 +41,11 @@ __pycache__/
 Thumbs.db
 
 # IDE files
-.vscode/
+# Exclude .vscode CONTENTS rather than the directory: git never descends into an
+# excluded directory, so a negation under `.vscode/` would silently do nothing.
+# settings.json is checked in — it is what makes Copilot find .agents/skills.
+.vscode/*
+!.vscode/settings.json
 .idea/
 
 # Hookify local rules (machine-specific, not for sharing)

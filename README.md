@@ -1,6 +1,8 @@
-# Tax Prep Skills for Claude Code
+# Tax Prep Skills for AI Coding Agents
 
-Reusable, taxpayer-agnostic tax preparation toolkit for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Provides `/tax-*` slash commands that guide Claude through the full US federal + state return pipeline — from document parsing through IRS-perspective review.
+Reusable, taxpayer-agnostic tax preparation toolkit. Provides `/tax-*` skills that guide an AI coding agent through the full US federal + state return pipeline — from document parsing through IRS-perspective review.
+
+Runs on **OpenAI Codex, Cursor, Kimi Code, GitHub Copilot and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)**. The first four discover the skills in `.agents/skills/` automatically with no install step; Claude Code works out of the box too, and `agents/install.sh` adds a global install. Each agent has sharp edges worth knowing before your first run — cached web search silently yielding last year's tax brackets, cloud agent modes that retain your documents — all documented in [per-agent compatibility notes](docs/contributing/agents-compat.md).
 
 Works for any filing status and any tax year. **State support is California-first:** the CA Form 540 is computed in depth (Schedule CA adjustments, exemption credits, mental-health surcharge); other states get a bracket-based estimate only, and NYC, part-year-resident, and nonresident returns are not modeled. The skills are state-parameterized, so adding another state is a well-scoped contribution — see the [state-module playbook](docs/contributing/state-module-playbook.md) for the pattern (fetched-law block, result section, compute functions, registrations, tests). PRs welcome.
 
@@ -8,7 +10,8 @@ Works for any filing status and any tax year. **State support is California-firs
 
 ## Prerequisites
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
+- One of: OpenAI Codex, Cursor, Kimi Code, GitHub Copilot, or [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — see [per-agent notes](docs/contributing/agents-compat.md)
+- **Live web access from your agent** — tax figures change annually, and a cached result silently produces a wrong return. Codex in particular defaults to `web_search = "cached"`; set it to `"live"`.
 - Python 3.10+ with `pip`
 - Git (for version control and PII protection hooks)
 - `gh` CLI (optional — for creating pull requests)
@@ -25,20 +28,34 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Install skills and hooks
+# 3. Install the PII git hooks (and, for Claude Code, a global skill install)
+#    Codex / Cursor / Kimi / Copilot need no skill install — they read
+#    .agents/skills/ directly — but DO run this for the pre-commit PII guard.
 bash agents/install.sh
 
-# 4. Start Claude Code and begin
-claude
+# 4. Start your agent in this directory and begin
 ```
 
-Once inside Claude Code:
+Then ask your agent to run the setup skill — `/tax-setup 2025` where slash
+commands are supported, or "follow the tax-setup skill for 2025" otherwise:
 
 ```
 /tax-setup 2025
 ```
 
 This starts the taxpayer interview and creates your workspace.
+
+### Upgrading from a version before the multi-agent layout
+
+Skills moved from `agents/skills/tax-*.md` to `.agents/skills/<name>/SKILL.md`. If you previously ran `agents/install.sh`, your global symlinks in `~/.claude/skills/` still point at the old paths and will stop resolving after you pull — the skills simply disappear, with no error.
+
+Re-run the installer once; it overwrites the stale links in place:
+
+```bash
+git pull && bash agents/install.sh
+```
+
+Nothing else changes: your workspace files, `answers.md`, and any in-progress return are untouched.
 
 ## Workflow Overview
 
@@ -47,7 +64,7 @@ The toolkit follows a 7-step pipeline. Each step is a separate skill that can be
 ```
 /tax-setup    →  Interview taxpayer, fetch current tax law, create workspace
       ↓
-/tax-parse    →  Parse source documents (PDFs, XLSX, CSV) via parallel subagents
+/tax-parse    →  Parse source documents (PDFs, XLSX, CSV), in parallel where supported
       ↓
 /tax-compute  →  Compute all form values from parsed data
       ↓
@@ -80,11 +97,11 @@ Beyond the core pipeline, the toolkit ships lifecycle and planning skills:
 (quarterly reminder `.ics`), and the read-only planners `/tax-project`,
 `/tax-withholding`, `/tax-scenario`, `/tax-roth-convert`, `/tax-harvest`,
 `/tax-retirement`, and `/tax-ptet`, plus `/tax-parse-crypto` for exchange CSVs.
-See `CLAUDE.md` for the full architecture.
+See [`AGENTS.md`](AGENTS.md) for the architecture, and [the skill catalog](docs/contributing/skill-catalog.md) for each skill's design notes and scope limits.
 
 ### Useful Options
 
-These are natural-language instructions interpreted by Claude, not parsed CLI flags. You can also express the same intent conversationally (e.g., "only parse the foreign documents").
+These are natural-language instructions your agent interprets, not parsed CLI flags. You can also express the same intent conversationally (e.g., "only parse the foreign documents").
 
 ```
 /tax-parse --group foreign     # Parse only foreign-language documents
@@ -176,13 +193,16 @@ source .venv/bin/activate
 python3 -m pytest tests/ -v
 ```
 
-The suite (1,000+ tests — see CLAUDE.md for the current count) covers the tax computation functions with hand-computed expected values from IRS worksheets, plus the archive/rollover, projection, scenario, harvesting, calendar, retirement, PTET, and crypto-importer modules.
+The suite (2,000+ tests) covers the tax computation functions with hand-computed expected values from IRS worksheets, plus the archive/rollover, projection, scenario, harvesting, calendar, retirement, PTET, and crypto-importer modules. [What each block of the suite guarantees](docs/contributing/test-invariants.md) carries the exact current count.
 
 ### Project Structure
 
 ```
+.agents/
+└── skills/           # Skill files, one dir per skill: <name>/SKILL.md
+                      # (discovered natively by Codex/Cursor/Kimi/Copilot;
+                      #  reached by Claude Code via .claude/skills/ symlinks)
 agents/
-├── skills/           # Skill markdown files (symlinked to .claude/skills/)
 ├── templates/        # JSON/MD templates for workspace initialization
 ├── lib/              # Shared Python utilities
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction

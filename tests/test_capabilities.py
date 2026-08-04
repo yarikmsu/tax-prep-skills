@@ -436,11 +436,11 @@ def test_registry_flags_asked_by_setup_interview():
     in the template but no interview prompt ever set it, making the FEIE rule
     dead code for the standard workflow). The skill annotates each question
     with the literal flag name, so this greps for it."""
-    setup_md = (REPO / "agents/skills/tax-setup.md").read_text()
+    setup_md = (REPO / ".agents/skills/tax-setup/SKILL.md").read_text()
     for rule in C.RULES:
         assert rule.flag in setup_md, (
             f"rule {rule.rule_id!r} keys on flags.{rule.flag}, but "
-            "agents/skills/tax-setup.md never mentions that flag — the "
+            ".agents/skills/tax-setup/SKILL.md never mentions that flag — the "
             "interview cannot set it and the rule is dead code")
 
 
@@ -842,7 +842,7 @@ class TestTaxSetupNoIncomeTaxAllowlistDoc:
     research judgment."""
 
     def _setup_md(self):
-        return (REPO / "agents/skills/tax-setup.md").read_text()
+        return (REPO / ".agents/skills/tax-setup/SKILL.md").read_text()
 
     def test_open_ended_instruction_removed(self):
         setup_md = self._setup_md()

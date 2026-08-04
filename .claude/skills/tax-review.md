@@ -1,1 +1,0 @@
-/path/to/tax-prep-skills/agents/skills/tax-review.md
