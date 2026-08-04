@@ -1,6 +1,6 @@
 ---
 name: tax-setup
-description: Initialize workspace for a new tax year — interview taxpayer, fetch current tax law, create config files
+description: Initialize workspace for a new tax year — interview taxpayer, fetch current tax law, create config files. Use when starting a tax year from scratch, when taxpayer_profile.json or tax_law_<year>.json is missing, or the user mentions setting up, initializing, or beginning a return.
 ---
 
 # /tax-setup

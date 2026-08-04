@@ -1,6 +1,6 @@
 ---
 name: tax-parse
-description: Parse all source tax documents (W-2, 1099s, bank statements), in parallel where supported
+description: Parse all source tax documents (W-2, 1099s, bank statements), in parallel where supported. Use when source documents are sitting in documents/ and need to become structured summaries, or the user mentions parsing W-2s, 1099s, or statements; run tax-setup first.
 ---
 
 # /tax-parse

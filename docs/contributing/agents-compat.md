@@ -113,12 +113,13 @@ taxpayer's documents.
 
 - Agent skills are GA and enabled by default (VS Code 1.109+; JetBrains from
   2026-06-02).
-- The repository ships `.vscode/settings.json` mapping
-  `chat.agentSkillsLocations` to `.agents/skills`. VS Code's documentation and
-  loader both list that path, but the setting's **default object omits it** — so
-  without this checked-in file you would see no skills and no error. Keep the
-  file; it is also the only discovery path on Windows clones where the
-  `.claude/skills` symlinks do not materialise.
+- **`.agents/skills/` is one of VS Code's default project skill locations**,
+  alongside `.github/skills/` and `.claude/skills/` (personal: `~/.copilot/skills/`,
+  `~/.claude/skills/`, `~/.agents/skills/`). No configuration is required. The
+  repository still ships `.vscode/settings.json` pointing
+  `chat.agentSkillsLocations` at `.agents/skills`, because that is the only
+  discovery path on Windows clones where the `.claude/skills` symlinks do not
+  materialise. Harmless everywhere the default already covers it.
 - `#fetch` caches pages for roughly five minutes. Minor, but re-fetch when a
   specific figure matters.
 - `#websearch` requires the `ms-vscode` websearchforcopilot extension and a

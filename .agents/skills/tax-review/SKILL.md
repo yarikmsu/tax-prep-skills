@@ -1,6 +1,6 @@
 ---
 name: tax-review
-description: EA + IRS officer review of tax return for audit risk, missed deductions, and optimization
+description: EA + IRS officer review of tax return for audit risk, missed deductions, and optimization. Use when the user asks for a review, a second opinion, an audit-risk assessment, or missed deductions, after tax-compute and ideally after tax-verify.
 ---
 
 # /tax-review

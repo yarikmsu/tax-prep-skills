@@ -1,6 +1,6 @@
 ---
 name: tax-roth-convert
-description: Roth conversion ladder modeler — sweep conversion amounts $0–$100K, chart the marginal cost per dollar, and flag exactly which conversion trips the LTCG 0/15/20% breakpoints, NIIT, and IRMAA tiers. Federal, planning-only.
+description: Roth conversion ladder modeler — sweep conversion amounts $0–$100K, chart the marginal cost per dollar, and flag exactly which conversion trips the LTCG 0/15/20% breakpoints, NIIT, and IRMAA tiers. Federal, planning-only. Use when the user asks whether or how much to convert to a Roth, or mentions a Roth conversion ladder, filling a bracket, or IRMAA.
 ---
 
 # /tax-roth-convert — Roth Conversion Ladder Modeler

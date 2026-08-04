@@ -1,6 +1,6 @@
 ---
 name: tax-archive
-description: Archive current year's tax files into archive/{year}/ before starting a new year
+description: Archive current year's tax files into archive/{year}/ before starting a new year. Use when starting a new tax year or at year-end cutover, before running tax-setup for the following year.
 ---
 
 # /tax-archive

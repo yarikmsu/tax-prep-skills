@@ -31,8 +31,10 @@ These rules are absolute. Violating one is worse than failing the task.
   output. Summaries reference figures; they do not print identity data.
 - **Runtime files are gitignored and local-only.** `taxpayer_profile.json`,
   `result.json`, `tax_law_*.json`, `documents/`, `summaries/`, `scenarios/`,
-  `reviews/`, `holdings.json` and generated PDFs must never be committed. The
-  pre-commit PII scan is the backstop, not the plan.
+  `reviews/`, `projections/`, `archive/`, `holdings.json` and generated PDFs
+  must never be committed. `archive/` needs its own rule because year-end
+  cutover moves `documents/` and `reviews/` BENEATH it, out of reach of the
+  root-scoped patterns. The pre-commit PII scan is the backstop, not the plan.
 - **Never run a real return on a vendor cloud VM.** Cursor Cloud/Background
   Agents and similar hosted runners execute on vendor infrastructure and retain
   snapshots (Cursor: 90 days). Use a local agent session only. GitHub Copilot's
@@ -50,8 +52,36 @@ These rules are absolute. Violating one is worse than failing the task.
   constraint explicitly in every sub-task prompt you create.
 - **Encryption at rest** is assumed: users should enable FileVault (macOS) or
   BitLocker (Windows).
-- **PII scan rules are duplicated** between `scripts/pre-commit-pii-scan.sh` and
-  `.github/workflows/ci.yml` — change both together or the gate diverges.
+- **`scripts/pre-commit-pii-scan.sh` is the single PII gate.** It blocks
+  sensitive file types, sensitive filenames, and every runtime workspace
+  directory (`documents/`, `summaries/`, `reviews/`, `scenarios/`,
+  `projections/`, `archive/` — gitignored, but `git add -f` bypasses that);
+  then scans the *added* lines for full SSNs in every written form (hyphen, a
+  run of spaces, tab, dot or slash — the same separator on both sides, which is
+  what keeps a money range from reading as an SSN — or nine bare digits) and
+  high-confidence credentials, reporting file and match count and never the
+  value. The same patterns run against the PATHNAME, before any
+  exemption — a file named after an SSN discloses it whatever it contains — and
+  every path printed in a block message is redacted. `tests/fixtures/` and
+  `documents/.gitkeep` are exempt from the filename and path rules ONLY; the
+  content and pathname scans still cover them. Run with no argument it scans
+  the index (the git hook); with `<base>...<head>` it scans **each commit in
+  the range individually**, merge commits included and against their first
+  parent — a net diff hides a secret that a later commit deleted, and a
+  conflict resolution exists in neither parent. `.pii-allowlist` is read from
+  **each scanned commit** (from the index in hook mode, with no working-tree
+  fallback), so an exemption must be STAGED with the synthetic value or
+  earlier; allowlisting it afterwards does not clear the commit that leaked it.
+  Every git failure BLOCKS, and so does a `grep` that cannot RUN (`|| true`
+  cannot tell "no match" from "grep failed"). Every intermediate lives in one
+  0700 work directory removed by a single trap: the raw patch holds the
+  unredacted value. The scan
+  pins `LC_ALL=C` and `cd`s to the repository root — under a UTF-8 locale grep
+  silently skips any line that is not valid UTF-8 (one Latin-1 byte hid every
+  match on it), and a pathspec resolved from a subdirectory matched nothing
+  while still printing the clean banner. Add
+  rules in that one place — they were previously hand-mirrored into
+  `.github/workflows/ci.yml`, and four bypasses shipped to both copies at once.
 
 Git hooks are the host-side enforcement backstop and work the same on every
 agent. `bash agents/install.sh` installs them. They still fire on a plain

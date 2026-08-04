@@ -1,6 +1,6 @@
 ---
 name: tax-withholding
-description: Withholding true-up — compare YTD federal withholding against the actual computed liability in result.json, then recommend a W-4 4(c) and/or 1040-ES schedule to close the gap
+description: Withholding true-up — compare YTD federal withholding against the actual computed liability in result.json, then recommend a W-4 4(c) and/or 1040-ES schedule to close the gap. Use when the user asks whether enough tax is being withheld, wants to update a W-4, or needs an estimated-payment schedule to close a shortfall.
 ---
 
 # /tax-withholding — Federal Withholding True-Up

@@ -12,6 +12,9 @@ projections/
 projection_inputs.json
 scenarios/
 reviews/
+# Year-end cutover moves documents/ and reviews/ BENEATH archive/{year}/,
+# where the root-scoped rules above no longer reach them.
+archive/
 holdings.json
 parse_ledger.json
 crypto_transactions.json

@@ -27,75 +27,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Check for blocked file types
+      - name: Scan changed files and content
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          BLOCKED_EXTENSIONS="pdf|xlsx|xls|csv|doc|docx|png|jpg|jpeg|gif|bmp|tiff|heic|zip|tar|gz"
-          VIOLATIONS_FILE=$(mktemp)
-
-          git diff --name-only --diff-filter=ACMR "${BASE_SHA}...HEAD" | while IFS= read -r file; do
-            filename=$(basename "$file")
-
-            # Allowlist: synthetic test fixtures share filenames with real workspace
-            # files (the code under test reads result.json / taxpayer_profile.json
-            # / tax_law_*.json from a workspace directory). Anything under
-            # tests/fixtures/ is reviewed at PR time to confirm synthetic content.
-            # Keep in sync with scripts/pre-commit-pii-scan.sh.
-            case "$file" in
-              tests/fixtures/*) continue ;;
-            esac
-
-            # Check blocked extensions
-            if echo "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
-              echo "  BLOCKED FILE TYPE: $file" >> "$VIOLATIONS_FILE"
-              continue
-            fi
-
-            # Check blocked filenames
-            if [ "$filename" = "taxpayer_profile.json" ] || [ "$filename" = "result.json" ] || [ "$filename" = "answers.md" ] || [ "$filename" = "parse_ledger.json" ] || [ "$filename" = "holdings.json" ]; then
-              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
-              continue
-            fi
-
-            # Check tax_law_*.json pattern
-            if echo "$filename" | grep -qE '^tax_law_.*\.json$'; then
-              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
-              continue
-            fi
-
-            # Check FBAR_*.md pattern
-            if echo "$filename" | grep -qE '^FBAR_.*\.md$'; then
-              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
-              continue
-            fi
-
-            # Persisted /tax-review workpapers derive from PII-bearing
-            # result.json. Keep in sync with scripts/pre-commit-pii-scan.sh.
-            case "$file" in
-              reviews/*|*/reviews/*)
-                echo "  BLOCKED PATH (reviews/): $file" >> "$VIOLATIONS_FILE"
-                continue ;;
-            esac
-            if echo "$filename" | grep -qE '^[0-9]{4}-review\.md$'; then
-              echo "  BLOCKED FILENAME: $file" >> "$VIOLATIONS_FILE"
-              continue
-            fi
-          done
-
-          if [ -s "$VIOLATIONS_FILE" ]; then
-            echo ""
-            echo "=========================================="
-            echo "  CI BLOCKED — Sensitive files found"
-            echo "=========================================="
-            echo ""
-            cat "$VIOLATIONS_FILE"
-            rm -f "$VIOLATIONS_FILE"
-            exit 1
-          fi
-
-          rm -f "$VIOLATIONS_FILE"
-          echo "No blocked file types found."
+        # Calls the SAME script the pre-commit hook runs, with a commit range
+        # instead of --cached. These rules used to be hand-mirrored here, and
+        # every one had to be edited in both places or the gate diverged in
+        # silence — which is exactly how four content-scan bypasses shipped to
+        # the hook and to the copy at the same time.
+        run: bash scripts/pre-commit-pii-scan.sh "${BASE_SHA}...HEAD"
 
   security:
     name: Dependency audit

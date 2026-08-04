@@ -1,6 +1,6 @@
 # Tax Prep Skills for AI Coding Agents
 
-Reusable, taxpayer-agnostic tax preparation toolkit. Provides `/tax-*` skills that guide an AI coding agent through the full US federal + state return pipeline — from document parsing through IRS-perspective review.
+Reusable, taxpayer-agnostic tax preparation toolkit. Provides `tax-*` skills that guide an AI coding agent through the full US federal + state return pipeline — from document parsing through IRS-perspective review.
 
 Runs on **OpenAI Codex, Cursor, Kimi Code, GitHub Copilot and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)**. The first four discover the skills in `.agents/skills/` automatically with no install step; Claude Code works out of the box too, and `agents/install.sh` adds a global install. Each agent has sharp edges worth knowing before your first run — cached web search silently yielding last year's tax brackets, cloud agent modes that retain your documents — all documented in [per-agent compatibility notes](docs/contributing/agents-compat.md).
 
@@ -13,13 +13,17 @@ Works for any filing status and any tax year. **State support is California-firs
 - One of: OpenAI Codex, Cursor, Kimi Code, GitHub Copilot, or [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — see [per-agent notes](docs/contributing/agents-compat.md)
 - **Live web access from your agent** — tax figures change annually, and a cached result silently produces a wrong return. Codex in particular defaults to `web_search = "cached"`; set it to `"live"`.
 - Python 3.10+ with `pip`
-- Git (for version control and PII protection hooks)
+- **Git 2.20 or newer** — the PII scan reads added lines via
+  `git diff --output-indicator-new`, which older git does not have. The scan
+  fails closed without it, so an older git blocks every commit rather than
+  passing one unscanned.
 - `gh` CLI (optional — for creating pull requests)
 
 ## Quick Start
 
 ```bash
-# 1. Clone the repo
+# 1. Clone the repo. This directory becomes your tax workspace — your documents
+#    and computed results live here, gitignored and local-only.
 git clone https://github.com/yarikmsu/tax-prep-skills.git
 cd tax-prep-skills
 
@@ -28,22 +32,58 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Install the PII git hooks (and, for Claude Code, a global skill install)
-#    Codex / Cursor / Kimi / Copilot need no skill install — they read
-#    .agents/skills/ directly — but DO run this for the pre-commit PII guard.
-bash agents/install.sh
-
-# 4. Start your agent in this directory and begin
+# 3. Install the PII git hooks. Every agent needs these: they run host-side on
+#    `git commit`, so they protect you whichever agent you use.
+#    Claude Code users: omit --hooks-only to also get a global skill install.
+bash agents/install.sh --hooks-only
 ```
 
-Then ask your agent to run the setup skill — `/tax-setup 2025` where slash
-commands are supported, or "follow the tax-setup skill for 2025" otherwise:
+**4. Turn on live web search.** Tax brackets change every year, and a cached
+search result silently produces a return that is wrong but entirely plausible —
+no test, gate or review step in this toolkit can detect it. Codex in particular
+defaults to cached results:
 
+```toml
+# ~/.codex/config.toml
+web_search = "live"     # default is "cached" — this is not optional
 ```
-/tax-setup 2025
-```
+
+Equivalent per invocation: `codex --search`. For the other agents see the
+[per-agent notes](docs/contributing/agents-compat.md). If your agent cannot do
+live web search at all, the skills stop and ask you to paste the current figures
+with their source URL — let them.
+
+**5. Start your agent in this directory.** Put your source documents in
+`documents/`, then invoke the setup skill.
+
+Then ask your agent to run the setup skill. **How you invoke a skill differs by
+agent** — only Claude Code and Cursor use a bare slash command:
+
+| Agent | Invoke it with | List available skills |
+|---|---|---|
+| Claude Code | `/tax-setup 2025` | type `/` |
+| Cursor | type `/`, search `tax-setup` | type `/` |
+| Codex | `$tax-setup` for 2025 | `/skills` |
+| Kimi Code | `/skill:tax-setup 2025` | `/skill:` |
+| GitHub Copilot (VS Code) | "follow the tax-setup skill for 2025" | picked up automatically |
+
+If your agent has no skill mechanism at all, open
+`.agents/skills/tax-setup/SKILL.md` and tell the agent to follow it — the files
+are plain Markdown instructions, written to be executable that way.
+
+**Check that the skills were found before you start.** Every one of these agents
+fails silently when discovery does not work: you get no skill and no error. List
+them (`/skills` in Codex, `/` in Claude Code or Cursor) and confirm you see 20
+entries beginning with `tax-`.
 
 This starts the taxpayer interview and creates your workspace.
+
+> **The clone is your workspace, not just the tool.** `documents/`,
+> `taxpayer_profile.json`, `result.json`, `summaries/` and the generated PDFs are
+> created inside it. All of them are gitignored and the pre-commit hooks block
+> them, but **never push this clone** to a remote you did not create — and never
+> paste taxpayer data into a GitHub issue or pull request, where hosted coding
+> agents read it as input and the platform retains it.
 
 ### Upgrading from a version before the multi-agent layout
 
@@ -62,41 +102,41 @@ Nothing else changes: your workspace files, `answers.md`, and any in-progress re
 The toolkit follows a 7-step pipeline. Each step is a separate skill that can be run independently.
 
 ```
-/tax-setup    →  Interview taxpayer, fetch current tax law, create workspace
+tax-setup    →  Interview taxpayer, fetch current tax law, create workspace
       ↓
-/tax-parse    →  Parse source documents (PDFs, XLSX, CSV), in parallel where supported
+tax-parse    →  Parse source documents (PDFs, XLSX, CSV), in parallel where supported
       ↓
-/tax-compute  →  Compute all form values from parsed data
+tax-compute  →  Compute all form values from parsed data
       ↓
-/tax-generate →  Generate PDF summary from computed results
+tax-generate →  Generate PDF summary from computed results
       ↓
-/tax-verify   →  Cross-reference against tax software return
+tax-verify   →  Cross-reference against tax software return
       ↓
-/tax-review   →  EA + IRS officer perspective review
+tax-review   →  EA + IRS officer perspective review
       ↓
-/tax-fbar     →  Prepare FBAR filing document (if applicable)
+tax-fbar     →  Prepare FBAR filing document (if applicable)
 ```
 
 **You don't have to run all steps.** Each skill checks its prerequisites and tells you what to run first if something is missing.
 
 ## Skill Reference
 
-| Command | What It Does | Prerequisites |
+| Skill | What It Does | Prerequisites |
 |---------|-------------|---------------|
-| `/tax-setup <year>` | Interview taxpayer, fetch tax brackets/rates from IRS.gov, create `taxpayer_profile.json` and `tax_law_<year>.json` | None |
-| `/tax-parse` | Parse all source documents (W-2, 1099s, bank statements) into structured `summaries/*.md` files | `/tax-setup`, source docs in workspace |
-| `/tax-compute` | Compute federal 1040 + state return line values, write to `result.json` | `/tax-setup`, `/tax-parse` |
-| `/tax-generate` | Generate a formatted PDF summary of the return | `/tax-compute` |
-| `/tax-verify <software.pdf>` | Compare computed values against a tax software return (FreeTaxUSA, TurboTax, etc.) line by line | `/tax-compute`, software PDF |
-| `/tax-review` | Dual-perspective review: Enrolled Agent (missed deductions, optimization) + IRS officer (audit risk, red flags) | `/tax-compute` (recommended: `/tax-verify` first) |
-| `/tax-fbar` | Prepare FBAR (FinCEN 114) filing document for foreign bank accounts | `/tax-compute`, foreign account data |
+| `tax-setup <year>` | Interview taxpayer, fetch tax brackets/rates from IRS.gov, create `taxpayer_profile.json` and `tax_law_<year>.json` | None |
+| `tax-parse` | Parse all source documents (W-2, 1099s, bank statements) into structured `summaries/*.md` files | `tax-setup`, source docs in workspace |
+| `tax-compute` | Compute federal 1040 + state return line values, write to `result.json` | `tax-setup`, `tax-parse` |
+| `tax-generate` | Generate a formatted PDF summary of the return | `tax-compute` |
+| `tax-verify <software.pdf>` | Compare computed values against a tax software return (FreeTaxUSA, TurboTax, etc.) line by line | `tax-compute`, software PDF |
+| `tax-review` | Dual-perspective review: Enrolled Agent (missed deductions, optimization) + IRS officer (audit risk, red flags) | `tax-compute` (recommended: `tax-verify` first) |
+| `tax-fbar` | Prepare FBAR (FinCEN 114) filing document for foreign bank accounts | `tax-compute`, foreign account data |
 
 Beyond the core pipeline, the toolkit ships lifecycle and planning skills:
-`/tax-archive` and `/tax-rollover` (year-over-year carryforwards),
-`/tax-extend` (Form 4868) and `/tax-amend` (1040-X), `/tax-calendar`
-(quarterly reminder `.ics`), and the read-only planners `/tax-project`,
-`/tax-withholding`, `/tax-scenario`, `/tax-roth-convert`, `/tax-harvest`,
-`/tax-retirement`, and `/tax-ptet`, plus `/tax-parse-crypto` for exchange CSVs.
+`tax-archive` and `tax-rollover` (year-over-year carryforwards),
+`tax-extend` (Form 4868) and `tax-amend` (1040-X), `tax-calendar`
+(quarterly reminder `.ics`), and the read-only planners `tax-project`,
+`tax-withholding`, `tax-scenario`, `tax-roth-convert`, `tax-harvest`,
+`tax-retirement`, and `tax-ptet`, plus `tax-parse-crypto` for exchange CSVs.
 See [`AGENTS.md`](AGENTS.md) for the architecture, and [the skill catalog](docs/contributing/skill-catalog.md) for each skill's design notes and scope limits.
 
 ### Useful Options
@@ -104,15 +144,15 @@ See [`AGENTS.md`](AGENTS.md) for the architecture, and [the skill catalog](docs/
 These are natural-language instructions your agent interprets, not parsed CLI flags. You can also express the same intent conversationally (e.g., "only parse the foreign documents").
 
 ```
-/tax-parse --group foreign     # Parse only foreign-language documents
-/tax-compute --refresh         # Re-fetch tax law data before computing
-/tax-review --perspective ea   # Enrolled Agent review only
-/tax-review --perspective irs  # IRS officer review only
+tax-parse --group foreign     # Parse only foreign-language documents
+tax-compute --refresh         # Re-fetch tax law data before computing
+tax-review --perspective ea   # Enrolled Agent review only
+tax-review --perspective irs  # IRS officer review only
 ```
 
 ## What You'll Need
 
-Gather these documents before starting `/tax-parse`:
+Gather these documents before starting `tax-parse`:
 
 **Income:**
 - W-2 (wages)
@@ -134,7 +174,7 @@ Gather these documents before starting `/tax-parse`:
 - State tax refund info (1099-G)
 - HSA contribution records (Form 5498-SA)
 - Foreign bank/brokerage statements (for FBAR)
-- Tax software return PDF (for `/tax-verify`)
+- Tax software return PDF (for `tax-verify`)
 
 **Supported formats:** PDF, XLSX, CSV. Place files in the `documents/` directory.
 
@@ -151,16 +191,20 @@ This toolkit is designed to handle sensitive tax data safely.
 
 **Pre-commit hooks (installed by `agents/install.sh`):**
 
-Three layers run on every commit:
+Three layers run on every commit. They are git hooks, so they run host-side and
+fire on a plain `git commit` from any agent — they do not depend on the agent
+cooperating, or on being the same agent that installed them:
 
 1. **Branch guard** — blocks direct commits to `main`/`master`. Hard block — commit is rejected with instructions to create a feature branch.
 
-2. **File type blocker** (`scripts/pre-commit-pii-scan.sh`) — blocks commits containing sensitive file types (PDF, XLSX, CSV, images, archives) and sensitive filenames (`taxpayer_profile.json`, `result.json`, `tax_law_*.json`, `answers.md`, `FBAR_*.md`). Hard block — commit is rejected.
+2. **File and path blocker** (`scripts/pre-commit-pii-scan.sh`) — blocks sensitive file types (PDF, XLSX, CSV, images, archives), sensitive filenames (`taxpayer_profile.json`, `result.json`, `tax_law_*.json`, `answers.md`, `FBAR_*.md`, `holdings.json`, `parse_ledger.json`, …), and anything under the runtime workspace directories (`documents/`, `summaries/`, `reviews/`, `scenarios/`, `projections/`, `archive/`). Those directories are gitignored, but `git add -f` bypasses `.gitignore` — this rule does not. Hard block — commit is rejected.
 
-3. **Regex content scanner** (`.claude/hooks.json` PreCommit hook) — scans staged diffs for SSN patterns, email addresses, phone numbers, API keys, and secrets. Advisory — output is shown to Claude, who warns you if PII is detected. Allowlist (`.pii-allowlist`) suppresses known false positives.
+3. **Content scanner** (same script) — scans the *added* lines for full SSNs in every written form — separated by a hyphen, a run of spaces, a tab, a dot or a slash, or run together as nine contiguous digits and high-confidence credentials (AWS, OpenAI/Anthropic `sk-…`, GitHub `ghp_…` and `github_pat_…`), and rejects the commit if it finds one. It reports the file name and a match count, never the value itself. `.pii-allowlist` — read from the *staged* snapshot, so an unstaged local edit cannot widen it — suppresses known-synthetic values such as `000-00-0000`; the masked `XXX-XX-1234` storage format never matches. A file git classifies as binary is rejected rather than skipped, since its content cannot be scanned. Hard block — commit is rejected.
+
+CI runs the same script against the pull request, inspecting **each commit individually** rather than the net diff — so a secret added in one commit and deleted in a later one is still caught, and a commit made with `--no-verify` cannot slip through. Any git command the scan cannot run is an error, never a clean result.
 
 **Pre-push hook:**
-- Blocks all automated pushes — Claude prints the push command for you to run manually after reviewing
+- Blocks every push, including your own, so nothing leaves the machine without a deliberate review. It prints the command to use when you are ready: `git push --no-verify -u origin <branch>`
 
 **CI (GitHub Actions):**
 - Runs pytest, PII file scan, and pip-audit on every PR to `main`
@@ -199,7 +243,7 @@ The suite (2,000+ tests) covers the tax computation functions with hand-computed
 
 ```
 .agents/
-└── skills/           # Skill files, one dir per skill: <name>/SKILL.md
+└── skills/           # The skills, one dir per skill: <name>/SKILL.md
                       # (discovered natively by Codex/Cursor/Kimi/Copilot;
                       #  reached by Claude Code via .claude/skills/ symlinks)
 agents/
@@ -208,18 +252,29 @@ agents/
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction
 │   ├── tax_law_fetcher.py    # Tax law cache management
 │   └── tax_computations.py   # Parameterized tax math
-└── install.sh        # Install skills, hooks, and gitignore
+└── install.sh        # Git hooks, gitignore, optional global skill install
+AGENTS.md             # Project truth for every agent (security, architecture)
+CLAUDE.md             # Claude Code specifics; imports AGENTS.md
+docs/
+├── contributing/     # agents-compat, skill-catalog, test-invariants,
+│                     # tax-gotchas, state-module-playbook
+├── changelog/        # Per-epic implementation history
+├── roadmap/          # Product backlogs
+└── superpowers/      # Feature specs and implementation plans
 scripts/
-└── pre-commit-pii-scan.sh   # File type blocker (called by pre-commit hook)
+└── pre-commit-pii-scan.sh   # File-type blocker + content scanner
 tests/
 ├── test_tax_computations.py     # tax math functions (the largest suite)
 └── test_*.py                    # per-module suites (rollover, projection, ptet, …)
 .claude/
-└── hooks.json        # Claude Code PreCommit hook (regex PII scanner)
+└── skills/           # Relative symlinks -> ../../.agents/skills/<name>
+                      # (project-local discovery for Claude Code and Cursor)
+.vscode/settings.json # Points VS Code Copilot at .agents/skills
 .github/
 ├── workflows/ci.yml  # CI pipeline (pytest + PII scan + pip-audit)
 └── dependabot.yml    # Weekly pip dependency monitoring
-.pii-allowlist        # False positive suppression for PII scanning
+.pii-allowlist        # False-positive suppression for the PII scanners
+requirements.txt      # Pinned runtime dependencies
 ```
 
 ### Key Design Principles

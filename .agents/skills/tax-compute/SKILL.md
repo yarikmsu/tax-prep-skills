@@ -1,6 +1,6 @@
 ---
 name: tax-compute
-description: Compute all tax form values from parsed data — federal 1040 + state return
+description: Compute all tax form values from parsed data — federal 1040 + state return. Use when documents have been parsed and the user asks to compute, calculate or finalize the return, or when result.json must be produced or refreshed.
 ---
 
 # /tax-compute

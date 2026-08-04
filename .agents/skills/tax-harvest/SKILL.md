@@ -1,6 +1,6 @@
 ---
 name: tax-harvest
-description: Tax-loss harvesting scanner — reads brokerage lot data, ranks losing positions by harvestable loss, checks the §1091 wash-sale window (±30 days, all accounts pooled), and reports federal + state $ savings. Planning-only, never mutates the baseline.
+description: Tax-loss harvesting scanner — reads brokerage lot data, ranks losing positions by harvestable loss, checks the §1091 wash-sale window (±30 days, all accounts pooled), and reports federal + state $ savings. Planning-only, never mutates the baseline. Use when the user asks about harvesting losses, offsetting capital gains, selling losing positions, or year-end portfolio tax moves.
 ---
 
 # /tax-harvest — Tax-Loss Harvesting Scanner

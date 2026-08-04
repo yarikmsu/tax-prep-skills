@@ -6,9 +6,13 @@
 # .agents/skills/ in the cloned repo automatically — see
 # docs/contributing/agents-compat.md.
 #
-# Usage: bash agents/install.sh [--copy]
-#   --copy  Copy each SKILL.md instead of symlinking. Use on Windows clones
-#           without developer mode, where symlink creation fails.
+# Usage: bash agents/install.sh [--copy | --hooks-only]
+#   --copy        Copy each SKILL.md instead of symlinking. Use on Windows clones
+#                 without developer mode, where symlink creation fails.
+#   --hooks-only  Install the git hooks and .gitignore entries but skip the global
+#                 Claude Code skill install. Use this on Codex, Cursor, Kimi Code
+#                 or Copilot: they discover .agents/skills/ in the clone directly,
+#                 so a ~/.claude/skills tree would be inert.
 #
 # Can be run from any directory — uses script location to find source files.
 
@@ -20,12 +24,17 @@ SOURCE_DIR="$WORKSPACE_ROOT/.agents/skills"
 SKILLS_DIR="$HOME/.claude/skills"
 
 INSTALL_MODE="link"
-if [ "${1:-}" = "--copy" ]; then
-    INSTALL_MODE="copy"
-elif [ -n "${1:-}" ]; then
-    echo "Error: unknown argument '$1' (expected --copy or nothing)"
-    exit 1
-fi
+case "${1:-}" in
+    "")           ;;
+    --copy)       INSTALL_MODE="copy" ;;
+    --hooks-only) INSTALL_MODE="hooks-only" ;;
+    *)
+        echo "Error: unknown argument '$1' (expected --copy, --hooks-only, or nothing)"
+        exit 1 ;;
+esac
+
+installed=()
+if [ "$INSTALL_MODE" != "hooks-only" ]; then
 
 if [ ! -d "$SOURCE_DIR" ]; then
     echo "Error: skills directory not found at $SOURCE_DIR"
@@ -44,7 +53,6 @@ if [ ${#skill_dirs[@]} -eq 0 ]; then
     exit 1
 fi
 
-installed=()
 for skill_dir in "${skill_dirs[@]}"; do
     name=$(basename "$skill_dir")   # e.g. tax-setup
     source_skill="${skill_dir%/}/SKILL.md"
@@ -75,33 +83,72 @@ if [ ${#installed[@]} -eq 0 ]; then
     exit 1
 fi
 
-# Create .gitignore for sensitive files if it doesn't exist
+# Report skills that no longer exist upstream. A renamed or withdrawn skill
+# otherwise stays installed and invocable, and under --copy it is
+# indistinguishable from a live one — for a toolkit whose central hazard is a
+# stale tax figure that still looks plausible, that is worth surfacing.
+#
+# REPORTED, NOT DELETED. ~/.claude/skills is shared with every other skill the
+# user has, from any source, and a `tax-` prefix does not prove we installed it.
+# Deleting someone's files to pre-empt a situation that has never arisen — no
+# skill has ever been renamed or withdrawn — is the wrong side of that trade.
+# The one unambiguous case is removed: a symlink that resolves into THIS clone's
+# .agents/skills and no longer has a target is ours by construction, already
+# broken, and shows up in the agent as a skill whose body cannot be read.
+for existing in "$SKILLS_DIR"/tax-*; do
+    [ -e "$existing" ] || [ -L "$existing" ] || continue
+    ename="${existing##*/}"
+    still_here=0
+    for name in "${installed[@]}"; do
+        [ "$name" = "$ename" ] && { still_here=1; break; }
+    done
+    [ "$still_here" -eq 1 ] && continue
+
+    link="$existing/SKILL.md"
+    target="$(readlink "$link" 2>/dev/null || true)"
+    case "$target" in
+        "$SOURCE_DIR"/*)
+            if [ ! -e "$link" ]; then
+                rm -rf "$existing"
+                echo "  Removed: $ename (dangling link into this clone)"
+                continue
+            fi
+            ;;
+    esac
+    echo "  NOTE: $SKILLS_DIR/$ename is installed but no longer in .agents/skills/."
+    echo "        If it came from this toolkit it is stale — remove it by hand."
+done
+
+fi  # end skill install (skipped under --hooks-only)
+
+# --- .gitignore -------------------------------------------------------------
+#
+# ONE list, used by BOTH the create path and the append path. They were two
+# hardcoded lists and they had already drifted: the create path was missing
+# eight patterns the append path adds, so a workspace that started WITHOUT a
+# .gitignore got a different set of protections from one that started with one.
+# The security-relevant entries are the runtime workspace directories — a
+# taxpayer's documents/ and reviews/ live there — and hand-mirroring the list
+# that protects them is the same mistake this repository already shipped once
+# between the git hook and CI.
+IGNORE_PATTERNS=(
+    "taxpayer_profile.json" "tax_law_*.json" "result.json" "parse_ledger.json"
+    "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "projections/"
+    "archive/" "scenarios/" "reviews/" "FBAR_*.md" "*.pdf" "holdings.json"
+    "crypto_transactions.json" "tax_calendar_*.ics"
+    ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"
+)
+
 GITIGNORE="$WORKSPACE_ROOT/.gitignore"
 if [ ! -f "$GITIGNORE" ]; then
-    cat > "$GITIGNORE" << 'EOF'
-# Sensitive tax data — never commit
-taxpayer_profile.json
-tax_law_*.json
-result.json
-parse_ledger.json
-answers.md
-summaries/
-documents/*
-!documents/.gitkeep
-FBAR_*.md
-*.pdf
-scenarios/
-reviews/
-holdings.json
-crypto_transactions.json
-tax_calendar_*.ics
-EOF
+    printf '%s\n' "# Sensitive tax data — never commit" > "$GITIGNORE"
+    printf '%s\n' "${IGNORE_PATTERNS[@]}" >> "$GITIGNORE"
     echo "  Created .gitignore (excludes sensitive tax data)"
 else
-    # Append sensitive patterns not already present
-    for pattern in "taxpayer_profile.json" "tax_law_*.json" "result.json" "answers.md" "parse_ledger.json" "summaries/" "documents/*" "!documents/.gitkeep" "FBAR_*.md" "*.pdf" "scenarios/" "reviews/" "holdings.json" "crypto_transactions.json" "tax_calendar_*.ics" ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"; do
+    # Append only what is missing, so a user's own entries survive.
+    for pattern in "${IGNORE_PATTERNS[@]}"; do
         if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
-            echo "$pattern" >> "$GITIGNORE"
+            printf '%s\n' "$pattern" >> "$GITIGNORE"
             echo "  Added $pattern to .gitignore"
         fi
     done
@@ -109,22 +156,105 @@ fi
 
 # Install git hooks for PII protection.
 #
-# Resolve the REAL hooks directory rather than assuming $WORKSPACE_ROOT/.git is one:
-# inside a git worktree .git is a FILE pointing elsewhere, so the naive path does not
-# exist and the PII guard would silently never install — leaving the last line of
-# defense absent exactly where agents most often work.
-GIT_COMMON_DIR="$(cd "$WORKSPACE_ROOT" && git rev-parse --git-common-dir 2>/dev/null || true)"
-case "$GIT_COMMON_DIR" in
-    "")  HOOKS_DIR="" ;;
-    /*)  HOOKS_DIR="$GIT_COMMON_DIR/hooks" ;;
-    *)   HOOKS_DIR="$WORKSPACE_ROOT/$GIT_COMMON_DIR/hooks" ;;
-esac
+# Refuse to write into a DIFFERENT repository's hooks. Nothing checked that
+# $WORKSPACE_ROOT was itself a repository root, so a toolkit unpacked inside an
+# unrelated clone resolved that clone's hooks directory and silently replaced
+# its pre-commit hook — bricking the outer project, whose commits then failed
+# looking for a scanner path that does not exist there.
+TOPLEVEL="$(cd "$WORKSPACE_ROOT" && git rev-parse --show-toplevel 2>/dev/null || true)"
+HOOKS_INSTALLED=1
+HOOKS_DIR=""
+if [ -n "$TOPLEVEL" ] && [ "$(cd "$TOPLEVEL" && pwd -P)" != "$(cd "$WORKSPACE_ROOT" && pwd -P)" ]; then
+    HOOKS_INSTALLED=0
+    echo "  WARNING: $WORKSPACE_ROOT is inside another git repository ($TOPLEVEL)."
+    echo "  Refusing to install hooks into a repository that is not this toolkit."
+    echo "  Clone the toolkit as its own repository, or run 'git init' here first."
+elif [ -n "$TOPLEVEL" ]; then
+    # `--git-path hooks` honours core.hooksPath; `--git-common-dir` does NOT.
+    # Any user running husky, lefthook, the pre-commit framework, or a corporate
+    # `core.hooksPath` got hooks written to .git/hooks — a directory git then
+    # never consults. The installer reported success, --hooks-only exited 0, and
+    # a full SSN committed cleanly. `--git-path` also still resolves correctly
+    # inside a linked worktree, which is what the previous code was written for.
+    HOOKS_PATH="$(cd "$WORKSPACE_ROOT" && git rev-parse --git-path hooks 2>/dev/null || true)"
+    case "$HOOKS_PATH" in
+        "")  HOOKS_DIR="" ;;
+        /*)  HOOKS_DIR="$HOOKS_PATH" ;;
+        *)   HOOKS_DIR="$WORKSPACE_ROOT/$HOOKS_PATH" ;;
+    esac
+
+    # ...but core.hooksPath can be GLOBAL, and then it resolves to the same
+    # directory for every repository on the machine. Installing there replaced
+    # whatever hook governed all of them, and this toolkit's PII guard then
+    # looked for scripts/pre-commit-pii-scan.sh in each OTHER repository's root,
+    # did not find it, and refused every commit there — reproduced end to end.
+    # Honouring core.hooksPath and OWNING it are different things.
+    #
+    # Containment is measured against the common git dir as well as the
+    # worktree, because in a linked worktree the hooks directory legitimately
+    # lives under the MAIN clone's .git and so is outside this working tree.
+    # Comparing only against the worktree would refuse the very case
+    # `--git-path` was adopted for.
+    if [ -n "$HOOKS_DIR" ]; then
+        _common="$(cd "$WORKSPACE_ROOT" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+        [ -n "$_common" ] || _common="$TOPLEVEL/.git"
+        _common_real="$(cd "$_common" 2>/dev/null && pwd -P || printf '%s' "$_common")"
+        _top_real="$(cd "$TOPLEVEL" && pwd -P)"
+        # The hooks dir need not exist yet, so containment is judged on its parent.
+        _hooks_real="$(cd "$(dirname "$HOOKS_DIR")" 2>/dev/null && pwd -P || true)"
+        _inside=0
+        for _base in "$_top_real" "$_common_real"; do
+            [ -n "$_hooks_real" ] || continue
+            if [ "$_hooks_real" = "$_base" ] || \
+               [ "${_hooks_real#"$_base"/}" != "$_hooks_real" ]; then
+                _inside=1
+            fi
+        done
+        if [ "$_inside" -eq 0 ]; then
+            HOOKS_INSTALLED=0
+            HOOKS_DIR=""
+            echo "  WARNING: core.hooksPath resolves outside this repository:"
+            echo "    $HOOKS_PATH"
+            echo "  That directory is shared with every repository using this setting."
+            echo "  Refusing to replace hooks that govern other projects."
+            echo "  Install the guard by hand, or unset core.hooksPath for this clone:"
+            echo "    git -C \"$WORKSPACE_ROOT\" config --unset core.hooksPath"
+        fi
+    fi
+fi
 if [ -n "$HOOKS_DIR" ]; then
     mkdir -p "$HOOKS_DIR"
 fi
+
+# Never destroy a hook this installer did not write. Another hook manager owning
+# pre-commit is a normal setup, and silently clobbering it removes a protection
+# the user chose. The marker is what distinguishes our own earlier install (safe
+# to replace) from someone else's hook (must be preserved).
+HOOK_MARKER="# tax-prep-skills-managed-hook"
+for _hook in pre-commit pre-push; do
+    [ -n "$HOOKS_DIR" ] || break
+    _path="$HOOKS_DIR/$_hook"
+    # `-e` alone is FALSE for a DANGLING symlink, so no backup was taken and the
+    # `cat >` below then FOLLOWED the link, creating the hook at its target —
+    # outside the hooks directory, where git never runs it. The installer
+    # reported success and nothing guarded commits. `-L` sees the link itself.
+    if [ -e "$_path" ] || [ -L "$_path" ]; then
+        if ! grep -qF "$HOOK_MARKER" "$_path" 2>/dev/null; then
+            mv "$_path" "$_path.pre-tax-prep-skills.bak"
+            echo "  Backed up your existing $_hook hook to $_hook.pre-tax-prep-skills.bak"
+            echo "  It no longer runs — chain it from the new hook if you still need it."
+        elif [ -L "$_path" ]; then
+            # Our own marker, but reached through a symlink: writing would still
+            # follow it out of the hooks directory. Replace it with a real file.
+            rm -f "$_path"
+        fi
+    fi
+done
+
 if [ -n "$HOOKS_DIR" ] && [ -d "$HOOKS_DIR" ]; then
     cat > "$HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 #!/bin/bash
+# tax-prep-skills-managed-hook
 # Git pre-commit hook — blocks commits to main and runs PII guard.
 
 # Block direct commits to main/master
@@ -174,6 +304,7 @@ HOOK_EOF
 
     cat > "$HOOKS_DIR/pre-push" << 'HOOK_EOF'
 #!/bin/bash
+# tax-prep-skills-managed-hook
 # Git pre-push hook — blocks automated pushes.
 echo ""
 echo "=========================================="
@@ -191,19 +322,44 @@ HOOK_EOF
     chmod +x "$HOOKS_DIR/pre-push"
     echo "  Installed pre-push hook (push blocker)"
 else
+    HOOKS_INSTALLED=0
     echo "  WARNING: could not locate a git hooks directory for $WORKSPACE_ROOT"
     echo "  Git hooks were NOT installed. PII protection is not active."
     echo "  Run this from inside a git clone of the repository and re-run install.sh."
 fi
 
 echo ""
-echo "Installed ${#installed[@]} tax skills to $SKILLS_DIR"
-# Generated from what was actually installed — a hardcoded list silently goes
-# stale every time a skill is added.
-printf 'Available commands: '
-printf '/%s ' "${installed[@]}"
-printf '\n'
-echo ""
-echo "Other agents (Codex / Cursor / Kimi Code / Copilot): no install needed —"
-echo "they discover .agents/skills/ in this repo automatically."
+if [ "$INSTALL_MODE" = "hooks-only" ]; then
+    echo "Git hooks installed. Skills were NOT copied to $SKILLS_DIR —"
+    echo "Codex, Cursor, Kimi Code and Copilot read .agents/skills/ in this clone."
+    echo "Confirm discovery with your agent's skill list (Codex: /skills)."
+else
+    echo "Installed ${#installed[@]} tax skills to $SKILLS_DIR"
+    # Generated from what was actually installed — a hardcoded list silently goes
+    # stale every time a skill is added.
+    printf 'Available commands: '
+    printf '/%s ' "${installed[@]}"
+    printf '\n'
+    echo ""
+    echo "Other agents (Codex / Cursor / Kimi Code / Copilot) do not need this —"
+    echo "they discover .agents/skills/ in this repo automatically. Next time,"
+    echo "bash agents/install.sh --hooks-only installs only the git hooks."
+fi
 echo "Per-agent sharp edges: docs/contributing/agents-compat.md"
+
+# EVERY mode, not just --hooks-only. The hooks are the security setup step
+# whichever mode installs them, and the previous guard covered only one of the
+# three — so `bash agents/install.sh` (the form README's Quick Start, Upgrading
+# and Contributing sections all use) printed "Installed 20 tax skills" and
+# exited 0 with nothing guarding commits. This check runs last so the user still
+# sees what DID get installed before being told what did not.
+if [ "$HOOKS_INSTALLED" -eq 0 ]; then
+    echo ""
+    echo "=========================================="
+    echo "  Git hooks were NOT installed"
+    echo "=========================================="
+    echo "Nothing is guarding commits in this working tree: no branch guard and"
+    echo "no PII scan. See the warning above for why. Do not put real taxpayer"
+    echo "documents here until this is resolved."
+    exit 1
+fi
