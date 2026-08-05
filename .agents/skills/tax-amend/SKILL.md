@@ -1,6 +1,7 @@
 ---
 name: tax-amend
 description: Amend a filed return — snapshot the as-filed state, apply corrected documents through the normal parse/compute path, emit the 1040-X three-column summary. Use when a return has already been filed and a corrected or late document arrives, or the user mentions amending, Form 1040-X, or a corrected 1099 or W-2.
+license: Apache-2.0
 ---
 
 # /tax-amend — Amended return (Form 1040-X)

@@ -1,6 +1,7 @@
 ---
 name: tax-calendar
 description: Generate or regenerate the quarterly reminder .ics calendar from taxpayer_profile.json. Use when the user asks about tax deadlines, quarterly estimated-payment reminders, or wants a calendar or .ics export.
+license: Apache-2.0
 ---
 
 # /tax-calendar

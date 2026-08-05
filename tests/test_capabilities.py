@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import capabilities as C  # noqa: E402
+from tests.skill_text import skill_text  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -435,12 +436,17 @@ def test_registry_flags_asked_by_setup_interview():
     ASK the question that sets each rule flag (Codex P2: lives_abroad existed
     in the template but no interview prompt ever set it, making the FEIE rule
     dead code for the standard workflow). The skill annotates each question
-    with the literal flag name, so this greps for it."""
-    setup_md = (REPO / ".agents/skills/tax-setup/SKILL.md").read_text()
+    with the literal flag name, so this greps for it.
+
+    Reads the whole tax-setup tree: the question groups live in
+    `references/interview.md`, one link-hop from SKILL.md. Scoping this to
+    SKILL.md after that move would pass because the questions are gone, which
+    is indistinguishable from their never having existed."""
+    setup_md = skill_text("tax-setup")
     for rule in C.RULES:
         assert rule.flag in setup_md, (
-            f"rule {rule.rule_id!r} keys on flags.{rule.flag}, but "
-            ".agents/skills/tax-setup/SKILL.md never mentions that flag — the "
+            f"rule {rule.rule_id!r} keys on flags.{rule.flag}, but the "
+            ".agents/skills/tax-setup/ tree never mentions that flag — the "
             "interview cannot set it and the rule is dead code")
 
 
@@ -842,7 +848,9 @@ class TestTaxSetupNoIncomeTaxAllowlistDoc:
     research judgment."""
 
     def _setup_md(self):
-        return (REPO / ".agents/skills/tax-setup/SKILL.md").read_text()
+        """The whole tax-setup tree — the state question lives in
+        `references/interview.md` since progressive disclosure."""
+        return skill_text("tax-setup")
 
     def test_open_ended_instruction_removed(self):
         setup_md = self._setup_md()

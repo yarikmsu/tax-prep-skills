@@ -1,6 +1,7 @@
 ---
 name: tax-rollover
 description: Pull prior-year carryforwards, identity, dependents (age-ticked), recurring payers, and foreign-holding (PFIC/§988) history from archive/{year}/ into the current-year workspace. Use when starting a new tax year and archive/{year-1}/ exists, or the user mentions carryforwards, prior-year data, or last year's return.
+license: Apache-2.0
 ---
 
 # /tax-rollover

@@ -1,6 +1,7 @@
 ---
 name: tax-fbar
 description: Prepare FBAR (FinCEN 114) filing document for foreign bank accounts. Use when the taxpayer has ANY foreign bank or brokerage account, or signature authority over someone else's foreign account (an employer's, a parent's, a nonprofit's) — the $10,000 aggregate test is what this skill performs, not a precondition for running it — or when the user mentions FBAR, FinCEN 114, or foreign account reporting.
+license: Apache-2.0
 ---
 
 # /tax-fbar

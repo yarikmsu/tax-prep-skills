@@ -1,6 +1,7 @@
 ---
 name: tax-retirement
 description: Mid-year retirement contribution dashboard — YTD vs max + marginal $ saved per remaining dollar across 401(k) / IRA / HSA / Mega Backdoor. Use when the user asks mid-year how much more they can contribute to a 401(k), IRA or HSA, or which account saves the most tax per additional dollar.
+license: Apache-2.0
 ---
 
 # /tax-retirement

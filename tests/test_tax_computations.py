@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from tests.skill_text import skill_text  # noqa: E402
 from agents.lib.tax_computations import (
     _coerce_numeric,
     compute_bracket_tax,
@@ -2609,8 +2610,7 @@ class TestCharitableNonItemizer:
         r = compute_charitable_non_itemizer(3000, "MFS", 2026, True, **self._CAP)
         assert r["allowed"] == 0.0
         # Skill side: /tax-compute must guard the tilt on mandatory itemization.
-        compute_md = " ".join((Path(__file__).resolve().parent.parent
-                      / ".agents/skills/tax-compute/SKILL.md").read_text().split())
+        compute_md = " ".join(skill_text("tax-compute").split())
         assert "mfs_spouse_itemizes" in compute_md
         assert "63(c)(6)(A)" in compute_md
         assert "mandatory itemization" in compute_md.lower()
@@ -2728,7 +2728,7 @@ class TestEquityCompWiring:
             (self._repo() / "agents/templates/taxpayer_profile_template.json").read_text())
         for flag in ("has_rsu_vesting", "has_espp"):
             assert flag in template["flags"], flag
-        setup_md = (self._repo() / ".agents/skills/tax-setup/SKILL.md").read_text()
+        setup_md = skill_text("tax-setup")
         assert "has_rsu_vesting" in setup_md and "has_espp" in setup_md
 
     def test_schedule_d_rows_carry_adjustment_and_code_b_note(self):
@@ -2835,9 +2835,9 @@ class TestQBIMinimum:
         template = json.loads(
             (repo / "agents/templates/taxpayer_profile_template.json").read_text())
         assert "qbi_active_trade" in template["flags"]
-        setup_md = (repo / ".agents/skills/tax-setup/SKILL.md").read_text()
+        setup_md = skill_text("tax-setup")
         assert "qbi_active_trade" in setup_md
-        compute_md = (repo / ".agents/skills/tax-compute/SKILL.md").read_text()
+        compute_md = skill_text("tax-compute")
         assert "flags.qbi_active_trade" in compute_md
 
 
@@ -4448,7 +4448,7 @@ class TestBigTicketQualifyingClassesDoc:
         return Path(__file__).resolve().parent.parent
 
     def test_setup_md_enumerates_classes_and_warns_against_ordinary_purchases(self):
-        setup_md = (self._repo() / ".agents/skills/tax-setup/SKILL.md").read_text()
+        setup_md = skill_text("tax-setup")
         for term in ("motor vehicle", "boat", "aircraft", "renovation"):
             assert term in setup_md, f"{term!r} missing from tax-setup.md"
         # The old open-ended invitation must be gone.
@@ -4458,7 +4458,7 @@ class TestBigTicketQualifyingClassesDoc:
         assert "double-count" in setup_md
 
     def test_compute_md_references_same_enumerated_classes(self):
-        compute_md = (self._repo() / ".agents/skills/tax-compute/SKILL.md").read_text()
+        compute_md = skill_text("tax-compute")
         for term in ("motor vehicle", "boat", "aircraft", "renovation"):
             assert term in compute_md, f"{term!r} missing from tax-compute.md"
         assert "furniture" in compute_md

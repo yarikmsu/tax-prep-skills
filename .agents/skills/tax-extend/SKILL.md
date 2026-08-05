@@ -1,6 +1,7 @@
 ---
 name: tax-extend
 description: File-an-extension flow — Form 4868 with the extension payment computed from the best available estimate, CA FTB 3519 payment guidance, and calendar deadline events. Use when the filing deadline is near and the return is not ready, or the user mentions an extension, Form 4868, or FTB 3519.
+license: Apache-2.0
 ---
 
 # /tax-extend — Extension (Form 4868 + state)

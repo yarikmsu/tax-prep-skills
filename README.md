@@ -69,7 +69,10 @@ agent** — only Claude Code and Cursor use a bare slash command:
 
 If your agent has no skill mechanism at all, open
 `.agents/skills/tax-setup/SKILL.md` and tell the agent to follow it — the files
-are plain Markdown instructions, written to be executable that way.
+are plain Markdown instructions, written to be executable that way. A skill is a
+**directory**: the larger ones keep their step detail in `references/*.md`
+alongside `SKILL.md`, linked from the step that needs it, so open each one as you
+reach it. `SKILL.md` on its own is not the whole skill.
 
 **Check that the skills were found before you start.** Every one of these agents
 fails silently when discovery does not work: you get no skill and no error. List
@@ -85,11 +88,21 @@ This starts the taxpayer interview and creates your workspace.
 > paste taxpayer data into a GitHub issue or pull request, where hosted coding
 > agents read it as input and the platform retains it.
 
-### Upgrading from a version before the multi-agent layout
+### Upgrading an existing clone
 
-Skills moved from `agents/skills/tax-*.md` to `.agents/skills/<name>/SKILL.md`. If you previously ran `agents/install.sh`, your global symlinks in `~/.claude/skills/` still point at the old paths and will stop resolving after you pull — the skills simply disappear, with no error.
+**Always re-run the installer after pulling.** Two layout changes break a global
+install in `~/.claude/skills/`, and only one of them is visible:
 
-Re-run the installer once; it overwrites the stale links in place:
+- **The multi-agent move.** Skills moved from `agents/skills/tax-*.md` to
+  `.agents/skills/<name>/SKILL.md`, so symlinks from an older install point at
+  paths that no longer exist — the skills simply disappear, with no error.
+- **Progressive disclosure.** The larger skills now keep their step detail in
+  `references/*.md` beside `SKILL.md`. An install predating that has only the
+  body. This one does **not** announce itself: the skill still lists, still
+  activates, and still reads as complete, while the steps it delegates are
+  missing — for `tax-compute`, most of the return.
+
+Re-run the installer once; it overwrites both in place:
 
 ```bash
 git pull && bash agents/install.sh
@@ -243,7 +256,9 @@ The suite (2,000+ tests) covers the tax computation functions with hand-computed
 
 ```
 .agents/
-└── skills/           # The skills, one dir per skill: <name>/SKILL.md
+└── skills/           # The skills, one dir per skill:
+                      #   <name>/SKILL.md        the body — always loaded
+                      #   <name>/references/*.md step detail — read on demand
                       # (discovered natively by Codex/Cursor/Kimi/Copilot;
                       #  reached by Claude Code via .claude/skills/ symlinks)
 agents/
@@ -299,6 +314,10 @@ All functions in `agents/lib/tax_computations.py` take rates/brackets as paramet
 ```bash
 python3 agents/lib/tax_computations.py
 ```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE). The disclaimer below is not modified by it.
 
 ## Disclaimer
 

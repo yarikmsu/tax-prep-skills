@@ -60,6 +60,13 @@ for skill_dir in "${skill_dirs[@]}"; do
         echo "  Skipped: $name (no SKILL.md)"
         continue
     fi
+    # A destination that is ITSELF a symlink makes every write below resolve into
+    # its target: `mkdir -p` succeeds on it silently, `ln` writes through it, and
+    # the `rm -rf` guarding references/ would delete the SOURCE tree inside the
+    # clone. Dropping the link removes only the link.
+    if [ -L "$SKILLS_DIR/$name" ]; then
+        rm -f "$SKILLS_DIR/$name"
+    fi
     mkdir -p "$SKILLS_DIR/$name"
     dest="$SKILLS_DIR/$name/SKILL.md"
     if [ "$INSTALL_MODE" = "copy" ]; then
@@ -70,10 +77,39 @@ for skill_dir in "${skill_dirs[@]}"; do
         # tracked skill file while leaving this install still a symlink.
         rm -f "$dest"
         cp "$source_skill" "$dest"
-        echo "  Copied: $name/SKILL.md"
     else
         ln -sfn "$source_skill" "$dest"
-        echo "  Linked: $name/SKILL.md"
+    fi
+
+    # A skill is a DIRECTORY, not a file. Under progressive disclosure SKILL.md
+    # carries the gates and links the procedure out to references/*.md, so
+    # installing the body ALONE leaves the agent a stub that names files it cannot
+    # open — 1588 of tax-compute's 1698 lines. Nothing errors: the agent reads a
+    # well-formed skill, finds no procedure at Step 1, and improvises the return.
+    # The Step 12.7 tie-out gate does not catch it either, because it compares
+    # parse_ledger.json against result.json and correctly-parsed documents tie out
+    # against an invented computation.
+    source_refs="${skill_dir%/}/references"
+    dest_refs="$SKILLS_DIR/$name/references"
+    # Clear first in BOTH modes. `rm -rf` on a symlink removes the link and not
+    # the tree behind it, and without this `ln -sfn` fails outright against a real
+    # directory left behind by an earlier --copy install.
+    rm -rf "$dest_refs"
+    if [ -d "$source_refs" ]; then
+        if [ "$INSTALL_MODE" = "copy" ]; then
+            cp -R "$source_refs" "$dest_refs"
+        else
+            ln -sfn "$source_refs" "$dest_refs"
+        fi
+        suffix="/ (SKILL.md + references/)"
+    else
+        suffix="/SKILL.md"
+    fi
+
+    if [ "$INSTALL_MODE" = "copy" ]; then
+        echo "  Copied: $name$suffix"
+    else
+        echo "  Linked: $name$suffix"
     fi
     installed+=("$name")
 done

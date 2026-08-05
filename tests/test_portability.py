@@ -9,6 +9,8 @@ import os
 import re
 from pathlib import Path
 
+from tests.skill_text import skill_text
+
 REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / ".agents" / "skills"
 CLAUDE_SKILLS = REPO / ".claude" / "skills"
@@ -43,6 +45,17 @@ def _frontmatter(skill_md: Path) -> dict:
 
 
 class TestSkillLayout:
+    # Skills that exceed the spec's 500-line SKILL.md limit and have not yet been
+    # restructured. This set may only SHRINK — see the paired assertion below.
+    OVERSIZED: set[str] = set()
+
+    MAX_SKILL_LINES = 500
+    MAX_NAME_CHARS = 64
+    MAX_DESCRIPTION_CHARS = 1024
+    NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    LICENSE = "Apache-2.0"
+    REF_LINK_RE = re.compile(r"references/([\w.-]+\.md)")
+
     def test_all_expected_skills_present(self):
         found = {p.name for p in _skill_dirs()}
         assert found == EXPECTED_SKILLS, (
@@ -104,6 +117,169 @@ class TestSkillLayout:
             f"descriptions with no trigger clause: {missing}. Add 'Use when ...' "
             "naming the situations, file states, and words a user would say.")
 
+    def test_every_skill_declares_the_repository_license(self):
+        """The spec's optional license field is the only license signal that
+        travels with a skill folder someone copies out of this repo — so the
+        VALUE is what matters, not merely that the key is set. A skill declaring
+        the wrong license travels exactly as far as one declaring the right one,
+        and nothing downstream re-derives it from the LICENSE file.
+        """
+        for d in _skill_dirs():
+            declared = _frontmatter(d / "SKILL.md").get("license")
+            assert declared == self.LICENSE, (
+                f"{d.name} declares license={declared!r}; the repository is "
+                f"{self.LICENSE}")
+
+    def test_the_license_file_is_what_the_skills_declare(self):
+        """Pins LICENSE itself, so the constant above cannot drift away from the
+        text it names — relicensing the repo without touching 20 frontmatter
+        blocks would otherwise leave every skill advertising the old terms."""
+        assert (REPO / "LICENSE").is_file(), "no LICENSE file"
+        text = (REPO / "LICENSE").read_text()
+        assert "Apache License" in text and "Version 2.0" in text, (
+            f"LICENSE is not the {self.LICENSE} text every skill declares")
+
+    def test_frontmatter_name_satisfies_the_spec(self):
+        for d in _skill_dirs():
+            name = _frontmatter(d / "SKILL.md").get("name", "")
+            assert len(name) <= self.MAX_NAME_CHARS, f"{d.name}: name too long"
+            assert self.NAME_RE.match(name), (
+                f"{d.name}: name {name!r} must be lowercase alphanumerics and "
+                "single hyphens, with no leading, trailing or doubled hyphen")
+
+    def test_frontmatter_description_within_the_spec_limit(self):
+        for d in _skill_dirs():
+            desc = _frontmatter(d / "SKILL.md").get("description", "")
+            assert 0 < len(desc) <= self.MAX_DESCRIPTION_CHARS, (
+                f"{d.name}: description is {len(desc)} chars "
+                f"(limit {self.MAX_DESCRIPTION_CHARS})")
+
+    def test_skill_bodies_are_under_the_line_limit(self):
+        over = []
+        for d in _skill_dirs():
+            if d.name in self.OVERSIZED:
+                continue
+            n = len((d / "SKILL.md").read_text().splitlines())
+            if n > self.MAX_SKILL_LINES:
+                over.append(f"{d.name} ({n})")
+        assert not over, (
+            f"SKILL.md over {self.MAX_SKILL_LINES} lines: {over}. Move detail "
+            "into references/ and link it one level deep from SKILL.md.")
+
+    def test_the_oversized_allowlist_only_shrinks(self):
+        """A skill that has been restructured must leave the allowlist, or the
+        list silently readmits regressions."""
+        stale = []
+        for name in sorted(self.OVERSIZED):
+            n = len((SKILLS_DIR / name / "SKILL.md").read_text().splitlines())
+            if n <= self.MAX_SKILL_LINES:
+                stale.append(f"{name} ({n})")
+        assert not stale, (
+            f"now under the limit and must be removed from OVERSIZED: {stale}")
+
+    def test_frontmatter_values_have_no_unquoted_colon(self):
+        """_frontmatter() splits on the first colon and accepts anything after
+        it. Every other agent uses a real YAML parser, where an unquoted scalar
+        containing ': ' is a parse error — and a skill that fails to parse
+        disappears with no message on exactly the agents this repo has no CI for.
+
+        Scoped to that ONE construct, and named for it. This is a heuristic, not
+        a parser: a leading `@`/`[`/`&`, a mid-value ` #`, a tab, or a duplicate
+        key would also break real YAML and none is caught here. Adding PyYAML to
+        catch them would put a dependency in requirements.txt to serve a test,
+        against a pinned-deps posture adopted for supply-chain reasons — so the
+        honest move is to narrow the claim rather than widen the check.
+        """
+        bad = []
+        for d in _skill_dirs():
+            block = (d / "SKILL.md").read_text().split("---\n", 2)[1]
+            for line in block.splitlines():
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                key, _, value = line.partition(":")
+                v = value.strip()
+                if v and v[0] not in "\"'" and ": " in v:
+                    bad.append(f"{d.name}: unquoted colon in {key.strip()!r}")
+        assert not bad, f"frontmatter would fail a strict YAML parser: {bad}"
+
+    def test_reference_files_are_one_level_deep(self):
+        """Agents partially read files reached through nested references, so
+        every reference must link DIRECTLY from SKILL.md — and every such link
+        must resolve.
+
+        All three directions are checked, because each fails silently in its own
+        way and none implies the others:
+
+        - a **dangling** link is a step the agent is told to read and cannot, so
+          the procedure is simply absent at that point in the return;
+        - an **unlinked** file is content no agent ever loads;
+        - a **nested** file defeats `tests/skill_text.py`, which globs
+          `references/*.md` exactly one level down. Text moved into a
+          subdirectory drops out of every doc-sync assertion at once while they
+          all stay green — the precise vacuity that helper exists to prevent.
+        """
+        for d in _skill_dirs():
+            refs = d / "references"
+            body = (d / "SKILL.md").read_text()
+
+            for link in sorted(set(self.REF_LINK_RE.findall(body))):
+                assert (refs / link).is_file(), (
+                    f"{d.name}/SKILL.md links references/{link}, which does not "
+                    "exist — the agent is sent to read a file that is not there")
+
+            if not refs.is_dir():
+                continue
+            for f in sorted(refs.rglob("*.md")):
+                rel = f.relative_to(refs)
+                assert len(rel.parts) == 1, (
+                    f"{d.name}/references/{rel} is nested. Flatten it: both the "
+                    "linkage check here and skill_text() stop one level down")
+                assert f"references/{f.name}" in body, (
+                    f"{d.name}/references/{f.name} is not linked from SKILL.md")
+
+    def test_interview_contents_matches_where_the_groups_actually_live(self):
+        """A reference file's own table of contents must not claim a section the
+        file does not contain.
+
+        `tax-setup` splits its interview into `references/interview.md`, but
+        Group 10 stays in `SKILL.md` on purpose: Step 9.5 runs `/tax-rollover`
+        between them, and the rollover pre-fills the prior-year overpayment
+        Group 10 asks about. Asking it inside the reference would have the
+        taxpayer recall from memory a figure the next step supplies.
+
+        That makes the TOC load-bearing. It listed Group 10 with no note, so an
+        agent walking the reference in order hit EOF one group short and the
+        interview quietly ended early — the estimated-payment questions never
+        asked. Neither the atom-survival audit nor the line-level diff could see
+        it: the text was not deleted, only moved, so both reported zero loss
+        while the navigation was broken. This is the check that sees it.
+        """
+        skill_dir = SKILLS_DIR / "tax-setup"
+        body = (skill_dir / "SKILL.md").read_text()
+        ref = (skill_dir / "references" / "interview.md").read_text()
+
+        group_re = re.compile(r"\*\*Group ([\d.]+) —")
+        here = set(group_re.findall(ref))
+        there = set(group_re.findall(body))
+
+        toc = re.findall(r"^- Group ([\d.]+) —(.*)$", ref, re.M)
+        assert toc, "interview.md lost its Contents block"
+        for num, rest in toc:
+            assert num in here or num in there, (
+                f"interview.md lists Group {num}, which exists in neither "
+                "interview.md nor SKILL.md")
+            if num not in here:
+                assert "SKILL.md" in rest, (
+                    f"interview.md lists Group {num} but does not contain it, "
+                    "and the entry does not say where it lives — an agent "
+                    "reading this file in order ends the interview early")
+
+        # And the reference must not simply run out: the reader has to be sent
+        # back for whatever comes after it.
+        assert "SKILL.md" in ref[-800:], (
+            "interview.md ends without pointing the reader back to SKILL.md; "
+            "the last group in the file is not the last group in the interview")
+
     def test_old_flat_location_is_gone(self):
         assert not (REPO / "agents" / "skills").exists(), (
             "agents/skills/ must not survive the move — a stale copy would drift "
@@ -148,7 +324,11 @@ class TestNeutralizationLint:
     def test_no_claude_only_invocations(self):
         offenders = []
         for d in _skill_dirs():
-            norm = self._normalize((d / "SKILL.md").read_text())
+            # The WHOLE skill tree, not just SKILL.md: a Claude-only tool named
+            # in a references/ file is exactly as unfollowable for a Codex or
+            # Kimi user, and scoping this to SKILL.md would have quietly dropped
+            # coverage of every line progressive disclosure relocated.
+            norm = self._normalize(skill_text(d.name))
             for pat in self.DENY:
                 start = 0
                 while (hit := norm.find(pat, start)) != -1:
@@ -173,7 +353,9 @@ class TestNeutralizationLint:
         """A cached or missing web result must stop the run, not silently yield
         prior-year figures — the failure mode with no downstream detector."""
         for name in self.WEB_DEPENDENT:
-            low = (SKILLS_DIR / name / "SKILL.md").read_text().lower()
+            # The fetch INSTRUCTIONS may legitimately live in references/ — that
+            # is ordinary step detail — so look for them across the whole tree.
+            low = skill_text(name).lower()
             assert "search the web" in low or "searching the web" in low, (
                 f"{name} is registered as web-dependent but no longer tells the "
                 "agent to search the web — either the fetch moved (update this "
@@ -188,7 +370,15 @@ class TestNeutralizationLint:
             # failure mode with no downstream detector: no test, tie-out or
             # review step sees a plausible wrong bracket. Requiring the two words
             # in ONE sentence is what makes the negation impossible to phrase.
-            sentences = re.split(r"(?<=[.!?])\s+|\n", low)
+            #
+            # And it must be in SKILL.md, NOT a references/ file: the whole body
+            # of SKILL.md loads when the skill activates, while a reference is
+            # read only if the agent chooses to. A gate the agent can decline to
+            # load is a gate that silently over-states completeness, so the
+            # freshness STOP is deliberately held to the stricter location while
+            # the search list above is not.
+            always_loaded = (SKILLS_DIR / name / "SKILL.md").read_text().lower()
+            sentences = re.split(r"(?<=[.!?])\s+|\n", always_loaded)
             assert any("paste" in s and "stop" in s for s in sentences), (
                 f"{name} tells the agent to search the web but no single sentence "
                 "tells it to STOP and ask the user to PASTE current figures; a "
@@ -197,7 +387,7 @@ class TestNeutralizationLint:
 
     def test_parallel_skills_document_a_sequential_fallback(self):
         for name in ("tax-parse", "tax-verify", "tax-parse-crypto"):
-            text = (SKILLS_DIR / name / "SKILL.md").read_text().lower()
+            text = skill_text(name).lower()
             assert "sequential" in text, (
                 f"{name} relies on parallel dispatch but documents no sequential "
                 "fallback — an agent without sub-tasks would stall or improvise")
@@ -210,7 +400,7 @@ class TestNeutralizationLint:
 
     def test_interview_skills_document_a_non_interactive_path(self):
         for name in self.INTERVIEW_SKILLS:
-            text = (SKILLS_DIR / name / "SKILL.md").read_text().lower()
+            text = skill_text(name).lower()
             assert "answers.md" in text, (
                 f"{name} interviews the user but names no non-interactive source; "
                 "headless runs (codex exec, Copilot's cloud agent) would guess")
@@ -295,6 +485,75 @@ class TestInstaller:
                 f"expected the no-hooks warning; got:\n{r.stdout}")
             assert r.returncode != 0, (
                 "hooks-only reported success without installing any hook")
+
+    def _skill_with_references(self, work: Path):
+        """A throwaway clone holding one skill that uses progressive disclosure."""
+        import shutil
+        import subprocess
+
+        (work / "agents").mkdir(parents=True)
+        d = work / ".agents" / "skills" / "tax-setup"
+        (d / "references").mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            "---\nname: tax-setup\ndescription: x\n---\n"
+            "Read [references/interview.md](references/interview.md).\n")
+        (d / "references" / "interview.md").write_text("THE INTERVIEW PROCEDURE\n")
+        shutil.copy(REPO / "agents" / "install.sh", work / "agents")
+        subprocess.run(["git", "init", "-q", "."], cwd=work, check=True)
+
+    def test_reference_files_are_installed_alongside_the_body(self, tmp_path):
+        """A skill is a DIRECTORY, and installing only SKILL.md truncates it.
+
+        Under progressive disclosure SKILL.md keeps the gates and links the
+        procedure out to references/*.md. Installing the body alone leaves the
+        agent a stub that names files it cannot open — for tax-compute, 1588 of
+        1698 lines. Nothing errors: the agent reads a well-formed skill, finds no
+        procedure at Step 1 and improvises the return. Step 12.7's tie-out gate
+        does not catch it either, because it compares parse_ledger.json against
+        result.json and correctly-parsed documents tie out against an invented
+        computation.
+
+        Read through rather than merely stat-ed, so a symlink that resolves
+        nowhere fails the same way a missing file does.
+        """
+        import subprocess
+
+        for mode in ([], ["--copy"]):
+            label = mode[0] if mode else "link"
+            work = tmp_path / f"clone-{label}"
+            self._skill_with_references(work)
+            home = tmp_path / f"home-{label}"
+            home.mkdir()
+            subprocess.run(["bash", "agents/install.sh", *mode], cwd=work,
+                           capture_output=True, text=True,
+                           env={**os.environ, "HOME": str(home)})
+            ref = (home / ".claude" / "skills" / "tax-setup"
+                   / "references" / "interview.md")
+            assert ref.is_file(), f"{label} mode installed no references/"
+            assert "THE INTERVIEW PROCEDURE" in ref.read_text(), (
+                f"{label} mode installed a references/ that cannot be read")
+
+    def test_upgrading_a_file_only_install_gains_the_references(self, tmp_path):
+        """The migration case: every existing install predates progressive
+        disclosure, so ~/.claude/skills/<name>/ is a real directory holding just
+        a SKILL.md. Re-running the installer has to fill in references/ there —
+        and must not need the destination torn down by hand first."""
+        import subprocess
+
+        work = tmp_path / "clone"
+        self._skill_with_references(work)
+        home = tmp_path / "home"
+        dest = home / ".claude" / "skills" / "tax-setup"
+        dest.mkdir(parents=True)
+        (dest / "SKILL.md").symlink_to(
+            work / ".agents" / "skills" / "tax-setup" / "SKILL.md")
+
+        subprocess.run(["bash", "agents/install.sh"], cwd=work,
+                       capture_output=True, text=True,
+                       env={**os.environ, "HOME": str(home)})
+        assert (dest / "references" / "interview.md").is_file(), (
+            "upgrading an install made before progressive disclosure left the "
+            "skill truncated, with no error and no prompt to re-install")
 
 
 class TestRuntimeWorkspaceIgnored:

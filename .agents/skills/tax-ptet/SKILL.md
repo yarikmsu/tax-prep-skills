@@ -1,6 +1,7 @@
 ---
 name: tax-ptet
 description: PTET election analyzer — estimates the federal SALT-cap-workaround savings of a CA/NY/NJ pass-through-entity tax election from K-1 income, and surfaces the state election deadlines. Read-only, federal-only, advisory. Use when the taxpayer has K-1 pass-through income from a CA, NY or NJ entity, or the user mentions PTET, the SALT cap workaround, or an entity-level state tax election.
+license: Apache-2.0
 ---
 
 # /tax-ptet — Pass-Through Entity Tax Election Analyzer

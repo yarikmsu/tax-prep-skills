@@ -1,6 +1,7 @@
 ---
 name: tax-generate
 description: Generate PDF summary of tax return from result.json. Use when the user asks for a PDF, a summary, a filing package, or a printable version of the return, after tax-compute has run.
+license: Apache-2.0
 ---
 
 # /tax-generate

@@ -140,16 +140,23 @@ design notes: `docs/contributing/skill-catalog.md`.
 ### Invoking a skill
 
 Skills live in `.agents/skills/<name>/SKILL.md`, one directory per skill, with
-`name` + `description` YAML frontmatter. Codex, Cursor, Kimi Code and Copilot
-discover this location natively — **no install step**. Claude Code reaches the
-same files through the tracked relative symlinks in `.claude/skills/`, or
+`name` + `description` + `license` YAML frontmatter. Codex, Cursor, Kimi Code and
+Copilot discover this location natively — **no install step**. Claude Code reaches
+the same files through the tracked relative symlinks in `.claude/skills/`, or
 globally via `bash agents/install.sh`.
+
+**A skill is a DIRECTORY, not a file.** The larger skills use progressive
+disclosure: `SKILL.md` holds the gates and links the step detail out to
+`references/*.md`, which are read on demand. Copying or installing `SKILL.md`
+alone truncates the skill — for `tax-compute` that is 1588 of 1698 lines, and it
+fails silently, because the body still reads as a complete, well-formed skill
+that simply names files the agent cannot open.
 
 Invoke a skill using your agent's own syntax (a slash command, a skill
 reference, or simply telling the agent to follow that skill). If your agent has
-no skill mechanism, read `.agents/skills/<name>/SKILL.md` and follow it directly —
-the files are plain Markdown instructions and are written to be executable that
-way.
+no skill mechanism, read `.agents/skills/<name>/SKILL.md` and follow it directly,
+opening each `references/*.md` when the step that links it comes up — the files
+are plain Markdown instructions and are written to be executable that way.
 
 **Agent-specific sharp edges — read before your first run:**
 `docs/contributing/agents-compat.md`.
@@ -211,10 +218,16 @@ modeled. Adding a state is community-contribution territory — follow
 ## 5. Directory structure
 
 ```
-.agents/skills/<name>/SKILL.md   # The skills. Discovered natively by Codex,
-                                 # Cursor, Kimi Code and Copilot.
+.agents/skills/<name>/
+├── SKILL.md                     # The skill. Discovered natively by Codex,
+│                                # Cursor, Kimi Code and Copilot.
+└── references/*.md              # Step detail, read on demand (progressive
+                                 # disclosure). Linked from SKILL.md, one level
+                                 # deep — never nested, never unlinked.
 .claude/skills/<name>            # Relative symlinks -> ../../.agents/skills/<name>
                                  # (Claude Code project-local; Cursor reads these too)
+                                 # Directory links on purpose: references/ must
+                                 # travel with the body.
 .vscode/settings.json            # Points VS Code Copilot at .agents/skills
 agents/
 ├── templates/                   # result_template.json, answers_template.md,

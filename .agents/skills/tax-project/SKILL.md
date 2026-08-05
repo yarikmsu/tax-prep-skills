@@ -1,6 +1,7 @@
 ---
 name: tax-project
 description: Mid-year projection — project full-year tax from YTD figures, compute safe-harbor estimates, suggest W-4 4(c) and 1040-ES adjustments. Use when the user asks mid-year what they will owe, whether to adjust withholding, or how to avoid an underpayment penalty.
+license: Apache-2.0
 ---
 
 # /tax-project — Mid-Year Tax Projection

@@ -61,7 +61,9 @@ taxpayer's documents.
   extra configuration.
 - Cursor reads **both** `.agents/skills/` and `.claude/skills/`. Since the latter
   are symlinks to the former, you may see each skill listed twice; both entries
-  resolve to the same `SKILL.md`, so there is no risk of divergent copies.
+  resolve to the same skill directory — `SKILL.md` and its `references/` alike —
+  so there is no risk of divergent copies. The `.claude/skills/` entries link the
+  DIRECTORY rather than the file for exactly that reason.
 - `hooks.json` is Cursor's native analogue of our git hooks. The git hooks still
   run host-side regardless, which is what makes them agent-independent.
 
@@ -140,7 +142,9 @@ Git symlinks may not materialise without developer mode enabled. Consequences:
 
 - **Cursor and Copilot are unaffected** — they read `.agents/skills/` directly.
 - **Claude Code** users should run `bash agents/install.sh --copy`, which copies
-  each `SKILL.md` instead of symlinking.
+  each skill directory — `SKILL.md` plus its `references/` — instead of
+  symlinking. Copy mode is the more robust of the two here precisely because it
+  depends on no link resolution at all.
 
 ## Git hooks are the shared backstop
 

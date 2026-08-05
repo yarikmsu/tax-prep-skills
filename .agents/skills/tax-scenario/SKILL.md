@@ -1,6 +1,7 @@
 ---
 name: tax-scenario
 description: Scenario modeling — fork the computed result.json, apply one or more signed income deltas (e.g. roth_conversion=40000), recompute the federal tax effect, and report the marginal cost. Stackable. Use when the user asks a what-if question about extra income, a bonus, a conversion or a deduction change and wants the marginal tax effect.
+license: Apache-2.0
 ---
 
 # /tax-scenario — What-If Scenario Modeling

@@ -1,6 +1,7 @@
 ---
 name: tax-review
 description: EA + IRS officer review of tax return for audit risk, missed deductions, and optimization. Use when the user asks for a review, a second opinion, an audit-risk assessment, or missed deductions, after tax-compute and ideally after tax-verify.
+license: Apache-2.0
 ---
 
 # /tax-review
@@ -451,71 +452,10 @@ Nonresident returns remain out of scope; flag loudly.
 
 ### 4. Generate Review Report
 
-Format the review as:
-
-```
-# Tax Return Review — TY{year}
-
-## 🏛️ IRS Officer Perspective
-
-### Audit Risk Assessment
-**Overall Risk Level:** LOW / MEDIUM / HIGH
-
-### DIF Score Flags
-1. {flag description} — Risk: {low/medium/high}
-...
-
-### Information Return Matching
-- ✅ All W-2s matched
-- ✅ All 1099s matched
-...
-
-### International Compliance
-- ✅/⚠️ FBAR: {status}
-- ✅/⚠️ Form 8938: {status}
-...
-
-### Substantiation Gaps
-1. {item needing documentation}
-...
-
----
-
-## 📊 EA (Enrolled Agent) Perspective
-
-### Missed Opportunities
-1. {opportunity} — Potential savings: ${X}
-...
-
-### Retirement Optimization
-- 401(k) utilization: {X}% of max
-- IRA: {status}
-- HSA: {status}
-...
-
-### Tax Planning for Next Year
-1. {recommendation}
-...
-
-### Document Retention
-- Keep {year} return for {N} years
-- Critical carryforward items: {list}
-
----
-
-## 📅 YoY What-Changed
-{embed Step 3.5 output here, or the skip note}
-
----
-
-## 🏢 PTET Election Opportunity
-{embed Step 3.6 output here, or the "not applicable" / skip note}
-
----
-
-## 🏖️ No-Income-Tax State Completeness
-{embed Step 3.7 output here, or the "not applicable" / skip note}
-```
+Format the review using the templates in
+[references/report-templates.md](references/report-templates.md) — the IRS
+Officer and EA perspectives plus the YoY, PTET and no-income-tax-state blocks.
+Read it now.
 
 ### 4.5. Persist the Review (workpaper)
 

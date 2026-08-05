@@ -1,6 +1,7 @@
 ---
 name: tax-parse-crypto
 description: Parse Coinbase/Kraken/Gemini crypto exchange CSVs into Form 8949 rows + Schedule D totals + ordinary-income receipts, and set the Form 1040 digital-asset question. Handles crypto-to-crypto trades and staking/reward income; FIFO basis; wash-sale does NOT apply (crypto is property). Use when the user has crypto exchange CSV exports, or mentions Coinbase, Kraken, Gemini, staking rewards, or the Form 1040 digital-asset question.
+license: Apache-2.0
 ---
 
 # /tax-parse-crypto — Crypto Exchange Importer

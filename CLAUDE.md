@@ -9,9 +9,14 @@ the two must never disagree.
 
 ## Skills
 
-`bash agents/install.sh` symlinks each `.agents/skills/<name>/SKILL.md` into
-`~/.claude/skills/<name>/SKILL.md` and installs the gitignore entries and git
-hooks. Add `--copy` on a clone where symlink creation is unavailable.
+`bash agents/install.sh` symlinks each `.agents/skills/<name>/SKILL.md` — and its
+`references/` directory, where the skill has one — into `~/.claude/skills/<name>/`,
+then installs the gitignore entries and git hooks. Add `--copy` on a clone where
+symlink creation is unavailable.
+
+Re-run it after pulling a change that adds or splits a `references/` file: an
+install predating progressive disclosure has only the body, which loads as a
+complete skill while every step it delegates is missing.
 
 The tracked relative symlinks in `.claude/skills/` already provide project-local
 discovery, so the global install is only needed to use the skills from other

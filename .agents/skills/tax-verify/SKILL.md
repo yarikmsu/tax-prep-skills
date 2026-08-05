@@ -1,6 +1,7 @@
 ---
 name: tax-verify
 description: Verify computed return against tax software output (FreeTaxUSA, TurboTax, etc.). Use when the user has a return PDF from tax software and wants a line-by-line comparison against the computed values, after tax-compute.
+license: Apache-2.0
 ---
 
 # /tax-verify
