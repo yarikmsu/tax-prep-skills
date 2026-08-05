@@ -468,6 +468,94 @@ class TestFlFreshness:
             check_freshness(2025, str(tmp_path))["null_fields"]
 
 
+class TestScalarByDesignThresholds:
+    """`_EXPECT_STRUCTURED` matches on the KEY NAME, and `threshold` is a dict
+    keyed by filing status nearly everywhere it appears. CA's mental-health
+    services surcharge is the exception — Prop 63 / R&TC §17043 set a flat
+    $1,000,000 threshold and never indexed it, so `create_state_template`
+    hardcodes a bare int.
+
+    The key-name rule therefore flagged the toolkit's OWN canonical CA template,
+    and every California return reported INCOMPLETE at /tax-compute Step 0.5
+    forever. That is worse than the sdi_wage_limit / underpayment_rates /
+    phaseout_rate nags that preceded it, because Step 0.5 says INCOMPLETE plus
+    no live web means STOP: a gate that fires on correct data teaches the agent
+    to reason its way past the gate. Observed end to end — an agent hit this,
+    correctly diagnosed the false positive, reclassified the cache FRESH, and
+    computed a full return on placeholder brackets.
+
+    The exemption is keyed by PATH so it cannot leak: a scalar `niit.threshold`
+    is still corruption and must still flag.
+    """
+
+    def _nulls(self, tmp_path, mutate=None):
+        data = create_empty_tax_law(2025)
+        data["state"] = create_state_template("CA")
+        if mutate:
+            mutate(data)
+        save_tax_law(2025, data, str(tmp_path))
+        return check_freshness(2025, str(tmp_path))["null_fields"]
+
+    def test_ca_surcharge_threshold_is_not_flagged(self, tmp_path):
+        assert not [f for f in self._nulls(tmp_path) if "mental_health" in f], (
+            "the canonical CA template must not report itself INCOMPLETE")
+
+    def test_the_exemption_does_not_leak_to_other_thresholds(self, tmp_path):
+        def scalarize(d):
+            d["federal"]["niit"]["threshold"] = 200000
+
+        flagged = [f for f in self._nulls(tmp_path, scalarize)
+                   if f.startswith("federal.niit.threshold")]
+        assert flagged and "expected dict/list" in flagged[0], (
+            "niit.threshold is per-filing-status; a bare scalar is corruption "
+            f"and must still flag. got: {flagged}")
+
+    def test_a_null_surcharge_threshold_is_still_a_gap(self, tmp_path):
+        def blank(d):
+            d["state"]["mental_health_surcharge"]["threshold"] = None
+
+        flagged = [f for f in self._nulls(tmp_path, blank) if "mental_health" in f]
+        assert flagged, "a missing threshold is still a gap, exempt or not"
+        assert "expected dict/list" not in flagged[0], (
+            "an exempt path must not tell the reader to supply a dict for a "
+            f"field that is a scalar by design. got: {flagged[0]}")
+
+    # Every state this repo models a template for.
+    STATES = ("CA", "NY", "NJ", "FL", "TX", "WA")
+
+    def test_no_state_template_trips_the_shape_rule_on_its_own_data(self, tmp_path):
+        """The class-level invariant, not just the one field that bit us.
+
+        `_EXPECT_STRUCTURED` matches key NAMES, so ANY template hardcoding an
+        unindexed statutory scalar at one of those names flags itself — and
+        pinning the individual path catches this one while missing the fifth.
+        CA's surcharge was the fourth field of this shape after sdi_wage_limit,
+        underpayment_rates and phaseout_rate, which is the signal that
+        instance-level tests were not holding the line.
+
+        So walk every template and assert none of them provokes a SHAPE
+        complaint about its own canonical data. A `got None` complaint is a
+        real gap and stays in scope; only `got <scalar>` is the false positive
+        this guards. The next one fails HERE, when the template is added.
+        """
+        offenders = []
+        for st in self.STATES:
+            data = create_empty_tax_law(2025)
+            data["state"] = create_state_template(st)
+            save_tax_law(2025, data, str(tmp_path))
+            offenders += [
+                f"{st}: {f}"
+                for f in check_freshness(2025, str(tmp_path))["null_fields"]
+                if "expected dict/list, got" in f and "got None" not in f
+            ]
+        assert not offenders, (
+            "a state template reports its OWN correct data as malformed, so "
+            "every return for that state stops at /tax-compute Step 0.5 — and "
+            "a gate that fires on correct data teaches the agent to override "
+            "it. Either give the field its real dict shape, or add its exact "
+            f"path to _SCALAR_BY_DESIGN. {offenders}")
+
+
 class TestFlSalesTaxAbsentKeyGuard:
     """Codex round-13 P2: the recursive freshness walker only examines
     PRESENT keys, so a FL cache with the WHOLE sales_tax block (or just its

@@ -835,6 +835,20 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                           # non-dict/non-list sales_tax value.
                           "sales_tax"}
 
+    # Exact PATHS where a key listed above is legitimately a bare scalar.
+    # Keyed by full path, never by key name: the whole value of
+    # _EXPECT_STRUCTURED is that a scalar `niit.threshold` is corruption, and a
+    # key-level exemption would silence that everywhere at once.
+    #
+    # Add an entry only when the value is set in STATUTE and never indexed, so
+    # there is no annual fetch for it to be stale against — which is exactly why
+    # create_state_template hardcodes it rather than leaving it None.
+    _SCALAR_BY_DESIGN = {
+        # CA mental-health services surcharge, Prop 63 / R&TC §17043: a flat
+        # $1,000,000 taxable-income threshold, unindexed since 2004.
+        "state.mental_health_surcharge.threshold",
+    }
+
     def _walk(obj, path=""):
         if isinstance(obj, dict):
             for k, v in obj.items():
@@ -890,12 +904,35 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 if k == "historical_top_rate" and isinstance(v, dict):
                     continue
                 child_path = f"{path}.{k}" if path else k
+                # _EXPECT_STRUCTURED matches on the KEY NAME, and `threshold` is
+                # a dict keyed by filing status almost everywhere it appears
+                # (additional_medicare_tax, niit, irmaa). CA's mental-health
+                # services surcharge is the exception: create_state_template
+                # hardcodes threshold=1000000 as a bare int, because Prop 63
+                # (R&TC §17043) set it in statute and never indexed it. The
+                # key-name rule therefore flagged the toolkit's OWN canonical
+                # CA template, so every California return reported INCOMPLETE
+                # at /tax-compute Step 0.5 forever — the sdi_wage_limit /
+                # underpayment_rates / phaseout_rate failure a fourth time.
+                #
+                # This one is worse than nagging. Step 0.5 says INCOMPLETE plus
+                # no live web means STOP, so a spurious INCOMPLETE trains the
+                # agent to reason its way PAST the freshness gate — verified: an
+                # agent hit this, correctly diagnosed the false positive, then
+                # reclassified the cache FRESH and computed a full return on
+                # placeholder brackets. A gate that cries wolf gets overridden.
+                #
+                # Scoped to the exact PATH, never the key: a scalar
+                # `niit.threshold` is still real corruption and still flags.
+                exempt = child_path in _SCALAR_BY_DESIGN
                 if v is None:
-                    if k in _EXPECT_STRUCTURED:
+                    # Still a gap, whatever its shape — but do not tell the
+                    # reader to supply a dict for a field that must be a scalar.
+                    if k in _EXPECT_STRUCTURED and not exempt:
                         null_fields.append(f"{child_path} (expected dict/list, got None)")
                     else:
                         null_fields.append(child_path)
-                elif k in _EXPECT_STRUCTURED and not isinstance(v, (dict, list)):
+                elif k in _EXPECT_STRUCTURED and not exempt and not isinstance(v, (dict, list)):
                     null_fields.append(f"{child_path} (expected dict/list, got {type(v).__name__}: {v!r})")
                 else:
                     _walk(v, child_path)
