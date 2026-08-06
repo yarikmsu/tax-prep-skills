@@ -172,6 +172,24 @@ If `generate_tax_pdf.py` does not exist, create one that:
 - Includes all sections present in result.json
 - Skips sections that are absent or have `_include_if` markers
 - Follows the same format as the existing generator (if one exists)
+- **Treats a null value as absent, not as a present value.** `result.json`
+  ships `null` placeholders for every unpopulated field, and
+  `d.get("k", default)` does NOT return the default when the key exists with
+  value null — so the default is exactly the case that never fires. The None
+  then reaches `Paragraph()`, `float()`, or an f-string `:,` spec and raises.
+  Route every read through small coercions (text → `""`, nested dict → `{}`,
+  list → `[]`, number → `0` for arithmetic, em dash for display) rather than
+  relying on `.get` defaults. A generator that crashes on
+  `agents/templates/result_template.json` — whose fields are ALL null — has
+  this bug; run it against that file as a smoke test before trusting it.
+- **Never hardcodes taxpayer data.** Names, amounts, and narrative findings
+  come from `result.json` (AGENTS.md §4). A generator carrying one filer's
+  name in a section header prints that name on somebody else's return, and it
+  puts real PII in a file the PII scan does not cover — that scan matches SSNs
+  and credentials, not names.
+- **Carries no AI-assistant attribution.** The PDF's `author`/`creator`
+  metadata, and any visible footer, must not name an assistant or tool vendor;
+  use the toolkit name. Every generated return inherits this metadata.
 
 If `generate_tax_pdf.py` already exists, verify it references all current sections in result.json.
 If result.json has new sections the PDF generator doesn't handle, update the generator.
@@ -179,6 +197,26 @@ If result.json has new sections the PDF generator doesn't handle, update the gen
 page-1 "Scope & Limitations" box** — generators created before the C2 manifest
 existed don't, and reusing one silently drops the box even though the
 completeness check passed. If it doesn't, update it before generating.
+
+**Check the three rules above against the existing generator too**, for the
+same reason and with more force: `generate_tax_pdf.py` is gitignored, so a
+workspace that has ever run this skill takes THIS branch, not the create
+branch — an existing generator is the common case, not the edge case.
+
+- **Null safety:** run it against `agents/templates/result_template.json`,
+  whose fields are all null. A generator that crashes there treats null as a
+  present value and will crash on any partially-populated return.
+- **No hardcoded taxpayer data:** grep the source for names, employers,
+  institutions and literal dollar amounts. Generators written for one filer
+  carry that filer's details in section headers and narrative — which then
+  print on somebody else's return, and put PII in a file the PII scan cannot
+  vet (it matches SSN and credential shapes, not names). Anything not backed
+  by a `result.json` field must be derived from one or removed; a section with
+  no backing data should skip rather than print stale text.
+- **No AI-assistant attribution:** check the `author`/`creator` metadata and
+  any footer.
+
+If any of these fail, update the generator before generating.
 
 ### 3. Generate PDF
 

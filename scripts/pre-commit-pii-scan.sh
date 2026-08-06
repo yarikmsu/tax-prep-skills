@@ -269,6 +269,31 @@ _grep_out() {
   printf '%s' "$out"
 }
 
+# Artifact digests are not PII, and the bare-nine-digit rule cannot tell them
+# apart. A sha256 is 64 hex characters, and a maximal digit run of EXACTLY nine
+# occurs inside one often enough that requirements.txt trips this rule 52 times
+# the moment the dependency tree is pinned with --generate-hashes. The
+# documented escape is `--no-verify`, so a gate that fires on correct data
+# every time the lock is regenerated would train contributors to bypass the PII
+# scan itself — the failure this repo has already paid for elsewhere.
+#
+# Scoped along BOTH axes so it can never widen into a hiding place:
+#   - the exact PATH (never a name pattern, never a directory), and
+#   - a token that must be the literal `--hash=sha256:` followed by exactly 64
+#     lowercase hex characters.
+# Nothing else in the file is exempt: a stray SSN on a requirements line is
+# still scanned, because only the digest tokens are removed, not the lines
+# holding them.
+strip_artifact_digests() {
+  # $1 — repo-relative path, $2 — added text
+  case "$1" in
+    requirements.txt|requirements.in)
+      printf '%s' "$2" | sed -E 's/--hash=sha256:[0-9a-f]{64}//g'
+      ;;
+    *) printf '%s' "$2" ;;
+  esac
+}
+
 count_hits() {
   local text="$1" pattern found
   : > "$GREP_ERR"
@@ -488,7 +513,7 @@ for scope in "${SCOPES[@]}"; do
     added=$(sed -n 's/^>//p' "$PATCH")
     [ -n "$added" ] || continue
 
-    hits=$(count_hits "$added")
+    hits=$(count_hits "$(strip_artifact_digests "$file" "$added")")
     [ "$hits" = "ERROR" ] && die "grep could not run while scanning $safe_file"
     if [ "${hits:-0}" -gt 0 ]; then
       # Report the FILE and a COUNT only. Never echo the match — that would put

@@ -1,0 +1,20 @@
+# Direct dependencies of the tax preparation toolkit — the human-edited list.
+# Update versions deliberately after testing, not automatically.
+#
+# requirements.txt is GENERATED from this file and is what everything installs.
+# It pins the full transitive tree with hashes, so a bump cannot silently swap a
+# dependency underneath a pin — pdfplumber 0.11.10 shipped no pdfplumber code at
+# all, only a pdfminer.six change, and pdfminer.six is the engine tax parsing
+# actually depends on.
+#
+# After editing this file, regenerate with the SAME flags (see AGENTS.md §7):
+#   uv pip compile requirements.in --generate-hashes --universal \
+#       --python-version 3.12 -o requirements.txt
+#
+# --python-version 3.12 matches the CI runner; --universal keeps the resolution
+# valid on contributor macOS as well as CI Linux.
+
+pdfplumber==0.11.10
+openpyxl==3.1.5
+reportlab==5.0.0
+defusedxml==0.7.1  # Protects openpyxl against XXE attacks in crafted .xlsx files

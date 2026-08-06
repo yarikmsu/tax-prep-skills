@@ -570,6 +570,18 @@ class TestRuntimeWorkspaceIgnored:
     WORKSPACE_DIRS = ["documents/", "summaries/", "reviews/", "scenarios/",
                       "projections/", "archive/"]
 
+    # File-shaped runtime artifacts. The directory list above cannot cover
+    # these, and `generate_tax_pdf.py` is the one the PII gate structurally
+    # cannot backstop: that gate matches SSN and credential SHAPES plus
+    # sensitive filenames, and a taxpayer's NAME matches neither — a generator
+    # that hardcodes one in a section header commits cleanly. Held as a CLASS
+    # rather than as the two entries that were missing, because the installer's
+    # own comment records this list drifting from the tracked .gitignore once
+    # already.
+    SENSITIVE_FILES = ["generate_tax_pdf.py", ".planning/HANDOFF.json",
+                       "taxpayer_profile.json", "result.json",
+                       "parse_ledger.json", "holdings.json"]
+
     def test_gitignore_covers_every_runtime_workspace_directory(self, tmp_path):
         """Driven through `git check-ignore`, not matched as a substring.
 
@@ -670,6 +682,44 @@ class TestRuntimeWorkspaceIgnored:
         missing = self._unignored(produced, tmp_path / "existing_probe")
         assert not missing, f"append path leaves these unignored: {missing}"
         assert "*.log" in produced, "the user's own entries must survive"
+
+    def _unignored_files(self, gitignore_text: str, tmp: Path) -> list:
+        """Which SENSITIVE_FILES git does not ignore, given this .gitignore."""
+        import subprocess
+
+        probe_repo = tmp / "fileprobe"
+        probe_repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "."], cwd=probe_repo, check=True)
+        (probe_repo / ".gitignore").write_text(gitignore_text)
+        unignored = []
+        for name in self.SENSITIVE_FILES:
+            probe = probe_repo / name
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_text("x")
+            if subprocess.run(["git", "check-ignore", "-q", name],
+                              cwd=probe_repo).returncode != 0:
+                unignored.append(name)
+        return unignored
+
+    def test_tracked_gitignore_covers_the_sensitive_runtime_files(self, tmp_path):
+        """The repo's own .gitignore, not the installer's copy of it."""
+        missing = self._unignored_files(
+            (REPO / ".gitignore").read_text(), tmp_path / "tracked")
+        assert not missing, f".gitignore does NOT ignore: {missing}"
+
+    def test_installer_also_covers_the_sensitive_runtime_files(self, tmp_path):
+        """IGNORE_PATTERNS must not drift from the tracked .gitignore.
+
+        Both installer paths are checked because the append path is the one
+        that upgrades a workspace whose .gitignore predates a new entry — the
+        exact situation that leaves an existing generator unprotected. The
+        directory-level tests above pass while these fail, which is how the
+        gap stayed invisible: the two new entries are file-shaped.
+        """
+        for label, seed in (("create", None), ("append", "# mine\n*.log\n")):
+            produced = self._run_installer(tmp_path / label, seed_gitignore=seed)
+            missing = self._unignored_files(produced, tmp_path / f"{label}_p")
+            assert not missing, f"{label} path leaves these unignored: {missing}"
 
     def test_both_installer_paths_produce_the_same_protections(self, tmp_path):
         """The defect this replaces: two hardcoded lists, and the create path was

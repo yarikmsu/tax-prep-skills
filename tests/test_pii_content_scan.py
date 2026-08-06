@@ -1144,3 +1144,50 @@ def test_no_unredacted_patch_survives_the_scan(tmp_path):
         except OSError:
             continue
     assert not leaked, f"unredacted value survived in temporary files: {leaked}"
+
+
+# A sha256 is 64 hex characters, and one containing a maximal run of EXACTLY
+# nine digits reads as a bare SSN to the token rule. Assembled rather than
+# written whole, for the same reason FAKE_SSN is: a literal nine-digit run in
+# this file would trip the scanner it exercises.
+FAKE_DIGEST = "a" * 20 + "12345" + "6789" + "b" * 35
+_LOCK_LINE = f"pdfplumber==0.11.10 \\\n    --hash=sha256:{FAKE_DIGEST}\n"
+
+
+def test_dependency_lock_digests_do_not_false_positive(tmp_path):
+    """Pinning the tree with --generate-hashes must not block the commit.
+
+    A sha256 contains a nine-digit run often enough that the real lock tripped
+    this rule 52 times the first time it was generated. The documented escape
+    is `--no-verify`, so a gate that fires every time the lock is regenerated
+    would train contributors to bypass the PII scan itself — costing far more
+    protection than the rule buys on a file of hex digests.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "requirements.txt", _LOCK_LINE)
+    assert len(FAKE_DIGEST) == 64, "digest must be sha256-shaped to be exempt"
+    assert _run(repo).returncode == 0
+
+
+def test_a_real_ssn_in_the_lock_file_still_blocks(tmp_path):
+    """The exemption removes the DIGEST TOKENS, not the file.
+
+    This is the test that keeps the fix from becoming a hiding place: the
+    exempt path is still fully scanned for everything that is not a
+    `--hash=sha256:` token followed by exactly 64 hex characters.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "requirements.txt", _LOCK_LINE + f"# contact {FAKE_SSN}\n")
+    assert _run(repo).returncode == 1
+
+
+def test_the_digest_exemption_does_not_leak_to_other_paths(tmp_path):
+    """Scoped by exact path, never by token shape alone.
+
+    Were it keyed only on the `--hash=sha256:` shape, prefixing a secret with
+    that string anywhere in the tree would launder it. Blocking the identical
+    line in notes.md is the deliberate, conservative half of that trade.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "notes.md", _LOCK_LINE)
+    assert _run(repo).returncode == 1

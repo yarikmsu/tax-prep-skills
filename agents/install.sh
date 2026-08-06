@@ -172,6 +172,14 @@ IGNORE_PATTERNS=(
     "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "projections/"
     "archive/" "scenarios/" "reviews/" "FBAR_*.md" "*.pdf" "holdings.json"
     "crypto_transactions.json" "tax_calendar_*.ics"
+    # generate_tax_pdf.py is source code but a per-workspace RUNTIME artifact,
+    # and the one such file whose contents the PII gate cannot vet: that gate
+    # matches SSN and credential SHAPES plus sensitive filenames, and a
+    # taxpayer's NAME has none of those. .planning/ holds agent handoffs, which
+    # quote whatever was being worked on. Both must be here as well as in the
+    # tracked .gitignore — this list is what protects a workspace that has no
+    # .gitignore yet, or one older than these entries.
+    "generate_tax_pdf.py" ".planning/"
     ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"
 )
 

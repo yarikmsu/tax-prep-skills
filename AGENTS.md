@@ -271,12 +271,33 @@ self-tests when run directly. None of them import anything agent-specific.
 
 ## 7. Tooling and tests
 
-Python 3.10+. Dependencies are pinned in `requirements.txt` for supply-chain
-safety. Use a virtual environment — never `pip install --break-system-packages`:
+Python 3.10+. Use a virtual environment — never `pip install
+--break-system-packages`:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 ```
+
+**`requirements.txt` is GENERATED — edit `requirements.in`.** The `.in` file
+holds the four direct dependencies; `requirements.txt` is the compiled lock,
+pinning the whole transitive tree with `--hash=sha256`. Pinning only direct
+dependencies is not pinning: pdfplumber 0.11.10 shipped no pdfplumber code at
+all, only a `pdfminer.six` bump — and `pdfminer.six` is the engine document
+parsing actually runs on. Hashes make pip refuse an artifact that does not
+match, so a version republished with different contents fails the install
+instead of silently parsing a return. After editing the `.in`, regenerate with
+the SAME flags and commit both files:
+
+```bash
+uv pip compile requirements.in --generate-hashes --universal \
+    --python-version 3.12 -o requirements.txt
+```
+
+`--python-version 3.12` matches the CI runner and `--universal` keeps the
+resolution valid on contributor macOS too; changing either flag silently
+changes what the lock covers. A Dependabot PR bumps `requirements.txt` — mirror
+the new version into `requirements.in` in the same PR, or the next regeneration
+reverts the bump.
 
 Run the suite (chain the activation — some agents start a fresh shell per
 command, so an earlier `source` may not persist):
