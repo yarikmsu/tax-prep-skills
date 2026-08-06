@@ -413,6 +413,7 @@ Nothing below is duplicated in this file — follow the pointer when you need it
 **Roadmap status** (`docs/roadmap/` holds several backlogs — this is which is
 which): the active backlog is `2026-07-20-product-owner-review.md` (Epic M
 TY2026 season-readiness, Epic N in-persona coverage tier 2, Epic O hygiene);
-Epics I–L are fully shipped. Product context for state support lives in
+Epics I–L are fully shipped, as is Epic P (Florida, from the state-support
+backlog below). Product context for state support lives in
 `2026-07-12-three-perspective-review.md` and `2026-state-support-ny-fl-wa.md`;
 multi-agent portability is `2026-multi-agent-portability.md`.

@@ -20,7 +20,8 @@ complete skill while every step it delegates is missing.
 
 The tracked relative symlinks in `.claude/skills/` already provide project-local
 discovery, so the global install is only needed to use the skills from other
-directories.
+directories. For the hooks and gitignore entries alone, use
+`bash agents/install.sh --hooks-only`.
 
 ## Feature workflow
 
@@ -43,6 +44,14 @@ per-agent convention it defers to:
 - Delete a remote branch with
   `git push origin --no-verify --delete <branch>` (the pre-push hook blocks the
   plain form).
+- **Waiting on CI: bind the poll to the commit** — `gh run list --commit "$SHA"`.
+  `gh pr checks` may still be reporting the *previous* commit's finished runs, and
+  an empty check list trivially satisfies "nothing pending" — both exit the wait on
+  a green that was never measured.
+- Merging a stack: `gh pr update-branch --rebase` puts each PR on the new `main`;
+  `git merge-tree --write-tree <base> <head>` dry-runs the merge for conflicts first.
+- `git grep -E` is POSIX ERE — `\s` and `\d` match nothing and report a clean "no
+  results". Use `[[:space:]]` / `[[:digit:]]` before believing an absence.
 
 ## Automated PR review loop
 
