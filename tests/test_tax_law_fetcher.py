@@ -281,6 +281,28 @@ def test_verify_source_pinning_state_is_single_block():
     assert r2["non_authoritative"] == []
 
 
+def test_verify_source_pinning_fl_requires_separate_county_rate_pin():
+    """FL's two independently-fetched rates need two provenance keys."""
+    d = create_empty_tax_law(2025)
+    fl = create_state_template("FL")
+    fl["sales_tax"]["state_rate"] = 0.06
+    fl["sales_tax"]["county_surtax_rate"] = 0.01
+    d["state"] = fl
+    d["_sources"] = {
+        "state.FL":
+            "https://floridarevenue.com/taxes/taxesfees/Pages/sales_tax.aspx",
+    }
+
+    assert "state.FL.county_surtax_rate" in \
+        verify_source_pinning(d)["unpinned"]
+
+    d["_sources"]["state.FL.county_surtax_rate"] = (
+        "https://floridarevenue.com/Forms_library/current/dr15dss.pdf")
+    state_unpinned = [p for p in verify_source_pinning(d)["unpinned"]
+                      if p.startswith("state.FL")]
+    assert state_unpinned == []
+
+
 def test_verify_source_pinning_malformed_sources_raises():
     d = _populated()
     d["_sources"] = ["not", "a", "dict"]
@@ -364,7 +386,7 @@ class TestStateRegimeType:
         # list, so a no-income-tax state structures them OUT (playbook step 1).
         assert "brackets" not in t
         assert "standard_deduction" not in t
-        assert t["sales_tax"]["state_rate"] == 0.06  # F.S. 212.05 structural
+        assert t["sales_tax"]["state_rate"] is None
         assert t["sales_tax"]["county_surtax_rate"] is None
 
 
@@ -444,20 +466,69 @@ class TestFlFreshness:
         return [f for f in res["null_fields"]
                 if f == "state" or f.startswith("state.") or f.startswith("state ")]
 
-    def test_fl_block_clean_once_county_rate_fetched(self, tmp_path):
+    def test_fl_block_clean_once_both_rates_fetched(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         data["state"] = fl
         save_tax_law(2025, data, str(tmp_path))
         assert self._state_nulls(check_freshness(2025, str(tmp_path))) == []
 
-    def test_unfetched_county_rate_is_flagged(self, tmp_path):
+    def test_unfetched_sales_tax_rates_are_flagged(self, tmp_path):
         data = create_empty_tax_law(2025)
         data["state"] = create_state_template("FL")
         save_tax_law(2025, data, str(tmp_path))
         assert self._state_nulls(check_freshness(2025, str(tmp_path))) == [
-            "state.sales_tax.county_surtax_rate"]
+            "state.sales_tax.state_rate",
+            "state.sales_tax.county_surtax_rate",
+        ]
+
+    def test_legacy_single_pin_forces_fl_provenance_migration(self, tmp_path):
+        """The old county-table `state.FL` pin must not bless state_rate."""
+        fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
+        fl["sales_tax"]["county_surtax_rate"] = 0.01
+        data = {
+            "tax_year": 2025,
+            "federal": {
+                "fbar_threshold": 10000,
+                "amt": {
+                    "exemption": {"single": 88100, "mfj": 137000,
+                                  "mfs": 68500},
+                    "phaseout_start": {"single": 626350, "mfj": 1252700,
+                                       "mfs": 626350},
+                    "rate_28_breakpoint": 239100,
+                },
+            },
+            "state": fl,
+            "exchange_rates": {"EUR": 1.08},
+            "_sources": {
+                # Legacy schema: this sole pin named the county table while
+                # state_rate was the template's hardcoded 0.06 seed.
+                "state.FL":
+                    "https://floridarevenue.com/Forms_library/current/dr15dss.pdf",
+            },
+        }
+        save_tax_law(2025, data, str(tmp_path))
+
+        legacy = check_freshness(2025, str(tmp_path))
+        assert legacy["status"] == "INCOMPLETE"
+        assert any(f.startswith("_sources.state.FL.county_surtax_rate")
+                   and "refetch legacy FL caches" in f
+                   for f in legacy["null_fields"])
+
+        data["_sources"] = {
+            "state.FL":
+                "https://floridarevenue.com/taxes/taxesfees/Pages/sales_tax.aspx",
+            "state.FL.county_surtax_rate":
+                "https://floridarevenue.com/Forms_library/current/dr15dss.pdf",
+        }
+        save_tax_law(2025, data, str(tmp_path))
+        migrated = check_freshness(2025, str(tmp_path))
+        assert migrated["status"] == "FRESH"
+        assert not any("legacy FL caches" in f
+                       for f in migrated["null_fields"])
 
     def test_empty_state_dict_still_flagged(self, tmp_path):
         # {} keeps meaning "not configured"; only a POSITIVE type:"none"
@@ -593,6 +664,16 @@ class TestFlSalesTaxAbsentKeyGuard:
                 "for FL's Schedule A line 5a sales-tax election)") in \
             self._state_nulls(check_freshness(2025, str(tmp_path)))
 
+    def test_fl_missing_state_rate_key_is_flagged(self, tmp_path):
+        data = create_empty_tax_law(2025)
+        fl = create_state_template("FL")
+        del fl["sales_tax"]["state_rate"]
+        data["state"] = fl
+        save_tax_law(2025, data, str(tmp_path))
+        assert ("state.sales_tax.state_rate (key absent — required for FL's "
+                "Schedule A line 5a sales-tax election)") in \
+            self._state_nulls(check_freshness(2025, str(tmp_path)))
+
     def test_tx_missing_sales_tax_key_unaffected(self, tmp_path):
         # The guard is FL-specific — TX (a hand-typed type-none block with
         # no sales_tax modeled at all in v1) must not be flagged for a key
@@ -609,6 +690,7 @@ class TestFlSalesTaxAbsentKeyGuard:
         # present, county rate fetched) is unaffected.
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         data["state"] = fl
         save_tax_law(2025, data, str(tmp_path))
@@ -655,6 +737,7 @@ class TestStateTypeFreshnessGuard:
     def test_valid_none_passes(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         data["state"] = fl
         save_tax_law(2025, data, str(tmp_path))
@@ -664,6 +747,7 @@ class TestStateTypeFreshnessGuard:
     def test_null_type_flagged(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         fl["type"] = None
         data["state"] = fl
@@ -674,6 +758,7 @@ class TestStateTypeFreshnessGuard:
     def test_misspelled_type_flagged(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         fl["type"] = "no_tax"  # misspelled/unrecognized regime
         data["state"] = fl
@@ -727,6 +812,7 @@ class TestStateTypeAbsentKeyGuard:
     def test_fl_missing_type_key_flagged(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         del fl["type"]
         data["state"] = fl
@@ -828,6 +914,7 @@ class TestStateRegimeVsCodeGuard:
     def test_fl_typed_none_is_clean(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         data["state"] = fl
         save_tax_law(2025, data, str(tmp_path))
@@ -942,6 +1029,7 @@ class TestNoneTypeContradictionGuard:
     def test_fl_with_leftover_ca_brackets_is_flagged(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         fl["brackets"] = [{"rate": 0.01, "min": 0, "max": 10412}]
         data["state"] = fl
@@ -952,6 +1040,7 @@ class TestNoneTypeContradictionGuard:
     def test_fl_with_leftover_standard_deduction_is_flagged(self, tmp_path):
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         fl["standard_deduction"] = {"single": 5540, "mfj": 11080}
         data["state"] = fl
@@ -969,6 +1058,7 @@ class TestNoneTypeContradictionGuard:
         # the SAME message, not that no flag appears at all.
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         fl["brackets"] = []
         fl["standard_deduction"] = {"single": None, "mfj": None}
@@ -993,6 +1083,7 @@ class TestNoneTypeContradictionGuard:
         # deduction keys at all) stays clean.
         data = create_empty_tax_law(2025)
         fl = create_state_template("FL")
+        fl["sales_tax"]["state_rate"] = 0.06
         fl["sales_tax"]["county_surtax_rate"] = 0.01
         data["state"] = fl
         save_tax_law(2025, data, str(tmp_path))

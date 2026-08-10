@@ -433,15 +433,18 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "Deliberately NO brackets/standard_deduction keys: the "
                 "freshness walker flags every empty list, and a field the "
                 "design never fetches would nag INCOMPLETE forever. The only "
-                "fetched field is the taxpayer's county discretionary sales "
-                "surtax rate, feeding the federal Schedule A line 5a "
+                "fetched fields are the current general state sales-tax rate "
+                "and the taxpayer's county discretionary surtax rate, feeding "
+                "the federal Schedule A line 5a "
                 "sales-tax election (compute_sales_tax_deduction → "
                 "compute_schedule_a state_local_sales_taxes)."
             ),
             "sales_tax": {
-                # F.S. 212.05 general rate — statutory-structural constant
-                # with citation, per the CA mental_health_surcharge precedent.
-                "state_rate": 0.06,
+                # Fetched at setup from current Florida DOR sales/use-tax
+                # guidance. A statutory rate is still a tax figure and may
+                # change by amendment; only AGENTS.md's enumerated CA surcharge
+                # exception may remain inline.
+                "state_rate": None,
                 "county_surtax_rate": None,  # taxpayer's county rate — /tax-setup fetches
             },
         },
@@ -728,16 +731,28 @@ def verify_source_pinning(data: dict) -> dict:
     # its own path (derived from the cache, so child_tax_credit / niit / amt /
     # etc. are all audited, not just filing_statuses + capital_gains_rates). The
     # cache holds ONE state as a flat block under `state` (state.code,
-    # state.brackets, …), NOT keyed by code — so it is a SINGLE expected pin
+    # state.brackets, …), NOT keyed by code — so its primary expected pin is
     # `state.<code>` (what /tax-setup records) whose DATA lives at `state`.
-    # Iterating the state's field keys would emit bogus state.code/state.name/
-    # state.brackets advisories and never credit the real state.CA pin.
+    # Iterating arbitrary state field keys would emit bogus state.code/
+    # state.name/state.brackets advisories and never credit the real state.CA
+    # pin. Explicit independently-fetched sub-blocks are added below.
     expected = [(b, b) for b in _fetched_federal_blocks(data)]
     state = data.get("state")
     if isinstance(state, dict) and _block_populated(data, "state"):
         code = _state_pin_code(state)
         src_key = f"state.{code}" if code != "state" else "state"
         expected.append((src_key, "state"))
+        # FL fetches two independent figures from two DOR publications. The
+        # general rate retains the primary `state.FL` pin; the taxpayer's
+        # county rate requires its own provenance. Besides making the audit
+        # complete, this extra required key is the schema-migration signal for
+        # legacy FL caches whose sole `state.FL` pin pointed at the county table
+        # while state_rate remained the old hardcoded seed.
+        if code == "FL" and isinstance(state.get("sales_tax"), dict):
+            expected.append((
+                "state.FL.county_surtax_rate",
+                "state.sales_tax.county_surtax_rate",
+            ))
     # exchange_rates is fetched data (IRS yearly-average rates) that directly
     # scales reported USD foreign income / FBAR values — audit it too.
     if _block_populated(data, "exchange_rates"):
@@ -994,11 +1009,15 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
             null_fields.append(
                 "state.sales_tax (key absent — required for FL's Schedule A "
                 "line 5a sales-tax election)")
-        elif (isinstance(state_block["sales_tax"], dict)
-                and "county_surtax_rate" not in state_block["sales_tax"]):
-            null_fields.append(
-                "state.sales_tax.county_surtax_rate (key absent — required "
-                "for FL's Schedule A line 5a sales-tax election)")
+        elif isinstance(state_block["sales_tax"], dict):
+            if "state_rate" not in state_block["sales_tax"]:
+                null_fields.append(
+                    "state.sales_tax.state_rate (key absent — required for "
+                    "FL's Schedule A line 5a sales-tax election)")
+            if "county_surtax_rate" not in state_block["sales_tax"]:
+                null_fields.append(
+                    "state.sales_tax.county_surtax_rate (key absent — required "
+                    "for FL's Schedule A line 5a sales-tax election)")
 
     # state.type regime-discriminator guard (Codex P2): "type" was removed
     # from _SKIP_KEYS above so a PRESENT-but-null or misspelled value is no
@@ -1152,8 +1171,12 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
 
     # H4 source pinning: a recorded but NON-AUTHORITATIVE source is INCOMPLETE
     # (a non-primary URL affirmatively taints the figure); populated-but-
-    # unpinned core blocks are a softer advisory that never flips FRESH (legacy
-    # caches predate the field). A malformed _sources object hard-errors.
+    # unpinned core blocks are normally a softer advisory that never flips
+    # FRESH (legacy caches predate the field). FL's two sales-tax pins are the
+    # exception: the separate county pin is also the migration discriminator
+    # from the old schema, where state.FL pointed at the county table and the
+    # general rate was a hardcoded seed. Missing either pin must force a live
+    # refetch rather than grandfather that plausible stale value.
     unpinned_sources = []
     try:
         pinning = verify_source_pinning(data)
@@ -1162,6 +1185,15 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 f"_sources.{block} (non-authoritative source {url!r} — pin to a "
                 "primary irs.gov/ftb.ca.gov/congress.gov URL)")
         unpinned_sources = pinning["unpinned"]
+        for block, figure in (
+            ("state.FL", "Florida general sales-tax rate"),
+            ("state.FL.county_surtax_rate", "Florida county surtax rate"),
+        ):
+            if block in unpinned_sources:
+                null_fields.append(
+                    f"_sources.{block} (key absent — {figure} requires a "
+                    "separate authoritative source pin; refetch legacy FL "
+                    "caches)")
     except ValueError as e:
         null_fields.append(f"_sources ({e})")
 

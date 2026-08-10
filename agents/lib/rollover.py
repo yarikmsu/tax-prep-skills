@@ -704,6 +704,28 @@ def _validate_year_arg(value: str) -> int:
     return year
 
 
+ROLLOVER_CATEGORIES = frozenset({
+    "carryforwards",
+    "identity",
+    "dependents",
+    "expected_sources",
+    "foreign_holdings",
+})
+
+
+def _parse_categories(value: str) -> set[str]:
+    """Normalize the CLI list and reject tokens the diff engine would ignore."""
+    categories = [category.strip() for category in value.split(",")]
+    if not categories or any(not category for category in categories):
+        raise RolloverError("Categories must be a non-empty comma-separated list")
+    unknown = sorted(set(categories) - ROLLOVER_CATEGORIES)
+    if unknown:
+        raise RolloverError(
+            "Unknown rollover categories: " + ", ".join(unknown)
+        )
+    return set(categories)
+
+
 def _change_to_dict(c: Change) -> dict:
     return {
         "category": c.category,
@@ -734,6 +756,7 @@ def _main(argv: list[str]) -> int:
 
     try:
         year = _validate_year_arg(args.year)
+        categories = _parse_categories(args.categories)
         workspace = Path(args.dst).resolve()
         src = _validate_subpath(Path(args.src).resolve(), workspace)
         # CLI's --year is the NEW year; archive should contain prior return (year - 1)
@@ -743,7 +766,6 @@ def _main(argv: list[str]) -> int:
         return 1
 
     current = _load_current_state(workspace, year)
-    categories = set(args.categories.split(","))
     diff = compute_diff(prior, current, categories=categories, tax_law_new=current.tax_law)
 
     if args.cmd == "diff":

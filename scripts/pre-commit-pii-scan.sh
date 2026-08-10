@@ -453,9 +453,51 @@ for scope in "${SCOPES[@]}"; do
         # documents/ carries financial data that the content patterns would not
         # recognise as sensitive.
         case "$file" in
-          documents/*|*/documents/*|summaries/*|*/summaries/*|reviews/*|*/reviews/*|scenarios/*|*/scenarios/*|projections/*|*/projections/*|archive/*|*/archive/*)
+          documents/*|*/documents/*|summaries/*|*/summaries/*|reviews/*|*/reviews/*|scenarios/*|*/scenarios/*|projections/*|*/projections/*|withholding/*|*/withholding/*|.planning/*|*/.planning/*|archive/*|*/archive/*)
             BLOCKED+=("  BLOCKED PATH (runtime workspace): $safe_file")
             continue ;;
+        esac
+
+        # Agent runtime state under `.claude/` — the same category as the
+        # runtime directories above, reached the same way (gitignored, so
+        # anything arriving here came through `git add -f` or a workspace whose
+        # .gitignore predates the entry), but it cannot be written as a
+        # directory rule. `.claude/` legitimately holds tracked project config:
+        # settings.json carries the PostToolUse hooks and skills/ holds the
+        # relative symlinks Claude Code discovers through. Blocking the
+        # directory would make the repository's own configuration
+        # uncommittable, and a gate that fires on correct data is how
+        # contributors learn to reach for --no-verify. So the directory is the
+        # SCOPE and the basename is the RULE, which is why this is two nested
+        # cases rather than one list of full paths — and the outer scope covers
+        # the nested form (`*/.claude/*`) for a workspace checked out a level
+        # down inside another clone, where no root-anchored pattern reaches.
+        #
+        # The content scan below cannot stand in for this rule. `.archive-files`
+        # and `.archive-dirs` are NUL-separated lists of paths beneath archive/,
+        # which is a taxpayer's scanned documents named after what they are —
+        # and a pathname has neither an SSN shape nor a credential shape, so a
+        # full-history index of one is read through and pronounced clean. The
+        # two stamps carry no identity themselves, but they are per-machine
+        # state that no other clone can act on.
+        #
+        # Each hook-written name ends in `*` to cover the `mktemp` sibling it is
+        # constructed as before being moved over the real name
+        # (`.perms-stamp.XXXXXX`). A hook killed by its configured timeout
+        # mid-refresh leaves that sibling behind holding what the finished file
+        # would have held, which makes the leftover the LIKELIER of the two to
+        # be lying loose when someone runs `git add .`.
+        #
+        # Matching is the shell's own `case` globbing, as above: no external
+        # matcher means no execution failure that could read as "no match".
+        case "$file" in
+          .claude/*|*/.claude/*)
+            case "$filename" in
+              .perms-stamp*|.skill-invariants-stamp*|.archive-dirs*|\
+              .archive-files*|.archive-index-dirty*|*.local.md|*.local.json)
+                BLOCKED+=("  BLOCKED PATH (agent runtime state): $safe_file")
+                continue ;;
+            esac ;;
         esac
 
         # `printf`, not `echo`: bash's echo consumes a leading -n/-e/-E as a
@@ -466,8 +508,25 @@ for scope in "${SCOPES[@]}"; do
           continue
         fi
 
+        # Exact runtime filenames. All of them are gitignored, so anything
+        # reaching here arrived through `git add -f` or a workspace whose
+        # .gitignore predates the entry — the same route as the directory rules
+        # above, and the whole reason a filename rule exists alongside them.
+        #
+        # generate_tax_pdf.py is the one entry that cannot be inferred from the
+        # rest, and the tempting reading is precisely wrong: it is SOURCE CODE,
+        # so it looks like the kind of file a repository is for, and the content
+        # scan below looks like the layer that should vet it. That scan cannot.
+        # It matches SSN and credential SHAPES, and tax-generate writes this
+        # generator per workspace with the taxpayer's NAME in its section
+        # headers — a name has neither shape, so the file is read line by line
+        # and pronounced clean. .gitignore says so in its own comment and
+        # AGENTS.md §1 counts it as sensitive; the permissions hook already
+        # chmods it 600. Being named by every one of those and not by this case
+        # is what let `git add -f generate_tax_pdf.py` commit a taxpayer's name.
+        # The filename rule is the only layer with any grip on this file.
         case "$filename" in
-          taxpayer_profile.json|result.json|answers.md|parse_ledger.json|holdings.json|projection_inputs.json|crypto_transactions.json)
+          taxpayer_profile.json|result.json|answers.md|parse_ledger.json|holdings.json|projection_inputs.json|crypto_transactions.json|generate_tax_pdf.py)
             BLOCKED+=("  BLOCKED FILENAME ($(redact "$filename")): $safe_file")
             continue ;;
         esac

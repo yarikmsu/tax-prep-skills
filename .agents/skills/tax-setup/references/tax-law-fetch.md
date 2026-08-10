@@ -151,13 +151,20 @@ a figure from a prior year.
 - **No-income-tax states (template `type: "none"` — FL):** do NOT search for
   income brackets; there are none, and an empty bracket list would keep the
   cache permanently INCOMPLETE. Record the pre-built FL template and fetch
-  only its `null` field:
-  - FL: Search `"Florida {county recorded in answers.md} county discretionary
+  only its fetched fields:
+  - FL: Search `"Florida general state sales and use tax rate {year}
+    site:floridarevenue.com"` and confirm the authoritative DOR result is
+    current/effective for `{year}` → `state.sales_tax.state_rate` (decimal).
+    Pin that general-rate page under `_sources["state.FL"]`. Then search
+    `"Florida {county recorded in answers.md} county discretionary
     sales surtax rate {year} site:floridarevenue.com"` — use the county the
     taxpayer named in the Group 2 FL interview above (never infer it from the
     ZIP) → `state.sales_tax.county_surtax_rate` (decimal, e.g. 0.01; 0.0 for
-    no-surtax counties). Pin the source: `_sources["state.FL"]` →
-    the floridarevenue.com page (allowlisted authoritative host).
+    no-surtax counties). Pin the county table/page separately under
+    `_sources["state.FL.county_surtax_rate"]` (the authoritative-host audit
+    checks every source entry; `state.FL` remains the required state-block pin).
+    If either current-year figure cannot be verified live, STOP under the
+    freshness rule rather than retaining the template's `null`.
 - For other states: Search `"{state} {year} income tax rates"`. `type:
   "none"` (the FL pattern — a positive declaration, never an empty bracket
   list) may be assigned ONLY to a state on this closed allowlist: **AK, FL,
@@ -220,12 +227,14 @@ path — every populated federal rate/bracket block (`federal.filing_statuses`,
 its **2-letter code** (`state.CA`), AND `exchange_rates` when foreign currencies
 are used. Example:
 `"_sources": {"federal.filing_statuses": "https://www.irs.gov/pub/irs-drop/rp-24-40.pdf", "federal.capital_gains_rates": "https://www.irs.gov/...", "state.CA": "https://www.ftb.ca.gov/...", "exchange_rates": "https://www.irs.gov/individuals/international-taxpayers/yearly-average-currency-exchange-rates"}`.
-Use only PRIMARY sources — any US-government `.gov` site (irs.gov, ftb.ca.gov,
-edd.ca.gov, tax.ny.gov, nj.gov, ssa.gov, treasury.gov, congress.gov,
-govinfo.gov) or law.cornell.edu, with an **https/http** URL. A blog or
-aggregator (smartasset, nerdwallet, a news site) is NOT acceptable —
+Use only PRIMARY sources accepted by
+`tax_law_fetcher._source_host_authoritative` — any US-government `.gov` site
+(irs.gov, ftb.ca.gov, edd.ca.gov, tax.ny.gov, nj.gov, ssa.gov, treasury.gov,
+congress.gov, govinfo.gov) or its explicit non-`.gov` primary-authority
+exceptions (`law.cornell.edu` and Florida DOR's `floridarevenue.com` today),
+with an **https/http** URL. A blog or aggregator (smartasset, nerdwallet, a news
+site) is NOT acceptable —
 `tax_law_fetcher.check_freshness` reports a non-authoritative (or non-web)
 recorded URL as **INCOMPLETE**, and a populated-but-unpinned fetched block as an
 advisory. This is the chain-of-custody pin: an LLM-fetched bracket must trace to
 a government source before it flows into a filed return.
-

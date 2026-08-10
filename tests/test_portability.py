@@ -15,12 +15,25 @@ REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / ".agents" / "skills"
 CLAUDE_SKILLS = REPO / ".claude" / "skills"
 
-EXPECTED_SKILLS = {
+# The toolkit itself — what a taxpayer clones this repository for.
+PRODUCT_SKILLS = {
     "tax-amend", "tax-archive", "tax-calendar", "tax-compute", "tax-extend",
     "tax-fbar", "tax-generate", "tax-harvest", "tax-parse", "tax-parse-crypto",
     "tax-project", "tax-ptet", "tax-retirement", "tax-review", "tax-rollover",
     "tax-roth-convert", "tax-scenario", "tax-setup", "tax-verify", "tax-withholding",
 }
+
+# Skills for people working ON the toolkit rather than filing with it. They ship
+# in .agents/skills/ deliberately: AGENTS.md invites community state modules, and
+# a contributor skill only one vendor's agent can see would contradict the
+# portability work that put every skill there in the first place.
+#
+# The split is only a LABEL. Both sets are held to every rule below — frontmatter,
+# the neutralization lint, the line cap, and a .claude/skills symlink each — so
+# nothing is relaxed by naming the boundary that the `tax-` prefix already implied.
+CONTRIBUTOR_SKILLS = {"codex-loop", "state-module"}
+
+EXPECTED_SKILLS = PRODUCT_SKILLS | CONTRIBUTOR_SKILLS
 
 
 def _skill_dirs():
@@ -64,6 +77,24 @@ class TestSkillLayout:
             "This list is deliberately explicit rather than globbed: adding a skill "
             "must also add its .claude/skills symlink, so the update is a prompt, "
             "not busywork")
+
+    def test_the_product_and_contributor_sets_stay_legible(self):
+        """The split names a boundary the `tax-` prefix only implied, and it is
+        worth nothing if the two sets blur.
+
+        The prefix rule is the whole content of the label: a `tax-` skill is
+        something a taxpayer invokes on their own return, and anything else is
+        work on the toolkit. Without this, `CONTRIBUTOR_SKILLS` becomes the set
+        someone appends to when a name does not fit, and the distinction the
+        split was made to express stops being true of the data.
+        """
+        assert not (PRODUCT_SKILLS & CONTRIBUTOR_SKILLS), "a skill is in both sets"
+        mislabelled = sorted(n for n in PRODUCT_SKILLS if not n.startswith("tax-"))
+        assert not mislabelled, (
+            f"{mislabelled} are in PRODUCT_SKILLS but are not `tax-` skills")
+        mislabelled = sorted(n for n in CONTRIBUTOR_SKILLS if n.startswith("tax-"))
+        assert not mislabelled, (
+            f"{mislabelled} are `tax-` skills sitting in CONTRIBUTOR_SKILLS")
 
     def test_every_skill_has_skill_md(self):
         for d in _skill_dirs():
@@ -237,6 +268,586 @@ class TestSkillLayout:
                 assert f"references/{f.name}" in body, (
                     f"{d.name}/references/{f.name} is not linked from SKILL.md")
 
+    def test_every_bash_block_in_every_skill_parses(self):
+        """A skill is instructions to run, and an angle-bracket placeholder is a
+        REDIRECT.
+
+        `PR=<number>` does not read as "fill this in" to a shell: it tries to
+        open a file called `number` and aborts the line. So does
+        `--categories <comma-separated ...>`, which had been sitting in
+        tax-rollover's apply step — the one command that writes carryforwards
+        into the new year's workspace. The failure is at paste time, in front of
+        a user, with a syntax error naming a token the document never mentions.
+
+        `bash -n` parses without executing, so this costs nothing and no command
+        runs. It is a SYNTAX check only: it cannot tell whether a command does
+        the right thing, only that a shell would accept it. Brace and quoted
+        placeholders (`{current_year}`, `"{prior year}"`) pass, which is why
+        those are the conventions here.
+        """
+        import subprocess
+
+        offenders = []
+        for d in _skill_dirs():
+            text = skill_text(d.name)
+            for i, block in enumerate(re.findall(r"```bash\n(.*?)```", text, re.S)):
+                r = subprocess.run(["bash", "-n"], input=block,
+                                   text=True, capture_output=True)
+                if r.returncode:
+                    last = r.stderr.strip().splitlines()[-1] if r.stderr else "?"
+                    offenders.append(f"{d.name} block {i}: {last}")
+        assert not offenders, (
+            "bash blocks a shell would reject — an angle-bracket placeholder is "
+            "a redirect, use `{braces}` or quote it:\n  " + "\n  ".join(offenders))
+
+    def test_codex_loop_resolves_only_threads_handled_this_round(self):
+        """The mutation must join this round's REST IDs to GraphQL threads.
+
+        Querying every unresolved thread closes older bot findings and human
+        review threads that Step 4 neither displayed nor answered.
+        """
+        body = skill_text("codex-loop")
+        assert "...| .id" not in body
+        assert "HANDLED_COMMENT_IDS" in body
+        assert "comments(first:1) { nodes { databaseId path } }" in body
+        assert "$handled | index($comment_id)" in body
+        assert 'review_threads > "$THREADS_BEFORE"' in body
+        assert '| .id\' "$THREADS_BEFORE" > "$THREAD_IDS"' in body
+        assert 'resolution_failed=0' in body
+        assert 'done < "$THREAD_IDS"' in body
+        assert 'review_threads > "$THREADS_AFTER"' in body
+        assert 'and ($threads | all(.isResolved))' in body
+        assert "leave handled threads open" in body
+
+    def test_codex_loop_binds_a_clean_pass_to_its_reviewed_commit(self):
+        """A late clean result for commit A must not certify commit B.
+
+        Timestamp filtering proves only that the response arrived after B's
+        trigger. The bot's clean-pass body names the reviewed commit, which is
+        the missing association.
+        """
+        body = skill_text("codex-loop")
+        assert "Reviewed commit" in body
+        assert 'HEAD_AT_TRIGGER" != "$REVIEWED_COMMIT"*' in body
+        assert 'CURRENT_HEAD" != "$HEAD_AT_TRIGGER"' in body
+
+    def test_codex_loop_selects_matching_clean_candidate_before_latest(self):
+        """A late stale response must not displace a valid current-head pass.
+
+        Two properties, and pinning only the first cost the second. PREFERRING
+        head-bound candidates is what stops a late stale reply from displacing a
+        valid pass. Filtering the others AWAY also emptied REVIEWED_COMMIT for a
+        stale-only set, which made the `elif` stale branch below unreachable and
+        left the empty-marker message as the only thing an operator ever saw —
+        and its documented remedy, widening the markup class, is the wrong thing
+        to go and do about a marker that parsed perfectly. So: prefer a match,
+        fall back to the latest candidate, and let the shell classify it.
+        """
+        body = skill_text("codex-loop")
+        start = body.index("REVIEWED_COMMIT=$(")
+        gate = body[start:body.index("CURRENT_HEAD=$(", start)]
+        preferred = ('map(select(. as \\$c | \\"$HEAD_AT_TRIGGER\\" '
+                     '| startswith(\\$c))) | last')
+        assert preferred in gate
+        assert gate.index(preferred) < gate.index("// last") < gate.index(
+            "| tail -1"), (
+            "the latest stale SHA is selected before candidates are head-bound")
+        assert "// last // empty" in gate, (
+            "a stale-only candidate set left nothing to report as stale")
+
+    def test_codex_loop_collects_only_root_bot_findings(self):
+        """Human comments and replies must never enter the handled-ID set."""
+        body = skill_text("codex-loop")
+        start = body.index("# Inline findings (P1/P2)")
+        inline = body[start:body.index("```", start)]
+        assert ".user.login == $bot" in inline
+        assert ".in_reply_to_id == null" in inline
+        assert "root findings from `$CODEX_BOT`" in body
+
+    def test_codex_loop_binds_inline_findings_to_the_triggered_head(self):
+        """A late review of A must not become B's exact handled-ID batch."""
+        body = skill_text("codex-loop")
+        start = body.index("# Inline findings (P1/P2)")
+        inline = body[start:body.index("```", start)]
+        assert '--arg head "$HEAD_AT_TRIGGER"' in inline
+        assert ".original_commit_id == $head" in inline
+        assert "original_commit_id" in body
+        assert "re-anchored `commit_id`" in body
+
+    def test_codex_loop_persists_state_across_fresh_shells(self):
+        """Every executable block must reconstruct the round explicitly."""
+        body = skill_text("codex-loop")
+        blocks = re.findall(r"```bash\n(.*?)```", body, re.S)
+        assert blocks
+        for block in blocks:
+            assert "codex-loop-state.env" in block
+            if 'PR="{pull request number}"' in block:
+                assert 'chmod 600 "$STATE_FILE"' in block
+            else:
+                assert '. "$STATE_FILE"' in block
+        for name in ("TRIGGER", "HEAD_AT_TRIGGER", "CURRENT_BATCH_IDS_JSON",
+                     "HANDLED_IDS_JSON", "PUBLISHED_SHA", "REVIEW_CLEAN"):
+            assert f"{name}=%q" in body
+        assert '"$HEAD_AT_TRIGGER" "$TRIGGER" \'[]\' \'[]\' \'\' \'0\'' in body
+
+    def test_codex_loop_requires_an_exact_disposition_for_every_batch_id(self):
+        """Every current root finding, and no unrelated thread, must mutate."""
+        body = skill_text("codex-loop")
+        assert "CURRENT_BATCH_IDS_JSON" in body
+        for predicate in (".created_at >= $trigger", ".user.login == $bot",
+                          ".in_reply_to_id == null"):
+            assert predicate in body
+        guard = "handled IDs do not exactly match this review batch"
+        assert body.count(guard) >= 4
+        assert body.count('(($handled | sort) == ($batch | sort))') >= 4
+        push_at = body.index('git push --no-verify')
+        reply_at = body.index('comments/$COMMENT_ID/replies')
+        resolve_at = body.index("resolveReviewThread")
+        assert body.rfind(guard, 0, push_at) >= 0
+        assert body.rfind(guard, 0, reply_at) >= 0
+        assert body.rfind(guard, 0, resolve_at) >= 0
+
+    def test_codex_loop_rechecks_published_head_before_thread_mutations(self):
+        """A concurrent push must stop replies and resolution independently."""
+        body = skill_text("codex-loop")
+        reply_at = body.index('comments/$COMMENT_ID/replies')
+        resolve_at = body.index("resolveReviewThread")
+        head_query = 'CURRENT_HEAD=$(gh pr view "$PR" --json headRefOid'
+        head_guard = '[ "$CURRENT_HEAD" = "$PUBLISHED_SHA" ]'
+        assert body.rfind(head_query, 0, reply_at) >= 0
+        assert body.rfind(head_guard, 0, reply_at) >= 0
+        assert body.rfind(head_query, reply_at, resolve_at) >= reply_at
+        assert body.rfind(head_guard, reply_at, resolve_at) >= reply_at
+
+    def test_codex_loop_stops_when_trigger_or_timestamp_fails(self):
+        """An empty trigger must not widen polling to historical results."""
+        body = skill_text("codex-loop")
+        assert 'if ! TRIGGER=$(gh api' in body
+        assert '[ -z "$TRIGGER" ]' in body
+        assert "review trigger failed or returned no timestamp" in body
+        assert 'if ! HEAD_AT_TRIGGER=$(gh pr view' in body
+        assert '[ -z "$HEAD_AT_TRIGGER" ]' in body
+
+    def test_codex_loop_refutations_include_the_verified_head_marker(self):
+        """Reply verification must accept the documented refutation format."""
+        body = skill_text("codex-loop")
+        assert "Every reply class must include `$PUBLISHED_PREFIX`" in body
+        assert "Reviewed at $PUBLISHED_PREFIX — no code change:" in body
+        assert "round has\nonly refutations" in body
+
+    def test_codex_loop_rechecks_head_after_ci_finishes(self):
+        """A push during CI polling must invalidate the earlier clean review."""
+        body = skill_text("codex-loop")
+        ci_query = body.index('gh run list --commit "$SHA"')
+        final_head = body.index('FINAL_HEAD=$(gh pr view', ci_query)
+        final_guard = body.index('[ "$FINAL_HEAD" != "$HEAD_AT_TRIGGER" ]',
+                                 final_head)
+        assert 'SHA=$HEAD_AT_TRIGGER' in body
+        assert ci_query < final_head < final_guard
+        assert "HEAD moved while CI was polled" in body
+        assert "clean review and green CI both cover current HEAD" in body
+
+    def test_codex_loop_final_success_requires_clean_review_and_green_ci(self):
+        """Green checks cannot certify a missing or stale review response."""
+        body = skill_text("codex-loop")
+        assert "REVIEW_CLEAN=0" in body
+        clean_set = body.index("REVIEW_CLEAN=1")
+        clean_branch = body.index("clean pass covers current HEAD")
+        final_gate = body.index(
+            '[ "$REVIEW_CLEAN" -eq 1 ] && [ "$CI_GREEN" -eq 1 ]')
+        final_success = body.index(
+            "clean review and green CI both cover current HEAD")
+        assert clean_set < clean_branch < final_gate < final_success
+        assert "could not fetch CI runs" in body
+
+    def test_codex_loop_requires_consent_for_every_remote_write(self):
+        """Automatic skill selection must remain locally read/write only.
+
+        Comments were called out originally, but replies, thread resolution and
+        pushes mutate remote state just as surely and need the same consent
+        boundary on agents that ignore `disable-model-invocation`.
+        """
+        body = skill_text("codex-loop").lower()
+        assert "before **every remote\nwrite**" in body
+        for mutation in ("trigger comments", "review replies",
+                         "thread\nresolution", "pushes", "pr metadata"):
+            assert mutation in body
+        assert "automatic skill selection" in body
+        assert "request only to inspect or fix\nfindings do not" in body
+
+    def test_codex_loop_publishes_before_replying_or_resolving(self):
+        """Remote thread state must never get ahead of the PR's code state."""
+        body = skill_text("codex-loop")
+        commit_at = body.index('git commit -m "fix: address review findings"')
+        push_at = body.index('git push --no-verify')
+        verify_at = body.index('[ "$PUBLISHED_SHA" = "$LOCAL_SHA" ]')
+        reply_at = body.index('comments/$COMMENT_ID/replies')
+        resolve_at = body.index('resolveReviewThread')
+        assert commit_at < push_at < verify_at < reply_at < resolve_at
+        assert "leave every handled thread open" in body
+
+    def test_codex_loop_verifies_every_reply_before_resolution(self):
+        """A failed reply must not leave an unanswered thread marked resolved.
+
+        The verification is per-class, not per-SHA. `contains($sha)` was the
+        predicate here, and it is the one that lets the wrong class through: a
+        "Fixed in <sha>" reply posted on a REFUTED finding names the same sha and
+        passes, after which the thread is resolved on a claim that code changed
+        when none did. Requiring the reply to start with that comment's own
+        recorded opening pins class and published head together, so keeping
+        `contains($sha)` alongside it would be pure redundancy — the opening
+        already embeds the sha.
+        """
+        body = skill_text("codex-loop")
+        reply_guard = body.index("reply_failed=0")
+        reply_verify = body.index("handled review threads are not all answered")
+        resolve_at = body.index("resolveReviewThread")
+        assert reply_guard < reply_verify < resolve_at
+        assert ">/dev/null || reply_failed=1" in body
+        assert 'done\nif [ "$reply_failed" -ne 0 ]' in body
+        assert 'select(.in_reply_to_id != null)' in body
+        assert ".in_reply_to_id == $root" in body
+        assert ".value.opening as $opening" in body
+        assert "(.body | startswith($opening))" in body
+
+    def test_codex_loop_composes_one_reply_body_per_finding(self):
+        """One body per handled root, looked up by comment id.
+
+        The step used to post a single hardcoded `Fixed in $PUBLISHED_PREFIX —
+        {summary}` to every thread in the batch. Two failures in one line: a
+        round of pure refutations — PR #23 round 17 was exactly that — announced
+        fixes that nothing touched, and the brace placeholder nobody substituted
+        became the round's public answer to a real finding.
+
+        The negative assertion is the load-bearing half. Without it the old
+        hardcoded form can be reintroduced beside the new machinery and every
+        other codex-loop assertion still passes.
+        """
+        body = skill_text("codex-loop")
+        assert '-f body="Fixed in $PUBLISHED_PREFIX' not in body, (
+            "a single fix-claim body is being broadcast to the whole batch")
+        assert '-f body="$BODY"' in body
+        assert 'jq -re --arg id "$COMMENT_ID"' in body, (
+            "the body must be looked up per comment, and `-re` is what makes a "
+            "missing entry exit non-zero instead of posting the literal `null`")
+
+    def test_codex_loop_reply_class_is_recorded_with_the_finding(self):
+        """Step 4 records a disposition per comment, not a bare id list.
+
+        Which finding was fixed and which was refuted is known only while the
+        findings are open in front of the agent; recomposing it at reply time is
+        recollection. The id list is DERIVED from the plan rather than typed
+        beside it, because two hand-maintained copies of the same batch are how
+        they drift.
+        """
+        body = skill_text("codex-loop")
+        assert "REPLY_PLAN_JSON" in body
+        assert """HANDLED_IDS_JSON=$(jq -c 'map(.id)' <<<"$REPLY_PLAN_JSON")""" in body
+        assert '(.class == "fix" or .class == "refute")' in body
+        assert 'error("unknown reply class for comment' in body, (
+            "an unrecognised class must fail the pipeline; the tempting `else` "
+            "branch silently produces the fix wording, which is the direction "
+            "that lies to the reviewer")
+
+    def test_codex_loop_refuses_to_publish_an_unsubstituted_placeholder(self):
+        """Braces are this repository's placeholder convention, so a reply body
+        containing one answers nothing — and it is about to be posted and then
+        resolved.
+
+        The guard exists on both sides of the publish boundary on purpose. At
+        plan time the findings are still open and a bad record costs a
+        re-edit; at post time the same defect is one API call from permanent.
+        """
+        body = skill_text("codex-loop")
+        assert body.count('test("[{}]") | not') >= 2, (
+            "the brace guard must run at plan time AND immediately before the "
+            "bodies are posted")
+        publish_at = body.index("comments/$COMMENT_ID/replies")
+        assert body.index('test("[{}]") | not') < publish_at
+        assert body.rindex('test("[{}]") | not') < publish_at, (
+            "the pre-post validation must precede the posting loop, not follow it")
+        assert ("a reply record has no class, no reason, or an unsubstituted "
+                "placeholder") in body
+        assert ("prepared replies do not match the handled roots, or one is "
+                "unsubstituted") in body
+
+    # Names the loop persists to its state file. Every one of them is read back
+    # by a LATER block in a fresh shell, which is what makes an unpersisted
+    # change to any of them invisible rather than merely local.
+    PERSISTED_NAMES = ("TRIGGER", "HEAD_AT_TRIGGER", "CURRENT_BATCH_IDS_JSON",
+                       "REPLY_PLAN_JSON", "HANDLED_IDS_JSON", "PUBLISHED_SHA",
+                       "REVIEW_CLEAN", "CI_GREEN")
+
+    def test_codex_loop_persists_every_verdict_change(self):
+        """A verdict downgraded in shell memory alone is worse than one lost.
+
+        The state file is APPEND-only and last-write-wins, and the block that set
+        `REVIEW_CLEAN=1` already appended that line. So a retraction that only
+        assigns the variable leaves the earlier affirmative as the last line in
+        the file: the next fresh shell sources a clean pass for a HEAD the bot
+        never reviewed, and the loop ends there. `CI_GREEN` was never persisted
+        at all.
+
+        Written as a general rule rather than as an assertion about the CI block,
+        because a targeted version goes green the next time a retraction is added
+        somewhere else.
+        """
+        body = skill_text("codex-loop")
+        blocks = re.findall(r"```bash\n(.*?)```", body, re.S)
+        assert blocks
+        unpersisted = []
+        for block in blocks:
+            for name in self.PERSISTED_NAMES:
+                if not re.search(rf"^\s*{name}=", block, re.M):
+                    continue
+                if f"{name}=%q" not in block or '"$STATE_FILE"' not in block:
+                    unpersisted.append(name)
+        assert not unpersisted, (
+            f"{sorted(set(unpersisted))} are assigned in a block that never "
+            "writes them to the state file — the next shell reads the previous "
+            "round's value and calls it this round's")
+
+    def test_codex_loop_resets_every_per_round_name_at_trigger(self):
+        """A name left out of the per-round reset is not unset — it is silently
+        carried forward.
+
+        `REVIEW_CLEAN` and `CI_GREEN` are the dangerous two: carried forward as
+        1 they certify a round before it has produced any evidence at all. The
+        reset list is compared against what the INITIALIZER writes rather than
+        against a hand-kept list here, so adding a name to the state file
+        without adding it to the reset fails.
+        """
+        body = skill_text("codex-loop")
+        # Anchored on the `\n` separator or the opening quote: the format
+        # strings are single-quoted shell, so an unanchored `(\w+)=%q` reads the
+        # escape's own `n` as the first letter of the name after it.
+        initialized = set(re.findall(r"(?:\\n|')(\w+)=%q",
+                                     body[:body.index("## The loop")]))
+        # Derived once from `gh repo view` and true for the whole loop, so the
+        # trigger step has nothing to say about them.
+        per_round = initialized - {"PR", "REPO", "OWNER", "NAME", "CODEX_BOT"}
+        assert per_round >= set(self.PERSISTED_NAMES)
+
+        # Located by the trigger post itself, not by a name in the format
+        # string: the initializer also writes `HEAD_AT_TRIGGER=%q`, and matching
+        # that first tests the initializer twice and the reset never.
+        trigger_block = [b for b in re.findall(r"```bash\n(.*?)```", body, re.S)
+                         if '-f body="@codex review"' in b]
+        assert len(trigger_block) == 1, "the trigger step has moved or split"
+        reset = "".join(re.findall(r"printf '([^']*)'", trigger_block[0]))
+        assert reset, "the trigger step no longer resets any per-round state"
+        missing = sorted(n for n in per_round if f"{n}=%q" not in reset)
+        assert not missing, (
+            f"{missing} survive a new trigger, so this round starts holding the "
+            "previous round's batch, replies or verdicts")
+
+    def test_codex_loop_clean_pass_match_is_anchored_but_markup_tolerant(self):
+        """The gate that ends the loop, driven rather than grepped.
+
+        `startswith("Codex Review: Didn\'t find any major issues")` was the
+        previous form and it is brittle in the direction that HANGS: the bot's
+        product label is undocumented, so the documented marker on its own, a
+        heading, and a bolded label all miss. A miss leaves REVIEWED_COMMIT
+        empty, the loop reports no parseable clean pass, and it re-triggers for
+        ever on a PR the bot has already passed.
+
+        Widening to `contains` is the tempting repair and it fails the other
+        way, which is why the regex is ANCHORED and why `>` is absent from the
+        markup class: a blockquote is how a human quotes the bot, and a
+        quotation must never end the loop. Both directions are asserted here on
+        the REAL expression lifted out of the skill and run through jq, because
+        a text assertion about an anchor cannot tell an anchor that works from
+        one that was mis-escaped into matching everything.
+
+        The one substitution made to the extracted expression is the shell's:
+        the jq program is embedded in a double-quoted shell string, so the
+        backtick in the character class is written `\\`` there and arrives at
+        jq as a bare backtick. Both spellings mean a literal backtick to
+        Oniguruma; normalising keeps the test honest about what jq actually
+        receives.
+        """
+        import shutil
+        import subprocess
+
+        if shutil.which("jq") is None:
+            pytest.skip("the clean-pass gate is a jq program")
+        body = skill_text("codex-loop")
+        assert "select(.body | startswith(" not in body, (
+            "the brittle prefix match is back in the selector — it can be "
+            "reintroduced BESIDE the regex, where every other assertion here "
+            "still passes. The form is still NAMED in the prose that explains "
+            "why it went, which is why this is anchored on the selector rather "
+            "than on the string.")
+        program = re.search(r"select\(\.body \| test\((.*?)\)\)", body, re.S)
+        assert program, "the clean-pass matcher has moved or changed shape"
+        pattern = "".join(re.findall(r'\\"(.*?)\\"', program.group(1)))
+        assert pattern.startswith("^"), (
+            "the match is unanchored, so a quotation of the marker in a human "
+            "comment ends the loop")
+        assert ">" not in pattern, (
+            "a blockquote marker in the skipped-prefix class lets a quoted "
+            "clean pass certify a commit the bot never passed")
+        pattern = pattern.replace("\\`", "`")
+
+        def matches(comment_body):
+            r = subprocess.run(
+                ["jq", "-n", "--arg", "b", comment_body, "--arg", "re", pattern,
+                 "$b | test($re)"], capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+            return r.stdout.strip()
+
+        accepted = {
+            "the documented marker alone":
+                "Didn\'t find any major issues\n\nReviewed commit: abc1234",
+            "a heading and the product label":
+                "## Codex Review: Didn\'t find any major issues\n\nReviewed "
+                "commit: abc1234",
+            "a bolded label":
+                "**Codex Review:** Didn\'t find any major issues",
+        }
+        for label, comment in accepted.items():
+            assert matches(comment) == "true", f"{label} was not recognised"
+
+        rejected = {
+            "a human quoting the bot in a blockquote":
+                "> Codex said Didn\'t find any major issues, but I disagree",
+            "the marker mid-sentence":
+                "I expect it will say Didn\'t find any major issues shortly",
+            "the marker quoted on a later line":
+                "My take:\n\nDidn\'t find any major issues was last round",
+        }
+        for label, comment in rejected.items():
+            assert matches(comment) == "false", (
+                f"{label} would end the loop on a review that never happened")
+
+    def test_codex_loop_documented_reply_openings_match_the_verifier(self):
+        """Two hand-maintained copies of one string, and only one was checked.
+
+        The verifier in references/reply-verification.md refuses to post a body
+        whose opening is not exactly one of two literals; the prose in Step 6
+        tells the agent what to write. They drifted — the prose said `Fixed in
+        $PUBLISHED_PREFIX` with no trailing separator, which the verifier
+        rejects — so following the documentation produced a run that always
+        failed at the last gate.
+
+        Derived from the jq rather than written out twice more here, because a
+        third copy in the test is a third thing to drift. The em dash between
+        single spaces is part of the string, not typography.
+        """
+        reference = (SKILLS_DIR / "codex-loop" / "references"
+                     / "reply-verification.md").read_text()
+        literals = re.findall(r'then "((?:Fixed|Reviewed) [^"]*)"', reference)
+        assert len(literals) == 2, (
+            f"the verifier's two sanctioned openings have moved: {literals}")
+        prose = (SKILLS_DIR / "codex-loop" / "SKILL.md").read_text()
+        for literal in literals:
+            documented = literal.replace("\\($sha)", "$PUBLISHED_PREFIX")
+            assert documented in prose, (
+                f"the verifier accepts only {documented!r} and no step "
+                "documents that exact opening, trailing separator included — "
+                "an agent following the prose composes a body the last gate "
+                "refuses, after the finding has already been resolved in "
+                "everything but name")
+
+    def test_codex_loop_bootstrap_guards_every_derived_name(self):
+        """`REPO=$(gh repo view …)` was the only unguarded command in the file.
+
+        An unauthenticated `gh` exits non-zero AND prints nothing, so the
+        failure has to be caught on both. Unguarded it wrote `REPO=''` into the
+        state file, every later block built `repos//…/issues//comments`, and a
+        404 read through the Step 3 filters yields no comments and no findings
+        — indistinguishable from the clean pass that ends the loop. A gate that
+        fails toward "everything is fine" is the one shape a review loop must
+        never have.
+
+        The two siblings are here because the same failure survives a
+        successful `gh`: `${REPO%/*}` on a slashless string strips nothing and
+        leaves OWNER === NAME === REPO, and `PR` is the one value typed by hand
+        and carries this repository's `{brace}` placeholder convention.
+
+        Generalized over the names the API paths are BUILT from rather than
+        over every `gh` assignment, and the boundary is the point. The file's
+        other captures — LOCAL_SHA, PR_HEAD, PUBLISHED_SHA, CURRENT_HEAD,
+        FINAL_HEAD — are each compared against an expected value on the very
+        next line, so an empty capture produces an INEQUALITY and lands on the
+        conservative branch: leave the threads open, retract the verdict,
+        re-trigger. Requiring a guard there too would be a rule that fires on
+        correct code, and a gate that cries wolf is reasoned past. What
+        distinguishes the identity names is that nothing ever compares them —
+        they are interpolated straight into a URL, where empty is not an error
+        but a well-formed path to nothing.
+        """
+        body = skill_text("codex-loop")
+        assert "if ! REPO=$(gh repo view" in body
+        assert '[ -z "$REPO" ]' in body
+        assert '[ "$OWNER" = "$REPO" ]' in body
+        assert "case $PR in" in body
+
+        interpolated = set()
+        for path in re.findall(r"repos/[^\s\"']+", body):
+            interpolated.update(re.findall(r"\$\{?(\w+)\}?", path))
+        assert {"OWNER", "NAME", "PR"} <= interpolated, (
+            f"the API paths stopped naming the identity values: {interpolated}")
+
+        unguarded = []
+        for block in re.findall(r"```bash\n(.*?)```", body, re.S):
+            for line in block.splitlines():
+                m = re.match(r"\s*(?:if ! )?(\w+)=\$\(", line)
+                if not m or m.group(1) not in interpolated | {"REPO"}:
+                    continue
+                if not (line.lstrip().startswith("if ! ")
+                        or "|| exit 1" in line or "|| return 1" in line):
+                    unguarded.append(line.strip())
+        assert not unguarded, (
+            "these assignments feed an API path without being checked: "
+            f"{unguarded}. An empty value here is not an error downstream; it "
+            "is a well-formed path to nothing, whose 404 read through the Step "
+            "3 filters is indistinguishable from the clean pass that ends the "
+            "loop.")
+
+    def test_state_module_limits_inline_tax_figures_to_governed_exceptions(self):
+        """A general fixed-surtax escape hatch silently goes stale after amendment."""
+        body = (SKILLS_DIR / "state-module" / "SKILL.md").read_text().lower()
+        assert "statutory-fixed structural\nconstant" in body
+        assert "mental_health_surcharge" in body
+        assert "explicitly enumerated in agents.md §2" in body
+        assert "fetch a new\nstate's surtax figures even when" in body
+        agents = (REPO / "AGENTS.md").read_text().lower()
+        assert "narrow enumerated exception" in agents
+        assert "r&tc §17043" in agents
+        assert "_source_host_authoritative" in body
+        assert "floridarevenue.com" in body
+
+    def test_fl_state_sales_tax_rate_is_fetched_and_consumed_from_cache(self):
+        """Florida's general rate is a fetched figure, not an inline constant."""
+        fetch = (SKILLS_DIR / "tax-setup" / "references" /
+                 "tax-law-fetch.md").read_text()
+        compute = (SKILLS_DIR / "tax-compute" / "references" /
+                   "state-return.md").read_text()
+        assert "state.sales_tax.state_rate" in fetch
+        assert '_sources["state.FL"]' in fetch
+        assert '_sources["state.FL.county_surtax_rate"]' in fetch
+        assert "STATE_RATE from the runtime-fetched" in compute
+        assert "compute_sales_tax_deduction(TABLE_AMOUNT, STATE_RATE" in compute
+        assert "hardcoded `0.06`" not in compute
+
+    def test_state_module_trigger_requires_explicit_implementation_intent(self):
+        """An unsupported-state filing question belongs at the capability gate."""
+        desc = _frontmatter(SKILLS_DIR / "state-module" / "SKILL.md")[
+            "description"
+        ].lower()
+        assert "explicitly asked to implement" in desc
+        assert "do not use for preparing a taxpayer return" in desc
+
+    def test_state_module_does_not_classify_washington_as_type_none(self):
+        """WA capital-gains excise requires a distinct modeled regime."""
+        body = (SKILLS_DIR / "state-module" / "SKILL.md").read_text()
+        type_none_line = next(
+            line for line in body.splitlines() if "A `type: \"none\"` state" in line
+        )
+        assert "WA" not in type_none_line
+        assert "Washington's capital-gains excise" in body
+
     def test_interview_contents_matches_where_the_groups_actually_live(self):
         """A reference file's own table of contents must not claim a section the
         file does not contain.
@@ -347,7 +958,7 @@ class TestNeutralizationLint:
     # the moment someone rewords "search the web", which is the same vacuous-pass
     # trap the emphasis-stripping in _normalize exists to avoid.
     WEB_DEPENDENT = ("tax-setup", "tax-compute", "tax-review", "tax-verify",
-                     "tax-parse", "tax-fbar")
+                     "tax-parse", "tax-fbar", "state-module")
 
     def test_web_dependent_skills_carry_a_stale_data_degrade(self):
         """A cached or missing web result must stop the run, not silently yield
@@ -568,7 +1179,7 @@ class TestRuntimeWorkspaceIgnored:
     """
 
     WORKSPACE_DIRS = ["documents/", "summaries/", "reviews/", "scenarios/",
-                      "projections/", "archive/"]
+                      "projections/", "withholding/", "archive/"]
 
     # File-shaped runtime artifacts. The directory list above cannot cover
     # these, and `generate_tax_pdf.py` is the one the PII gate structurally
@@ -580,7 +1191,56 @@ class TestRuntimeWorkspaceIgnored:
     # already.
     SENSITIVE_FILES = ["generate_tax_pdf.py", ".planning/HANDOFF.json",
                        "taxpayer_profile.json", "result.json",
-                       "parse_ledger.json", "holdings.json"]
+                       "parse_ledger.json", "holdings.json",
+                       # The rest of AGENTS.md §6's runtime file list, added
+                       # after `projection_inputs.json` — YTD wages,
+                       # withholding and estimated payments — turned out to be
+                       # the one entry `git add -A` staged in a workspace whose
+                       # .gitignore the installer had written. It was absent
+                       # from here for the same reason it was absent there, so
+                       # the test that drives both installer paths against this
+                       # list could not see it. A list that holds six of a
+                       # class is a list that will be short again.
+                       "answers.md", "projection_inputs.json",
+                       "crypto_transactions.json", "FBAR_2026.md",
+                       "tax_calendar_2026.ics",
+                       # Agent runtime state under `.claude/`. `.archive-files`
+                       # is a NUL-separated list of every path beneath archive/
+                       # — a taxpayer's scanned documents, named after what they
+                       # are — and the PII gate cannot recognise a pathname by
+                       # shape. `settings.local.json` accumulates per-machine
+                       # allow rules and absolute paths, and hookify's
+                       # `*.local.md` rules are generated from conversation
+                       # analysis, so they quote the work in progress.
+                       ".claude/settings.local.json",
+                       ".claude/hookify.block-git-push.local.md",
+                       ".claude/.perms-stamp",
+                       ".claude/.skill-invariants-stamp",
+                       ".claude/.archive-dirs",
+                       ".claude/.archive-files",
+                       # Holds nothing, but its PRESENCE is the signal that the
+                       # manifest pair above is mid-publish. Committing it would
+                       # make every fresh clone rebuild both indexes once.
+                       ".claude/.archive-index-dirty",
+                       # The mktemp siblings, and the entries that matter most.
+                       # None of these four files is written in place: each is
+                       # built as `<name>.XXXXXX` and moved over the real name,
+                       # so a hook killed by its timeout mid-refresh leaves the
+                       # sibling holding exactly what the finished file would
+                       # have held. The bare names above were already ignored
+                       # before this rule existed; the leftovers were not.
+                       ".claude/.perms-stamp.Qw7rTt",
+                       ".claude/.skill-invariants-stamp.K1k1k1",
+                       ".claude/.archive-dirs.Ab3xZ9",
+                       ".claude/.archive-files.Ab3xZ9"]
+
+    # The counterweight to the entries above, and it is not optional: git never
+    # descends into an excluded directory, so a single `.claude/` line would
+    # make all four of these uncommittable and NO negation could undo it.
+    COMMITTABLE_CLAUDE_PATHS = [".claude/settings.json",
+                                ".claude/skills/tax-setup",
+                                ".claude/hooks/harden-runtime-perms.sh",
+                                ".claude/agents/bias-direction-reviewer.md"]
 
     def test_gitignore_covers_every_runtime_workspace_directory(self, tmp_path):
         """Driven through `git check-ignore`, not matched as a substring.
@@ -720,6 +1380,141 @@ class TestRuntimeWorkspaceIgnored:
             produced = self._run_installer(tmp_path / label, seed_gitignore=seed)
             missing = self._unignored_files(produced, tmp_path / f"{label}_p")
             assert not missing, f"{label} path leaves these unignored: {missing}"
+
+    def _ignored_paths(self, gitignore_text: str, tmp: Path, names) -> set:
+        """Which of `names` git ignores under this .gitignore.
+
+        `git check-ignore` answers about a PATHNAME, so nothing has to exist —
+        which is what lets one probe repo cover a mktemp leftover that only
+        exists after a crash and a directory that must stay committable.
+        """
+        import subprocess
+
+        probe_repo = tmp / "claudeprobe"
+        probe_repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "."], cwd=probe_repo, check=True)
+        (probe_repo / ".gitignore").write_text(gitignore_text)
+        return {name for name in names
+                if subprocess.run(["git", "check-ignore", "-q", name],
+                                  cwd=probe_repo).returncode == 0}
+
+    def test_claude_directory_config_stays_committable(self, tmp_path):
+        """`.claude/` is a directory people `git add`, and that is exactly what
+        makes the artifact rules load-bearing rather than a directory rule.
+
+        settings.json carries the project's PostToolUse hooks, skills/ holds the
+        tracked relative symlinks Claude Code discovers through, and hooks/ and
+        agents/ are the scripts and reviewers themselves. Simplifying the six
+        artifact rules into one `.claude/` line passes every other assertion in
+        this class while making the repository's own configuration
+        uncommittable in every workspace the installer touches.
+
+        Inherently one-directional, and worth saying so: this passes unchanged
+        against a .gitignore carrying no `.claude/` rules at all, because
+        over-blocking is the only failure it can observe. The sensitive-file
+        tests above are what pin the rules' existence; this pins their scope.
+        """
+        for label, text in (("tracked", (REPO / ".gitignore").read_text()),
+                            ("create", self._run_installer(tmp_path / "cfg_c")),
+                            ("append", self._run_installer(
+                                tmp_path / "cfg_a", seed_gitignore="# mine\n"))):
+            ignored = self._ignored_paths(text, tmp_path / f"{label}_cfg",
+                                          self.COMMITTABLE_CLAUDE_PATHS)
+            assert not ignored, (
+                f"the {label} .gitignore makes {sorted(ignored)} uncommittable")
+
+    def test_the_installer_and_the_tracked_gitignore_agree_on_claude_state(self):
+        """Both copies of the same rule set, compared as SETS rather than
+        spot-checked.
+
+        The tracked .gitignore protects this clone; IGNORE_PATTERNS protects a
+        taxpayer workspace that has no .gitignore yet, or one predating an
+        entry. AGENTS.md §1 is explicit about what hand-mirrored rules cost
+        here — four bypasses once shipped to two copies at once — and the
+        installer's own comment records this list drifting before.
+
+        Equality, not containment, because both directions are real failures: a
+        rule only in the installer leaves this repository staging its own hook
+        state, and a rule only here leaves every installed workspace staging
+        the archive path index.
+        """
+        gitignore, installer = self._ignore_rule_sets()
+        gitignore = {p for p in gitignore if p.startswith(".claude/")}
+        installer = {p for p in installer if p.startswith(".claude/")}
+        assert gitignore == installer, (
+            f"only in .gitignore: {sorted(gitignore - installer)}; "
+            f"only in the installer: {sorted(installer - gitignore)}")
+
+    @staticmethod
+    def _ignore_rule_sets():
+        """The tracked .gitignore's rules and the installer's, as two sets.
+
+        Comments are stripped from BOTH sides before the quoted names are
+        pulled out of the array. Without that step a double-quoted filename
+        inside one of the array's explanatory comments becomes a phantom
+        installer-only entry — the block already quotes `.claude/settings.json`
+        and `.perms-stamp.XXXXXX` in backticks, which is harmless only until
+        someone reaches for double quotes.
+        """
+        gitignore = {ln.strip()
+                     for ln in (REPO / ".gitignore").read_text().splitlines()
+                     if ln.strip() and not ln.strip().startswith("#")}
+        array = re.search(r"IGNORE_PATTERNS=\((.*?)\n\)",
+                          (REPO / "agents" / "install.sh").read_text(), re.S)
+        assert array, "IGNORE_PATTERNS has moved — the installer writes what?"
+        body = "\n".join(ln for ln in array.group(1).splitlines()
+                         if not ln.strip().startswith("#"))
+        return gitignore, set(re.findall(r'"([^"]+)"', body))
+
+    def test_the_installer_and_the_tracked_gitignore_agree_on_every_rule(self):
+        """The same equality over the WHOLE list, which is where it was needed.
+
+        Scoping the comparison to `.claude/` left every other rule unchecked,
+        and that is precisely where the drift was: nine entries lived in the
+        tracked .gitignore and in neither installer path —
+        `projection_inputs.json`, the `.env` variants, `*.bak`, `*.tmp`,
+        `Thumbs.db` and the IDE pair. Only one direction was ever
+        self-correcting, which is why nothing surfaced it: the installer's
+        WORKSPACE_ROOT is the clone root, so running it here APPENDS whatever
+        the array has that .gitignore lacks. Nothing at all pushes an entry the
+        other way, so that direction drifted silently for as long as it liked.
+        """
+        gitignore, installer = self._ignore_rule_sets()
+        assert gitignore == installer, (
+            f"only in .gitignore (an installed workspace stages it): "
+            f"{sorted(gitignore - installer)}; "
+            f"only in the installer (this clone stages it): "
+            f"{sorted(installer - gitignore)}")
+
+    def test_every_negation_follows_the_rule_it_reopens(self):
+        """git honours a negation only where it comes AFTER its exclusion, and
+        never at all where the exclusion is a directory.
+
+        The create path writes IGNORE_PATTERNS in array order, so the order in
+        that array is the order in the file. Both negated paths are files the
+        repository must keep committable — the tracked VS Code settings that
+        point Copilot at .agents/skills, and the placeholder that makes an
+        empty documents/ survive a clone — and a reordering that looks purely
+        cosmetic silently makes both uncommittable in every workspace the
+        installer has ever touched.
+        """
+        gitignore_lines = [ln.strip()
+                           for ln in (REPO / ".gitignore").read_text().splitlines()
+                           if ln.strip() and not ln.strip().startswith("#")]
+        array = re.search(r"IGNORE_PATTERNS=\((.*?)\n\)",
+                          (REPO / "agents" / "install.sh").read_text(), re.S)
+        body = "\n".join(ln for ln in array.group(1).splitlines()
+                         if not ln.strip().startswith("#"))
+        installer_order = re.findall(r'"([^"]+)"', body)
+        for label, order in (("tracked .gitignore", gitignore_lines),
+                             ("IGNORE_PATTERNS", installer_order)):
+            for negation, exclusion in (("!.vscode/settings.json", ".vscode/*"),
+                                        ("!documents/.gitkeep", "documents/*")):
+                assert negation in order and exclusion in order, (
+                    f"{label} lost {negation} or {exclusion}")
+                assert order.index(negation) > order.index(exclusion), (
+                    f"{label} places {negation} before {exclusion}, so git "
+                    "never reaches the negation and the file stays ignored")
 
     def test_both_installer_paths_produce_the_same_protections(self, tmp_path):
         """The defect this replaces: two hardcoded lists, and the create path was
@@ -1044,6 +1839,41 @@ class TestInstallerPruning:
                        capture_output=True, text=True, env=env)
         assert not (home / ".claude" / "skills" / "tax-gone").exists(), (
             "a dangling link into this clone should be cleaned up")
+
+    def test_a_dangling_link_is_removed_whatever_the_skill_is_named(self, tmp_path):
+        """Ownership is proven by where the link resolves, not by the name.
+
+        The scan used to glob `tax-*`, which was exactly co-extensive with the
+        skill set at the time. `.agents/skills/` now also holds contributor
+        skills, so a name-based glob would skip them while the installer still
+        printed its clean summary — the shape of silent gap this file exists to
+        catch. A non-`tax-` name is the case that distinguishes the two rules.
+        """
+        import shutil
+        import subprocess
+
+        work = tmp_path / "clone"
+        (work / "agents").mkdir(parents=True)
+        for name in ("tax-setup", "codex-loop"):
+            d = work / ".agents" / "skills" / name
+            d.mkdir(parents=True)
+            (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: x\n---\n")
+        shutil.copy(REPO / "agents" / "install.sh", work / "agents")
+        subprocess.run(["git", "init", "-q", "."], cwd=work, check=True)
+        home = tmp_path / "home"
+        home.mkdir()
+        env = {**os.environ, "HOME": str(home)}
+
+        subprocess.run(["bash", "agents/install.sh"], cwd=work,
+                       capture_output=True, text=True, env=env)
+        assert (home / ".claude" / "skills" / "codex-loop" / "SKILL.md").is_symlink()
+
+        shutil.rmtree(work / ".agents" / "skills" / "codex-loop")
+        subprocess.run(["bash", "agents/install.sh"], cwd=work,
+                       capture_output=True, text=True, env=env)
+        assert not (home / ".claude" / "skills" / "codex-loop").exists(), (
+            "a dangling link into this clone is ours by construction whatever "
+            "it is called, and the agent lists it as a skill it cannot read")
 
     def test_pruning_never_touches_a_users_own_skills(self, tmp_path):
         """~/.claude/skills is shared with everything else the user installs."""

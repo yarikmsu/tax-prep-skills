@@ -80,11 +80,12 @@ Add a state entry to `create_state_template(state)` next to `"CA"`:
 
 - REQUIRED: `code` (2-letter — `/tax-project`'s state block gates on it),
   `name`, `standard_deduction` (`single`/`mfj` at minimum), `brackets: []`.
-- Everything indexed annually ships as `None`/empty and is FETCHED by
-  `/tax-setup` via WebSearch from the state DOR — never hardcode indexed
-  amounts. Statutory-structural facts (bracket COUNT, a surtax rate fixed
-  in statute) may be inline constants with the citation, per the CA
-  `mental_health_surcharge` precedent.
+- Every bracket, rate, cap and threshold ships as `None`/empty and is FETCHED
+  by `/tax-setup` via WebSearch from the state DOR, even when the current
+  statute does not index it. Only statutory-fixed structural constants
+  explicitly enumerated in AGENTS.md §2 may remain inline; today that is the
+  existing CA `mental_health_surcharge` rate and threshold. Bracket count and
+  other nonnumeric shape facts may remain structural.
 - **A stub for your state may already exist** (NY ships one) — rework it,
   don't duplicate. Audit `_SKIP_KEYS` for any new descriptive key (the
   fetcher's MAINTENANCE comment requires it), and remember the freshness

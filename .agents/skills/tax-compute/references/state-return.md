@@ -206,9 +206,11 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    exemptions, FL} in the current-year Schedule A instructions (search the web),
    then:
    ```bash
-   python3 -c "from agents.lib.tax_computations import compute_sales_tax_deduction; print(compute_sales_tax_deduction(TABLE_AMOUNT, 0.06, COUNTY_SURTAX_RATE, BIG_TICKET_TAX))"
+   python3 -c "from agents.lib.tax_computations import compute_sales_tax_deduction; print(compute_sales_tax_deduction(TABLE_AMOUNT, STATE_RATE, COUNTY_SURTAX_RATE, BIG_TICKET_TAX))"
    ```
-   (COUNTY_SURTAX_RATE from `state.sales_tax.county_surtax_rate` — UNLESS
+   (STATE_RATE from the runtime-fetched `state.sales_tax.state_rate`; never
+   substitute a remembered or inline Florida rate. COUNTY_SURTAX_RATE from
+   `state.sales_tax.county_surtax_rate` — UNLESS
    `answers.md` records a time-weighted local rate because the taxpayer lived
    in more than one FL county this year or the county's surtax rate changed
    mid-year (the `/tax-setup` county follow-up question), in which case use
@@ -247,9 +249,8 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    12–15, Step 6 tax, Step 6.5 AMT, Step 7 credits, Step 8 other taxes,
    Step 9 payments/refund, and the Step 9.5 §6654 penalty. A stale election
    silently omits line 5a or finalizes the wrong standard-vs-itemized
-   choice. **This hardcoded `0.06`
-   state rate and the FL optional-table lookup are FLORIDA-SPECIFIC
-   (F.S. 212.05) — do NOT reuse them for any other `type: "none"` state.**
+   choice. **The fetched FL state rate and the FL optional-table lookup are
+   FLORIDA-SPECIFIC — do NOT reuse them for any other `type: "none"` state.**
    For a `type: "none"` state OTHER than FL (state.code != "FL" — e.g. TX,
    TN, WY, AK, NV, SD): do NOT run this computation. A TX filer computed
    at FL's 6% table/rate would silently misprice Schedule A line 5a (TX's
@@ -317,4 +318,3 @@ of the lib guards: `projection.project_state_tax` and
 `loss_harvest._state_marginal_rate` both refuse TN bracket math). Record
 the capability gate's Hall-specific not-modeled note (Form INC 250 is
 manual) and compute nothing.
-

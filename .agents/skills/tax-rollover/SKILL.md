@@ -62,7 +62,7 @@ python3 -m agents.lib.rollover apply \
   --from archive/{prior_year} \
   --to . \
   --year {current_year} \
-  --categories <comma-separated user-selected categories>
+  --categories "{comma-separated user-selected categories}"
 ```
 
 If the user selected no categories, skip this step and print *"No changes applied."*

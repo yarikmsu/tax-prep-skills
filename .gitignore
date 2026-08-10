@@ -9,6 +9,7 @@ documents/*
 FBAR_*.md
 *.pdf
 projections/
+withholding/
 projection_inputs.json
 scenarios/
 reviews/
@@ -60,5 +61,46 @@ Thumbs.db
 !.vscode/settings.json
 .idea/
 
-# Hookify local rules (machine-specific, not for sharing)
+# Hookify local rules (machine-specific, not for sharing). They are generated
+# from conversation analysis, so a rule quotes whatever was being worked on when
+# it was created — the same disclosure shape as .planning/, not merely a
+# preference file.
 .claude/*.local.md
+
+# Per-machine Claude Code state. `.claude/settings.json` IS tracked — it carries
+# the project's PostToolUse hooks — and `.claude/skills/` holds the tracked
+# relative symlinks that give Claude Code project-local discovery. That is what
+# makes `.claude/` a directory people `git add`, and equally what rules out
+# ignoring the directory itself: git never descends into an excluded directory,
+# so a bare `.claude/` line would make the repository's own config and skill
+# links uncommittable. Every rule below therefore names an artifact.
+#   settings.local.json accumulates per-machine allow rules and absolute paths,
+#     and in this clone it grants `Bash(git push:*)`. It was previously covered
+#     only by a contributor's own global gitignore, which protects nobody else.
+#   .perms-stamp is rewritten by the permissions hook on every tool call.
+#   .skill-invariants-stamp is the same for the skill-invariants hook.
+#   .archive-dirs is the owner-only directory index used to notice detached
+#     writes beneath an existing archived year without walking every file.
+#   .archive-files is the owner-only file index used to verify archived file
+#     modes without recursively rediscovering the full history on every call.
+#   .archive-index-dirty exists only between the two renames that publish those
+#     two indexes. Its PRESENCE is what forces a rebuild after a pass dies
+#     mid-publish; that job briefly belonged to the absence of .perms-stamp,
+#     which conflated it with the incremental boundary of every other tree.
+#
+# All five end in `*`, for two different reasons. The four data files are never
+# written in place: each is built as a `mktemp` sibling (`.perms-stamp.XXXXXX`)
+# and moved over the real name, so the settings.json hook timeout firing
+# mid-refresh — the routine outcome on a large archive — leaves the sibling
+# behind holding exactly the contents the finished file would have had. Under
+# the exact-name form that leftover was untracked rather than ignored, which is
+# one `git add .` away from committing a NUL-separated index of every archived
+# taxpayer document path. The glob covers both the file that is rarely lying
+# around and the one that is. On the marker, which IS written in place and holds
+# nothing, the glob is merely defensive.
+.claude/*.local.json
+.claude/.perms-stamp*
+.claude/.skill-invariants-stamp*
+.claude/.archive-dirs*
+.claude/.archive-files*
+.claude/.archive-index-dirty*

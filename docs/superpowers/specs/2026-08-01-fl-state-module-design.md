@@ -27,14 +27,19 @@ lacked; WA's excise will add a third type later).
 
 ## 3. Fetched-law block
 `create_state_template("FL")`: code/name/authority/`type: "none"`/
-`no_income_tax: true`/note + `sales_tax: {state_rate: 0.06 (F.S. 212.05,
-structural), county_surtax_rate: None (fetched)}`. Deliberately NO
+`no_income_tax: true`/note + `sales_tax: {state_rate: None (fetched from
+current-year Florida DOR sales/use-tax guidance), county_surtax_rate: None
+(fetched from the current county table)}`. Deliberately NO
 brackets/standard_deduction keys — the freshness walker flags every empty
 list, so a no-income-tax state must structure them out (playbook step 1).
 CA/NY templates gain `type: "graduated_income"`; the generic fallback is
 UNCHANGED (no type key) so other states' freshness behavior doesn't move.
-Source pin: `state.FL` → floridarevenue.com (added to
-_AUTHORITATIVE_NONGOV_DOMAINS — FL DOR is a .com, not .gov).
+Source pins: `state.FL` → the current general-rate floridarevenue.com page and
+`state.FL.county_surtax_rate` → the current county table (the domain was added to
+_AUTHORITATIVE_NONGOV_DOMAINS — FL DOR is a .com, not .gov). Freshness treats
+both keys as mandatory provenance for populated rates; requiring the separate
+county key invalidates legacy caches where `state.FL` named the county table
+and `state_rate` was still the old hardcoded template seed.
 
 ## 4. Result section
 `florida_state`: informational — no_income_tax_statement,

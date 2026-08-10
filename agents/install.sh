@@ -131,7 +131,13 @@ fi
 # The one unambiguous case is removed: a symlink that resolves into THIS clone's
 # .agents/skills and no longer has a target is ours by construction, already
 # broken, and shows up in the agent as a skill whose body cannot be read.
-for existing in "$SKILLS_DIR"/tax-*; do
+#
+# The scan is over EVERY installed entry, not just `tax-*`. Ownership is proven
+# by where the link resolves, not by the name — and .agents/skills now also holds
+# contributor skills (codex-loop, state-module) that a name-based glob would skip
+# while claiming to have checked. The speculative NOTE below stays narrow, which
+# is where the name actually carries information.
+for existing in "$SKILLS_DIR"/*; do
     [ -e "$existing" ] || [ -L "$existing" ] || continue
     ename="${existing##*/}"
     still_here=0
@@ -151,6 +157,15 @@ for existing in "$SKILLS_DIR"/tax-*; do
             fi
             ;;
     esac
+    # Past this point ownership is a GUESS, so the guess stays narrow: only a
+    # `tax-` name is plausibly ours under --copy, where no link survives to prove
+    # it. Warning about every unrelated skill in a shared directory would be
+    # noise, and noise is what teaches people to skip the installer's output.
+    case "$ename" in
+        tax-*) ;;
+        *) continue ;;
+    esac
+
     echo "  NOTE: $SKILLS_DIR/$ename is installed but no longer in .agents/skills/."
     echo "        If it came from this toolkit it is stale — remove it by hand."
 done
@@ -170,8 +185,23 @@ fi  # end skill install (skipped under --hooks-only)
 IGNORE_PATTERNS=(
     "taxpayer_profile.json" "tax_law_*.json" "result.json" "parse_ledger.json"
     "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "projections/"
-    "archive/" "scenarios/" "reviews/" "FBAR_*.md" "*.pdf" "holdings.json"
+    "withholding/" "archive/" "scenarios/" "reviews/" "FBAR_*.md" "*.pdf" "holdings.json"
     "crypto_transactions.json" "tax_calendar_*.ics"
+    # projection_inputs.json holds YTD wages, withholding and estimated payments
+    # — the mid-year input to tax-project and tax-withholding. It was in the
+    # tracked .gitignore, in the PII gate's sensitive-filename case AND in the
+    # permissions hook, and missing from this list alone, so a workspace whose
+    # .gitignore this installer wrote was the one place it stayed visible:
+    # measured on a scratch clone seeded with 29 runtime artifacts, it was the
+    # only one `git add -A` staged.
+    #
+    # The two lists are now compared in BOTH directions, because only one of
+    # them was ever self-correcting. This installer's WORKSPACE_ROOT is the
+    # clone root, so running it here APPENDS anything the array has that the
+    # tracked .gitignore lacks — which is why that direction has always been
+    # empty and why watching it proves nothing. Nothing at all pushed an entry
+    # the other way.
+    "projection_inputs.json"
     # generate_tax_pdf.py is source code but a per-workspace RUNTIME artifact,
     # and the one such file whose contents the PII gate cannot vet: that gate
     # matches SSN and credential SHAPES plus sensitive filenames, and a
@@ -180,7 +210,64 @@ IGNORE_PATTERNS=(
     # tracked .gitignore — this list is what protects a workspace that has no
     # .gitignore yet, or one older than these entries.
     "generate_tax_pdf.py" ".planning/"
-    ".venv/" ".env" "*.swp" "*.swo" "*~" ".DS_Store" "__pycache__/" "*.pyc"
+    # Per-machine Claude Code state, and the one part of this list that must
+    # name artifacts instead of a directory: `.claude/settings.json` carries the
+    # project's PostToolUse hooks and `.claude/skills/` holds tracked relative
+    # symlinks, and git never descends into an excluded directory — so a
+    # `.claude/` line here would write a .gitignore that makes the repository's
+    # own config uncommittable in every workspace this installer touches.
+    #
+    # The hook-written files carry a trailing `*` because each is built as a
+    # `mktemp` sibling (`.perms-stamp.XXXXXX`) and moved over the real name. A
+    # hook killed by its timeout mid-refresh leaves the sibling holding what the
+    # finished file would have held, and .archive-files is a NUL-separated index
+    # of every archived taxpayer document PATH — identity data that the PII scan
+    # cannot recognise by shape. The exact-name form ignored only the version
+    # that is rarely the one lying around.
+    #
+    # `*.local.md` is here as well as `*.local.json`: hookify writes its local
+    # rules from conversation analysis, so they quote the work in progress. All
+    # of these belong in this list as well as in the tracked .gitignore, for the
+    # reason above — this list is what protects a workspace that has no
+    # .gitignore yet, or one older than these entries.
+    ".claude/*.local.md" ".claude/*.local.json"
+    ".claude/.perms-stamp*" ".claude/.skill-invariants-stamp*"
+    ".claude/.archive-dirs*" ".claude/.archive-files*"
+    ".claude/.archive-index-dirty*"
+    # The non-tax tail, and every entry that used to be missing from it was
+    # missing for the same reason: it reads as clutter until you ask what the
+    # file actually holds.
+    #
+    # `*.bak` and `*.tmp` are the partial-copy shapes an editor or a
+    # half-finished script leaves beside the file it was rewriting, and beside
+    # result.json that copy IS the return. The permissions hook already chmods
+    # them 600 for exactly that reason, which is the tell that they are not
+    # clutter; `*.swp`/`*.swo`/`*~` were here without them, covering one editor's
+    # spelling of the idea and not the other's.
+    #
+    # `.env.*` and `.env.local` are here as well as `.env` because the bare name
+    # matches neither of them, and `.env.local` is the form tooling actually
+    # writes — the tempting reading is that `.env` is the general case and these
+    # are variants of it, when in gitignore terms it is three unrelated rules.
+    #
+    # `Thumbs.db` is `.DS_Store`'s Windows counterpart and the worse of the two:
+    # `.DS_Store` records positions and view options, while Thumbs.db is a
+    # THUMBNAIL CACHE holding rendered pictures of the images beside it — a
+    # scanned W-2 in a directory the root-scoped `documents/*` rule does not
+    # reach. This installer's `--copy` mode exists for Windows clones, so that
+    # is a supported host and not a hypothetical one.
+    #
+    # The IDE pair closes the list rather than being left as a documented
+    # exception. `.vscode/*` must be an artifact rule for the same reason
+    # `.claude/` is: git never descends into an excluded directory, so a
+    # `.vscode/` line would make the tracked settings.json that points Copilot
+    # at .agents/skills uncommittable and no negation could undo it. The
+    # negation must FOLLOW the exclusion for git to honour it, so the two travel
+    # as an adjacent pair here, in the order they are written out.
+    ".venv/" ".env" ".env.*" ".env.local"
+    "*.swp" "*.swo" "*~" "*.bak" "*.tmp"
+    ".DS_Store" "Thumbs.db" "__pycache__/" "*.pyc"
+    ".vscode/*" "!.vscode/settings.json" ".idea/"
 )
 
 GITIGNORE="$WORKSPACE_ROOT/.gitignore"
@@ -378,7 +465,10 @@ if [ "$INSTALL_MODE" = "hooks-only" ]; then
     echo "Codex, Cursor, Kimi Code and Copilot read .agents/skills/ in this clone."
     echo "Confirm discovery with your agent's skill list (Codex: /skills)."
 else
-    echo "Installed ${#installed[@]} tax skills to $SKILLS_DIR"
+    # "skills", not "tax skills": .agents/skills also holds the contributor
+    # skills, and a count labelled with a prefix that does not describe all of
+    # them is a small lie the reader has no way to check.
+    echo "Installed ${#installed[@]} skills to $SKILLS_DIR"
     # Generated from what was actually installed — a hardcoded list silently goes
     # stale every time a skill is added.
     printf 'Available commands: '

@@ -77,7 +77,9 @@ reach it. `SKILL.md` on its own is not the whole skill.
 **Check that the skills were found before you start.** Every one of these agents
 fails silently when discovery does not work: you get no skill and no error. List
 them (`/skills` in Codex, `/` in Claude Code or Cursor) and confirm you see 20
-entries beginning with `tax-`.
+entries beginning with `tax-`. Two further skills, `codex-loop` and
+`state-module`, are for working on the toolkit itself and play no part in
+preparing a return — ignore them here.
 
 This starts the taxpayer interview and creates your workspace.
 

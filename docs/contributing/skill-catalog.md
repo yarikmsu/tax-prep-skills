@@ -208,3 +208,39 @@ kept at full precision (the IRS 3-dp form rule injects error — matches tax sof
 - `/tax-calendar` (`agents/lib/tax_calendar.py`, backlog #10) is the "minimal write-only" sibling: pure compute (frozen `CalendarEvent` dataclass + per-category builders + `build_events` orchestrator + `to_ics` RFC-5545 serializer) + CLI `_main` + workspace-bounded `write_calendar`. Reuses `rollover._validate_subpath` + `_validate_year_arg` (the same boundary check every other write-derived skill uses), catches the `RolloverError` and re-raises as `CalendarError` to keep this module's error surface consistent. Writes only `tax_calendar_{year}.ics` at the workspace root (NOT under `scenarios/` — it's a top-level deliverable for the taxpayer, not a planning artifact). UIDs use the deterministic `{category}-{key}-{year}@tax-prep-skills` slug so re-importing is idempotent. **Key schema decision: PTET reminders are driven by `flags.k1_states` (entity-state list — where each K-1 partnership/S-corp files), NOT by `address.state` (taxpayer's resident state). A TX resident with a CA K-1 needs CA PTET reminders.** RMD reminders are driven by user-asserted `subject_to_rmd_*` booleans, NOT a derived age check, because RMD start age is birth-year-cohort-dependent under SECURE 2.0. **§7503 next-business-day rollover IS applied (L1, PRODID v4):** federal deadlines (1040-ES, extension, FBAR) roll past weekends + DC legal holidays via `irs_dates.next_business_day`; state deadlines (CA 540-ES, CA/NY/NJ PTET) roll past WEEKENDS ONLY (DC holidays don't bind state authorities — rolling a state date past DC Emancipation Day would push it a day LATE; state-specific holidays not modeled, caveated in the description); RMD Dec 31 does NOT roll. The `.ics` DTSTART is the observed date; descriptions note the statutory-vs-observed shift. CA/NY/NJ PTET only; first-year RMD April-1 deferral not modeled. Federal + 3-state.
 - `/tax-ptet` (`agents/lib/ptet.py`, backlog #9) is the FIRST **read-only-AND-writes-nothing** planning skill — advisory output (a `/tax-review`-style section), so unlike scenario/roth-ladder/harvest it has no `save_scenario` and no `scenarios/` artifact. Reuses `scenario.extract_baseline_inputs` + `_rate_kwargs` + `read_tax_year` and `rollover._validate_subpath`/`_validate_year_arg`, and ANCHORS the federal benefit like the other three: the entity-level PTET deduction is a negative `other_income` delta through the `compute_scenario` keystone, so the reported $ is the actual marginal effect around `result.json` line 24 (tapers as a large deduction falls through brackets). Three primitives: (1) `ptet_tax(state, income, rate_override=)` — CA flat 9.3% vs NY/NJ graduated `(lower, rate, base_tax)` schedules; NJ BAIT year-aware via `_schedule_for` (TY2022+ single 10.9% over $1M vs pre-2022 4-bracket `_NJ_SCHEDULE_LEGACY_2020`); fetched `state.ptet` cache wins over the statutory schedule via `_resolve_schedule`/`_validate_fetched_schedule`. (2) `_election_deadline(state, year)` — reuses the `/tax-calendar` statutory facts (NY's election due March 15 *of the tax year*, can't be made on the return — the trap; CA year-aware: AB 150 ≤2025 June-15 prepayment is an election PREREQUISITE, SB 132 2026-2030 the election survives a missed payment but the credit drops 12.5%, TY2021 had no prepayment requirement) — wired through the rollover with `/tax-calendar` so both print the same weekend-rolled date (`_obs_date`/`_state_due` weekend-only; `ptet._election_deadline` ↔ `irs_dates.next_business_day`). (3) the **forgone-SALT offset** = `marginal_fed × min(salt_room, total_ptet)`, `salt_room` defaulting 0 (cap exhausted) but OBBBA-aware via `_salt_cap(year,status)` ($40K/$20K-MFS TY2025-2029, reverts $10K 2030; `federal.salt_cap` cache preferred; `--other-salt` derives headroom, `--salt-room` wins). **Bias:** cap-exhausted default OVERSTATES savings → loud `ASSUMPTION` note; offset valued at the top marginal rate can only *reduce* net savings (safe); offset gated on `itemizes` (`--standard-deduction`). §199A QBI clawback (`--qbi-eligible STATE`, priced `PTET × (1 − qbi_rate)`, default-off overstatement caveat). Gross benefit allocated pro-rata by each state's *income reduction*, SALT offset by *PTET paid* (both reconcile). `_PTET_WINDOWS` gating (CA 2021-2030 / NY 2021+ / NJ 2020+) → out-of-window `modeled=False`; non-CA/NY/NJ also `modeled=False` (never a silent $0). Phantom-income guard PREFERS `schedule_e_k1_income` over `line_8_schedule1_other`/`other_income` and hard-errors when `--income` exceeds that pass-through bucket. `_est_marginal_fed` probes `other_income` (not wages — avoids folding the 0.9% Medicare tax) with a local $100 probe + AUTO-ESTIMATED near-cliff caveat. `_parse_state_amounts` `combine="sum"` for `--income` / `"reject"` for `--ptet-rate`, `_normalize_state` validates codes at the parse boundary + an orphan-override guard; `--marginal-fed` via `_validate_rate`; all numerics via `_strict_non_negative`. State savings hardcoded $0 (the owner's PTET credit offsets the entity tax). Full round-by-round review history in `docs/changelog/pre-epic.md`.
 
+
+### Contributor skills (not part of the return pipeline)
+
+Two skills in `.agents/skills/` are for people working ON the toolkit rather
+than filing with it. They are labelled in `test_portability.py` by
+`CONTRIBUTOR_SKILLS` and held to every rule the `tax-*` skills are held to —
+frontmatter, the neutralization lint, the line cap, and a `.claude/skills`
+symlink each. They ship in the portable location on purpose: `state-module` is
+the entry point for the community state contributions AGENTS.md invites, and a
+contributor skill only one vendor's agent could read would undo the point of
+the multi-agent move.
+
+- `codex-loop` — the commands behind CLAUDE.md's review-loop bullets, which are
+  prose because the always-loaded budget is tight, and which were re-derived
+  from scratch every round (28 rounds on PR #65, 19 on #23, 16 on #20). Carries
+  the three traps that silently end the loop early: a clean pass arrives as a
+  top-level ISSUE COMMENT rather than a review, so polling `reviewThreads` alone
+  waits forever; inline comments must be filtered by `created_at` against the
+  trigger time, because GitHub re-anchors un-outdated ones to current HEAD and a
+  stale finding then carries today's SHA; and a clean pass only ends the loop if
+  the HEAD it reviewed is still HEAD. Thread resolution is the GraphQL
+  `resolveReviewThread` mutation — there is no REST endpoint.
+  `disable-model-invocation: true` — but only some agents honour that key, so it
+  is a Claude-Code-level safety property and not a portable one. The skill body
+  therefore states the degrade outright: where the key is not honoured, every
+  step that posts to GitHub is one to confirm with the user first. The
+  neutralization lint cannot see either of these, since it matches bare tool
+  names; a Claude-only *path* or *frontmatter key* passes it untouched.
+- `state-module` — gates and ordering only; the detail stays in
+  `state-module-playbook.md` and `TEMPLATE-state-module.md`, so there is one
+  copy to keep current rather than two that drift. Registered in
+  `WEB_DEPENDENT`: filling a fetched-law block means looking up a state's
+  current schedules, and AGENTS.md §2's STOP-and-paste rule governs a state
+  figure exactly as it governs a federal one. Model-invocable on purpose — it
+  has no side effects, and a contributor asking "add Washington" should get it
+  without knowing its name.

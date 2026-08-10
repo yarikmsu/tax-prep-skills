@@ -443,6 +443,42 @@ def test_cli_apply_writes_files(tmp_path):
     assert profile["prior_year"]["capital_loss_carryforward"] == 1000
 
 
+def test_cli_categories_trim_spaces(tmp_path):
+    """The documented comma-space spelling must select every category."""
+    import shutil
+    shutil.copytree(FIXTURES / "prior_2024_clean", tmp_path / "archive" / "2024")
+    shutil.copy(FIXTURES / "current_2025_empty" / "result.json", tmp_path / "result.json")
+    shutil.copy(FIXTURES / "current_2025_empty" / "taxpayer_profile.json", tmp_path / "taxpayer_profile.json")
+    shutil.copy(FIXTURES / "current_2025_empty" / "tax_law_2025.json", tmp_path / "tax_law_2025.json")
+
+    repo = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        ["python3", "-m", "agents.lib.rollover", "diff",
+         "--from", str(tmp_path / "archive" / "2024"),
+         "--to", str(tmp_path), "--year", "2025", "--json",
+         "--categories", "carryforwards, dependents"],
+        capture_output=True, text=True, cwd=str(repo),
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert set(json.loads(proc.stdout)) == {"carryforwards", "dependents"}
+
+
+@pytest.mark.parametrize("categories", ["carryforwards,,dependents", "made_up"])
+def test_cli_rejects_invalid_categories(tmp_path, categories):
+    """Invalid tokens must fail instead of producing a partial clean-looking diff."""
+    repo = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        ["python3", "-m", "agents.lib.rollover", "diff",
+         "--from", str(tmp_path), "--to", str(tmp_path), "--year", "2025",
+         "--categories", categories],
+        capture_output=True, text=True, cwd=str(repo),
+    )
+
+    assert proc.returncode != 0
+    assert "categor" in proc.stderr.lower()
+
+
 def test_cli_rejects_path_traversal(tmp_path):
     repo = Path(__file__).resolve().parent.parent
     proc = subprocess.run(

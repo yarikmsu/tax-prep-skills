@@ -53,11 +53,17 @@ def _make_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _stage(repo: Path, name: str, content: str) -> None:
+def _stage(repo: Path, name: str, content: str, force: bool = False) -> None:
+    """`force` is `git add -f`, and it is how the gitignored artifacts actually
+    arrive at this scan — that or a workspace whose .gitignore predates the
+    entry. It is also required for a name a CONTRIBUTOR's global gitignore
+    happens to cover, which would otherwise fail the staging step itself and
+    never reach the scan under test."""
     path = repo / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
-    subprocess.run(["git", "add", name], cwd=repo, check=True)
+    subprocess.run(["git", "add"] + (["-f"] if force else []) + [name],
+                   cwd=repo, check=True)
 
 
 def _run(repo: Path) -> subprocess.CompletedProcess:
@@ -393,6 +399,14 @@ def test_runtime_workspace_directories_are_blocked(tmp_path):
         assert _run(repo).returncode == 1, f"{path} was not blocked"
 
 
+def test_withholding_and_planning_directories_are_blocked(tmp_path):
+    """Planning reports remain sensitive even when forced past .gitignore."""
+    for path in ("withholding/report.md", ".planning/HANDOFF.json"):
+        repo = _make_repo(tmp_path / path.replace("/", "_"))
+        _stage(repo, path, "ordinary text\n")
+        assert _run(repo).returncode == 1, f"{path} was not blocked"
+
+
 def test_documents_gitkeep_stays_committable(tmp_path):
     """documents/.gitkeep is tracked on purpose — it is what makes the directory
     exist in a fresh clone."""
@@ -672,6 +686,79 @@ def test_empty_gitkeep_stays_committable(tmp_path):
     repo = _make_repo(tmp_path)
     _stage(repo, "documents/.gitkeep", "")
     assert _run(repo).returncode == 0
+
+
+# Agent runtime state under `.claude/`. Every one of these is gitignored, so
+# anything reaching this scan arrived through `git add -f` or through a
+# workspace whose .gitignore predates the entry — the same way the runtime
+# workspace directories above get here.
+CLAUDE_RUNTIME_STATE = [
+    ".claude/.archive-files",
+    ".claude/.archive-files.Ab3xZ9",   # the mktemp sibling a timeout leaves
+    ".claude/.archive-dirs",
+    ".claude/.archive-index-dirty",  # empty, but still agent runtime state
+    ".claude/.perms-stamp",
+    ".claude/.perms-stamp.Qw7rTt",
+    ".claude/.skill-invariants-stamp",
+    ".claude/settings.local.json",
+    ".claude/hookify.block-git-push.local.md",
+    "sub/.claude/.archive-files",      # a clone checked out inside another
+]
+
+
+def test_the_scan_blocks_agent_runtime_state_under_dot_claude(tmp_path):
+    """The content scan structurally cannot stand in for this rule.
+
+    `.archive-files` and `.archive-dirs` are lists of paths beneath archive/ —
+    a taxpayer's scanned documents, named after what they are — and a PATHNAME
+    has neither an SSN shape nor a credential shape. A full-history index of one
+    is read through and pronounced clean.
+
+    The fixture content is deliberately a plain synthetic path, matching nothing
+    the content patterns look for. That is what proves the PATH rule fired: a
+    fixture carrying an SSN would block through the wrong branch and prove
+    nothing about this one.
+    """
+    for path in CLAUDE_RUNTIME_STATE:
+        repo = _make_repo(tmp_path / path.replace("/", "_"))
+        _stage(repo, path, "archive/2025/documents/W2-Example-Employer.pdf\n",
+               force=True)
+        r = _run(repo)
+        assert r.returncode == 1, f"{path} committed cleanly"
+        assert "BLOCKED PATH (agent runtime state)" in r.stdout, (
+            f"{path} was blocked, but by some other rule: {r.stdout}")
+
+
+def test_the_scan_still_allows_the_tracked_claude_config(tmp_path):
+    """The counterweight, and what stops the rule above being 'simplified' into
+    a blanket `.claude/` block later.
+
+    This is the real commit shape: settings.json carries the PostToolUse hooks,
+    hooks/ the scripts they run, agents/ the read-only reviewers, and
+    skills/<name> the tracked relative symlink Claude Code discovers through.
+    Staged together, because that is how they arrive.
+
+    Being explicit about what this can and cannot catch: it passes unchanged
+    against a scanner that has no `.claude/` rule at all, which is inherent —
+    an over-blocking rule is the only thing it can see. The test above is the
+    evidence that the rule exists; this one is the evidence that it is narrow.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, ".claude/settings.json", '{"hooks": {"PostToolUse": []}}\n')
+    _stage(repo, ".claude/hooks/harden-runtime-perms.sh", "#!/usr/bin/env bash\n")
+    _stage(repo, ".claude/agents/bias-direction-reviewer.md", "# reviewer\n")
+    _stage(repo, "sub/.claude/settings.json", "{}\n")
+    (repo / ".agents" / "skills" / "tax-setup").mkdir(parents=True)
+    (repo / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
+    (repo / ".claude" / "skills" / "tax-setup").symlink_to(
+        "../../.agents/skills/tax-setup")
+    subprocess.run(["git", "add", ".claude/skills/tax-setup"], cwd=repo,
+                   check=True)
+
+    r = _run(repo)
+    assert r.returncode == 0, (
+        f"the repository's own Claude Code configuration is uncommittable: "
+        f"{r.stdout}")
 
 
 # --- Round 5: the AWS rule, and the detector/redactor split ------------------
@@ -1035,6 +1122,15 @@ def test_a_ten_digit_number_still_does_not_false_positive(tmp_path):
 @pytest.mark.parametrize("name", [
     "taxpayer_profile.json", "result.json", "answers.md", "parse_ledger.json",
     "holdings.json", "projection_inputs.json", "crypto_transactions.json",
+    # The one entry here whose CONTENT this scanner structurally cannot vet.
+    # tax-generate writes this generator per workspace with the taxpayer's NAME
+    # in its section headers, and a name has neither an SSN shape nor a
+    # credential shape, so the content pass reads it line by line and
+    # pronounces it clean. .gitignore names it, AGENTS.md §1 counts it
+    # sensitive and the permissions hook chmods it 600; being named by all
+    # three and not by this case is what let `git add -f generate_tax_pdf.py`
+    # commit a taxpayer's name.
+    "generate_tax_pdf.py",
     "tax_law_2026.json", "FBAR_2026.md", "2026-review.md",
     "tax_calendar_2026.ics",
 ])
