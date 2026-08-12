@@ -302,6 +302,13 @@ Python 3.10+. Use a virtual environment — never `pip install
 python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 ```
 
+**A green local suite is not a green CI.** That `venv` follows whatever `python3`
+is, while the lock is compiled for 3.12 — and the interpreter alone decides some
+results: `Popen.communicate()` re-flushes a stdin the caller already closed,
+which raises on 3.12 and not on 3.13+. CI therefore runs the suite on **3.12 and
+3.14**, both reported. Reinstall from the lock rather than letting the venv drift
+off it; an installed version that is not the pinned one tests what nobody ships.
+
 **`requirements.txt` is GENERATED — edit `requirements.in`.** The `.in` file
 holds the four direct dependencies; `requirements.txt` is the compiled lock,
 pinning the whole transitive tree with `--hash=sha256`. Pinning only direct

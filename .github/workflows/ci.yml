@@ -6,13 +6,25 @@ on:
 
 jobs:
   test:
-    name: Tests
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      # Report both. Cancelling the sibling on the first failure is what makes a
+      # version-specific break look like a plain break.
+      fail-fast: false
+      matrix:
+        # 3.12 is what requirements.txt is compiled for and what the project
+        # ships against. 3.14 is what `python3 -m venv` gives a contributor on a
+        # current macOS today, and a local green there said nothing about this
+        # job until it ran here too: `Popen.communicate()` re-flushes a stdin the
+        # caller already closed, which raises on 3.12 and not on 3.13+, so a test
+        # passed locally and failed in CI on the interpreter alone.
+        python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Install test dependencies

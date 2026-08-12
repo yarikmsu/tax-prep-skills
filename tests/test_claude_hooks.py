@@ -97,6 +97,17 @@ STAMP_OVERLAP_SECONDS = 1.3
 needs_jq = pytest.mark.skipif(shutil.which("jq") is None,
                               reason="the hook is a deliberate no-op without jq")
 
+# GNU chmod's getopt permutes argv, so it keeps scanning for options past the
+# mode argument and reads a bare `-return.pdf` as an unrecognized flag. BSD
+# chmod (this project's macOS dev hosts) stops option scanning once it hits
+# the mode and treats everything after as a filename, so it cannot reproduce
+# the failure this guards against. `--version` is a cheap, direct GNU/BSD
+# discriminator: GNU chmod understands it, BSD chmod does not.
+needs_gnu_chmod = pytest.mark.skipif(
+    subprocess.run(["chmod", "--version"], capture_output=True).returncode != 0,
+    reason="BSD chmod does not permute argv, so it cannot reproduce GNU "
+           "chmod reading a leading '-' as an option")
+
 
 def _mode(p: Path) -> int:
     return stat.S_IMODE(p.stat().st_mode)
@@ -1346,6 +1357,113 @@ class TestRuntimePermissionsHook:
             f"  only in the hook: {sorted(hook_globs - expected_globs)}\n"
             f"  only in the scan: {sorted(expected_globs - hook_globs)}")
 
+    def test_the_generated_artifact_extension_set_is_declared_once(self):
+        """Three consumers must read GENERATED_ARTIFACT_EXTENSIONS, not repeat it.
+
+        The root-level glob loop, is_generated_artifact_name (the payload fast
+        path), and harden_workspace_artifacts' find predicate each need their
+        own loop over the set — the fast path runs before any find, and the
+        root loop runs before .claude/ or a walk exist at all — but all three
+        must be reading the SAME array rather than three independently spelled
+        copies. A hardcoded literal reintroduced at any one of them is exactly
+        the drift this array exists to make structurally impossible: the
+        earlier design stated the set twice, one contributor spelled it a
+        third time in the root-level loop, and nothing noticed.
+        """
+        text = PERMS_HOOK.read_text()
+
+        decl = re.search(r"^GENERATED_ARTIFACT_EXTENSIONS=\(([^)]*)\)$",
+                          text, re.M)
+        assert decl, "GENERATED_ARTIFACT_EXTENSIONS has moved or been renamed"
+        extensions = decl.group(1).split()
+        assert len(extensions) >= 4, f"parsed too few extensions: {extensions}"
+        assert len(set(extensions)) == len(extensions), (
+            f"duplicate entries in GENERATED_ARTIFACT_EXTENSIONS: {extensions}")
+
+        def function_body(name):
+            body = re.search(rf"\n{name}\(\) \{{\n(.*?)\n\}}\n", text, re.S)
+            assert body, f"{name} has moved"
+            return body.group(1)
+
+        fast_path_body = function_body("is_generated_artifact_name")
+        assert "GENERATED_ARTIFACT_EXTENSIONS[@]" in fast_path_body, (
+            "is_generated_artifact_name no longer loops over "
+            "GENERATED_ARTIFACT_EXTENSIONS — it may have grown its own "
+            "hardcoded extension list")
+        assert "*~) return 0" in fast_path_body, (
+            "is_generated_artifact_name dropped the *~ literal (it has no "
+            "leading dot and can't live in the extensions array)")
+
+        walk_body = function_body("harden_workspace_artifacts")
+        assert "GENERATED_ARTIFACT_EXTENSIONS[@]" in walk_body, (
+            "harden_workspace_artifacts no longer loops over "
+            "GENERATED_ARTIFACT_EXTENSIONS — it may have grown its own "
+            "hardcoded find predicate")
+        assert "-o -name '*~'" in walk_body, (
+            "harden_workspace_artifacts' find predicate dropped the *~ literal")
+
+        root_loop = re.search(
+            r"shopt -s nullglob dotglob nocaseglob\n(.*?)"
+            r"\nshopt -u nocaseglob dotglob nullglob\n", text, re.S)
+        assert root_loop, "the root-level artifact glob loop has moved"
+        assert "GENERATED_ARTIFACT_EXTENSIONS[@]" in root_loop.group(1), (
+            "the root-level glob loop no longer loops over "
+            "GENERATED_ARTIFACT_EXTENSIONS — it may have grown its own "
+            "hardcoded glob list")
+        assert "'./*~'" in root_loop.group(1), (
+            "the root-level glob loop dropped the *~ literal")
+
+    def test_the_runtime_and_pruned_tree_names_are_declared_once(self):
+        """RUNTIME_ARTIFACT_TREES/PRUNED_HOME_TREES back both the fast path
+        and the find walk.
+
+        Before this array existed, `.git`/`.venv` were named three separate
+        times — the find walk's prune clause, a literal `case` arm in the
+        fast path, and a second `case` arm doing the case-alias check — with
+        no shared list and nothing to notice if one of the three drifted
+        from the others. classify_edited_top_tree and
+        harden_workspace_artifacts must both read these two arrays rather
+        than growing their own copies of either list.
+        """
+        text = PERMS_HOOK.read_text()
+
+        runtime_decl = re.search(
+            r"^RUNTIME_ARTIFACT_TREES=\(([^)]*)\)$", text, re.M)
+        assert runtime_decl, "RUNTIME_ARTIFACT_TREES has moved or been renamed"
+        runtime_trees = runtime_decl.group(1).split()
+        assert set(runtime_trees) == {
+            "documents", "summaries", "reviews", "scenarios", "projections",
+            "withholding", "archive", ".planning",
+        }, f"RUNTIME_ARTIFACT_TREES no longer matches AGENTS.md's runtime " \
+           f"tree list: {sorted(runtime_trees)}"
+
+        pruned_decl = re.search(r"^PRUNED_HOME_TREES=\(([^)]*)\)$", text, re.M)
+        assert pruned_decl, "PRUNED_HOME_TREES has moved or been renamed"
+        assert set(pruned_decl.group(1).split()) == {".git", ".venv"}, (
+            f"PRUNED_HOME_TREES no longer matches: {pruned_decl.group(1)}")
+
+        def function_body(name):
+            body = re.search(rf"\n{name}\(\) \{{\n(.*?)\n\}}\n", text, re.S)
+            assert body, f"{name} has moved"
+            return body.group(1)
+
+        classify_body = function_body("classify_edited_top_tree")
+        assert "RUNTIME_ARTIFACT_TREES[@]" in classify_body, (
+            "classify_edited_top_tree no longer loops over "
+            "RUNTIME_ARTIFACT_TREES — the payload fast path may have grown "
+            "its own hardcoded tree list")
+        assert "PRUNED_HOME_TREES[@]" in classify_body, (
+            "classify_edited_top_tree no longer loops over "
+            "PRUNED_HOME_TREES — the payload fast path may have grown its "
+            "own hardcoded .git/.venv check")
+
+        walk_body = function_body("harden_workspace_artifacts")
+        assert "PRUNED_HOME_TREES[@]" in walk_body \
+            and "RUNTIME_ARTIFACT_TREES[@]" in walk_body, (
+            "harden_workspace_artifacts' prune predicate no longer loops "
+            "over PRUNED_HOME_TREES/RUNTIME_ARTIFACT_TREES — it may have "
+            "grown its own hardcoded -path list")
+
     def test_a_chmod_that_cannot_run_is_reported_rather_than_swallowed(self, tmp_path):
         """Never-block was right; total silence was not the only way to get it.
 
@@ -1530,6 +1648,80 @@ class TestRuntimePermissionsHook:
         assert self._run(tmp_path, payload).returncode == 0
         assert _mode(archived) == 0o600
 
+    @staticmethod
+    def _is_case_insensitive_filesystem(tmp_path):
+        """Probe tmp_path rather than trusting `uname`.
+
+        A case-insensitive filesystem answers to either spelling of a name; a
+        case-sensitive one treats them as two unrelated names. Three of this
+        class's tests each need to know which kind of host they are running
+        on and skip the scenario that cannot occur on the other kind — this
+        is their shared probe rather than three copies of the same three
+        lines, which is what a fourth such test would otherwise become.
+        """
+        probe = tmp_path / "case-probe"
+        probe.write_text("x")
+        is_case_insensitive = (tmp_path / "CASE-PROBE").exists()
+        probe.unlink()
+        return is_case_insensitive
+
+    @staticmethod
+    def _start_behind_a_slow_walk(workspace, payload, slow_walk,
+                                  project_dir=None):
+        """Start the hook with one `find` paused, once the pause is live.
+
+        Pausing a walk is what makes ORDER observable rather than merely
+        outcome: everything hardened before it is already 0600 while the hook is
+        still blocked, and everything that waits for it is still 0644. Asserting
+        the end state instead would pass on either ordering, since every walk
+        eventually hardens its own set.
+
+        `slow_walk` selects WHICH walk stalls, by find's first argument — a
+        runtime tree by name, or `.` for harden_workspace_artifacts. It has no
+        default and every caller must state it explicitly: choosing it wrongly
+        is how one of these tests stops discriminating, because pausing a walk
+        that runs before the behaviour under test proves nothing — the
+        assertion is then satisfied by the very walk the fast path exists to
+        pre-empt — and a silent default let exactly that happen once already.
+
+        Returns the live process and the marker the shim touches; the caller
+        must reap it.
+        """
+        shim = workspace / "bin"
+        shim.mkdir()
+        marker = workspace / "full-walk-started"
+        (shim / "find").write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            f"  {slow_walk})\n"
+            "    : > \"$PERMS_FIND_MARKER\"\n"
+            "    /bin/sleep 2\n"
+            "    ;;\n"
+            "esac\n"
+            f"exec {shutil.which('find')} \"$@\"\n"
+        )
+        (shim / "find").chmod(0o755)
+        process = subprocess.Popen(
+            ["bash", str(PERMS_HOOK)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ,
+                 "CLAUDE_PROJECT_DIR": str(project_dir or workspace),
+                 "PERMS_FIND_MARKER": str(marker),
+                 "PATH": f"{shim}:{os.environ['PATH']}"},
+        )
+        assert process.stdin is not None
+        process.stdin.write(json.dumps(payload))
+        process.stdin.close()
+        # communicate() re-flushes self.stdin, and flushing an already-closed
+        # stream raises ValueError on Python 3.12 — the version CI pins and
+        # requirements.txt is compiled for — but not on 3.13+. Dropping the
+        # reference keeps the test honest on both.
+        process.stdin = None
+        deadline = time.time() + 10
+        while time.time() < deadline and not marker.exists():
+            time.sleep(0.02)
+        return process, marker
+
     @needs_jq
     def test_write_payload_hardens_exact_target_before_a_slow_full_walk_finishes(
             self, tmp_path):
@@ -1546,41 +1738,319 @@ class TestRuntimePermissionsHook:
         target.chmod(0o644)
         (tmp_path / ".claude").mkdir()
 
-        shim = tmp_path / "bin"
-        shim.mkdir()
-        marker = tmp_path / "full-walk-started"
-        (shim / "find").write_text(
-            "#!/bin/sh\n"
-            "case \"$1\" in\n"
-            "  documents)\n"
-            "    : > \"$PERMS_FIND_MARKER\"\n"
-            "    /bin/sleep 2\n"
-            "    ;;\n"
-            "esac\n"
-            f"exec {shutil.which('find')} \"$@\"\n"
-        )
-        (shim / "find").chmod(0o755)
         payload = {"tool_name": "Write",
                    "tool_input": {"file_path": str(target)}}
-        process = subprocess.Popen(
-            ["bash", str(PERMS_HOOK)], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PERMS_FIND_MARKER": str(marker),
-                 "PATH": f"{shim}:{os.environ['PATH']}"},
-        )
-        assert process.stdin is not None
-        process.stdin.write(json.dumps(payload))
-        process.stdin.close()
-        process.stdin = None
-        deadline = time.time() + 10
-        while time.time() < deadline and not marker.exists():
-            time.sleep(0.02)
+        process, marker = self._start_behind_a_slow_walk(
+            tmp_path, payload, slow_walk="documents")
 
         try:
             assert marker.exists(), "the deliberately slow full walk never began"
             assert _mode(target) == 0o600, (
                 "the exact Write target waited behind the unbounded tree scan")
+            _, stderr = process.communicate(timeout=15)
+            assert process.returncode == 0, stderr
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+    @needs_jq
+    def test_a_generated_pdf_outside_every_runtime_tree_is_hardened_early(
+            self, tmp_path):
+        """A return can be generated into any subdirectory, not just a named one.
+
+        The early payload path recognised only the eight runtime prefixes, so a
+        completed return in `exports/` was left to `harden_workspace_artifacts`
+        — which finds it only after walking the whole contributor tree, and not
+        at all if that walk hits the hook timeout.
+
+        The paused walk is `harden_workspace_artifacts` ITSELF (`find .`), not a
+        runtime tree: the fast path runs before every walk regardless of which
+        of the two runs first between themselves, so pausing `documents` here
+        would still leave `harden_workspace_artifacts` free to find `exports/`
+        on its own — satisfying this assertion via the walk, not the fast path,
+        and passing even with the fast path's artifact arm deleted.
+        """
+        documents = tmp_path / "documents"
+        documents.mkdir()
+        (documents / "w2.pdf").write_text("financial data")
+        target = tmp_path / "exports" / "Tax_Return_2026.PDF"
+        target.parent.mkdir()
+        target.write_text("financial data")
+        target.chmod(0o644)
+        (tmp_path / ".claude").mkdir()
+
+        payload = {"tool_name": "Write",
+                   "tool_input": {"file_path": str(target)}}
+        process, marker = self._start_behind_a_slow_walk(
+            tmp_path, payload, slow_walk=".")
+
+        try:
+            assert marker.exists(), "the deliberately slow walk never began"
+            assert _mode(target) == 0o600, (
+                "a generated return outside the runtime trees waited behind "
+                "the tree scan")
+            _, stderr = process.communicate(timeout=15)
+            assert process.returncode == 0, stderr
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+    def test_a_bash_written_document_is_hardened_before_the_workspace_sweep(
+            self, tmp_path):
+        """A slow generic sweep must not starve the named runtime trees.
+
+        `harden_workspace_artifacts` prunes only the NAMED trees below — a
+        nested checkout, a build output, or any other subtree a workspace
+        happens to contain is walked in full, so that sweep is not bounded
+        by construction. `documents/` holds the taxpayer's actual source
+        files under arbitrary names, bounded only by what got scanned in,
+        and AGENTS.md singles it out as needing its own rule for exactly
+        that reason. The payload is opaque Bash, so there is nothing to
+        fast-path; only walk order protects this file, and the named tree
+        goes first so a slow sweep elsewhere cannot strand it at 0644.
+
+        The paused walk is `.` (harden_workspace_artifacts itself), not a
+        runtime tree: pausing `documents` would prove nothing here, since
+        the loop runs first and would already have hardened the target
+        before the pause could even engage.
+        """
+        documents = tmp_path / "documents"
+        documents.mkdir()
+        target = documents / "new_w2.pdf"
+        target.write_text("financial data")
+        target.chmod(0o644)
+        (tmp_path / ".claude").mkdir()
+
+        process, marker = self._start_behind_a_slow_walk(
+            tmp_path, self.OPAQUE_BASH, slow_walk=".")
+
+        try:
+            assert marker.exists(), "the deliberately slow walk never began"
+            assert _mode(target) == 0o600, (
+                "a Bash-written document waited behind the workspace sweep")
+            _, stderr = process.communicate(timeout=15)
+            assert process.returncode == 0, stderr
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+    @needs_jq
+    def test_the_payload_fast_path_reaches_no_further_than_the_walk(self,
+                                                                     tmp_path):
+        """Earlier, not wider.
+
+        `harden_workspace_artifacts` prunes `.git` and `.venv`, so a matching
+        name inside either must not become hardened merely because it arrived
+        by the payload route instead. More chmods is not automatically safer: a
+        permissions hook that reaches into the object store is one a contributor
+        switches off, and a switched-off hook protects nothing.
+        """
+        (tmp_path / ".claude").mkdir()
+        targets = []
+        for tree in (".git", ".venv"):
+            (tmp_path / tree).mkdir()
+            artifact = tmp_path / tree / "objects.tmp"
+            artifact.write_text("not taxpayer data")
+            artifact.chmod(0o644)
+            targets.append(artifact)
+
+        for artifact in targets:
+            payload = {"tool_name": "Write",
+                       "tool_input": {"file_path": str(artifact)}}
+            assert self._run(tmp_path, payload).returncode == 0
+
+        leaked = [str(a.relative_to(tmp_path)) for a in targets
+                  if _mode(a) != 0o644]
+        assert not leaked, f"the fast path chmodded pruned trees: {leaked}"
+
+    @needs_jq
+    def test_a_case_aliased_venv_path_is_still_excluded_from_hardening(
+            self, tmp_path):
+        """A default case-insensitive macOS filesystem answers to either spelling.
+
+        `.VENV/tool.tmp` and `.venv/tool.tmp` name the SAME on-disk file there,
+        so a payload reporting the uppercase alias still passes `[ -e "$edited" ]`.
+        A case-sensitive `case "$edited" in .venv/*)` arm misses that alias, falls
+        to the generic artifact-name arm, and lets the fast path chmod a file
+        inside the tree `harden_workspace_artifacts` deliberately prunes — for
+        example turning a venv script's 0755 into 0600 and breaking it. Skipped
+        on a case-sensitive host (CI runs Linux): there `.VENV` is an ordinary,
+        unrelated directory rather than an alias of `.venv`, so this scenario
+        cannot occur and an end-to-end reproduction would test nothing real.
+        """
+        is_case_insensitive = self._is_case_insensitive_filesystem(tmp_path)
+        if not is_case_insensitive:
+            pytest.skip("host filesystem is case-sensitive")
+
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".venv").mkdir()
+        artifact = tmp_path / ".venv" / "tool.tmp"
+        artifact.write_text("not taxpayer data")
+        artifact.chmod(0o755)
+
+        payload = {"tool_name": "Write",
+                   "tool_input": {"file_path": str(tmp_path / ".VENV" / "tool.tmp")}}
+        assert self._run(tmp_path, payload).returncode == 0
+        assert _mode(artifact) == 0o755, (
+            "the fast path chmodded .venv via a case-aliased payload path")
+
+    @needs_jq
+    def test_a_case_varied_sensitive_tree_path_is_still_hardened(
+            self, tmp_path):
+        """A case-varied spelling of an INCLUDED tree must not skip the fast path.
+
+        The mirror image of the alias test above: the fast path's
+        case-alias handling initially covered only the EXCLUDED .git/.venv
+        arms, added when a case-insensitive host let `.VENV/tool.tmp` and
+        `.venv/tool.tmp` collide. The INCLUDED arms (documents/, summaries/,
+        ...) matched case-sensitively only, so `Documents/scan.png` on the
+        same kind of host silently skipped the fast path and was left at
+        whatever mode the Write left it in until the next full workspace
+        walk — reproduced directly by review: the file stayed 0644 for the
+        whole span of a paused walk. Skipped on a case-sensitive host (CI
+        runs Linux): there `Documents` is an ordinary, distinct directory
+        outside every named tree, and no guarantee is expected to cover it.
+
+        The paused walk is `documents` — the SAME directory, since that is
+        what makes this an alias at all. Running the hook to completion
+        instead asserts nothing: `harden_changed_tree documents` reaches
+        `Documents/scan.png` through the other spelling of its own inode, so
+        the end state is 0600 whether the fast path classified the payload
+        or dropped it entirely. Only the pause separates the two.
+        """
+        is_case_insensitive = self._is_case_insensitive_filesystem(tmp_path)
+        if not is_case_insensitive:
+            pytest.skip("host filesystem is case-sensitive")
+
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / "documents").mkdir()
+        target = tmp_path / "Documents" / "scan.png"
+        target.write_text("financial data")
+        target.chmod(0o644)
+
+        payload = {"tool_name": "Write", "tool_input": {"file_path": str(target)}}
+        process, marker = self._start_behind_a_slow_walk(
+            tmp_path, payload, slow_walk="documents")
+
+        try:
+            assert marker.exists(), "the deliberately slow walk never began"
+            assert _mode(target) == 0o600, (
+                "a case-varied spelling of a sensitive tree skipped the fast "
+                "path")
+            _, stderr = process.communicate(timeout=15)
+            assert process.returncode == 0, stderr
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+    @needs_jq
+    def test_a_distinct_uppercase_directory_is_still_hardened(self, tmp_path):
+        """.VENV is not a case alias of .venv on every host.
+
+        On a case-sensitive filesystem (CI runs Linux) `.VENV` is an
+        ordinary, distinct directory that `harden_workspace_artifacts`'s find
+        walk never prunes. Excluding it from the fast path by name alone —
+        the same way the case-insensitive-alias fix folds `.VENV` into
+        `.venv` — would strand a file inside it at whatever mode it arrived
+        with if the later workspace scan times out. Skipped on a
+        case-insensitive host (this macOS dev box): there `.VENV` and
+        `.venv` name the same on-disk file, so the two cannot coexist as
+        distinct directories and this scenario cannot occur.
+
+        The paused walk is `harden_workspace_artifacts` ITSELF (`find .`),
+        which is the very scan the docstring above says a timeout can lose.
+        Running the hook to completion instead asserts nothing: that walk
+        prunes the literal `./.venv` and so descends into the distinct
+        `./.VENV`, where `-iname '*.pdf'` matches — the end state is 0600
+        whether the fast path classified `.VENV` correctly or wrongly folded
+        it into the pruned tree. Only the pause separates the two.
+        """
+        is_case_insensitive = self._is_case_insensitive_filesystem(tmp_path)
+        if is_case_insensitive:
+            pytest.skip("host filesystem is case-insensitive")
+
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".VENV").mkdir()
+        target = tmp_path / ".VENV" / "return.pdf"
+        target.write_text("financial data")
+        target.chmod(0o644)
+
+        payload = {"tool_name": "Write", "tool_input": {"file_path": str(target)}}
+        process, marker = self._start_behind_a_slow_walk(
+            tmp_path, payload, slow_walk=".")
+
+        try:
+            assert marker.exists(), "the deliberately slow walk never began"
+            assert _mode(target) == 0o600, (
+                "a distinct uppercase directory was excluded as if it were a "
+                "case alias of the pruned .venv")
+            _, stderr = process.communicate(timeout=15)
+            assert process.returncode == 0, stderr
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+    @needs_jq
+    @needs_gnu_chmod
+    def test_a_dash_prefixed_root_artifact_reaches_the_fast_path_cleanly(
+            self, tmp_path):
+        """An absolute payload path can strip to a root name starting with `-`.
+
+        `/repo/-return.pdf` strips to the root-relative `-return.pdf`. The
+        root PDF/backup glob at pass start already hardens this valid name
+        safely as `./-return.pdf`, so its mode is correct either way — the
+        bug is in the payload fast path's OWN, later, redundant chmod call:
+        unprefixed, GNU chmod reads `-return.pdf` as an unrecognized option,
+        `warn`s, sets `failed=1`, and the hook exits 1 and skips stamp
+        advancement despite the Write having fully succeeded. Skipped on BSD
+        chmod (this macOS dev box), which does not reproduce that parse.
+        """
+        (tmp_path / ".claude").mkdir()
+        target = tmp_path / "-return.pdf"
+        target.write_text("financial data")
+        target.chmod(0o644)
+
+        payload = {"tool_name": "Write", "tool_input": {"file_path": str(target)}}
+        result = self._run(tmp_path, payload)
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == '', (
+            "the fast path's own chmod call warned on a dash-prefixed name")
+        assert _mode(target) == 0o600
+
+    @needs_jq
+    def test_a_physically_resolved_payload_path_is_still_in_the_workspace(
+            self, tmp_path):
+        """CLAUDE_PROJECT_DIR may name the workspace through a symlink.
+
+        `cd` without -P leaves $PWD holding that logical spelling, so a tool
+        reporting the RESOLVED path failed the `"$PWD"/*` test, fell into the
+        absolute-path arm, and was discarded as external. The whole early-harden
+        fast path was then inert on such a host — silently, since the later tree
+        walk still hardens the file and the hook still exits 0.
+        """
+        real = tmp_path / "real"
+        (real / "documents").mkdir(parents=True)
+        (real / ".claude").mkdir()
+        target = real / "documents" / "w2.pdf"
+        target.write_text("financial data")
+        target.chmod(0o644)
+        link = tmp_path / "link"
+        link.symlink_to(real)
+
+        payload = {"tool_name": "Write",
+                   "tool_input": {"file_path": str(target.resolve())}}
+        process, marker = self._start_behind_a_slow_walk(
+            real, payload, slow_walk="documents", project_dir=link)
+
+        try:
+            assert marker.exists(), "the deliberately slow walk never began"
+            assert _mode(target) == 0o600, (
+                "a physically-resolved payload path was treated as external")
             _, stderr = process.communicate(timeout=15)
             assert process.returncode == 0, stderr
         finally:

@@ -62,13 +62,28 @@ for f in taxpayer_profile.json result.json answers.md parse_ledger.json \
         || warn "could not chmod 600 a sensitive runtime file"
 done
 
+# The generated-artifact extensions are read by three call sites: this
+# root-level glob loop, is_generated_artifact_name, and
+# harden_workspace_artifacts' find predicate (the payload fast path needs its
+# own copy of the predicate because it runs before any find). All three read
+# this one array rather than repeating the list, so a new extension added
+# here reaches every call site with nothing left to fall out of sync. `*~`
+# has no leading dot and is handled as a literal alongside the array at each
+# call site — a dot-only representation cannot express it.
+GENERATED_ARTIFACT_EXTENSIONS=(pdf bak tmp swp swo)
+
 # Bash's default globs miss dotfiles and are case-sensitive. Expand root PDFs
 # plus the backup/swap shapes declared sensitive in .gitignore with both
 # behaviors enabled. This covers unusual valid PDF names (`..pdf`, `...pdf`),
 # mixed-case extensions, and partial copies such as `result.json.bak`.
 # The `./` prefix prevents an option-like name from becoming a chmod flag.
 shopt -s nullglob dotglob nocaseglob
-for f in ./*.pdf ./*.bak ./*.tmp ./*.swp ./*.swo ./*~; do
+root_artifact_globs=()
+for ext in "${GENERATED_ARTIFACT_EXTENSIONS[@]}"; do
+    root_artifact_globs+=("./*.$ext")
+done
+root_artifact_globs+=('./*~')
+for f in ${root_artifact_globs[@]}; do
     if [ -L "$f" ]; then
         warn "refusing to follow a symlink for a sensitive runtime file"
         continue
@@ -78,6 +93,7 @@ for f in ./*.pdf ./*.bak ./*.tmp ./*.swp ./*.swo ./*~; do
         || warn "could not chmod 600 a sensitive runtime file"
 done
 shopt -u nocaseglob dotglob nullglob
+unset root_artifact_globs
 
 # Directories get 700 rather than merely removing group/other bits: a directory
 # restored as 600 needs its owner execute bit put back before the hook can walk
@@ -290,6 +306,7 @@ path_has_symlink_component() {
 
 harden_one() {
     local entry=$1
+    local chmod_target=$entry
     if path_has_symlink_component "$entry"; then
         # chmod follows symlinks on supported hosts. Refuse the whole path,
         # including a regular file reached through a symlinked parent, so a
@@ -298,11 +315,25 @@ harden_one() {
         warn "refusing to follow a symlink in a sensitive runtime path"
         return
     fi
+    # A root-relative name can start with `-` (an absolute payload path like
+    # /repo/-return.pdf strips to the root-relative -return.pdf before ever
+    # reaching this function), and GNU chmod's argv-permuting option parser
+    # reads a leading `-` as an unrecognized flag rather than a filename —
+    # BSD chmod does not permute argv and cannot reproduce it. `[ -d ]`/
+    # `[ -f ]` below are unaffected: shell test operators take a fixed
+    # argument in a fixed position, not a getopt-style scan, so they see
+    # `$entry` fine either way. The `./` prefix is applied here, once, so
+    # every caller gets the defense for free instead of having to
+    # rediscover it — a caller that already prefixed `./` itself is
+    # unaffected, since the prefixed string no longer starts with `-`.
+    case "$chmod_target" in
+        -*) chmod_target="./$chmod_target" ;;
+    esac
     if [ -d "$entry" ]; then
-        chmod 700 "$entry" 2>/dev/null \
+        chmod 700 "$chmod_target" 2>/dev/null \
             || warn "could not harden a sensitive runtime directory"
     elif [ -f "$entry" ]; then
-        chmod 600 "$entry" 2>/dev/null \
+        chmod 600 "$chmod_target" 2>/dev/null \
             || warn "could not chmod 600 a sensitive runtime file"
     fi
 }
@@ -704,6 +735,13 @@ reassert_archive_index_modes() {
 }
 
 harden_indexed_archive_files() {
+    # This re-tests what ARCHIVE_INDEX_MODES_SAFE — the only path that reaches
+    # here — already established. That is deliberate: SAFE was decided before a
+    # potentially long incremental walk, and the manifest can be replaced by a
+    # symlink inside that window. The guard is a TOCTOU re-check, not a
+    # redundant copy of the gate, and its full-walk fallback is the safe
+    # direction. Deleting it because it "cannot fire" removes the only cover for
+    # the race.
     [ -n "$CHANGED_LIST" ] && [ -f "$ARCHIVE_FILE_INDEX" ] \
         && [ ! -L "$ARCHIVE_FILE_INDEX" ] || {
         harden_full_tree archive
@@ -893,6 +931,102 @@ harden_changed_tree() {
     harden_full_tree "$tree"
 }
 
+# LC_ALL=C makes every byte 0-255 valid input to tr, avoiding "Illegal byte
+# sequence" under a locale (e.g. the UTF-8 one this host defaults to) where
+# some byte in a scanner/OCR-produced filename is not valid text —
+# scripts/pre-commit-pii-scan.sh pins the same fix for the same reason. Case
+# is folded ASCII-only, which matches every name this file ever compares
+# against: the runtime/pruned tree names and the generated-artifact
+# extensions are all seven-bit. A failed fork returns non-zero; every caller
+# treats that as "no match", the safe direction for a check that only widens
+# what gets hardened, never narrows it.
+lower_ascii() {
+    LC_ALL=C tr '[:upper:]' '[:lower:]'
+}
+
+# Both lists are stated ONCE, here, rather than separately inside the find
+# predicate below and the payload fast path's own classification: that
+# duplication is what previously let the fast path's case-alias handling for
+# .git/.venv exist without covering the other eight trees the same way, and
+# left the eventual fix un-checked against the find predicate it has to
+# agree with. RUNTIME_ARTIFACT_TREES are hardened directly by the fast path;
+# PRUNED_HOME_TREES are excluded from it because harden_workspace_artifacts'
+# find walk prunes them instead.
+RUNTIME_ARTIFACT_TREES=(documents summaries reviews scenarios projections
+                         withholding archive .planning)
+PRUNED_HOME_TREES=(.git .venv)
+
+# Classifies a Write/Edit/NotebookEdit payload's top-level path segment
+# against both lists above, writing the result to EDITED_TOP_TREE_KIND
+# ('runtime', 'pruned', or '' for neither) rather than returning it, so the
+# `-ef` filesystem check below runs at most once per hook call. An exact
+# spelling match needs no filesystem probe — the dominant case, an exact top-
+# level spelling, is the only one every skill ever writes, and it pays no
+# subshell or tr fork at all. Only when NO candidate matches exactly does
+# this fold case, once rather than once per candidate, and confirm a folded
+# match with `-ef` (same device and inode; a bash test builtin, not `stat`,
+# whose flags this project already avoids relying on because they differ
+# between BSD and GNU — see index_mode_is_owner_only) before trusting it: on
+# a case-sensitive host (CI's Linux) a folded-case match can be an ordinary,
+# UNRELATED directory — e.g. a distinct `.VENV` that is not an alias of
+# `.venv` at all — and treating it as the tree it merely resembles would
+# exclude it from the fast path and strand a file inside it at whatever mode
+# it arrived with if the later workspace scan times out.
+classify_edited_top_tree() {
+    local segment=$1
+    local segment_lower
+    local tree
+
+    EDITED_TOP_TREE_KIND=''
+    [ -n "$segment" ] || return
+
+    for tree in "${RUNTIME_ARTIFACT_TREES[@]}" "${PRUNED_HOME_TREES[@]}"; do
+        if [ "$segment" = "$tree" ]; then
+            case "$tree" in
+                .git|.venv) EDITED_TOP_TREE_KIND='pruned' ;;
+                *) EDITED_TOP_TREE_KIND='runtime' ;;
+            esac
+            return
+        fi
+    done
+
+    segment_lower=$(printf '%s' "$segment" | lower_ascii) || return
+    for tree in "${RUNTIME_ARTIFACT_TREES[@]}" "${PRUNED_HOME_TREES[@]}"; do
+        [ "$segment_lower" = "$tree" ] || continue
+        [ -e "$tree" ] && [ "$segment" -ef "$tree" ] || continue
+        case "$tree" in
+            .git|.venv) EDITED_TOP_TREE_KIND='pruned' ;;
+            *) EDITED_TOP_TREE_KIND='runtime' ;;
+        esac
+        return
+    done
+}
+
+# The generated-artifact extension set backs three call sites: the root-level
+# glob loop above, this check, and harden_workspace_artifacts' find predicate
+# below (the payload fast path needs its own copy of the predicate because it
+# runs before any find). All three read GENERATED_ARTIFACT_EXTENSIONS rather
+# than repeating the list, so a new extension added once reaches every call
+# site with nothing left to fall out of sync.
+is_generated_artifact_name() {
+    local lowered
+    local ext
+    # `case` is case-sensitive and bash 3.2 has no ${var,,}, so lower the
+    # basename to match find's -iname. `*~` carries no case either way, and
+    # has no leading dot, so it is checked as a literal rather than folded
+    # into the extension loop below.
+    lowered=$(printf '%s' "${1##*/}" | lower_ascii) || return 1
+    case "$lowered" in
+        *~) return 0 ;;
+    esac
+    for ext in "${GENERATED_ARTIFACT_EXTENSIONS[@]}"; do
+        case "$lowered" in
+            *".$ext") return 0 ;;
+        esac
+    done
+    return 1
+}
+
 harden_workspace_artifacts() {
     # Generated PDFs and their editor/generator backup copies may be written to
     # an arbitrary workspace subdirectory, not only the root or a named runtime
@@ -900,33 +1034,40 @@ harden_workspace_artifacts() {
     # elsewhere (and .git/.venv). Find's default -P behavior does not follow
     # symlinked directories, while harden_one rejects a symlink component on
     # every materialized artifact path.
+    #
+    # The predicate is built ONCE, from PRUNED_HOME_TREES, RUNTIME_ARTIFACT_TREES
+    # and GENERATED_ARTIFACT_EXTENSIONS — the same arrays the payload fast path
+    # reads. Stating the prune and name lists a second time here, independent of
+    # those arrays, was the previous design, and it was two more chances for the
+    # two walks to start covering different files.
+    local prune_predicate=()
+    local name_predicate=()
+    local tree
+    local ext
+
+    for tree in "${PRUNED_HOME_TREES[@]}" "${RUNTIME_ARTIFACT_TREES[@]}"; do
+        [ ${#prune_predicate[@]} -eq 0 ] || prune_predicate+=(-o)
+        prune_predicate+=(-path "./$tree")
+    done
+    for ext in "${GENERATED_ARTIFACT_EXTENSIONS[@]}"; do
+        [ ${#name_predicate[@]} -eq 0 ] || name_predicate+=(-o)
+        name_predicate+=(-iname "*.$ext")
+    done
+    name_predicate+=(-o -name '*~')
+
+    local walk=(
+        . \( "${prune_predicate[@]}" \) -prune -o
+        -type f \( "${name_predicate[@]}" \)
+    )
     if [ -z "$CHANGED_LIST" ]; then
         warn "could not inspect generated workspace artifacts safely"
         return
     fi
     if [ "$FORCE_FULL" -eq 0 ] && [ -f "$STAMP" ] \
-       && find . \
-            \( -path './.git' -o -path './.venv' -o \
-               -path './documents' -o -path './summaries' -o \
-               -path './reviews' -o -path './scenarios' -o \
-               -path './projections' -o -path './withholding' -o \
-               -path './.planning' -o -path './archive' \) -prune -o \
-            -type f \( -iname '*.pdf' -o -iname '*.bak' -o \
-                        -iname '*.tmp' -o -iname '*.swp' -o \
-                        -iname '*.swo' -o -name '*~' \) \
-            -newercm "$STAMP" -print0 \
+       && find "${walk[@]}" -newercm "$STAMP" -print0 \
             > "$CHANGED_LIST" 2>/dev/null; then
         :
-    elif ! find . \
-            \( -path './.git' -o -path './.venv' -o \
-               -path './documents' -o -path './summaries' -o \
-               -path './reviews' -o -path './scenarios' -o \
-               -path './projections' -o -path './withholding' -o \
-               -path './.planning' -o -path './archive' \) -prune -o \
-            -type f \( -iname '*.pdf' -o -iname '*.bak' -o \
-                        -iname '*.tmp' -o -iname '*.swp' -o \
-                        -iname '*.swo' -o -name '*~' \) -print0 \
-            > "$CHANGED_LIST" 2>/dev/null; then
+    elif ! find "${walk[@]}" -print0 > "$CHANGED_LIST" 2>/dev/null; then
         warn "could not inspect generated workspace artifacts safely"
         return
     fi
@@ -954,8 +1095,20 @@ if [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
                 | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' \
               2>/dev/null) || edited=''
         edited_in_workspace=1
+        # A tool may report a physically-resolved file_path while $PWD holds the
+        # logical one — the cd above is logical, so CLAUDE_PROJECT_DIR reached
+        # through a symlinked parent keeps that spelling. Matching only $PWD
+        # classified such a target as EXTERNAL, which discards it entirely and
+        # makes this whole fast path inert on that host. The relative remainder
+        # is valid from cwd under either spelling, since both name one directory.
+        # An empty prefix here would be a disaster ("/*" matches every absolute
+        # path and strips nothing), so a failed `pwd -P` falls back to $PWD and
+        # the arm becomes a harmless duplicate.
+        physical_pwd=$(pwd -P 2>/dev/null) || physical_pwd=''
+        [ -n "$physical_pwd" ] || physical_pwd=$PWD
         case "$edited" in
             "$PWD"/*) edited=${edited#"$PWD"/} ;;
+            "$physical_pwd"/*) edited=${edited#"$physical_pwd"/} ;;
             /*) edited_in_workspace=0; edited='' ;;
         esac
         case "/$edited/" in
@@ -969,14 +1122,33 @@ if [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
                 edited=''
                 ;;
         esac
-        case "$edited" in
-            documents/*|summaries/*|reviews/*|scenarios/*|projections/*|\
-            withholding/*|archive/*|.planning/*)
-                if [ -e "$edited" ] || [ -L "$edited" ]; then
-                    harden_one "$edited"
-                fi
+        harden_payload_target=0
+        edited_top=${edited%%/*}
+        classify_edited_top_tree "$edited_top"
+        case "$EDITED_TOP_TREE_KIND" in
+            runtime)
+                harden_payload_target=1
+                ;;
+            pruned)
+                # harden_workspace_artifacts prunes this tree (or its alias)
+                # by the same check; nothing to harden here.
+                ;;
+            *)
+                # A generator may place a return in any subdirectory,
+                # not only a named runtime tree. harden_workspace_artifacts
+                # does find those, but it still walks the whole
+                # contributor tree to do it, and naming the exact file
+                # skips that walk entirely. Root-level artifacts are
+                # hardened at pass start; this covers the nested ones,
+                # for the tools that report a path at all.
+                is_generated_artifact_name "$edited" \
+                    && harden_payload_target=1
                 ;;
         esac
+        if [ "$harden_payload_target" -eq 1 ] \
+           && { [ -e "$edited" ] || [ -L "$edited" ]; }; then
+            harden_one "$edited"
+        fi
     fi
 fi
 
@@ -989,10 +1161,28 @@ if reassert_archive_index_modes; then
     ARCHIVE_INDEX_MODES_SAFE=1
 fi
 
+# AFTER the runtime-tree walks, not before. A prior version of this pass ran
+# harden_workspace_artifacts first on the theory that it was "bounded by
+# construction" for having pruned every large tree — false: it prunes only
+# the NAMED trees below, and anything else a workspace happens to contain (a
+# nested checkout, a build output, an unrelated data dump) is walked in full.
+# That is not a bound, it is an unenumerated set. `documents/` is bounded by
+# something real — what the taxpayer actually scanned in — and AGENTS.md
+# singles it out as the directory that "needs its own rule" precisely because
+# it holds the raw source PII. The two walks are disjoint and their order is
+# free on correctness grounds alone, so it is decided by which class of file
+# a timeout is allowed to strand: an unindexed generated PDF outside every
+# named tree, or an indexed taxpayer document inside one. The named trees go
+# first. The residual gap this accepts — an opaque-Bash-written PDF outside
+# every named tree AND outside the workspace root, colliding with a slow
+# named-tree walk — needs three things to compound, and the documented
+# generation flow (tax-generate/SKILL.md) writes to the workspace root,
+# which harden_one covers at pass start regardless of this walk's order.
 for d in documents summaries reviews scenarios projections withholding .planning; do
     [ -e "$d" ] || [ -L "$d" ] || continue
     harden_changed_tree "$d"
 done
+
 harden_workspace_artifacts
 
 if [ -e archive ] || [ -L archive ]; then
@@ -1228,9 +1418,13 @@ fi
 # merely slower, so the missing-directory case degrades in the safe direction.
 # A failed chmod/scan pass must leave the old stamp in place: otherwise an
 # unchanged file whose chmod failed is older than a new stamp and every later
-# incremental pass skips it permanently. Archive-index publication is the one
-# deliberate exception above: it removes the old stamp first, using absence as
-# a dirty marker until both manifests have been replaced successfully.
+# incremental pass skips it permanently. ADVANCE OR HOLD, never a third state —
+# there is no case in which this hook unlinks the stamp. Archive-index
+# publication once did exactly that, using the stamp's absence to mean "rebuild
+# both manifests"; it now marks that window with its own file
+# ($ARCHIVE_INDEX_DIRTY_MARKER), because absence-as-dirty-marker also discarded
+# the incremental boundary for every unrelated runtime tree and left a window in
+# which a kill destroyed a consistent stamp.
 write_stamp() {
     local candidate
     candidate=$(mktemp ".claude/.perms-stamp.XXXXXX" 2>/dev/null) || return 1
@@ -1256,6 +1450,11 @@ write_stamp() {
     }
 }
 
+# The symlink arm is a TOCTOU re-check of the pass-start guard, which already
+# warns and sets failed=1 for a stamp that was a symlink then — and failed=0 is
+# required here. It can therefore only fire if the stamp BECAME a symlink during
+# this pass, which is the whole point: mv -f onto a symlink writes through it,
+# outside the workspace. Do not delete this as already-guaranteed.
 if [ "$failed" -eq 0 ] && [ -d .claude ] && [ ! -L .claude ] \
    && [ ! -L "$STAMP" ]; then
     write_stamp || warn "could not advance the permissions stamp safely"
