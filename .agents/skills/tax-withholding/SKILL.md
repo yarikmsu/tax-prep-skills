@@ -38,7 +38,9 @@ the federal report plus a "CA only" caveat.
 
 1. **Validate prerequisites.** Confirm `result.json`, `projection_inputs.json`, and
    `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24, stop and tell
-   the user to run `/tax-compute`.
+   the user to run `/tax-compute`. If you create `projection_inputs.json` from the
+   template in this skill, immediately run
+   `python3 -m agents.lib.secure_fs projection_inputs.json` after writing it.
 
 2. **Resolve prior-year baseline.** If `archive/{year-1}/` exists it is used for the
    prior-year safe harbor; otherwise note degraded mode to the user.
@@ -51,15 +53,28 @@ the federal report plus a "CA only" caveat.
    (Omit `--as-of` to use today.)
 
 4. **Render + save.** Run the same command without `--json` to get the markdown report.
-   Save it to `withholding/TY{year}_asof_{MM-DD}.md` and `chmod 600` it. Print the report.
+   Before writing, create and restrict its directory; then restrict the report immediately
+   after saving it and print the report:
+   ```bash
+   mkdir -p withholding && python3 -m agents.lib.secure_fs withholding
+   ```
+   Now save the report. Only once the file exists, restrict it — the two
+   commands are in separate blocks because running them as one would call
+   `secure_fs` on a path that does not exist yet, which exits 1:
+   ```bash
+   python3 -m agents.lib.secure_fs withholding/TY{year}_asof_{MM-DD}.md
+   ```
 
 5. **Audit note.** Append one line to `answers.md` (NO dollar PII duplicated):
    ```
    ## Withholding true-up TY{year} as-of {MM-DD} — run {today}. Safe-harbor: {covered/underpaid}.
    ```
+   Then run `python3 -m agents.lib.secure_fs answers.md` in case the write
+   replaced the file rather than preserving its existing permissions.
 
 ## Security & safety
 - Any delegated sub-task must have NO network access and must NOT write outside `withholding/`.
 - Never extract or store full SSNs.
 - This skill never writes `result.json` or `taxpayer_profile.json`.
-- All written files (`withholding/*.md`) → `chmod 600`.
+- Restrict every written file and the `withholding/` directory with
+  `agents.lib.secure_fs`; on Windows a bare POSIX-mode command does not restrict the DACL.

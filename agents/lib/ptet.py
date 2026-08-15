@@ -51,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.projection import (  # noqa: E402
+    ProjectionError,
     _money,
     _read_json,
 )
@@ -66,6 +67,7 @@ from agents.lib.scenario import (  # noqa: E402
     read_tax_year,
 )
 from agents.lib.tax_computations import compute_scenario  # noqa: E402
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 class PtetError(Exception):
@@ -952,8 +954,13 @@ def _main(argv: list) -> int:
             ptet_cfg=(tax_law.get("ptet") if isinstance(tax_law, dict) else None))
         print(render_markdown(report))
         return 0
-    except (PtetError, ScenarioError, RolloverError) as e:
-        print(f"Error: {e}", file=sys.stderr)
+    except (PtetError, ProjectionError, ScenarioError, RolloverError) as e:
+        # ProjectionError belongs here because `_read_json` is projection's,
+        # and it is what a missing result.json raises — the single most
+        # ordinary way to run this skill wrong (before /tax-compute has been
+        # run at all). Without it that case exited with a Python traceback
+        # rather than the `Error: …` line the skill tells the agent to read.
+        print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
 
 

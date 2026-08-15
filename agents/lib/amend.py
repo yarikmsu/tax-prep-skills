@@ -29,6 +29,7 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 class AmendError(Exception):
@@ -254,11 +255,11 @@ def render_markdown(comparison: dict, bullets: list) -> str:
 
 def _read_json(path: Path, what: str) -> dict:
     if not path.is_file():
-        raise AmendError(f"{what} not found at {path}")
+        raise AmendError(f"{what} not found at {redact(path)}")
     try:
         return json.loads(path.read_text())
     except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
-        raise AmendError(f"could not read {what}: {e}") from e
+        raise AmendError(f"could not read {what}: {redact(e)}") from e
 
 
 def _main(argv: list) -> int:
@@ -298,7 +299,7 @@ def _main(argv: list) -> int:
         else:
             print(render_markdown(comparison, bullets))
     except (AmendError, RolloverError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     return 0
 

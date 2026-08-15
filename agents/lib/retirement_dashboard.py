@@ -49,6 +49,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
     _validate_year_arg,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 class RetirementError(Exception):
@@ -1780,11 +1781,11 @@ def _read_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text())
     except json.JSONDecodeError as e:
-        raise RetirementError(f"{path} is not valid JSON: {e}") from e
+        raise RetirementError(f"{redact(path)} is not valid JSON: {redact(e)}") from e
     except UnicodeDecodeError as e:
-        raise RetirementError(f"{path} is not valid UTF-8 text: {e}") from e
+        raise RetirementError(f"{redact(path)} is not valid UTF-8 text: {redact(e)}") from e
     except OSError as e:
-        raise RetirementError(f"could not read {path}: {e}") from e
+        raise RetirementError(f"could not read {redact(path)}: {redact(e)}") from e
 
 
 def _main(argv: "list[str]") -> int:
@@ -1812,7 +1813,7 @@ def _main(argv: "list[str]") -> int:
             raise RetirementError("--workspace must be a non-empty path")
         workspace = Path(args.workspace).resolve()
         if not workspace.is_dir():
-            raise RetirementError(f"workspace does not exist: {workspace}")
+            raise RetirementError(f"workspace does not exist: {redact(workspace)}")
         try:
             profile_path = _validate_subpath(
                 Path(args.profile).resolve(), workspace
@@ -1837,7 +1838,7 @@ def _main(argv: "list[str]") -> int:
             tax_year=year,
         )
     except (RetirementError, RolloverError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     if args.json:

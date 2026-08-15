@@ -52,6 +52,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_niit,
     compute_scenario,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 
 SCHEMA = "tax-roth-ladder/v1"
 MAX_RUNGS = 200  # bound output / compute for pathological --max/--step combinations
@@ -528,7 +529,7 @@ def _main(argv: list) -> int:
         today = (datetime.date.fromisoformat(args.today) if args.today
                  else datetime.date.today())
     except (RothLadderError, ScenarioError, RolloverError, ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     try:
@@ -536,16 +537,16 @@ def _main(argv: list) -> int:
                               step=_coerce_numeric(args.step, default=5000), name=name,
                               today=today, ira_basis=args.ira_basis, ira_value=args.ira_value)
     except (RothLadderError, ScenarioError, ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     data = _report_to_dict(report)
     if not args.no_save:
         try:
             out = save_scenario(workspace, name, data)
-            print(f"# Saved {out}", file=sys.stderr)
+            print(f"# Saved {redact(out)}", file=sys.stderr)
         except (ScenarioError, RolloverError) as e:
-            print(f"ERROR: {e}", file=sys.stderr)
+            print(f"ERROR: {redact(e)}", file=sys.stderr)
             return 1
 
     if args.json:

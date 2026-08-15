@@ -20,15 +20,16 @@ These rules are absolute. Violating one is worse than failing the task.
 - **NEVER store or emit a full SSN.** Record only the last four digits, in
   `ssn_last4` fields, formatted `XXX-XX-{last4}`. This applies when parsing
   source documents too: never extract a full SSN, even into an intermediate file.
-- **`chmod 600` every file containing PII or financial data** immediately after
+- **Restrict every file holding PII or financial data** immediately after
   writing it — `taxpayer_profile.json`, `result.json`, `answers.md`, `FBAR_*.md`,
-  generated PDFs, anything under `reviews/`. The runtime DIRECTORIES below get
-  **`chmod 700`** as you create them: 600 on the files leaves a 755 directory
-  listing its entries, and under `archive/` those entries are a taxpayer's
-  scanned documents named after what they are. This one is MANUAL — `tax-review`
-  is the only skill that writes it down, no `agents/lib/` `mkdir` applies it, and
-  the sole automatic re-assertion is a Claude Code hook. Under every other agent
-  the rule holds only because YOU ran the `chmod`, at creation time.
+  generated PDFs, anything under `reviews/`. Runtime DIRECTORIES get it as you
+  create them (the POSIX equivalent is `chmod 600` on files, `chmod 700` on
+  directories): an owner-only file inside a listable directory still discloses
+  its NAME, and under `archive/` those names are a taxpayer's scanned documents.
+  Do it with `python3 -m agents.lib.secure_fs PATH [PATH ...]` and never a bare
+  `chmod` — on Windows under a POSIX-compatible shell `chmod` only flips the
+  read-only DOS attribute and leaves NTFS untouched. `agents/lib/` writers call
+  it internally. The WORKSPACE ROOT is yours: nothing creates it, none secures it.
 - **Never log, echo, or display sensitive values** in skill output or terminal
   output. Summaries reference figures; they do not print identity data.
 - **Runtime files are gitignored and local-only.** `taxpayer_profile.json`,
@@ -265,8 +266,10 @@ tests/                           # pytest suite
 `agents/lib/` holds the computation engine — `tax_computations.py` (all the
 parameterized tax math), `tax_law_fetcher.py` (cache schema, freshness, source
 pinning), `parse_utils.py`, `capabilities.py`, `tie_out.py`, `irs_dates.py`, and
-one module per planning skill. Every module exposes a `_main` CLI entry point and
-self-tests when run directly. None of them import anything agent-specific.
+one module per planning skill. Every module exposes a `_main` CLI entry point;
+run with no arguments, a few (`tax_computations`, `secure_fs`, `irs_dates`,
+`crypto_importer`) run a built-in self-test instead of the CLI, and the rest
+report their usage. None of them import anything agent-specific.
 
 ## 6. Runtime files (created per taxpayer, all gitignored)
 
@@ -282,7 +285,8 @@ self-tests when run directly. None of them import anything agent-specific.
 - `documents/` — source tax documents; place files here for parsing
 - `summaries/` — per-document parsed data as markdown
 - `holdings.json` — optional brokerage lot data for `tax-harvest`
-- `reviews/` — persisted `tax-review` workpapers (`{year}-review.md`, chmod 600).
+- `reviews/` — persisted `tax-review` workpapers (`{year}-review.md`, owner-only
+  via `secure_fs`, directory included).
   Archived into `archive/{year}/reviews/` at year-end cutover, after which
   `tax-rollover` surfaces the prior year's "Tax Planning for Next Year" section
   as the new year's checklist

@@ -112,6 +112,16 @@ Work down this ladder and TELL the user which rung was used:
    State ({code}): {automatic — FTB 3519 payment made: yes/no | not modeled}.
    Estimate source: {computed result.json | projection | user estimate}.
    ```
+4. Re-restrict both files you just wrote. An editor that REPLACES a file
+   rather than editing it in place leaves the replacement at the default
+   mode — owner-only is not inherited from the file it overwrote — so this
+   runs after the write, every time, and is a no-op when nothing moved.
+   `secure_fs`, not a bare `chmod`: under a POSIX-compatible shell on Windows
+   `chmod` only flips the read-only DOS attribute and leaves the inherited
+   NTFS ACL granting every other local account read access.
+   ```bash
+   python3 -m agents.lib.secure_fs taxpayer_profile.json answers.md || exit 1
+   ```
 
 ### 5.5. Estimate the §6601 interest cost of paying later (pay-now vs October)
 

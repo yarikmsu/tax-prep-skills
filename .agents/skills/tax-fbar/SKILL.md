@@ -119,6 +119,12 @@ a parent's account, a nonprofit's?" Record the yes/no in
 in answers.md. A YES adds those accounts to the FBAR (Part IV) even though
 they never appear on the tax return or in any ledger document.
 
+After recording the completeness/signature-authority answers, immediately
+restrict both files again in case either write replaced the prior file:
+```bash
+python3 -m agents.lib.secure_fs taxpayer_profile.json answers.md
+```
+
 ### 2. Gather Account Details
 
 For each foreign account, collect:
@@ -214,11 +220,6 @@ this toolkit — it's on the `/tax-compute` limitations manifest).
 
 ⚠️ **SECURITY:** The generated file contains sensitive account numbers. Verify `FBAR_*.md` is in `.gitignore` (install.sh adds it by default). Warn the user: "This file contains full account numbers — securely delete it after FBAR filing is complete."
 
-After creating the file, set restrictive permissions:
-```bash
-chmod 600 FBAR_{year}_Preparation.md
-```
-
 Create `FBAR_{year}_Preparation.md`:
 
 ```markdown
@@ -273,9 +274,18 @@ Create `FBAR_{year}_Preparation.md`:
 - [ ] Save confirmation number
 ```
 
+Immediately after writing the file, restrict it to the current OS identity:
+```bash
+python3 -m agents.lib.secure_fs FBAR_{year}_Preparation.md
+```
+
 ### 6. Update result.json
 
 Ensure `fbar_fincen_114` and `form_8938_fatca` sections in result.json are accurate.
+Immediately after writing it, run:
+```bash
+python3 -m agents.lib.secure_fs result.json
+```
 
 ### 7. Summary
 

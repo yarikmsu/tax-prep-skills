@@ -58,6 +58,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
     _validate_year_arg,
 )
+from agents.lib.secure_fs import redact, secure_fd, secure_path  # noqa: E402
 
 
 class CalendarError(Exception):
@@ -268,7 +269,7 @@ def _strict_state_list(d: dict, key: str) -> list[str]:
         if not _STATE_CODE_RE.match(code):
             raise CalendarError(
                 f"flags.{key}[{i}] must be a 2-letter US state code "
-                f"(e.g. 'CA', 'NY'), got {code!r}"
+                f"(e.g. 'CA', 'NY'), got {redact(repr(code))}"
             )
     # Dedupe while preserving first-occurrence order — multiple K-1s in
     # the same state share state-level PTET deadlines, so emitting one
@@ -335,7 +336,8 @@ def _strict_state_str(d: dict, key: str) -> "str | None":
     if not _STATE_CODE_RE.match(code) or code not in _USPS_STATES:
         raise CalendarError(
             f"address.{key} must be a 2-letter USPS state/territory code "
-            f"(e.g. 'CA', 'NY'), got {v!r} — fix taxpayer_profile.json "
+            f"(e.g. 'CA', 'NY'), got {redact(repr(v))} — fix "
+            f"taxpayer_profile.json "
             f"(the calendar refuses to guess and silently drop state "
             f"reminders)"
         )
@@ -356,7 +358,8 @@ def _strict_bool(d: dict, key: str, *, default: bool = False) -> bool:
     v = d[key]
     if not isinstance(v, bool):
         raise CalendarError(
-            f"flags.{key} must be a JSON boolean (true/false), got {v!r}"
+            f"flags.{key} must be a JSON boolean (true/false), "
+            f"got {redact(repr(v))}"
         )
     return v
 
@@ -1308,17 +1311,20 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
     except RolloverError as e:
         raise CalendarError(str(e)) from e
     if not profile_path.is_file():
-        raise CalendarError(f"taxpayer_profile not found at {profile_path}")
+        raise CalendarError(
+            f"taxpayer_profile not found at {redact(profile_path)}")
     try:
         profile = json.loads(profile_path.read_text())
     except json.JSONDecodeError as e:
-        raise CalendarError(f"taxpayer_profile is not valid JSON: {e}") from e
+        raise CalendarError(
+            f"taxpayer_profile is not valid JSON: {redact(e)}") from e
     except UnicodeDecodeError as e:
         raise CalendarError(
-            f"taxpayer_profile is not valid UTF-8 text: {e}"
+            f"taxpayer_profile is not valid UTF-8 text: {redact(e)}"
         ) from e
     except OSError as e:  # PermissionError, IsADirectoryError, generic OSError
-        raise CalendarError(f"could not read {profile_path}: {e}") from e
+        raise CalendarError(
+            f"could not read {redact(profile_path)}: {redact(e)}") from e
 
     events = build_events(profile, tax_year)
     ics = to_ics(events)
@@ -1331,7 +1337,7 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
     # replaced (calendar apps that already imported the old file will retain
     # orphan events whose UIDs aren't in the new file).
     if out.exists():
-        print(f"Replacing existing {out.name}", file=sys.stderr)
+        print(f"Replacing existing {redact(out.name)}", file=sys.stderr)
     tmp = out.with_suffix(out.suffix + ".tmp")
     try:
         # Write bytes, not text, so the precise CRLF line endings produced
@@ -1341,8 +1347,29 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
         # malformed iCalendar. This bug is invisible on platforms where
         # `os.linesep == '\n'` (Linux, macOS), so cross-platform tests
         # assert against bytes-on-disk rather than text.
-        tmp.write_bytes(ics.encode("utf-8"))
-        os.chmod(tmp, 0o600)
+        #
+        # Created at 600 up front rather than written-then-chmod'd: the .ics
+        # carries the taxpayer's filing status, state and payment schedule, and
+        # Path.write_bytes would create the file at the umask default (0644)
+        # holding all of it before secure_path tightened anything — on Windows
+        # with no ACL protection at all until the PowerShell call returned.
+        # `mode` on os.open is create-only (POSIX ignores it for a .tmp left
+        # behind by a failed prior run), so secure_fd runs on the descriptor
+        # before the first byte lands. rollover.py, scenario.py and tie_out.py
+        # hold the same line. os.replace then carries the mode across the
+        # rename onto the real target.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            handle = os.fdopen(fd, "wb")
+        except BaseException:
+            # fdopen has not adopted the descriptor yet, so nothing else will
+            # ever close it — the `with` below only covers the success path.
+            os.close(fd)
+            raise
+        with handle as f:
+            secure_fd(f.fileno(), tmp)
+            f.write(ics.encode("utf-8"))
+        secure_path(tmp)
         os.replace(tmp, out)  # atomic on POSIX
     except OSError as e:
         # Best-effort cleanup of the temp file before surfacing the error.
@@ -1350,7 +1377,7 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
-        raise CalendarError(f"failed to write {out}: {e}") from e
+        raise CalendarError(f"failed to write {redact(out)}: {redact(e)}") from e
     return out
 
 
@@ -1371,13 +1398,14 @@ def _main(argv: list[str]) -> int:
             raise CalendarError("--workspace must be a non-empty path")
         workspace = Path(args.workspace).resolve()
         if not workspace.is_dir():
-            raise CalendarError(f"workspace does not exist: {workspace}")
+            raise CalendarError(
+                f"workspace does not exist: {redact(workspace)}")
         out = write_calendar(Path(args.profile), workspace, tax_year=year)
     except (CalendarError, RolloverError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
-    print(f"Wrote {out}")
+    print(f"Wrote {redact(out)}")
     return 0
 
 

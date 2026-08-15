@@ -53,6 +53,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
     _validate_year_arg,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 class WithholdingError(Exception):
@@ -489,13 +490,13 @@ def _main(argv: list) -> int:
 
         prior = load_prior_baseline(workspace / "archive" / str(year - 1), year - 1)
     except (WithholdingError, ProjectionError, RolloverError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     try:
         report = build_report(result, proj_inputs, prior, year, as_of)
     except (WithholdingError, ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     if args.json:

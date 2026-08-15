@@ -61,7 +61,13 @@ silently omits a form it cannot model:
      b. The user EXPLICITLY accepts proceeding without the named form(s). Then:
         (1) record the decision in `answers.md` (date, rule id, form, one-line
         user rationale); (2) add the rule id(s) to `acknowledged_limitations`
-        in `taxpayer_profile.json`; (3) re-run the gate and confirm exit 0.
+        in `taxpayer_profile.json`; (3) run
+        `python3 -m agents.lib.secure_fs answers.md taxpayer_profile.json || exit 1`
+        — an editor that REPLACES a file rather than editing it in place leaves
+        the replacement at the default mode, and this branch can END the run
+        (option a, or a gate that still blocks), so the securing step in
+        `references/finalize.md` may never be reached; (4) re-run the gate and
+        confirm exit 0.
    - **1 (error):** Fix the reported profile problem (non-bool flag, unknown
      acknowledged id, malformed state). Never bypass the gate on an error.
 3. NEVER add ids to `acknowledged_limitations` without the user's explicit

@@ -103,6 +103,45 @@ GREP_ERR="$WORK/greperr"
 # gate, so every diff here asks for machine-readable output explicitly.
 DIFF_SAFE="--no-color --no-ext-diff --no-textconv"
 
+# Sets RECORDED_FIRST_PARENT to the first parent a commit records in its OWN
+# object, or to the empty string when it records none — a true root commit.
+#
+# This is the one question `git rev-list --parents` and `git rev-parse <sha>^`
+# cannot answer. Both report the parents THIS CLONE HAS. In a shallow clone the
+# boundary commit's parents were never fetched, so both describe it exactly as
+# they describe a root commit: `rev-list --parents -n 1` prints the sha alone
+# and `rev-parse <sha>^` fails. The root special cases below then diff a whole
+# SNAPSHOT against the empty tree — every file the boundary carries, most of
+# them from history the range never asked about — and a secret that some earlier
+# reviewed commit legitimately holds fails today's unrelated pull request. The
+# commit OBJECT always carries the true parent list; a shallow graft only hides
+# it from traversal.
+#
+# Only the HEADER block is read — every line before the first genuinely EMPTY
+# one. That is what rules out `git cat-file -p | grep '^parent '`, which was
+# tried first and false-matches a commit MESSAGE line beginning "parent " (e.g.
+# "parent bug tracked separately"), silently turning any commit into a "root"
+# and reopening the bypass. Folded headers (gpgsig, mergetag) continue with a
+# leading space, and git renders an empty signature line as a single space, so
+# neither ends the block early nor starts with "parent ". Pure bash: a `grep`
+# that cannot RUN reports "no match", and no rule here may be turned off by a
+# failure to test it.
+RECORDED_FIRST_PARENT=""
+read_recorded_first_parent() {
+  # $1 — commit sha.
+  local obj line
+  RECORDED_FIRST_PARENT=""
+  obj=$(git cat-file commit "$1" 2>/dev/null) \
+    || die "could not read the commit object for '$1' — cannot tell a root commit from a shallow boundary"
+  while IFS= read -r line; do
+    [ -n "$line" ] || break
+    case "$line" in
+      "parent "*) RECORDED_FIRST_PARENT="${line#parent }"; return 0 ;;
+    esac
+  done <<< "$obj"
+  return 0
+}
+
 SCOPES=()
 if [ -n "$DIFF_RANGE" ]; then
   base="${DIFF_RANGE%%...*}"
@@ -118,10 +157,62 @@ if [ -n "$DIFF_RANGE" ]; then
   if ! git rev-list "$merge_base..$head" > "$REVS" 2>/dev/null; then
     die "cannot enumerate commits in '$merge_base..$head'"
   fi
+  # `A..B` excludes A, which is correct for CI: the base is already on main and
+  # was scanned by the pull request that put it there. A ROOT commit is the one
+  # base for which that is false — nothing precedes it, so no earlier range can
+  # ever have covered it. Excluding it is what made the full-history audit
+  # (`$(git rev-list --max-parents=0 HEAD)...HEAD`, the gate before publishing a
+  # private repo) report CLEAN on a repository whose initial import carried a
+  # full SSN — verified before this line existed. The per-commit scan below
+  # already diffs a parentless commit against the empty tree; it simply never
+  # received one.
+  # `git rev-parse -q --verify "${merge_base}^"` exits non-zero for BOTH
+  # "confirmed: no parent" and "the check itself failed" (an I/O error, a
+  # broken git wrapper) — `-q` suppresses the message that would otherwise
+  # tell the two apart, so treating any failure as proof of root conflates an
+  # expected condition with an unexpected error. `git cat-file -p` was tried
+  # next, but its output is the WHOLE commit object — header lines plus the
+  # free-form message below a blank line — and grepping it for `^parent `
+  # false-matches a commit message that itself starts a line with "parent "
+  # (e.g. "parent bug tracked separately"), silently reopening the same
+  # bypass this line exists to close. `git rev-list --parents -n 1` avoids
+  # both problems: it prints exactly one line, `<sha>` followed by zero or
+  # more parent shas from git's own parent-tracking, never commit-message
+  # text. What it reports is the parents this CLONE HAS, which is not the same
+  # question — see read_recorded_first_parent above — so the sha-alone line is
+  # a NECESSARY condition for a root commit and the object header decides it.
+  parents_line=$(git rev-list --parents -n 1 "$merge_base" 2>/dev/null) \
+    || die "cannot determine parents of merge base '$merge_base'"
+  if [ "$parents_line" = "$merge_base" ]; then
+    # rev-list found no parent. Confirm against the commit's own object before
+    # acting on it: in a shallow clone this is what a BOUNDARY looks like too,
+    # and a boundary is an ordinary base — already scanned by the pull request
+    # that landed it, so `A..B`'s exclusion is right for it and only a true root
+    # earns the exception.
+    read_recorded_first_parent "$merge_base"
+    if [ -z "$RECORDED_FIRST_PARENT" ]; then
+      printf '%s\n' "$merge_base" >> "$REVS"
+    fi
+  fi
   while IFS= read -r sha; do
     [ -n "$sha" ] || continue
-    # `<sha>^` is the FIRST parent for a merge, which is the scoping this wants.
-    parent=$(git rev-parse -q --verify "${sha}^" 2>/dev/null || echo "$EMPTY_TREE")
+    # The FIRST parent, which is the scoping this wants for a merge.
+    #
+    # Read from the commit object for the same reason as above: this used to be
+    # `git rev-parse -q --verify "${sha}^" || echo "$EMPTY_TREE"`, which cannot
+    # tell "records no parent" from "records one this clone does not have" and
+    # silently widened the second case to a whole-snapshot scan. A recorded
+    # parent that is absent is a history this script cannot scan commit by
+    # commit, so it BLOCKS and says how to fix it rather than scanning something
+    # else and reporting that as coverage.
+    read_recorded_first_parent "$sha"
+    if [ -z "$RECORDED_FIRST_PARENT" ]; then
+      parent="$EMPTY_TREE"
+    elif git rev-parse -q --verify "${RECORDED_FIRST_PARENT}^{commit}" > /dev/null 2>&1; then
+      parent="$RECORDED_FIRST_PARENT"
+    else
+      die "commit '$sha' records a parent this clone does not have — a shallow history cannot be scanned commit by commit (CI needs fetch-depth: 0)"
+    fi
     # "<allowlist revision>|<git diff arguments>"
     SCOPES+=("$sha|$parent $sha")
   done < "$REVS"

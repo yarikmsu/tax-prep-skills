@@ -54,18 +54,22 @@ Read-only with respect to the baseline: never modifies `result.json` or
    ```
    Add `--ira-value` (and optionally `--ira-basis`) to apply the Form 8606 pro-rata rule so
    each rung's *taxable* conversion is diluted by the after-tax basis fraction.
-   This writes `scenarios/{name}.json` (chmod 600, default name `roth-ladder`) and emits
-   the JSON report.
+   This writes `scenarios/{name}.json` with owner-only permissions through
+   `agents.lib.secure_fs` (default name `roth-ladder`) and emits the JSON report.
 
 4. **Render.** Run the same command without `--json` to print the markdown report. Save it
-   to `scenarios/{name}.md` and `chmod 600`. Present the ladder table (marginal rate per
-   rung) and the "Threshold crossings" section so the user can pick a conversion amount
-   that fills a bracket without spilling into the next penalty zone.
+   to `scenarios/{name}.md`, immediately run
+   `python3 -m agents.lib.secure_fs scenarios/{name}.md`, and present the ladder
+   table (marginal rate per rung) and the "Threshold crossings" section so the user
+   can pick a conversion amount that fills a bracket without spilling into the next
+   penalty zone.
 
 5. **Audit note.** Append one line to `answers.md` (NO dollar PII duplicated):
    ```
    ## Roth ladder "{name}" TY{year} — swept $0..{max} step {step}. Run {today}.
    ```
+   Then run `python3 -m agents.lib.secure_fs answers.md` in case the write
+   replaced the file rather than preserving its existing permissions.
 
 ## How to read it
 - **Marginal rate** column already reflects LTCG bracket bumping (the QDCG worksheet
@@ -92,6 +96,7 @@ Read-only with respect to the baseline: never modifies `result.json` or
   other target and never overwrites `result.json` / `taxpayer_profile.json`.
 - Scenario names are validated to a single safe path segment (no `/`, `\`, `..`, leading dot).
 - `scenarios/` is gitignored — ladder files hold financial figures.
-- All written files (`scenarios/*`) → `chmod 600`.
+- Restrict every manually written file with `agents.lib.secure_fs`; the library
+  already applies the same enforcement to its JSON output and directory.
 - Any delegated sub-task must have NO network access and must NOT write outside `scenarios/`.
 - Never extract or store full SSNs.

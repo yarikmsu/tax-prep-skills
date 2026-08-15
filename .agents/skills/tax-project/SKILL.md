@@ -33,7 +33,8 @@ taxpayer_profile.json. Re-runnable quarterly.
    and — for TY2025-2028 — the OBBBA **Schedule 1-A** total via `forecast_overrides.schedule_1a`,
    estimated with `compute_schedule_1a`: tips + overtime premium + car-loan + senior, a
    below-AGI deduction that lowers projected taxable income but not AGI).
-   Validate inputs (no shell metacharacters; numeric fields numeric). `chmod 600` the file.
+   Validate inputs (no shell metacharacters; numeric fields numeric). Immediately after
+   writing the file, run `python3 -m agents.lib.secure_fs projection_inputs.json`.
 
 3. **Resolve prior-year baseline.** If `archive/{year-1}/` exists, read its
    `result.json` to pre-fill `recurring_from_prior` (interest/dividends) as editable
@@ -51,12 +52,24 @@ taxpayer_profile.json. Re-runnable quarterly.
    (Omit `--as-of` to use today.)
 
 6. **Render + save.** Run the same command without `--json` to get the markdown report.
-   Save it to `projections/TY{year}_asof_{MM-DD}.md` and `chmod 600` it. Print the report.
+   Before writing, create and restrict its directory; then restrict the report immediately
+   after saving it and print the report:
+   ```bash
+   mkdir -p projections && python3 -m agents.lib.secure_fs projections
+   ```
+   Now save the report. Only once the file exists, restrict it — the two
+   commands are in separate blocks because running them as one would call
+   `secure_fs` on a path that does not exist yet, which exits 1:
+   ```bash
+   python3 -m agents.lib.secure_fs projections/TY{year}_asof_{MM-DD}.md
+   ```
 
 7. **Audit note.** Append one line to `answers.md` (NO dollar PII duplicated):
    ```
    ## Mid-year projection TY{year} as-of {MM-DD} — run {today}. Safe-harbor: {covered/underpaid}.
    ```
+   Then run `python3 -m agents.lib.secure_fs answers.md` in case the write
+   replaced the file rather than preserving its existing permissions.
 
 8. **PTET election check (time-sensitive).** If `flags.has_k1_income` is true and any
    entry in `flags.k1_states` is **CA / NY / NJ**, the pass-through-entity tax election
@@ -75,4 +88,5 @@ taxpayer_profile.json. Re-runnable quarterly.
 - Any delegated sub-task must have NO network access and must NOT write outside `projections/`.
 - Never extract or store full SSNs.
 - This skill never writes `result.json` or `taxpayer_profile.json`.
-- All written files (`projection_inputs.json`, `projections/*.md`) → `chmod 600`.
+- Restrict every written file and the `projections/` directory with
+  `agents.lib.secure_fs`; on Windows a bare POSIX-mode command does not restrict the DACL.

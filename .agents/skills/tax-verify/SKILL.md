@@ -260,6 +260,17 @@ disagreed with the computed value. Empty if none were declared in Step 1.5.
 
 Add verification results to answers.md under a "## Verification Results" section.
 
+Then re-restrict it. An editor that REPLACES the file rather than editing it in
+place leaves the replacement at the default mode — owner-only is not inherited
+from the file it overwrote. `secure_fs`, not a bare `chmod`: under a
+POSIX-compatible shell on Windows `chmod` only flips the read-only DOS
+attribute and leaves the inherited NTFS ACL granting every other local account
+read access.
+
+```bash
+python3 -m agents.lib.secure_fs answers.md || exit 1
+```
+
 ### 6. Summary
 
 Print:

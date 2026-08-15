@@ -80,6 +80,18 @@ Warnings:
 
 Do **not** log specific field values (SSN, dollar amounts) into `answers.md` — only counts and warnings.
 
+Then re-restrict it. Step 4's writes go through `agents.lib.rollover`, which
+restricts what it writes itself; this block is written by YOU, and an editor
+that REPLACES a file rather than editing it in place leaves the replacement at
+the default mode — owner-only is not inherited from the file it overwrote.
+`secure_fs`, not a bare `chmod`: under a POSIX-compatible shell on Windows
+`chmod` only flips the read-only DOS attribute and leaves the inherited NTFS
+ACL readable by every other local account.
+
+```bash
+python3 -m agents.lib.secure_fs answers.md || exit 1
+```
+
 ### 5.5. Surface the prior-year review checklist
 
 If `archive/{prior_year}/reviews/{prior_year}-review.md` exists (the workpaper

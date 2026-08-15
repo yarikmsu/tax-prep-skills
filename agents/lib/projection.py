@@ -40,6 +40,7 @@ from agents.lib.tax_law_fetcher import (  # noqa: E402
     _TN_HALL_REPEAL_YEAR,
     _none_type_allowed,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 class ProjectionError(Exception):
@@ -1422,11 +1423,11 @@ def load_prior_baseline(archive_dir, prior_year: int):
 
 def _read_json(path: Path) -> dict:
     if not path.exists():
-        raise ProjectionError(f"{path} does not exist")
+        raise ProjectionError(f"{redact(path)} does not exist")
     try:
         return json.loads(path.read_text())
     except json.JSONDecodeError as e:
-        raise ProjectionError(f"{path.name} is malformed: {e}")
+        raise ProjectionError(f"{redact(path.name)} is malformed: {redact(e)}")
 
 
 def _main(argv: list) -> int:
@@ -1461,16 +1462,16 @@ def _main(argv: list) -> int:
         profile = _read_json(workspace / "taxpayer_profile.json")
         prior = load_prior_baseline(workspace / "archive" / str(year - 1), year - 1)
     except ProjectionError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     except RolloverError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     try:
         report = build_report(inputs, profile, tax_law, prior, year, as_of)
     except (ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     if args.json:

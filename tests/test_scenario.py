@@ -1,6 +1,7 @@
 """Tests for scenario modeling — tax_computations.compute_scenario + agents/lib/scenario.py."""
 import datetime
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -622,6 +623,62 @@ def test_save_scenario_writes_under_scenarios_chmod600(tmp_path):
     assert out == (tmp_path / "scenarios" / "ok.json").resolve()
     assert out.exists()
     assert (out.stat().st_mode & 0o777) == 0o600
+
+
+def test_save_scenario_restricts_the_scenarios_directory(tmp_path):
+    """600 on the file leaves `scenarios/` itself readable, and a scenario NAME is
+    disclosure on its own — `divorce-2027.json` in a shared-host listing. Pinned at
+    umask 022, without which mkdir's 0777 request lands on 0700 unaided and the
+    assertion proves nothing."""
+    old = os.umask(0o022)
+    try:
+        sc.save_scenario(tmp_path, "ok", {"schema": "tax-scenario/v1"})
+    finally:
+        os.umask(old)
+    mode = (tmp_path / "scenarios").stat().st_mode & 0o777
+    assert mode == 0o700, f"scenarios/ is {oct(mode)}, listing scenario names"
+
+
+def test_save_scenario_fails_closed_when_directory_chmod_fails(tmp_path, monkeypatch):
+    """A scenarios/ that can't be tightened to 700 must abort the write, not
+    drop a scenario file into a listable directory — a scenario NAME alone
+    (divorce-2027.json) is a disclosure, and financial data is in the file.
+
+    save_scenario() secures paths via secure_path() (agents/lib/secure_fs.py),
+    which calls os.chmod() directly rather than the Path.chmod() method, so
+    the failure is injected there — os is a singleton module, so patching it
+    through any importer's `os` name (here scenario.py's) reaches the same
+    call secure_fs.py makes."""
+    real_chmod = os.chmod
+
+    def refuse(path, *args, **kwargs):
+        if Path(path).name == "scenarios":
+            raise OSError("simulated chmod failure")
+        return real_chmod(path, *args, **kwargs)
+
+    monkeypatch.setattr("agents.lib.scenario.os.chmod", refuse)
+    with pytest.raises(sc.ScenarioError, match="scenarios"):
+        sc.save_scenario(tmp_path, "ok", {"schema": "tax-scenario/v1"})
+    assert not (tmp_path / "scenarios" / "ok.json").exists()
+
+
+def test_save_scenario_fails_closed_when_file_chmod_fails(tmp_path, monkeypatch):
+    """Same guarantee on the scenario file itself: a chmod 600 that can't be
+    applied (an ACL/NFS filesystem, say) must not leave financial data behind
+    at the ambient mode — the file is created at 600 directly, but a chmod
+    failure removes it rather than trusting whatever mode creation landed at."""
+    real_chmod = os.chmod
+
+    def refuse(path, *args, **kwargs):
+        if Path(path).name == "ok.json":
+            raise OSError("simulated chmod failure")
+        return real_chmod(path, *args, **kwargs)
+
+    monkeypatch.setattr("agents.lib.scenario.os.chmod", refuse)
+    with pytest.raises(sc.ScenarioError, match="ok.json"):
+        sc.save_scenario(tmp_path, "ok", {"schema": "tax-scenario/v1"})
+    assert not (tmp_path / "scenarios" / "ok.json").exists(), \
+        "chmod failure must not leave an unsecured scenario file behind"
 
 
 @pytest.mark.parametrize("bad", ["../escape", "a/b", "..", ".", ".hidden", ""])

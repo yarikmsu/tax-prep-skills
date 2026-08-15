@@ -60,6 +60,7 @@ raw form boxes at parse time — the skill documents the box→category table.
 
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
+)
+from agents.lib.secure_fs import (  # noqa: E402
+    is_reparse_point,
+    redact,
+    secure_fd,
+    secure_path,
 )
 from agents.lib.tax_computations import (  # noqa: E402
     compute_pfic_1291,
@@ -282,12 +289,14 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             raise TieOutError(f"{where} must be an object")
         doc_id = _require_str(rec.get("doc_id"), f"{where}.doc_id")
         if doc_id in seen_ids:
-            raise TieOutError(f"duplicate doc_id {doc_id!r} — records must be unique")
+            raise TieOutError(
+                f"duplicate doc_id {redact(repr(doc_id))} — records "
+                f"must be unique")
         seen_ids.add(doc_id)
         file = _require_str(rec.get("file"), f"{where}.file")
         if file in seen_files:
             raise TieOutError(
-                f"duplicate file {file!r} — one physical document must have "
+                f"duplicate file {redact(repr(file))} — one physical document must have "
                 "exactly ONE record; two records would double-count its "
                 "amounts while still passing coverage."
             )
@@ -302,12 +311,13 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             raise TieOutError(f"{where}.key_boxes must be an object")
         if skipped is None and not boxes:
             raise TieOutError(
-                f"{where} ({doc_id}): a non-skipped record must carry key_boxes — "
+                f"{where} ({redact(doc_id)}): a non-skipped record must carry "
+                "key_boxes — "
                 "an empty parse is either a skip (give the reason) or a bug."
             )
         if skipped is not None and boxes:
             raise TieOutError(
-                f"{where} ({doc_id}): a SKIPPED record must not carry key_boxes "
+                f"{where} ({redact(doc_id)}): a SKIPPED record must not carry key_boxes "
                 "— its amounts would earn coverage credit while vanishing from "
                 "the sum checks (the exact intake-drop the gate exists to "
                 "catch). Either it's a skip (no amounts) or a parse (no skip)."
@@ -364,10 +374,11 @@ def _expected_payer_name(entry, where: str) -> str:
                 return v.strip()
         raise TieOutError(
             f"{where} object entries must carry a non-empty 'name' or "
-            f"'institution', got {entry!r} — an unnamed entry can never "
-            "match a ledger payer and would false-alarm forever")
+            f"'institution', got {redact(repr(entry))} — an unnamed entry "
+            "can never match a ledger payer and would false-alarm forever")
     raise TieOutError(
-        f"{where} entries must be strings or objects, got {entry!r}")
+        f"{where} entries must be strings or objects, got "
+        f"{redact(repr(entry))}")
 
 
 def _payer_tokens(name: str) -> frozenset:
@@ -1684,23 +1695,87 @@ def list_document_files(workspace: Path) -> "list[str]":
 
 def write_report(workspace: Path, markdown: str) -> Path:
     summaries = workspace / "summaries"
-    summaries.mkdir(exist_ok=True)
-    target = _validate_subpath((summaries / "_tie_out.md").resolve(), workspace)
-    target.write_text(markdown)
+    # mkdir(exist_ok=True) accepts a symlink (or, on Windows, a junction —
+    # is_reparse_point() catches both; see secure_fs.py's module docstring
+    # for why is_symlink() alone misses a junction) pointing at an existing
+    # directory without complaint (is_dir() follows it), and the chmod below
+    # would then resolve through the link and mutate the external target's
+    # permissions — before _validate_subpath's resolve()-based check further
+    # down ever gets a chance to reject the path as outside workspace.
+    # is_reparse_point() fails CLOSED — everything but FileNotFoundError
+    # propagates rather than certifying an uninspected path as safe — and this
+    # call sits OUTSIDE any try, so an untranslated OSError would escape
+    # write_report as a bare traceback past every caller's `except TieOutError`
+    # (including _main's).
     try:
-        target.chmod(0o600)
-    except OSError:
-        pass
+        summaries_is_reparse = is_reparse_point(summaries)
+    except OSError as e:
+        raise TieOutError(
+            f"Could not determine whether {redact(summaries)} is a symlink "
+            f"or junction: {redact(e)} — refusing to write through a path "
+            f"that could not be inspected.") from e
+    if summaries_is_reparse:
+        raise TieOutError(
+            f"{redact(summaries)} is a symlink or junction, not a real "
+            f"directory — refusing to write through it.")
+    summaries.mkdir(mode=0o700, exist_ok=True)
+    # summaries/ holds one file per source document, named after it, so the
+    # listing discloses on its own. A chmod failure here fails the write
+    # rather than continuing into a directory that could not be secured —
+    # archive.py and scenario.py hold the same line for the runtime paths
+    # they create (AGENTS.md SECURITY §1).
+    try:
+        secure_path(summaries)
+    except OSError as e:
+        raise TieOutError(
+            f"Could not secure {redact(summaries)} (chmod 700): "
+            f"{redact(e)}") from None
+    target = _validate_subpath((summaries / "_tie_out.md").resolve(), workspace)
+    # `mode` on os.open is a create-only argument — POSIX ignores it when
+    # target already exists (a re-run of the tie-out gate over a report from
+    # before this hardening), so opening alone does not guarantee 600. The
+    # explicit secure_fd right after open, before any content is written,
+    # closes that window instead of leaving the report at its old, possibly
+    # looser mode for the whole write — scenario.py holds the same line.
+    # secure_fd prefers fchmod on the open descriptor where the platform has
+    # it; it does not exist on Windows, a supported platform, so it falls
+    # back there to the same PowerShell-ACL-based enforcement secure_path
+    # uses everywhere else on that platform.
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except OSError as e:
+        raise TieOutError(f"Could not create {redact(target)}: {redact(e)}") from e
+    try:
+        # os.fdopen adopts the descriptor only on success — see scenario.py's
+        # note for why a raise here would otherwise leak it permanently.
+        try:
+            handle = os.fdopen(fd, "w")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle as f:
+            secure_fd(f.fileno(), target)
+            f.write(markdown)
+    except OSError as e:
+        target.unlink(missing_ok=True)
+        raise TieOutError(f"Could not write {redact(target)}: {redact(e)}") from e
+    try:
+        secure_path(target)
+    except OSError as e:
+        target.unlink(missing_ok=True)
+        raise TieOutError(
+            f"Could not secure {redact(target)} (chmod 600): "
+            f"{redact(e)}") from None
     return target
 
 
 def _read_json(path: Path, what: str) -> dict:
     if not path.exists():
-        raise TieOutError(f"{what} not found at {path}")
+        raise TieOutError(f"{what} not found at {redact(path)}")
     try:
         return json.loads(path.read_text())
     except json.JSONDecodeError as e:
-        raise TieOutError(f"{what} is malformed: {e}")
+        raise TieOutError(f"{what} is malformed: {redact(e)}")
 
 
 def _main(argv: list) -> int:
@@ -1781,11 +1856,19 @@ def _main(argv: list) -> int:
                           pfic_multiyear_disposition_ids=pfic_multiyear_disposition_ids,
                           pfic_recompute_failures=pfic_recompute_failures)
         markdown = render_markdown(report)
-        write_report(workspace, markdown)
     except (TieOutError, RolloverError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
+    # The VERDICT is printed, and its exit code decided, BEFORE the report is
+    # persisted. write_report deliberately fails CLOSED on a chmod/write error
+    # (an unsecured report is worse than no report), but that failure must not
+    # be allowed to suppress a verdict already computed, nor to downgrade a
+    # FAILED gate to exit 1 — which /tax-compute Step 12.7 documents as
+    # "parse_ledger.json is missing or malformed", sending the agent to fix a
+    # ledger that is fine while the dropped-1099 failure this gate exists to
+    # raise is never printed at all. A permissions fault must not be able to
+    # mask a tax-correctness fault.
     if args.json:
         out = {
             "failed": report.failed,
@@ -1802,7 +1885,18 @@ def _main(argv: list) -> int:
         print(json.dumps(out, indent=2))
     else:
         print(markdown)
-    return 2 if report.failed else 0
+
+    exit_code = 2 if report.failed else 0
+    try:
+        write_report(workspace, markdown)
+    except (TieOutError, RolloverError) as e:
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
+        # Never below 1 (the write really did fail, so this is not a clean
+        # pass) and never below the verdict's own code — 2 outranks it, so a
+        # FAILED tie-out still exits 2 even when its report could not be
+        # written.
+        return max(exit_code, 1)
+    return exit_code
 
 
 if __name__ == "__main__":

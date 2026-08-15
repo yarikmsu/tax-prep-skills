@@ -33,7 +33,8 @@ The script:
 - Refuses if `archive/{year}/` already exists
 - Refuses if root `result.json` is missing or `meta.tax_year` doesn't match
 - Moves all listed files atomically (rolls back on failure)
-- Sets `chmod 600` on every archived file
+- Restricts every archived file and directory to the current OS identity through
+  `agents.lib.secure_fs`
 
 ### 3. Print summary
 

@@ -34,6 +34,7 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 class CapabilityError(Exception):
@@ -816,17 +817,17 @@ def _main(argv: list) -> int:
             (workspace / "taxpayer_profile.json").resolve(), workspace)
         if not profile_path.exists():
             raise CapabilityError(
-                f"{profile_path} does not exist — run /tax-setup first.")
+                f"{redact(profile_path)} does not exist — run /tax-setup first.")
         try:
             profile = json.loads(profile_path.read_text())
         except json.JSONDecodeError as e:
-            raise CapabilityError(f"taxpayer_profile.json is malformed: {e}")
+            raise CapabilityError(f"taxpayer_profile.json is malformed: {redact(e)}")
         extra = None
         if args.acknowledge:
             extra = {s.strip() for s in args.acknowledge.split(",") if s.strip()}
         report = evaluate(profile, extra_acknowledged=extra)
     except (CapabilityError, RolloverError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     if args.json:

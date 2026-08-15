@@ -1,0 +1,58 @@
+name: Add support for a state
+description: Propose or claim a state module. This is the best first contribution.
+labels: ["state-module", "good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        State support is California-first today: CA Form 540 is computed in depth,
+        Florida is modeled as a no-income-tax regime, and every other state is a
+        bracket estimate only.
+
+        Adding a state is deliberately community territory, and the path is mapped
+        so you are not starting from a blank page:
+
+        - `docs/contributing/state-module-playbook.md` — the procedure
+        - `docs/superpowers/specs/TEMPLATE-state-module.md` — the spec to fill in
+
+        **Start with the spec, not the code.** State tax law has more
+        discontinuities than people expect, and the ordering of the template's
+        questions is what makes the implementation tractable.
+
+        Open this issue first so two people do not build the same state twice.
+
+  - type: input
+    id: state
+    attributes:
+      label: State
+      description: Name and two-letter code.
+      placeholder: "New York (NY)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regime
+    attributes:
+      label: Regime type
+      description: A state with no income tax is a positive declaration, never an empty section.
+      options:
+        - graduated_income
+        - none
+        - not sure yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: quirks
+    attributes:
+      label: Known quirks
+      description: Anything that diverges from the federal treatment — nonconformity add-backs, a surcharge, its own AMT, an unusual estimated-payment schedule, a credit with a cliff.
+      placeholder: "e.g. its estimated-payment installments are not four equal quarters; it does not conform to the federal treatment of X"
+
+  - type: checkboxes
+    id: intent
+    attributes:
+      label: Are you planning to build it?
+      options:
+        - label: I intend to work on this myself.
+        - label: I am requesting it, not claiming it.

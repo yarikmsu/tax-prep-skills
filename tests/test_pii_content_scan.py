@@ -246,6 +246,200 @@ def test_range_mode_passes_on_a_clean_range(tmp_path):
     assert r.returncode == 0, f"stdout={r.stdout!r} stderr={r.stderr!r}"
 
 
+def test_range_mode_scans_the_root_commit_when_it_is_the_base(tmp_path):
+    """`A...B` excludes A, which silently exempted the initial import.
+
+    The gate before publishing a private repository is a full-history audit,
+    `$(git rev-list --max-parents=0 HEAD)...HEAD` — and with the base excluded
+    that scanned every commit EXCEPT the one most likely to carry a file nobody
+    reviewed. Run against this exact repository shape it printed "PII scan
+    clean — 1 commit(s) inspected" over a root commit holding a full SSN.
+
+    A root commit is the one base for which exclusion cannot be justified by
+    "it was already scanned by the range that landed it": nothing precedes it.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n")
+    root = _commit(repo, "root commit carrying a leak")
+    _stage(repo, "ok.md", "clean\n")
+    _commit(repo, "clean")
+
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{root}...HEAD"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 1, f"the initial import went unscanned: {r.stdout!r}"
+    assert "leak.md" in r.stdout, "must name the file it found, not merely fail"
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_range_mode_still_excludes_a_non_root_base(tmp_path):
+    """The root commit is an exception, not a redefinition of `A...B`.
+
+    A CI base is already on main and was scanned by the pull request that landed
+    it. Including every base would fail today's PR for content that passed its
+    own review — the paired assertion that keeps the fix above narrow.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "seed.md", "nothing here\n")
+    _commit(repo, "root")
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n")
+    base = _commit(repo, "already on main")
+    _stage(repo, "more.md", "still nothing\n")
+    _commit(repo, "more")
+
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{base}...HEAD"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 0, f"a non-root base must stay excluded: {r.stdout!r}"
+
+
+def test_root_detection_dies_on_a_broken_git_rather_than_guessing(tmp_path):
+    """The root-commit check must tell "confirmed: no parent" apart from "the
+    check itself failed" — an I/O error, a broken git wrapper. Both used to
+    make `git rev-parse -q --verify "${merge_base}^"` exit non-zero
+    identically, so a genuine failure was silently read as proof of root.
+
+    A fake `git` on PATH that fails only `rev-list --parents -n 1
+    <merge_base>` (what the fix reads instead) simulates that failure. The
+    base here has a real parent, so the correct behavior on a working git is
+    to exclude it — the fix must refuse to guess and die instead of silently
+    doing that (or anything else) when it cannot actually tell.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "seed.md", "nothing here\n")
+    _commit(repo, "root")
+    _stage(repo, "next.md", "also nothing\n")
+    base = _commit(repo, "already on main — has a real parent")
+    _stage(repo, "more.md", "still nothing\n")
+    _commit(repo, "more")
+
+    fakebin = tmp_path.parent / f"{tmp_path.name}_fakebin"
+    fakebin.mkdir()
+    real_git = shutil.which("git")
+    wrapper = fakebin / "git"
+    wrapper.write_text(
+        "#!/bin/bash\n"
+        f'if [ "$1" = "rev-list" ] && [ "$2" = "--parents" ] && [ "$5" = "{base}" ]; then\n'
+        "  exit 1\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n'
+    )
+    os.chmod(wrapper, 0o755)
+
+    env = dict(os.environ, PATH=f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}")
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{base}...HEAD"],
+                       cwd=repo, capture_output=True, text=True, env=env)
+    assert r.returncode == 1, (
+        f"a broken merge-base check must block, not guess a verdict: "
+        f"stdout={r.stdout!r} stderr={r.stdout!r}"
+    )
+    assert "could not run" in r.stdout, r.stdout
+
+
+def test_a_root_commit_is_still_detected_when_its_MESSAGE_mentions_a_parent(tmp_path):
+    """The root check reads the commit object's HEADER block, so it must stop at
+    the blank line that ends it.
+
+    `git cat-file -p | grep '^parent '` was the first attempt and false-matches
+    a commit MESSAGE line beginning "parent " — which reads as "this commit has
+    a parent", excludes the base, and silently reopens the initial-import
+    bypass. The message below is the one that broke it.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n")
+    root = _commit(repo, "import\n\nparent bug tracked separately\n")
+    _stage(repo, "ok.md", "clean\n")
+    _commit(repo, "clean")
+
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{root}...HEAD"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 1, f"the initial import went unscanned: {r.stdout!r}"
+    assert "leak.md" in r.stdout
+
+
+def _clone_shallow(origin: Path, dest: Path, depth: int) -> Path:
+    """A genuinely shallow clone — `file://` forces the transport that honours
+    --depth, where a plain local path hardlinks the whole object store instead.
+    """
+    subprocess.run(["git", "clone", "-q", "--depth", str(depth),
+                    f"file://{origin}", str(dest)], check=True)
+    assert subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                          cwd=dest, capture_output=True, text=True
+                          ).stdout.strip() == "true", "the clone is not shallow"
+    (dest / "scripts").mkdir(exist_ok=True)
+    shutil.copy(SCAN, dest / "scripts" / "pre-commit-pii-scan.sh")
+    return dest
+
+
+def test_a_shallow_boundary_base_is_not_scanned_as_a_root_commit(tmp_path):
+    """In a shallow clone the boundary commit's parents were never fetched, so
+    `git rev-list --parents -n 1` prints the sha alone — exactly what a TRUE
+    root prints. Read as a root, the base is appended to the scan set and later
+    diffed against the empty tree: its entire SNAPSHOT is scanned as if newly
+    added, including files carried down from history the range never asked
+    about. A pull request then fails on content some earlier commit legitimately
+    holds and today's diff never touched.
+
+    Here `leak.md` exists only in the commit BELOW the boundary. The range is
+    clean; anything that blocks has scanned outside it.
+    """
+    origin = _make_repo(tmp_path / "origin")
+    _stage(origin, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(origin, "root")
+    _stage(origin, "mid.md", "clean\n")
+    _commit(origin, "mid")
+    _stage(origin, "head.md", "also clean\n")
+    _commit(origin, "head")
+
+    shallow = _clone_shallow(origin, tmp_path / "shallow", depth=2)
+    base = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=shallow,
+                          capture_output=True, text=True).stdout.strip()
+
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{base}...HEAD"],
+                       cwd=shallow, capture_output=True, text=True)
+    assert r.returncode == 0, (
+        "a shallow boundary was scanned as a root commit — the block came from "
+        f"outside the range: {r.stdout!r}")
+
+
+def test_a_commit_whose_recorded_parent_is_missing_blocks(tmp_path):
+    """The same ambiguity inside the range, where the answer is different.
+
+    A commit that records a parent this clone does not have cannot be diffed
+    against it. The fallback used to be the empty tree — the whole snapshot,
+    reported afterwards as "N commit(s) inspected", which is coverage the scan
+    did not have. It blocks instead, and says what to fix.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "seed.md", "nothing here\n")
+    base = _commit(repo, "base")
+    _stage(repo, "more.md", "still nothing\n")
+    head = _commit(repo, "more")
+
+    parent = subprocess.run(["git", "rev-parse", f"{head}^"], cwd=repo,
+                            capture_output=True, text=True).stdout.strip()
+    fakebin = tmp_path.parent / f"{tmp_path.name}_missingparent"
+    fakebin.mkdir()
+    real_git = shutil.which("git")
+    wrapper = fakebin / "git"
+    # Only the existence probe for that parent fails, which is what a shallow
+    # graft looks like from here: the commit object still records the sha, the
+    # object store does not have it.
+    wrapper.write_text(
+        "#!/bin/bash\n"
+        f'if [ "$1" = "rev-parse" ] && [ "$#" -ge 4 ] && [ "$4" = "{parent}^{{commit}}" ]; then\n'
+        "  exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n'
+    )
+    os.chmod(wrapper, 0o755)
+
+    env = dict(os.environ, PATH=f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}")
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{base}...HEAD"],
+                       cwd=repo, capture_output=True, text=True, env=env)
+    assert r.returncode == 1, (
+        f"an unscannable history reported a verdict: {r.stdout!r}")
+    assert "shallow" in r.stdout, r.stdout
+
+
 def test_ci_invokes_the_shared_script_rather_than_reimplementing_it(tmp_path):
     """AGENTS.md used to warn that these rules were duplicated and had to change
     together. Calling one script removes the class of drift entirely — this test
@@ -262,7 +456,13 @@ def test_range_mode_reports_coverage_so_a_clean_pass_is_evidence(tmp_path):
     indistinguishable from a scan that examined nothing — a false pass that
     looks exactly like a real one."""
     repo = _make_repo(tmp_path)
+    # `base` is deliberately NOT the root commit. A root base is INCLUDED in the
+    # scan (see test_range_mode_scans_the_root_commit_when_it_is_the_base), so
+    # its own files would join this count and this assertion would be measuring
+    # root inclusion rather than the coverage line it is here to pin.
     _stage(repo, "seed.md", "nothing here\n")
+    _commit(repo, "root")
+    _stage(repo, "seed2.md", "nothing here either\n")
     base = _commit(repo, "base")
     _stage(repo, "a.md", "still nothing\n")
     _stage(repo, "b.md", "also nothing\n")

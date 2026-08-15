@@ -4,6 +4,7 @@ The invariant under test: a parsed document that never landed on a return
 line is DETERMINISTICALLY caught, not hopefully noticed.
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -2156,3 +2157,186 @@ def test_pfic_line15_short_still_fails():
                         pfic_event_expected=True, expected_pfic_fund_ids={"A"},
                         any_taxable_pfic_recorded=True)
     assert report.failed and any("line 15" in m for m in report.pfic_incomplete)
+
+
+# --------------------------------------------------------------------------
+# write_report — the report lands in a restricted directory
+# --------------------------------------------------------------------------
+
+def test_write_report_restricts_the_summaries_directory(tmp_path):
+    """`summaries/` holds one markdown file per source document, named after the
+    document. 600 on `_tie_out.md` does nothing about a 755 directory listing
+    `w2-acme.md` beside it. Pinned at umask 022 — under umask 077 mkdir's 0777
+    request already yields 0700 and the assertion would pass unaided."""
+    old = os.umask(0o022)
+    try:
+        T.write_report(tmp_path, "# tie-out\n")
+    finally:
+        os.umask(old)
+    mode = (tmp_path / "summaries").stat().st_mode & 0o777
+    assert mode == 0o700, f"summaries/ is {oct(mode)}, listing per-document filenames"
+
+
+def test_write_report_fails_closed_when_directory_chmod_fails(tmp_path, monkeypatch):
+    """A summaries/ that already exists with permissive permissions and can't be
+    tightened must abort the write, not drop _tie_out.md into a listable
+    directory — the tie-out HARD GATE has to fail loudly, not report success
+    over an unsecured path.
+
+    write_report() secures paths via secure_path() (agents/lib/secure_fs.py),
+    which calls os.chmod() directly rather than the Path.chmod() method, so
+    the failure is injected there — os is a singleton module, so patching it
+    through any importer's `os` name (here tie_out.py's) reaches the same
+    call secure_fs.py makes."""
+    real_chmod = os.chmod
+
+    def refuse(path, *args, **kwargs):
+        if Path(path).name == "summaries":
+            raise OSError("simulated chmod failure")
+        return real_chmod(path, *args, **kwargs)
+
+    monkeypatch.setattr("agents.lib.tie_out.os.chmod", refuse)
+    with pytest.raises(T.TieOutError, match="summaries"):
+        T.write_report(tmp_path, "# tie-out\n")
+    assert not (tmp_path / "summaries" / "_tie_out.md").exists()
+
+
+def test_write_report_fails_closed_when_file_chmod_fails(tmp_path, monkeypatch):
+    """Same guarantee on the report file itself: a chmod 600 that can't be
+    applied must not leave a world-readable _tie_out.md behind silently — the
+    file is created at mode 600 directly, but a chmod failure removes it
+    rather than trusting whatever mode the creation call actually landed at."""
+    real_chmod = os.chmod
+
+    def refuse(path, *args, **kwargs):
+        if Path(path).name == "_tie_out.md":
+            raise OSError("simulated chmod failure")
+        return real_chmod(path, *args, **kwargs)
+
+    monkeypatch.setattr("agents.lib.tie_out.os.chmod", refuse)
+    with pytest.raises(T.TieOutError, match="_tie_out.md"):
+        T.write_report(tmp_path, "# tie-out\n")
+    assert not (tmp_path / "summaries" / "_tie_out.md").exists(), \
+        "chmod failure must not leave an unsecured report file behind"
+
+
+def test_write_report_file_created_at_restricted_mode(tmp_path):
+    """_tie_out.md is opened with mode 600 from creation, not written under
+    the ambient umask and tightened afterward — closing the window where a
+    freshly written report would sit at 644/664 until the following chmod."""
+    old = os.umask(0o022)
+    try:
+        target = T.write_report(tmp_path, "# tie-out\n")
+    finally:
+        os.umask(old)
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
+def test_write_report_refuses_symlinked_summaries_directory(tmp_path, tmp_path_factory):
+    """summaries/ replaced with a symlink to an external directory must be
+    refused before mkdir/chmod ever run — mkdir(exist_ok=True) accepts a
+    symlink to an existing directory silently, and the chmod that follows
+    would resolve through it before _validate_subpath's own check on the
+    report path gets a chance to reject it as outside workspace."""
+    external = tmp_path_factory.mktemp("external_summaries")
+    (external / "private.txt").write_bytes(b"not the taxpayer's workspace")
+    external_mode_before = external.stat().st_mode & 0o777
+
+    (tmp_path / "summaries").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(T.TieOutError, match="symlink"):
+        T.write_report(tmp_path, "# tie-out\n")
+
+    assert external.stat().st_mode & 0o777 == external_mode_before, \
+        "chmod followed the symlink and mutated a directory outside the workspace"
+
+
+def test_write_report_refuses_windows_junction_summaries_directory(tmp_path, monkeypatch):
+    """summaries/ standing in for an NTFS junction must be refused the same
+    way a symlinked summaries/ is (see test above) — Path.is_symlink()
+    returns False for a junction (see secure_fs.py's module docstring), so
+    this simulates one via is_reparse_point() directly on a real, plain
+    directory, since a junction can't be created on POSIX. Patched at
+    tie_out.py's own imported name (T.is_reparse_point), a `from X import Y`
+    binding decoupled from secure_fs.py's own name once imported."""
+    real_is_reparse_point = T.is_reparse_point
+
+    def fake(path):
+        if Path(path).name == "summaries":
+            return True
+        return real_is_reparse_point(path)
+
+    monkeypatch.setattr("agents.lib.tie_out.is_reparse_point", fake)
+    with pytest.raises(T.TieOutError, match="symlink or junction"):
+        T.write_report(tmp_path, "# tie-out\n")
+
+
+def _minimal_failing_workspace(tmp_path):
+    """A workspace whose tie-out FAILS: the ledger claims a document that does
+    not exist under documents/ (a phantom file), which the gate reports as a
+    hard failure — exit 2, "return NOT complete"."""
+    (tmp_path / "documents").mkdir()
+    (tmp_path / "parse_ledger.json").write_text(json.dumps({"records": [
+        {"doc_id": "w2-acme", "file": "documents/missing_W2.pdf",
+         "form_type": "W-2", "payer": "Acme Corp", "person": "primary",
+         "key_boxes": {"wages": 100000.0}, "skipped": None}]}))
+    (tmp_path / "result.json").write_text(json.dumps({
+        "meta": {"tax_year": 2026}, "form_1040": {"line_1a_wages": 100000.0}}))
+    return tmp_path
+
+
+def test_main_failing_gate_exits_2_even_when_the_report_cannot_be_written(
+        tmp_path, monkeypatch, capsys):
+    """A permissions fault must not mask a tax-correctness fault. write_report
+    fails CLOSED on a chmod/write error, but if that raise happened before the
+    verdict were printed, a FAILED gate (exit 2 = "do not mark the return
+    complete") would be reported as exit 1 — which /tax-compute Step 12.7
+    documents as "parse_ledger.json is missing or malformed", sending the agent
+    to fix a ledger that is fine while the dropped-document failure is never
+    printed at all."""
+    ws = _minimal_failing_workspace(tmp_path)
+
+    def exploding_write_report(workspace, markdown):
+        raise T.TieOutError("Could not secure summaries (chmod 700): simulated")
+
+    monkeypatch.setattr("agents.lib.tie_out.write_report", exploding_write_report)
+    code = T._main(["--workspace", str(ws)])
+    out = capsys.readouterr()
+    assert code == 2, (
+        "a FAILED tie-out must still exit 2 when only the report write failed")
+    assert "FAILED" in out.out, "the verdict was suppressed by the write failure"
+    assert "missing_W2.pdf" in out.out, "the failing document was never named"
+    assert "Could not secure" in out.err, "the write failure went unreported"
+
+
+def test_main_passing_gate_exits_1_when_the_report_cannot_be_written(
+        tmp_path, monkeypatch, capsys):
+    """The mirror case: an otherwise-clean tie-out whose report cannot be
+    persisted is not a clean pass (exit 0) — write_report fails closed, so the
+    run is an error (exit 1). The verdict is still printed."""
+    ws = tmp_path
+    (ws / "documents").mkdir()
+    (ws / "parse_ledger.json").write_text(json.dumps({"records": []}))
+    (ws / "result.json").write_text(json.dumps({"meta": {"tax_year": 2026}}))
+
+    def exploding_write_report(workspace, markdown):
+        raise T.TieOutError("Could not secure summaries (chmod 700): simulated")
+
+    monkeypatch.setattr("agents.lib.tie_out.write_report", exploding_write_report)
+    code = T._main(["--workspace", str(ws)])
+    out = capsys.readouterr()
+    assert code == 1, "a report that could not be written is not a clean pass"
+    assert out.out.strip(), "the verdict was suppressed by the write failure"
+
+
+def test_write_report_translates_an_uninspectable_summaries_path(tmp_path, monkeypatch):
+    """is_reparse_point() fails CLOSED — every OSError but FileNotFoundError
+    propagates — and this call sits outside any try, so without translation a
+    PermissionError would escape write_report as a bare traceback past every
+    caller's `except TieOutError`, including _main's."""
+    def raising(path):
+        raise PermissionError("simulated access denied")
+
+    monkeypatch.setattr("agents.lib.tie_out.is_reparse_point", raising)
+    with pytest.raises(T.TieOutError, match="could not be inspected"):
+        T.write_report(tmp_path, "# tie-out\n")

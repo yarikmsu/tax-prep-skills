@@ -21,6 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from agents.lib.irs_dates import next_business_day  # noqa: E402
+from agents.lib.secure_fs import redact  # noqa: E402
 
 # SE tax filing threshold per IRS rules
 SE_TAX_THRESHOLD = 400
@@ -2565,7 +2566,7 @@ def _sch1a_require(limits, path: str):
     for key in path.split("."):
         if not isinstance(node, dict) or node.get(key) is None:
             raise ValueError(
-                f"federal.schedule_1a.{path} is unfetched — refusing to "
+                f"federal.schedule_1a.{redact(path)} is unfetched — refusing to "
                 "compute a Schedule 1-A deduction without the indexed cap/"
                 "threshold (a guess would mis-limit it); fetch via /tax-setup")
         node = node[key]
@@ -2913,7 +2914,7 @@ def _espp_date(raw, label: str) -> datetime.date:
     try:
         return datetime.date.fromisoformat(raw)
     except ValueError as e:
-        raise ValueError(f"{label} {raw!r} is not a valid YYYY-MM-DD date: {e}")
+        raise ValueError(f"{label} {raw!r} is not a valid YYYY-MM-DD date: {redact(e)}")
 
 
 def _add_years(d: datetime.date, years: int) -> datetime.date:
@@ -5283,7 +5284,7 @@ if __name__ == "__main__":
     try:
         compute_bracket_tax(100000, [])
     except ValueError as e:
-        print(f"Caught expected error: {e}")
+        print(f"Caught expected error: {redact(e)}")
 
     print("\n=== SE Tax Test ===")
     se = compute_se_tax(-500)

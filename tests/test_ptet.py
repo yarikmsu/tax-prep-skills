@@ -737,3 +737,31 @@ def test_analyze_surfaces_unfetched_warning_in_caveats():
         rate_overrides={"CA": 0.10}, ptet_cfg=None)
     ca2 = next(s for s in report2.states if s.state == "CA")
     assert not any("not fetched" in c for c in ca2.caveats)
+
+
+def test_cli_reports_a_missing_result_json_as_an_error_not_a_traceback(tmp_path):
+    """Running /tax-ptet before /tax-compute is the most ordinary way to get
+    this wrong, and it went through `_read_json` — which is projection's, and
+    raises `ProjectionError`, a type `_main`'s except tuple did not list. The
+    CLI exited with a raw Python traceback instead of the `Error: …` line the
+    skill instructs the agent to read, so the agent saw a crash rather than a
+    prerequisite it could satisfy.
+
+    Mutation-verified: dropping ProjectionError from the tuple fails this.
+    """
+    res = _run_cli(["--workspace", str(tmp_path)])
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "Traceback" not in res.stderr, res.stderr
+    assert res.stderr.startswith("Error: "), res.stderr
+    assert "result.json" in res.stderr
+
+
+def test_cli_reports_a_missing_tax_law_cache_the_same_way(tmp_path):
+    """The second file the same read path opens — same handler, and the one a
+    user hits after /tax-compute has run but the cache was never fetched."""
+    ws = _ws(tmp_path)
+    (ws / "tax_law_2026.json").unlink()
+    res = _run_cli(["--workspace", str(ws), "--year", "2026"])
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "Traceback" not in res.stderr, res.stderr
+    assert res.stderr.startswith("Error: ")

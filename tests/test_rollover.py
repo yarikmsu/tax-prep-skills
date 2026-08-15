@@ -397,6 +397,34 @@ def test_apply_changes_chmod_600(tmp_path):
     assert (mode & 0o777) == 0o600
 
 
+def test_apply_changes_tmp_file_is_600_before_replace(tmp_path, monkeypatch):
+    """os.replace carries a file's mode over to the name it lands on, so the .tmp
+    file must already be 600 the moment it's created — not write-then-chmod after
+    the replace — or the real target (profile/result, both PII-bearing) sits at
+    the shell's default mode for the window between the replace and the trailing
+    chmod, and permanently if the second replace then fails and the restore path
+    never tightens it."""
+    import shutil
+    shutil.copytree(FIXTURES / "current_2025_empty", tmp_path / "ws")
+    targets = WritePaths(result=tmp_path / "ws" / "result.json", profile=tmp_path / "ws" / "taxpayer_profile.json")
+
+    seen_modes = []
+    real_replace = os.replace
+
+    def spy_replace(src, dst):
+        seen_modes.append(Path(src).stat().st_mode & 0o777)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("agents.lib.rollover.os.replace", spy_replace)
+
+    changes = {"carryforwards": [Change(
+        category="carryforwards", json_path="prior_year.capital_loss_carryforward",
+        target_file="taxpayer_profile.json", prior_value=1000, current_value=0,
+        action_suggested="apply", reason="test")]}
+    apply_changes(changes, category_decisions={"carryforwards": "apply"}, targets=targets)
+    assert seen_modes == [0o600, 0o600]
+
+
 # --- CLI integration tests ---------------------------------------------------
 
 def test_cli_diff_json_output(tmp_path):

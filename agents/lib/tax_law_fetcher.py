@@ -28,6 +28,8 @@ from agents.lib.capabilities import (  # noqa: E402
     _NO_INCOME_TAX_STATES,
     _TN_HALL_REPEAL_YEAR,
 )
+from agents.lib.secure_fs import is_reparse_point  # noqa: E402
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 def get_tax_law_path(year: int, workspace: str = ".") -> Path:
@@ -55,17 +57,21 @@ def load_tax_law(year: int, workspace: str = ".") -> dict | None:
     path = get_tax_law_path(year, workspace)
     if not path.exists():
         return None
-    if path.is_symlink():
+    # is_reparse_point(), not is_symlink(): the latter is False for an NTFS
+    # junction and converts an lstat failure into "not a link" on Python 3.14,
+    # which would certify an uninspected path as safe and then read tax law
+    # through it. This one fails closed on both counts.
+    if is_reparse_point(path):
         raise ValueError(
-            f"{path} is a symlink — refusing to read for security. "
-            "Remove the symlink and re-run /tax-setup to re-fetch tax law data."
+            f"{redact(path)} is a symlink or junction — refusing to read for security. "
+            "Remove it and re-run /tax-setup to re-fetch tax law data."
         )
     try:
         return json.loads(path.read_text())
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         # Corrupt cache — remove so caller re-fetches, but warn
         print(
-            f"WARNING: Corrupt tax law cache at {path} ({type(e).__name__}). "
+            f"WARNING: Corrupt tax law cache at {redact(path)} ({type(e).__name__}). "
             "Removing so data can be re-fetched.",
             file=sys.stderr,
         )
@@ -73,7 +79,7 @@ def load_tax_law(year: int, workspace: str = ".") -> dict | None:
             path.unlink(missing_ok=True)
         except OSError as unlink_err:
             print(
-                f"WARNING: Could not remove corrupt cache {path}: {unlink_err}. "
+                f"WARNING: Could not remove corrupt cache {redact(path)}: {redact(unlink_err)}. "
                 "Manual deletion may be required.",
                 file=sys.stderr,
             )
@@ -112,7 +118,7 @@ def save_tax_law(year: int, data: dict, workspace: str = ".") -> str:
         try:
             os.unlink(tmp_path)
         except OSError as cleanup_err:
-            print(f"WARNING: Could not remove temp file {tmp_path}: {cleanup_err}",
+            print(f"WARNING: Could not remove temp file {redact(tmp_path)}: {redact(cleanup_err)}",
                   file=sys.stderr)
         raise
 
@@ -795,7 +801,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
             # Malformed timestamp (e.g., manual edit or corrupt write). Treat as
             # STALE so caller re-fetches, which will also fix the timestamp.
             print(
-                f"WARNING: Could not parse fetch timestamp '{fetched_str}': {e}. "
+                f"WARNING: Could not parse fetch timestamp '{fetched_str}': {redact(e)}. "
                 "Treating data as STALE.",
                 file=sys.stderr,
             )
@@ -1260,7 +1266,7 @@ if __name__ == "__main__":
         data = create_empty_tax_law(year)
         workspace = sys.argv[3] if len(sys.argv) > 3 else "."
         path = save_tax_law(year, data, workspace)
-        print(f"Created empty tax law template: {path}")
+        print(f"Created empty tax law template: {redact(path)}")
     elif cmd == "load":
         workspace = sys.argv[3] if len(sys.argv) > 3 else "."
         data = load_tax_law(year, workspace)

@@ -2125,3 +2125,46 @@ class TestReadmeOnboarding:
             "documents/ to appear inside a git checkout")
         assert "never push this clone" in lowered, (
             "README must warn against pushing a clone that holds taxpayer files")
+
+
+class TestSelfTestClaim:
+    """`AGENTS.md` §5 and `CONTRIBUTING.md` both tell a contributor which
+    `agents/lib/` modules run a self-test when invoked with no arguments.
+
+    Both used to say EVERY module does. Four of twenty-one do; the other
+    seventeen argparse-error or print usage. A contributor following that
+    sentence runs a module, gets `error: the following arguments are required`,
+    and has no way to tell a broken module from a wrong instruction — so the
+    list is named in the docs and checked here rather than asserted.
+
+    Only the harmful direction is machine-checked: a module the docs CLAIM
+    self-tests must actually do it. The reverse — a module quietly GAINING one,
+    leaving the list short — is not, and that is a deliberate trade rather than
+    an oversight. Catching it means globbing `agents/lib/`, which would make
+    every edit to any of the twenty-one modules select this whole suite in the
+    PostToolUse hook (`.claude/hooks/skill-invariants.sh` pairs WATCHED_ROOTS
+    with select_modules_for). A stale-but-short list costs a contributor
+    nothing; that hook cost is paid on every engine edit.
+    """
+
+    SELF_TESTING = ("tax_computations", "secure_fs", "irs_dates", "crypto_importer")
+
+    def test_the_named_modules_really_do_self_test(self):
+        import subprocess
+        import sys
+
+        for name in self.SELF_TESTING:
+            result = subprocess.run(
+                [sys.executable, f"agents/lib/{name}.py"],
+                cwd=str(REPO), capture_output=True, text=True, timeout=120)
+            assert result.returncode == 0, (
+                f"{name}.py is documented as self-testing when run with no "
+                f"arguments, and it exited {result.returncode}: "
+                f"{result.stderr[-300:]}")
+
+    def test_both_documents_name_the_same_modules(self):
+        agents = (REPO / "AGENTS.md").read_text()
+        contributing = (REPO / "CONTRIBUTING.md").read_text()
+        for name in self.SELF_TESTING:
+            assert f"`{name}`" in agents, f"AGENTS.md §5 does not name {name}"
+            assert f"`{name}`" in contributing, f"CONTRIBUTING.md does not name {name}"

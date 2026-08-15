@@ -71,7 +71,11 @@ Gather context that affects review quality. **First check `answers.md` "Confirme
 - Any major life changes expected next year (marriage, divorce, new child, retirement, move)?
 - Are you considering any large purchases that might have tax implications (home, EV)?
 
-Log all answers to `answers.md` under "Confirmed Assumptions".
+Log all answers to `answers.md` under "Confirmed Assumptions". After every
+write or rewrite of that file, immediately run:
+```bash
+python3 -m agents.lib.secure_fs answers.md
+```
 
 ### 2. IRS Officer Review (DIF Score & Audit Risk)
 
@@ -463,9 +467,15 @@ Write the FULL Step 4 report to `reviews/{year}-review.md` — the review is a
 workpaper that belongs with the return, not scrollback that vanishes:
 
 ```bash
-mkdir -p reviews && chmod 700 reviews
-# write the report, then:
-chmod 600 reviews/{year}-review.md
+mkdir -p reviews && python3 -m agents.lib.secure_fs reviews
+```
+
+Now write the report. Only once the file exists, restrict it — the two commands
+are in separate blocks because running them as one would call `secure_fs` on a
+path that does not exist yet, which exits 1:
+
+```bash
+python3 -m agents.lib.secure_fs reviews/{year}-review.md
 ```
 
 - `reviews/` is gitignored (it derives from PII-bearing result.json) and is

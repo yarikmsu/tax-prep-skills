@@ -146,6 +146,102 @@ Git symlinks may not materialise without developer mode enabled. Consequences:
   symlinking. Copy mode is the more robust of the two here precisely because it
   depends on no link resolution at all.
 
+**PII/financial file permissions (AGENTS.md §1) are enforced there too, not
+just recorded.** `os.chmod(path, 0o600/0o700)` restricts access on POSIX only —
+on Windows `Path.chmod()` toggles the read-only DOS attribute and touches
+nothing about who can read or list the file. Every runtime write in
+`agents/lib/` that secures a PII/financial path goes through
+`agents/lib/secure_fs.py`, which on Windows shells out to PowerShell's
+`Get-Acl`/`Set-Acl` (built into every Windows install, no extra dependency)
+to build a *protected* DACL holding exactly one ACE — that identity, Full
+Control — clearing whatever explicit grants the path already had rather than
+layering onto them, which is what an `icacls /grant:r` one-liner would have left
+behind, and then to take ownership. Changing only the DACL is insufficient
+because the previous owner can replace it later. Those are two SEPARATE
+`Set-Acl` calls, restriction first: `Set-Acl` persists every modified section at
+once, so folding both into one object makes them all-or-nothing, and a path
+where the process holds `WRITE_DAC` but not `WRITE_OWNER` would end up with no
+restriction applied at all rather than a restriction plus a reported ownership
+failure. Both are then verified against a fresh read — the protection flag, the
+single ACE's identity, rights and inheritance, and the owner. Verifying only the
+owner would return success on a descriptor whose DACL never changed. On a
+**directory** that ACE is made inheritable
+(`ContainerInherit,ObjectInherit`): a protected DACL with a non-inheritable
+ACE strips the inherited grants off entries already inside — a summary file
+whose only ACEs were inherited is left with an empty DACL, locking its owner
+out — and leaves anything created afterwards falling back to the token
+default DACL (SYSTEM and Administrators), where POSIX `0700` covers every
+child by denying traversal. A leaf keeps the non-inheritable form, which is
+the only valid one for a file. **Skill instructions get the same enforcement**:
+every `SKILL.md` step that directly writes a PII/financial artifact runs
+`python3 -m agents.lib.secure_fs PATH [PATH ...]`; library-backed writers use
+the same functions internally. This covers setup/parse state, the computed
+`result.json`/`answers.md`, generated PDFs, FBAR and review workpapers,
+projection/withholding reports, crypto imports, scenario reports, and the
+`tax-amend` as-filed snapshot. A bare POSIX-mode command under a
+POSIX-compatible shell on Windows hits the same DOS-attribute-only gap
+`os.chmod` had. The command and its argument are also kept on one line: a line
+break between them leaves `secure_fs` with no path, so it silently runs its own
+self-test instead of securing anything. Where a step creates the directory and
+another step writes the file into it, the two `secure_fs` calls sit in
+**separate** fenced blocks — run as one block, the second would fire before the
+file exists and exit 1.
+
+The module also closes two related gaps. `Path.is_symlink()` is `False` for
+an NTFS **junction** (a different reparse tag than a symlink, and — unlike a
+symlink on older Windows — needing no elevated privilege to create), so
+every symlink-refusal check in this codebase (`archive.py`'s moved entries
+and `archive/{year}` destination, `tie_out.py`'s `summaries/`,
+`parse_utils.py`'s validated document path and `documents/` scan, and
+`tax_law_fetcher.py`'s cache read) uses `secure_fs.is_reparse_point()`,
+which catches both, rather than `is_symlink()` alone. It keys on the reparse
+**tag**, not on `FILE_ATTRIBUTE_REPARSE_POINT`: Windows sets that bit for a
+whole family of filter-driver features whose files are ORDINARY — OneDrive
+Files On-Demand placeholders, Data Deduplication, the overlay filter that
+compresses installed application files, container image layers — so refusing on
+the bare bit stopped `/tax-parse`, `/tax-archive` and `/tax-setup` with
+"symlink or junction" on a normal document in a OneDrive-backed workspace. The
+test is Windows' own `0x20000000` NAME SURROGATE flag ("the reparse point is a
+surrogate for another named entity"), which every name-substituting tag carries
+— symlink, junction, WSL's LX symlink, `GLOBAL_REPARSE`, and any added later —
+plus `IO_REPARSE_TAG_APPEXECLINK`, which redirects without setting it. The
+benign families leave the flag clear, `IO_REPARSE_TAG_NFS` included: it
+represents an NFS special file, not a name substitution. A reparse point whose tag cannot be read is refused: the attribute
+said "reparse point" and nothing certified otherwise.
+`is_reparse_point()` uses `os.lstat()` on POSIX too:
+Python 3.14's `Path.is_symlink()` converts every `OSError` to `False`, which
+would turn access denied or a transient I/O failure into a false safety
+certificate before a later operation follows the path. The helper therefore
+fails **closed** on every platform: only `FileNotFoundError` — the path
+genuinely doesn't exist — is treated as "not a reparse point"; any other
+`OSError` propagates so a caller's `exists()`/`mkdir()` can't be led past an
+uninspected link or junction. `secure_path()` refuses a reparse point itself,
+too — the skill layer's own guard is the shell test `[ -L summaries ]`, which
+is POSIX-only and reads false for a junction, so the refusal has to live at
+the layer every caller passes through rather than in a prose instruction.
+
+That refusal covers **every component the caller named**, not the leaf alone:
+`os.lstat()` declines to follow only the FINAL component, so a linked `archive`
+with a real `archive/{year}/as_filed` under it passed a leaf-only check and the
+chmod landed outside the workspace. A relative path — what every skill passes,
+run from the workspace root — is walked component by component from the current
+directory down; an absolute path is walked the same way when it lies under the
+current directory, and otherwise only its leaf is checked, because nothing here
+can know where an unrelated tree's trust boundary is and a walk to the
+filesystem root would refuse correct data (macOS puts every temporary directory
+under `/var`, which is itself a symlink).
+
+The CLI **stops at the first refusal** rather than reporting it and continuing:
+the callers pass a tree outermost-first, so a refusal says the paths after it
+are not what they appear to be. It prints how many were skipped, never their
+names. That stop is scoped to `secure_fs.PathRefused` — a component that is a
+reparse point, or that could not be inspected at all — because those say
+something about the TREE. An ordinary failure (the file is gone, the chmod was
+denied) says nothing about the other targets and does not stop the run: an
+unmatched `summaries/*.md` arrives as a literal pattern, and the `result.json`
+after it still has to be secured. `PathRefused` subclasses `OSError`, so
+library callers that catch `OSError` and translate are unaffected.
+
 ## Git hooks are the shared backstop
 
 The PII pre-commit scan and the branch guard run **host-side**, so they fire on a

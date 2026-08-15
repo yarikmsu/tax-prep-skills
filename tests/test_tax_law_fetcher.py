@@ -1,6 +1,7 @@
 """Tests for tax_law_fetcher freshness logic — the sdi_wage_limit year-aware
 null exception (Codex P1 on PR #29)."""
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,8 @@ from agents.lib.tax_law_fetcher import (  # noqa: E402
     _source_host_authoritative,
     create_empty_tax_law,
     create_state_template,
+    get_tax_law_path,
+    load_tax_law,
     save_tax_law,
 )
 
@@ -1174,3 +1177,57 @@ class TestCacheYearMismatchGuard:
         assert any(f.startswith("tax_year (missing or invalid")
                    for f in result["null_fields"])
         assert result["status"] == "INCOMPLETE"
+
+
+class TestCacheReparsePointGuard:
+    """load_tax_law() refuses to read tax law through a link it did not verify.
+
+    The figures in this cache decide every number on the return, so a cache
+    file that silently resolves somewhere else is a wrong-return vector, not
+    just a containment one.
+    """
+
+    def test_refuses_a_symlinked_cache(self, tmp_path):
+        real = tmp_path / "elsewhere.json"
+        real.write_text(json.dumps(create_empty_tax_law(2025)))
+        get_tax_law_path(2025, str(tmp_path)).symlink_to(real)
+        with pytest.raises(ValueError, match="symlink or junction"):
+            load_tax_law(2025, str(tmp_path))
+
+    def test_guard_uses_the_junction_aware_helper(self):
+        """is_symlink() is False for an NTFS junction, so on a Windows clone
+        the guard did not fire at all — and on Python 3.14 it converts an
+        lstat failure to False. Asserted structurally: a junction cannot be
+        created on POSIX CI, and simulating one end-to-end needs os.name ==
+        "nt", which makes pathlib construct WindowsPath process-wide.
+        `from ... import` binds per module, so identity is checked here."""
+        import agents.lib.secure_fs as sfs
+        import agents.lib.tax_law_fetcher as tlf
+
+        # `#` comments stripped: the prose names is_symlink() to explain why it
+        # is not used, so a raw scan would match the explanation, not a call.
+        code = "\n".join(line.split("#", 1)[0]
+                         for line in Path(tlf.__file__).read_text().splitlines())
+        assert tlf.is_reparse_point is sfs.is_reparse_point
+        assert ".is_symlink()" not in code, (
+            "tax_law_fetcher still calls Path.is_symlink() — it would read tax "
+            "law through an unverified junction")
+
+    def test_fails_closed_when_the_cache_cannot_be_inspected(self, tmp_path, monkeypatch):
+        """Python 3.14's is_symlink() converts every OSError to False. Reading
+        tax law through a path whose nature could not be established is the
+        outcome that guard exists to prevent, so the error propagates."""
+        cache = get_tax_law_path(2025, str(tmp_path))
+        cache.write_text(json.dumps(create_empty_tax_law(2025)))
+
+        def denied(path):
+            raise PermissionError(13, "denied")
+
+        monkeypatch.setattr("agents.lib.secure_fs.os.lstat", denied)
+        with pytest.raises(PermissionError):
+            load_tax_law(2025, str(tmp_path))
+
+    def test_reads_a_plain_cache_file(self, tmp_path):
+        cache = get_tax_law_path(2025, str(tmp_path))
+        cache.write_text(json.dumps(create_empty_tax_law(2025)))
+        assert load_tax_law(2025, str(tmp_path))["tax_year"] == 2025

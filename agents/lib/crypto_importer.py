@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib.secure_fs import redact  # noqa: E402
 
 SCHEMA = "tax-parse-crypto/v1"
 
@@ -1193,7 +1194,7 @@ def _read_csv(path: str) -> 'list[list[str]]':
     import csv
     p = Path(path)
     if not p.is_file():
-        raise CryptoImportError(f"file not found: {path}")
+        raise CryptoImportError(f"file not found: {redact(path)}")
     with open(p, newline="", encoding="utf-8-sig") as f:
         return list(csv.reader(f))
 
@@ -1230,14 +1231,14 @@ def _cli_compute(argv: 'list[str]') -> int:
     path = argv[0]
     p = Path(path)
     if not p.is_file():
-        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        print(f"ERROR: file not found: {redact(path)}", file=sys.stderr)
         return 1
     try:
         data = json.loads(p.read_text())
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         # main() only catches CryptoImportError; re-raise so a user-edited empty/malformed
         # normalized file produces the promised clean ERROR, not a raw traceback. (Codex P2.)
-        raise CryptoImportError(f"{path} is not valid JSON: {e}")
+        raise CryptoImportError(f"{redact(path)} is not valid JSON: {redact(e)}")
     txns = data.get("transactions", data) if isinstance(data, dict) else data
     year = None
     if "--year" in argv:
@@ -1296,7 +1297,7 @@ def main(argv: 'list[str]') -> int:
               file=sys.stderr)
         return 2
     except CryptoImportError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
 

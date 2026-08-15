@@ -1,0 +1,94 @@
+name: Bug report
+description: Something in the toolkit behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Before you type anything else
+
+        This project processes real tax documents, so the natural way to report a
+        parsing bug is to attach the document that broke it. **Please don't.**
+
+        GitHub retains what you post here, and deleting a comment does not reliably
+        unsend it.
+
+        **Replace every real value with an invented one.** Keep only the structure —
+        a column header, a date format, a currency string, an unexpected row. The
+        structure is almost always the actual cause; the values almost never are.
+
+        This includes the *last four* digits of an SSN. The toolkit stores those
+        locally because a return needs them; a public issue never does.
+
+        A redacted example that still reproduces the bug:
+
+        ```
+        Name: Jane Example        (invented — not the real name)
+        SSN:  XXX-XX-0000         (invented digits — never the real last four)
+        Box 1 Wages: 100000.00    (a round number, not the real one)
+        ```
+
+        If the bug **only** reproduces with real data, do not attach it. Say so
+        below and describe the document's shape instead; we will help build a
+        fixture.
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction check
+      options:
+        - label: This report contains no real taxpayer data — no full SSN, no real names or account numbers, and no attached tax document.
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        What did you expect, and what did you get instead? If the defect is a WRONG NUMBER in a
+        computed result, stop and report it privately as a security advisory instead — a figure
+        that understates what is owed is treated as a security-class defect, and the link is on
+        the previous page. Everything else (a crash, a parse failure, a skill that will not run)
+        belongs here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The command or skill you ran, and the redacted input if one is needed.
+      placeholder: |
+        1. Ran `python3 -m agents.lib.projection --inputs ... --workspace ...`
+        2. With this redacted input: ...
+        3. Got: ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit
+      description: "Output of `git rev-parse --short HEAD`."
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: "Output of `python3 --version`. CI runs 3.12 and 3.14."
+    validations:
+      required: true
+
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+      description: Which AI agent you were running the skill through, if any (Codex, Cursor, Kimi Code, Copilot, Claude Code), or "none — ran the library directly".
+
+  - type: input
+    id: tax-year
+    attributes:
+      label: Tax year and state
+      description: 'For example: "TY2026, CA". Say if the state is not modeled in depth — most are bracket-estimate only.'

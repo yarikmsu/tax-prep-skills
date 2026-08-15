@@ -50,21 +50,27 @@ reversible when stacking.
    python3 -m agents.lib.scenario --result result.json --workspace . --year {year} \
        --name {name} [--base scenarios/{other}.json] --json {KEY=AMOUNT ...}
    ```
-   This writes `scenarios/{name}.json` (chmod 600) and emits the JSON report.
+   This writes `scenarios/{name}.json` with owner-only permissions through
+   `agents.lib.secure_fs` and emits the JSON report.
 
 4. **Render.** Run the same command without `--json` to print the markdown report. Save it
-   to `scenarios/{name}.md` and `chmod 600`. Present the bottom-line table and marginal rate.
+   to `scenarios/{name}.md`, immediately run
+   `python3 -m agents.lib.secure_fs scenarios/{name}.md`, and present the
+   bottom-line table and marginal rate.
 
 5. **Audit note.** Append one line to `answers.md` (NO dollar PII duplicated):
    ```
    ## Scenario "{name}" TY{year} — base {base}, deltas {keys}. Run {today}.
    ```
+   Then run `python3 -m agents.lib.secure_fs answers.md` in case the write
+   replaced the file rather than preserving its existing permissions.
 
 ## Security & safety
 - Writes ONLY under `scenarios/`; a path guard refuses any other target and never
   overwrites `result.json` / `taxpayer_profile.json`.
 - Scenario names are validated to a single safe path segment (no `/`, `\`, `..`, leading dot).
 - `scenarios/` is gitignored — scenario files hold financial figures.
-- All written files (`scenarios/*`) → `chmod 600`.
+- Restrict every manually written file with `agents.lib.secure_fs`; the library
+  already applies the same enforcement to its JSON output and directory.
 - Any delegated sub-task must have NO network access and must NOT write outside `scenarios/`.
 - Never extract or store full SSNs.

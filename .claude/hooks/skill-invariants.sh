@@ -137,6 +137,7 @@ WATCHED_ROOTS='
 .vscode/settings.json
 AGENTS.md
 CLAUDE.md
+CONTRIBUTING.md
 LICENSE
 README.md
 agents/install.sh
@@ -210,9 +211,9 @@ select_modules_for() {
         # everything else under that directory is gitignored editor state, and
         # watching the directory would spend ten seconds on every window-layout
         # write.
-        AGENTS.md|CLAUDE.md|README.md|LICENSE|.gitignore|.pii-allowlist|\
-        .vscode/settings.json|agents/install.sh|docs/contributing|\
-        docs/contributing/*.md|tests/test_portability.py)
+        AGENTS.md|CLAUDE.md|CONTRIBUTING.md|README.md|LICENSE|.gitignore|\
+        .pii-allowlist|.vscode/settings.json|agents/install.sh|\
+        docs/contributing|docs/contributing/*.md|tests/test_portability.py)
             RUN_PORTABILITY=1
             ;;
     esac

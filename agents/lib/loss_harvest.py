@@ -81,6 +81,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_niit,
     compute_scenario,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 # Reuse the NIIT helpers from /tax-roth-convert so the two anchored-skills agree
 # on how baseline NII is defined and how NIIT params are pulled from tax_law.
 # Any future change (e.g. adding ST gains to NII to close the v1 simplification)
@@ -123,7 +124,7 @@ def _parse_txn_date(raw, label: str) -> datetime.date:
     try:
         return datetime.date.fromisoformat(raw)
     except ValueError as e:
-        raise LossHarvestError(f"{label} date {raw!r} is not a valid YYYY-MM-DD: {e}")
+        raise LossHarvestError(f"{label} date {raw!r} is not a valid YYYY-MM-DD: {redact(e)}")
 
 
 def check_wash_sale(ticker: str, recent_txns: 'list[dict]',
@@ -1577,23 +1578,23 @@ def _main(argv: list) -> int:
         today = (datetime.date.fromisoformat(args.today) if args.today
                  else datetime.date.today())
     except (LossHarvestError, ScenarioError, RolloverError, ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     try:
         report = build_harvest(result, profile, tax_law, holdings, year,
                                name=name, today=today)
     except (LossHarvestError, ScenarioError, ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     data = _report_to_dict(report)
     if not args.no_save:
         try:
             out = save_scenario(workspace, name, data)
-            print(f"# Saved {out}", file=sys.stderr)
+            print(f"# Saved {redact(out)}", file=sys.stderr)
         except (ScenarioError, RolloverError) as e:
-            print(f"ERROR: {e}", file=sys.stderr)
+            print(f"ERROR: {redact(e)}", file=sys.stderr)
             return 1
 
     if args.json:

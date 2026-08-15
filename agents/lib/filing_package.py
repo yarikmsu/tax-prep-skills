@@ -31,6 +31,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
 )
 from agents.lib.yoy_diff import _section_present  # noqa: E402
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 class FilingPackageError(Exception):
@@ -366,7 +367,7 @@ def _main(argv: list) -> int:
             print(render_markdown(result))
     except (FilingPackageError, RolloverError, OSError,
             json.JSONDecodeError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     return 0
 

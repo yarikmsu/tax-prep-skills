@@ -13,3 +13,16 @@ password=None
 secret=None
 token=None
 api_key=None
+# Synthetic SSN spellings used by tests/test_secure_fs.py to prove the runtime
+# redactor masks every form the scanner above blocks. Area 000 is never issued,
+# so none of these can be a real SSN.
+000.00.0000
+000/00/0000
+000 00 0000
+000000000
+0000000000
+# A synthetic AWS access-key ID used by tests/test_secure_fs.py to pin that a
+# credential-shaped filename is redacted too. Deliberately NOT AWS's published
+# example key, which is test_pii_content_scan.py's own fixture for proving that
+# AWS keys BLOCK — exempting that value would have disabled the detection test.
+AKIAAAAAAAAAAAAAAAAA

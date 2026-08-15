@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability or a data-exposure concern
+    url: https://github.com/yarikmsu/tax-prep-skills/security/advisories/new
+    about: Report privately. Never open a public issue for a security problem, and never attach a real tax document.
+  - name: Question, or telling us you filed a return with this
+    url: https://github.com/yarikmsu/tax-prep-skills/discussions
+    about: Discussions is the right place for usage questions and for feedback that is not a defect.
+  - name: A wrong number in a computed result
+    url: https://github.com/yarikmsu/tax-prep-skills/security/advisories/new
+    about: A figure that understates what is owed is treated as a security-class defect. Report it privately, with synthetic values.

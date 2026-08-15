@@ -147,7 +147,8 @@ the sequential path produces identical output — it is only slower.
 Whoever executes a parse task (a delegated agent, or you working sequentially) must:
 - have NO network access (no web search, no URL fetching)
 - NOT modify files outside the `summaries/` directory
-- NOT execute arbitrary shell commands beyond the parse_utils.py calls below
+- NOT execute arbitrary shell commands beyond the parse_utils.py calls and the
+  one summary-file `secure_fs` call below
 - NOT update `result.json` — all `result.json` updates happen in Step 5, in the
   main session only
 
@@ -166,7 +167,8 @@ You are parsing tax documents for TY{year}.
    Employer Identification Numbers (EINs, format XX-XXXXXXX) may be recorded in full.
 3. Do NOT use any network capability (no web search, no URL fetching).
 4. Do NOT read or modify any file outside the summaries/ directory.
-5. Do NOT run any shell command other than the parse_utils.py calls below.
+5. Do NOT run any shell command other than the parse_utils.py calls and the
+   secure_fs call on your own summary file, both below.
 ═══════════════════════════════
 
 Documents to parse:
@@ -199,6 +201,25 @@ Save results to summaries/{group_name}.md with this format:
 
 ## {Document 2 Name}
 ...
+
+Immediately after writing the file, run this command, both parts on the SAME
+line — a line break between the module name and its argument leaves
+`secure_fs` with no path, so it runs its own self-test instead of securing
+anything:
+
+`python3 -m agents.lib.secure_fs 'summaries/{group_name}.md'`
+
+Quote the path exactly like the parse_utils.py call above. Several group names
+in the table in Step 3 contain spaces or parentheses (US W-2s, Foreign Bank,
+Form 3921 (ISO exercise)) that an unquoted path would split into multiple
+arguments, silently leaving the real file untouched. Use secure_fs, not a bare
+`chmod 600` — on Windows under a POSIX-compatible shell, `chmod` only flips
+the read-only DOS attribute and leaves the file readable by every other local
+account, which secure_fs's underlying protected-ACL enforcement actually
+closes. The directory is already secured (from /tax-setup), but a freshly
+written file inside it still lands at the shell's default permissions until
+something tightens it, and Step 6's sweep below does not run until every
+group in this dispatch has finished.
 
 Do NOT update result.json — only write to summaries/. The parent agent handles result.json.
 ```
@@ -272,9 +293,17 @@ After merging, perform validation checks:
 
 Report validation results to the user.
 
-After validation, set restrictive permissions on all output files:
+After validation, set restrictive permissions on all output files — a backstop, not
+the primary control: each summary should already be secured from the per-file
+secure_fs call in Step 3's parse-task template, and this sweep only catches one a
+sub-agent skipped, the same belt-and-suspenders shape as the SSN redaction sweep in
+Step 5. `answers.md` is in the list for the opposite reason: Step 5.4 rewrites it
+by hand, and an editor that REPLACES a file rather than editing it in place leaves
+the replacement at the default mode — owner-only is not inherited from the file it
+overwrote. Uses the same cross-platform helper as Step 3, not a bare `chmod`, for the
+same reason:
 ```bash
-chmod 600 summaries/*.md result.json
+python3 -m agents.lib.secure_fs summaries/*.md result.json answers.md
 ```
 
 ### 6.5. Emit the parse ledger (parse_ledger.json)
@@ -347,7 +376,10 @@ Rules:
   On a re-run, carry any existing `crypto-csv` records over verbatim —
   rewriting them back to "pending" would erase `/tax-parse-crypto`'s
   reconciliation trail (and re-block the gate).
-- `chmod 600 parse_ledger.json` (it carries dollar figures; already gitignored).
+- `python3 -m agents.lib.secure_fs parse_ledger.json` (it carries dollar
+  figures; already gitignored). Use `secure_fs`, not a bare `chmod 600` — on
+  Windows under a POSIX-compatible shell, `chmod` only flips the read-only DOS
+  attribute and leaves the file readable by every other local account.
 
 ### 6.7. Second-read verification for high-value records (A3)
 

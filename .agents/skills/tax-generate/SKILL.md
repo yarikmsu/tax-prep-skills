@@ -218,6 +218,13 @@ branch — an existing generator is the common case, not the edge case.
 
 If any of these fail, update the generator before generating.
 
+After creating or modifying `generate_tax_pdf.py`, immediately restrict it to
+the current OS identity. The generated source can contain taxpayer names, so it
+is a runtime PII artifact even though its extension is `.py`:
+```bash
+python3 -m agents.lib.secure_fs generate_tax_pdf.py
+```
+
 ### 3. Generate PDF
 
 Run:
@@ -230,7 +237,7 @@ Run:
 Check that the output PDF was created and set restrictive permissions:
 ```bash
 ls -la Tax_Return_*_Summary.pdf
-chmod 600 Tax_Return_*_Summary.pdf
+python3 -m agents.lib.secure_fs Tax_Return_*_Summary.pdf
 ```
 
 Report:
@@ -241,8 +248,8 @@ Report:
 ### 4.5. Filing package mode (`--filing-package`, F1)
 
 When invoked with `--filing-package`, ALSO produce
-`Tax_Return_{year}_Filing_Package.pdf` (chmod 600). **This is NOT an
-e-file artifact** — no MeF submission, no Form 8879; say so on page 1 of
+`Tax_Return_{year}_Filing_Package.pdf`. **This is NOT an e-file artifact** —
+no MeF submission, no Form 8879; say so on page 1 of
 the package in the same banner style as the Scope & Limitations box. The
 package has four parts:
 
@@ -311,6 +318,12 @@ package has four parts:
 
 The summary PDF from step 3 is unchanged — the package is an ADDITIONAL
 artifact.
+
+Immediately after writing the filing package, restrict it to the current OS
+identity:
+```bash
+python3 -m agents.lib.secure_fs Tax_Return_{year}_Filing_Package.pdf
+```
 
 ### 5. Summary
 

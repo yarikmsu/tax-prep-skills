@@ -10,6 +10,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib.secure_fs import is_reparse_point, redact  # noqa: E402
+
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
 # Must be called before any XML parsing (including openpyxl imports).
 try:
@@ -33,35 +36,46 @@ def _validate_file_path(
 ) -> Path:
     """Validate that a file path exists, check extension, and enforce containment.
 
-    Checks symlinks on the original (unresolved) path before resolving,
+    Checks reparse points on the original (unresolved) path before resolving,
     then verifies the resolved path stays within the workspace.
 
     Raises:
         FileNotFoundError: If file does not exist.
+        OSError: If the path cannot be inspected (see is_reparse_point).
         ValueError: If extension doesn't match, path escapes workspace,
                     symlink points outside workspace, or file is too large.
     """
     raw = Path(path)
-    # Check symlinks BEFORE resolving — resolve() follows them, making is_symlink() False
-    if raw.is_symlink():
+    # Check BEFORE resolving — resolve() follows the link, making the check False.
+    # is_reparse_point() rather than is_symlink(): it also catches an NTFS junction
+    # (which is_symlink() reports False for), and it fails CLOSED, where
+    # Path.is_symlink() turns every OSError into "not a link" on Python 3.14 — one
+    # of the two interpreters CI runs.
+    if is_reparse_point(raw):
         target = raw.resolve()
         if workspace is not None:
             base = Path(workspace).resolve()
             if not target.is_relative_to(base):
-                raise ValueError(f"Symlink '{path}' points outside workspace '{workspace}'")
+                raise ValueError(
+                    f"Symlink '{redact(path)}' points outside workspace "
+                    f"'{redact(workspace)}'")
     p = raw.resolve()
     if workspace is not None:
         base = Path(workspace).resolve()
         if not p.is_relative_to(base):
-            raise ValueError(f"Path '{path}' is outside workspace '{workspace}'")
+            raise ValueError(
+                f"Path '{redact(path)}' is outside workspace "
+                f"'{redact(workspace)}'")
     if not p.is_file():
-        raise FileNotFoundError(f"File not found: {path}")
+        raise FileNotFoundError(f"File not found: {redact(path)}")
     if expected_suffixes and p.suffix.lower() not in expected_suffixes:
-        raise ValueError(f"Unexpected file type '{p.suffix}' for {path}. Expected: {expected_suffixes}")
+        raise ValueError(
+            f"Unexpected file type '{p.suffix}' for {redact(path)}. "
+            f"Expected: {expected_suffixes}")
     file_size = p.stat().st_size
     if file_size > MAX_FILE_SIZE:
         raise ValueError(
-            f"File too large: {path} is {file_size / 1024 / 1024:.1f} MB "
+            f"File too large: {redact(path)} is {file_size / 1024 / 1024:.1f} MB "
             f"(limit: {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)"
         )
     return p
@@ -93,7 +107,9 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
         target_pages = pages if pages is not None else range(num_pages)
         for i in target_pages:
             if i < 0 or i >= num_pages:
-                raise IndexError(f"Page {i} out of range for {path} ({num_pages} pages)")
+                raise IndexError(
+                    f"Page {i} out of range for {redact(path)} "
+                    f"({num_pages} pages)")
             text = pdf.pages[i].extract_text() or ""
             result[i] = text
     return result
@@ -125,7 +141,9 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
         target_pages = pages if pages is not None else range(num_pages)
         for i in target_pages:
             if i < 0 or i >= num_pages:
-                raise IndexError(f"Page {i} out of range for {path} ({num_pages} pages)")
+                raise IndexError(
+                    f"Page {i} out of range for {redact(path)} "
+                    f"({num_pages} pages)")
             tables = pdf.pages[i].extract_tables() or []
             if tables:
                 result[i] = tables
@@ -267,7 +285,7 @@ def scan_workspace(workspace_dir: str) -> list[dict]:
     """
     workspace = Path(workspace_dir)
     if not workspace.is_dir():
-        raise NotADirectoryError(f"Not a directory: {workspace_dir}")
+        raise NotADirectoryError(f"Not a directory: {redact(workspace_dir)}")
 
     extensions = {".pdf", ".xlsx", ".csv"}
     # Skip known output files
@@ -275,8 +293,14 @@ def scan_workspace(workspace_dir: str) -> list[dict]:
 
     documents = []
     for f in sorted(workspace.iterdir()):
-        if f.is_symlink():
-            print(f"WARNING: Skipping symlink {f.name} — copy the file into the workspace instead.",
+        # is_reparse_point(), not is_symlink(): a junction is invisible to the
+        # latter, and an lstat failure there reads as "not a link" rather than
+        # propagating. It fails closed, so an uninspectable entry raises instead
+        # of being silently dropped from the document list — a dropped document
+        # understates income, which overstates the refund the user acts on.
+        if is_reparse_point(f):
+            print(f"WARNING: Skipping symlink {redact(f.name)} — copy the "
+                  f"file into the workspace instead.",
                   file=sys.stderr)
             continue
         if not f.is_file() or f.suffix.lower() not in extensions:
@@ -305,12 +329,17 @@ def scan_workspace(workspace_dir: str) -> list[dict]:
             except Exception as e:
                 doc["doc_type"] = "error"
                 # Sanitize error message — avoid leaking document content
-                # that may contain SSNs or account numbers
-                err_msg = str(e)
+                # that may contain SSNs or account numbers. Truncation was the
+                # only sanitizing here, and a 200-character prefix of a parser
+                # error is where an SSN would sit: redacted at ASSIGNMENT so
+                # both consumers are covered, the stderr warning below and the
+                # `error` field that rides out in the document list.
+                err_msg = redact(e)
                 if len(err_msg) > 200:
                     err_msg = err_msg[:200] + "..."
                 doc["error"] = f"{type(e).__name__}: {err_msg}"
-                print(f"WARNING: Failed to classify {f.name}: {type(e).__name__}: {err_msg}",
+                print(f"WARNING: Failed to classify {redact(f.name)}: "
+                      f"{type(e).__name__}: {redact(err_msg)}",
                       file=sys.stderr)
         elif f.suffix.lower() == ".xlsx":
             doc["doc_type"] = "excel"
@@ -352,9 +381,10 @@ if __name__ == "__main__":
             tables = extract_tables(path, pages=pages)
             print(json.dumps(tables, indent=2, default=str))
         else:
-            print(f"Error: Unknown command '{cmd}'. Valid commands: scan, classify, extract, tables",
+            print(f"Error: Unknown command '{redact(cmd)}'. "
+              f"Valid commands: scan, classify, extract, tables",
                   file=sys.stderr)
             sys.exit(1)
     except (FileNotFoundError, ValueError, NotADirectoryError) as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"Error: {redact(e)}", file=sys.stderr)
         sys.exit(1)

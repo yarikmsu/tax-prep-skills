@@ -36,6 +36,38 @@ Ensure these directories exist in the workspace:
 - `summaries/` — parsed document summaries
 - `agents/` — if not already present (should exist from install)
 
+**Create `documents/` and `summaries/` at owner-only permissions, not at the
+shell's default mode.** Both hold taxpayer data from their first write:
+`documents/` the scanned source documents themselves, and `summaries/` the
+financial data `/tax-parse` extracts from them — well before `/tax-compute`'s
+tie-out gate ever runs and secures it. Restricting the DIRECTORY is not
+redundant with the 600 on each file inside: an owner-only file in a listable
+directory still discloses its NAME, and under `documents/` those names say what
+each document is. Refuse first if either path is already a symlink — a
+bare `chmod` follows it to whatever it points at (possibly outside the
+workspace), and `mkdir -p` treats a symlink to a directory as already satisfied,
+so neither command on its own would catch it. Use `agents/lib/secure_fs.py`,
+not a bare `chmod 700`: on Windows `chmod` only flips the read-only DOS
+attribute and leaves the underlying NTFS permissions untouched, which is exactly
+the gap that module closes.
+
+```bash
+for d in documents summaries; do
+  if [ -L "$d" ]; then
+    echo "$d is a symlink — refusing to secure through it. Remove or replace it with a real directory, then re-run /tax-setup." >&2
+    exit 1
+  fi
+  mkdir -p "$d" && python3 -m agents.lib.secure_fs "$d" || exit 1
+done
+```
+
+A non-zero exit here is a refusal, same as Step 0's above — do not proceed past
+it until the user has replaced the offending path with a real directory. The
+`[ -L ]` test is only the first line of defence: it is POSIX-only and reads
+false for an NTFS junction, so on Windows the refusal that actually fires is
+`secure_fs`'s own — it checks for both and exits non-zero rather than applying
+permissions to whatever the junction points at.
+
 ### 2. Interview the Taxpayer
 
 Ask the user, one topic at a time, to collect taxpayer information. Ask in logical groups:
@@ -81,9 +113,12 @@ Create `taxpayer_profile.json` from the interview answers. Use the template at `
 - Names: letters, hyphens, apostrophes, spaces only — reject shell metacharacters (`$`, `` ` ``, `!`, `;`, `|`, `&`)
 - ZIP: 5 or 9 digits only
 
-**After saving**, set restrictive permissions:
+**After saving**, set restrictive permissions — use `secure_fs`, and
+not a bare `chmod 600`, for the same reason Step 1 does: under a
+POSIX-compatible shell on Windows, `chmod` only flips the read-only DOS
+attribute and leaves the file readable by every other local account.
 ```bash
-chmod 600 taxpayer_profile.json
+python3 -m agents.lib.secure_fs taxpayer_profile.json
 ```
 
 ### 4. Fetch Current Tax Law
@@ -108,7 +143,7 @@ STOP rule above binds every fetch in it.
 
 After creating both files, set restrictive permissions:
 ```bash
-chmod 600 result.json answers.md
+python3 -m agents.lib.secure_fs result.json answers.md
 ```
 
 ### 6. Check Dependencies
@@ -144,9 +179,10 @@ python3 -m agents.lib.tax_calendar \
   --year {year}
 ```
 
-`write_calendar` already sets `chmod 600` on the output. v1 uses statutory
-dates only — when April 15 lands on a weekend or DC Emancipation Day, the IRS
-rolls the date forward; cross-check IRS.gov for the authoritative deadline.
+`write_calendar` already restricts the output through `agents.lib.secure_fs`.
+v1 uses statutory dates only — when April 15 lands on a weekend or DC
+Emancipation Day, the IRS rolls the date forward; cross-check IRS.gov for the
+authoritative deadline.
 
 Users can subscribe by importing the `.ics` into Google Calendar / Apple
 Calendar / Outlook. A 7-day-prior reminder is embedded per event. The skill

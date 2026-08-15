@@ -32,8 +32,8 @@ of three states depending on `tax_law.state`:
   degrades to "state savings not modeled" with a warning to run `/tax-setup`.
 
 Read-only with respect to the baseline: never modifies `result.json` or
-`taxpayer_profile.json`. Writes a single `scenarios/<name>.json` (chmod 600) via
-the same guarded writer `/tax-scenario` uses.
+`taxpayer_profile.json`. Writes a single `scenarios/<name>.json` with owner-only
+permissions through the same guarded writer `/tax-scenario` uses.
 
 ## Prerequisites
 - `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
@@ -138,6 +138,12 @@ the same guarded writer `/tax-scenario` uses.
    offer "unrealized gain/loss by lot" CSV exports — you can help convert to the schema
    above).
 
+   Then run `python3 -m agents.lib.secure_fs holdings.json` before continuing —
+   **whether the file was already there or you just helped create it.** It carries
+   every lot's cost basis and account label. A file the user exported themselves
+   arrives at their shell's default mode, so the already-exists path is the one
+   that needs this most, not the one that gets to skip it.
+
 2. **Sanity-check the holdings.**
    - Per-lot: `current_value < cost_basis` → at a loss; `acquired` is not in the future;
      `quantity > 0`. The library rejects malformed inputs.
@@ -150,10 +156,12 @@ the same guarded writer `/tax-scenario` uses.
    python3 -m agents.lib.loss_harvest --result result.json --workspace . \
        --year {year} --holdings holdings.json --name {name} --json
    ```
-   Writes `scenarios/{name}.json` (chmod 600, default name `harvest`) and emits JSON.
+   Writes `scenarios/{name}.json` with owner-only permissions through
+   `agents.lib.secure_fs` (default name `harvest`) and emits JSON.
 
 4. **Render.** Run the same command without `--json` to print the markdown report. Save
-   it to `scenarios/{name}.md` and `chmod 600`. Walk the user through:
+   it to `scenarios/{name}.md`, immediately run
+   `python3 -m agents.lib.secure_fs scenarios/{name}.md`, and walk the user through:
    - **Bottom-line table** — eligible loss, federal/state savings, carryforward.
    - **Schedule D after harvest** — baseline vs. post-harvest net ST/LT.
    - **Harvest plan** — ranked eligible lots with per-lot value-per-dollar (ST losses
@@ -180,6 +188,12 @@ the same guarded writer `/tax-scenario` uses.
 6. **Audit note.** Append one line to `answers.md` (NO dollar PII):
    ```
    ## Tax-loss harvest "{name}" TY{year} as of {as_of} — {N} lots eligible, run {today}.
+   ```
+   Then re-restrict it — an editor that REPLACES the file rather than editing
+   it in place leaves the replacement at the default mode, and owner-only is
+   not inherited from the file it overwrote:
+   ```bash
+   python3 -m agents.lib.secure_fs answers.md || exit 1
    ```
 
 ## How to read the savings
@@ -236,7 +250,8 @@ the same guarded writer `/tax-scenario` uses.
   paths or `../` escapes outside the workspace).
 - Scenario names must be a single safe path segment (no `/`, `\`, `..`, leading dot).
 - `holdings.json` and `scenarios/` are gitignored — both hold lot-level financial data.
-- All written files (`scenarios/*`) → `chmod 600`.
+- Restrict every manually written file with `agents.lib.secure_fs`; the library
+  already applies the same enforcement to its JSON output and directory.
 - Any delegated sub-task must have NO network access and must NOT write outside `scenarios/`.
 - Never extract or store full SSNs or account numbers; the holdings schema uses
   human-readable account labels (e.g. "Schwab Brokerage"), not account numbers.

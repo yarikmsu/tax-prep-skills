@@ -14,6 +14,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib.secure_fs import redact, secure_fd, secure_path  # noqa: E402
+
 
 class RolloverError(Exception):
     """Raised when /tax-rollover cannot safely proceed."""
@@ -156,24 +159,25 @@ class PriorReturn:
 
 def _read_json(path: Path) -> dict:
     if not path.exists():
-        raise RolloverError(f"{path} does not exist")
+        raise RolloverError(f"{redact(path)} does not exist")
     try:
         return json.loads(path.read_text())
     except json.JSONDecodeError as e:
-        raise RolloverError(f"{path.name} is malformed: {e}")
+        raise RolloverError(f"{redact(path.name)} is malformed: {redact(e)}")
 
 
 def load_prior(archive_dir: Path, year: int) -> PriorReturn:
     archive_dir = Path(archive_dir)
     if not archive_dir.exists():
-        raise RolloverError(f"archive directory {archive_dir} does not exist")
+        raise RolloverError(
+            f"archive directory {redact(archive_dir)} does not exist")
     result = _read_json(archive_dir / "result.json")
     profile = _read_json(archive_dir / "taxpayer_profile.json")
     meta_year = result.get("meta", {}).get("tax_year")
     if meta_year != year:
         raise RolloverError(
-            f"Archive at {archive_dir} is for TY{meta_year}, not TY{year}. "
-            "Refusing to roll inconsistent data."
+            f"Archive at {redact(archive_dir)} is for TY{meta_year}, not "
+            f"TY{year}. Refusing to roll inconsistent data."
         )
     return PriorReturn(year=year, result=result, profile=profile)
 
@@ -649,16 +653,42 @@ def apply_changes(
     original_profile = targets.profile.read_bytes()
     original_result = targets.result.read_bytes()
     try:
-        tmp_profile.write_text(json.dumps(profile, indent=2))
-        tmp_result.write_text(json.dumps(result, indent=2))
+        # Create at 600 up front rather than write-then-chmod: os.replace carries
+        # a file's mode over to the name it lands on, so a tmp file written at the
+        # shell's default mode would leave the real target — profile or result,
+        # both PII-bearing — briefly at that looser mode after the replace, until
+        # the chmod below runs (or, on the second replace failing, the restore
+        # path below writes the original bytes back without ever tightening it).
+        # os.open's mode is create-only and POSIX ignores it if the .tmp path
+        # already exists from a prior failed apply, so secure_fd on the open
+        # descriptor closes that gap too; scenario.py/tie_out.py hold the same
+        # line, including the Windows fallback (os.fchmod is Unix-only —
+        # secure_fd falls back there to the same PowerShell-ACL-based
+        # enforcement secure_path uses everywhere else on that platform).
+        for tmp_path, content in (
+            (tmp_profile, json.dumps(profile, indent=2)),
+            (tmp_result, json.dumps(result, indent=2)),
+        ):
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            # os.fdopen adopts the descriptor only on success — see
+            # scenario.py's note. This loop opens TWO per call, so a leak here
+            # compounds twice as fast as at the single-file sites.
+            try:
+                handle = os.fdopen(fd, "w")
+            except BaseException:
+                os.close(fd)
+                raise
+            with handle as f:
+                secure_fd(f.fileno(), tmp_path)
+                f.write(content)
         os.replace(tmp_profile, targets.profile)
         try:
             os.replace(tmp_result, targets.result)
         except OSError:
             targets.profile.write_bytes(original_profile)
             raise
-        os.chmod(targets.profile, 0o600)
-        os.chmod(targets.result, 0o600)
+        secure_path(targets.profile)
+        secure_path(targets.result)
     except OSError as e:
         # Best-effort restore (no-op if writes already rolled back above)
         if targets.profile.read_bytes() != original_profile:
@@ -668,7 +698,8 @@ def apply_changes(
         for p in (tmp_profile, tmp_result):
             if p.exists():
                 p.unlink()
-        raise RolloverError(f"Atomic write failed, no changes applied: {e}") from e
+        raise RolloverError(
+            f"Atomic write failed, no changes applied: {redact(e)}") from e
 
     return report
 
@@ -690,7 +721,9 @@ def _validate_subpath(candidate: Path, workspace: Path) -> Path:
     try:
         candidate.relative_to(workspace)
     except ValueError:
-        raise RolloverError(f"Path {candidate} is outside workspace {workspace}")
+        raise RolloverError(
+            f"Path {redact(candidate)} is outside workspace "
+            f"{redact(workspace)}")
     return candidate
 
 
@@ -698,7 +731,8 @@ def _validate_year_arg(value: str) -> int:
     try:
         year = int(value)
     except ValueError:
-        raise RolloverError(f"Year must be a 4-digit integer, got {value!r}")
+        raise RolloverError(
+            f"Year must be a 4-digit integer, got {redact(repr(value))}")
     if not (2000 <= year <= 2099):
         raise RolloverError(f"Year {year} out of range (2000-2099)")
     return year
@@ -762,7 +796,7 @@ def _main(argv: list[str]) -> int:
         # CLI's --year is the NEW year; archive should contain prior return (year - 1)
         prior = load_prior(src, year - 1)
     except RolloverError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     current = _load_current_state(workspace, year)
@@ -776,7 +810,17 @@ def _main(argv: list[str]) -> int:
             for cat, changes in diff.items():
                 print(f"\n## {cat}")
                 for c in changes:
-                    print(f"  [{c.action_suggested}] {c.json_path}: {c.prior_value!r} (currently {c.current_value!r}) — {c.reason}")
+                    # The VALUES stay raw, and that is deliberate: this is
+                    # the diff a user approves field by field, so it has to
+                    # show what it is proposing, and redact() masks any run
+                    # of nine or more digits — a legitimate nine-figure
+                    # amount would print as [REDACTED]. Identity is stored
+                    # masked already (ssn_last4 holds XXX-XX-1234, which
+                    # §1 requires and which redact() leaves alone). The
+                    # json_path is a path and is redacted.
+                    print(f"  [{c.action_suggested}] {redact(c.json_path)}: "
+                          f"{c.prior_value!r} (currently {c.current_value!r})"
+                          f" — {c.reason}")
         return 0
 
     # apply
@@ -785,11 +829,12 @@ def _main(argv: list[str]) -> int:
     try:
         report = apply_changes(diff, category_decisions=decisions, targets=targets)
     except RolloverError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     print(f"Applied {len(report.written)} changes")
     for line in report.written:
-        print(f"  + {line}")
+        # Each line is "{target_file}:{json_path}" — a runtime path.
+        print(f"  + {redact(line)}")
     for w in report.warnings:
         print(f"  ! {w}")
     return 0

@@ -14,6 +14,7 @@ and rollover.py path/year validation.
 
 import datetime
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
     _validate_year_arg,
 )
+from agents.lib.secure_fs import redact, secure_fd, secure_path  # noqa: E402
 from agents.lib.tax_computations import (  # noqa: E402
     CAPITAL_LOSS_LIMIT,
     CAPITAL_LOSS_LIMIT_MFS,
@@ -108,17 +110,20 @@ def parse_deltas(tokens: "list[str]") -> dict:
     out: dict = {}
     for tok in tokens:
         if "=" not in tok:
-            raise ScenarioError(f"Delta {tok!r} is not KEY=AMOUNT.")
+            raise ScenarioError(f"Delta {redact(repr(tok))} is not KEY=AMOUNT.")
         key, _, raw = tok.partition("=")
         key = key.strip().lstrip("+")  # allow a leading +KEY for readability
         raw = raw.strip()
         if key not in DELTA_KEYS:
             raise ScenarioError(
-                f"Unknown delta key {key!r}. Valid keys: {', '.join(sorted(DELTA_KEYS))}."
+                f"Unknown delta key {redact(repr(key))}. "
+                f"Valid keys: {', '.join(sorted(DELTA_KEYS))}."
             )
         amount = _coerce_numeric(raw, default=None)
         if amount is None:
-            raise ScenarioError(f"Delta amount for {key!r} is not numeric: {raw!r}")
+            raise ScenarioError(
+                f"Delta amount for {redact(repr(key))} is not numeric: "
+                f"{redact(repr(raw))}")
         resolved = DELTA_ALIASES.get(key, key)
         out[resolved] = round(out.get(resolved, 0.0) + amount, 2)
     return out
@@ -309,7 +314,9 @@ def resolve_base(result: dict, base_scenario: "dict | None", year: int,
     for key in ("line_24", "baseline_recompute_total"):
         val = anchor.get(key)
         if isinstance(val, bool) or not isinstance(val, (int, float)):
-            raise ScenarioError(f"--base scenario anchor.{key} is not numeric: {val!r}")
+            raise ScenarioError(
+                f"--base scenario anchor.{key} is not numeric: "
+                f"{redact(repr(val))}")
     return {
         "inputs": dict(inputs),
         "anchor": anchor,
@@ -454,7 +461,8 @@ def _validate_name(name: str) -> str:
     """A scenario name must be a single safe path segment (no separators / traversal)."""
     if not name or name in (".", "..") or "/" in name or "\\" in name or name.startswith("."):
         raise ScenarioError(
-            f"Invalid scenario name {name!r}: must be a single path segment "
+            f"Invalid scenario name {redact(repr(name))}: must be a single path "
+            "segment "
             "(letters, digits, '-', '_'), no separators or leading dot."
         )
     return name
@@ -469,12 +477,69 @@ def save_scenario(workspace: Path, name: str, data: dict) -> Path:
     # Force the write target under workspace/scenarios/ and never over a source-of-truth file.
     _validate_subpath(out_path, workspace)
     if out_path.parent != scen_dir:
-        raise ScenarioError(f"Refusing to write outside scenarios/: {out_path}")
+        raise ScenarioError(
+            f"Refusing to write outside scenarios/: {redact(out_path)}")
     if out_path.name in ("result.json", "taxpayer_profile.json"):
         raise ScenarioError("Refusing to overwrite a source-of-truth file.")
-    scen_dir.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(data, indent=2, default=str))
-    out_path.chmod(0o600)
+    scen_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # 600 on the file leaves the directory listing readable, and a scenario NAME
+    # discloses on its own. The chmod is not redundant with `mode`: mkdir ignores
+    # it for a directory that already exists, which is the usual case here. A
+    # failure here (e.g. an ACL/NFS filesystem where chmod doesn't hold) fails
+    # the write rather than continuing into a directory that could not be
+    # secured — archive.py and tie_out.py hold the same line for the runtime
+    # paths they create (AGENTS.md SECURITY §1).
+    try:
+        secure_path(scen_dir)
+    except OSError as e:
+        raise ScenarioError(
+            f"Could not secure {redact(scen_dir)} (chmod 700): "
+            f"{redact(e)}") from None
+    # `mode` on os.open is a create-only argument — POSIX ignores it when
+    # out_path already exists (a re-save over a scenario name that predates
+    # this hardening, or one restored from a backup), so opening alone does
+    # not guarantee 600 the way the comment used to claim. The explicit
+    # secure_fd right after open, before any content is written, closes that
+    # window instead of leaving new financial data written at the file's old
+    # mode until the trailing secure_path below runs. secure_fd prefers
+    # fchmod on the open descriptor (immune to the path being replaced in
+    # between) where the platform has it; os.fchmod does not exist on
+    # Windows, a supported platform (docs/contributing/agents-compat.md), so
+    # it falls back there to the same PowerShell-ACL-based enforcement
+    # secure_path uses everywhere else on that platform.
+    content = json.dumps(data, indent=2, default=str)
+    try:
+        fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except OSError as e:
+        raise ScenarioError(
+            f"Could not create {redact(out_path)}: {redact(e)}") from e
+    try:
+        # os.fdopen ADOPTS the descriptor only once it returns; if it raises
+        # (MemoryError building the buffered wrapper, an OSError from the
+        # seekable/isatty probe on an exotic filesystem) nothing else will
+        # ever close fd, and the `with` below covers the success path only.
+        # A session that re-saves repeatedly on a failing filesystem would
+        # otherwise walk to EMFILE, at which point every later os.open in the
+        # process fails — including the ones writing result.json.
+        try:
+            handle = os.fdopen(fd, "w")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle as f:
+            secure_fd(f.fileno(), out_path)
+            f.write(content)
+    except OSError as e:
+        out_path.unlink(missing_ok=True)
+        raise ScenarioError(
+            f"Could not write {redact(out_path)}: {redact(e)}") from e
+    try:
+        secure_path(out_path)
+    except OSError as e:
+        out_path.unlink(missing_ok=True)
+        raise ScenarioError(
+            f"Could not secure {redact(out_path)} (chmod 600): "
+            f"{redact(e)}") from None
     return out_path
 
 
@@ -526,23 +591,23 @@ def _main(argv: list) -> int:
         today = (datetime.date.fromisoformat(args.today) if args.today
                  else datetime.date.today())
     except (ScenarioError, RolloverError, ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     try:
         report = build_report(result, profile, tax_law, year, name, deltas,
                               base_scenario, today)
     except (ScenarioError, ProjectionError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     data = _report_to_dict(report)
     if not args.no_save:
         try:
             out = save_scenario(workspace, name, data)
-            print(f"# Saved {out}", file=sys.stderr)
+            print(f"# Saved {redact(out)}", file=sys.stderr)
         except (ScenarioError, RolloverError) as e:
-            print(f"ERROR: {e}", file=sys.stderr)
+            print(f"ERROR: {redact(e)}", file=sys.stderr)
             return 1
 
     if args.json:

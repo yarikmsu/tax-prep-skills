@@ -21,6 +21,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_year_arg,
     load_prior,
 )
+from agents.lib.secure_fs import redact  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -410,7 +411,7 @@ def _main(argv: list) -> int:
         # used so the prior marginal bracket reflects that year's schedule.
         prior_tax_law = _load_tax_law(prior_dir, year - 1)
     except RolloverError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     report = compute_yoy_diff(prior.result, current, tax_law,

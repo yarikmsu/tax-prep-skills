@@ -28,12 +28,26 @@ computed from the parse-ledger diff.
 
 ### 1. Snapshot the as-filed state (once, before ANY correction)
 
+Create and restrict the snapshot directory BEFORE copying anything into it —
+`archive/` entry names describe a taxpayer's documents, so a listable directory
+discloses them even when every file inside is owner-only:
+
 ```bash
 mkdir -p archive/{year}/as_filed
+python3 -m agents.lib.secure_fs archive archive/{year} archive/{year}/as_filed || exit 1
 ```
+
 Copy `result.json`, `taxpayer_profile.json`, `parse_ledger.json`,
-`answers.md`, and `summaries/` into `archive/{year}/as_filed/`, then
-`chmod -R 600` the files (`700` the dirs).
+`answers.md`, and `summaries/` into `archive/{year}/as_filed/`. Then restrict
+every copy — `secure_fs`, not a bare `chmod -R`: under a POSIX-compatible shell
+on Windows `chmod` only flips the read-only DOS attribute and leaves the whole
+as-filed snapshot readable by every other local account. It applies owner-only
+to each path, files and directories alike, so no separate mode split is needed:
+
+```bash
+find archive/{year}/as_filed -print0 \
+  | xargs -0 python3 -m agents.lib.secure_fs || exit 1
+```
 
 - **If `archive/{year}/as_filed/` already exists, REFUSE to overwrite** —
   it is the immutable column-A baseline. A second amendment amends the
@@ -42,7 +56,14 @@ Copy `result.json`, `taxpayer_profile.json`, `parse_ledger.json`,
   chain needs manual bookkeeping in answers.md).
 - Record in `answers.md`: date snapshotted, the user's confirmation that
   result.json matches the filed return, and which document(s) triggered
-  the amendment.
+  the amendment. Then re-restrict it — an editor that REPLACES the file rather
+  than editing it in place leaves the replacement at the default mode, and
+  owner-only is not inherited from the file it overwrote:
+  ```bash
+  python3 -m agents.lib.secure_fs answers.md || exit 1
+  ```
+  Every later `answers.md` write in this skill (Step 2.5's scan line, Step 5's
+  amendment record) ends with the same command.
 
 ### 2. Timing checks (before doing the work)
 
@@ -83,7 +104,8 @@ or phase-outs**. The engine was corrected 2026-07 (these are BELOW-AGI Schedule
    phased out. Recommend amendment when the net delta is material.
 4. **Record** a scan line in `answers.md` (run date + outcome; NO dollar
    figures). If no TY2025 return claimed these provisions, note that the scan
-   ran clean — the correction is prophylactic for this taxpayer.
+   ran clean — the correction is prophylactic for this taxpayer. Then
+   `python3 -m agents.lib.secure_fs answers.md || exit 1`, per Step 1.
 
 (Not applicable to TY2026+ returns — those were computed with the corrected
 engine from the start.)
@@ -147,8 +169,9 @@ $250"), never "amounts changed".
   date (roll April 15 past a weekend / DC holiday via
   `irs_dates.next_business_day`), not the statutory date — interest cannot start
   before the observed deadline.
-- Add the amendment to `answers.md` (dates, documents, no dollar figures)
-  and re-run `/tax-calendar` if any flag changed.
+- Add the amendment to `answers.md` (dates, documents, no dollar figures),
+  then `python3 -m agents.lib.secure_fs answers.md || exit 1` per Step 1, and
+  re-run `/tax-calendar` if any flag changed.
 
 ## Caveats
 - v1 models ONE live amendment per year (the as-filed snapshot is

@@ -14,6 +14,16 @@
 # Bash is in the matcher on purpose: result.json and the generated PDF are
 # produced by running a script, which a Write|Edit-only matcher never observes.
 #
+# POSIX-ONLY, deliberately, and SECURITY.md says so rather than implying
+# otherwise. This re-asserts modes with `chmod`, which under a POSIX-compatible
+# shell on Windows flips the read-only DOS attribute and leaves the NTFS DACL
+# alone — so on that platform the guarantee rests on the documented writes,
+# every one of which goes through `agents.lib.secure_fs` (pinned per skill and
+# per call by tests/test_secure_fs.py). Routing this hook through that CLI
+# instead would put a Python process on the critical path of every tool call,
+# in a hook whose whole design is a millisecond fast path that never blocks.
+# A backstop that says what it does not cover beats one that overstates it.
+#
 # NEVER BLOCKS. Exit 2 is the only code that feeds a hook's stderr back as an
 # error the agent must handle, and this hook never uses it: a permissions hook
 # that can derail a session gets switched off, and a switched-off hook protects

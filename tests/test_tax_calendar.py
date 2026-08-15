@@ -1,6 +1,7 @@
 """Tests for agents/lib/tax_calendar.py — quarterly reminder .ics generator."""
 import datetime
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -1998,3 +1999,34 @@ def test_build_events_malformed_fl_property_flag_hard_errors_non_fl_resident():
                "flags": {"fl_business_tangible_property": "yes"}}
     with pytest.raises(cal.CalendarError):
         cal.build_events(profile, 2026)
+
+
+def test_write_calendar_tmp_file_is_600_before_replace(tmp_path, monkeypatch):
+    """The .ics carries the taxpayer's filing status, state and payment
+    schedule. Path.write_bytes would create the .tmp at the umask default
+    (0644) already holding all of it, leaving it world-readable for the whole
+    write; os.replace then carries whatever mode the .tmp has onto the real
+    target. Spying on os.replace and reading the SOURCE path's mode at the
+    moment of the call is the only point in the sequence where the pre-fix
+    window is directly observable — the trailing secure_path on the final
+    target passes either way. rollover.py's own test pins the same invariant
+    the same way."""
+    profile_path = tmp_path / "taxpayer_profile.json"
+    profile_path.write_text(json.dumps(_profile()))
+
+    seen = {}
+    real_replace = os.replace
+
+    def spying_replace(src, dst):
+        seen["mode"] = os.stat(src).st_mode & 0o777
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("agents.lib.tax_calendar.os.replace", spying_replace)
+    old_umask = os.umask(0o022)  # a permissive umask, or the assertion is vacuous
+    try:
+        cal.write_calendar(profile_path, tmp_path, tax_year=2026)
+    finally:
+        os.umask(old_umask)
+    assert seen["mode"] == 0o600, (
+        f"the .tmp held the calendar at {oct(seen.get('mode'))} when it was "
+        "renamed onto the real target, not 0600")

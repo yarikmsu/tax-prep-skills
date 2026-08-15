@@ -29,6 +29,15 @@ Update `result.json` with ALL computed values:
 
 Update `answers.md` with computed results section.
 
+Both files now hold the taxpayer's computed figures. Restrict them immediately
+— `secure_fs`, not a bare `chmod 600`: on Windows under a POSIX-compatible
+shell, `chmod` only flips the read-only DOS attribute and leaves the file
+readable by every other local account.
+
+```bash
+python3 -m agents.lib.secure_fs result.json answers.md || exit 1
+```
+
 ### Step 12.7: Parse-to-return tie-out (HARD GATE)
 
 Run it now, from `../SKILL.md` → "Gates that run regardless". It is written out
