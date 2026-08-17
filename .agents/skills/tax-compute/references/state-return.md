@@ -206,7 +206,7 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    exemptions, FL} in the current-year Schedule A instructions (search the web),
    then:
    ```bash
-   python3 -c "from agents.lib.tax_computations import compute_sales_tax_deduction; print(compute_sales_tax_deduction(TABLE_AMOUNT, STATE_RATE, COUNTY_SURTAX_RATE, BIG_TICKET_TAX))"
+   sh agents/lib/run.sh -c "from agents.lib.tax_computations import compute_sales_tax_deduction; print(compute_sales_tax_deduction(TABLE_AMOUNT, STATE_RATE, COUNTY_SURTAX_RATE, BIG_TICKET_TAX))"
    ```
    (STATE_RATE from the runtime-fetched `state.sales_tax.state_rate`; never
    substitute a remembered or inline Florida rate. COUNTY_SURTAX_RATE from

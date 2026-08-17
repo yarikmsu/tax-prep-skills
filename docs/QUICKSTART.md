@@ -23,8 +23,12 @@ versions known to be green.
 ```bash
 git clone https://github.com/yarikmsu/tax-prep-skills.git
 cd tax-prep-skills
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# `run.sh` owns the layout: it activates the workspace venv — `bin/` on POSIX,
+# `Scripts/` on Windows — and execs the interpreter that venv installed. Chained,
+# so a failed venv step stops here instead of installing the pinned tree into the
+# HOST interpreter.
+python3 -m venv .venv &&
+  sh agents/lib/run.sh -m pip install -r requirements.txt
 ```
 
 `requirements.txt` is a compiled lock that pins the entire transitive tree with
@@ -34,7 +38,7 @@ pip install -r requirements.txt
 ## 3. Produce a mid-year tax projection
 
 ```bash
-python3 -m agents.lib.projection \
+sh agents/lib/run.sh -m agents.lib.projection \
   --inputs tests/fixtures/projection/projection_inputs.json \
   --workspace tests/fixtures/projection \
   --year 2026 \
@@ -71,7 +75,7 @@ biases the answer. That is the house style, and it is the point of the project.
 ## 4. Scan a portfolio for harvestable losses
 
 ```bash
-python3 -m agents.lib.loss_harvest \
+sh agents/lib/run.sh -m agents.lib.loss_harvest \
   --result result.json \
   --workspace tests/fixtures/harvest \
   --holdings holdings.json \

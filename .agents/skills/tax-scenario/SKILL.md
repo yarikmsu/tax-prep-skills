@@ -37,6 +37,25 @@ reversible when stacking.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
+### Procedure
+
 1. **Validate prerequisites.** Confirm `result.json`, `taxpayer_profile.json`, and
    `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24, stop and tell
    the user to run `/tax-compute`.
@@ -47,7 +66,7 @@ reversible when stacking.
 
 3. **Compute.** Run:
    ```bash
-   python3 -m agents.lib.scenario --result result.json --workspace . --year {year} \
+   sh agents/lib/run.sh -m agents.lib.scenario --result result.json --workspace . --year {year} \
        --name {name} [--base scenarios/{other}.json] --json {KEY=AMOUNT ...}
    ```
    This writes `scenarios/{name}.json` with owner-only permissions through
@@ -55,14 +74,14 @@ reversible when stacking.
 
 4. **Render.** Run the same command without `--json` to print the markdown report. Save it
    to `scenarios/{name}.md`, immediately run
-   `python3 -m agents.lib.secure_fs scenarios/{name}.md`, and present the
+   `sh agents/lib/run.sh -m agents.lib.secure_fs scenarios/{name}.md`, and present the
    bottom-line table and marginal rate.
 
 5. **Audit note.** Append one line to `answers.md` (NO dollar PII duplicated):
    ```
    ## Scenario "{name}" TY{year} — base {base}, deltas {keys}. Run {today}.
    ```
-   Then run `python3 -m agents.lib.secure_fs answers.md` in case the write
+   Then run `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md` in case the write
    replaced the file rather than preserving its existing permissions.
 
 ## Security & safety

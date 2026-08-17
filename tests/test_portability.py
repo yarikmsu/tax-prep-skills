@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 
-from tests.skill_text import skill_text
+from tests.skill_text import CONTRIBUTOR_SKILLS, skill_text
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / ".agents" / "skills"
@@ -31,7 +31,6 @@ PRODUCT_SKILLS = {
 # The split is only a LABEL. Both sets are held to every rule below — frontmatter,
 # the neutralization lint, the line cap, and a .claude/skills symlink each — so
 # nothing is relaxed by naming the boundary that the `tax-` prefix already implied.
-CONTRIBUTOR_SKILLS = {"codex-loop", "state-module"}
 
 EXPECTED_SKILLS = PRODUCT_SKILLS | CONTRIBUTOR_SKILLS
 
@@ -2140,11 +2139,15 @@ class TestSelfTestClaim:
     Only the harmful direction is machine-checked: a module the docs CLAIM
     self-tests must actually do it. The reverse — a module quietly GAINING one,
     leaving the list short — is not, and that is a deliberate trade rather than
-    an oversight. Catching it means globbing `agents/lib/`, which would make
-    every edit to any of the twenty-one modules select this whole suite in the
-    PostToolUse hook (`.claude/hooks/skill-invariants.sh` pairs WATCHED_ROOTS
-    with select_modules_for). A stale-but-short list costs a contributor
-    nothing; that hook cost is paid on every engine edit.
+    an oversight. The reason for declining it USED to be cost: catching it means
+    globbing `agents/lib/`, which would make every edit to any of the modules
+    there select this whole suite in the PostToolUse hook. That argument no
+    longer holds — the engine-preflight work added an `agents/lib/*.py` arm to
+    `select_modules_for` that sets RUN_PORTABILITY for exactly that trigger, so
+    the cost is already paid and the reverse check is now free to add. It is
+    left undone deliberately rather than reasoned away: the list is short and
+    its failure direction is harmless, but do not re-derive the old trade from
+    this docstring, because its premise is gone.
     """
 
     SELF_TESTING = ("tax_computations", "secure_fs", "irs_dates", "crypto_importer")

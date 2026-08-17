@@ -36,18 +36,37 @@ the federal report plus a "CA only" caveat.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
+### Procedure
+
 1. **Validate prerequisites.** Confirm `result.json`, `projection_inputs.json`, and
    `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24, stop and tell
    the user to run `/tax-compute`. If you create `projection_inputs.json` from the
    template in this skill, immediately run
-   `python3 -m agents.lib.secure_fs projection_inputs.json` after writing it.
+   `sh agents/lib/run.sh -m agents.lib.secure_fs projection_inputs.json` after writing it.
 
 2. **Resolve prior-year baseline.** If `archive/{year-1}/` exists it is used for the
    prior-year safe harbor; otherwise note degraded mode to the user.
 
 3. **Compute.** Run:
    ```bash
-   python3 -m agents.lib.withholding --result result.json --inputs projection_inputs.json \
+   sh agents/lib/run.sh -m agents.lib.withholding --result result.json --inputs projection_inputs.json \
        --workspace . --year {year} --as-of {MM-DD} --json
    ```
    (Omit `--as-of` to use today.)
@@ -56,20 +75,20 @@ the federal report plus a "CA only" caveat.
    Before writing, create and restrict its directory; then restrict the report immediately
    after saving it and print the report:
    ```bash
-   mkdir -p withholding && python3 -m agents.lib.secure_fs withholding
+   mkdir -p withholding && sh agents/lib/run.sh -m agents.lib.secure_fs withholding
    ```
    Now save the report. Only once the file exists, restrict it — the two
    commands are in separate blocks because running them as one would call
    `secure_fs` on a path that does not exist yet, which exits 1:
    ```bash
-   python3 -m agents.lib.secure_fs withholding/TY{year}_asof_{MM-DD}.md
+   sh agents/lib/run.sh -m agents.lib.secure_fs withholding/TY{year}_asof_{MM-DD}.md
    ```
 
 5. **Audit note.** Append one line to `answers.md` (NO dollar PII duplicated):
    ```
    ## Withholding true-up TY{year} as-of {MM-DD} — run {today}. Safe-harbor: {covered/underpaid}.
    ```
-   Then run `python3 -m agents.lib.secure_fs answers.md` in case the write
+   Then run `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md` in case the write
    replaced the file rather than preserving its existing permissions.
 
 ## Security & safety

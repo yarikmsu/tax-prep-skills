@@ -19,6 +19,23 @@ Move current-year tax files (`result.json`, `taxpayer_profile.json`, `answers.md
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 1. Input validation
 
 **SECURITY:** Validate that `{year}` is a 4-digit integer (2000–2099) before using in any shell command. Reject non-numeric input.
@@ -26,7 +43,7 @@ Move current-year tax files (`result.json`, `taxpayer_profile.json`, `answers.md
 ### 2. Run the archive script
 
 ```bash
-python3 -m agents.lib.archive {year}
+sh agents/lib/run.sh -m agents.lib.archive {year}
 ```
 
 The script:

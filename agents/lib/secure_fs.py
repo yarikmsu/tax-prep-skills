@@ -45,6 +45,19 @@ outermost-first and a refusal says the paths after it are not what they
 appear to be. An ordinary failure does not stop it.
 """
 
+# THIS MODULE MUST IMPORT ON AN INTERPRETER OLDER THAN THE PROJECT MINIMUM.
+# It is the redactor `preflight.py` reaches for before it can report anything at
+# all, and the failure preflight most often diagnoses IS an old interpreter: on a
+# stock macOS `python3` is 3.9, where the PEP 604 annotation below (`list[str] |
+# None`) is evaluated at def time and raises. Without this line `secure_fs`
+# became unimportable exactly when it was needed, `_redact` fell back to
+# withholding, and the verdict replaced all twenty-one module errors — including
+# the single line naming the real cause — with "<withheld: the redactor is part
+# of the missing engine>", under a banner claiming the engine was missing when
+# only the interpreter was old. The engine modules this one reports ON may use
+# any supported syntax; this one may not.
+from __future__ import annotations
+
 import os
 import re
 import stat

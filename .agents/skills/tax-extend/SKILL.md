@@ -28,6 +28,23 @@ payment estimate below is the deliverable, not the form.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 1. Establish the balance-due estimate (best available source)
 
 Work down this ladder and TELL the user which rung was used:
@@ -39,8 +56,8 @@ Work down this ladder and TELL the user which rung was used:
    - CA payment (if `california_540` computed) = `ca_total_tax` −
      (`ca_withholding_box17` + CA estimates paid), floored at $0.
 2. **Projection** — no computed return: run `/tax-project` (or
-   `python3 -m agents.lib.projection ... --json`) and use
-   `federal.balance` / `state.balance` (positive = owed). Label the figures
+   `sh agents/lib/run.sh -m agents.lib.projection ... --json`)
+   and use `federal.balance` / `state.balance` (positive = owed). Label the figures
    PROJECTED and recommend a cushion (see step 2).
 3. **User estimate** — no YTD data either: ask the user for their best
    estimate of total tax and payments so far. Label clearly.
@@ -96,7 +113,7 @@ Work down this ladder and TELL the user which rung was used:
    skill-set flag — the interview never asks it).
 2. Regenerate the calendar so the new deadlines are subscribable:
    ```bash
-   python3 -m agents.lib.tax_calendar --profile taxpayer_profile.json \
+   sh agents/lib/run.sh -m agents.lib.tax_calendar --profile taxpayer_profile.json \
        --workspace . --year {year}
    ```
    This adds two `extension` events: **April 15 {year+1}** (4868 + payment
@@ -120,7 +137,7 @@ Work down this ladder and TELL the user which rung was used:
    `chmod` only flips the read-only DOS attribute and leaves the inherited
    NTFS ACL granting every other local account read access.
    ```bash
-   python3 -m agents.lib.secure_fs taxpayer_profile.json answers.md || exit 1
+   sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json answers.md || exit 1
    ```
 
 ### 5.5. Estimate the §6601 interest cost of paying later (pay-now vs October)

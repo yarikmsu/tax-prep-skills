@@ -174,7 +174,7 @@ default DACL (SYSTEM and Administrators), where POSIX `0700` covers every
 child by denying traversal. A leaf keeps the non-inheritable form, which is
 the only valid one for a file. **Skill instructions get the same enforcement**:
 every `SKILL.md` step that directly writes a PII/financial artifact runs
-`python3 -m agents.lib.secure_fs PATH [PATH ...]`; library-backed writers use
+`sh agents/lib/run.sh -m agents.lib.secure_fs PATH [PATH ...]`; library-backed writers use
 the same functions internally. This covers setup/parse state, the computed
 `result.json`/`answers.md`, generated PDFs, FBAR and review workpapers,
 projection/withholding reports, crypto imports, scenario reports, and the
@@ -186,6 +186,68 @@ self-test instead of securing anything. Where a step creates the directory and
 another step writes the file into it, the two `secure_fs` calls sit in
 **separate** fenced blocks — run as one block, the second would fire before the
 file exists and exit 1.
+
+## Why a copied skill must refuse to compute
+
+A skill copied away from `agents/lib/` still reads as a complete, well-formed
+procedure while every script it names silently does nothing — the gates do not
+announce their own absence, they simply never run. That is why the preflight is
+the first step of every engine-calling skill, and why a failure to RUN it is
+itself the block: the script ships inside the directory whose disappearance is
+the failure being detected.
+
+## Reaching the engine: `agents/lib/run.sh`
+
+Every engine invocation in a skill — `agents/lib/preflight.py` included — goes
+through one launcher:
+
+```bash
+sh agents/lib/run.sh agents/lib/preflight.py
+sh agents/lib/run.sh -m agents.lib.projection --workspace .
+```
+
+`run.sh` activates the workspace virtualenv and `exec`s the interpreter, so the
+engine's exit status is the command's. ONE copy: the activation used to be
+inlined at 106 call sites, and a 190-character string repeated that often
+drifted — five sites chained it and then invoked a bare `python3`, which on a
+Windows venv is the host interpreter. A wrapper makes that unrepresentable.
+
+**Per call, not once at the top of a block.** Some agents open a fresh shell per
+command (AGENTS.md §7), so an activation stated once does not reach the next
+one, and the preflight would then certify one interpreter while the computation
+ran on another — on a stock macOS, a 3.12 virtualenv certified while
+`python3 -m agents.lib.projection` runs under /usr/bin/python3, a 3.9 this
+toolkit does not support. `preflight.py` enforces the other half: it BLOCKS when
+a workspace `.venv` exists that it is not running in.
+
+Re-sourcing per command costs the caller's shell nothing, and for a reason that
+has changed: `run.sh` runs in a CHILD shell, so the activation happens inside a
+process that exits, and the calling shell's `PATH` is never touched at all. The
+older argument — that CPython's `activate` calls `deactivate nondestructive`
+before it prepends, so the twentieth `source` leaves what the first one did —
+was about the inlined prefix this replaced, where the activation really did land
+in the agent's own shell. It is no longer the mechanism in play, so do not reach
+for it to justify hoisting the activation back out of the launcher: per-command
+is not an inefficiency to optimise away, it is the only form that survives an
+agent that opens a fresh shell per command.
+
+**Both venv layouts, and why the form looks the way it does.** A stdlib venv
+keeps its scripts in `bin/` on POSIX and `Scripts/` on Windows, so the prefix
+tries each behind its own `-f` test. Two things forced that shape:
+
+- **`[ -d .venv ] && source .venv/bin/activate` alone** silently no-ops against
+  a `Scripts/` venv — the `-d` guard passes, the `source` finds nothing, and
+  every engine command after it runs on the host interpreter.
+- **`{ . a || . b; }` does not fix it.** POSIX requires a non-interactive shell
+  to ABORT when `.` cannot read its file, so under `sh` or `dash` the `||` is
+  never evaluated and the whole command — `preflight.py` included — never runs.
+  Verified: `/bin/sh` exits 1 and `/bin/dash` exits 2 with no output, while
+  `bash` reaches the fallback. Testing the file first sidesteps the abort
+  entirely, which is why both branches carry `-f`.
+
+`preflight.py` is the enforcement behind it: it blocks whenever a workspace
+`.venv` exists that it is not running in, and its remedy names the layout that
+workspace actually has.
 
 The module also closes two related gaps. `Path.is_symlink()` is `False` for
 an NTFS **junction** (a different reparse tag than a symlink, and — unlike a

@@ -82,6 +82,8 @@ PORTABILITY = "tests/test_portability.py"
 CAPABILITIES = "tests/test_capabilities.py"
 AGENTS = "tests/test_claude_agents.py"
 HOOKS = "tests/test_claude_hooks.py"
+PREFLIGHT = "tests/test_preflight.py"
+SECUREFS = "tests/test_secure_fs.py"
 
 # The stamp is deliberately backdated one second, so a file written in the same
 # coarse filesystem tick as the pass start still reads as newer than it. A test
@@ -310,7 +312,16 @@ class TestSkillInvariantsHook:
         seconds, and a hook that slow on unrelated work gets removed.
         """
         _fake_venv(tmp_path, exit_code=1, lines=["should never run"])
-        r = _run_skill_hook(tmp_path, str(tmp_path / "agents" / "lib" / "x.py"))
+        # NOT `agents/lib/x.py` any more: the engine directory became watched
+        # when preflight.py started importing every module in it, so that path
+        # would now prove the filter runs rather than that it short-circuits.
+        # NOR `agents/x.py`, its successor here, for the same reason one step
+        # later: test_secure_fs sweeps every `*.py` under `agents/`, so that
+        # path is watched too and this test was asserting the gap
+        # `test_a_python_file_deeper_under_agents_is_covered` now closes. A
+        # changelog entry is outside every watched root and stays that way —
+        # only `docs/QUICKSTART.md` and `docs/contributing/` are watched.
+        r = _run_skill_hook(tmp_path, str(tmp_path / "docs/changelog/x.md"))
         assert r.returncode == 0, r.stderr
         assert r.stderr.strip() == ""
 
@@ -476,8 +487,8 @@ class TestSkillInvariantsHook:
         one, because a hook can only be tested by running it and every assertion
         below spawns bash — and a skill edit cannot break a single one of its
         assertions. Selecting the union of what the changed paths can turn red
-        puts a skill edit at roughly a seventh of a cold pass and an
-        agent-definition edit at roughly a four-hundredth. Those RATIOS are the
+        puts a skill edit at roughly a tenth of a cold pass and an
+        agent-definition edit at roughly a five-hundredth. Those RATIOS are the
         durable half; the seconds behind them live in exactly one place, the
         MEASURED COSTS block in `.claude/hooks/skill-invariants.sh`. Read them
         there rather than from a copy here — a copy is how one quantity comes to
@@ -498,7 +509,8 @@ class TestSkillInvariantsHook:
             quiescent_workspace,
             str(quiescent_workspace / ".agents/skills/tax-setup/SKILL.md"))
         assert skill_edit.returncode == 2
-        assert _selected_modules(skill_edit) == [PORTABILITY, CAPABILITIES], (
+        assert _selected_modules(skill_edit) == [PORTABILITY, CAPABILITIES,
+                                                  PREFLIGHT, SECUREFS], (
             "a skill edit must run the two modules that read skill prose and "
             "pay for neither of the other two")
 
@@ -540,6 +552,25 @@ class TestSkillInvariantsHook:
         (".claude/settings.json", HOOKS),
         (".claude/hooks/harden-runtime-perms.sh", HOOKS),
         ("tests/test_claude_hooks.py", HOOKS),
+        # A path appears once PER MODULE it has to reach. One row per path
+        # pinned only the first module of a multi-module arm, and the arms
+        # below were the ones nothing else covered: the `REPO / "literal"`
+        # locator in the test after this cannot recover a read written over a
+        # loop, and both documents here are read that way. Deleting
+        # `RUN_PREFLIGHT=1` from the QUICKSTART/agents-compat arm used to leave
+        # the whole suite green while an edit dropping the launcher string from
+        # either turned test_preflight red at CI only.
+        ("docs/contributing/agents-compat.md", PREFLIGHT),
+        ("docs/QUICKSTART.md", PREFLIGHT),
+        ("docs/QUICKSTART.md", PORTABILITY),
+        ("requirements.in", PREFLIGHT),
+        ("agents/lib/run.sh", PREFLIGHT),
+        ("agents/lib/run.sh", PORTABILITY),
+        ("agents/lib/run.sh", SECUREFS),
+        ("tests/skill_text.py", PREFLIGHT),
+        ("tests/skill_text.py", CAPABILITIES),
+        ("scripts/pre-commit-pii-scan.sh", PORTABILITY),
+        ("scripts/pre-commit-pii-scan.sh", SECUREFS),
     ]
 
     def test_every_watched_source_path_reaches_its_module(
@@ -556,6 +587,12 @@ class TestSkillInvariantsHook:
         _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
         wrong = []
         for relative, module in self.WATCHED_SOURCE_PATHS:
+            # The shim exits 1, so each iteration leaves its modules recorded as
+            # red and the next one unions them in — by the end of the table a
+            # path that selects NOTHING would still be handed most of the suite
+            # and pass. Clear between iterations so each row measures its own
+            # arm.
+            _clear_red_carry_forward(quiescent_workspace)
             r = _run_skill_hook(quiescent_workspace,
                                 str(quiescent_workspace / relative))
             if r.returncode != 2 or module not in _selected_modules(r):
@@ -565,21 +602,118 @@ class TestSkillInvariantsHook:
             "these watched paths do not reach the module that reads them: "
             f"{wrong}")
 
+    def test_a_per_file_arm_never_selects_less_than_the_generic_one(
+            self, quiescent_workspace):
+        """`case` is first-match-wins, so an engine module with its OWN arm gets
+        exactly what that arm lists — never the `agents/lib/*.py` arm below it.
+
+        Every such arm therefore has to REPEAT the generic selections on top of
+        its extra ones, and twice now it has not: RUN_PORTABILITY was missing
+        first, and after that fix RUN_SECUREFS was still missing from the three
+        files where it matters most. `test_secure_fs` sweeps `agents/**/*.py`
+        for a network import and for a raw path reaching a message, so a fetcher
+        that grew an outbound call turned it red while this hook ran five
+        modules, passed them all, and exited 0 silent.
+
+        The table above cannot see this: it asserts one module per path, so a
+        path already reaching `test_claude_agents.py` satisfies it while missing
+        two others. Derive the arms FROM THE SCRIPT rather than listing them —
+        a fifth per-file arm added later is covered the day it is written.
+        """
+        script = (HOOKS_DIR / "skill-invariants.sh").read_text()
+        arms = re.findall(r"^\s{8}((?:agents/lib/\w+\.py\|?)+)\)$",
+                          script, re.MULTILINE)
+        paths = sorted({p for arm in arms for p in arm.split("|")})
+        assert len(paths) >= 3, (
+            f"no per-file engine arms found — the pattern stopped matching the "
+            f"script, so this test now asserts nothing (found {paths})")
+
+        generic = {PREFLIGHT, SECUREFS, PORTABILITY}
+        _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
+        short = []
+        for relative in paths:
+            # Per ITERATION. The shim exits 1 to make the argv readable, so each
+            # run records its own modules as red and the next one legitimately
+            # unions them in — which means the second path onwards inherits
+            # `securefs` from the first and this test passes with the fix
+            # reverted. Verified: without this line, deleting RUN_SECUREFS from
+            # the tax_law_fetcher arm left it green.
+            _clear_red_carry_forward(quiescent_workspace)
+            selected = set(_selected_modules(
+                _run_skill_hook(quiescent_workspace,
+                                str(quiescent_workspace / relative))))
+            if not generic <= selected:
+                short.append(f"{relative} misses {sorted(generic - selected)}")
+        assert not short, (
+            "these engine modules have their own case arm and it selects less "
+            f"than `agents/lib/*.py` would: {short}")
+
+    def test_a_python_file_deeper_under_agents_is_covered(
+            self, quiescent_workspace):
+        """`test_secure_fs` sweeps `agents/**` and `scripts/**` WHOLE — every
+        `*.py` and `*.sh` at any depth — for a network import, a bare `chmod`
+        and a raw path reaching a message. The hook's catch-all for that sweep
+        was `agents|scripts`, which matches those two words exactly, so a file
+        one level further down (`agents/tools/check.py`) matched no arm at all.
+
+        Neither branch has a fallback: the Write/Edit branch exits 0 the moment
+        nothing is selected, and the Bash branch hands each path `find` printed
+        to this same function. So a new file outside `agents/lib/` could add an
+        outbound call or drop a redaction and turn `test_secure_fs` red with no
+        local signal whatsoever — CI only.
+
+        The negative half is not padding. The arm is scoped to the two
+        EXTENSIONS the sweep reads rather than a bare `agents/*`, because an
+        engine run rewrites `agents/lib/__pycache__/*.pyc`; a bare pattern would
+        select a pytest module on the next Bash call after every single one.
+        """
+        _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
+        missed = []
+        for relative in ("agents/tools/check.py", "scripts/helpers/check.sh",
+                         "agents/tools/nested/deeper/check.sh"):
+            _clear_red_carry_forward(quiescent_workspace)
+            r = _run_skill_hook(quiescent_workspace,
+                                str(quiescent_workspace / relative))
+            if r.returncode != 2 or SECUREFS not in _selected_modules(r):
+                missed.append(f"{relative} -> {_selected_modules(r) or 'nothing'}")
+        assert not missed, (
+            "these files are inside a tree test_secure_fs sweeps whole and the "
+            f"hook selects nothing for them: {missed}")
+
+        _clear_red_carry_forward(quiescent_workspace)
+        bytecode = _run_skill_hook(
+            quiescent_workspace,
+            str(quiescent_workspace
+                / "agents/lib/__pycache__/preflight.cpython-312.pyc"))
+        assert bytecode.returncode == 0, (
+            "compiled bytecode is not source the sweep reads, and it is "
+            "rewritten by every engine run — selecting on it would put a "
+            "pytest module behind every `ls` that followed one")
+
     @pytest.mark.parametrize("relative", [
-        "agents/lib/tax_computations.py",
-        "agents/lib/tie_out.py",
+        "agents/templates/result_template.json",
         "docs/roadmap/2026-tax-planning-features.md",
     ])
     def test_an_unwatched_source_edit_stays_silent(self, tmp_path, relative):
         """The counterweight to the parametrization above: the watched set is a
         list, not a mood.
 
-        `tax_computations.py` is the sharpest of the three, because it IS read
-        by a test that asserts against skill prose — `test_tax_computations.py`,
-        which takes minutes and cannot run in a hook. Widening the filter to
-        `agents/lib/` to cover it would make every engine edit pay for a pytest
-        run that says nothing about it, and a hook that slow on unrelated work
-        gets deleted. CI keeps that one.
+        `agents/lib/*.py` USED to be the sharpest case here, on the reasoning
+        that widening the filter to the engine would make every module edit pay
+        for a pytest run that said nothing about it. That reasoning expired when
+        `preflight.py` arrived: `check()` imports all twenty-one modules and
+        executes one, so `test_preflight.py` says something about every single
+        one of them, and a SyntaxError in `projection.py` really does turn it
+        red. Engine modules are watched now, and the cost is the preflight
+        module alone — between capabilities and portability (MEASURED COSTS).
+        `requirements.txt` expired the same way one step further out: the
+        preflight gate now compares INSTALLED distributions against the lock,
+        and `test_preflight.py` reads the file to derive what a pin says, so a
+        Dependabot bump that drops or renames a pin turns that module red.
+
+        The paths kept here are ones no watched module reads: a template no
+        invariant test loads, and a roadmap document outside
+        `docs/contributing`.
 
         The positive control at the end is what makes the silence mean
         anything: a hook that exits 0 for every payload — deleted, renamed,
@@ -618,22 +752,47 @@ class TestSkillInvariantsHook:
         inside `skill_text()` are invisible here, which is why the explicit
         list above exists alongside this.
         """
-        chain = re.compile(r'REPO((?:\s*/\s*"[^"]+")+)')
+        # TWO spellings, because the modules use two. `REPO / "a" / "b"` is the
+        # chain; `Path(REPO_ROOT, "a", "b")` is what test_secure_fs writes
+        # throughout, and matching only the first recovered ZERO paths from that
+        # module — so it sat in this loop looking guarded while every path it
+        # reads was invisible here, covered only by the hand-written table above
+        # and by nothing at all for a read it grows later.
+        chain = re.compile(r'REPO((?:\s*/\s*"[^"]+")+)'
+                           r'|Path\(\s*REPO_ROOT\s*,((?:\s*"[^"]+"\s*,?)+)\)')
         reads: dict[str, set[str]] = {}
-        for module in (PORTABILITY, CAPABILITIES, AGENTS, HOOKS):
+        for module in (PORTABILITY, CAPABILITIES, AGENTS, HOOKS, PREFLIGHT,
+                       SECUREFS):
             for match in chain.finditer((REPO / module).read_text()):
-                rel = "/".join(re.findall(r'"([^"]+)"', match.group(1)))
+                rel = "/".join(re.findall(r'"([^"]+)"',
+                                          match.group(1) or match.group(2)))
                 # A literal naming a path that does NOT exist is an assertion
                 # about its absence — `agents/skills`, the pre-PR#66 flat
                 # location. Nothing can change under it, so nothing watches it.
                 if (REPO / rel).exists():
                     reads.setdefault(rel, set()).add(module)
+        # Per MODULE, not just in total: a spelling this locator cannot read
+        # makes a module look covered while contributing nothing, which is
+        # exactly how test_secure_fs sat here recovering zero paths.
+        for module in (PORTABILITY, PREFLIGHT, SECUREFS):
+            assert any(module in readers for readers in reads.values()), (
+                f"the locator recovers no path literals from {module} — it is "
+                f"in this loop contributing nothing, and a read it grows later "
+                f"reaches CI with no local signal")
         assert len(reads) >= 15, (
             f"the locator stopped finding path literals: {sorted(reads)}")
 
         _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
         unwatched = []
         for rel, readers in sorted(reads.items()):
+            # Per iteration, for the reason the two loops above carry the same
+            # line: the shim exits 1, so each run records its modules as red and
+            # the next unions them in. `.agents/skills` sorts first and records
+            # four of the six, after which a path whose arm was deleted outright
+            # still shows them and passes. This loop was the third instance of
+            # that vacuity and the one left standing when the other two were
+            # fixed — which is itself the argument for fixing all three at once.
+            _clear_red_carry_forward(quiescent_workspace)
             selected = _selected_modules(
                 _run_skill_hook(quiescent_workspace,
                                 str(quiescent_workspace / rel)))
@@ -690,7 +849,7 @@ class TestSkillInvariantsHook:
 
         assert r.returncode == 2, r.stderr
         assert _selected_modules(r) == [PORTABILITY, CAPABILITIES, AGENTS,
-                                        HOOKS], (
+                                        HOOKS, PREFLIGHT, SECUREFS], (
             "an unusable stamp must force the full pass, never skip it")
         assert outside.read_text() == "external sentinel", (
             "the hook wrote its stamp through a symlink outside the workspace")
@@ -791,7 +950,7 @@ class TestSkillInvariantsHook:
         r = _run_skill_hook_bash(tmp_path)
         assert r.returncode == 2
         assert _selected_modules(r) == [PORTABILITY, CAPABILITIES, AGENTS,
-                                        HOOKS], (
+                                        HOOKS, PREFLIGHT, SECUREFS], (
             "an untrustworthy stamp must force every module, not silently skip "
             "every change")
 
@@ -851,6 +1010,76 @@ class TestSkillInvariantsHook:
             "run again — which is the entire cost of advancing the stamp there")
         assert PORTABILITY in _selected_modules(repaired)
 
+    def test_the_check_name_lists_agree(self):
+        """The check names are enumerated in SIX places, and the two that were
+        left out of the first version of this test fail silently forever.
+
+        `apply_red_checks` turns a stamp token back into a flag,
+        `remember_red_checks` turns a flag back into a token, `read_red_checks`
+        decides which tokens are not junk, `run_focused_modules` maps a flag to
+        the module pytest actually runs, `select_every_module` forces them all,
+        and `nothing_selected` decides whether anything runs at all.
+
+        Comparing only the first three — which is how this shipped — misses the
+        two that cannot announce themselves. Omit a check from
+        `run_focused_modules` and its flag is set by every trigger, written to
+        the stamp on every red verdict, restored on every later pass, and never
+        handed to pytest: it can never go green, so it is carried red forever
+        while its assertions never run. Omit it from `nothing_selected` and the
+        flag is set, the fast path still exits 0, and a Bash call never runs it.
+        """
+        import re as _re
+        script = (HOOKS_DIR / "skill-invariants.sh").read_text()
+
+        def flags(pattern):
+            return {m.upper() for m in _re.findall(pattern, script, _re.M)}
+
+        initialised = flags(r"^RUN_(\w+)=0$")
+        applied = flags(r"^\s*\w+\) RUN_(\w+)=1 ;;$")
+        remembered = flags(r'\[ "\$RUN_(\w+)" -eq 1 \] && NEW_RED=')
+        forced = flags(r"^    RUN_(\w+)=1$")
+        nothing = flags(r'\[ "\$RUN_(\w+)" -eq 0 \]')
+        runs = flags(r'\[ "\$RUN_(\w+)" -eq 1 \] \\')
+        reader = _re.search(r'case "\$line" in\n\s*([\w|]+)\)', script)
+        assert reader, "read_red_checks' token list not found — has it moved?"
+        recognised = {t.upper() for t in reader.group(1).split("|")}
+
+        lists = {"initialised": initialised, "apply": applied,
+                 "remember": remembered, "read": recognised,
+                 "select_every": forced, "nothing_selected": nothing,
+                 "run_focused": runs}
+        assert len(set(map(frozenset, lists.values()))) == 1, (
+            "the check-name lists have drifted: "
+            + "; ".join(f"{k}={sorted(v)}" for k, v in sorted(lists.items())))
+        assert "PREFLIGHT" in applied, "the new module is not wired at all"
+
+        # SETS ARE NOT ENOUGH: the two directions have to agree PAIRWISE. The
+        # `applied` regex above discards the stamp token and keeps only the flag,
+        # so swapping two pairings — `preflight) RUN_SECUREFS=1` next to
+        # `securefs) RUN_PREFLIGHT=1` — leaves all seven sets identical and this
+        # test green, while a red `test_preflight.py` is carried forward under
+        # the other module's name and re-selects the wrong one on the next pass.
+        # The still-red check then never runs again and reports clean, which is
+        # the exact failure the docstring above says this test exists to catch.
+        pairs_applied = {token.upper(): flag.upper() for token, flag in
+                         _re.findall(r"^\s*(\w+)\) RUN_(\w+)=1 ;;$", script,
+                                     _re.M)}
+        pairs_remembered = {token.upper(): flag.upper() for flag, token in
+                            _re.findall(
+                                r'\[ "\$RUN_(\w+)" -eq 1 \] && '
+                                r'NEW_RED="\$\{NEW_RED\}(\w+)"', script)}
+        assert pairs_applied, "apply_red_checks' pairings no longer parse"
+        assert pairs_remembered, "remember_red_checks' pairings no longer parse"
+        assert pairs_applied == pairs_remembered, (
+            f"a stamp token and its flag are paired differently in the two "
+            f"directions, so a red check is carried forward under another "
+            f"module's name: apply={pairs_applied} remember={pairs_remembered}")
+        for token, flag in pairs_applied.items():
+            assert token == flag, (
+                f"the stamp token {token!r} sets RUN_{flag} — they are the same "
+                f"check and must share a name, or the mapping needs a third "
+                f"place to be kept in step")
+
     def test_a_red_check_is_recarried_until_it_goes_green(self, tmp_path):
         """The two stamp rules that only make sense together.
 
@@ -887,9 +1116,11 @@ class TestSkillInvariantsHook:
         _fake_venv(tmp_path, exit_code=1, lines=["$*"])
         red = _run_skill_hook(tmp_path, str(skill))
         assert red.returncode == 2
-        assert _selected_modules(red) == [PORTABILITY, CAPABILITIES]
+        assert _selected_modules(red) == [PORTABILITY, CAPABILITIES, PREFLIGHT,
+                                          SECUREFS]
         assert _stamp_body(tmp_path) == [SKILL_STAMP_VERSION, "portability",
-                                         "capabilities"], (
+                                         "capabilities", "preflight",
+                                         "securefs"], (
             "the failing pass recorded nothing, so nothing downstream can know "
             "a check is still red")
 
@@ -903,8 +1134,8 @@ class TestSkillInvariantsHook:
         agent.write_text("# reviewer, edited\n")
         union = _run_skill_hook(tmp_path, str(agent))
         assert union.returncode == 2
-        assert _selected_modules(union) == [PORTABILITY, CAPABILITIES,
-                                            AGENTS], (
+        assert _selected_modules(union) == [PORTABILITY, CAPABILITIES, AGENTS,
+                                            PREFLIGHT, SECUREFS], (
             "an unrelated watched change ran the agents module alone and "
             "reported success, with two checks still red on disk")
 
@@ -3921,9 +4152,15 @@ class TestHookRegistration:
     # at (registered timeout) / SECONDS_PER_COLLECTED_TEST it exceeds the
     # timeout itself and asks for that to be raised. Producing that prompt is
     # the whole point of the assertion; when it fires, act on it rather than
-    # re-deriving the constant that produced it. The margin between budget and
-    # measurement has already narrowed once, when the hooks module grew — the
-    # constant did not move, the measurement came up to meet it.
+    # re-deriving the constant that produced it.
+    #
+    # The absolute one no longer binds anything: the measured cold pass has
+    # OVERTAKEN it (MEASURED COSTS), and the derived floor passed it long before
+    # that. It stays as the floor for a hypothetical suite of a few very slow
+    # tests, which is the shape the per-test budget cannot see — but read it as
+    # that, not as a bound on today's runtime, and do not raise it to chase the
+    # measurement. Chasing is how a budget becomes a second, staler copy of the
+    # block.
     SECONDS_PER_COLLECTED_TEST = 0.35
     MEASURED_FULL_PASS_FLOOR = 120
 

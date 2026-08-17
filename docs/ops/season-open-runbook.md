@@ -73,7 +73,7 @@ Every fetched block records its authoritative URL in `tax_law_<year>.json`
 `_sources`. Then run the pinning verifier:
 
 ```bash
-python3 -c "from agents.lib.tax_law_fetcher import verify_source_pinning; \
+sh agents/lib/run.sh -c "from agents.lib.tax_law_fetcher import verify_source_pinning; \
   import json; print(verify_source_pinning(json.load(open('tax_law_<year>.json'))))"
 ```
 
@@ -86,7 +86,7 @@ lookalike (`irs.gov.evil.com`) resolves to a non-`.gov` host and is rejected.
 ```bash
 source .venv/bin/activate
 python3 -m pytest tests/test_ty2026_readiness.py -v   # M1 golden path + absence matrix
-python3 agents/lib/tax_computations.py                # engine self-test
+sh agents/lib/run.sh agents/lib/tax_computations.py   # engine self-test
 python3 -m pytest tests/ -q                            # full suite
 ```
 

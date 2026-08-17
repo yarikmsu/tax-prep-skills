@@ -6,19 +6,36 @@ Wraps pdfplumber with error handling and provides consistent interfaces.
 """
 
 import csv
+import functools
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib import preflight  # noqa: E402
 from agents.lib.secure_fs import is_reparse_point, redact  # noqa: E402
 
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
 # Must be called before any XML parsing (including openpyxl imports).
+#
+# The OUTCOME is recorded, not just announced. A warning on stderr is not a
+# guard: this module went on to open workbooks with the stdlib XML parser
+# restored, on the one input class AGENTS.md §7 names defusedxml to defend —
+# an untrusted `.xlsx` a taxpayer downloaded from a payer. Worse, it is the
+# failure the preflight gate reasons FROM: that gate warns rather than blocks on
+# a missing package because "it surfaces loudly at first use, as an ImportError
+# inside /tax-parse", which was true of the other three and false of this one
+# alone. `extract_excel` refuses instead, so the claim holds for all four.
+#
+# The refusal is at the Excel entry point rather than at import, because PDF and
+# CSV extraction are unaffected and this module is what /tax-parse, /tax-verify
+# and /tax-parse-crypto all import first.
 try:
     import defusedxml
     defusedxml.defuse_stdlib()
+    _XXE_GUARD_ACTIVE = True
 except ImportError:
+    _XXE_GUARD_ACTIVE = False
     print(
         "WARNING: defusedxml not installed — .xlsx parsing is vulnerable to XXE attacks. "
         "Install with: pip install defusedxml",
@@ -27,6 +44,88 @@ except ImportError:
 
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB — prevents DoS via oversized files
+
+
+# Every distribution `requirements.txt` pins that a document parse actually runs
+# on — pdfplumber and the stack under it, openpyxl and the stack under it. The
+# lock exists for exactly this set: pdfplumber 0.11.10 shipped no pdfplumber
+# code at all, only a `pdfminer.six` bump (AGENTS.md §7), so the package whose
+# republication changes what a W-2 parses to is not one anybody names directly.
+#
+# Split rather than "the whole lock", because a gate that fires on a package the
+# parse never reaches is the cry-wolf shape this repository has been bitten by:
+# refusing to read a 1099 because the PDF *generator* was upgraded teaches an
+# agent that these refusals are noise. The two sets are pinned as a PARTITION of
+# the lock by `test_every_locked_distribution_is_classified`, so a bump that
+# pulls in a new transitive package fails there — the alternative is that it
+# lands in neither set and silently escapes the check.
+_PARSING_TREE = frozenset({
+    "pdfplumber", "pdfminer-six", "pypdfium2", "pillow", "charset-normalizer",
+    "cryptography", "cffi", "pycparser",
+    "openpyxl", "et-xmlfile", "defusedxml",
+})
+# Pinned, and reached by no parse: `reportlab` writes the summary PDF in
+# /tax-generate, downstream of every figure this module produces.
+_GENERATION_TREE = frozenset({"reportlab"})
+
+
+@functools.lru_cache(maxsize=1)
+def _off_lock_parsers() -> str:
+    """Why the parsing stack is not the locked one, or "" when it is.
+
+    Cached: this is read at every PDF and workbook entry point, and it walks the
+    installed distributions and re-reads the lock. A parse splits into per-
+    document sub-tasks, so the walk would otherwise repeat once per file, and
+    within one process the answer cannot change. Tests that fake an environment
+    call `cache_clear()`.
+    """
+    drift, lock_error = preflight._drifted_dependencies()
+    named = [record for record in drift if record[0] in _PARSING_TREE]
+    if named:
+        # `installed is None` is the ABSENT case, carried as a state rather than
+        # as prose — printing the sentinel would put "pdfminer-six None" in
+        # front of the reader instead of the finding.
+        detail = ", ".join(
+            f"{pkg} is NOT INSTALLED (lock pins {pinned})" if installed is None
+            else f"{pkg} {installed} (lock pins {pinned})"
+            for pkg, installed, pinned in named)
+        return ("the installed parsing packages are not the ones the lock "
+                f"pins: {detail}")
+    if lock_error:
+        # Unverifiable, not verified-clean. `requirements.txt` is tracked and
+        # sits two levels above this file, so a workspace that cannot read it is
+        # one where `agents/lib/` was moved away from the clone it belongs to —
+        # the state AGENTS.md §4 says must not compute a return, arrived at from
+        # the other side.
+        return ("the installed parsing packages could not be compared against "
+                f"requirements.txt at all: {lock_error}")
+    return ""
+
+
+def _require_locked_parsers() -> None:
+    """Refuse to open a document while the parsing stack is off the lock.
+
+    The preflight gate WARNS about the same records, and the two are not in
+    conflict — they are the two halves of one decision. Blocking the gate would
+    refuse /tax-calendar and every other skill that opens no document, on a
+    signal parsed out of a text file. Refusing HERE costs those skills nothing
+    and covers the case the lock is actually for: a parser the suite never ran
+    against, reading a taxpayer's document, producing a figure that is wrong in
+    a direction nobody can predict and that no downstream check can catch —
+    `tax-review` audits the aggregated result, and the tie-out compares the
+    ledger to the result, so a misparsed box ties out perfectly.
+    """
+    off_lock = _off_lock_parsers()
+    if off_lock:
+        raise RuntimeError(
+            f"{off_lock}. A parser version the lock does not name is one the "
+            "test suite never ran against, and a republished parser changes "
+            "what a document parses to — which is why requirements.txt pins "
+            "the whole transitive tree by hash (AGENTS.md §7). Source "
+            "documents are untrusted input and the return's figures come off "
+            "this parse, so this is a refusal, not a warning. Restore the "
+            "pinned tree: "
+            "sh agents/lib/run.sh -m pip install -r requirements.txt")
 
 
 def _validate_file_path(
@@ -96,7 +195,13 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
         FileNotFoundError: If file does not exist.
         ValueError: If path escapes workspace or file is too large.
         IndexError: If a requested page number is out of range.
+        RuntimeError: If the installed parsing stack is not the locked one.
     """
+    # BEFORE the import, for the reason `extract_excel` refuses before its own:
+    # a document that is going to be refused must not be opened, and the refusal
+    # is about the library that would open it.
+    _require_locked_parsers()
+
     import pdfplumber
 
     _validate_file_path(path, {".pdf"}, workspace=workspace)
@@ -130,7 +235,10 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
         FileNotFoundError: If file does not exist.
         ValueError: If path escapes workspace or file is too large.
         IndexError: If a requested page number is out of range.
+        RuntimeError: If the installed parsing stack is not the locked one.
     """
+    _require_locked_parsers()
+
     import pdfplumber
 
     _validate_file_path(path, {".pdf"}, workspace=workspace)
@@ -164,7 +272,27 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
     Raises:
         FileNotFoundError: If file does not exist.
         ValueError: If path escapes workspace or file is too large.
+        RuntimeError: If defusedxml is absent, so there is no XXE guard, or if
+            the installed parsing stack is not the locked one.
     """
+    # BEFORE the path validation and before openpyxl is imported: a workbook
+    # that is going to be refused must not be opened, and `load_workbook` reads
+    # XML the moment it is called. See the import guard at the top of this file
+    # for why this is a refusal and not a warning.
+    if not _XXE_GUARD_ACTIVE:
+        raise RuntimeError(
+            "defusedxml is not installed, so openpyxl would parse this "
+            "workbook with the stdlib XML parser and no XXE guard. Source "
+            "documents are untrusted input, so this is a refusal, not a "
+            "warning. Install the pinned tree: "
+            "sh agents/lib/run.sh -m pip install -r requirements.txt")
+
+    # AFTER the guard check, which is about this same tree and says the sharper
+    # thing: an absent `defusedxml` is drift too — the lock pins it — and the
+    # message naming the XXE hole is the one worth printing over the message
+    # naming a version mismatch.
+    _require_locked_parsers()
+
     import openpyxl
 
     _validate_file_path(path, {".xlsx"}, workspace=workspace)
@@ -207,7 +335,15 @@ def pdf_page_count(path: str, workspace: str | None = None) -> int:
     Raises:
         FileNotFoundError: If file does not exist.
         ValueError: If path escapes workspace or file is too large.
+        RuntimeError: If the installed parsing stack is not the locked one.
     """
+    # Refused like the two extractors, not exempted as a "mere" count. It is
+    # /tax-parse step 2.5's page-count probe, the one that decides whether a
+    # document splits into sub-tasks, and it opens the PDF with the same
+    # pdfminer stack — so a wrong answer here silently drops pages from the
+    # parse that follows.
+    _require_locked_parsers()
+
     import pdfplumber
 
     _validate_file_path(path, {".pdf"}, workspace=workspace)
@@ -282,6 +418,8 @@ def scan_workspace(workspace_dir: str) -> list[dict]:
 
     Raises:
         NotADirectoryError: If workspace_dir is not a valid directory.
+        RuntimeError: If the workspace holds a PDF and the installed parsing
+            stack is not the locked one.
     """
     workspace = Path(workspace_dir)
     if not workspace.is_dir():
@@ -317,6 +455,20 @@ def scan_workspace(workspace_dir: str) -> list[dict]:
 
         # Classify by extension
         if f.suffix.lower() == ".pdf":
+            # OUTSIDE the try, and per-PDF rather than at the top of the scan.
+            # Outside, because that handler turns every exception into a
+            # `doc_type: "error"` entry and a stderr line — a refusal routed
+            # through it degrades into a warning, which is the exact shape the
+            # defusedxml guard above was rewritten to stop being. Per-PDF,
+            # because a workspace holding only CSVs opens no locked parser and
+            # /tax-parse-crypto works on exactly that.
+            #
+            # This is the entry point most easily missed: `scan documents/` is
+            # the FIRST command /tax-parse runs, it opens every PDF to classify
+            # it, and its output is the routing table for everything after — a
+            # document classified by an untested parser is one parsed as the
+            # wrong form, or dropped.
+            _require_locked_parsers()
             try:
                 import pdfplumber
                 with pdfplumber.open(str(f)) as pdf:

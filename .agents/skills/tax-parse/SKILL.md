@@ -22,24 +22,41 @@ Parse all source tax documents in the workspace and extract structured data.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 0.5. Tax Law & Exchange Rate Freshness Check
 
 Foreign documents require exchange rates from `tax_law_{year}.json`. Verify data is current:
 
 1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
-2. Run: `[ -d .venv ] && source .venv/bin/activate; python3 agents/lib/tax_law_fetcher.py freshness {year}`
-2. Act on the result:
+2. Run: `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py freshness {year}`
+3. Act on the result:
    - **FRESH:** Proceed. Print exchange rates if foreign currencies present (e.g., `EUR: 1.08 per USD`).
    - **STALE:** Search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL) for updated IRS yearly average exchange rates. Re-fetch if changed.
    - **INCOMPLETE:** Check if `exchange_rates` section is populated. If empty and foreign currencies are in `taxpayer_profile.json`, search the web for `"IRS yearly average exchange rate {year} {currency}"` (same live-results requirement and STOP-and-ask degrade path as above). Exchange rates are stored at `tax_law.exchange_rates.{CURRENCY}` (e.g., `{"EUR": 1.08}`).
    - **NOT_FOUND:** **STOP.** Tell user to run `/tax-setup` first.
-3. If no foreign currencies in `taxpayer_profile.json`, skip exchange rate printing.
+4. If no foreign currencies in `taxpayer_profile.json`, skip exchange rate printing.
 
 ### 1. Scan Workspace for Documents
 
 Run the document scanner:
 ```bash
-[ -d .venv ] && source .venv/bin/activate; python3 agents/lib/parse_utils.py scan documents/
+sh agents/lib/run.sh agents/lib/parse_utils.py scan documents/
 ```
 
 This returns a JSON list of all parseable files with auto-detected types.
@@ -175,7 +192,7 @@ Documents to parse:
 {list of files in this group}
 
 For each document:
-1. Use Bash to run: [ -d .venv ] && source .venv/bin/activate; python3 agents/lib/parse_utils.py extract '{filepath}'
+1. Use Bash to run: sh agents/lib/run.sh agents/lib/parse_utils.py extract '{filepath}'
 
    SECURITY: Always wrap {filepath} in SINGLE quotes to prevent shell expansion.
    Single quotes prevent $(), backticks, and double-quote escapes from executing.
@@ -207,7 +224,7 @@ line — a line break between the module name and its argument leaves
 `secure_fs` with no path, so it runs its own self-test instead of securing
 anything:
 
-`python3 -m agents.lib.secure_fs 'summaries/{group_name}.md'`
+`sh agents/lib/run.sh -m agents.lib.secure_fs 'summaries/{group_name}.md'`
 
 Quote the path exactly like the parse_utils.py call above. Several group names
 in the table in Step 3 contain spaces or parentheses (US W-2s, Foreign Bank,
@@ -303,7 +320,7 @@ the replacement at the default mode — owner-only is not inherited from the fil
 overwrote. Uses the same cross-platform helper as Step 3, not a bare `chmod`, for the
 same reason:
 ```bash
-python3 -m agents.lib.secure_fs summaries/*.md result.json answers.md
+sh agents/lib/run.sh -m agents.lib.secure_fs summaries/*.md result.json answers.md
 ```
 
 ### 6.5. Emit the parse ledger (parse_ledger.json)
@@ -376,7 +393,7 @@ Rules:
   On a re-run, carry any existing `crypto-csv` records over verbatim —
   rewriting them back to "pending" would erase `/tax-parse-crypto`'s
   reconciliation trail (and re-block the gate).
-- `python3 -m agents.lib.secure_fs parse_ledger.json` (it carries dollar
+- `sh agents/lib/run.sh -m agents.lib.secure_fs parse_ledger.json` (it carries dollar
   figures; already gitignored). Use `secure_fs`, not a bare `chmod 600` — on
   Windows under a POSIX-compatible shell, `chmod` only flips the read-only DOS
   attribute and leaves the file readable by every other local account.
@@ -411,7 +428,7 @@ Re-run the step 2.5 diff against the FINAL ledger — deterministic, catches
 anything the conversational step missed:
 
 ```bash
-python3 -c "
+sh agents/lib/run.sh -c "
 import json
 from agents.lib.tie_out import load_ledger, missing_expected_payers
 ledger = load_ledger(json.load(open('parse_ledger.json')))

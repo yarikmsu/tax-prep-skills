@@ -22,8 +22,9 @@ Update `result.json` with ALL computed values:
 - balance_due_summary
 - income_summary_by_person
 - **`meta.limitations` — the C2 manifest.** Run
-  `python3 agents/lib/capabilities.py --workspace . --json` and copy its
-  `limitations` array verbatim into `result.json` `meta.limitations`. It is
+  `sh agents/lib/run.sh agents/lib/capabilities.py --workspace . --json`
+  and copy its `limitations` array verbatim into `result.json`
+  `meta.limitations`. It is
   never empty (it always carries at least the state-scope note); `/tax-generate`
   prints it on page 1 so the taxpayer sees what this return does NOT cover.
 
@@ -35,7 +36,7 @@ shell, `chmod` only flips the read-only DOS attribute and leaves the file
 readable by every other local account.
 
 ```bash
-python3 -m agents.lib.secure_fs result.json answers.md || exit 1
+sh agents/lib/run.sh -m agents.lib.secure_fs result.json answers.md || exit 1
 ```
 
 ### Step 12.7: Parse-to-return tie-out (HARD GATE)

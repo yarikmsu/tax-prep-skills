@@ -20,18 +20,35 @@ Cross-reference the computed tax return against a tax software-generated PDF.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 0.5. Tax Law Freshness Verification
 
 Before comparing thresholds, verify tax law data is current:
 
 1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
-2. Run: `python3 agents/lib/tax_law_fetcher.py freshness {year}`
-2. Act on the result:
+2. Run: `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py freshness {year}`
+3. Act on the result:
    - **FRESH:** Proceed. Print the key thresholds being used (standard deduction, FTC simplified limit, Form 8959 threshold).
    - **STALE:** Search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL) to check for new legislation since the fetch date. If new law found, re-fetch affected rates. If no changes, proceed.
    - **INCOMPLETE:** Re-fetch the missing fields listed in `null_fields` by searching the web (same live-results rule and same STOP-and-ask degrade path as above), then update `tax_law_{year}.json`.
    - **NOT_FOUND:** **STOP.** Tell user to run `/tax-setup` first. Do not proceed.
-3. Print:
+4. Print:
    ```
    Tax Law Verification — TY{year}
    Status: {status} (fetched {age_days} days ago)
@@ -73,7 +90,7 @@ Parse every page of the tax software return at '{pdf_path}'.
 
 For each page:
 1. Run Python to extract text:
-   [ -d .venv ] && source .venv/bin/activate; python3 agents/lib/parse_utils.py extract '{pdf_path}' '{page_num}'
+   sh agents/lib/run.sh agents/lib/parse_utils.py extract '{pdf_path}' '{page_num}'
 
    SECURITY: Always wrap paths in SINGLE quotes to prevent shell expansion.
    Single quotes prevent $(), backticks, and double-quote escapes from executing.
@@ -268,7 +285,7 @@ attribute and leaves the inherited NTFS ACL granting every other local account
 read access.
 
 ```bash
-python3 -m agents.lib.secure_fs answers.md || exit 1
+sh agents/lib/run.sh -m agents.lib.secure_fs answers.md || exit 1
 ```
 
 ### 6. Summary

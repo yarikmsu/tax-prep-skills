@@ -22,72 +22,72 @@ REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 
 SENSITIVE_SKILL_SECURITY_CALLS = {
     "tax-setup": (
-        'mkdir -p "$d" && python3 -m agents.lib.secure_fs "$d" || exit 1',
-        "python3 -m agents.lib.secure_fs taxpayer_profile.json",
-        "python3 -m agents.lib.secure_fs result.json answers.md",
+        'mkdir -p "$d" && sh agents/lib/run.sh -m agents.lib.secure_fs "$d" || exit 1',
+        "-m agents.lib.secure_fs taxpayer_profile.json",
+        "-m agents.lib.secure_fs result.json answers.md",
     ),
     "tax-parse": (
-        "python3 -m agents.lib.secure_fs 'summaries/{group_name}.md'",
+        "-m agents.lib.secure_fs 'summaries/{group_name}.md'",
         # answers.md is in the sweep because Step 5.4 rewrites it by hand; the
         # sweep listed only what the sub-tasks and the library had produced.
-        "python3 -m agents.lib.secure_fs summaries/*.md result.json answers.md",
-        "python3 -m agents.lib.secure_fs parse_ledger.json",
+        "-m agents.lib.secure_fs summaries/*.md result.json answers.md",
+        "-m agents.lib.secure_fs parse_ledger.json",
     ),
     "tax-amend": (
-        "python3 -m agents.lib.secure_fs archive archive/{year} "
+        "-m agents.lib.secure_fs archive archive/{year} "
         "archive/{year}/as_filed || exit 1",
-        "xargs -0 python3 -m agents.lib.secure_fs || exit 1",
+        "xargs -0 sh agents/lib/run.sh -m agents.lib.secure_fs || exit 1",
         # Three separate answers.md writes (Steps 1, 2.5 and 5) had no
         # securing step between them, while the archive copies two lines above
         # did.
-        "python3 -m agents.lib.secure_fs answers.md || exit 1",
+        "-m agents.lib.secure_fs answers.md || exit 1",
     ),
     "tax-generate": (
-        "python3 -m agents.lib.secure_fs generate_tax_pdf.py",
-        "python3 -m agents.lib.secure_fs Tax_Return_*_Summary.pdf",
-        "python3 -m agents.lib.secure_fs Tax_Return_{year}_Filing_Package.pdf",
+        "-m agents.lib.secure_fs generate_tax_pdf.py",
+        "-m agents.lib.secure_fs Tax_Return_*_Summary.pdf",
+        "-m agents.lib.secure_fs Tax_Return_{year}_Filing_Package.pdf",
     ),
     "tax-review": (
-        "python3 -m agents.lib.secure_fs answers.md",
-        "mkdir -p reviews && python3 -m agents.lib.secure_fs reviews",
-        "python3 -m agents.lib.secure_fs reviews/{year}-review.md",
+        "-m agents.lib.secure_fs answers.md",
+        "mkdir -p reviews && sh agents/lib/run.sh -m agents.lib.secure_fs reviews",
+        "-m agents.lib.secure_fs reviews/{year}-review.md",
     ),
     "tax-project": (
-        "python3 -m agents.lib.secure_fs projection_inputs.json",
-        "mkdir -p projections && python3 -m agents.lib.secure_fs projections",
-        "python3 -m agents.lib.secure_fs projections/TY{year}_asof_{MM-DD}.md",
-        "python3 -m agents.lib.secure_fs answers.md",
+        "-m agents.lib.secure_fs projection_inputs.json",
+        "mkdir -p projections && sh agents/lib/run.sh -m agents.lib.secure_fs projections",
+        "-m agents.lib.secure_fs projections/TY{year}_asof_{MM-DD}.md",
+        "-m agents.lib.secure_fs answers.md",
     ),
     "tax-withholding": (
-        "python3 -m agents.lib.secure_fs projection_inputs.json",
-        "mkdir -p withholding && python3 -m agents.lib.secure_fs withholding",
-        "python3 -m agents.lib.secure_fs withholding/TY{year}_asof_{MM-DD}.md",
-        "python3 -m agents.lib.secure_fs answers.md",
+        "-m agents.lib.secure_fs projection_inputs.json",
+        "mkdir -p withholding && sh agents/lib/run.sh -m agents.lib.secure_fs withholding",
+        "-m agents.lib.secure_fs withholding/TY{year}_asof_{MM-DD}.md",
+        "-m agents.lib.secure_fs answers.md",
     ),
     "tax-fbar": (
-        "python3 -m agents.lib.secure_fs taxpayer_profile.json answers.md",
-        "python3 -m agents.lib.secure_fs FBAR_{year}_Preparation.md",
-        "python3 -m agents.lib.secure_fs result.json",
+        "-m agents.lib.secure_fs taxpayer_profile.json answers.md",
+        "-m agents.lib.secure_fs FBAR_{year}_Preparation.md",
+        "-m agents.lib.secure_fs result.json",
     ),
     "tax-parse-crypto": (
-        "python3 -m agents.lib.secure_fs 'summaries/crypto_<exchange>.json'",
-        "python3 -m agents.lib.secure_fs crypto_transactions.json",
-        "python3 -m agents.lib.secure_fs result.json taxpayer_profile.json crypto_transactions.json",
-        "python3 -m agents.lib.secure_fs parse_ledger.json",
+        "-m agents.lib.secure_fs 'summaries/crypto_<exchange>.json'",
+        "-m agents.lib.secure_fs crypto_transactions.json",
+        "-m agents.lib.secure_fs result.json taxpayer_profile.json crypto_transactions.json",
+        "-m agents.lib.secure_fs parse_ledger.json",
     ),
     "tax-scenario": (
-        "python3 -m agents.lib.secure_fs scenarios/{name}.md",
-        "python3 -m agents.lib.secure_fs answers.md",
+        "-m agents.lib.secure_fs scenarios/{name}.md",
+        "-m agents.lib.secure_fs answers.md",
     ),
     "tax-harvest": (
-        "python3 -m agents.lib.secure_fs holdings.json",
-        "python3 -m agents.lib.secure_fs scenarios/{name}.md",
+        "-m agents.lib.secure_fs holdings.json",
+        "-m agents.lib.secure_fs scenarios/{name}.md",
         # The audit-note append had only the blanket "restrict every manually
         # written file" line at the bottom of the skill's Security section
         # covering it. A rule three screens away from the step it governs is
         # the shape of instruction that gets followed unevenly, which is the
         # entire reason this pin is per-CALL rather than per-skill.
-        "python3 -m agents.lib.secure_fs answers.md",
+        "-m agents.lib.secure_fs answers.md",
     ),
     # The three skills below wrote taxpayer data with NO securing step anywhere
     # in them — not a weak one, none — while SECURITY.md claimed every
@@ -96,29 +96,29 @@ SENSITIVE_SKILL_SECURITY_CALLS = {
     # a replacement and renames it over the target does not, and owner-only is
     # not inherited from the file being overwritten.
     "tax-extend": (
-        "python3 -m agents.lib.secure_fs taxpayer_profile.json answers.md || exit 1",
+        "-m agents.lib.secure_fs taxpayer_profile.json answers.md || exit 1",
     ),
     "tax-verify": (
-        "python3 -m agents.lib.secure_fs answers.md || exit 1",
+        "-m agents.lib.secure_fs answers.md || exit 1",
     ),
     "tax-rollover": (
-        "python3 -m agents.lib.secure_fs answers.md || exit 1",
+        "-m agents.lib.secure_fs answers.md || exit 1",
     ),
     "tax-roth-convert": (
-        "python3 -m agents.lib.secure_fs scenarios/{name}.md",
-        "python3 -m agents.lib.secure_fs answers.md",
+        "-m agents.lib.secure_fs scenarios/{name}.md",
+        "-m agents.lib.secure_fs answers.md",
     ),
     # Lives in references/finalize.md, not SKILL.md — which is exactly why the
     # check below reads a skill's references/ too. tax-compute writes the two
     # most sensitive artifacts in the toolkit from a progressive-disclosure file
     # and had no securing step at all while a SKILL.md-only scan reported green.
     "tax-compute": (
-        "python3 -m agents.lib.secure_fs result.json answers.md || exit 1",
+        "-m agents.lib.secure_fs result.json answers.md || exit 1",
         # Step 0.7's blocked branch writes both files and can END the run —
         # the user declines to proceed, or the re-run still blocks — so
         # finalize.md's securing step is not reached on the path where a
         # taxpayer's acknowledgment has just been written down.
-        "python3 -m agents.lib.secure_fs answers.md taxpayer_profile.json || exit 1",
+        "-m agents.lib.secure_fs answers.md taxpayer_profile.json || exit 1",
     ),
 }
 
@@ -198,7 +198,29 @@ def test_sensitive_skill_writes_use_cross_platform_security(skill_name, required
     leaves an inherited Windows DACL readable by other local identities."""
     skill_dir = Path(REPO_ROOT, ".agents", "skills", skill_name)
     text = "\n".join(d.read_text() for d in _skill_documents(skill_dir))
+    launcher = "sh agents/lib/run.sh"
     for required_call in required_calls:
+        if required_call.startswith("-m agents.lib.secure_fs"):
+            assert f"{launcher} {required_call}" in text, (
+                f"{skill_name} does not route {required_call} through the "
+                f"launcher — a bare interpreter there runs the HOST python on "
+                f"a Windows venv and leaves the path world-listable")
+            continue
+        # Every pin is checked to route through the LAUNCHER, not merely to
+        # name the module. Narrowing them to `-m agents.lib.secure_fs` alone
+        # made this module — which exists to pin the Windows-safe securing path
+        # — unable to tell `sh agents/lib/run.sh -m …` from a bare
+        # `python3 -m …`, which is the regression it is here to catch. The
+        # interpreter half is also covered by
+        # test_preflight.py::test_no_skill_names_an_interpreter_itself; this is
+        # the per-call half, and neither alone is the invariant.
+        #
+        # The pins themselves start at `-m agents.lib.secure_fs`, deliberately
+        # excluding whatever precedes it: the skills name `sh agents/lib/run.sh`
+        # and the launcher resolves the interpreter one layer down, as
+        # `${TAXPY:-python3}`, so a Windows venv's `python.exe` is reached.
+        # Pinning a literal interpreter here made every invocation-form change
+        # break twenty assertions about permissions, which are not what changed.
         assert required_call in text, f"{skill_name} does not secure {required_call}"
 
 
@@ -289,7 +311,7 @@ def test_bare_chmod_detector_catches_every_shipped_and_plausible_form():
         "on Windows `chmod` only flips the read-only DOS attribute and leaves the whole",
         "Step 5. Uses the same cross-platform helper as Step 3, not a bare `chmod`, for the",
         "bare `chmod` follows it to whatever it points at (possibly outside the",
-        "python3 -m agents.lib.secure_fs result.json answers.md || exit 1",
+        "-m agents.lib.secure_fs result.json answers.md || exit 1",
     )
     for line in must_not_flag:
         assert not _bare_chmod_offenders(line), f"detector misreads prose as a command: {line!r}"
@@ -1661,3 +1683,122 @@ class TestTheNoNetworkClaimIsTrue:
         assert "from urllib.parse import urlparse" in fetcher, (
             "the source-pinning check no longer parses URLs — re-check what "
             "SECURITY.md says the library's role in the fetch is")
+
+
+class TestTheLauncherNamesNoPathWhenItCannotResolveItsRoot:
+    """`run.sh` is invoked by every skill, and its one failure path printed
+    `$0`.
+
+    That argument is an absolute path whenever a skill invokes the launcher by
+    one, and the tree it sits under is named by the person who made it — the
+    scanned-document and taxpayer-identity shapes AGENTS.md §1 restricts those
+    directories to prevent. Both halves disclosed it: this script's own `echo`,
+    and the shell's `cd: can't cd to ...` diagnostic underneath it. A POSIX
+    shell has no redactor to reach for, so the path is dropped rather than
+    masked; what a reader needs — which script, which step, what to do — does
+    not require it.
+    """
+
+    # A NAME rather than an SSN-shaped token, deliberately. The mechanism is
+    # the same for any string in the path, and writing nine digits into a
+    # tracked file — even synthetic ones — is what the PII gate blocks and what
+    # `.pii-allowlist` exists to make a deliberate exception for. Nothing here
+    # needs the exception.
+    IDENTIFIER = "Jane-Q-Household-Returns"
+
+    def _tree(self, tmp_path):
+        lib = tmp_path / self.IDENTIFIER / "agents" / "lib"
+        lib.mkdir(parents=True)
+        launcher = lib / "run.sh"
+        launcher.write_text(
+            Path(REPO_ROOT, "agents", "lib", "run.sh").read_text())
+        launcher.chmod(0o755)
+        return lib
+
+    @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                        reason="root traverses a 000 directory, so the "
+                               "failure this measures cannot be produced")
+    def test_a_root_it_cannot_reach_is_reported_without_the_path(self,
+                                                                 tmp_path):
+        """Run it from inside the tree with the grandparent unreadable: the
+        script itself opens (the cwd is already resolved) and the two-levels-up
+        `cd` cannot traverse. That is the real failure — an unreadable ancestor
+        or an oddly-resolved `$0` — rather than a fabricated message."""
+        lib = self._tree(tmp_path)
+        blocked = tmp_path / self.IDENTIFIER
+        # The `cd` and the `chmod` both happen INSIDE the child, in that order.
+        # Passing `cwd=` to subprocess would have the child resolve that
+        # absolute path after the directory is already unreadable, so the
+        # traversal fails before the launcher is ever reached — the test would
+        # measure Python's spawn, not this script.
+        try:
+            result = subprocess.run(
+                ["sh", "-c",
+                 f'cd "{lib}" || exit 99\n'
+                 f'chmod 000 "{blocked}" || exit 98\n'
+                 'sh ./run.sh -c pass\n'
+                 'status=$?\n'
+                 f'chmod 755 "{blocked}"\n'
+                 'exit $status\n'],
+                capture_output=True, text=True)
+        finally:
+            blocked.chmod(0o755)
+
+        assert result.returncode == 1, (
+            "the launcher continued past a root it could not resolve, which "
+            "is how it ends up exec'ing the HOST interpreter silently: "
+            f"{result.stderr}")
+        assert self.IDENTIFIER not in result.stderr, (
+            "the workspace path reached the terminal: " + result.stderr)
+        assert self.IDENTIFIER not in result.stdout
+        assert "cannot resolve the toolkit root" in result.stderr, (
+            "the path was dropped and so was the diagnosis — a refusal has to "
+            "say what failed")
+
+    def test_neither_half_of_the_diagnostic_can_carry_a_path(self):
+        """A SOURCE assertion, and deliberately so — the behavioural test above
+        cannot reach this claim.
+
+        It invokes the launcher as `sh ./run.sh`, so `$0` is relative and no
+        workspace name could appear in the output whatever the script printed.
+        Making `$0` absolute is not a matter of writing a longer test: opening
+        `<id>/agents/lib/run.sh` and `cd`-ing to `<id>` need the SAME traversal
+        permission on `<id>`, so an interpreter that got far enough to run the
+        script is one whose `cd` succeeds. The two states cannot co-exist, and
+        a test that ran anyway would be asserting an absence it had no way to
+        produce — which is the vacuous shape this suite keeps finding.
+
+        So the disclosure half is pinned where it is decidable. Both channels
+        are covered because both leaked: the script's own message, and the
+        shell's `cd: can't cd to <path>` underneath it, which discloses just as
+        completely and is silenced by the redirect rather than by anything the
+        script says.
+        """
+        source = Path(REPO_ROOT, "agents", "lib", "run.sh").read_text()
+        echoed = [line for line in source.splitlines()
+                  if "echo" in line and not line.lstrip().startswith("#")]
+        assert echoed, "no diagnostics at all — this test read the wrong file"
+        leaking = [line for line in echoed if "$0" in line or "$ROOT" in line]
+        assert not leaking, (
+            "a launcher diagnostic interpolates the path it was invoked by, "
+            f"which is the workspace name AGENTS.md §1 restricts: {leaking}")
+
+        resolution = [line for line in source.splitlines()
+                      if "dirname" in line and "cd" in line]
+        assert len(resolution) == 1, (
+            f"expected one root-resolution line, found {resolution}")
+        assert "2>/dev/null" in resolution[0], (
+            "the shell prints its own path-bearing `cd:` diagnostic on the "
+            "same failure, so dropping the path from the echo alone leaks it "
+            f"anyway: {resolution[0]}")
+
+    def test_the_launcher_still_runs_from_that_same_tree(self, tmp_path):
+        """The counterweight: a launcher that refused every invocation would
+        satisfy the assertion above perfectly, and the identifier only stays
+        out of the output because nothing ran."""
+        lib = self._tree(tmp_path)
+        result = subprocess.run(
+            ["sh", "./run.sh", "-c", "print('ran')"],
+            cwd=str(lib), capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert "ran" in result.stdout

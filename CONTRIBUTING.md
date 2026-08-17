@@ -25,9 +25,12 @@ blank page.
 ```bash
 git clone https://github.com/yarikmsu/tax-prep-skills.git
 cd tax-prep-skills
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install pytest                     # test runner; not a runtime dependency, so
+python3 -m venv .venv &&               # chained: a failed venv step must stop here,
+  sh agents/lib/run.sh -m pip install -r requirements.txt &&
+  sh agents/lib/run.sh -m pip install pytest
+                                       # or the launcher finds no activate script
+                                       # and installs into the HOST interpreter.
+                                       # pytest is not a runtime dependency, so
                                         # it isn't pinned in requirements.txt — CI
                                         # installs it the same way, as a separate step
 bash agents/install.sh --hooks-only    # git hooks + .gitignore entries
@@ -65,7 +68,7 @@ source .venv/bin/activate && python3 -m pytest tests/ -q
   non-obvious ways.
 - Every module under `agents/lib/` exposes a `_main` CLI. Four of them
   (`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer`) run a built-in
-  self-test when invoked with no arguments — `python3 agents/lib/tax_computations.py`
+  self-test when invoked with no arguments — `sh agents/lib/run.sh agents/lib/tax_computations.py`
   is the one to run after touching the math.
 
 ## Dependencies

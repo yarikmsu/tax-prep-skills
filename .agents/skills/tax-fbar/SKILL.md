@@ -23,18 +23,35 @@ Prepare FBAR (Report of Foreign Bank and Financial Accounts) filing documentatio
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 0.5. Tax Law Freshness Verification
 
 FBAR values depend on exchange rates from `tax_law_{year}.json`. Verify data is current:
 
 1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
-2. Run: `python3 agents/lib/tax_law_fetcher.py freshness {year}`
-2. Act on the result:
+2. Run: `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py freshness {year}`
+3. Act on the result:
    - **FRESH:** Proceed. Print the exchange rates being used (e.g., `EUR: 1.08`).
    - **STALE:** search the web for updated IRS yearly average exchange rates (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL). Re-fetch if changed.
    - **INCOMPLETE:** Check if `exchange_rates` section is populated. If empty, fetch by searching the web for: `"IRS yearly average exchange rate {year} {currency}"`.
    - **NOT_FOUND:** **STOP.** Tell user to run `/tax-setup` first.
-3. Print exchange rates being used so user can verify:
+4. Print exchange rates being used so user can verify:
    ```
    Exchange Rates — TY{year}
    {currency}: {rate} per USD (IRS yearly average)
@@ -91,14 +108,20 @@ Before computing FBAR values, verify the account list is complete. **First check
 The completeness probe above relies on the user's memory; this check is
 mechanical. When `parse_ledger.json` exists (written by `/tax-parse` step 6.5):
 
-1. Collect foreign payers from the ledger:
-   ```bash
-   python3 -c "
-   import json
-   from agents.lib.tie_out import load_ledger, foreign_payers
-   ledger = load_ledger(json.load(open('parse_ledger.json')))
-   print('\n'.join(foreign_payers(ledger)) or '(none)')"
-   ```
+1. Collect foreign payers from the ledger. The block is at column 0, fence and
+   all: the `-c` body cannot be indented (Python below 3.13 raises
+   IndentationError) and a fenced block indented INSIDE a list item, with a
+   flush-left body, ends the item at the first body line and leaves the closing
+   fence opening a new one. `tax-parse` has the same shape, also unindented.
+
+```bash
+sh agents/lib/run.sh -c "
+import json
+from agents.lib.tie_out import load_ledger, foreign_payers
+ledger = load_ledger(json.load(open('parse_ledger.json')))
+print('\n'.join(foreign_payers(ledger)) or '(none)')"
+```
+
 2. Diff against the FBAR account table: **every foreign payer in the ledger
    must appear as an institution in the account list** (or be explicitly
    justified in answers.md — e.g. "not a financial account: foreign employer
@@ -122,7 +145,7 @@ they never appear on the tax return or in any ledger document.
 After recording the completeness/signature-authority answers, immediately
 restrict both files again in case either write replaced the prior file:
 ```bash
-python3 -m agents.lib.secure_fs taxpayer_profile.json answers.md
+sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json answers.md
 ```
 
 ### 2. Gather Account Details
@@ -276,7 +299,7 @@ Create `FBAR_{year}_Preparation.md`:
 
 Immediately after writing the file, restrict it to the current OS identity:
 ```bash
-python3 -m agents.lib.secure_fs FBAR_{year}_Preparation.md
+sh agents/lib/run.sh -m agents.lib.secure_fs FBAR_{year}_Preparation.md
 ```
 
 ### 6. Update result.json
@@ -284,7 +307,7 @@ python3 -m agents.lib.secure_fs FBAR_{year}_Preparation.md
 Ensure `fbar_fincen_114` and `form_8938_fatca` sections in result.json are accurate.
 Immediately after writing it, run:
 ```bash
-python3 -m agents.lib.secure_fs result.json
+sh agents/lib/run.sh -m agents.lib.secure_fs result.json
 ```
 
 ### 7. Summary

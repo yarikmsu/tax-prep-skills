@@ -38,6 +38,25 @@ Read-only with respect to the baseline: never modifies `result.json` or
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
+### Procedure
+
 1. **Validate prerequisites.** Confirm `result.json`, `taxpayer_profile.json`, and
    `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24, stop and tell
    the user to run `/tax-compute`. If `federal.irmaa.tiers` is empty, note IRMAA will be
@@ -49,7 +68,7 @@ Read-only with respect to the baseline: never modifies `result.json` or
 
 3. **Compute.** Run:
    ```bash
-   python3 -m agents.lib.roth_ladder --result result.json --workspace . --year {year} \
+   sh agents/lib/run.sh -m agents.lib.roth_ladder --result result.json --workspace . --year {year} \
        --name {name} --max {max} --step {step} [--ira-value {balance} --ira-basis {basis}] --json
    ```
    Add `--ira-value` (and optionally `--ira-basis`) to apply the Form 8606 pro-rata rule so
@@ -59,7 +78,7 @@ Read-only with respect to the baseline: never modifies `result.json` or
 
 4. **Render.** Run the same command without `--json` to print the markdown report. Save it
    to `scenarios/{name}.md`, immediately run
-   `python3 -m agents.lib.secure_fs scenarios/{name}.md`, and present the ladder
+   `sh agents/lib/run.sh -m agents.lib.secure_fs scenarios/{name}.md`, and present the ladder
    table (marginal rate per rung) and the "Threshold crossings" section so the user
    can pick a conversion amount that fills a bracket without spilling into the next
    penalty zone.
@@ -68,7 +87,7 @@ Read-only with respect to the baseline: never modifies `result.json` or
    ```
    ## Roth ladder "{name}" TY{year} — swept $0..{max} step {step}. Run {today}.
    ```
-   Then run `python3 -m agents.lib.secure_fs answers.md` in case the write
+   Then run `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md` in case the write
    replaced the file rather than preserving its existing permissions.
 
 ## How to read it

@@ -22,12 +22,29 @@ Compute all tax form line values from parsed source data.
 
 ## Gates that run before computation
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### Step 0.5: Tax Law Freshness Verification
 
 Before any computation, verify tax law data is current:
 
 1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
-2. Run: `python3 agents/lib/tax_law_fetcher.py freshness {year}`
+2. Run: `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py freshness {year}`
 3. Act on the **`status` field**, not the exit code — `freshness` exits 0 even
    for NOT_FOUND, so an agent treating it like Steps 0.7 and 12.7 would sail
    past a missing cache into a computation with no rates:
@@ -50,7 +67,7 @@ Before loading any data, verify the engine can actually compute this taxpayer's
 situation — the toolkit must never produce a plausible-looking return that
 silently omits a form it cannot model:
 
-1. Run: `python3 agents/lib/capabilities.py --workspace .`
+1. Run: `sh agents/lib/run.sh agents/lib/capabilities.py --workspace .`
 2. Act on the exit code:
    - **0:** Proceed. The printed limitations manifest is reused in Step 12.
    - **2 (BLOCKED):** **STOP.** Show the user the blocked situations and the
@@ -62,7 +79,7 @@ silently omits a form it cannot model:
         (1) record the decision in `answers.md` (date, rule id, form, one-line
         user rationale); (2) add the rule id(s) to `acknowledged_limitations`
         in `taxpayer_profile.json`; (3) run
-        `python3 -m agents.lib.secure_fs answers.md taxpayer_profile.json || exit 1`
+        `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md taxpayer_profile.json || exit 1`
         — an editor that REPLACES a file rather than editing it in place leaves
         the replacement at the default mode, and this branch can END the run
         (option a, or a gate that still blocks), so the securing step in
@@ -96,7 +113,7 @@ skip one because a reference file did not mention it.
 
 Prove every parsed document landed on the return — the CP2000 killer:
 
-1. Run: `python3 agents/lib/tie_out.py --workspace .`
+1. Run: `sh agents/lib/run.sh agents/lib/tie_out.py --workspace .`
 2. Act on the exit code:
    - **0:** Tied out. If the report lists ⚠ unverifiable categories or ⚠
      advisory items (a possibly-taxable state refund, a personal-item 1099-K,

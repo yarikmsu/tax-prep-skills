@@ -26,7 +26,7 @@ These rules are absolute. Violating one is worse than failing the task.
   create them (the POSIX equivalent is `chmod 600` on files, `chmod 700` on
   directories): an owner-only file inside a listable directory still discloses
   its NAME, and under `archive/` those names are a taxpayer's scanned documents.
-  Do it with `python3 -m agents.lib.secure_fs PATH [PATH ...]` and never a bare
+  Do it with `sh agents/lib/run.sh -m agents.lib.secure_fs PATH [PATH ...]` and never a bare
   `chmod` — on Windows under a POSIX-compatible shell `chmod` only flips the
   read-only DOS attribute and leaves NTFS untouched. `agents/lib/` writers call
   it internally. The WORKSPACE ROOT is yours: nothing creates it, none secures it.
@@ -216,6 +216,21 @@ are plain Markdown instructions and are written to be executable that way.
   absent, so legacy profiles still pass. Every capability rule's flag must exist
   in `taxpayer_profile_template.json` **and** be asked by the `tax-setup`
   interview (enforced by test) — a rule keyed on a flag nothing sets is dead code.
+- **A skill without its engine must not compute** — every gate above, and every
+  planning skill's whole computation, runs as a script under `agents/lib/`, a
+  SIBLING of `.agents/skills/` that does not travel when a skill is copied
+  elsewhere (another agent's skill store, a gist, a zip). Every TAXPAYER-FACING
+  engine-calling skill therefore opens with `agents/lib/preflight.py`, and a
+  failure to RUN it — the file not existing included — IS the block, never a step
+  to skip: the script ships inside the directory whose disappearance is the
+  failure, so it cannot report its own absence. Preflight checks EVERY engine
+  module, not just the gates.
+  `codex-loop` and `state-module` are EXEMPT by test — contributor tooling, run
+  from a clone that contains the engine. Auditing which skills call the engine
+  (two invocation forms; a grep cannot): `docs/contributing/skill-catalog.md`.
+  **Every engine call goes through `sh agents/lib/run.sh`** — one launcher; it
+  activates the workspace venv (either layout) and execs the interpreter that
+  venv installed. Why: `docs/contributing/agents-compat.md`.
 - **State regimes are typed** — `tax_law state.type` (`graduated_income` |
   `none`): a no-income-tax state is a POSITIVE declaration, never an empty
   section. See `docs/contributing/state-module-playbook.md`.
@@ -265,11 +280,11 @@ tests/                           # pytest suite
 
 `agents/lib/` holds the computation engine — `tax_computations.py` (all the
 parameterized tax math), `tax_law_fetcher.py` (cache schema, freshness, source
-pinning), `parse_utils.py`, `capabilities.py`, `tie_out.py`, `irs_dates.py`, and
-one module per planning skill. Every module exposes a `_main` CLI entry point;
-run with no arguments, a few (`tax_computations`, `secure_fs`, `irs_dates`,
-`crypto_importer`) run a built-in self-test instead of the CLI, and the rest
-report their usage. None of them import anything agent-specific.
+pinning), `parse_utils.py`, `capabilities.py`, `tie_out.py`, `irs_dates.py`, `preflight.py`
+(the engine gate), `run.sh` (the launcher every skill invokes) and one module per planning skill. Every module
+exposes a `_main` CLI entry point; run with no arguments a few
+(`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer`) self-test,
+`preflight` exits 0, 2 (blocked) or 1 (could not run), and the rest report usage. None of them import anything agent-specific.
 
 ## 6. Runtime files (created per taxpayer, all gitignored)
 
@@ -303,7 +318,7 @@ Python 3.10+. Use a virtual environment — never `pip install
 --break-system-packages`:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+python3 -m venv .venv && sh agents/lib/run.sh -m pip install -r requirements.txt
 ```
 
 **A green local suite is not a green CI.** That `venv` follows whatever `python3`
@@ -343,7 +358,8 @@ source .venv/bin/activate && python3 -m pytest tests/ -q
 
 Libraries: `pdfplumber` (PDF parsing — split large PDFs, >10 pages, into
 sub-tasks), `openpyxl` (Excel), `reportlab` (PDF generation), `defusedxml`
-(protects openpyxl against XXE attacks in crafted `.xlsx` files).
+(the XXE guard for crafted `.xlsx`). Parsing REFUSES on an absent guard or
+a parser version the lock does not pin.
 
 ## 8. Development guidelines
 
@@ -352,7 +368,7 @@ sub-tasks), `openpyxl` (Excel), `reportlab` (PDF generation), `defusedxml`
   values. The only hardcoded constants are structural (SE threshold `$400`, SE
   factor `92.35%`).
 - Always round output to 2 decimal places.
-- Run `.venv/bin/python agents/lib/tax_computations.py` after changes — the
+- Run `sh agents/lib/run.sh agents/lib/tax_computations.py` after changes — the
   self-test must pass.
 
 **Input validation (all lib parsers)**

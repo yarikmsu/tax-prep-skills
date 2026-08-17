@@ -37,6 +37,47 @@ focused estimate or mid-year deadline check.
 
 ## How it works
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
+### Procedure
+
+Steps:
+1. Confirm prerequisites exist. If `flags.has_k1_income` is false and the user has
+   no K-1 income, tell them PTET doesn't apply and stop.
+2. Ask the user for the **qualifying pass-through income per entity state** (the
+   amount the entity would elect to pay PTET on). Map each to `--income STATE=AMT`.
+3. Ask for their other state/local taxes (property tax + state income/wage
+   withholding) and pass `--other-salt`; the analyzer derives the unused headroom
+   against the year's SALT cap ($40K for TY2025–2029, $10K otherwise). With the
+   larger OBBBA cap, don't assume the cap is exhausted — get the number. (Or pass
+   `--salt-room` directly if they already know their headroom.)
+4. Ask whether the K-1 income is **§199A QBI-eligible** (operating businesses
+   usually yes; investment/specified-service partnerships at high income often
+   no). If yes, pass `--qbi-eligible STATE` so the QBI clawback is priced — the
+   PTET deduction shrinks the QBI base, so the federal savings is *lower* than
+   the raw marginal-rate benefit. If unsure, the default output warns that the
+   savings may be overstated.
+5. Run the analyzer and present the rendered markdown. Highlight the **earliest
+   election deadline** relative to today's date.
+
+
+### What the analyzer computes
+
 1. **Per-state PTET paid.** For each K-1 entity state you supply income for, the
    entity-level tax is computed from the rate schedule. A **fetched**
    `ptet.<STATE>` schedule in `tax_law_{year}.json` (keyed by K-1 entity state,
@@ -85,50 +126,29 @@ focused estimate or mid-year deadline check.
 ## Usage
 
 ```bash
-[ -d .venv ] && source .venv/bin/activate
-
 # Estimate CA + NY PTET savings (SALT cap assumed exhausted):
-python3 -m agents.lib.ptet --workspace . --year 2025 \
+sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
     --income CA=200000 --income NY=100000
 
 # Derive SALT headroom from the cap given your other state/local taxes:
-python3 -m agents.lib.ptet --workspace . --year 2025 \
+sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
     --income CA=200000 --other-salt 28000 --marginal-fed 0.37
 
 # ...or set the unused headroom directly:
-python3 -m agents.lib.ptet --workspace . --year 2025 \
+sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
     --income CA=200000 --salt-room 8000 --marginal-fed 0.37
 
 # Override a multi-owner entity's graduated rate:
-python3 -m agents.lib.ptet --workspace . --year 2025 \
+sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
     --income NY=3000000 --ptet-rate NY=0.0965
 
 # Mark QBI-eligible (§199A) K-1 income so the QBI clawback is priced in:
-python3 -m agents.lib.ptet --workspace . --year 2025 \
+sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
     --income CA=200000 --qbi-eligible CA
 
 # Deadline-reminder mode (no income → reads flags.k1_states, lists deadlines):
-python3 -m agents.lib.ptet --workspace . --year 2025
+sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025
 ```
-
-Steps:
-1. Confirm prerequisites exist. If `flags.has_k1_income` is false and the user has
-   no K-1 income, tell them PTET doesn't apply and stop.
-2. Ask the user for the **qualifying pass-through income per entity state** (the
-   amount the entity would elect to pay PTET on). Map each to `--income STATE=AMT`.
-3. Ask for their other state/local taxes (property tax + state income/wage
-   withholding) and pass `--other-salt`; the analyzer derives the unused headroom
-   against the year's SALT cap ($40K for TY2025–2029, $10K otherwise). With the
-   larger OBBBA cap, don't assume the cap is exhausted — get the number. (Or pass
-   `--salt-room` directly if they already know their headroom.)
-4. Ask whether the K-1 income is **§199A QBI-eligible** (operating businesses
-   usually yes; investment/specified-service partnerships at high income often
-   no). If yes, pass `--qbi-eligible STATE` so the QBI clawback is priced — the
-   PTET deduction shrinks the QBI base, so the federal savings is *lower* than
-   the raw marginal-rate benefit. If unsure, the default output warns that the
-   savings may be overstated.
-5. Run the analyzer and present the rendered markdown. Highlight the **earliest
-   election deadline** relative to today's date.
 
 ## Caveats (v1)
 

@@ -59,7 +59,7 @@ body:
       label: Steps to reproduce
       description: The command or skill you ran, and the redacted input if one is needed.
       placeholder: |
-        1. Ran `python3 -m agents.lib.projection --inputs ... --workspace ...`
+        1. Ran `sh agents/lib/run.sh -m agents.lib.projection --inputs ... --workspace ...`
         2. With this redacted input: ...
         3. Got: ...
     validations:

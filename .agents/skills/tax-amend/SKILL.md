@@ -26,6 +26,23 @@ computed from the parse-ledger diff.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 1. Snapshot the as-filed state (once, before ANY correction)
 
 Create and restrict the snapshot directory BEFORE copying anything into it —
@@ -34,7 +51,7 @@ discloses them even when every file inside is owner-only:
 
 ```bash
 mkdir -p archive/{year}/as_filed
-python3 -m agents.lib.secure_fs archive archive/{year} archive/{year}/as_filed || exit 1
+sh agents/lib/run.sh -m agents.lib.secure_fs archive archive/{year} archive/{year}/as_filed || exit 1
 ```
 
 Copy `result.json`, `taxpayer_profile.json`, `parse_ledger.json`,
@@ -46,7 +63,7 @@ to each path, files and directories alike, so no separate mode split is needed:
 
 ```bash
 find archive/{year}/as_filed -print0 \
-  | xargs -0 python3 -m agents.lib.secure_fs || exit 1
+  | xargs -0 sh agents/lib/run.sh -m agents.lib.secure_fs || exit 1
 ```
 
 - **If `archive/{year}/as_filed/` already exists, REFUSE to overwrite** —
@@ -60,7 +77,7 @@ find archive/{year}/as_filed -print0 \
   than editing it in place leaves the replacement at the default mode, and
   owner-only is not inherited from the file it overwrote:
   ```bash
-  python3 -m agents.lib.secure_fs answers.md || exit 1
+  sh agents/lib/run.sh -m agents.lib.secure_fs answers.md || exit 1
   ```
   Every later `answers.md` write in this skill (Step 2.5's scan line, Step 5's
   amendment record) ends with the same command.
@@ -105,7 +122,7 @@ or phase-outs**. The engine was corrected 2026-07 (these are BELOW-AGI Schedule
 4. **Record** a scan line in `answers.md` (run date + outcome; NO dollar
    figures). If no TY2025 return claimed these provisions, note that the scan
    ran clean — the correction is prophylactic for this taxpayer. Then
-   `python3 -m agents.lib.secure_fs answers.md || exit 1`, per Step 1.
+   `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md || exit 1`, per Step 1.
 
 (Not applicable to TY2026+ returns — those were computed with the corrected
 engine from the start.)
@@ -132,7 +149,7 @@ engine from the start.)
 ### 4. Render the 1040-X three-column summary
 
 ```bash
-python3 -m agents.lib.amend --workspace . --year {year} \
+sh agents/lib/run.sh -m agents.lib.amend --workspace . --year {year} \
     --paid-with-original {amount}
 ```
 `--paid-with-original` = tax actually remitted with (or after) the
@@ -170,7 +187,7 @@ $250"), never "amounts changed".
   `irs_dates.next_business_day`), not the statutory date — interest cannot start
   before the observed deadline.
 - Add the amendment to `answers.md` (dates, documents, no dollar figures),
-  then `python3 -m agents.lib.secure_fs answers.md || exit 1` per Step 1, and
+  then `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md || exit 1` per Step 1, and
   re-run `/tax-calendar` if any flag changed.
 
 ## Caveats

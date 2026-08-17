@@ -18,6 +18,23 @@ If no year is provided, default to the current calendar year minus 1 (e.g., in 2
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 0. Refuse if prior-year files exist at root
 
 Before doing anything else, check if there's an existing `result.json` at the workspace root. If yes, read its `meta.tax_year`:
@@ -57,7 +74,7 @@ for d in documents summaries; do
     echo "$d is a symlink — refusing to secure through it. Remove or replace it with a real directory, then re-run /tax-setup." >&2
     exit 1
   fi
-  mkdir -p "$d" && python3 -m agents.lib.secure_fs "$d" || exit 1
+  mkdir -p "$d" && sh agents/lib/run.sh -m agents.lib.secure_fs "$d" || exit 1
 done
 ```
 
@@ -118,7 +135,7 @@ not a bare `chmod 600`, for the same reason Step 1 does: under a
 POSIX-compatible shell on Windows, `chmod` only flips the read-only DOS
 attribute and leaves the file readable by every other local account.
 ```bash
-python3 -m agents.lib.secure_fs taxpayer_profile.json
+sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json
 ```
 
 ### 4. Fetch Current Tax Law
@@ -143,19 +160,19 @@ STOP rule above binds every fetch in it.
 
 After creating both files, set restrictive permissions:
 ```bash
-python3 -m agents.lib.secure_fs result.json answers.md
+sh agents/lib/run.sh -m agents.lib.secure_fs result.json answers.md
 ```
 
 ### 6. Check Dependencies
 
 Run via Bash:
 ```bash
-python3 -c "import pdfplumber; import openpyxl; import reportlab; import defusedxml; print('All dependencies installed')"
+sh agents/lib/run.sh -c "import pdfplumber; import openpyxl; import reportlab; import defusedxml; print('All dependencies installed')"
 ```
 
 If any import fails, create a virtual environment and install pinned dependencies:
 ```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+python3 -m venv .venv && sh agents/lib/run.sh -m pip install -r requirements.txt
 ```
 
 ⚠️ **Do NOT use `--break-system-packages`** — always use a virtual environment to isolate dependencies.
@@ -173,7 +190,7 @@ the flags.
 
 Run via Bash:
 ```bash
-python3 -m agents.lib.tax_calendar \
+sh agents/lib/run.sh -m agents.lib.tax_calendar \
   --profile taxpayer_profile.json \
   --workspace . \
   --year {year}

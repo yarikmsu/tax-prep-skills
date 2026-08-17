@@ -5,6 +5,42 @@ Relocated verbatim from CLAUDE.md so the agent instruction files stay under
 the truncation limits documented in `docs/contributing/agents-compat.md`.
 AGENTS.md points here; nothing else should duplicate it.
 
+## Auditing which skills call the engine
+
+The engine is invoked in TWO forms, and any audit of which skills reach it has
+to match both:
+
+- **By PATH** — `agents/lib/tie_out.py`, `agents/lib/preflight.py`.
+- **By MODULE** — `python3 -m agents.lib.projection`.
+
+A path-only search reads the module-form skills — every planning skill plus
+`tax-archive` and `tax-rollover` — as calling no engine at all, which is the
+reading that lets a roster of engine callers ship with two thirds of its
+entries missing.
+
+**Do not try to reproduce that by grepping the tree, and do not conclude from
+grepping it that the module form no longer matters.** Every skill now opens
+with `sh agents/lib/run.sh agents/lib/preflight.py`, a PATH form, so the path
+spelling appears in every skill whatever the rest of it does — the gate hides the very
+asymmetry this section is about.
+
+A grep cannot even tell you how many skills there are. It counts FILES, and the
+count is always higher than the number of skills: `references/*.md` match too,
+and the two contributor skills (`codex-loop`, `state-module`) name the directory
+while being exempt from the gate by design. No figure is quoted here on purpose
+— it moves whenever a reference is added, and a stale absolute in the section
+telling you not to trust a grep would be its own counter-example.
+
+Check the predicate against command UNITS with the preflight command excluded,
+which is what `test_the_launcher_is_what_makes_the_roster_universal` does. It
+replaced a test whose premise the launcher retired: every invocation is a PATH
+form now, so the roster is universal for a different reason than it was, and
+what is load-bearing is the launcher's own universality.
+
+AGENTS.md §4 states the rule this detail belongs to: a skill separated from
+`agents/lib/` must refuse to compute rather than run every gate as a silent
+no-op.
+
 ## Pipeline and optional branches
 
 **Optional parsing branch (off `/tax-parse`, feeds `/tax-compute`):**

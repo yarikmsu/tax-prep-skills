@@ -11,7 +11,7 @@ no attached tax document. GitHub retains it.
 ## Verification
 
 <!-- What you ran, and what it printed. "Tests pass" is not verification;
-     the actual count the run printed — `2621 passed, 2 skipped` — is. -->
+     the actual count the run printed — `2866 passed, 2 skipped` — is. -->
 
 - [ ] `source .venv/bin/activate && python3 -m pytest tests/ -q` passes locally
 - [ ] Added tests for new behavior, with worksheet comments on hand-computed values

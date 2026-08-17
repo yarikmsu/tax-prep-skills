@@ -131,6 +131,25 @@ permissions through the same guarded writer `/tax-scenario` uses.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
+### Procedure
+
 1. **Verify prerequisites.** Confirm `result.json`, `taxpayer_profile.json`,
    `tax_law_{year}.json`, and `holdings.json` exist. If `result.json` lacks a computed
    line 24, stop and tell the user to run `/tax-compute`. If `holdings.json` is missing,
@@ -138,7 +157,7 @@ permissions through the same guarded writer `/tax-scenario` uses.
    offer "unrealized gain/loss by lot" CSV exports — you can help convert to the schema
    above).
 
-   Then run `python3 -m agents.lib.secure_fs holdings.json` before continuing —
+   Then run `sh agents/lib/run.sh -m agents.lib.secure_fs holdings.json` before continuing —
    **whether the file was already there or you just helped create it.** It carries
    every lot's cost basis and account label. A file the user exported themselves
    arrives at their shell's default mode, so the already-exists path is the one
@@ -153,7 +172,7 @@ permissions through the same guarded writer `/tax-scenario` uses.
 
 3. **Compute.** Run:
    ```bash
-   python3 -m agents.lib.loss_harvest --result result.json --workspace . \
+   sh agents/lib/run.sh -m agents.lib.loss_harvest --result result.json --workspace . \
        --year {year} --holdings holdings.json --name {name} --json
    ```
    Writes `scenarios/{name}.json` with owner-only permissions through
@@ -161,7 +180,7 @@ permissions through the same guarded writer `/tax-scenario` uses.
 
 4. **Render.** Run the same command without `--json` to print the markdown report. Save
    it to `scenarios/{name}.md`, immediately run
-   `python3 -m agents.lib.secure_fs scenarios/{name}.md`, and walk the user through:
+   `sh agents/lib/run.sh -m agents.lib.secure_fs scenarios/{name}.md`, and walk the user through:
    - **Bottom-line table** — eligible loss, federal/state savings, carryforward.
    - **Schedule D after harvest** — baseline vs. post-harvest net ST/LT.
    - **Harvest plan** — ranked eligible lots with per-lot value-per-dollar (ST losses
@@ -193,7 +212,7 @@ permissions through the same guarded writer `/tax-scenario` uses.
    it in place leaves the replacement at the default mode, and owner-only is
    not inherited from the file it overwrote:
    ```bash
-   python3 -m agents.lib.secure_fs answers.md || exit 1
+   sh agents/lib/run.sh -m agents.lib.secure_fs answers.md || exit 1
    ```
 
 ## How to read the savings

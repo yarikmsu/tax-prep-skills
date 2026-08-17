@@ -68,9 +68,9 @@ unset payload
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 
 # ---------------------------------------------------------------------------
-# The watched set, and which of the four modules each watched path can turn red.
+# The watched set, and which of the six modules each watched path can turn red.
 #
-# DERIVED by reading those four modules, not guessed. A guessed set is wrong in
+# DERIVED by reading those six modules, not guessed. A guessed set is wrong in
 # the direction that is invisible: a path left out produces no local signal,
 # which is indistinguishable from a path that has no invariants to begin with.
 # The previous filter accepted only `*.md` under the two skill directories and
@@ -102,6 +102,16 @@ cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 #                               the sensitive-filename case of
 #                               scripts/pre-commit-pii-scan.sh, which it parses
 #                               and compares against the permissions hook's list.
+#   tests/test_preflight.py     .agents/skills/** through skill_text() (the gate
+#                               heading, its fail-closed sentence, and the
+#                               chained activation on every engine invocation),
+#                               and EVERY module in agents/lib/ — check()
+#                               imports all twenty-one and executes one, so a
+#                               SyntaxError in any of them turns this module red.
+#                               The directory itself is watched too: the roster
+#                               is pinned against `agents/lib/*.py`, and an ADD
+#                               shows up as the directory's own timestamp moving
+#                               rather than as a path beneath it.
 #
 # agents/lib/rollover.py is watched for a reason none of those files names
 # directly: capabilities.py imports it and tax_law_fetcher.py imports
@@ -140,24 +150,31 @@ CLAUDE.md
 CONTRIBUTING.md
 LICENSE
 README.md
+agents
 agents/install.sh
-agents/lib/capabilities.py
-agents/lib/rollover.py
-agents/lib/tax_law_fetcher.py
+agents/lib
 agents/templates/taxpayer_profile_template.json
+docs/QUICKSTART.md
 docs/contributing
+requirements.in
+requirements.txt
+scripts
 scripts/pre-commit-pii-scan.sh
 tests/skill_text.py
 tests/test_capabilities.py
 tests/test_claude_agents.py
 tests/test_claude_hooks.py
 tests/test_portability.py
+tests/test_preflight.py
+tests/test_secure_fs.py
 '
 
 RUN_PORTABILITY=0
 RUN_CAPABILITIES=0
 RUN_AGENTS=0
 RUN_HOOKS=0
+RUN_PREFLIGHT=0
+RUN_SECUREFS=0
 
 # Takes a REPOSITORY-RELATIVE path and turns on the modules it can break. The
 # directory roots appear both bare and with a `/*` suffix because find prints
@@ -180,6 +197,16 @@ select_modules_for() {
         .agents/skills|.agents/skills/*|.claude/skills|.claude/skills/*)
             RUN_PORTABILITY=1
             RUN_CAPABILITIES=1
+            # test_secure_fs pins ~40 exact `secure_fs` command strings
+            # inside SKILL.md and its references. Changing the invocation
+            # form broke twenty of them in one commit while the hook,
+            # running six modules on a skill edit, selected none.
+            RUN_SECUREFS=1
+            # A SKILL.md edit can drop the engine-preflight gate heading, its
+            # fail-closed sentence, or the chained activation prefix on
+            # an engine invocation — the three things test_preflight.py asserts
+            # per skill, and all three are one deletion away.
+            RUN_PREFLIGHT=1
             ;;
         .claude/agents|.claude/agents/*.md)
             RUN_AGENTS=1
@@ -191,13 +218,128 @@ select_modules_for() {
         scripts/pre-commit-pii-scan.sh)
             RUN_HOOKS=1
             RUN_PORTABILITY=1
+            # test_secure_fs parses this script's PII_PATTERNS array to pin
+            # redactor parity, and THAT failure is a disclosure channel: a
+            # family detected here and not redacted there means the gate blocks
+            # a path holding a credential and prints the credential.
+            RUN_SECUREFS=1
             ;;
+        # These three carry EXTRA selections on top of what any engine module
+        # gets. `case` is first-match-wins, so they have to repeat EVERY
+        # selection the `agents/lib/*.py` arm makes rather than fall through to
+        # it — without that, EDITING one of them skipped a module that DELETING
+        # it did not, which is the wrong way round. It has now been the wrong
+        # way round twice: RUN_PORTABILITY was the first omission, and
+        # RUN_SECUREFS was still missing after that fix, on the three files
+        # where it matters most. test_secure_fs sweeps `agents/**/*.py` for a
+        # network import and for a raw path reaching a message, so a fetcher
+        # that grew an outbound call, or a redaction dropped from a message,
+        # turned it red while this hook ran five modules, passed them all, and
+        # exited 0 silent.
         agents/lib/capabilities.py|agents/lib/rollover.py)
             RUN_CAPABILITIES=1
             RUN_AGENTS=1
+            RUN_PREFLIGHT=1
+            RUN_PORTABILITY=1
+            RUN_SECUREFS=1
             ;;
-        agents/lib/tax_law_fetcher.py|tests/test_claude_agents.py)
+        agents/lib/tax_law_fetcher.py)
             RUN_AGENTS=1
+            RUN_PREFLIGHT=1
+            RUN_PORTABILITY=1
+            RUN_SECUREFS=1
+            ;;
+        tests/test_claude_agents.py)
+            RUN_AGENTS=1
+            ;;
+        # The directory AND every module under it. The roster test is only half
+        # the reason and was, on its own, the wrong half: it pins the roster
+        # against `agents/lib/*.py`, so only an ADD or REMOVE turns it red, and
+        # an addition shows up as the directory's own timestamp moving. Reasoning
+        # from that alone, this arm was once narrowed to the directory — and left
+        # a hole, because `preflight.check()` IMPORTS all twenty-one modules and
+        # executes one of them. A SyntaxError in `projection.py` turns
+        # test_preflight red while the hook, selecting nothing, exits 0 silent.
+        # Verified by breaking that module. An engine edit therefore costs the
+        # preflight module (MEASURED COSTS: between capabilities and
+        # portability), and that is the cheaper half of the trade.
+        # The bare directory is what a DELETE looks like — a removal surfaces
+        # only as the directory's own ctime moving, never as a path beneath it —
+        # so it selects every module that imports anything in here, not just the
+        # roster check. Deleting capabilities.py or tax_law_fetcher.py fails
+        # test_capabilities.py and test_claude_agents.py at COLLECTION, and the
+        # per-file arms above cover an edit to those files, not their removal.
+        agents/lib/secure_fs.py)
+            # Every per-file arm above imports it — rollover, capabilities
+            # and tax_law_fetcher all do — so it earns their selections
+            # too. The header makes this import-edge argument for
+            # rollover.py and stopped one edge short.
+            RUN_SECUREFS=1
+            RUN_CAPABILITIES=1
+            RUN_AGENTS=1
+            RUN_PREFLIGHT=1
+            RUN_PORTABILITY=1
+            ;;
+        # test_secure_fs sweeps these two WHOLE — `Path(REPO_ROOT, "agents")`
+        # and `Path(REPO_ROOT, "scripts")`, every `*.py` and `*.sh` beneath —
+        # for a network import, a bare `chmod`, and a raw path reaching a
+        # message. Anything ADDED under either is covered by that sweep the
+        # moment it lands, so a file outside `agents/lib/` (a new
+        # `agents/tools/*.py`, a second script) turned it red with no local
+        # signal at all. The more specific arms above still win for the paths
+        # they name; these are the catch-alls the sweep implies.
+        agents|scripts)
+            RUN_SECUREFS=1
+            ;;
+        agents/lib)
+            RUN_PREFLIGHT=1
+            RUN_CAPABILITIES=1
+            RUN_AGENTS=1
+            # ...and secure_fs, which this arm's own comment claims to cover:
+            # test_secure_fs imports the module at file scope, so DELETING it
+            # fails that module at COLLECTION.
+            RUN_SECUREFS=1
+            # And portability: TestSelfTestClaim subprocess-executes four of
+            # these modules, so DELETING one turns it red exactly as editing one
+            # does. The arm below adds it for the edit; this arm is the one a
+            # removal reaches, and it was the half that omitted it.
+            RUN_PORTABILITY=1
+            ;;
+        # test_preflight pins RUNTIME_DEPENDENCIES against this file, so a
+        # fifth direct dependency added here and not there leaves the gate
+        # reporting "pinned dependencies importable" about four of five.
+        # The LOCK is watched for the same reason one step further out: the gate
+        # now compares installed versions against it, and test_preflight reads
+        # it to derive what a pin says. A Dependabot bump that drops a pin
+        # turns that module red, and this is the arm that says so locally.
+        requirements.in|requirements.txt)
+            RUN_PREFLIGHT=1
+            ;;
+        # run.sh is what every skill actually invokes, so it is engine code by
+        # any measure the rest of this arm uses.
+        agents/lib/*.sh)
+            RUN_PREFLIGHT=1
+            RUN_PORTABILITY=1
+            # test_secure_fs bans a bare `chmod` and a shell fetcher anywhere
+            # under agents/ and scripts/.
+            RUN_SECUREFS=1
+            ;;
+        agents/lib/*.py)
+            RUN_PREFLIGHT=1
+            # test_secure_fs audits EVERY module here for a network import and
+            # for a raw path reaching a message.
+            RUN_SECUREFS=1
+            # test_portability EXECUTES four of these modules and asserts they
+            # exit 0 (TestSelfTestClaim), so an engine edit that breaks a
+            # built-in self-test turns portability red — and selecting preflight
+            # alone left that silent, since the module still imports fine.
+            RUN_PORTABILITY=1
+            ;;
+        tests/test_preflight.py)
+            RUN_PREFLIGHT=1
+            ;;
+        tests/test_secure_fs.py)
+            RUN_SECUREFS=1
             ;;
         agents/templates/taxpayer_profile_template.json|\
         tests/test_capabilities.py)
@@ -206,15 +348,59 @@ select_modules_for() {
         tests/skill_text.py)
             RUN_PORTABILITY=1
             RUN_CAPABILITIES=1
+            # test_preflight.py derives its whole skill roster through this.
+            RUN_PREFLIGHT=1
             ;;
         # .vscode/settings.json is watched as a FILE and .vscode is not a root:
         # everything else under that directory is gitignored editor state, and
         # watching the directory would spend ten seconds on every window-layout
         # write.
-        AGENTS.md|CLAUDE.md|CONTRIBUTING.md|README.md|LICENSE|.gitignore|\
-        .pii-allowlist|.vscode/settings.json|agents/install.sh|\
+        # README.md, CONTRIBUTING.md and docs/QUICKSTART.md carry the clone URL
+        # that preflight's remedy repeats, and test_preflight compares the four
+        # against each other — a rename in any of them leaves the ONE copy that
+        # is a stranded reader's only escape route pointing at a 404.
+        # agents-compat.md and QUICKSTART both carry forms test_preflight now
+        # asserts against — the activation prefix and the clone URL. The
+        # coverage test cannot see either: it recovers `REPO / "literal"`
+        # chains, and both reads are written over a loop.
+        docs/QUICKSTART.md|docs/contributing/agents-compat.md)
+            RUN_PREFLIGHT=1
+            RUN_PORTABILITY=1
+            ;;
+        CONTRIBUTING.md|README.md)
+            RUN_PORTABILITY=1
+            RUN_PREFLIGHT=1
+            ;;
+        # install.sh is under `agents/`, which test_secure_fs sweeps for a bare
+        # `chmod` and a shell fetcher.
+        agents/install.sh)
+            RUN_PORTABILITY=1
+            RUN_SECUREFS=1
+            ;;
+        AGENTS.md|CLAUDE.md|LICENSE|.gitignore|\
+        .pii-allowlist|.vscode/settings.json|\
         docs/contributing|docs/contributing/*.md|tests/test_portability.py)
             RUN_PORTABILITY=1
+            ;;
+        # LAST, and this is the half the `agents|scripts` arm above was missing.
+        # That arm matches those two words EXACTLY — a `case` pattern is not a
+        # prefix — so it fires only when find prints the ROOT itself, which
+        # happens when a file is added directly beneath it. A path one level
+        # further down (`agents/tools/check.py`, `scripts/helpers/check.sh`)
+        # matched no arm at all, and neither branch has a fallback: the
+        # Write/Edit branch exits 0 on an empty selection, and the Bash branch's
+        # scan hands each printed path to this same function. So the sweep the
+        # arm above documents — every `*.py` and `*.sh` under `agents/` and
+        # `scripts/` — was enforced for the two subtrees that happen to be named
+        # by an arm and silently unenforced everywhere else beneath them.
+        #
+        # `*` in a `case` pattern spans `/`, so these reach any depth. Scoped to
+        # the two EXTENSIONS the sweep actually reads rather than a bare
+        # `agents/*`: an engine run rewrites `agents/lib/__pycache__/*.pyc`,
+        # whose ctime then beats the stamp on the next Bash call, and a bare
+        # pattern would buy a pytest module for every `ls` that followed one.
+        agents/*.py|agents/*.sh|scripts/*.py|scripts/*.sh)
+            RUN_SECUREFS=1
             ;;
     esac
 }
@@ -224,11 +410,14 @@ select_every_module() {
     RUN_CAPABILITIES=1
     RUN_AGENTS=1
     RUN_HOOKS=1
+    RUN_PREFLIGHT=1
+    RUN_SECUREFS=1
 }
 
 nothing_selected() {
     [ "$RUN_PORTABILITY" -eq 0 ] && [ "$RUN_CAPABILITIES" -eq 0 ] \
-        && [ "$RUN_AGENTS" -eq 0 ] && [ "$RUN_HOOKS" -eq 0 ]
+        && [ "$RUN_AGENTS" -eq 0 ] && [ "$RUN_HOOKS" -eq 0 ] \
+        && [ "$RUN_PREFLIGHT" -eq 0 ] && [ "$RUN_SECUREFS" -eq 0 ]
 }
 
 # Turns the stamp's red carry-forward back into selection flags. A check named
@@ -254,13 +443,15 @@ apply_red_checks() {
             capabilities) RUN_CAPABILITIES=1 ;;
             agents) RUN_AGENTS=1 ;;
             hooks) RUN_HOOKS=1 ;;
+            preflight) RUN_PREFLIGHT=1 ;;
+            securefs) RUN_SECUREFS=1 ;;
         esac
     done <<< "$KNOWN_RED"
     return 0
 }
 
 # The mirror image, run after the verdict: which checks does this pass hand to
-# the next one as still-red. Both directions read the same four RUN_* flags,
+# the next one as still-red. Both directions read the same RUN_* flags,
 # which are frozen from apply_red_checks until the process exits — so "what ran"
 # and "what is recorded as red" cannot disagree without an edit that moves one of
 # them across that line.
@@ -270,9 +461,13 @@ remember_red_checks() {
     [ "$RUN_CAPABILITIES" -eq 1 ] && NEW_RED="${NEW_RED}capabilities"$'\n'
     [ "$RUN_AGENTS" -eq 1 ] && NEW_RED="${NEW_RED}agents"$'\n'
     [ "$RUN_HOOKS" -eq 1 ] && NEW_RED="${NEW_RED}hooks"$'\n'
-    # Never leak the last test's status: with RUN_HOOKS unset the chain above
-    # ends in a false condition, and this function's value would then say
-    # "nothing was written" to a caller that never asked about the hooks module.
+    [ "$RUN_PREFLIGHT" -eq 1 ] && NEW_RED="${NEW_RED}preflight"$'\n'
+    [ "$RUN_SECUREFS" -eq 1 ] && NEW_RED="${NEW_RED}securefs"$'\n'
+    # `return 0` explicitly, never the fall-through. With the LAST flag in the
+    # chain above unset — whichever it is; naming the module here went stale the
+    # same day the next check was appended, twice — the function ENDS on a false
+    # condition, so its status would report a failure to a caller that never
+    # asked about that module at all.
     return 0
 }
 
@@ -334,9 +529,15 @@ fi
 # the full run, which is correct and merely slower.
 # ---------------------------------------------------------------------------
 STAMP=".claude/.skill-invariants-stamp"
-# Line 1 is the format version; every line after it names a CHECK — portability,
-# capabilities, agents, hooks — that came back red in the pass which wrote the
-# stamp (see "what the pass is allowed to remember"). Version 1 carried the
+# Line 1 is the format version; every line after it names a CHECK that came back
+# red in the pass which wrote the stamp (see "what the pass is allowed to
+# remember"). The names are NOT listed here: this sentence enumerated four of
+# them and stayed at four when the fifth and sixth arrived, and
+# `test_the_check_name_lists_agree` parses the seven CODE lists as sets and
+# cannot see a comment. A reader debugging a stamp then reads `preflight` or
+# `securefs` as corruption and "repairs" it by deleting the carry-forward the
+# red-remembering design depends on. `read_red_checks` below holds the real
+# list, in one place. Version 1 carried the
 # version line alone, so a v1 stamp read by this code would parse as "nothing is
 # red": a well-formed, plausible answer that is wrong for precisely the check the
 # previous pass failed on. Bumping the version makes every older stamp UNTRUSTED
@@ -401,13 +602,20 @@ trap 'cleanup; exit 1' TERM INT HUP
 # through unfiltered would be the shorter form and it is wrong in the direction
 # that does not announce itself — apply_red_checks would ignore the junk, so a
 # stamp that had been mangled by a crashed write would read as "nothing is red"
-# and look exactly like a clean pass. Recognizing the four tokens here means the
+# and look exactly like a clean pass. Recognizing the known tokens here means the
 # only thing an unreadable stamp can cost is a re-run.
+#
+# THIS LIST IS THE THIRD COPY of the check names — `apply_red_checks` and
+# `remember_red_checks` hold the other two — and it is the one that fails
+# SILENTLY when they drift. Adding `preflight` to those two and not to this one
+# left the hook writing `preflight` into the stamp and then declining to read it
+# back: the check was recorded red, the next pass dropped the token as junk, and
+# a still-red module reported clean. Add a name to all three or to none.
 read_red_checks() {
     local line
     while IFS= read -r line; do
         case "$line" in
-            portability|capabilities|agents|hooks)
+            portability|capabilities|agents|hooks|preflight|securefs)
                 KNOWN_RED="${KNOWN_RED}${line}"$'\n' ;;
         esac
     done <<< "$(sed -n '2,$p' "$STAMP" 2>/dev/null)"
@@ -440,7 +648,7 @@ elif [ "$STAMP" -nt "$NOW_MARKER" ]; then
     FORCE_FULL=1
 else
     # Reached only when the stamp is trusted, which is also the only case where
-    # the red set matters: every branch above forces all four modules anyway.
+    # the red set matters: every branch above forces all six modules anyway.
     read_red_checks
 fi
 
@@ -521,23 +729,38 @@ apply_red_checks
 # reproduce, and both times the copies elsewhere were left behind.
 #
 # READ THE RATIOS, NOT THE SECONDS, and the conditions are why. One macOS host,
-# 2026-08-10, `.venv/bin/python -m pytest`, every line taken at least three
+# `.venv/bin/python -m pytest`, every line taken at least three
 # times, on a machine that was NOT idle — a second agent session was editing
 # this repository and running this suite throughout, which is the honest
 # condition for a hook that fires on tool calls rather than a best-case one.
-# Run-to-run spread is ±15% on the slow lines, and a second independent
-# measurement of `pytest tests/` on this same host returned 139-155s where this
-# block returns 163-178s: two careful readings of one command, 25% apart. Every
-# line below is therefore a RANGE with a run count, and a figure lifted from
-# here to three significant figures would be wrong again by the next reading.
+# Run-to-run spread is ±15% on the slow lines, and the spread BETWEEN sittings is
+# larger than that: an earlier reading of `pytest tests/` on this same host
+# returned 139-155s, a later one 175-209s, and this one 200s. The portability
+# module moved further — 7.5-10.2s one day, 12.7-13.4s the next, with no code
+# between the two — which is why the ratios below are stated as "roughly" and
+# why a figure lifted from here to three significant figures would be wrong by
+# the next reading. Every line is a RANGE with a run count.
+#
+# SECONDS ARE WALL CLOCK of the invocation — interpreter start and collection
+# included — because that is what the tool call waits on. pytest's own "in
+# 0.39s" footer is the smaller number and reading one convention as the other is
+# how a row ends up looking halved: the fixed overhead is about 0.4s, which is
+# most of a sub-second module's row and a rounding error on the hooks module.
 #
 #   what triggers it               what runs     observed range    runs
 #   ---------------------------------------------------------------------
-#   nothing watched changed        no pytest     0.07 - 0.10s        6
-#   agent-definition edit           19 tests     0.22 - 0.26s        4
-#   skill .md edit                 208 tests       12 - 14s          4
-#   cold pass, all four modules    332 tests       83 - 109s         6
-#   (for scale) `pytest tests/`   2413 tests      163 - 178s         5
+#   nothing watched changed        no pytest     0.03 - 0.05s        6
+#   agent-definition edit           19 tests     0.14 - 0.18s        3
+#   skill .md edit                 629 tests     15.0 - 16.1s        3
+#   cold pass, all six modules     770 tests      138 - 139s         3
+#   (for scale) `pytest tests/`   2928 tests      194 - 199s         3
+#
+# COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
+# passes two `--deselect` flags, so portability collects 97 and runs 95; and
+# the hooks module holds two platform skips, so it collects 124 and runs 122.
+# Reporting either as collected made the decomposition sum past the total —
+# twice, and the second time the derived rows were right and the part was wrong,
+# which is the harder way round to notice.
 #
 # The first line is this hook end to end on its fast path, timed in an isolated
 # copy of the repository so that the concurrent editor could not turn it into a
@@ -549,22 +772,77 @@ apply_red_checks
 # deselections run_focused_modules passes. This is the durable half: WHICH
 # module dominates, and by how much, survives a change of machine.
 #
-#   tests/test_claude_hooks.py     105 tests       71 - 78s          4
-#   tests/test_portability.py       92 tests      8.8 - 10.4s        4
-#   tests/test_capabilities.py     116 tests     0.74 - 0.78s        3
-#   tests/test_claude_agents.py     19 tests     0.22 - 0.26s        4
+#   tests/test_claude_hooks.py     122 tests      118 - 123s         3
+#   tests/test_portability.py       95 tests      9.6 - 9.9s         3
+#   tests/test_capabilities.py     116 tests     0.90 - 0.93s        3
+#   tests/test_claude_agents.py     19 tests     0.14 - 0.18s        3
+#   tests/test_secure_fs.py        133 tests      1.1 - 1.5s         3
+#   tests/test_preflight.py        285 tests      3.9 - 5.1s         3
+#
+# The agent-definition row above and the agents row here are the SAME
+# invocation — that trigger selects that module alone — and are stated with the
+# same range on purpose. Two figures for one measurement is how this block
+# started drifting from itself the first time.
+#
+# Read the preflight line as a RATIO, which is the half that survives a change
+# of machine: it sits between capabilities and portability, and is roughly a
+# twenty-fifth of the hooks module that dominates every total here. A skill edit
+# selects it alongside portability, capabilities and secure_fs, which is where
+# its cost actually lands. It has grown against its neighbours three times: the
+# launcher tests EXECUTE `run.sh` in a subprocess rather than asserting against
+# its text — the trade that bought a test able to catch a hang — and the
+# installed-versus-locked comparison added a class that reads the lock and
+# fabricates distributions, then a second one for the pins that are ABSENT from
+# an environment rather than merely the wrong version. Both of those classes are
+# tmp_path and fabrication, which is why the row moved much less than its count.
 #
 # ARITHMETIC, stated because a block whose parts do not add up is a block a
-# reader stops believing: those four sum to 81s at their minima and 90s at their
-# maxima, against 83-109s measured for the four run together. Parts SHOULD sum
-# to slightly more than the whole — four interpreter starts and four collections
-# instead of one, and collection is 0.05s for all 332 — and at the low end they
-# do. At the high end they do not, and the missing term is no term at all: the
-# hooks module alone moves 7s between runs, more than every other module in the
-# list added together, so parts and total can only ever agree to within the
-# noise of the one line that dominates both. A future reading where they
-# disagree by more than that module's own spread is a reading where something
-# real has changed.
+# reader stops believing: those six sum to 134s at their minima and 141s at
+# their maxima, against 138-139s measured for the six run together. Parts
+# should exceed the whole slightly — six interpreter starts and six collections
+# instead of one — and this sitting cannot show that: the ranges OVERLAP,
+# because the difference being looked for (a few seconds) is smaller than the
+# hooks module's own run-to-run swing. Read it as "they agree", which is all
+# this comparison can resolve, and not as a measurement of collection overhead.
+#
+# EVERY line above was measured together, most recently 2026-08-16, on an idle
+# machine, and re-measured END TO END rather than patched where a count moved:
+# 15 tests were added to the preflight and secure_fs modules that sitting, and
+# patching two rows over stale neighbours is what left the derived rows wrong
+# the last time. This sitting reads SLOWER throughout than the one earlier the
+# same day (`pytest tests/` 194-199s against 174-179s, the cold pass 138-139s
+# against 120-122s) while the 15 added tests account for under two seconds of
+# it. Nearly all of the shift is the hooks module's own row moving, which is
+# well inside the between-sitting spread recorded above — do NOT read a cause
+# into it, and do read the ratios rather than the seconds.
+#
+# THE COUNTS ARE NEWER THAN THE SECONDS, deliberately, and this is the policy
+# stated below rather than a lapse. A later round on the same branch added 13
+# tests to the preflight module — the absent-locked-package comparison and the
+# marker evaluator it needs — so its row moved and, with it, the two rows
+# derived from it (the skill edit and the cold pass) and the `pytest tests/`
+# line. The seconds are still that sitting's set: 13 tests that fabricate
+# distributions and write a two-line lock into tmp_path are a small fraction of
+# that row's own run-to-run spread, and re-reading ONE row against neighbours
+# measured in another sitting is the failure this block has shipped twice.
+#
+# Counts are derivable in a second, so a stale one has no excuse and they are
+# refreshed with every change; seconds cost half an hour of a machine that has
+# to be otherwise idle, so they are re-read as a SET when the branch settles
+# rather than after each round. Re-read as a set is the point: a row measured in
+# a different sitting than the rows it is compared against is how this block
+# twice shipped a decomposition that did not sum. A row added later is
+# re-measured with the rest rather than appended to an older run. The previous revision
+# was not, and shipped counts that predated the branch's own additions: the
+# hooks module read 105 while that branch had added a test to it, and the
+# derived rows were arithmetic over stale parts. Counts are derivable in one
+# second and there is no excuse for a stale one; seconds are not, which is why
+# they carry run counts and why the note about ratios above still governs.
+#
+# The hooks module dominates both the parts and the total — it alone swings
+# several seconds between runs, more than every other module added together — so
+# parts and whole can only ever agree to within ITS noise. A future reading where
+# they disagree by more than that is a reading where something real changed.
 #
 # SPREAD is what justifies filtering at all: three orders of magnitude from the
 # fast path to the cold pass, both in the first table. The previous behaviour
@@ -572,23 +850,36 @@ apply_red_checks
 # cold-pass line rather than the fast-path one.
 #
 # WHERE THE COST IS is one module, and the bound is arithmetic rather than
-# approximate: portability, capabilities and agents together are at most 11.4s
-# even taking each at its slowest, so of a cold pass that never measured below
-# 83s, at least 86% is tests/test_claude_hooks.py. A hook can only be tested by
-# running it — that module spawns 205 bash processes across its 105 tests
-# (counted with a `bash` shim on PATH) and holds deliberate sleeps — five tests
-# at about 4.5s each. Selecting a subset is therefore the whole win: a skill edit
-# skips that module and costs about a seventh of a cold pass, an
-# agent-definition edit about a four-hundredth. When this gets tight the lever
+# approximate: portability, capabilities, agents, secure_fs and preflight
+# together are at most 18s even taking each at its slowest, so of a cold
+# pass that never measured below 138s, at least 87% is
+# tests/test_claude_hooks.py. A hook can only be tested by running it — that
+# module spawns bash processes across its 122 tests, more than one per case
+# (205 over 105 tests when last counted with a `bash` shim on PATH; the
+# RATIO is what carries forward, not the absolute) and holds deliberate
+# sleeps — five tests at about 4.5s each. Selecting a subset is therefore the
+# whole win: a skill edit skips that module and costs roughly a ninth of a
+# cold pass (15.0-16.1s against 138-139s), an
+# agent-definition edit roughly a five-hundredth. When this gets tight the lever
 # is that module's own runtime, not this list and not the timeout.
 #
-# HEADROOM is the cold pass against the 180s registered for this hook in
-# .claude/settings.json: 1.6x at the worst observed 109s, 2.2x at the best 83s.
-# Plan against the worst — the run that overruns is by definition the slow one,
-# and overrunning reports NOTHING, because Claude Code cancels the hook and the
-# agent sees nothing at all, the same silent mode the "hook that never fires"
-# note at the top of this file describes. 1.6x is not comfortable. Work added
-# here needs that timeout raised with it.
+# HEADROOM is the cold pass against the timeout registered for this hook in
+# .claude/settings.json. That timeout is 300s and the worst observed cold pass
+# is 139s, so the margin is 2.2x. Plan against the WORST — the run that overruns
+# is by definition the slow one. It has narrowed from 2.5x on the sitting
+# before, and the floor `test_the_skill_hook_has_headroom_over_its_measured_
+# runtime` derives from the selected modules' collected count is nearer the
+# registered timeout than the measurement is. The next block of work here needs
+# the timeout raised WITH it rather than after that test says so.
+#
+# It bit once already. At the previous 180s the margin had fallen to 1.7x and
+# `test_the_skill_hook_has_headroom_over_its_measured_runtime` went red, because
+# the suite's own size implied a 182s floor. Overrunning reports NOTHING: Claude
+# Code cancels the hook and the agent sees nothing at all — the same silent mode
+# the "hook that never fires" note at the top of this file describes. So the
+# cold pass and the registered timeout are re-read TOGETHER whenever either
+# moves, and work added here needs the timeout raised with it. The timeout is a
+# budget chosen ABOVE this block, never a copy of it.
 # ---------------------------------------------------------------------------
 #
 # Running the union of every changed path's modules, rather than only the
@@ -599,6 +890,19 @@ apply_red_checks
 # tests/test_tie_out.py each assert against tax-parse/SKILL.md prose, and both
 # are far too slow to run here. Editing that one skill still has CI as its only
 # signal.
+#
+# KNOWN GAP, the same trade from the other direction: test_claude_hooks.py READS
+# test_preflight.py and test_secure_fs.py — its watched-set coverage test opens
+# all six module files and recovers every `REPO / "literal"` path they name — so
+# adding such a literal to either turns the hooks module red while the arms
+# above select only that module's own tests. By the import-edge argument used
+# for rollover.py, those two arms should therefore also carry RUN_HOOKS. They
+# deliberately do not: the hooks module is 86% of a cold pass (MEASURED COSTS),
+# and both files are edited constantly, so that edge would put the most
+# expensive module on the most frequent edit — the fast path this hook exists to
+# protect, spent on a signal CI produces two minutes later anyway. A gate that
+# slow on routine work gets switched off, and a switched-off gate catches
+# nothing at all. The lever, when this matters, is that module's runtime.
 #
 # The two deselected assertions are the registry pair, and they are excluded
 # because they necessarily fail while a NEW skill is being written — the
@@ -625,6 +929,10 @@ run_focused_modules() {
         && modules[${#modules[@]}]=tests/test_claude_agents.py
     [ "$RUN_HOOKS" -eq 1 ] \
         && modules[${#modules[@]}]=tests/test_claude_hooks.py
+    [ "$RUN_PREFLIGHT" -eq 1 ] \
+        && modules[${#modules[@]}]=tests/test_preflight.py
+    [ "$RUN_SECUREFS" -eq 1 ] \
+        && modules[${#modules[@]}]=tests/test_secure_fs.py
     [ "${#modules[@]}" -gt 0 ] || return 1
 
     .venv/bin/python -m pytest "${modules[@]}" \

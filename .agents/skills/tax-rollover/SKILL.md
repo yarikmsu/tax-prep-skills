@@ -21,6 +21,23 @@ Example: after `/tax-setup 2025` for TY2025, run `/tax-rollover 2024` to pull fr
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 1. Input validation
 
 **SECURITY:** Validate `{prior_year}` is a 4-digit integer (2000–2099). Reject non-numeric.
@@ -30,7 +47,7 @@ Example: after `/tax-setup 2025` for TY2025, run `/tax-rollover 2024` to pull fr
 Run via Bash:
 
 ```bash
-python3 -m agents.lib.rollover diff \
+sh agents/lib/run.sh -m agents.lib.rollover diff \
   --from archive/{prior_year} \
   --to . \
   --year {current_year} \
@@ -58,7 +75,7 @@ If every change in a category has `action_suggested == "skip"`, do not ask — j
 Run:
 
 ```bash
-python3 -m agents.lib.rollover apply \
+sh agents/lib/run.sh -m agents.lib.rollover apply \
   --from archive/{prior_year} \
   --to . \
   --year {current_year} \
@@ -89,7 +106,7 @@ the default mode — owner-only is not inherited from the file it overwrote.
 ACL readable by every other local account.
 
 ```bash
-python3 -m agents.lib.secure_fs answers.md || exit 1
+sh agents/lib/run.sh -m agents.lib.secure_fs answers.md || exit 1
 ```
 
 ### 5.5. Surface the prior-year review checklist

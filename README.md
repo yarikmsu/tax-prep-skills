@@ -1,6 +1,20 @@
 # Tax Prep Skills for AI Coding Agents
 
-Reusable, taxpayer-agnostic tax preparation toolkit. Provides `tax-*` skills that guide an AI coding agent through the full US federal + state return pipeline — from document parsing through IRS-perspective review.
+**A tax return is a good test of whether an AI agent can be trusted with work that must not be wrong.** Every figure is checkable, the rules change annually, being confidently wrong costs real money and IRS attention, and the input is a folder of documents nobody wants leaving their laptop.
+
+This is a reusable, taxpayer-agnostic toolkit of `tax-*` skills that walk an agent through the full US federal + state pipeline — parsing source documents, computing every form line, producing a filing package, and reviewing the result from both an enrolled agent's and an IRS officer's perspective. It runs entirely on your machine.
+
+The tax math is the easy half. The interesting half is the machinery that stops a *plausible* answer from passing as a correct one:
+
+- **No tax law is hardcoded.** Every rate, bracket and threshold is fetched from IRS.gov at runtime and cached per year. If your agent's web access is cached rather than live, the skills stop and ask you — they never fall back to last year's figure. A stale bracket produces a return that is wrong and looks perfect, and no test, gate or review step downstream can detect it.
+- **Every document must reach the return.** `tax-parse` records each source file it read; `tax-compute` hard-fails if a recorded document's amounts never appear in the result. That is the dropped-1099 CP2000 scenario, and it cannot pass silently.
+- **The engine refuses to guess.** Situations it cannot compute — rental Schedule E, part-year residency, the premium tax credit, kiddie tax — block with the form named instead of producing a number, and stay blocked until you acknowledge the limitation explicitly.
+- **Bias direction decides severity.** When data is missing or ambiguous, a fallback that *overstates* the number you act on is a hard error; one that understates it degrades with a loud banner. Never a silent guess in the expensive direction.
+- **A skill without its engine refuses to run.** The gates above are scripts in `agents/lib/`, which does not travel when a skill is copied elsewhere. Copied alone, a skill still reads as a complete procedure while every gate silently does nothing — so each one now opens with a preflight, and failing to *run* that check is itself the block.
+
+Those five rules are the actual subject of this repository. The [test suite](docs/contributing/test-invariants.md) exists mostly to prove they still hold.
+
+**Start here:** [QUICKSTART](docs/QUICKSTART.md) goes from clone to a real computed number in about fifteen minutes, on bundled fixtures — no personal data, no network. Then [SECURITY.md](SECURITY.md) for what does and does not leave your machine, and [CONTRIBUTING.md](CONTRIBUTING.md) to add a state.
 
 Runs on **OpenAI Codex, Cursor, Kimi Code, GitHub Copilot and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)**. The first four discover the skills in `.agents/skills/` automatically with no install step; Claude Code works out of the box too, and `agents/install.sh` adds a global install. Each agent has sharp edges worth knowing before your first run — cached web search silently yielding last year's tax brackets, cloud agent modes that retain your documents — all documented in [per-agent compatibility notes](docs/contributing/agents-compat.md).
 
@@ -28,9 +42,15 @@ git clone https://github.com/yarikmsu/tax-prep-skills.git
 cd tax-prep-skills
 
 # 2. Set up Python environment
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# `run.sh` owns the layout — it activates the workspace venv, `bin/` on POSIX or
+# `Scripts/` on Windows, and execs the interpreter that venv installed. One form
+# in one place: this step was written out four times in three spellings before,
+# in the change that introduced the launcher to own exactly this. Chained, so a
+# failed venv step stops here rather than installing the pinned tree into the
+# HOST interpreter; not `|| exit 1`, which would close an interactive shell this
+# was pasted into.
+python3 -m venv .venv &&
+  sh agents/lib/run.sh -m pip install -r requirements.txt
 
 # 3. Install the PII git hooks. Every agent needs these: they run host-side on
 #    `git commit`, so they protect you whichever agent you use.
@@ -239,17 +259,26 @@ CI runs the same script against the pull request, inspecting **each commit indiv
 ```bash
 git clone https://github.com/yarikmsu/tax-prep-skills.git
 cd tax-prep-skills
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install pytest
+# `run.sh` owns the layout — it activates the workspace venv, `bin/` on POSIX or
+# `Scripts/` on Windows, and execs the interpreter that venv installed. One form
+# in one place: this step was written out four times in three spellings before,
+# in the change that introduced the launcher to own exactly this. Chained, so a
+# failed venv step stops here rather than installing the pinned tree into the
+# HOST interpreter; not `|| exit 1`, which would close an interactive shell this
+# was pasted into.
+python3 -m venv .venv &&
+  sh agents/lib/run.sh -m pip install -r requirements.txt &&
+  sh agents/lib/run.sh -m pip install pytest
 bash agents/install.sh
 ```
 
 ### Running Tests
 
 ```bash
-source .venv/bin/activate
-python3 -m pytest tests/ -v
+# Chained: several agents open a fresh shell per command, so an activation on
+# its own line does not reach the next one — pytest would run on the host
+# interpreter, where the suite's dependencies are not installed.
+source .venv/bin/activate && python3 -m pytest tests/ -v
 ```
 
 The suite (2,000+ tests) covers the tax computation functions with hand-computed expected values from IRS worksheets, plus the archive/rollover, projection, scenario, harvesting, calendar, retirement, PTET, and crypto-importer modules. [What each block of the suite guarantees](docs/contributing/test-invariants.md) carries the exact current count.
@@ -268,6 +297,7 @@ agents/
 ├── lib/              # Shared Python utilities
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction
 │   ├── tax_law_fetcher.py    # Tax law cache management
+│   ├── preflight.py          # Engine-presence gate (run first by every skill)
 │   └── tax_computations.py   # Parameterized tax math
 └── install.sh        # Git hooks, gitignore, optional global skill install
 AGENTS.md             # Project truth for every agent (security, architecture)
@@ -300,6 +330,7 @@ requirements.txt      # Pinned runtime dependencies
 - **No hardcoded tax law** — skills fetch current rates/brackets from IRS.gov at runtime, cached in `tax_law_<year>.json`
 - **Modular** — each skill works independently; inapplicable sections are skipped
 - **Parallel** — document parsing dispatches subagents grouped by institution/language
+- **A skill without its engine refuses to run** — the hard gates, and every planning skill's computation, are scripts in `agents/lib/`, a sibling of `.agents/skills/` that does not travel when a skill is copied. All 20 taxpayer-facing skills open with `sh agents/lib/run.sh agents/lib/preflight.py`; a failure to run it *is* the block, since the script cannot report its own absence. It checks every engine module and refuses to vouch for an interpreter the engine will not run on
 
 ### Git Workflow
 
@@ -314,7 +345,7 @@ requirements.txt      # Pinned runtime dependencies
 All functions in `agents/lib/tax_computations.py` take rates/brackets as parameters — never hardcode values. Run the self-test after changes:
 
 ```bash
-python3 agents/lib/tax_computations.py
+sh agents/lib/run.sh agents/lib/tax_computations.py
 ```
 
 ## License

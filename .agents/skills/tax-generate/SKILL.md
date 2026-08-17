@@ -21,6 +21,23 @@ Generate a formatted PDF summary of the computed tax return.
 
 ## Steps
 
+### Engine preflight (HARD GATE — runs before every other step)
+
+Run: `sh agents/lib/run.sh agents/lib/preflight.py`
+
+- **Exit 0** — the engine is present and usable; continue. If the verdict says
+  `OK, with N warning(s)`, show the user those lines first: the engine is fine,
+  but something a later step needs is not — a missing package, or a workspace
+  with no virtualenv — and it surfaces at first use instead of here.
+- **Anything else — including the command failing because the file does not
+  exist — STOP.** Do not parse, compute, or emit anything. Show the user the
+  command's output and stop there.
+
+The gates and computation this skill names are scripts under `agents/lib/`, a
+sibling of `.agents/skills/` that does not travel with a copied skill — which
+then still reads as a complete procedure while every script it names is absent.
+So a failure to RUN this check IS the blocking condition, never a step to skip.
+
 ### 1. Verify Prerequisites
 
 Check that `result.json` exists and has non-zero values in key fields:
@@ -152,8 +169,9 @@ Before generating the PDF, verify result.json internal consistency:
    - `meta.limitations` must be a non-empty list (it always carries at least
      the state-scope note after `/tax-compute` Step 12). If it is empty or
      missing: **STOP — do not generate.** Re-run `/tax-compute` Step 12 (or the
-     capability gate directly: `python3 agents/lib/capabilities.py --workspace
-     . --json`) to populate it first. This check is deliberately EXCLUDED from
+     capability gate directly:
+     `sh agents/lib/run.sh agents/lib/capabilities.py --workspace . --json`)
+     to populate it first. This check is deliberately EXCLUDED from
      the "proceed anyway?" prompt below: a PDF without the page-1 scope box
      presents itself as complete coverage, which is the exact failure C2 exists
      to prevent.
@@ -222,14 +240,14 @@ After creating or modifying `generate_tax_pdf.py`, immediately restrict it to
 the current OS identity. The generated source can contain taxpayer names, so it
 is a runtime PII artifact even though its extension is `.py`:
 ```bash
-python3 -m agents.lib.secure_fs generate_tax_pdf.py
+sh agents/lib/run.sh -m agents.lib.secure_fs generate_tax_pdf.py
 ```
 
 ### 3. Generate PDF
 
 Run:
 ```bash
-[ -d .venv ] && source .venv/bin/activate; python3 generate_tax_pdf.py
+sh agents/lib/run.sh generate_tax_pdf.py
 ```
 
 ### 4. Verify Output
@@ -237,7 +255,7 @@ Run:
 Check that the output PDF was created and set restrictive permissions:
 ```bash
 ls -la Tax_Return_*_Summary.pdf
-python3 -m agents.lib.secure_fs Tax_Return_*_Summary.pdf
+sh agents/lib/run.sh -m agents.lib.secure_fs Tax_Return_*_Summary.pdf
 ```
 
 Report:
@@ -256,7 +274,7 @@ package has four parts:
 1. **Assembly order + attachment checklist** — computed, never
    hand-enumerated:
    ```bash
-   python3 -m agents.lib.filing_package --result result.json --workspace .
+   sh agents/lib/run.sh -m agents.lib.filing_package --result result.json --workspace .
    ```
    Render its table (Form 1040 first, then every present form by its
    official Attachment Sequence No., state forms last) and its checklist
@@ -322,7 +340,7 @@ artifact.
 Immediately after writing the filing package, restrict it to the current OS
 identity:
 ```bash
-python3 -m agents.lib.secure_fs Tax_Return_{year}_Filing_Package.pdf
+sh agents/lib/run.sh -m agents.lib.secure_fs Tax_Return_{year}_Filing_Package.pdf
 ```
 
 ### 5. Summary

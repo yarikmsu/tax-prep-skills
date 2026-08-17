@@ -23,3 +23,11 @@ def skill_text(name: str) -> str:
     parts = [(skill_dir / "SKILL.md").read_text()]
     parts += [p.read_text() for p in sorted((skill_dir / "references").glob("*.md"))]
     return "\n".join(parts)
+
+
+# The two skills that work ON the toolkit rather than on a return. Defined here,
+# beside `skill_text()`, because every module that needs it already imports from
+# this one — it was duplicated verbatim in test_portability and test_preflight,
+# and a third contributor skill registered in one copy would have left the other
+# demanding an engine-preflight gate in tooling that is exempt by design.
+CONTRIBUTOR_SKILLS = {"codex-loop", "state-module"}
