@@ -134,6 +134,53 @@ def redact(text) -> str:
     return out
 
 
+# The window a bare integer may be PRINTED in. Not a validity check — every
+# caller has its own accepted range and applies it after this — but the bound
+# on what a refusal is allowed to disclose. Deliberately wider than any
+# caller's range (tax_calendar accepts 2000-2099): narrower than a caller and a
+# legitimate mismatch loses the one fact the message exists to convey, wider
+# and the window stops meaning "a year".
+_MIN_PRINTABLE_YEAR = 1900
+_MAX_PRINTABLE_YEAR = 2199
+
+
+def year_or_shape(value) -> str:
+    """A year field rendered for an error message: the YEAR when the value is
+    one, otherwise its SHAPE and nothing whatever of its content.
+
+    `taxpayer_profile.json` and `projection_inputs.json` are hand-edited, so a
+    misplaced value — a name, an address, an entire nested object — reaches a
+    year comparison exactly as readily as a wrong year does, and every one of
+    those refusals is printed to the terminal. `redact` above is not the
+    backstop for it: by design it masks SSN and credential SHAPES, and a
+    taxpayer's name has neither (AGENTS.md #1's never-display-a-sensitive-value
+    rule). So the value prints only once it is known to be a year, and anything
+    else is described the way `projection._canonical_status` describes an
+    unrecognized filing status: domain and length, never content.
+
+    INTEGER-ness is not year-ness, and the first version of this tested the
+    wrong one of the two. `isinstance(value, int)` was taken as proof the value
+    "cannot carry anything sensitive" — but the field is hand-edited, and an
+    account or policy number lands in it as an int exactly as a name lands in
+    it as a str. `redact` covers only the nine-digit tail of that (an SSN
+    typed into the field is masked by `_NINE_DIGITS`); an eight-digit account
+    number is shorter than every pattern it knows and printed in full. So the
+    window above, not the type, is what earns the print.
+
+    bool before int, because `isinstance(True, int)` is True and "TYTrue" is
+    the one shape that would read like a year while not being one.
+    """
+    if isinstance(value, bool):
+        return "a bool"
+    if isinstance(value, int):
+        if _MIN_PRINTABLE_YEAR <= value <= _MAX_PRINTABLE_YEAR:
+            return f"TY{value}"
+        return f"an int ({len(str(abs(value)))} digits)"
+    if isinstance(value, str):
+        return f"a string ({len(value)} chars)"
+    return f"a {type(value).__name__}"
+
+
 def _without_the_raw_path(e: OSError) -> OSError:
     """Rebuild an OSError with its operand path dropped and its text redacted.
 
@@ -676,5 +723,17 @@ if __name__ == "__main__":
             link = os.path.join(td, "link")
             os.symlink(f, link)
             assert is_reparse_point(link), "symlink not detected as a reparse point"
+
+    # year_or_shape: a real year prints, everything else is shape-only. The
+    # negative half is the load-bearing one — a regression that starts echoing
+    # the value looks identical from the positive case alone.
+    assert year_or_shape(2025) == "TY2025"
+    assert year_or_shape(True) == "a bool"
+    assert year_or_shape(87654321) == "an int (8 digits)", \
+        "an out-of-window integer is printed in full"
+    for hidden in ("Jane Q Taxpayer", {"name": "Jane"}, ["2025"], 2025.0, None):
+        shape = year_or_shape(hidden)
+        assert "Jane" not in shape and "2025" not in shape, \
+            f"year_or_shape leaked content of {type(hidden).__name__}: {shape}"
 
     print("secure_fs self-test OK")

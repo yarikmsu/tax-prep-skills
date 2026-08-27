@@ -49,7 +49,8 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
     _validate_year_arg,
 )
-from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.capabilities import _USPS_STATES  # noqa: E402
+from agents.lib.secure_fs import redact, year_or_shape  # noqa: E402
 
 
 class RetirementError(Exception):
@@ -728,17 +729,23 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
             f"tax_law must be a JSON object, got {type(tax_law).__name__}"
         )
 
+    # Both year comparisons below describe the SHAPE of a value that is not a
+    # plain integer year rather than printing it. Both files are hand-edited,
+    # and a misplaced name or nested object reaches these messages as readily
+    # as a wrong year does; `redact` masks SSN and credential shapes only
+    # (AGENTS.md #1). A genuine wrong year still prints, because which year the
+    # file is for is the whole content of the message.
     profile_year = profile.get("tax_year")
     if tax_year is not None and profile_year not in (None, tax_year):
         raise RetirementError(
-            f"taxpayer_profile.tax_year is {profile_year}, expected "
-            f"tax_year={tax_year}"
+            f"taxpayer_profile.tax_year is {year_or_shape(profile_year)}, "
+            f"expected TY{tax_year}"
         )
     inputs_year = projection_inputs.get("tax_year")
     if tax_year is not None and inputs_year not in (None, tax_year):
         raise RetirementError(
-            f"projection_inputs.tax_year is {inputs_year}, expected "
-            f"tax_year={tax_year}. Combining stale YTD figures with the "
+            f"projection_inputs.tax_year is {year_or_shape(inputs_year)}, "
+            f"expected TY{tax_year}. Combining stale YTD figures with the "
             f"requested year's limits would produce a cross-year dashboard."
         )
     # Same generalization rule applied to the third input source.
@@ -980,17 +987,30 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
         )
     raw_state = state_code
     state_code = state_code.strip().upper()
-    # Require the 2-letter USPS postal code (or "" for no state). A full
+    # Require a real 2-letter USPS postal code (or "" for no state). A full
     # name like "California" uppercases to "CALIFORNIA", misses
     # _HSA_NON_CONFORMING_STATES, and would silently report CA/NJ HSA
     # contributions as state-deductible — overstating state savings.
     # Reject non-two-letter values rather than guess (Codex PR #20).
-    if state_code and not (len(state_code) == 2 and state_code.isalpha()):
+    #
+    # MEMBERSHIP, not shape, and the paragraph above is why: the harm named
+    # there is falling outside a small set, and the SHAPE check let every
+    # two-letter miss straight through it. "CN" for CA and "NU" for NJ are
+    # the ordinary typos, both accepted, both flipping the HSA row from
+    # `hsa_non_conforming` to `hsa_conforming` — a state deduction invented
+    # at the taxpayer's own marginal rate, silently, which is the
+    # OVER-statement direction AGENTS.md ranks as the hard error. The
+    # conformity sets below (PA/NJ/MA for the IRA and 401(k) rates) miss the
+    # same way. `_USPS_STATES` is imported rather than re-listed; it is the
+    # set capabilities and tax_calendar already validate against.
+    if state_code and (not (len(state_code) == 2 and state_code.isalpha())
+                       or state_code not in _USPS_STATES):
         raise RetirementError(
             f"profile.address.state must be a 2-letter US postal code "
             f"(e.g. 'CA', 'NJ', 'TX') or null, got {raw_state!r}. A full "
-            f"state name would silently miss the CA/NJ HSA non-conformity "
-            f"check and overstate state savings."
+            f"state name, or a two-letter value that is not a real code, "
+            f"would silently miss the CA/NJ HSA non-conformity check and "
+            f"overstate state savings."
         )
     hsa_kind: AccountKind = (
         "hsa_non_conforming" if state_code in _HSA_NON_CONFORMING_STATES

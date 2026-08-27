@@ -2039,6 +2039,41 @@ def test_build_dashboard_rejects_stale_projection_inputs_year():
         )
 
 
+def test_the_year_mismatch_errors_never_echo_a_malformed_year():
+    """Same rule as `projection`'s year guard, on the same hand-edited files.
+
+    Both comparisons here refused a non-year already — `not in (None,
+    tax_year)` catches a dict as surely as a wrong int — but the refusal was
+    built by interpolating the raw value, and /tax-retirement prints it. A
+    taxpayer's name in a mistyped `tax_year` would have gone straight to the
+    terminal: `redact` masks SSN and credential shapes only (AGENTS.md #1).
+    A genuine wrong YEAR still prints, because which year the file is for is
+    the entire content of the message.
+    """
+    secret = "Jane Q Taxpayer"
+    law = _tax_law_2026()
+    for key, holder in (("profile", "taxpayer_profile"),
+                        ("inputs", "projection_inputs")):
+        for bad in (secret, {"name": secret}, True):
+            profile, inputs = _profile(), _inputs()
+            (profile if key == "profile" else inputs)["tax_year"] = bad
+            with pytest.raises(rd.RetirementError) as e:
+                rd.build_dashboard(
+                    profile, inputs, law, marginal_fed_rate=0.24,
+                    marginal_state_rate=0.0, modified_agi=80000, tax_year=2026)
+            assert "Jane" not in str(e.value), (
+                f"{holder}.tax_year was echoed into the refusal: {e.value}")
+            assert holder in str(e.value) and "TY2026" in str(e.value)
+
+    # A real wrong year is still named — that is the message.
+    profile, inputs = _profile(), _inputs()
+    inputs["tax_year"] = 2025
+    with pytest.raises(rd.RetirementError, match="TY2025"):
+        rd.build_dashboard(profile, inputs, law, marginal_fed_rate=0.24,
+                           marginal_state_rate=0.0, modified_agi=80000,
+                           tax_year=2026)
+
+
 def test_build_dashboard_accepts_missing_projection_inputs_year():
     """A projection_inputs file without an explicit tax_year is fine
     (the field is optional in the template). Only mismatched values
@@ -4179,3 +4214,56 @@ def test_ira_pool_mfj_still_applies_spousal_exception_regression_guard():
     )
     trad = next(a for a in report.accounts if a.name == "Traditional IRA")
     assert trad.pool_remaining == 7000.0
+
+
+def test_a_two_letter_typo_for_a_non_conforming_state_is_refused():
+    """The shape check guarded the wrong thing, and its own comment said so.
+
+    `address.state` is read for exactly one purpose here: membership of the
+    small non-conformity sets — CA/NJ for the HSA, PA/NJ/MA for the IRA and
+    401(k) rates. The guard rejected "California" and accepted every two-letter
+    value, which is the miss that matters: "CN" for CA and "NU" for NJ are the
+    ordinary typos, and both fell outside the set the same way a full name
+    does. The result is not a refusal but a WRONG NUMBER — the HSA row flips
+    from `hsa_non_conforming` to `hsa_conforming` and a state deduction is
+    invented at the taxpayer's own marginal rate, silently. Over-stating the
+    figure the user acts on is the direction AGENTS.md ranks as the hard error.
+
+    Replayed rather than asserted about: the conforming pair below is what the
+    typo used to produce, so a regression that widens the domain again fails
+    here rather than at the raise.
+    """
+    law = _tax_law_2026()
+
+    def hsa_kind(state):
+        profile = _profile()
+        profile["address"]["state"] = state
+        inputs = _inputs(hsa_coverage="self_only", hsa_employee=1000)
+        report = rd.build_dashboard(
+            profile, inputs, law, marginal_fed_rate=0.32,
+            marginal_state_rate=0.093, modified_agi=120000,
+        )
+        return next(a for a in report.accounts if a.name == "HSA").kind
+
+    assert hsa_kind("CA") == "hsa_non_conforming"
+    assert hsa_kind("NJ") == "hsa_non_conforming"
+    assert hsa_kind("TX") == "hsa_conforming", (
+        "a real conforming state must still be accepted — the domain check "
+        "is about codes that name no state, not about the two sets"
+    )
+    for typo in ("CN", "NU", "ZZ", "BC"):
+        with pytest.raises(rd.RetirementError, match="address.state"):
+            hsa_kind(typo)
+
+
+def test_the_state_domain_is_the_shared_usps_set_not_a_local_copy():
+    """A fourth copy of the 56 codes is a fourth thing to drift.
+
+    capabilities owns the set, tax_calendar and irs_dates already read it from
+    there, and this module is the third consumer. Pinned by identity so a
+    later hand-written frozenset here fails rather than diverging quietly —
+    DC and the five inhabited territories are the entries a hand copy drops.
+    """
+    from agents.lib.capabilities import _USPS_STATES as CANONICAL
+    assert rd._USPS_STATES is CANONICAL
+    assert {"DC", "PR", "GU", "VI", "AS", "MP"} <= rd._USPS_STATES

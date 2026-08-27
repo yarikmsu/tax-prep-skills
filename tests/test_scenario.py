@@ -36,6 +36,29 @@ def _load_fixture_workspace(tmp_path) -> Path:
 # compute_scenario (the keystone)
 # --------------------------------------------------------------------------
 
+@pytest.mark.parametrize("status", ["Married Filing Jointly",
+                                    "Married Filing Separately",
+                                    "Head of Household", None, ""])
+def test_rate_kwargs_refuses_a_non_canonical_status_for_all_three_skills(status):
+    """`_rate_kwargs` is the chokepoint /tax-scenario, /tax-roth-convert and
+    /tax-harvest all pass their status through, so pinning it here pins the
+    three skills at once.
+
+    All three read `filing_status` off result.json meta (falling back to the
+    profile) and hand it straight here with no check of their own. Before the
+    guard moved INTO `_full_status_key`/`_binary_status_key`, a spelled-out
+    status resolved to the single column and the skills priced a conversion or
+    a harvest on single brackets and the single standard deduction — the
+    understating direction — while /tax-project and /tax-withholding, whose
+    call sites had been given the check individually, refused the same file.
+
+    It must refuse BEFORE reading tax_law, or a workspace missing the status
+    reports a missing-brackets problem instead of the missing status.
+    """
+    with pytest.raises(sc.ProjectionError):
+        sc._rate_kwargs({}, {}, status)
+
+
 def test_compute_scenario_zero_delta_is_baseline():
     base = {"wages": 150000}
     out = compute_scenario(base, {}, **RATE_KW)
@@ -773,3 +796,37 @@ def test_cli_malformed_json_yields_error_not_traceback(tmp_path):
     assert res.returncode == 1
     assert res.stderr.startswith("ERROR:")
     assert "Traceback" not in res.stderr
+
+
+def test_a_bad_base_scenario_status_names_the_base_file_not_result_json():
+    """The strict helper's remedy is right for every caller but this one.
+
+    `_canonical_status` names result.json's `meta.filing_status` and
+    taxpayer_profile.json, which is where four of the five callers read the
+    status from. `resolve_base` reads it out of the stored
+    `scenarios/<name>.json` passed as `--base`, so the shared message sent the
+    reader to two files that were both fine. Before the guard moved into the
+    helper this path silently returned "single" and compared on it, so the
+    refusal is the improvement — misdirecting the remedy is not.
+    """
+    current = {"meta": {"filing_status": "MFJ"}}
+    for bad in ({}, {"filing_status": None}, {"filing_status": ""},
+                {"filing_status": "Married Filing Jointly"}):
+        base = {"schema": "tax-scenario/v1", "tax_year": 2026, "inputs": {},
+                "anchor": {}, "name": "b", **bad}
+        with pytest.raises(sc.ScenarioError) as exc:
+            sc.resolve_base(current, base, 2026, "MFJ")
+        msg = str(exc.value)
+        assert "--base scenario" in msg
+        assert "not at fault" in msg, (
+            "the message must clear result.json / taxpayer_profile.json, "
+            "which is where a reader would otherwise start looking")
+        # Never the raw value: a hand-edited scenario can carry misplaced data.
+        assert "Married Filing Jointly" not in msg
+
+    # A genuine mismatch still reports as a mismatch, not as a bad file.
+    base = {"schema": "tax-scenario/v1", "tax_year": 2026, "inputs": {},
+            "anchor": {}, "name": "b", "filing_status": "MFS"}
+    with pytest.raises(sc.ScenarioError) as exc:
+        sc.resolve_base(current, base, 2026, "MFJ")
+    assert "Cannot stack across filing statuses" in str(exc.value)

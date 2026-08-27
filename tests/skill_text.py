@@ -31,3 +31,15 @@ def skill_text(name: str) -> str:
 # and a third contributor skill registered in one copy would have left the other
 # demanding an engine-preflight gate in tooling that is exempt by design.
 CONTRIBUTOR_SKILLS = {"codex-loop", "state-module"}
+
+# Skills that deliberately never touch `agents/lib/`, and are therefore outside
+# the engine-preflight gate. Declared here rather than left to the derived
+# roster's silence: a skill with no engine call falls out of that roster
+# automatically, which makes "exempt by design" and "lost its engine call in an
+# edit" the same observation. Naming it turns the second into a test failure.
+#
+# Membership is NOT a permission. `test_preflight.py` asserts of every member
+# that its text contains no engine call in ANY of the three forms, so declaring
+# a skill here cannot silence the gate on one that needs it — the declaration is
+# a claim, and the claim is what gets checked.
+ENGINE_FREE_SKILLS = {"tax-safe-harbor"}

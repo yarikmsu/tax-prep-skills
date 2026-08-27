@@ -49,6 +49,8 @@ from agents.lib.tax_computations import (
     compute_pfic_excess_distribution,
     compute_pfic_1291,
     compute_sales_tax_deduction,
+    prior_year_agi_threshold,
+    prior_year_prong,
     SE_TAX_THRESHOLD,
 )
 
@@ -1766,9 +1768,111 @@ class TestForm2210:
         assert not r["no_penalty"]
 
     def test_prior_year_zero_exception(self):
-        """§6654(e)(2): explicit $0 prior-year liability → no penalty."""
-        r = compute_form_2210(20000, 1000, "Single", 2025, prior_year_tax=0)
-        assert r["no_penalty"] and "6654(e)(2)" in r["no_penalty_reason"]
+        """A $0 prior-year base has TWO routes to a $0 requirement.
+
+        §6654(e)(2) needs the prior year to have covered 12 months and the
+        taxpayer to have been a US citizen/resident throughout it; it does not
+        need a return to have been filed, and it clears the year outright.
+        §6654(d)(1)(B)(ii) — the ORDINARY prong — needs a 12-month prior year
+        and a filed return, and asks nothing about citizenship: 100%/110% of
+        $0 is $0. They are independent, and a $0 figure evidences neither, so
+        unconfirmed on BOTH the prong is DROPPED rather than taken at $0 and
+        the 90%-of-current test stands alone.
+
+        One flag standing for both is what shipped, and it cost the second
+        route: a dual-status or first-year-resident filer with a full 12-month
+        $0 return could not affirm citizenship, so the engine billed them 90%
+        of the current year while tax-safe-harbor SKILL.md — which has listed
+        the two as separate preconditions since it shipped — cleared them.
+        The planning path (`projection._prior_tax_agi`) gates the same figure
+        the same way; the three must agree.
+        """
+        confirmed = compute_form_2210(
+            20000, 1000, "Single", 2025, prior_year_tax=0,
+            prior_year_zero_liability_confirmed=True)
+        assert confirmed["no_penalty"]
+        assert "6654(e)(2)" in confirmed["no_penalty_reason"]
+
+        # The ordinary prong, WITHOUT the citizenship confirmation.
+        ordinary = compute_form_2210(
+            20000, 1000, "Single", 2025, prior_year_tax=0,
+            prior_year_return_filed_12_months_confirmed=True)
+        assert ordinary["required_annual_payment"] == 0.0, (
+            "a confirmed filed 12-month $0 prior year was refused the "
+            "ordinary prong, which has no citizenship condition")
+        assert "6654(e)(2)" not in (ordinary["no_penalty_reason"] or ""), (
+            "the ordinary prong was reported as the citizenship exception — "
+            "two different findings, and only one of them was confirmed")
+        assert any("6654(d)(1)(B)" in n for n in ordinary["notes"])
+        # The factor cannot matter against $0, so no caveat may claim it does.
+        assert not any("110%" in n and "UNDERSTATED" in n
+                       for n in ordinary["notes"]), (
+            "a caveat that is false where it fires teaches the reader to "
+            "discount the ones that are true")
+
+        unconfirmed = compute_form_2210(20000, 1000, "Single", 2025,
+                                        prior_year_tax=0)
+        assert not unconfirmed["no_penalty"], (
+            "a $0 prior-year figure still clears the year unasked")
+        assert unconfirmed["required_annual_payment"] == 18000.0, (
+            "the dropped prong came back as a $0 prior-year prong, which "
+            "zeroes the requirement by another route")
+        assert any("6654(e)(2)" in n and "6654(d)(1)(B)" in n
+                   for n in unconfirmed["notes"]), (
+            "the run overstates while naming at most one of the two ways out")
+
+    def test_the_dropped_zero_prong_does_not_also_claim_the_figures_are_absent(self):
+        """One situation, one instruction.
+
+        The unconfirmed-$0 path sets `prior_year_tax = None`, which fell into
+        the branch for figures that were never supplied: the caller was told
+        the prior-year tax/AGI were "unavailable" (they had just passed them)
+        and that supplying them "can only LOWER" the requirement — where
+        CONFIRMING them clears the year outright. Both notes in one result,
+        each contradicting the other.
+        """
+        dropped = compute_form_2210(20000, 1000, "Single", 2025,
+                                    prior_year_tax=0)
+        absent = compute_form_2210(20000, 1000, "Single", 2025)
+
+        unavailable = [n for n in dropped["notes"]
+                       if "prior-year tax/AGI unavailable" in n]
+        assert not unavailable, (
+            "the dropped-$0 run also claims the prior-year figures were "
+            f"never supplied: {unavailable}")
+        assert any("can only\nLOWER" in n or "can only LOWER" in n
+                   for n in absent["notes"]), (
+            "the genuinely-absent case lost the note this test exempts the "
+            "dropped case from — it is the one that still needs it")
+
+        # The basis strings say which of the two happened, so a reader of
+        # `required_basis` alone is not left to guess.
+        assert dropped["required_basis"] != absent["required_basis"]
+        assert "prong dropped" in dropped["required_basis"]
+        assert "unavailable" in absent["required_basis"]
+        # Both still land on the same 90%-of-current requirement.
+        assert (dropped["required_annual_payment"]
+                == absent["required_annual_payment"] == 18000.0)
+
+    def test_the_missing_agi_note_quotes_the_threshold_the_prong_tests(self):
+        """The note's figure and the prong's figure are the same selection.
+
+        `prior_year_agi_threshold` exists because the threshold has a SECOND
+        reader — this note. Hand-selecting it beside the prong that selects it
+        internally is the two-copy drift the helper was extracted to remove,
+        and nothing related the two until this test.
+        """
+        for status, mfs in (("Single", False), ("MFS", True)):
+            r = compute_form_2210(20000, 1000, status, 2025,
+                                  prior_year_tax=10000, prior_year_agi=None)
+            note = next(n for n in r["notes"] if "prior_year_agi unavailable" in n)
+            expected = prior_year_agi_threshold(mfs)
+            assert f"${expected:,.0f} threshold" in note, (
+                f"{status}: the note quotes a threshold the prong does not "
+                f"test against (expected ${expected:,.0f}) — {note}")
+            # And the prong really did take the 100% factor it describes.
+            assert f"{prior_year_prong(10000.0, None, mfs)[0]:.0%}" in \
+                r["required_basis"]
 
     def test_withholding_meets_safe_harbor(self):
         """Prior-based harbor 100% × 10,000 = 10,000 ≤ withholding."""

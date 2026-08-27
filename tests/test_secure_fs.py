@@ -16,7 +16,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from agents.lib.secure_fs import is_reparse_point, redact, secure_fd, secure_path
+from agents.lib.secure_fs import (
+    is_reparse_point, redact, secure_fd, secure_path, year_or_shape,
+    _MIN_PRINTABLE_YEAR, _MAX_PRINTABLE_YEAR,
+)
 
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -139,6 +142,10 @@ SKILLS_THAT_WRITE_NOTHING_SENSITIVE = {
     # hand, so a skill-level call would restrict a path it never created.
     "tax-calendar": "tax_calendar.write_calendar secures the .ics it writes",
     "tax-archive": "archive.archive_year secures what it moves",
+    # Advisory, and the only skill with no workspace at all: it asks for two
+    # figures off a filed return, requests no identity data by instruction, and
+    # writes no file. There is nothing on disk for a securing call to restrict.
+    "tax-safe-harbor": "engine-free advisory; no workspace and no artifact",
 }
 
 # A line that mentions chmod is a VIOLATION unless it is prose explaining why
@@ -1802,3 +1809,69 @@ class TestTheLauncherNamesNoPathWhenItCannotResolveItsRoot:
             cwd=str(lib), capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert "ran" in result.stdout
+
+
+class TestYearOrShapeOnlyPrintsAYear:
+    """`year_or_shape` decides what a refusal about a hand-edited year field
+    may disclose. Its first version tested the wrong property.
+
+    "An integer cannot carry anything sensitive" was the reasoning, and it does
+    not hold: `tax_year` is hand-edited, and an account, policy or member
+    number lands in it as an int exactly as a misplaced name lands in it as a
+    str. `redact` is not the backstop — `_NINE_DIGITS` masks a nine-digit run
+    and nothing shorter, so eight digits printed in full — which is the same
+    reason this function exists for strings at all.
+    """
+
+    def test_a_real_year_still_prints(self):
+        """The counterweight. Suppressing everything would pass every leak
+        assertion below while making the message useless: WHICH year the file
+        is for is the whole content of a year-mismatch refusal."""
+        assert year_or_shape(2025) == "TY2025"
+        assert year_or_shape(_MIN_PRINTABLE_YEAR) == f"TY{_MIN_PRINTABLE_YEAR}"
+        assert year_or_shape(_MAX_PRINTABLE_YEAR) == f"TY{_MAX_PRINTABLE_YEAR}"
+
+    def test_an_integer_outside_the_window_is_shape_only(self):
+        # Built from strings, not written as literals: a nine-digit run in
+        # source is exactly what the PII gate blocks, and it blocked this.
+        ssn_shaped = int("1" * 9)
+        card_shaped = int("4" + "2" * 15)
+        for hidden in (87654321,            # an eight-digit account number
+                       ssn_shaped,          # nine digits: an SSN typed in
+                       card_shaped,
+                       _MIN_PRINTABLE_YEAR - 1,
+                       _MAX_PRINTABLE_YEAR + 1,
+                       -87654321, 0):
+            shape = year_or_shape(hidden)
+            assert str(abs(hidden)) not in shape, (
+                f"year_or_shape printed a non-year integer: {shape!r}")
+            assert shape.startswith("an int ("), shape
+
+    def test_the_digit_count_is_all_that_survives(self):
+        assert year_or_shape(87654321) == "an int (8 digits)"
+        assert year_or_shape(-5) == "an int (1 digits)"
+
+    def test_the_window_covers_every_callers_accepted_range(self):
+        """Direction matters, and only one direction is a leak.
+
+        NARROWER than a caller and a legitimate year prints as a shape: the
+        message degrades, and nothing escapes. WIDER and the window stops
+        meaning "a year" — so it is pinned against the widest range any caller
+        accepts rather than left to drift with it.
+        """
+        sys.path.insert(0, REPO_ROOT)
+        from agents.lib import tax_calendar as cal
+        assert _MIN_PRINTABLE_YEAR <= cal._MIN_YEAR, (
+            "tax_calendar accepts a year this refuses to print, so its own "
+            "mismatch message would name no year at all")
+        assert _MAX_PRINTABLE_YEAR >= cal._MAX_YEAR
+        assert cal._MIN_YEAR - _MIN_PRINTABLE_YEAR < 200, (
+            "the printable window has drifted far wider than any caller's "
+            "accepted range, which is the direction that discloses")
+
+    def test_a_bool_is_still_caught_before_int(self):
+        """`isinstance(True, int)` is True, and 1 is outside the window — so a
+        bool would now read as "an int (1 digits)" rather than leaking, but it
+        would also stop naming the one shape that reads like a year."""
+        assert year_or_shape(True) == "a bool"
+        assert year_or_shape(False) == "a bool"

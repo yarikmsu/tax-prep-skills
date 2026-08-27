@@ -172,6 +172,15 @@ Beyond the core pipeline, the toolkit ships lifecycle and planning skills:
 (quarterly reminder `.ics`), and the read-only planners `tax-project`,
 `tax-withholding`, `tax-scenario`, `tax-roth-convert`, `tax-harvest`,
 `tax-retirement`, and `tax-ptet`, plus `tax-parse-crypto` for exchange CSVs.
+
+`tax-safe-harbor` stands apart from all of them: it answers one question — will an
+underpayment penalty attach, and what closes it — from figures off last year's
+Form 1040, with no workspace, no tax-law cache and no engine. It can do that because
+the prior-year prong of §6654 is the one calculation here whose parameters are
+statutory and unindexed, so there is no current-year figure available to go stale. It
+computes only that prong, which can overstate what you owe and never understate it;
+paying above it is credited against the tax actually due, not money lost.
+
 See [`AGENTS.md`](AGENTS.md) for the architecture, and [the skill catalog](docs/contributing/skill-catalog.md) for each skill's design notes and scope limits.
 
 ### Useful Options
@@ -330,7 +339,7 @@ requirements.txt      # Pinned runtime dependencies
 - **No hardcoded tax law** — skills fetch current rates/brackets from IRS.gov at runtime, cached in `tax_law_<year>.json`
 - **Modular** — each skill works independently; inapplicable sections are skipped
 - **Parallel** — document parsing dispatches subagents grouped by institution/language
-- **A skill without its engine refuses to run** — the hard gates, and every planning skill's computation, are scripts in `agents/lib/`, a sibling of `.agents/skills/` that does not travel when a skill is copied. All 20 taxpayer-facing skills open with `sh agents/lib/run.sh agents/lib/preflight.py`; a failure to run it *is* the block, since the script cannot report its own absence. It checks every engine module and refuses to vouch for an interpreter the engine will not run on
+- **A skill without its engine refuses to run** — the hard gates, and every planning skill's computation, are scripts in `agents/lib/`, a sibling of `.agents/skills/` that does not travel when a skill is copied. All 20 taxpayer-facing skills that reach the engine open with `sh agents/lib/run.sh agents/lib/preflight.py`; the exception, `tax-safe-harbor`, calls no engine module at all and says so in a declaration a test checks rather than trusts; a failure to run it *is* the block, since the script cannot report its own absence. It checks every engine module and refuses to vouch for an interpreter the engine will not run on
 
 ### Git Workflow
 

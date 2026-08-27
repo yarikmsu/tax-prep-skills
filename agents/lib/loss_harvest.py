@@ -53,6 +53,7 @@ from agents.lib.projection import (  # noqa: E402
     ProjectionError,
     _binary_status_key,
     _cache_state_code_present_but_invalid,
+    _capital_loss_limit,
     _full_status_key,
     _money,
     _none_type_allowed,
@@ -75,8 +76,6 @@ from agents.lib.scenario import (  # noqa: E402
     save_scenario,
 )
 from agents.lib.tax_computations import (  # noqa: E402
-    CAPITAL_LOSS_LIMIT,
-    CAPITAL_LOSS_LIMIT_MFS,
     _coerce_numeric,
     compute_niit,
     compute_scenario,
@@ -1103,8 +1102,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     # Loss-cap accounting (signals to the user, separate from the keystone math
     # which applies the cap internally via capital_loss_limit):
     combined = new_st + new_lt
-    loss_cap = (CAPITAL_LOSS_LIMIT_MFS if (filing_status or "").upper() == "MFS"
-                else CAPITAL_LOSS_LIMIT)
+    loss_cap = _capital_loss_limit(filing_status, "harvest")
     if combined < 0:
         used_against_ordinary = min(float(loss_cap), -combined)
         carryforward = round(-combined - used_against_ordinary, 2)

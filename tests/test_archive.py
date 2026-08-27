@@ -118,6 +118,25 @@ def test_refuses_if_year_mismatch(workspace):
     assert (workspace / "result.json").exists()
 
 
+def test_year_mismatch_never_echoes_a_non_year(workspace):
+    """`meta.tax_year` is read off result.json with no type check at all.
+
+    The refusal is printed to the terminal, so the same rule the projection
+    and calendar year guards follow applies here: a genuine year IS the
+    message and prints, anything else is described by shape. Nothing else in
+    this module type-checks the field, which is what made it the third copy
+    of one leak rather than a variation on it.
+    """
+    (workspace / "result.json").write_text(
+        json.dumps({"meta": {"tax_year": 87654321}}))
+    with pytest.raises(ArchiveError) as e:
+        archive_year(2024, root=workspace)
+    assert "87654321" not in str(e.value), (
+        f"the mismatch refusal printed a non-year integer: {e.value}")
+    assert "8 digits" in str(e.value) and "TY2024" in str(e.value)
+    assert (workspace / "result.json").exists()
+
+
 def test_partial_file_set_succeeds(tmp_path):
     (tmp_path / "result.json").write_text(json.dumps({"meta": {"tax_year": 2024}}))
     archive_year(2024, root=tmp_path)

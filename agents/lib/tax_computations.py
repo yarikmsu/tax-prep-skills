@@ -3487,10 +3487,63 @@ def compute_form_8801_credit(
 # required annual payment = LESSER of 90% of current-year tax or 100%/110%
 # of prior-year tax (110% above $150K prior-year AGI, $75K MFS) — §6654(d);
 # no penalty when the balance after withholding is under $1,000 — §6654(e)(1);
-# no penalty when prior-year tax was $0 — §6654(e)(2).
-_F2210_DE_MINIMIS = 1000.0
-_F2210_PRIOR_AGI_THRESHOLD = 150000.0
-_F2210_PRIOR_AGI_THRESHOLD_MFS = 75000.0
+# no penalty when there was no prior-year LIABILITY — §6654(e)(2).
+# PUBLIC, and named without the form number, because they are not Form 2210's:
+# they are §6654's, and `projection.compute_safe_harbor` applies the same rule
+# for the same reason. `tax-safe-harbor` then RESTATES them in prose, having no
+# engine to call — so this is one statutory quantity with three readers, and the
+# copy that prices the penalty on the filed return is this one. Two named copies
+# plus a sentence, related by nothing, is how an amendment lands in one module
+# and leaves the other two quoting the old law while every test stays green.
+# Ints, not floats: `f"${x:,}"` renders 150000.0 as "$150,000.0", and the skill
+# parity test formats these to compare against the prose. The de-minimis floor
+# was left `_F2210_`-named and private by the revision that made its neighbours
+# public — inside this comment, which says why neither is right: §6654(e)(1) is
+# the authority, and the skill states the same $1,000 in step 6. It is public
+# and interpolated into the message below for the same reason as the rest.
+DE_MINIMIS_BALANCE = 1000
+PRIOR_YEAR_AGI_THRESHOLD = 150_000
+PRIOR_YEAR_AGI_THRESHOLD_MFS = 75_000
+PRIOR_YEAR_FACTOR_HIGH = 1.10
+PRIOR_YEAR_FACTOR = 1.00
+
+
+def prior_year_agi_threshold(mfs: bool) -> int:
+    """The §6654(d)(1)(C)(i) prior-AGI threshold above which 110% applies.
+
+    Its own function because the threshold has a SECOND reader: the note
+    `compute_form_2210` writes when prior AGI is unknown quotes the figure it
+    could not test against. Selecting it there by hand is the same two-copy
+    drift the prong below exists to remove, one layer down.
+    """
+    return PRIOR_YEAR_AGI_THRESHOLD_MFS if mfs else PRIOR_YEAR_AGI_THRESHOLD
+
+
+def prior_year_prong(prior_tax: float, prior_agi: "float | None",
+                     mfs: bool) -> "tuple[float, float]":
+    """§6654(d)(1)(C)'s prior-year prong: `(factor, prior_based)`.
+
+    The constants above were unified across three modules while the four
+    lines that APPLY them stayed hand-copied in each — which is the half an
+    amendment has to change. §6654(d)(1)(C)(i) carried a different percentage
+    schedule before 2002 and §6654(i)(1) suppresses the factor outright for
+    farmers and fishermen; implementing either against three copies is three
+    edits with nothing relating them, and the comment above says why that is
+    how one module ends up quoting the old law with every test still green.
+
+    CA conforms to both the thresholds and the factor (R&TC §19136 via FTB
+    5805), so `compute_ca_safe_harbor` reads this too. A future CA
+    de-conformity is what would split them, and it would split them HERE.
+
+    Callers keep what differs: their own `min(pct90, ...)` rounding, and
+    whether a missing prior AGI is flagged to the reader. A missing prior AGI
+    takes the 100% factor — the UNDERSTATING direction, flagged by every
+    caller rather than silently assumed.
+    """
+    factor = (PRIOR_YEAR_FACTOR_HIGH
+              if (prior_agi or 0) > prior_year_agi_threshold(mfs)
+              else PRIOR_YEAR_FACTOR)
+    return factor, round(factor * prior_tax, 2)
 
 
 def _f2210_amount(value, what: str, allow_negative: bool = False) -> float:
@@ -3571,6 +3624,8 @@ def compute_form_2210(
     prior_year_agi: float = None,
     estimated_payments: list = None,
     underpayment_rates: list = None,
+    prior_year_zero_liability_confirmed: bool = False,
+    prior_year_return_filed_12_months_confirmed: bool = False,
 ) -> dict:
     """Form 2210 underpayment-of-estimated-tax penalty at filing (1040 line 38).
 
@@ -3588,12 +3643,29 @@ def compute_form_2210(
             per §7503 over weekends/DC legal holidays (matching the printed
             Form 2210 columns); accrual ends at the statutory Apr 15 of
             tax_year+1 (the worksheet endpoint, which does NOT roll).
-        prior_year_tax: prior-year total tax. None = unknown → the required
-            annual payment degrades to the 90%-of-current test (the prior-year
-            harbor could only LOWER it). Explicit 0 → §6654(e)(2) no-penalty.
+        prior_year_tax: completed pre-factor prior-year tax base constructed
+            under line 8 of the Form 2210 instructions for `tax_year`; never
+            raw Form 1040 line 24 or Form 2210 line 8 after its factor. None =
+            unresolved → the required annual payment degrades to the
+            90%-of-current test (the prior-year harbor could only LOWER it).
+            Explicit 0 → no required annual payment, by whichever of the two
+            flags below is confirmed.
         prior_year_agi: prior-year AGI for the 110% factor. None with a
             non-zero prior_year_tax assumes the 100% factor and notes the
             possible understatement.
+        prior_year_zero_liability_confirmed: §6654(e)(2) — the prior year had
+            no tax liability, covered 12 months, and the taxpayer was a US
+            citizen or resident THROUGHOUT it. Clears the year outright. Does
+            NOT require that a return was filed.
+        prior_year_return_filed_12_months_confirmed: §6654(d)(1)(B)'s closing
+            text — the prior year covered 12 months AND a return was filed for
+            it. Keeps a $0 prior-year tax available to the ORDINARY prong,
+            where 100%/110% of $0 is $0. Carries NO citizenship or residency
+            condition, which is the whole reason it is asked separately: the
+            two tests are independent, and one flag standing for both refused
+            a $0 prior year to every taxpayer who could not affirm citizenship
+            — demanding 90% of the current year from someone §6654(d)(1)(B)(ii)
+            already covers.
         estimated_payments: list of {"date": "YYYY-MM-DD", "amount": float}
             1040-ES payments (dates matter — a January payment can't cure an
             April underpayment retroactively).
@@ -3668,22 +3740,125 @@ def compute_form_2210(
         "notes": notes,
     }
 
-    if tax - wh < _F2210_DE_MINIMIS:
+    # Rounded to cents BEFORE the strict `<` comparison, and the SAME rounded
+    # figure printed in the reason. Two already-rounded dollar amounts can
+    # subtract to 999.9999999999982 in raw float — under the floor, on a
+    # balance that is exactly $1,000.00 — and the message then reads "$1,000.00
+    # is under the $1,000 de minimis", contradicting itself while clearing a
+    # penalty that attaches. `projection.compute_safe_harbor` rounds for this
+    # reason; this is the copy that prices the penalty on the FILED return, so
+    # the two must not disagree (pinned by test).
+    balance_after_withholding = round(tax - wh, 2)
+    if balance_after_withholding < DE_MINIMIS_BALANCE:
         result["no_penalty"] = True
         result["no_penalty_reason"] = (
-            f"balance after withholding (${tax - wh:,.2f}) is under the "
-            "$1,000 de minimis (§6654(e)(1)) — no penalty")
+            f"balance after withholding (${balance_after_withholding:,.2f}) is "
+            f"under the ${DE_MINIMIS_BALANCE:,} de minimis (§6654(e)(1)) — no "
+            f"penalty")
         return result
 
+    # Distinguishes "no prior-year figures were supplied" from "they were
+    # supplied and the §6654(e)(2) gate below dropped them". Both reach the
+    # `prior_year_tax is None` branch, and without this the second one also
+    # collected that branch's note — so a caller who HAD supplied the figures
+    # was told they were unavailable, and told that supplying them "can only
+    # LOWER" the requirement, six lines after being told that confirming them
+    # would clear the year outright. Two notes, opposite instructions, same
+    # result dict.
+    prior_dropped_unconfirmed_zero = False
     if prior_year_tax is not None:
         pt = _f2210_amount(prior_year_tax, "prior_year_tax")
         if pt == 0:
-            result["no_penalty"] = True
-            result["no_penalty_reason"] = (
-                "prior-year tax liability was $0 — §6654(e)(2) exception "
-                "(requires the prior year covered 12 months and the taxpayer "
-                "was a US citizen/resident all year — verify)")
-            return result
+            # A $0 prior-year tax has TWO independent statutory routes to a
+            # zero requirement, and this gated both behind the FIRST one's
+            # preconditions:
+            #   §6654(e)(2)      — no prior liability + 12-month prior year +
+            #                      US citizen/resident throughout it. Clears
+            #                      the year outright; needs no filed return.
+            #   §6654(d)(1)(B)(ii) — the ORDINARY prong at 100%/110% of $0.
+            #                      Its closing text asks only for a 12-month
+            #                      prior year AND a filed return, and says
+            #                      NOTHING about citizenship or residency.
+            # One flag standing for both meant a taxpayer who filed a full
+            # 12-month prior return showing $0 — and who could not affirm the
+            # citizenship half, or simply was not asked about it — had the $0
+            # thrown away and was priced at 90% of the current year. That is
+            # the over-stating direction, but it is over-stating a penalty
+            # against a taxpayer the statute already covers, and
+            # tax-safe-harbor SKILL.md has listed the two as separate
+            # preconditions since it shipped: the engine-free skill and the
+            # engine returned different answers for the same person.
+            #
+            # Unconfirmed on BOTH, the prong is still dropped entirely (NOT
+            # taken at $0, which would zero the required payment by another
+            # route) and the 90%-of-current test stands alone. A $0 prior year
+            # is short/part-year often enough that reading it as a cleared year
+            # unasked is the costly default.
+            #
+            # LITERAL booleans, never truthiness, on both flags. `bool("false")`
+            # is True and so is `bool(1)`, and either flag can zero the
+            # requirement — so a JSON string or an int reaching here suppresses
+            # a penalty that may well apply, the over-clearing direction
+            # AGENTS.md makes a hard error. The planning twin
+            # (`projection._confirmed_flag`) has rejected non-booleans since it
+            # shipped; this is the copy that prices the penalty on the FILED
+            # return, and it is called by an agent assembling arguments out of
+            # answers.md, which is exactly where a hand-typed "false" comes from.
+            for _flag_name, _flag in (
+                    ("prior_year_zero_liability_confirmed",
+                     prior_year_zero_liability_confirmed),
+                    ("prior_year_return_filed_12_months_confirmed",
+                     prior_year_return_filed_12_months_confirmed)):
+                if not isinstance(_flag, bool):
+                    raise ValueError(
+                        f"{_flag_name} must be a bool (True/False), got "
+                        f"{type(_flag).__name__}")
+            if prior_year_zero_liability_confirmed:
+                result["no_penalty"] = True
+                result["no_penalty_reason"] = (
+                    "the §6654(e)(2) preconditions were CONFIRMED by the "
+                    "caller: a 12-month prior year, NO LIABILITY for it, "
+                    "and US citizenship or residence throughout. No "
+                    "liability is that year's Form 1040 TOTAL TAX line at "
+                    "$0, or a year that required no return at all — not "
+                    "the $0 prior_year_tax passed here, which is net of "
+                    "the refundable credits Form 2210 line 8 subtracts and "
+                    "reaches $0 on a positive total tax — so nothing in "
+                    "this engine verified it. No penalty")
+                return result
+            if prior_year_return_filed_12_months_confirmed:
+                # Kept at $0 and run through the ordinary prong below, rather
+                # than returned as a no-penalty here: the two are the same
+                # arithmetic (min(90%, factor x $0) = $0) but not the same
+                # finding, and the quarters table this builds is what a filer
+                # attaches to Form 2210. §6654(e)(2) is a reason not to file
+                # the form; this is a line 8 of zero.
+                notes.append(
+                    "prior-year tax is $0 and the §6654(d)(1)(B) conditions "
+                    "were confirmed (prior year covered 12 months; a return "
+                    "was filed for it): the ordinary prior-year prong applies "
+                    "at 100%/110% of $0, so the required annual payment is $0. "
+                    "§6654(e)(2) was not confirmed and is not needed for this "
+                    "— it carries a citizenship/residency condition the "
+                    "prior-year prong does not")
+            else:
+                prior_year_tax = None
+                prior_dropped_unconfirmed_zero = True
+                notes.append(
+                    "prior-year tax is $0 but neither route to a $0 "
+                    "requirement was confirmed: the prior-year prong is "
+                    "dropped and the 90%-of-current test stands alone, which "
+                    "OVERSTATES if either applies. §6654(e)(2) needs THREE "
+                    "things, and this $0 is not one of them: a 12-month "
+                    "prior year, NO LIABILITY for it, and US citizenship "
+                    "or residence throughout. No liability is that year's "
+                    "Form 1040 TOTAL TAX line at $0, or a year that "
+                    "required no return at all — never this $0, which is "
+                    "net of refundable credits — pass "
+                    "prior_year_zero_liability_confirmed=True. §6654(d)(1)(B) "
+                    "needs only a 12-month prior year AND a return filed for "
+                    "it, with no citizenship condition — pass "
+                    "prior_year_return_filed_12_months_confirmed=True instead")
 
     # Required annual payment — same math as projection.compute_safe_harbor
     # (kept in sync by test; projection imports THIS module, so the planning
@@ -3691,23 +3866,39 @@ def compute_form_2210(
     pct90 = round(0.90 * tax, 2)
     if prior_year_tax is None:
         required = pct90
-        basis = "90% of current-year tax (prior-year figures unavailable)"
-        notes.append(
-            "prior-year tax/AGI unavailable: required annual payment uses the "
-            "90%-of-current test only — supplying prior-year figures can only "
-            "LOWER it, never raise it")
+        basis = ("90% of current-year tax (prior-year prong dropped)"
+                 if prior_dropped_unconfirmed_zero else
+                 "90% of current-year tax (prior-year figures unavailable)")
+        # Only when they really were absent. On the dropped-$0 path the note
+        # appended above already says what happened and what to do, and this
+        # one would contradict it on both counts.
+        if not prior_dropped_unconfirmed_zero:
+            notes.append(
+                "prior-year tax/AGI unavailable: required annual payment uses "
+                "the 90%-of-current test only — supplying prior-year figures "
+                "can only LOWER it, never raise it")
     else:
-        threshold = (_F2210_PRIOR_AGI_THRESHOLD_MFS if fs == "MFS"
-                     else _F2210_PRIOR_AGI_THRESHOLD)
         pa = (None if prior_year_agi is None
               else _f2210_amount(prior_year_agi, "prior_year_agi",
                                  allow_negative=True))
-        factor = 1.10 if (pa or 0) > threshold else 1.00
-        prior_based = round(factor * pt, 2)
+        factor, prior_based = prior_year_prong(pt, pa, fs == "MFS")
         required = min(pct90, prior_based)
         basis = (f"lesser of 90% of current ({pct90:,.2f}) and "
                  f"{factor:.0%} of prior-year tax ({prior_based:,.2f})")
-        if pa is None:
+        if pa is None and pt != 0:
+            # `pt != 0` because at a $0 base the factor cannot matter: 110% of
+            # $0 and 100% of $0 are both $0, so the note's claim that the
+            # penalty "may be UNDERSTATED" is false on that path. A caveat
+            # that is untrue where it fires teaches the reader to discount the
+            # ones that are true.
+            #
+            # Selected inside the branch that quotes it, not beside the prong
+            # that also selects it: computing it unconditionally put two reads
+            # of one statutory figure six lines apart, in the block whose
+            # purpose is to have exactly one. `prior_year_agi_threshold` is
+            # what `prior_year_prong` tests against, and a test pins this note
+            # to it so the pair cannot drift.
+            threshold = prior_year_agi_threshold(fs == "MFS")
             notes.append(
                 "prior_year_agi unavailable — assumed at or below the "
                 f"${threshold:,.0f} threshold (100% factor); if prior AGI "

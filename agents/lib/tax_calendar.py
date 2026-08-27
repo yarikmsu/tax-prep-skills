@@ -23,12 +23,19 @@ Caveats:
   (1040-ES, extension, FBAR) roll past weekends AND DC legal holidays (incl.
   DC Emancipation Day) via irs_dates.next_business_day; the `.ics` DTSTART is
   the observed date and the description notes the statutory-vs-observed shift.
-  STATE deadlines (CA 540-ES, CA/NY/NJ PTET) roll past WEEKENDS ONLY — the
-  shared helper's DC holidays don't apply to state authorities, and
-  state-specific holidays (e.g. CA Cesar Chavez Day) are not modeled, so a
-  state date landing on a state holiday may shift one more day (caveated in the
-  description). RMD Dec 31 does NOT roll (a distribution deadline, not a §7503
-  file/pay act).
+  STATE deadlines (CA 540-ES, CA/NY/NJ PTET) roll under THAT state's own
+  holiday set via irs_dates.next_business_day_state. California's INCLUDES the
+  federal set — R&TC §18410 folds it in by reference and FTB applies it by name
+  in the 540-ES instructions — so a CA date rolls past DC Emancipation Day and
+  MLK Day exactly as a federal one does. CA's own Gov Code §6700 holidays are
+  the half not modeled, and no date emitted here can reach one (asserted in
+  tests/test_irs_dates.py, not assumed). NY and NJ roll past weekends only,
+  as a labelled DEGRADE rather than a claim about their law (their statutes
+  have not been read here), and only THEY carry the "state-specific legal
+  holidays are not modeled" caveat in the description. RMD Dec 31 does NOT
+  roll (a distribution deadline, not a §7503 file/pay act), and FL county
+  property dates deliberately keep the statutory date (see
+  _fl_county_observed_note).
 - PTET windows for CA / NY / NJ only — other states have varying or no PTET
   election. Emitted only when the K-1 flag is set, since pass-through filers
   are the only ones for whom the SALT-cap workaround applies.
@@ -52,13 +59,19 @@ from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.capabilities import _USPS_STATES  # noqa: E402
-from agents.lib.irs_dates import next_business_day  # noqa: E402
+from agents.lib.irs_dates import (  # noqa: E402
+    next_business_day,
+    next_business_day_state,
+    state_conforms_to_federal_holidays as _state_conforms_to_federal_holidays,
+)
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
     _validate_year_arg,
 )
-from agents.lib.secure_fs import redact, secure_fd, secure_path  # noqa: E402
+from agents.lib.secure_fs import (  # noqa: E402
+    redact, secure_fd, secure_path, year_or_shape,
+)
 
 
 class CalendarError(Exception):
@@ -71,12 +84,14 @@ class CalendarError(Exception):
 # A deadline that lands on a weekend or legal holiday is timely on the next
 # business day (§7503). FEDERAL deadlines use the shared next_business_day
 # helper (weekends + DC legal holidays, incl. DC Emancipation Day). STATE
-# deadlines roll past WEEKENDS ONLY: the shared helper's DC holidays do NOT
-# apply to state tax authorities (a state does not observe DC Emancipation Day,
-# so rolling a state deadline past it would push it a day LATE — the unsafe
-# direction), and state-specific holidays (e.g. CA Cesar Chavez Day) are not
-# modeled. RMD Dec 31 does NOT roll (a distribution deadline, not a §7503
-# file/pay act). The `.ics` DTSTART carries the OBSERVED date so the reminder
+# deadlines use next_business_day_state, which resolves the holiday set from
+# the state code it REQUIRES. This block used to give every state the
+# weekend-only roll, on the premise that a state tax authority ignores the DC
+# holiday set entirely. For the one state modeled in depth that is false — R&TC
+# §18410 folds the federal set into California's, which is why CA dates were
+# being published up to three days EARLY. A state whose statute is unread
+# here (NY, NJ) keeps the weekend-only roll as a labelled degrade. RMD Dec 31
+# does NOT roll (a distribution deadline, not a §7503 file/pay act). The `.ics` DTSTART carries the OBSERVED date so the reminder
 # fires when the taxpayer can actually act; descriptions keep the statutory
 # date and note the observed shift when they differ.
 
@@ -85,25 +100,54 @@ def _fed_due(year: int, month: int, day: int) -> datetime.date:
     return next_business_day(datetime.date(year, month, day))
 
 
-def _state_due(year: int, month: int, day: int) -> datetime.date:
-    """State deadline rolled past WEEKENDS only (state-specific legal holidays
-    are not modeled — see the module note)."""
-    d = datetime.date(year, month, day)
-    while d.weekday() >= 5:
-        d += datetime.timedelta(days=1)
-    return d
+def _state_due(year: int, month: int, day: int, state: str) -> datetime.date:
+    """A state deadline rolled under THAT state's holiday rule.
+
+    `state` is required and has no default. Every date this module emits
+    belongs to a named jurisdiction, and the rule differs between them:
+    California adopts the federal legal-holiday set by statute (R&TC §18410,
+    which FTB's own 540-ES instructions apply by name), while NY and NJ have
+    not been checked here and keep the weekend-only degrade. Passing no state
+    is how one rule came to stand for all three and publish CA dates up to
+    three days early.
+
+    Delegates to `irs_dates.next_business_day_state`, which is where the rule
+    lives now that /tax-project's CA 540-ES vouchers need it too.
+    """
+    return next_business_day_state(datetime.date(year, month, day), state)
 
 
 def _observed_note(statutory: datetime.date, observed: datetime.date,
-                   *, state: bool = False) -> str:
-    """A description suffix naming the observed shift, empty when none."""
+                   *, state: "str | None" = None) -> str:
+    """A description suffix naming the observed shift, empty when none.
+
+    `state` is the jurisdiction's code, or None for a federal deadline. It
+    used to be a BOOLEAN, and the caveat it gated — "state-specific legal
+    holidays are not modeled" — was appended to every state event alike. It is
+    an instruction to go and confirm the date, and for California there is
+    nothing left to confirm: R&TC §18410 folds the federal legal-holiday set
+    into CA's, and every CA date emitted here matches FTB's own published one.
+    A caveat telling a Californian to check a date this engine already gets
+    right is the lying caveat this repo would rather have missing, and it
+    teaches the reader to discount the same sentence where it is still live —
+    on NY and NJ, whose statutes have not been read here.
+
+    Suppressed on REACHABILITY, not on CA having no holidays of its own. It
+    has four the federal calendar does not (§6700), unmodeled here; no date
+    this module emits can land on or roll across one, which
+    `test_irs_dates.py` re-derives from the call sites, in
+    `test_no_california_deadline_can_reach_a_state_only_holiday`. The day a
+    CA deadline CAN reach one, that
+    test fails and this suppression stops being true — which is the point of
+    asserting it somewhere rather than believing it here.
+    """
     if observed == statutory:
         return ""
     note = (f" Note: the statutory {statutory.strftime('%B')} {statutory.day} "
             f"date is a {statutory.strftime('%A')}; the deadline is observed "
             f"{observed.strftime('%B')} {observed.day}, {observed.year} (next "
             f"business day, §7503).")
-    if state:
+    if state and not _state_conforms_to_federal_holidays(state):
         note += (" State-specific legal holidays are not modeled — confirm the "
                  "exact date with the state tax authority.")
     return note
@@ -427,7 +471,7 @@ def events_ca_es(tax_year: int) -> list[CalendarEvent]:
     out: list[CalendarEvent] = []
     for label, (m, d), year_offset, pct in _CA_ES_DUE:
         statutory = datetime.date(tax_year + year_offset, m, d)
-        date = _state_due(tax_year + year_offset, m, d)
+        date = _state_due(tax_year + year_offset, m, d, "CA")
         out.append(CalendarEvent(
             uid=f"ca540es-{label.lower()}-{tax_year}@{_UID_NAMESPACE}",
             summary=f"CA 540-ES {label} estimated tax due — {pct} (TY{tax_year})",
@@ -443,7 +487,7 @@ def events_ca_es(tax_year: int) -> list[CalendarEvent]:
                 f"(R&TC §19136.3). Pay via FTB Web Pay — mandatory e-pay "
                 f"may apply once payments exceed $20,000 or total tax "
                 f"exceeds $80,000 (R&TC §19011.5)."
-                + _observed_note(statutory, date, state=True)
+                + _observed_note(statutory, date, state="CA")
             ),
             category="state_estimated_tax",
             quarter_label=label,
@@ -794,7 +838,7 @@ def events_ptet(tax_year: int, *, state: str | None,
     out: list[CalendarEvent] = []
     if code == "CA":
         ca_pre_stat = datetime.date(tax_year, 6, 15)
-        ca_pre_obs = _state_due(tax_year, 6, 15)
+        ca_pre_obs = _state_due(tax_year, 6, 15, "CA")
         out.append(CalendarEvent(
             uid=f"ptet-ca-prepay-{tax_year}@{_UID_NAMESPACE}",
             summary=f"CA PTET June prepayment due (TY{tax_year})",
@@ -808,12 +852,12 @@ def events_ptet(tax_year: int, *, state: str | None,
                 "election still stands but the qualified PTE credit is "
                 "reduced by 12.5% of the underpaid amount — either way a "
                 "high-cost SALT-cap workaround loss."
-                + _observed_note(ca_pre_stat, ca_pre_obs, state=True)
+                + _observed_note(ca_pre_stat, ca_pre_obs, state="CA")
             ),
             category="ptet",
         ))
         ca_bal_stat = datetime.date(tax_year + 1, 3, 15)
-        ca_bal_obs = _state_due(tax_year + 1, 3, 15)
+        ca_bal_obs = _state_due(tax_year + 1, 3, 15, "CA")
         out.append(CalendarEvent(
             uid=f"ptet-ca-balance-{tax_year}@{_UID_NAMESPACE}",
             summary=f"CA PTET balance + election (TY{tax_year})",
@@ -822,7 +866,7 @@ def events_ptet(tax_year: int, *, state: str | None,
                 "California PTE balance due and Form 3804 election filing "
                 f"for tax year {tax_year}. PTE election is made annually on "
                 "the timely-filed pass-through return."
-                + _observed_note(ca_bal_stat, ca_bal_obs, state=True)
+                + _observed_note(ca_bal_stat, ca_bal_obs, state="CA")
             ),
             category="ptet",
         ))
@@ -834,7 +878,7 @@ def events_ptet(tax_year: int, *, state: str | None,
         # installment must equal at least 25% of the required annual
         # payment.
         ny_el_stat = datetime.date(tax_year, 3, 15)
-        ny_el_obs = _state_due(tax_year, 3, 15)
+        ny_el_obs = _state_due(tax_year, 3, 15, "NY")
         out.append(CalendarEvent(
             uid=f"ptet-ny-election-q1-{tax_year}@{_UID_NAMESPACE}",
             summary=f"NY PTET election + Q1 estimated payment (TY{tax_year})",
@@ -846,13 +890,13 @@ def events_ptet(tax_year: int, *, state: str | None,
                 f"follow on June 15, September 15, and December 15. Each "
                 f"installment must be at least 25% of the required annual "
                 f"PTET. See tax.ny.gov/bus/ptet/ for current procedures."
-                + _observed_note(ny_el_stat, ny_el_obs, state=True)
+                + _observed_note(ny_el_stat, ny_el_obs, state="NY")
             ),
             category="ptet",
         ))
         for quarter, month in (("Q2", 6), ("Q3", 9), ("Q4", 12)):
             q_stat = datetime.date(tax_year, month, 15)
-            q_obs = _state_due(tax_year, month, 15)
+            q_obs = _state_due(tax_year, month, 15, "NY")
             out.append(CalendarEvent(
                 uid=f"ptet-ny-{quarter.lower()}-{tax_year}@{_UID_NAMESPACE}",
                 summary=f"NY PTET {quarter} estimated payment (TY{tax_year})",
@@ -862,7 +906,7 @@ def events_ptet(tax_year: int, *, state: str | None,
                     f"year {tax_year}. At least 25% of the required annual "
                     f"PTET — pay via the Tax Department's PTET Web File "
                     f"application by ACH debit."
-                    + _observed_note(q_stat, q_obs, state=True)
+                    + _observed_note(q_stat, q_obs, state="NY")
                 ),
                 category="ptet",
             ))
@@ -870,7 +914,7 @@ def events_ptet(tax_year: int, *, state: str | None,
         # annual return is due March 15 after the close of the PTET
         # taxable year, and any unpaid PTET must be paid by then.
         ny_ar_stat = datetime.date(tax_year + 1, 3, 15)
-        ny_ar_obs = _state_due(tax_year + 1, 3, 15)
+        ny_ar_obs = _state_due(tax_year + 1, 3, 15, "NY")
         out.append(CalendarEvent(
             uid=f"ptet-ny-annual-return-{tax_year}@{_UID_NAMESPACE}",
             summary=f"NY PTET annual return + final payment (TY{tax_year})",
@@ -881,7 +925,7 @@ def events_ptet(tax_year: int, *, state: str | None,
                 f"paid by this date — an extension of time to file is NOT "
                 f"an extension of time to pay; penalties for unpaid tax "
                 f"apply after the original due date."
-                + _observed_note(ny_ar_stat, ny_ar_obs, state=True)
+                + _observed_note(ny_ar_stat, ny_ar_obs, state="NY")
             ),
             category="ptet",
         ))
@@ -901,7 +945,7 @@ def events_ptet(tax_year: int, *, state: str | None,
         )
         for quarter, (month, day), year_offset in _NJ_ESTIMATES:
             nj_stat = datetime.date(tax_year + year_offset, month, day)
-            nj_obs = _state_due(tax_year + year_offset, month, day)
+            nj_obs = _state_due(tax_year + year_offset, month, day, "NJ")
             out.append(CalendarEvent(
                 uid=f"ptet-nj-{quarter.lower()}-{tax_year}@{_UID_NAMESPACE}",
                 summary=f"NJ BAIT {quarter} estimated payment (TY{tax_year})",
@@ -911,12 +955,12 @@ def events_ptet(tax_year: int, *, state: str | None,
                     f"year {tax_year}. PTE-150 quarterly installment — at "
                     f"least 25% of the required annual BAIT. Pay "
                     f"electronically via the NJ PTE/BAIT payment system."
-                    + _observed_note(nj_stat, nj_obs, state=True)
+                    + _observed_note(nj_stat, nj_obs, state="NJ")
                 ),
                 category="ptet",
             ))
         nj_el_stat = datetime.date(tax_year + 1, 3, 15)
-        nj_el_obs = _state_due(tax_year + 1, 3, 15)
+        nj_el_obs = _state_due(tax_year + 1, 3, 15, "NJ")
         out.append(CalendarEvent(
             uid=f"ptet-nj-election-{tax_year}@{_UID_NAMESPACE}",
             summary=f"NJ BAIT election deadline (TY{tax_year})",
@@ -927,7 +971,7 @@ def events_ptet(tax_year: int, *, state: str | None,
                 f"Form PTE-100, due March 15, {tax_year + 1} for a calendar-"
                 f"year entity (no extension of time to elect — extensions "
                 f"file via PTE-200-T but do not move the election deadline)."
-                + _observed_note(nj_el_stat, nj_el_obs, state=True)
+                + _observed_note(nj_el_stat, nj_el_obs, state="NJ")
             ),
             category="ptet",
         ))
@@ -1064,10 +1108,16 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
             f"{type(profile).__name__}"
         )
 
+    # `_validate_tax_year` guards the CALLER's year; this is the profile's own,
+    # read straight off a hand-edited file and never type-checked. It prints
+    # only once it is known to be an integer year — a misplaced name or nested
+    # object here would otherwise be echoed to the terminal, and `redact` masks
+    # SSN and credential shapes only (AGENTS.md #1).
     profile_year = profile.get("tax_year")
     if profile_year is not None and profile_year != tax_year:
         raise CalendarError(
-            f"taxpayer_profile.json is for TY{profile_year}, not TY{tax_year}."
+            f"taxpayer_profile.json is for {year_or_shape(profile_year)}, "
+            f"not TY{tax_year}."
         )
 
     # Each "missing-OK" block: split absence (key missing OR explicit null)

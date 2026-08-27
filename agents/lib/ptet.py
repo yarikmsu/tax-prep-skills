@@ -67,6 +67,7 @@ from agents.lib.scenario import (  # noqa: E402
     read_tax_year,
 )
 from agents.lib.tax_computations import compute_scenario  # noqa: E402
+from agents.lib.irs_dates import next_business_day_state  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 
 
@@ -231,23 +232,34 @@ def _resolve_schedule(state: str, tax_year: "int | None",
     return _schedule_for(state, tax_year), note
 
 
-def _obs_date(year: int, month: int, day: int) -> str:
-    """A PTET (state) deadline formatted with §7503 WEEKEND rollover applied —
-    matching tax_calendar._state_due (state-specific legal holidays are not
-    modeled, so weekends only). Renders e.g. 'June 16, 2026' when the statutory
-    date is a Sunday."""
-    d = datetime.date(year, month, day)
-    while d.weekday() >= 5:
-        d += datetime.timedelta(days=1)
+def _obs_date(year: int, month: int, day: int, state: str) -> str:
+    """A PTET deadline formatted with THAT state's §7503 rollover applied.
+
+    Delegates to `irs_dates.next_business_day_state` rather than re-rolling
+    here. The inline weekend-only loop this replaces was a fourth copy of a
+    rule that turned out to be wrong for California: R&TC §18410 folds the
+    federal legal-holiday set into CA's own, so a CA date can roll past MLK
+    Day or observed DC Emancipation Day, which no weekend-only loop
+    reaches. NY and NJ keep
+    the weekend-only degrade — their statutes have not been read here — and
+    naming the state at the call site is what keeps that a stated limitation
+    instead of an accident. Renders e.g. 'June 16, 2026'.
+    """
+    d = next_business_day_state(datetime.date(year, month, day), state)
     return f"{d.strftime('%B')} {d.day}, {d.year}"
 
 
 def _election_deadline(state: str, tax_year: int) -> "tuple[str, str]":
     """Return (deadline_date, actionable note) for making a TY{tax_year} election.
 
-    Dates carry the §7503 next-business-day WEEKEND rollover (via _obs_date),
-    matching tax_calendar.py's state deadlines — state-specific legal holidays
-    are not modeled, so a date on a state holiday may shift one more day.
+    Dates carry the §7503 next-business-day rollover under the STATE's own
+    holiday set (via _obs_date), matching tax_calendar.py's state deadlines.
+    California's set INCLUDES the federal one (R&TC §18410), so a CA date rolls
+    past DC Emancipation Day and MLK Day too; the CA-only §6700 holidays are
+    not modeled either, and no date emitted here can reach one (asserted in
+    tests/test_irs_dates.py). NY and NJ roll past weekends only and their
+    state-specific holidays are not modeled, so a date landing on one may
+    shift a further day.
     """
     if state == "CA":
         # The June 15 prepayment (greater of $1,000 or 50% of prior-year PTET) is
@@ -262,14 +274,15 @@ def _election_deadline(state: str, tax_year: int) -> "tuple[str, str]":
         #     the PTE credit is REDUCED by 12.5% of the unpaid June amount
         #     (R&TC §19904). Calling June 15 an election-preservation deadline
         #     would wrongly imply the election is lost after that date.
-        march_next = _obs_date(tax_year + 1, 3, 15)
-        june = _obs_date(tax_year, 6, 15)
+        march_next = _obs_date(tax_year + 1, 3, 15, "CA")
+        june = _obs_date(tax_year, 6, 15, "CA")
         if tax_year == 2021:
             return (
-                _obs_date(2022, 3, 15),
+                _obs_date(2022, 3, 15, "CA"),
                 f"CA AB 150 (first year): there was NO June 15 prepayment "
                 f"requirement for TY2021 — make the election on a timely-filed "
-                f"2021 entity return (originally due {_obs_date(2022, 3, 15)}).")
+                f"2021 entity return (originally due "
+                f"{_obs_date(2022, 3, 15, 'CA')}).")
         if tax_year >= 2026:
             note = (
                 f"CA SB 132: pay the {june} prepayment (greater of "
@@ -289,7 +302,7 @@ def _election_deadline(state: str, tax_year: int) -> "tuple[str, str]":
         # the earliest binding PTET date across the three states, and the one
         # most likely to be missed (it falls before the year is even underway
         # in practice). Backlog #9 flags this specifically.
-        march = _obs_date(tax_year, 3, 15)
+        march = _obs_date(tax_year, 3, 15, "NY")
         return (
             march,
             f"NY Tax Law §861: the annual PTET election for TY{tax_year} is due "
@@ -299,7 +312,7 @@ def _election_deadline(state: str, tax_year: int) -> "tuple[str, str]":
     if state == "NJ":
         # NJ's BAIT election is made on/with the entity return, due the
         # following March 15.
-        march_next = _obs_date(tax_year + 1, 3, 15)
+        march_next = _obs_date(tax_year + 1, 3, 15, "NJ")
         return (
             march_next,
             f"NJ BAIT (P.L. 2021 c.419): elect on Form PTE-100 by the entity "

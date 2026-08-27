@@ -186,9 +186,16 @@ Print:
 
 ## Caveats
 
-- **Statutory dates only.** When April 15 lands on a weekend or DC Emancipation
-  Day, the IRS rolls the deadline forward. v1 surfaces the statutory date —
-  cross-check IRS.gov for the moved date when relevant
+- **The `.ics` carries OBSERVED dates, not statutory ones.** A federal deadline
+  landing on a weekend or a DC legal holiday rolls to the next business day
+  (§7503), and the event date IS the rolled one, with the statutory date named
+  in the description. California rolls on the same holiday set (R&TC §18410),
+  so its 540-ES and PTET dates match FTB's published ones; NY and NJ PTET dates
+  roll past weekends only and carry a "confirm with the state tax authority"
+  line for that reason. Do not repeat a statutory date back to the user over a
+  rolled one, and do not "correct" the file — the two dates that deliberately
+  do NOT roll are the Dec 31 RMD reminder and the FL county property deadlines,
+  each for the reason given where it is emitted
 - **First-year RMD deferral not modeled.** The IRS lets you defer the first
   RMD to April 1 of the year following the year you turn 73, but bunching two
   RMDs into one year usually costs more in tax. v1 uses Dec 31 as the safe

@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.projection import (  # noqa: E402
     ProjectionError,
     _binary_status_key,
+    _capital_loss_limit,
     _full_status_key,
     _money,
     _num,
@@ -35,8 +36,6 @@ from agents.lib.rollover import (  # noqa: E402
 )
 from agents.lib.secure_fs import redact, secure_fd, secure_path  # noqa: E402
 from agents.lib.tax_computations import (  # noqa: E402
-    CAPITAL_LOSS_LIMIT,
-    CAPITAL_LOSS_LIMIT_MFS,
     SCENARIO_INPUT_KEYS,
     _coerce_numeric,
     compute_scenario,
@@ -251,9 +250,7 @@ def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None") -> d
         "ctc_phase_out_start": (ctc_cfg.get("phase_out_start") or {}).get(bin_key),
         "addl_medicare_threshold": threshold_map.get(full_key) or threshold_map.get(bin_key),
         "addl_medicare_rate": addl_cfg.get("rate", 0.009),
-        "capital_loss_limit": (CAPITAL_LOSS_LIMIT_MFS
-                               if (filing_status or "").upper() == "MFS"
-                               else CAPITAL_LOSS_LIMIT),
+        "capital_loss_limit": _capital_loss_limit(filing_status, "scenario"),
     }
 
 
@@ -300,7 +297,22 @@ def resolve_base(result: dict, base_scenario: "dict | None", year: int,
     # inputs with the CURRENT status — mixing the two is silently wrong. Compare by
     # effective bracket key so MFJ/QSS (same brackets) are treated as compatible.
     base_fs = base_scenario.get("filing_status")
-    if _full_status_key(base_fs) != _full_status_key(filing_status):
+    try:
+        base_key = _full_status_key(base_fs, "--base scenario")
+    except ProjectionError:
+        # `_canonical_status`'s remedy names result.json and
+        # taxpayer_profile.json, which is right for every OTHER caller and
+        # wrong here: this status was read out of the stored scenario passed
+        # as --base, and sending the reader to two files that are both fine is
+        # worse than the silent "single" this replaced. The value is not
+        # echoed — a hand-edited scenario can carry misplaced data.
+        raise ScenarioError(
+            "--base scenario file has no usable `filing_status`: it must be "
+            "one of Single/MFJ/MFS/HoH/QSS. Re-save the base scenario with "
+            "/tax-scenario, or correct that field in the scenario file by "
+            "hand — result.json and taxpayer_profile.json are not at fault."
+        ) from None
+    if base_key != _full_status_key(filing_status, "scenario"):
         raise ScenarioError(
             f"--base scenario filing status ({base_fs}) differs from current "
             f"({filing_status}). Cannot stack across filing statuses."

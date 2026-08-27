@@ -765,3 +765,31 @@ def test_cli_reports_a_missing_tax_law_cache_the_same_way(tmp_path):
     assert res.returncode == 1, res.stdout + res.stderr
     assert "Traceback" not in res.stderr, res.stderr
     assert res.stderr.startswith("Error: ")
+
+
+def test_obs_date_honours_the_conforming_holiday_set():
+    """`_obs_date` delegates, and the delegation is the point.
+
+    It used to hold a FOURTH inlined copy of the weekend-only roll, which is
+    how a rule wrong for California came to be repeated in four places. It now
+    calls `irs_dates.next_business_day_state` with the state it is dating, so
+    CA gets the federal holiday set (R&TC §18410) and NY/NJ keep the
+    weekend-only degrade.
+
+    Asserted on January 15, a date NO PTET deadline falls on. That is
+    deliberate and is stated so a reader does not "simplify" it away: the real
+    PTET deadlines are March 15 and June 15, and neither lands on a federal
+    holiday in any year from 2020 to 2040 — so no PTET date can distinguish
+    the two rules today, and a test built from one would pass just as happily
+    on the inlined copy. This asserts the CONTRACT rather than a coincidence,
+    which is what will still be right if a deadline moves or a second state is
+    added to the conforming set.
+    """
+    assert ptet._obs_date(2024, 1, 15, "CA") == "January 16, 2024", (
+        "January 15 2024 was MLK Day; CA adopts the federal set")
+    assert ptet._obs_date(2024, 1, 15, "NY") == "January 15, 2024", (
+        "NY's statute is unread here, so it keeps the weekend-only degrade")
+
+    # The real deadlines still render, and still agree with tax_calendar.
+    assert ptet._obs_date(2026, 3, 15, "NY") == "March 16, 2026", "Sunday"
+    assert ptet._obs_date(2026, 6, 15, "CA") == "June 15, 2026", "Monday"

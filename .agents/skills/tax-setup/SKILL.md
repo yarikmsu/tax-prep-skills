@@ -197,9 +197,12 @@ sh agents/lib/run.sh -m agents.lib.tax_calendar \
 ```
 
 `write_calendar` already restricts the output through `agents.lib.secure_fs`.
-v1 uses statutory dates only — when April 15 lands on a weekend or DC
-Emancipation Day, the IRS rolls the date forward; cross-check IRS.gov for the
-authoritative deadline.
+The dates it writes are the OBSERVED ones: a deadline landing on a weekend or a
+DC legal holiday rolls to the next business day (§7503) and the `.ics` carries
+the rolled date, with the statutory one kept in the event description. So do
+not cross-check a rolled date back to the statutory one and do not repeat the
+statutory date as the deadline — `/tax-calendar`'s own caveats list the two
+kinds of date that deliberately do not roll.
 
 Users can subscribe by importing the `.ics` into Google Calendar / Apple
 Calendar / Outlook. A 7-day-prior reminder is embedded per event. The skill

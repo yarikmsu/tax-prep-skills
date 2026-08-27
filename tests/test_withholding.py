@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from agents.lib import projection as proj
 from agents.lib import withholding as wh
+from tests.skill_text import skill_text
 
 
 def test_read_liability_happy_path():
@@ -67,17 +69,30 @@ def test_build_inputs_missing_blocks_default_zero():
 
 
 class _FakePrior:
-    """Stand-in for projection.load_prior_baseline's PriorReturn."""
-    def __init__(self, total_tax, agi):
+    """Stand-in for projection.load_prior_baseline's PriorReturn.
+
+    `ca_tax`/`ca_agi` add a COMPUTED california_540 section — without one
+    `_prior_ca_tax_agi` returns (None, None) and the CA prior-year prong does
+    not resolve, which several assertions here turn on.
+    """
+    def __init__(self, total_tax, agi, ca_tax=None, ca_agi=None):
         self.result = {"form_1040": {"line_24_total_tax": total_tax, "line_11_agi": agi}}
+        if ca_tax is not None:
+            self.result["california_540"] = {"ca_total_tax": ca_tax,
+                                             "ca_agi": ca_agi}
 
 
-def _proj_inputs(ytd_wh, est=0):
-    return {
+def _proj_inputs(ytd_wh, est=0, prior_base=None, prior_agi=None):
+    inputs = {
         "pay_frequency": "biweekly",
         "ytd": {"federal_withholding": ytd_wh},
         "estimated_payments_made": {"federal": est},
     }
+    if prior_base is not None:
+        inputs["prior_year_form_2210_tax_base"] = prior_base
+    if prior_agi is not None:
+        inputs["prior_year_form_2210_agi"] = prior_agi
+    return inputs
 
 
 def test_build_report_underpaid_both_targets():
@@ -89,7 +104,7 @@ def test_build_report_underpaid_both_targets():
     frac = as_of.timetuple().tm_yday / 365
     # YTD withholding 10000 -> projected full-year = 10000/frac (~20165), no estimates.
     prior = _FakePrior(30000, 120000)
-    r = wh.build_report(result, _proj_inputs(10000), prior, 2026, as_of)
+    r = wh.build_report(result, _proj_inputs(10000, prior_base=30000), prior, 2026, as_of)
     proj_wh = round(10000 / frac, 2)
     assert r.liability == 40000.0
     assert r.degraded is False
@@ -106,17 +121,129 @@ def test_build_report_underpaid_both_targets():
     assert r.zero_target.shortfall > r.penalty_target.shortfall
 
 
+def test_early_estimates_are_applied_before_requesting_first_installments():
+    """An estimate paid before Q1 offsets every cumulative checkpoint.
+
+    With a $20,000 required annual payment and $8,000 already paid by March 1,
+    federal Q1's cumulative $5,000 and California Q1's cumulative $6,000 are
+    both satisfied. Splitting the $12,000 annual remainder by itself would
+    instead request $3,000 and $3,600 at April 15 — payments not yet needed.
+    """
+    inputs = _ca_proj_inputs(fed_wh=0, state_wh=0, state_est=8000)
+    inputs["estimated_payments_made"]["federal"] = 8000
+    r = wh.build_report(
+        _ca_result(fed_tax=22222.22, ca_tax=22222.22, ca_agi=200000),
+        inputs, None, 2026, datetime.date(2026, 3, 1))
+
+    assert r.safe_harbor.required_annual == 20000.0
+    assert r.safe_harbor.shortfall == 12000.0
+    assert [(v.quarter, v.amount) for v in r.vouchers_penalty] == [
+        (1, 0.0), (2, 2000.0), (3, 5000.0), (4, 5000.0)]
+    assert r.ca.safe_harbor.required_annual == 20000.0
+    assert r.ca.safe_harbor.shortfall == 12000.0
+    assert [(v.quarter, v.amount) for v in r.ca.vouchers_penalty] == [
+        (1, 0.0), (2, 6000.0), (3, 0.0), (4, 6000.0)]
+    assert r.voucher_catchup_note is None
+    assert r.ca.voucher_catchup_note is None
+
+
 def test_build_report_covered_when_pace_exceeds_target():
     # High YTD withholding so projected full-year covers even the zero-balance target.
     result = {"meta": {"tax_year": 2026, "filing_status": "single"},
               "form_1040": {"line_24_total_tax": 40000}}
     as_of = datetime.date(2026, 6, 30)
     prior = _FakePrior(30000, 120000)
-    r = wh.build_report(result, _proj_inputs(30000), prior, 2026, as_of)
+    r = wh.build_report(result, _proj_inputs(30000, prior_base=30000), prior, 2026, as_of)
     assert r.penalty_target.covered is True
     assert r.penalty_target.shortfall == 0.0
     assert r.zero_target.covered is True
     assert r.w4_penalty.per_paycheck == 0.0
+
+
+def test_the_header_does_not_call_an_archive_absent_that_the_ca_block_uses():
+    """"No federal line-8 base" is not "no archive", and the header said so.
+
+    `degraded` now tracks only whether an explicit
+    `prior_year_form_2210_tax_base` was supplied — the common NO. With an
+    archive present the header still printed "Prior-year baseline: none —
+    DEGRADED MODE" while the CA table below computed a prior-year-based CA
+    harbor from that very archive. `ProjectionReport` grew `has_prior_archive`
+    to separate the two; `TrueUpReport` did not.
+    """
+    prior = _FakePrior(30000, 120000, ca_tax=7000, ca_agi=180000)
+    r = wh.build_report(_ca_result(fed_tax=40000.0, ca_tax=9000.0,
+                                   ca_agi=200000),
+                        _proj_inputs(10000), prior, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.degraded is True and r.baseline_source is None
+    assert r.ca is not None and r.ca.safe_harbor.prior_based is not None, (
+        "the fixture no longer resolves a CA prior-year prong, so the clause "
+        "this pins would be a false claim rather than a true one")
+    assert r.has_prior_archive is True, (
+        "the withholding report cannot tell 'no explicit base' from "
+        "'no archive', which is the distinction the header turns on")
+    md = wh.render_markdown(r)
+    line = next(ln for ln in md.splitlines()
+                if ln.startswith("- Prior-year baseline:"))
+    assert "prior return IS present" in line, (
+        f"the header reads {line!r} with an archive present and in use by the "
+        f"CA block below it")
+    assert wh._report_to_dict(r)["has_prior_archive"] is True
+
+    # Without an archive the plain wording must survive, or this has merely
+    # replaced one unconditional claim with another.
+    bare = wh.build_report(
+        {"meta": {"tax_year": 2026, "filing_status": "single"},
+         "form_1040": {"line_24_total_tax": 40000}},
+        _proj_inputs(10000), None, 2026, datetime.date(2026, 6, 30))
+    assert bare.has_prior_archive is False
+    assert "prior return IS present" not in wh.render_markdown(bare)
+
+    # And an archive that resolves NO CA prong must not claim one either: a
+    # federal-only return renders no CA section at all, so the clause would
+    # point at a harbor the report does not contain.
+    fed_only = wh.build_report(
+        {"meta": {"tax_year": 2026, "filing_status": "single"},
+         "form_1040": {"line_24_total_tax": 40000}},
+        _proj_inputs(10000), _FakePrior(30000, 120000), 2026,
+        datetime.date(2026, 6, 30))
+    assert fed_only.has_prior_archive is True and fed_only.ca is None
+    assert "prior return IS present" not in wh.render_markdown(fed_only), (
+        "the clause names a CA harbor in a report with no CA section")
+
+
+def test_has_prior_archive_is_a_documented_payload_contract():
+    """It drives no renderer branch here, so the docs are what keep it real.
+
+    The projection field of the same name gates a warning; this one is read by
+    nothing in `render_markdown` — the header clarifier gates on the stronger
+    `ca_prior_resolved`, and there is no `recurring_from_prior` on this side to
+    warn about. That left it looking like spare weight a maintainer could
+    delete, breaking a payload contract the skill implied but never stated.
+    Stating it is the fix, so the statement is pinned.
+    """
+    r = wh.build_report(_ca_result(fed_tax=40000.0, ca_tax=9000.0,
+                                   ca_agi=200000),
+                        _proj_inputs(10000),
+                        _FakePrior(30000, 120000, ca_tax=7000, ca_agi=180000),
+                        2026, datetime.date(2026, 6, 30))
+    assert "has_prior_archive" in wh._report_to_dict(r), (
+        "the field left the payload; the skill still tells the agent to read it")
+
+    doc = skill_text("tax-withholding")
+    assert "`has_prior_archive`" in doc, (
+        "tax-withholding/SKILL.md does not document `has_prior_archive`, so "
+        "the only thing keeping an unread field alive is that nobody noticed "
+        "it — which is how the JSON contract gets deleted by a tidy-up")
+    at = doc.index("`has_prior_archive`")
+    entry = doc[at:at + 900].lower()
+    # The two mistakes the field invites, both named in the entry.
+    assert "degraded" in entry, (
+        "the entry does not separate it from `safe_harbor.degraded`, which is "
+        "the confusion the field exists to prevent")
+    assert "prior_based" in entry, (
+        "the entry does not warn that archive PRESENCE is not a computed CA "
+        "prior-year harbor — the weaker fact reading as the stronger one")
 
 
 def test_build_report_degraded_mode_uses_90pct_only():
@@ -131,12 +258,17 @@ def test_build_report_degraded_mode_uses_90pct_only():
 
 
 def test_build_report_prior_factor_110_above_threshold():
+    # An explicit tax base without its paired AGI must not borrow the
+    # archive's — tax-amend can leave that AGI belonging to a different
+    # return — so the paired AGI has to be supplied explicitly here too.
     # prior AGI 200000 (single) > 150000 -> factor 1.10 -> prior_based = 1.10*30000 = 33000
     result = {"meta": {"tax_year": 2026, "filing_status": "single"},
               "form_1040": {"line_24_total_tax": 100000}}
     as_of = datetime.date(2026, 6, 30)
     prior = _FakePrior(30000, 200000)
-    r = wh.build_report(result, _proj_inputs(1000), prior, 2026, as_of)
+    r = wh.build_report(
+        result, _proj_inputs(1000, prior_base=30000, prior_agi=200000),
+        prior, 2026, as_of)
     # min(0.9*100000=90000, 1.10*30000=33000) = 33000
     assert r.safe_harbor.required_annual == 33000.0
 
@@ -146,7 +278,7 @@ def test_render_markdown_contains_key_sections():
               "form_1040": {"line_24_total_tax": 40000}}
     as_of = datetime.date(2026, 6, 30)
     prior = _FakePrior(30000, 120000)
-    r = wh.build_report(result, _proj_inputs(10000), prior, 2026, as_of)
+    r = wh.build_report(result, _proj_inputs(10000, prior_base=30000), prior, 2026, as_of)
     md = wh.render_markdown(r)
     assert "# Withholding True-Up — TY2026 (as of 06-30)" in md
     assert "## Liability & payments" in md
@@ -170,7 +302,7 @@ def test_report_to_dict_roundtrips_json():
               "form_1040": {"line_24_total_tax": 40000}}
     as_of = datetime.date(2026, 6, 30)
     prior = _FakePrior(30000, 120000)
-    r = wh.build_report(result, _proj_inputs(10000), prior, 2026, as_of)
+    r = wh.build_report(result, _proj_inputs(10000, prior_base=30000), prior, 2026, as_of)
     d = wh._report_to_dict(r)
     s = json.dumps(d, default=str)  # must be JSON-serializable
     back = json.loads(s)
@@ -189,7 +321,7 @@ def test_vouchers_zero_exceeds_penalty_when_liability_above_safe_harbor():
               "form_1040": {"line_24_total_tax": 40000}}
     as_of = datetime.date(2026, 6, 30)
     prior = _FakePrior(30000, 120000)
-    r = wh.build_report(result, _proj_inputs(1000), prior, 2026, as_of)
+    r = wh.build_report(result, _proj_inputs(1000, prior_base=30000), prior, 2026, as_of)
     assert r.safe_harbor.required_annual < r.liability
     pen_total = sum(v.amount for v in r.vouchers_penalty)
     zero_total = sum(v.amount for v in r.vouchers_zero)
@@ -206,7 +338,7 @@ def test_vouchers_zero_covers_full_gap_when_no_paychecks_remain():
               "form_1040": {"line_24_total_tax": 40000}}
     as_of = datetime.date(2026, 12, 31)
     prior = _FakePrior(30000, 120000)
-    r = wh.build_report(result, _proj_inputs(10000), prior, 2026, as_of)
+    r = wh.build_report(result, _proj_inputs(10000, prior_base=30000), prior, 2026, as_of)
     assert r.inputs.paychecks_remaining == 0
     assert r.w4_zero.per_paycheck == 0.0
     zero_total = round(sum(v.amount for v in r.vouchers_zero), 2)
@@ -227,8 +359,9 @@ def test_main_json_output_ok(capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["year"] == 2026
     assert out["liability"] == 40000.0
-    assert out["degraded"] is False  # archive/2025 present
-    assert out["baseline_source"] == "archive/2025"
+    assert out["degraded"] is False
+    assert out["baseline_source"] == \
+        "projection_inputs.json completed Form 2210 line-8 base"
 
 
 def test_main_markdown_output_ok(capsys):
@@ -264,6 +397,190 @@ def test_main_future_as_of_returns_1(capsys):
     assert "future" in capsys.readouterr().err.lower()
 
 
+def _closed_year_workspace(tmp_path, year):
+    """The fixture workspace re-dated to `year`, with no stored `as_of_date`.
+
+    Dropping that key is the whole point: with one present the default chain
+    never runs, so a fixture that carries it cannot see this bug at all.
+    """
+    result = json.loads((FIX / "result.json").read_text())
+    result["meta"]["tax_year"] = year
+    (tmp_path / "result.json").write_text(json.dumps(result))
+    inputs = json.loads((FIX / "projection_inputs.json").read_text())
+    inputs.pop("as_of_date")
+    inputs["tax_year"] = year
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(inputs))
+    return ["--result", str(tmp_path / "result.json"),
+            "--inputs", str(tmp_path / "projection_inputs.json"),
+            "--workspace", str(tmp_path), "--year", str(year), "--json"]
+
+
+def test_the_true_up_carries_the_prior_prong_precondition_too():
+    """The other renderer of the same prior-year row.
+
+    Both reports print `{factor}% of prior-year tax` off the same SafeHarbor,
+    so §6654(d)(1)(B)'s closing-text precondition has to travel with it in
+    both places or the caveat has a hole exactly where a workspace user lands
+    — /tax-safe-harbor's step 0 hands the computed-liability question HERE.
+    """
+    from agents.lib.projection import _PRIOR_PRONG_PRECONDITION_NOTE
+    result = json.loads((FIX / "result.json").read_text())
+    result["meta"]["tax_year"] = 2026
+    inputs = json.loads((FIX / "projection_inputs.json").read_text())
+    inputs["tax_year"] = 2026
+    inputs["prior_year_form_2210_tax_base"] = 40000.0
+    md_report = wh.build_report(
+        result=result, proj_inputs=inputs, year=2026,
+        as_of=datetime.date(2026, 6, 30), prior=None)
+    md = wh.render_markdown(md_report)
+    assert not md_report.safe_harbor.degraded, (
+        "fixture drift: the prior prong must be IN PLAY here, or the test "
+        "proves nothing about the gate")
+    assert _PRIOR_PRONG_PRECONDITION_NOTE in md
+    assert "6654(d)(1)(B)" in md
+
+    # Degraded: no base, no prong, and so nothing for the caveat to qualify.
+    del inputs["prior_year_form_2210_tax_base"]
+    bare = wh.build_report(result=result, proj_inputs=inputs, year=2026,
+                           as_of=datetime.date(2026, 6, 30), prior=None)
+    assert bare.safe_harbor.degraded, "fixture drift: expected degraded mode"
+    assert _PRIOR_PRONG_PRECONDITION_NOTE not in wh.render_markdown(bare)
+
+    # A CONFIRMED $0 base: the prong IS resolved, so the degraded gate above
+    # does not reach it, and the note is false of both routes to it —
+    # §6654(e)(2) requires no filed return at all. Suppressed by the shared
+    # predicate rather than by a second copy of the rule here, for the reason
+    # the note itself is shared: a suppression in one renderer only is the
+    # same drift as a caveat in one renderer only.
+    for flag in ("prior_year_zero_liability_confirmed",
+                 "prior_year_return_filed_12_months_confirmed"):
+        inputs["prior_year_form_2210_tax_base"] = 0
+        inputs.pop("prior_year_zero_liability_confirmed", None)
+        inputs.pop("prior_year_return_filed_12_months_confirmed", None)
+        inputs[flag] = True
+        zero = wh.build_report(result=result, proj_inputs=inputs, year=2026,
+                               as_of=datetime.date(2026, 6, 30), prior=None)
+        assert not zero.safe_harbor.degraded, (
+            f"fixture drift: {flag} must leave the prong resolved")
+        assert zero.safe_harbor.prior_tax == 0
+        assert _PRIOR_PRONG_PRECONDITION_NOTE not in wh.render_markdown(zero), (
+            f"the caveat claims an unfiled prior year makes the figure too "
+            f"LOW; confirmed via {flag} the $0 target is correct as printed")
+
+
+def test_the_withholding_cli_shares_the_year_guard(tmp_path, capsys):
+    """The other caller of `_require_inputs_tax_year`.
+
+    Both CLIs read the same projection_inputs.json and the same four
+    year-bound prior-year fields, so a guard implemented in one of them is a
+    guard with a hole in it — this side previously compared `tax_year` only
+    when the file DECLARED one, which the template's null default defeats.
+    The rule is shared, and so is this pin: a yearless file that answers a
+    year-bound field refuses; the same file with the year declared runs.
+    """
+    result = json.loads((FIX / "result.json").read_text())
+    result["meta"]["tax_year"] = 2026
+    (tmp_path / "result.json").write_text(json.dumps(result))
+    inputs = json.loads((FIX / "projection_inputs.json").read_text())
+    inputs.pop("tax_year", None)
+    inputs["prior_year_form_2210_tax_base"] = 40000.0
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(inputs))
+    argv = ["--result", str(tmp_path / "result.json"),
+            "--inputs", str(tmp_path / "projection_inputs.json"),
+            "--workspace", str(tmp_path), "--year", "2026", "--json",
+            "--today", "2026-07-01"]
+
+    assert wh._main(argv) == 1
+    err = capsys.readouterr().err
+    assert "prior_year_form_2210_tax_base" in err and "tax_year" in err, err
+
+    inputs["tax_year"] = 2026
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(inputs))
+    assert wh._main(argv) == 0, capsys.readouterr().err
+
+    # And a declared mismatch still refuses, as it always did.
+    inputs["tax_year"] = 2025
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(inputs))
+    assert wh._main(argv) == 1
+    assert "TY2025" in capsys.readouterr().err
+
+
+def test_main_defaults_a_closed_year_to_december_31(tmp_path, capsys):
+    """`--year 2025` run in January 2026 used to annualize five days.
+
+    The `as_of > today` guard cannot fire here — 2025-01-05 is not in the
+    future of 2026-01-05 — so nothing downstream caught it, and the report
+    divided a full year's withholding by 5/365 and printed the resulting
+    shortfall as a payment to make. The CLI default is where it enters; the
+    guard next to it never could.
+    """
+    rc = wh._main(_closed_year_workspace(tmp_path, 2025)
+                  + ["--today", "2026-01-05"])
+    assert rc == 0, capsys.readouterr().err
+    assert json.loads(capsys.readouterr().out)["as_of"] == "12-31"
+
+
+def test_main_preserves_a_stored_as_of_on_a_closed_year(tmp_path, capsys):
+    """The true-up keeps the date attached to the stored YTD actuals."""
+    result = json.loads((FIX / "result.json").read_text())
+    result["meta"]["tax_year"] = 2025
+    result["california_540"] = {"ca_total_tax": 8000, "ca_agi": 100000}
+    (tmp_path / "result.json").write_text(json.dumps(result))
+    inputs = json.loads((FIX / "projection_inputs.json").read_text())
+    assert inputs["as_of_date"] == "06-30", (
+        "the fixture no longer carries a stored mid-year stamp, so this test "
+        "passes without exercising the override it exists for")
+    inputs["tax_year"] = 2025
+    inputs.pop("prior_year_form_2210_tax_base", None)
+    inputs["ytd"]["state_withholding"] = 2000
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(inputs))
+
+    rc = wh._main(["--result", str(tmp_path / "result.json"),
+                   "--inputs", str(tmp_path / "projection_inputs.json"),
+                   "--workspace", str(tmp_path), "--year", "2025",
+                   "--json", "--today", "2026-01-05"])
+    assert rc == 0, capsys.readouterr().err
+    data = json.loads(capsys.readouterr().out)
+    assert data["as_of"] == "06-30"
+    assert data["stale_as_of_note"] is None
+    assert data["safe_harbor"]["shortfall"] == 15834.25, (
+        f"shortfall is {data['safe_harbor']['shortfall']} — relabeling the "
+        "same half-year actuals as 12-31 gave $26,000.00")
+    assert data["inputs"]["paychecks_remaining"] == 0
+    assert data["w4_penalty"]["paychecks_remaining"] == 0
+    assert data["w4_penalty"]["per_paycheck"] == 0.0
+    assert data["w4_zero"]["paychecks_remaining"] == 0
+    assert data["w4_zero"]["per_paycheck"] == 0.0
+    assert data["ca"]["de4_penalty"]["paychecks_remaining"] == 0
+    assert data["ca"]["de4_penalty"]["per_paycheck"] == 0.0
+    assert data["ca"]["de4_zero"]["paychecks_remaining"] == 0
+    assert data["ca"]["de4_zero"]["per_paycheck"] == 0.0
+    assert "No paychecks remain in TY2025" in data["w4_lever_note"]
+
+    sensitive = "-".join(("123", "45", "6789"))
+    inputs["as_of_date"] = sensitive
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(inputs))
+    common = ["--result", str(tmp_path / "result.json"),
+              "--inputs", str(tmp_path / "projection_inputs.json"),
+              "--workspace", str(tmp_path), "--year", "2025",
+              "--today", "2026-01-05"]
+    for output_args in (["--json"], []):
+        rc = wh._main(common + output_args)
+        captured = capsys.readouterr()
+        assert rc == 0, captured.err
+        assert sensitive not in captured.out and sensitive not in captured.err
+        assert "Invalid stored as-of date omitted" in captured.out
+
+
+def test_main_still_defaults_an_open_year_to_today(tmp_path, capsys):
+    """The counterweight: freezing the CURRENT year at 12-31 would annualize
+    nothing and report a full year of withholding as already banked."""
+    rc = wh._main(_closed_year_workspace(tmp_path, 2026)
+                  + ["--today", "2026-01-05"])
+    assert rc == 0, capsys.readouterr().err
+    assert json.loads(capsys.readouterr().out)["as_of"] == "01-05"
+
+
 # ---------------------------------------------------------------------------
 # E7: California true-up (Form 540 + FTB 5805 + 540-ES 30/40/0/30)
 # ---------------------------------------------------------------------------
@@ -282,12 +599,16 @@ def _ca_result(ca_tax=8000, ca_agi=200000, fed_tax=40000):
             "california_540": {"ca_total_tax": ca_tax, "ca_agi": ca_agi}}
 
 
-def _ca_proj_inputs(fed_wh=10000, state_wh=1000, state_est=0):
-    return {
+def _ca_proj_inputs(fed_wh=10000, state_wh=1000, state_est=0,
+                    prior_base=None):
+    inputs = {
         "pay_frequency": "biweekly",
         "ytd": {"federal_withholding": fed_wh, "state_withholding": state_wh},
         "estimated_payments_made": {"federal": 0, "state": state_est},
     }
+    if prior_base is not None:
+        inputs["prior_year_form_2210_tax_base"] = prior_base
+    return inputs
 
 
 def test_read_ca_inputs_happy_and_absent():
@@ -380,7 +701,14 @@ def test_render_markdown_ca_sections():
     assert "## California true-up (Form 540)" in md
     assert "CA safe harbor (FTB 5805)" in md
     assert "DE 4 per-paycheck extra CA withholding" in md
-    assert "CA 540-ES voucher schedule (30% / 40% / 0% / 30%)" in md
+    assert "CA 540-ES voucher schedule" in md
+    # The statutory split is NOT in the heading. This table has no Share
+    # column, so the heading was the only place the split was stated —
+    # and it was stated above amounts that follow a different one. This
+    # assertion used to pin the contradicting form, so the two modules
+    # asserted opposite contracts for the same string.
+    assert "CA 540-ES voucher schedule (30%" not in md
+    assert "the statutory weighting is 30% / 40% / 0% / 30%" in md
     assert "there is no September (Q3) payment" in md
     assert "R&TC §19011.5" in md  # mandatory e-pay caveat
 
@@ -425,12 +753,171 @@ def test_read_ca_inputs_zero_tax_computed_return_still_counts():
     assert wh.read_ca_inputs(result) == (0.0, 15000.0)
 
 
+def test_the_federal_voucher_table_carries_the_catchup_note_too():
+    """This renderer shipped the 1040-ES table without the note beside it.
+
+    `projection.render_markdown` prints the same note under the
+    same schedule from the same `compute_estimated_vouchers`, whose split of
+    the ANNUAL remainder under-funds the earliest still-open deadline. Here
+    the table was bare — and /tax-safe-harbor step 0 hands a workspace user to
+    BOTH tools, so half the handoff carried an under-stated earliest voucher
+    with nothing marking it as one. Under-stating what must be paid by a date
+    is the direction the toolkit is least allowed to move in.
+    """
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000}}
+    r = wh.build_report(result, _proj_inputs(10000), _FakePrior(30000, 120000),
+                        2026, datetime.date(2026, 6, 30))
+    md = wh.render_markdown(r)
+    assert "### 1040-ES voucher schedule (fallback)" in md, (
+        "the federal voucher table stopped rendering")
+    assert wh._FEDERAL_CATCHUP.text in md, (
+        "the federal voucher table renders without the catch-up note that "
+        "`projection.render_markdown` carries under the identical schedule")
+
+
+def test_the_ca_catchup_note_is_gated_here_as_it_is_in_projection():
+    """It was unconditional in this renderer after the other one was gated.
+
+    Two renderers reading one note is one place for the fix and two places
+    for the bug. With the CA harbor covered the schedule is all zeros, and
+    "pay catch-up amounts NOW rather than at the printed dates" then asks for
+    money that avoids no penalty — the OVER-stating direction AGENTS.md makes
+    a hard error. `/tax-project` stopped saying it; `/tax-withholding` went on
+    saying it about the same taxpayer.
+    """
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(state_wh=20000),
+                        _FakeCaPrior(30000, 120000, 6000, 120000), 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca is not None and r.ca.safe_harbor.covered, (
+        "the fixture no longer covers the CA harbor, so it cannot pin the "
+        "all-zero schedule case")
+    assert all(v.amount == 0 for v in r.ca.vouchers_penalty), (
+        "the covered fixture still produces non-zero CA vouchers")
+    assert wh._CA_CATCHUP.text not in wh.render_markdown(r), (
+        "the CA catch-up note renders against an all-zero CA schedule — a "
+        "payment directive with nothing behind it")
+
+
+def test_the_ca_de_minimis_silences_the_whole_ca_payment_advice():
+    """The report that said "no penalty applies" and "pay now" in one section.
+
+    Reproduces the shipped contradiction end to end. `compute_ca_safe_harbor`
+    zeroed its shortfall under R&TC §19136 so the DE 4 figure would not demand
+    payments that avoid nothing, but `compute_ca_estimated_vouchers` took
+    `required_annual` and recomputed a shortfall of its own — so the same CA
+    block printed the de-minimis status line, a $200.25 January instalment and
+    a note telling the taxpayer to pay catch-up amounts NOW. Over-stating what
+    must be paid is the hard-error direction; arriving as a banner over a
+    voucher rather than as a wrong total does not soften it.
+
+    $1,000 of CA tax against $347 YTD withholding, projected to $699.75 for the
+    year, leaves $300.25 — under the $500 floor.
+    """
+    r = wh.build_report(_ca_result(ca_tax=1000, ca_agi=20000),
+                        _ca_proj_inputs(state_wh=347), None, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca is not None and r.ca.safe_harbor.de_minimis, (
+        "the fixture no longer lands under the CA de minimis, so it cannot "
+        "pin the contradiction")
+    assert all(v.amount == 0 for v in r.ca.vouchers_penalty), (
+        "the CA penalty schedule still demands an instalment under §19136 — "
+        "the exact payment the harbor's zeroed shortfall exists to suppress")
+    assert r.ca.voucher_catchup_note is None, (
+        "the CA catch-up note fires under the de minimis")
+    md = wh.render_markdown(r)
+    ca_section = md.split("## California", 1)
+    assert len(ca_section) == 2, "the CA section stopped rendering"
+    assert "no CA underpayment penalty applies" in ca_section[1], (
+        "the de-minimis status line is gone, so this no longer pins the two "
+        "claims appearing together")
+    assert wh._CA_CATCHUP.text not in ca_section[1], (
+        "one CA section says no penalty can apply AND directs an immediate "
+        "catch-up payment")
+    # The zero-balance column is untouched: the tax is still owed at filing,
+    # and suppressing THAT would be the under-stating direction.
+    assert any(v.amount > 0 for v in r.ca.vouchers_zero), (
+        "the de minimis silenced the zero-balance schedule too — it excuses "
+        "the penalty, not the tax")
+
+
+def test_the_federal_de_minimis_silences_the_federal_payment_advice():
+    """§6654(e)(1), the same fix on the side that had no floor at all.
+
+    `compute_form_2210` reports `no_penalty` on these figures. Before the
+    floor reached `compute_safe_harbor`, this renderer showed a shortfall,
+    a voucher schedule for it and the catch-up note above them.
+    """
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 5000}}
+    r = wh.build_report(result, _proj_inputs(2000), None, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.safe_harbor.de_minimis, (
+        "$2,000 YTD withholding projects to $4,033.15 for the year, leaving "
+        "$966.85 of $5,000 — the fixture no longer lands under the floor")
+    assert r.penalty_target.covered and r.penalty_target.shortfall == 0.0
+    assert all(v.amount == 0 for v in r.vouchers_penalty), (
+        "the federal penalty schedule still demands payments under "
+        "§6654(e)(1)")
+    assert r.voucher_catchup_note is None
+    md = wh.render_markdown(r)
+    # The SHARED sentence, not a second copy of it: `_federal_status` writes
+    # /tax-project's status cell too, and two reports explaining one statute
+    # in two wordings is the drift this asserts against.
+    assert wh._federal_status(r.safe_harbor, tax_is_actual=True) in md, (
+        "the safe-harbor row reads covered against a visible balance owed "
+        "with nothing saying why")
+    assert "6654(e)(1)" in wh._federal_status(r.safe_harbor, tax_is_actual=True), (
+        "the shared status sentence no longer names the statute, so the "
+        "assertion above would pass on a bare 'covered'")
+    # ...and `annualized` is the ONE thing the two reports do not share. Here
+    # the tax is `read_liability` — form_1040 line 24, which this report's own
+    # Assumptions call "the **actual computed** tax" — and the annualized side
+    # is the withholding pace. /tax-project's wording points the reader at more
+    # tax than projected, which in THIS report is the one input that cannot
+    # move.
+    assert "more tax than projected" not in md, (
+        "the true-up prints /tax-project's cliff sentence, telling a reader "
+        "whose tax is already computed to watch it for movement")
+    assert "WITHHOLDING pace" in md, (
+        "the cliff sentence does not name the side that is actually "
+        "annualized here")
+    assert any(v.amount > 0 for v in r.vouchers_zero), (
+        "the zero-balance schedule was silenced too — the tax is still due")
+
+
+def test_the_catchup_notes_reach_this_json_payload_too():
+    """/tax-withholding reads `--json` before it renders, like /tax-project."""
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(),
+                        _FakeCaPrior(30000, 120000, 6000, 120000), 2026,
+                        datetime.date(2026, 6, 30))
+    payload = wh._report_to_dict(r)
+    assert payload["voucher_catchup_note"] == r.voucher_catchup_note
+    assert payload["ca"]["voucher_catchup_note"] == r.ca.voucher_catchup_note
+    assert r.voucher_catchup_note, (
+        "the fixture no longer fires the federal note, so this shows nothing")
+    assert r.voucher_catchup_note in wh.render_markdown(r), (
+        "the renderer prints a note the payload does not carry")
+
+
 def test_render_markdown_ca_catchup_and_de_minimis_notes():
     prior = _FakeCaPrior(30000, 120000, 6000, 120000)
     r = wh.build_report(_ca_result(), _ca_proj_inputs(), prior, 2026,
                         datetime.date(2026, 6, 30))
     md = wh.render_markdown(r)
-    assert "pay catch-up amounts NOW" in md
+    # Anchored to the CA SECTION and to the CA note's own text. Both notes end
+    # "pay catch-up amounts NOW", and this renderer gained the federal one, so
+    # a bare substring search over the whole document passed on the federal
+    # note with the CA render block deleted — the test-vacuity class PR #74
+    # was opened to close.
+    ca_section = md.split("## California", 1)
+    assert len(ca_section) == 2, "the CA section stopped rendering"
+    assert wh._CA_CATCHUP.text in ca_section[1], (
+        "the CA catch-up note is missing from the CA section")
+    assert wh._FEDERAL_CATCHUP.text not in ca_section[1], (
+        "the FEDERAL note renders inside the CA section — the two carry "
+        "different weights and different step references, and this test "
+        "cannot tell them apart by their shared closing sentence")
     assert "5805F" in md  # farmers/fishermen not-modeled caveat
     # De minimis: CA tax 1000, projected withholding ~700 (347/frac) ->
     # required 900 (degraded 90%) leaves a raw gap, but tax minus
@@ -453,7 +940,8 @@ def test_build_report_federal_prior_agi_missing_note():
         result = {"form_1040": {"line_24_total_tax": 30000}}
     result = {"meta": {"tax_year": 2026, "filing_status": "single"},
               "form_1040": {"line_24_total_tax": 40000}}
-    r = wh.build_report(result, _proj_inputs(10000), _PriorNoAgi(), 2026,
+    r = wh.build_report(result, _proj_inputs(10000, prior_base=30000),
+                        _PriorNoAgi(), 2026,
                         datetime.date(2026, 6, 30))
     assert r.safe_harbor.prior_agi_missing is True
     assert "may be UNDERSTATED" in wh.render_markdown(r)
@@ -474,3 +962,342 @@ def test_read_ca_inputs_box17_only_scaffold_skipped():
     r = wh.build_report(result, _ca_proj_inputs(), None, 2026,
                         datetime.date(2026, 6, 30))
     assert r.ca is None
+
+
+def test_the_federal_prior_prong_requires_the_completed_line8_base():
+    """An archive's raw line 24 cannot silently become Form 2210 line 8."""
+    prior = _FakeCaPrior(30000, 120000, 6000, 120000)
+    unresolved = wh.build_report(
+        _ca_result(), _ca_proj_inputs(), prior, 2026,
+        datetime.date(2026, 6, 30))
+    assert unresolved.safe_harbor.degraded is True
+    assert unresolved.safe_harbor.prior_tax is None
+    assert "Do not substitute raw Form 1040 line 24" in \
+        wh.render_markdown(unresolved)
+
+    completed = wh.build_report(
+        _ca_result(), _ca_proj_inputs(prior_base=30000), prior, 2026,
+        datetime.date(2026, 6, 30))
+    assert completed.safe_harbor.degraded is False
+    assert completed.safe_harbor.prior_tax == 30000.0
+    # No federal `prior_tax_unnetted`, on the object or in the payload — the
+    # CA twin is the live one; see its field comment in projection.py.
+    assert not hasattr(completed.safe_harbor, "prior_tax_unnetted")
+    assert "prior_tax_unnetted" not in wh._report_to_dict(
+        completed)["safe_harbor"]
+    assert "prior_tax_unnetted" in wh._report_to_dict(
+        completed)["ca"]["safe_harbor"]
+
+
+def test_the_unnetted_current_year_note_reaches_this_renderer_too():
+    """The same §6654(f) gap on THIS year, where it drives more than a prong.
+
+    `read_liability` takes `form_1040.line_24_total_tax`, and §6654 measures
+    Form 2210 line 4 — line 24 net of the part-IV refundable credits. Line 4
+    feeds BOTH the 90% prong and the $1,000 floor, so the shortfall this
+    report prints and the excuse it withholds are both computed too high:
+    $5,000 of tax, $1,000 of refundable AOTC and $3,500 withheld is a true
+    $500 balance §6654(e)(1) excuses, reported here as $1,500 to pay.
+    Over-stating what the taxpayer must pay is the hard-error direction.
+    """
+    r = wh.build_report(_ca_result(), _ca_proj_inputs(),
+                        _FakeCaPrior(30000, 120000, 6000, 120000), 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.safe_harbor.current_tax_unnetted is True, (
+        "the fixture no longer prints a shortfall, so it cannot show whether "
+        "the note reaches this renderer")
+    md = wh.render_markdown(r)
+    assert wh._CURRENT_TAX_UNNETTED_NOTE in md, (
+        "/tax-withholding asks for a payment computed off raw line 24 with "
+        "nothing saying that is not the figure §6654 measures")
+    from agents.lib.projection import _CURRENT_TAX_UNNETTED_NOTE as PROJ_NOTE
+    assert wh._CURRENT_TAX_UNNETTED_NOTE is PROJ_NOTE, (
+        "the two renderers no longer share ONE constant, which is how the "
+        "catch-up note came to exist in one report and not the other")
+    assert wh._report_to_dict(r)["safe_harbor"]["current_tax_unnetted"] is True, (
+        "the flag does not reach --json, which is what both skills read first")
+
+    # $40,000 of tax, $5,000 withheld and $40,000 of estimates: covered, and
+    # off the floor, so the silence is about having nothing to over-state
+    # rather than about §6654(e)(1) already excusing the year.
+    inputs = _ca_proj_inputs(fed_wh=5000)
+    inputs["estimated_payments_made"] = dict(inputs["estimated_payments_made"],
+                                             federal=40000)
+    covered = wh.build_report(_ca_result(), inputs, None, 2026,
+                              datetime.date(2026, 6, 30))
+    assert covered.safe_harbor.covered and not covered.safe_harbor.de_minimis
+    assert covered.safe_harbor.current_tax_unnetted is False, (
+        "the note fires on a year asking for nothing — a caveat on a run with "
+        "no figure to over-state is how a real one stops being read")
+    assert wh._CURRENT_TAX_UNNETTED_NOTE not in wh.render_markdown(covered)
+
+
+def test_the_de_minimis_margin_reaches_this_report_and_its_payload():
+    """The floor excuses the penalty on a PROJECTION; the margin says by how
+    much. Both statuses are shared with /tax-project, so what this pins is
+    that the true-up's own gap table and JSON carry them."""
+    r = wh.build_report(_ca_result(ca_tax=1000, ca_agi=20000),
+                        _ca_proj_inputs(state_wh=347), None, 2026,
+                        datetime.date(2026, 6, 30))
+    assert r.ca.safe_harbor.de_minimis_margin > 0
+    payload = wh._report_to_dict(r)
+    assert payload["ca"]["safe_harbor"]["de_minimis_margin"] == \
+        r.ca.safe_harbor.de_minimis_margin, (
+        "the margin does not reach --json, so a skill summarizing the payload "
+        "cannot tell $1 of headroom from the whole floor")
+    md = wh.render_markdown(r)
+    ca_block = md.split("## California", 1)[1]
+    assert wh._ca_status(r.ca.safe_harbor, tax_is_actual=True) in ca_block, (
+        "the CA status states the excuse without saying what has to move for "
+        "it to evaporate")
+    assert "more CA tax than projected" not in ca_block, (
+        "the CA cell carries /tax-project's wording into a report whose CA "
+        "tax is read from result.json and does not move")
+
+
+# --- The voucher table's DATES, read across BOTH columns -------------------
+#
+# The catch-up note this report already carried is scoped to the "To avoid
+# penalty" column, and that column is all $0.00 whenever the harbor is covered
+# or under §6654(e)(1)'s floor — so the only calendar caveat the report had went
+# silent in exactly the runs where "To zero balance" beside it still carried the
+# whole balance on a date already behind us. `resolve_as_of`'s closed-year
+# default is what made that the ORDINARY run rather than an odd one.
+
+
+def _closed_year_report(today, fed_wh=9000, prior_tax=8000):
+    """TY2025 read at `today`, as-of the closed year's 12-31.
+
+    Prior tax 8000 at AGI 90000 -> factor 1.00, so the harbor requires 8000
+    against ~9000 projected withholding: COVERED, penalty column all zeros,
+    with 30000 - 9000 = 21000 still owed in the zero-balance column.
+    """
+    result = {"meta": {"tax_year": 2025, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 30000}}
+    return wh.build_report(result, _proj_inputs(fed_wh, prior_base=prior_tax),
+                           _FakePrior(prior_tax, 90000), 2025,
+                           datetime.date(2025, 12, 31), today=today)
+
+
+def test_a_covered_harbor_does_not_silence_the_zero_columns_calendar():
+    """The regression this pair exists for, stated as the two columns.
+
+    A covered harbor zeroes the penalty column and with it `voucher_catchup_
+    note`, which is correct — nothing is short against the safe harbor. It must
+    not take the DATE caveat with it: the balance is in the other column, on
+    the same row, under the same passed deadline.
+    """
+    r = _closed_year_report(datetime.date(2026, 3, 1))
+    assert r.safe_harbor.covered and r.voucher_catchup_note is None
+    assert all(v.amount == 0 for v in r.vouchers_penalty)
+    assert [(v.quarter, v.due_date, v.amount) for v in r.vouchers_zero] == \
+        [(4, "2026-01-15", 21000.0)]
+    assert r.voucher_dates_note is not None, (
+        "the only column with money in it is the one no note can reach"
+    )
+    assert "2026-01-15" in r.voucher_dates_note
+    assert r.voucher_dates_note in wh.render_markdown(r)
+    assert wh._report_to_dict(r)["voucher_dates_note"] == r.voucher_dates_note, (
+        "the caveat does not reach --json, which both skills read FIRST"
+    )
+
+
+def test_a_zero_balance_row_is_optional_before_the_balance_due_deadline():
+    r = _closed_year_report(datetime.date(2026, 3, 1))
+    note = r.voucher_dates_note
+    assert "zero-balance target" in note and "optional" in note
+    assert "not due until" in note and "2026-04-15" in note
+    for false_penalty_claim in ("pay NOW", "underpayment keeps accruing",
+                                "expect the penalty", "penalty is FIXED"):
+        assert false_penalty_claim not in note, (
+            "a funded optional balance row inherited the penalty schedule's "
+            f"instruction: {false_penalty_claim!r}")
+
+
+def test_a_zero_balance_row_becomes_balance_due_without_inventing_a_penalty():
+    """Past the payment deadline, change instruments but not penalty status."""
+    r = _closed_year_report(datetime.date(2026, 6, 1))
+    note = r.voucher_dates_note
+    assert "balance-due deadline was 2026-04-15" in note
+    assert "Do NOT send a TY2025 1040-ES voucher" in note
+    assert "pay any unpaid TY2025 tax as a balance-due payment" in note
+    for false_penalty_claim in ("pay NOW", "underpayment keeps accruing",
+                                "expect the penalty", "penalty is FIXED"):
+        assert false_penalty_claim not in note
+    md = wh.render_markdown(r)
+    assert md.index(note) < md.index("## Caveats")
+
+
+def test_a_funded_penalty_row_keeps_penalty_specific_calendar_guidance():
+    """Separating columns must not silence a real penalty-target row."""
+    open_report = _closed_year_report(
+        datetime.date(2026, 3, 1), fed_wh=9000, prior_tax=30000)
+    assert open_report.safe_harbor.shortfall > 0
+    assert "pay NOW" in open_report.voucher_dates_note
+    assert "ONLY for the funded penalty-target row" in \
+        open_report.voucher_dates_note
+
+    closed_report = _closed_year_report(
+        datetime.date(2026, 6, 1), fed_wh=9000, prior_tax=30000)
+    assert "any TY2025 underpayment penalty is FIXED" in \
+        closed_report.voucher_dates_note
+    assert "expect the penalty" not in closed_report.voucher_dates_note
+
+
+def test_the_cutoff_is_statutory_april_15_not_the_observed_due_date():
+    """§7503 rolls installments, not §6654(b)(2)'s accrual endpoint."""
+    assert proj.accrual_period_closed(2022, datetime.date(2023, 4, 15)) is True
+    assert proj.accrual_period_closed(2022, datetime.date(2023, 4, 16)) is True
+    assert proj.accrual_period_closed(2022, datetime.date(2023, 4, 18)) is True
+
+
+def test_no_calendar_note_while_every_printed_date_is_still_ahead():
+    """A gate that fires on correct data is the one readers learn to skip."""
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000}}
+    r = wh.build_report(result, _proj_inputs(10000), _FakePrior(30000, 120000),
+                        2026, datetime.date(2026, 6, 30),
+                        today=datetime.date(2026, 6, 30))
+    assert r.penalty_target.shortfall > 0 and r.zero_target.shortfall > 0
+    assert r.voucher_dates_note is None
+    assert all(v.due_date >= "2026-06-30" for v in r.vouchers_penalty)
+
+
+def test_a_passed_date_with_nothing_owed_against_it_stays_quiet():
+    """Gated on the AMOUNT, not on the date alone: an all-zero table asks for
+    nothing, and a caveat about nothing is the one that trains a reader past
+    the real ones."""
+    r = _closed_year_report(datetime.date(2026, 6, 1), fed_wh=30000)
+    assert r.zero_target.covered and r.safe_harbor.covered
+    assert all(v.amount == 0 for v in r.vouchers_zero)
+    assert r.voucher_dates_note is None
+
+
+def test_a_report_built_without_a_date_asserts_nothing_about_the_calendar():
+    """`today` is optional and absent means SILENT, never assumed. Reading the
+    clock inside build_report would make a pure function non-deterministic; the
+    CLI owns the date and carries a --today override."""
+    r = _closed_year_report(None)
+    assert r.voucher_dates_note is None
+    assert wh._report_to_dict(r)["voucher_dates_note"] is None
+
+
+def test_the_ca_columns_get_the_same_reading_under_their_own_statute():
+    r = wh.build_report(
+        _ca_result(fed_tax=30000, ca_tax=9000, ca_agi=200000),
+        _ca_proj_inputs(fed_wh=9000, state_wh=2000),
+        _FakeCaPrior(8000, 90000, 1000, 90000), 2026,
+        datetime.date(2026, 12, 31), today=datetime.date(2027, 6, 1))
+    assert r.ca.safe_harbor.covered and r.ca.zero_shortfall > 0
+    note = r.ca.voucher_dates_note
+    assert note is not None and "540-ES" in note and "FTB 5805" in note
+    assert "1040-ES" not in note, (
+        "the CA block explained in terms of the federal instrument"
+    )
+    assert "expect the penalty" not in note and "penalty is FIXED" not in note
+    assert note in wh.render_markdown(r)
+    assert wh._report_to_dict(r)["ca"]["voucher_dates_note"] == note
+
+
+# --- Which lever the covered year still has --------------------------------
+
+
+def test_the_w4_lead_is_replaced_once_no_paycheck_remains():
+    """The lead recommended the W-4 route unconditionally, directly above a
+    4(c) figure of $0.00/paycheck over 0 remaining paychecks. `elapsed_fraction`
+    is exactly 1.0 at 12-31, so the closed-year default guarantees that state."""
+    r = _closed_year_report(datetime.date(2026, 3, 1))
+    assert r.inputs.paychecks_remaining == 0
+    assert "No paychecks remain in TY2025" in r.w4_lever_note
+    assert "prefer it over uneven estimates" not in r.w4_lever_note
+    md = wh.render_markdown(r)
+    assert r.w4_lever_note in md
+    assert md.index(r.w4_lever_note) < md.index("### W-4 line 4(c)"), (
+        "the correction has to precede the figures it explains"
+    )
+    assert wh._report_to_dict(r)["w4_lever_note"] == r.w4_lever_note
+
+
+def test_the_spent_lever_note_does_not_read_as_a_covered_year():
+    """$0.00/paycheck is also what a fully covered year prints. The note has to
+    separate 'no lever left' from 'nothing owed' — this run owes $21,000."""
+    r = _closed_year_report(datetime.date(2026, 3, 1))
+    assert r.zero_target.shortfall == 21000.0
+    assert "not because nothing is owed" in r.w4_lever_note
+    assert "$21,000" in r.w4_lever_note
+    assert "not the safe-harbor shortfall" in r.w4_lever_note
+
+
+def test_the_w4_lead_still_leads_while_payroll_remains():
+    result = {"meta": {"tax_year": 2026, "filing_status": "single"},
+              "form_1040": {"line_24_total_tax": 40000}}
+    r = wh.build_report(result, _proj_inputs(10000), _FakePrior(30000, 120000),
+                        2026, datetime.date(2026, 6, 30))
+    assert r.inputs.paychecks_remaining > 0
+    assert "prefer it over uneven estimates when paychecks remain" in r.w4_lever_note
+    assert "No paychecks remain" not in r.w4_lever_note
+    assert r.w4_lever_note in wh.render_markdown(r)
+
+
+def test_the_cli_hands_build_report_the_real_date_not_the_as_of(tmp_path, capsys):
+    """The whole calendar half is reachable only through `_main`'s `today`.
+
+    Wired wrong — or not wired — every note above stays None on the exact run
+    they exist for, with the unit tests still green because they pass `today`
+    themselves.
+    """
+    rc = wh._main(_closed_year_workspace(tmp_path, 2025)
+                  + ["--today", "2026-06-01"])
+    assert rc == 0, capsys.readouterr().err
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["as_of"] == "12-31"
+    assert payload["w4_lever_note"] and "No paychecks remain in TY2025" in \
+        payload["w4_lever_note"]
+    # Asserted, not assumed: a fixture that came to owe nothing would make
+    # every check below vacuous while staying green.
+    assert any(v["amount"] > 0 for v in payload["vouchers_zero"]), (
+        "the fixture no longer owes anything, so this test proves nothing")
+    assert payload["voucher_dates_note"], (
+        "the fixture owes money on a January 15 that is months behind "
+        "2026-06-01, and the payload says nothing about it")
+    assert "obsolete" in payload["voucher_dates_note"]
+    assert "expect the penalty" not in payload["voucher_dates_note"]
+    assert "2026-04-15" in payload["voucher_dates_note"]
+
+
+def test_every_zero_liability_flag_is_validated_without_a_ca_section():
+    """A parse boundary that fires on the shape of a DIFFERENT file is not one.
+
+    The CA flag this once pinned was coerced only inside `build_ca_true_up`,
+    which returns None before reaching it when result.json carries no
+    `california_540` section — so the JSON string "true", the exact case
+    `_confirmed_flag` exists to reject since `bool("false")` is True, ran
+    clean for a season in a non-CA workspace and began hard-erroring the
+    moment a CA section appeared. That flag is gone: R&TC §19136(c)(2) needs
+    no confirmation, so nothing reads it and a legacy file carrying it is
+    simply ignored rather than refused.
+
+    The invariant outlives it on the two FEDERAL flags, which `build_report`
+    coerces unconditionally — including the newer
+    `prior_year_return_filed_12_months_confirmed`, added beside its twin
+    precisely so it could not repeat the CA flag's history of being read on
+    one path only.
+    """
+    result = {"meta": {"tax_year": 2026, "filing_status": "Single"},
+              "form_1040": {"line_24_total_tax": 15000}}
+    assert "california_540" not in result, "the premise: no CA section"
+
+    # The retired CA flag: inert, not fatal, even in its rejected shape.
+    inert = dict(_proj_inputs(0),
+                 prior_year_ca_zero_liability_confirmed="true")
+    assert wh.build_ca_true_up(result, inert, None, "Single",
+                               datetime.date(2026, 6, 30), 13, 2026) is None
+
+    # Both federal flags: refused on the non-CA path, where the CA flag was not.
+    for flag in ("prior_year_zero_liability_confirmed",
+                 "prior_year_return_filed_12_months_confirmed"):
+        proj_inputs = dict(_proj_inputs(0), **{flag: "true"})
+        with pytest.raises(proj.ProjectionError) as exc:
+            wh.build_report(result, proj_inputs, None, 2026,
+                            datetime.date(2026, 6, 30))
+        assert flag in str(exc.value)

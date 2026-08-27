@@ -179,8 +179,13 @@ added), the estimated §6601 interest if the balance is carried to October
 how-to-pay instructions, and the two new calendar dates.
 
 ## Caveats
-- Statutory dates only — when April 15 / October 15 falls on a weekend or DC
-  holiday the IRS rolls the deadline forward; v1 prints the statutory date.
+- **This skill's prose names statutory dates; the calendar events it adds do
+  not.** When April 15 / October 15 falls on a weekend or a DC legal holiday
+  the deadline rolls forward (§7503), and the two `extension` events written by
+  `tax_calendar` in step 5 carry the ROLLED date. Say the observed date back to
+  the user wherever it differs — step 5.5 already computes it for the §6601
+  interest, and quoting April 15 beside a calendar entry reading April 18 reads
+  as an error in the calendar rather than a simplification here.
 - Late-FILING penalty (5%/month, max 25%) is what the extension prevents;
   the late-PAYMENT penalty (0.5%/month) and interest are what the PAYMENT
   prevents. When BOTH run in the same month they do NOT stack: §6651(c)(1)

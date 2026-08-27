@@ -25,13 +25,14 @@ tooling, labelled by `CONTRIBUTOR_SKILLS`, not exempted.
 time and everything the second hook protects is gitignored, so it never reaches a commit.
 Neither replaces them; the git hooks are what cover other agents.
 
-- `skill-invariants.sh` (`Write|Edit|Bash`, timeout 300s) — fires on CHANGE, not on state.
+- `skill-invariants.sh` (`Write|Edit|Bash`, timeout 480s) — fires on CHANGE, not on state.
   A Write/Edit is filtered by its path; a Bash payload is opaque, so it is filtered by
   `.claude/.skill-invariants-stamp` plus one `find -newercm`, and exits 0 in milliseconds
   when nothing watched moved, which is what stops `ls` and `git status` buying a pytest
   run. It then runs only the subset of six test modules the changed paths can turn red. A
-  new source file behind an assertion goes in BOTH `WATCHED_ROOTS` (or a Bash call never
-  sees it) and `select_modules_for` (or editing it selects nothing). Exit 0 silent, 2
+  new source file behind an assertion ALWAYS goes in `select_modules_for` (or editing it
+  selects nothing), and in `WATCHED_ROOTS` only where no entry there already contains it
+  — they are `find` ROOTS, so `agents` reaches `agents/lib`. Exit 0 silent, 2
   blocking with the failing tail, 1 when TERM/INT/HUP killed the pass — no verdict, so it
   must not block. No-ops without `jq` or a `.venv`.
 - `harden-runtime-perms.sh` (`Write|Edit|NotebookEdit|Bash`, timeout 60s) — re-asserts

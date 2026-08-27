@@ -2,6 +2,7 @@
   "tax_year": 2026,
   "as_of_date": "06-30",
   "pay_frequency": "biweekly",
+  "prior_year_form_2210_tax_base": 30000,
   "ytd": {"federal_withholding": 10000},
   "estimated_payments_made": {"federal": 0}
 }

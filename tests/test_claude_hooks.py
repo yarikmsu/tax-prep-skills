@@ -538,6 +538,14 @@ class TestSkillInvariantsHook:
         ("agents/lib/capabilities.py", CAPABILITIES),
         ("agents/lib/rollover.py", CAPABILITIES),
         ("agents/templates/taxpayer_profile_template.json", CAPABILITIES),
+        # The row the negative list's docstring below already claims exists.
+        # `result_template.json` left that list when test_portability began
+        # building a prior-year return out of it, and joined this one only in
+        # prose: the `case` arm was added to the hook, both lists were called
+        # "one claim seen from both directions", and nothing here was touched.
+        # Deleting that arm left the whole suite green while an edit to the
+        # template selected no module at all.
+        ("agents/templates/result_template.json", PORTABILITY),
         ("AGENTS.md", PORTABILITY),
         ("CLAUDE.md", PORTABILITY),
         ("README.md", PORTABILITY),
@@ -691,7 +699,7 @@ class TestSkillInvariantsHook:
             "pytest module behind every `ls` that followed one")
 
     @pytest.mark.parametrize("relative", [
-        "agents/templates/result_template.json",
+        "agents/templates/answers_template.md",
         "docs/roadmap/2026-tax-planning-features.md",
     ])
     def test_an_unwatched_source_edit_stays_silent(self, tmp_path, relative):
@@ -713,7 +721,11 @@ class TestSkillInvariantsHook:
 
         The paths kept here are ones no watched module reads: a template no
         invariant test loads, and a roadmap document outside
-        `docs/contributing`.
+        `docs/contributing`. `result_template.json` was the template here until
+        `test_portability.py` began building a prior-year return out of it, and
+        it moved to the watched side in the same edit — the two lists are one
+        claim seen from both directions, so a path leaves this one by joining
+        that one, never by being quietly dropped.
 
         The positive control at the end is what makes the silence mean
         anything: a hook that exits 0 for every payload — deleted, renamed,
@@ -4113,6 +4125,221 @@ class TestHookRegistration:
             assert func in names, (
                 f"{path}::{cls} has no {func} — the --deselect matches nothing "
                 "and pytest ignores it in silence")
+
+    def test_the_measured_costs_counts_match_live_collection(self):
+        """The block's own rule, enforced instead of asked for.
+
+        MEASURED COSTS says counts "are derivable in a second and there is no
+        excuse for a stale one", and refreshing them by hand has failed at
+        least four times — most recently on the branch that made the block the
+        SOLE copy by deleting the figure from test-invariants.md, where it
+        shipped a portability row five tests light and a suite row twenty. A
+        reader following the pointer got a wrong figure with nothing to flag
+        it, because nothing related the prose to the suite.
+
+        COLLECTED, not run: collection is deterministic across machines while
+        the run count subtracts platform skips that are not. The block states
+        both, so its collected figures are what can be checked here — and the
+        DERIVED rows are checked as arithmetic over the parts, which is the
+        half the block calls exact and the half that caught the last drift.
+        """
+        block = SKILL_HOOK.read_text()
+        start = block.index("MEASURED COSTS")
+        end = block.index("Running the union of every changed path")
+        costs = block[start:end]
+
+        # ONE collection, attributed per file from the node ids. This test runs
+        # inside the module MEASURED COSTS calls at least 84% of a cold pass,
+        # and it used to shell out seven times — six per-module collections
+        # plus a whole-suite one — adding that to every cold pass of the hook
+        # it measures. The block names this module's runtime as the lever when
+        # the budget gets tight; a test enforcing the block should not be
+        # spending it.
+        out = subprocess.run(
+            [sys.executable, "-m", "pytest", "tests/", "--collect-only",
+             "-q", "-p", "no:cacheprovider"],
+            cwd=REPO, capture_output=True, text=True)
+        found = re.search(r"(\d+) tests? collected", out.stdout)
+        assert found, f"could not collect tests/: {out.stdout[-400:]}"
+        suite_collects = int(found.group(1))
+        live: dict = {}
+        for line in out.stdout.splitlines():
+            node = line.strip()
+            if "::" not in node:
+                continue
+            path = node.split("::", 1)[0]
+            if path.startswith("tests/") and path.endswith(".py"):
+                live[path] = live.get(path, 0) + 1
+        assert sum(live.values()) == suite_collects, (
+            f"node-id attribution sums to {sum(live.values())} against a "
+            f"reported {suite_collects} — the per-module figures below would "
+            "be derived from an incomplete listing")
+
+        # "collects N and runs M" — the block's own reconciliation sentences.
+        # Whitespace is flattened first so a REWRAPPED sentence still matches:
+        # `.` does not cross newlines, and the fallback that used to cover that
+        # built a str->str dict, so `stated_collects["hooks"] == live[...]`
+        # compared "125" to 125 and could never hold — a red suite reporting
+        # two identical numbers as a mismatch. `[^.]*?` keeps each match inside
+        # one sentence so the two modules cannot be paired with each other's
+        # figure.
+        # Comment markers stripped BEFORE flattening: `\s+ -> " "` alone
+        # leaves the per-line "#", so a sentence wrapped mid-phrase flattens to
+        # "a cold # pass" and no phrase regex can match across the wrap.
+        flat = re.sub(r"\s+", " ", re.sub(r"^#[ \t]?", "", costs, flags=re.M))
+        stated_collects: dict = {}
+        for mod, n in re.findall(r"(portability|hooks)\b[^.]*?collects (\d+)",
+                                 flat):
+            stated_collects.setdefault(mod, int(n))
+        assert set(stated_collects) == {"portability", "hooks"}, (
+            "the block's reconciliation sentences for the portability and "
+            f"hooks modules no longer parse (found {sorted(stated_collects)}) "
+            "— widen the pattern; a sentence this test cannot read is a "
+            "figure nothing checks")
+        # The per-module decomposition rows: "tests/test_x.py   N tests".
+        rows = {p: int(n) for p, n in
+                re.findall(r"(tests/test_\w+\.py)\s+(\d+) tests", costs)}
+        assert len(rows) == 6, (
+            f"the decomposition names {sorted(rows)} — six module rows are "
+            "what the derived rows below are summed from")
+
+        # Portability's gap is the hook's own --deselect flags: derivable, so
+        # it is derived rather than trusted from the prose.
+        deselects = len(re.findall(r"--deselect\s+tests/test_portability\.py",
+                                   block))
+        missing = sorted(p for p in rows if p not in live)
+        assert not missing, (
+            f"the decomposition names {missing}, which the suite collection "
+            "did not produce — a renamed or deleted module")
+        assert rows["tests/test_portability.py"] == (
+            live["tests/test_portability.py"] - deselects), (
+            f"portability collects {live['tests/test_portability.py']} and the "
+            f"hook deselects {deselects}, so the row should read "
+            f"{live['tests/test_portability.py'] - deselects}, not "
+            f"{rows['tests/test_portability.py']}")
+        for path, count in rows.items():
+            if path in ("tests/test_portability.py", "tests/test_claude_hooks.py"):
+                continue   # gaps handled above / platform-dependent below
+            assert count == live[path], (
+                f"{path} collects {live[path]}; the block says {count}")
+        # Both reconciliation sentences, not just the one that happened to
+        # parse: `(portability|hooks) module` never matched "portability
+        # collects 150 and runs 148" — it says no "module" — so the guard that
+        # used to sit here (`if "hooks" in stated_collects`) checked one of the
+        # two and silently skipped the other, on top of never being able to
+        # hold at all once the str-valued fallback supplied the value.
+        assert stated_collects["hooks"] == live["tests/test_claude_hooks.py"], (
+            "the block's stated hooks-module COLLECTED figure is stale: "
+            f"{stated_collects['hooks']} against {live['tests/test_claude_hooks.py']}")
+        assert stated_collects["portability"] == live["tests/test_portability.py"], (
+            "the block's stated portability COLLECTED figure is stale: "
+            f"{stated_collects['portability']} against "
+            f"{live['tests/test_portability.py']}")
+
+        # The derived rows. A skill edit selects the four non-hook, non-agent
+        # modules; a cold pass adds the other two. The block calls this half
+        # EXACT, and a decomposition error shows up here first.
+        skill_edit = sum(rows[p] for p in rows if p not in (
+            "tests/test_claude_hooks.py", "tests/test_claude_agents.py"))
+        cold = sum(rows.values())
+        stated_skill = int(re.search(r"skill \.md edit\s+(\d+) tests", costs).group(1))
+        stated_cold = int(re.search(r"cold pass, all six modules\s+(\d+) tests",
+                                    costs).group(1))
+        assert stated_skill == skill_edit, (
+            f"the skill-edit row reads {stated_skill}; its four parts sum to "
+            f"{skill_edit}")
+        assert stated_cold == cold, (
+            f"the cold-pass row reads {stated_cold}; its six parts sum to {cold}")
+
+        stated_suite = int(re.search(r"`pytest tests/`\s+(\d+) tests", costs).group(1))
+        # The scale row is the PLAIN invocation, so its gap to collection is
+        # only the platform skips the block reconciles in prose.
+        gap = suite_collects - stated_suite
+        assert 0 <= gap <= 4, (
+            f"`pytest tests/` collects {suite_collects}; the block's scale row "
+            f"reads {stated_suite}, a gap of {gap} that its stated platform "
+            "skips do not explain — re-derive the whole block, do not patch "
+            "this row")
+        # The scale row's own reconciliation sentence states the COLLECTED
+        # figure, which is machine-independent and therefore pinned EXACTLY.
+        # The tolerance above exists for the platform skips the RUN figure
+        # subtracts, and it was wide enough to sit green on a row a test out of
+        # date — a tolerance for one unknown quietly covering a second thing.
+        stated_suite_collects = int(re.search(
+            r"`pytest tests/` collects (\d+) and runs (\d+)", flat).group(1))
+        stated_suite_runs = int(re.search(
+            r"`pytest tests/` collects (\d+) and runs (\d+)", flat).group(2))
+        assert stated_suite_collects == suite_collects, (
+            f"the block says `pytest tests/` collects {stated_suite_collects}; "
+            f"it collects {suite_collects}")
+        assert stated_suite_runs == stated_suite, (
+            f"the scale row reads {stated_suite} tests and the sentence beside "
+            f"it says {stated_suite_runs} run — one quantity, two values")
+
+        # PROSE counts too, not only the table. The rows were pinned while a
+        # sentence two paragraphs down said the hooks module "spawns bash
+        # processes across its 122 tests" against a row reading 123 — CLAUDE.md
+        # makes this block the single owner of these figures precisely because
+        # one quantity with two values is what the block was created to end,
+        # and a regex that reads only the table leaves prose stale for ever.
+        # Every "N tests" in the block must be a figure the block itself
+        # derives; a historical aside states its unit some other way ("205
+        # spawns over 105 cases") rather than being exempted here.
+        allowed = set(rows.values()) | {skill_edit, cold, stated_suite}
+        for stale in {int(n) for n in re.findall(r"(\d+) tests\b", costs)} - allowed:
+            raise AssertionError(
+                f"the block says \"{stale} tests\" somewhere, which is none of "
+                f"its own derived figures {sorted(allowed)} — a prose count "
+                "left behind by a table refresh")
+
+        # The RATIO half, which the count half leaves untouched. The commit
+        # that pinned the counts fixed "roughly nine tenths" against the
+        # block's own "at least 84%" BY HAND, and a hand-fixed figure in this
+        # block has drifted every time. Both halves of that quantity are
+        # derived here from the seconds the block itself states, and every
+        # restatement of it must be the same numeral: the failure mode is not
+        # a wrong percentage, it is TWO of them.
+        others = float(re.search(r"at most (\d+(?:\.\d+)?)s even taking each at "
+                                 r"its slowest", flat).group(1))
+        floor_s = float(re.search(r"cold pass that never measured below "
+                                  r"(\d+(?:\.\d+)?)s", flat).group(1))
+        derived = int(100 * (floor_s - others) / floor_s)
+        # The WHOLE script, not the sliced block: the restatement that
+        # contradicted the derivation sat at line 1032, past
+        # "Running the union of every changed path" and so outside `costs`
+        # entirely — which is exactly why nothing caught it. A quantity's
+        # copies are wherever they are; only its DERIVATION is local.
+        whole = re.sub(r"\s+", " ",
+                       re.sub(r"^#[ \t]?", "", block, flags=re.M))
+        stated_share = {int(n) for n in
+                        re.findall(r"at least (\d+)% ", whole)}
+        assert stated_share == {derived}, (
+            f"the script states the hooks share as {sorted(stated_share)}%; the "
+            f"block's own seconds ({floor_s}s cold pass, at most {others}s for "
+            f"the other five) give at least {derived}%")
+
+        # No SECOND spelling of the same quantity. A sentence that names the
+        # hooks module and a cold pass together may carry the canonical
+        # percentage and nothing else — not a fraction in words, not a
+        # different percentage.
+        fraction = re.compile(
+            r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten)[ -]"
+            r"(?:halves|thirds|quarters|fifths|sixths|sevenths|eighths|"
+            r"ninths|tenths)\b")
+        for sentence in whole.split(". "):
+            if "cold pass" not in sentence:
+                continue
+            if "hooks" not in sentence and "that module" not in sentence:
+                continue
+            assert not fraction.search(sentence), (
+                "a sentence states the hooks module's share of a cold pass as "
+                f"a fraction in words: {sentence.strip()[:160]!r} — quote the "
+                f"block's own 'at least {derived}%' instead. One quantity with "
+                "two spellings is what this block exists to end")
+            for pct in re.findall(r"(\d+)%", sentence):
+                assert int(pct) == derived, (
+                    f"a sentence states the hooks share as {pct}% against the "
+                    f"block's derived {derived}%: {sentence.strip()[:160]!r}")
 
     # Every SECOND about this hook lives in ONE place: the MEASURED COSTS block
     # in .claude/hooks/skill-invariants.sh. Read the cold pass, the per-module

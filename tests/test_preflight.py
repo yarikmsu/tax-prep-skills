@@ -22,7 +22,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import preflight as P  # noqa: E402
-from tests.skill_text import CONTRIBUTOR_SKILLS, skill_text  # noqa: E402
+from tests.skill_text import (  # noqa: E402
+    CONTRIBUTOR_SKILLS, ENGINE_FREE_SKILLS, skill_text)
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / ".agents" / "skills"
@@ -908,6 +909,101 @@ class TestSkillGate:
         # is HANDED (`run.sh -m agents.lib.projection`), and a future skill
         # could call it directly.
         assert _calls_engine("python3 -m agents.lib.projection --year 2025")
+
+    def test_an_engine_free_skill_is_exempt_by_declaration_not_by_silence(self):
+        """`ENGINE_FREE_SKILLS` membership is a claim, and this is the check.
+
+        A skill with no engine call falls out of the derived roster on its own,
+        so "engine-free by design" and "lost its engine call in an edit" are the
+        same observation from the gate's side — both simply stop being iterated.
+        The declaration exists to tell them apart, which only works if the
+        declared property is asserted rather than assumed.
+
+        Read the other way, the exemption is the obvious escape hatch: name a
+        skill here and its gate requirement disappears. That is what this test
+        forecloses — a declared skill that grows an engine call fails HERE, so
+        the only way to add one is to remove the declaration and take the gate.
+
+        Deliberately whole-text and NOT per-`_shell_units`, unlike every positive
+        audit in this file. `_shell_units` exists because an inline `-c` body puts
+        `python3` and the engine import on different LINES, so a per-line read of
+        a command that spans lines sees neither half — a blind spot when PROVING
+        a call is covered. Proving ABSENCE has no such spot: every unit is a
+        substring of the concatenated text, so a unit-level failure implies a
+        text-level one and the loop could never fire on its own. Iterating it
+        anyway would look like a third form was being checked separately when it
+        was not.
+        """
+        for name in sorted(ENGINE_FREE_SKILLS):
+            skill_dir = SKILLS_DIR / name
+            assert skill_dir.is_dir(), f"{name} is declared engine-free but does not exist"
+            assert not _calls_engine(skill_text(name)), (
+                f"{name} is declared engine-free but its text reaches the engine "
+                f"by path or module. Either drop the declaration and carry the "
+                f"preflight gate, or drop the engine call.")
+
+    def test_the_engine_free_declaration_cannot_overlap_the_two_other_rosters(self):
+        """Three sets, three meanings, no double citizenship.
+
+        Overlap with the derived roster is a contradiction — a skill cannot both
+        call the engine and be declared not to — and it is the shape the escape
+        hatch would take, so it fails as a set operation regardless of what the
+        per-skill assertion above finds. Overlap with `CONTRIBUTOR_SKILLS` is
+        different and still wrong: those are exempt because they run from a clone
+        that HAS the engine, not because they avoid it, and collapsing the two
+        exemptions would let a contributor skill's engine calls go unchecked.
+        """
+        assert not (ENGINE_FREE_SKILLS & _engine_calling_skills_cached())
+        assert not (ENGINE_FREE_SKILLS & CONTRIBUTOR_SKILLS)
+
+    def test_the_three_rosters_partition_the_skills_tree(self):
+        """What makes the declaration load-bearing: a statement about the TREE.
+
+        Every assertion in this class ranges over a set that a regression
+        SHRINKS, and shrinkage is the failure mode. A skill whose last engine
+        call is deleted leaves the derived roster silently — the gate assertions
+        simply stop iterating it, `test_the_gate_is_not_vacuous`'s floor of 20
+        absorbs the loss, and `ENGINE_FREE_SKILLS` never hears about it. Deleting
+        a name FROM that declaration is the same hole entered from the other
+        side: nothing then requires the skill to be either gated or declared, so
+        the exemption can be dropped without the gate arriving to replace it.
+
+        Neither hole is closeable by talking about either set, because both are
+        satisfied by a smaller tree. Closing them takes coverage of the whole
+        directory: every skill either reaches the engine (and carries the gate,
+        per the assertions below), or is declared engine-free (and is checked to
+        stay that way, per the assertion above), or is contributor tooling. A
+        skill can then only leave one roster by joining another, and every such
+        move is an edit to `tests/skill_text.py` rather than a silent effect of
+        editing a skill.
+        """
+        on_disk = {d.name for d in SKILLS_DIR.iterdir() if d.is_dir()}
+        assert on_disk, "the skills tree did not resolve — every roster is empty"
+        classified = (_engine_calling_skills_cached() | ENGINE_FREE_SKILLS
+                      | CONTRIBUTOR_SKILLS)
+        assert not (on_disk - classified), (
+            f"{sorted(on_disk - classified)} neither reach the engine nor are "
+            f"declared in ENGINE_FREE_SKILLS. A skill that lost its last engine "
+            f"call drops out of the gate with no other signal: either restore "
+            f"the call or declare it engine-free and take the assertion that it "
+            f"stays engine-free.")
+        assert not (classified - on_disk), (
+            f"{sorted(classified - on_disk)} is declared in a roster but is not "
+            f"a skill directory — a rename left the declaration behind, and a "
+            f"declaration naming nothing exempts nothing while looking current")
+
+    def test_the_engine_free_assertion_has_teeth_on_an_empty_declaration(self):
+        """The positive control, because the set above starts and may return empty.
+
+        Iterating an empty `ENGINE_FREE_SKILLS` passes while proving nothing,
+        and reads exactly like a set of skills that were all checked. This drives
+        the predicate the assertion depends on over all three invocation forms,
+        so the check keeps a failing case even at zero members.
+        """
+        assert _calls_engine("sh agents/lib/run.sh agents/lib/preflight.py")
+        assert _calls_engine("sh agents/lib/run.sh -m agents.lib.projection")
+        assert _calls_engine('run.sh -c "\nfrom agents.lib.tie_out import x\n"')
+        assert not _calls_engine("multiply line 24 by 1.10 and show your work")
 
     @pytest.mark.parametrize("skill", sorted(_engine_calling_skills_cached()))
     def test_the_gate_names_the_command_and_fails_closed(self, skill):

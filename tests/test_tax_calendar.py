@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import tax_calendar as cal
+from tests.skill_text import skill_text  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1747,13 +1748,79 @@ def test_1040es_federal_rolls_past_weekend_and_dc_holiday():
     assert "next business day" in q1.description
 
 
-def test_ca_540es_state_rolls_weekend_only_not_dc_holiday():
-    # Apr 15 2023 is a Saturday. FEDERAL would roll to Apr 18 (past the Mon
-    # Apr 17 DC Emancipation observance), but a CA (state) deadline rolls past
-    # the WEEKEND ONLY → Mon Apr 17, because DC holidays don't bind CA.
-    q1 = next(e for e in cal.events_ca_es(2023) if e.quarter_label == "Q1")
-    assert q1.date == datetime.date(2023, 4, 17)
-    assert "State-specific legal holidays are not modeled" in q1.description
+def test_ca_540es_rolls_on_the_federal_holiday_set():
+    """CA adopts the FEDERAL legal-holiday set — R&TC §18410, and FTB's dates.
+
+    This test asserted the opposite for as long as it existed: that Apr 15
+    2023 (a Saturday) rolls to Monday Apr 17 for California because DC
+    Emancipation Day "doesn't bind CA". R&TC §18410 says otherwise — "a legal
+    holiday includes a federal legal holiday recognized by the Internal
+    Revenue Service under Section 7503 of the Internal Revenue Code" — and
+    FTB applies it by name in the Form 540-ES instructions this module dates:
+    "Due to the federal Emancipation Day holiday observed on April 17, 2023,
+    tax returns filed and payments mailed or submitted on April 18, 2023, will
+    be considered timely."
+
+    All three of FTB's published TY2023 540-ES dates are asserted, not just
+    the one that moved, because two of them roll for two different holidays:
+    Q1 past observed Emancipation Day and Q4 past MLK Day. A weekend-only rule
+    printed Apr 17 and Jan 15 — a payment date up to three days early, and,
+    once the passed-deadline gate read the same rule, a warning that a 540-ES
+    row had been missed on the very day it was due.
+    """
+    events = {e.quarter_label: e for e in cal.events_ca_es(2023)}
+    assert events["Q1"].date == datetime.date(2023, 4, 18)
+    assert events["Q2"].date == datetime.date(2023, 6, 15)
+    assert events["Q4"].date == datetime.date(2024, 1, 16)
+    assert "Q3" not in events, "CA weights September at 0%"
+
+    # The caveat is now jurisdiction-aware: it was a blanket sentence on every
+    # state event, and on CA it had become a claim that is not true. A caveat
+    # that lies where the engine is right teaches the reader to discount it
+    # where it is still live.
+    assert "State-specific legal holidays are not modeled" not in \
+        events["Q1"].description, (
+        "CA's holidays ARE modeled now; telling a Californian to go confirm a "
+        "date this engine gets right is the lying caveat")
+    ny = next(e for e in cal.events_ptet(2026, state="NY",
+                                         has_k1_income=True)
+               if "election" in e.summary.lower())
+    assert "State-specific legal holidays are not modeled" in ny.description, (
+        "NY's statute has NOT been read here, so the caveat must survive "
+        "there — dropping it everywhere would be the opposite error")
+
+
+def test_no_skill_calls_the_generated_calendar_statutory_dates_only():
+    """The `.ics` carries OBSERVED dates, and three skills said it did not.
+
+    Epic L routed every federal and CA/NY/NJ deadline in this module through
+    `irs_dates`, so the event DATE is the rolled one and the statutory date is
+    kept in the description. The v1 caveat that superseded replaced survived in
+    three user-facing places: `/tax-calendar`'s own Caveats block ("v1 surfaces
+    the statutory date — cross-check IRS.gov"), `/tax-setup` directly beneath
+    the invocation, and `/tax-extend` a few lines below a step that rolls the
+    date ITSELF to keep §6601 interest from starting early.
+
+    Each told a taxpayer to go and correct a date this engine already gets
+    right — the lying caveat this repo would rather have missing, and the one
+    that teaches a reader to discount the caveats that are still live. The
+    /tax-extend one also contradicted its own step 5.5 in the same file.
+
+    Behaviour is asserted FIRST so this cannot become a phrase ban outliving
+    its reason: a release that really did emit statutory dates would fail on
+    the rolled dates below, not on the prose.
+    """
+    assert cal._fed_due(2023, 4, 15) == datetime.date(2023, 4, 18)
+    assert cal._state_due(2024, 1, 15, "CA") == datetime.date(2024, 1, 16)
+
+    claims = ("statutory dates only", "surfaces the statutory date",
+              "prints the statutory date", "uses statutory dates")
+    for name in ("tax-calendar", "tax-setup", "tax-extend"):
+        flat = " ".join(skill_text(name).replace("**", "").split()).lower()
+        for claim in claims:
+            assert claim not in flat, (
+                f"/{name} claims '{claim}', but the .ics carries the OBSERVED "
+                "date — Apr 15 2023 is written as Apr 18 2023")
 
 
 def test_rmd_dec31_does_not_roll():
@@ -2030,3 +2097,26 @@ def test_write_calendar_tmp_file_is_600_before_replace(tmp_path, monkeypatch):
     assert seen["mode"] == 0o600, (
         f"the .tmp held the calendar at {oct(seen.get('mode'))} when it was "
         "renamed onto the real target, not 0600")
+
+
+def test_the_profile_year_mismatch_never_echoes_a_malformed_year():
+    """`_validate_tax_year` guards the CALLER's year; this one is the FILE's.
+
+    `taxpayer_profile.json` is hand-edited and its `tax_year` reached this
+    refusal untyped, so a misplaced name went to the terminal verbatim —
+    `redact` masks SSN and credential shapes only, and a name has neither
+    (AGENTS.md #1). Shared with `projection`'s year guard through
+    `secure_fs.year_or_shape`, so the three files that compare a hand-edited
+    year cannot drift on what is safe to print.
+    """
+    secret = "Jane Q Taxpayer"
+    for bad in (secret, {"name": secret}, ["2025"], True):
+        profile = dict(_profile(), tax_year=bad)
+        with pytest.raises(cal.CalendarError) as e:
+            cal.build_events(profile, 2026)
+        assert "Jane" not in str(e.value), (
+            f"taxpayer_profile.tax_year was echoed: {e.value}")
+        assert "TY2026" in str(e.value)
+
+    with pytest.raises(cal.CalendarError, match="TY2025"):
+        cal.build_events(dict(_profile(), tax_year=2025), 2026)

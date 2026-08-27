@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Union
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib.secure_fs import is_reparse_point, redact, secure_path  # noqa: E402
+from agents.lib.secure_fs import (  # noqa: E402
+    is_reparse_point, redact, secure_path, year_or_shape,
+)
 
 # EVERY path this module names in an error is a RUNTIME path, and the CLI below
 # prints them. An entry under documents/ — or under archive/{year}/documents/
@@ -243,8 +245,13 @@ def archive_year(year, root: Path, dry_run: bool = False) -> ArchiveReport:
     except json.JSONDecodeError as e:
         raise ArchiveError(f"result.json is malformed: {redact(e)}")
     if meta_year != year:
+        # Not `TY{meta_year}`: nothing type-checks `meta.tax_year` on the way
+        # in, so this prints whatever the file holds there — the same leak the
+        # projection and calendar year guards already route through
+        # `year_or_shape`.
         raise ArchiveError(
-            f"Root result.json is for TY{meta_year}, not TY{year}. Pass the correct year."
+            f"Root result.json is for {year_or_shape(meta_year)}, not "
+            f"TY{year}. Pass the correct year."
         )
 
     report = ArchiveReport(year=year, dry_run=dry_run)

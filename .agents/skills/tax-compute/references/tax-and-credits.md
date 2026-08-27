@@ -379,21 +379,71 @@ Inputs:
   rest. Omitting it overstates the penalty and can trigger a Form 2210 that
   isn't due at all.
 - `filing_status`, `tax_year` from the profile.
-- `prior_year_tax`: `archive/{year-1}/result.json` form_1040
-  `line_24_total_tax` **minus the prior year's refundable credits** (same
-  line 2/3 treatment as the current year — Form 2210 line 8 uses the
-  prior-year tax net of refundable credits; the raw line 24 overstates the
-  harbor), floored at 0. `prior_year_agi`: prior `line_11_agi`. No archive →
-  pass `None` for both (degrades to the 90%-of-current test — the prior-year
-  harbor could only lower the requirement, so this never understates).
+- `prior_year_zero_liability_confirmed`: pass `True` **only** when the
+  composition below comes out to exactly $0 AND you have confirmed all THREE
+  §6654(e)(2) preconditions with the user — the prior year covered a full 12
+  months, the taxpayer had NO LIABILITY for it, and was a US citizen or
+  resident throughout it. No liability means that year's Form 1040 TOTAL TAX
+  line was $0, or that no return was required at all; it is NOT the
+  composition below, which subtracts refundable credits and reaches $0 on a
+  positive total tax ($500 of SE tax under a $2,000 EIC). That exception
+  clears the whole year, so it is not taken from a figure that happens to
+  equal zero. It does NOT require that a return was filed.
+- `prior_year_return_filed_12_months_confirmed`: the SECOND route to a $0
+  base, and an independent test — ask about it separately whenever the
+  composition comes out to $0, including when the answer to the citizenship
+  question above was "no". Pass `True` once the user confirms the prior year
+  covered a full 12 months **and** a return was filed for it. That is
+  §6654(d)(1)(B)'s closing text, the only thing standing between a taxpayer
+  and the ordinary prior-year prong, and it asks nothing about citizenship or
+  residency: 100%/110% of a $0 prior-year tax is $0, so the required annual
+  payment is $0. Collapsing the two questions charged 90% of the current year
+  to every $0-prior-year filer who could not affirm citizenship — a first-year
+  green-card holder or dual-status filer with a full 12-month $0 return is
+  covered, and was being told to pay.
+  Left unconfirmed on BOTH, the engine DROPS the prior-year prong (the
+  90%-of-current test stands alone), which overstates rather than clearing a
+  penalty that attaches; record both answers in `answers.md`.
+- `prior_year_tax`: the completed **pre-factor** prior-year tax composition
+  under line 8 of the Form 2210 instructions for the COVERED year. Build it
+  from that chart's enumerated income-tax and other-tax lines, exclusions, and
+  refundable credits; raw Form 1040 line 24 minus credits is not sufficient.
+  In particular, the chart conditionally excludes household employment taxes
+  and can exclude §965 net tax, while admitting only named Schedule 2 items.
+  Record the verified composition in `answers.md`; if it is not complete, pass
+  `None` and leave the prior prong unresolved rather than infer it from the
+  archive. `prior_year_agi` must come from **the same return figure 1 was
+  composed from**, read off THAT year's own layout by the printed label:
+  **Form 1040 line 11 holds AGI only from 2020 on**, and is 8b on 2019, 7
+  on 2018, 37 on 2017. The number printed at line 11 on each of those is a
+  small one — it reads as under the threshold and applies 100% where 110%
+  is owed, the same tenth-low failure the amended-AGI trap below produces.
+  Do NOT take it from the archived `line_11_agi` without confirming which
+  return the archive holds: `/tax-amend` overwrites
+  `archive/{year}/result.json` with the AMENDED return's figures, and
+  §6654(d)(1)(B)(ii) reads the tax shown on the controlling return (the
+  original, unless amended before that year's return was due). Pairing an
+  original-return base with an amended AGI that crossed the
+  $150,000/$75,000 threshold applies 100% where 110% is owed — the
+  required annual payment comes out 10% low, on the filed return. Ask
+  whether the prior return was amended and when; if the pair cannot be
+  established from one return, pass `prior_year_agi=None` and take the
+  flagged 100% factor rather than guessing.
+  With no completed base, the calculation degrades to the 90%-of-current test
+  — the prior-year harbor could only lower the requirement, so this never
+  understates the amount needed for that remaining prong.
 - `estimated_payments`: the FULL Form 2210 Table-1 payment timeline, not
   just line 26. Ask the user and record in answers.md:
   - dated 1040-ES payments ("paid evenly on the due dates" → four equal
     entries on Apr/Jun/Sep 15 and Jan 15). Dates matter: a January payment
     cannot retroactively cure an April underpayment;
   - a prior-year overpayment applied to estimates — dated Apr 15 of the tax
-    year when the prior return was filed on time; if it was filed LATE, use
-    the actual filing date (the credit didn't exist until then);
+    year when the prior year was PAID IN FULL before that date; if the
+    overpayment arose from a payment made after it, use that payment's date.
+    The Form 2210 line 11 test is when the money went in, NOT when the return
+    was filed: a return on extension whose tax was fully covered by
+    withholding still credits on Apr 15, and dating it to the October filing
+    would overstate every earlier installment's shortfall;
   - **the balance-due payment with an early-filed return**: when this return
     is filed and paid before Apr 15, include that payment at its actual date
     — it stops the Q4 (and any open) accrual early per the 2210 line 11
@@ -426,4 +476,3 @@ Act on the result:
 - Surface the Schedule AI note when income was concentrated late in the year
   (RSU vest, year-end sale) — the annualized method usually reduces the
   penalty but is manual.
-

@@ -135,6 +135,15 @@ cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 # path MEANS. Both are needed and they are separate lists, so a path added to
 # one and not the other is half-covered: missing from the roots it is invisible
 # to a Bash call, missing from the case it selects nothing when edited directly.
+#
+# These are `find` ROOTS, so a directory here already covers everything beneath
+# it: `agents` covers `agents/lib` and `agents/templates/*.json`, `scripts`
+# covers the PII scan. Five such entries had accumulated, each listing a path
+# an ancestor already reached — `find` then walked and printed them twice, and
+# more to the point they read as the thing a new watched file needs, when what
+# it actually needs is its arm in `select_modules_for` below. A file belongs
+# here only when NO listed directory contains it (`.claude/settings.json`,
+# `docs/QUICKSTART.md`, the `tests/*.py` modules — there is no `tests` root).
 # ---------------------------------------------------------------------------
 WATCHED_ROOTS='
 .agents/skills
@@ -151,15 +160,11 @@ CONTRIBUTING.md
 LICENSE
 README.md
 agents
-agents/install.sh
-agents/lib
-agents/templates/taxpayer_profile_template.json
 docs/QUICKSTART.md
 docs/contributing
 requirements.in
 requirements.txt
 scripts
-scripts/pre-commit-pii-scan.sh
 tests/skill_text.py
 tests/test_capabilities.py
 tests/test_claude_agents.py
@@ -344,6 +349,14 @@ select_modules_for() {
         agents/templates/taxpayer_profile_template.json|\
         tests/test_capabilities.py)
             RUN_CAPABILITIES=1
+            ;;
+        # test_portability builds a prior-year return from result_template to
+        # prove raw line 24 is ignored, then checks the explicit completed
+        # Form 2210 base exists in projection_inputs_template. A template edit
+        # must therefore select the module that pins both halves of the intake.
+        agents/templates/result_template.json|\
+        agents/templates/projection_inputs_template.json)
+            RUN_PORTABILITY=1
             ;;
         tests/skill_text.py)
             RUN_PORTABILITY=1
@@ -712,9 +725,9 @@ nothing_selected && exit 0
 apply_red_checks
 
 # An explicit module list, in the same spirit as EXPECTED_SKILLS: additions are a
-# prompt rather than busywork, and `tests/` wholesale is roughly twice the cold
-# pass for seven times the tests — far too slow to pay on a save (MEASURED COSTS
-# below owns the seconds). `test_the_hook_runs_test_files_that_exist` pins that
+# prompt rather than busywork, and `tests/` wholesale is roughly half again the
+# cold pass for nearly four times the tests — far too slow to pay on a save
+# (MEASURED COSTS below owns the seconds). `test_the_hook_runs_test_files_that_exist` pins that
 # each path resolves — a rename would otherwise make pytest exit 4 (usage error)
 # and report "invariants FAILED" on every skill edit while `pytest tests/` was
 # green.
@@ -728,56 +741,90 @@ apply_red_checks
 # `tests/` wholesale figure (75s, then 176s) that a later measurement did not
 # reproduce, and both times the copies elsewhere were left behind.
 #
+# RE-MEASURED END TO END, every row in ONE sitting, after `tax-safe-harbor`'s
+# fourth review round added twenty-four tests — seven to the portability module
+# this hook selects, seventeen to modules it does not. The sitting ran as several
+# consecutive invocations with NOTHING touching the repository between them, the
+# ten-minute cap on a tool call being what splits them; that is a continuation of
+# one sitting and not the patch this paragraph forbids. An earlier set taken
+# during the same round WAS discarded rather than used, for the reason the
+# paragraph exists: source files were still being edited while it ran, so its
+# rows described a tree that no longer exists. That patch is what the revision
+# before THAT was: count columns edited and seconds carried over, going wrong in
+# BOTH directions at once, every count landing short (100 where 116 run, 288
+# where 289 run, 2936 where 2956 collect) while its module rows summed to about
+# 136s against a cold pass it stated as 121-124s. Parts exceeding the whole was
+# its signature; this sitting has them exceeding by about 6% for an entirely
+# different reason, and the ARITHMETIC paragraph below separates the two rather
+# than leaving a reader to guess which they are looking at. So: no row here is
+# edited alone. Either the whole block is re-measured in one sitting or it is
+# left as it stands, stale and legibly so.
+#
+# MEASURING THE FAST-PATH ROW HAS A TRAP, stated because it cost two full passes
+# to find. That row needs a stamp NEWER than every watched file, and a bare
+# `touch` on the stamp does not produce one: the trust ladder above backdates
+# `$NOW_MARKER` by a second and treats `[ "$STAMP" -nt "$NOW_MARKER" ]` as
+# untrustworthy, so a stamp dated this instant forces a FULL pass. The first
+# invocation after such a touch measures the cold pass, the hook then rewrites
+# the stamp with a trustworthy date, and every run after it is genuinely fast —
+# which reads exactly like a warm-up effect and is not one. Backdate the stamp
+# (`touch -A -000010`) and all six runs are fast.
+#
 # READ THE RATIOS, NOT THE SECONDS, and the conditions are why. One macOS host,
-# `.venv/bin/python -m pytest`, every line taken at least three
-# times, on a machine that was NOT idle — a second agent session was editing
-# this repository and running this suite throughout, which is the honest
-# condition for a hook that fires on tool calls rather than a best-case one.
-# Run-to-run spread is ±15% on the slow lines, and the spread BETWEEN sittings is
-# larger than that: an earlier reading of `pytest tests/` on this same host
-# returned 139-155s, a later one 175-209s, and this one 200s. The portability
-# module moved further — 7.5-10.2s one day, 12.7-13.4s the next, with no code
-# between the two — which is why the ratios below are stated as "roughly" and
-# why a figure lifted from here to three significant figures would be wrong by
-# the next reading. Every line is a RANGE with a run count.
+# `.venv/bin/python -m pytest`, every line taken three times, back to back, with
+# nothing else running against the repository — an earlier attempt at this same
+# sweep was ABANDONED mid-flight because edits were landing during it and firing
+# the hook's own pytest underneath the measurement. Run-to-run spread is ±5% on
+# the slow lines here, and the spread BETWEEN sittings is far larger: readings of
+# `pytest tests/` on this same host have returned 139-155s, 175-209s, 179-191s,
+# 184-190s and 199-204s. The portability module moved further — 7.5-10.2s one day,
+# 12.7-13.4s the next, with no code between the two — which is why the ratios below are
+# stated as "roughly" and why a figure lifted from here to three significant
+# figures would be wrong by the next reading. Every line is a RANGE with a run
+# count.
 #
 # SECONDS ARE WALL CLOCK of the invocation — interpreter start and collection
 # included — because that is what the tool call waits on. pytest's own "in
 # 0.39s" footer is the smaller number and reading one convention as the other is
-# how a row ends up looking halved: the fixed overhead is about 0.4s, which is
-# most of a sub-second module's row and a rounding error on the hooks module.
+# how a row ends up looking halved. The fixed overhead is under 0.2s on this
+# host, which is the whole of the agents row and a rounding error on the hooks
+# module.
 #
 #   what triggers it               what runs     observed range    runs
 #   ---------------------------------------------------------------------
-#   nothing watched changed        no pytest     0.03 - 0.05s        6
-#   agent-definition edit           19 tests     0.14 - 0.18s        3
-#   skill .md edit                 629 tests     15.0 - 16.1s        3
-#   cold pass, all six modules     770 tests      138 - 139s         3
-#   (for scale) `pytest tests/`   2928 tests      194 - 199s         3
+#   nothing watched changed        no pytest    0.04 - 0.05s         6
+#   agent-definition edit           19 tests      0.2 - 0.2s         3
+#   skill .md edit                 720 tests     16.4 - 17.2s        3
+#   cold pass, all six modules     862 tests    121.8 - 138.9s       3
+#   (for scale) `pytest tests/`   3221 tests    190.5 - 209.6s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
-# passes two `--deselect` flags, so portability collects 97 and runs 95; and
-# the hooks module holds two platform skips, so it collects 124 and runs 122.
-# Reporting either as collected made the decomposition sum past the total —
-# twice, and the second time the derived rows were right and the part was wrong,
+# passes two `--deselect` flags, so portability collects 179 and runs 177; and
+# the hooks module holds two platform skips, so it collects 125 and runs 123.
+# `pytest tests/` collects 3223 and runs 3221 for the same skips — and that row
+# is the PLAIN invocation, WITHOUT the two deselections, which is the other way
+# to state a count the measured command did not actually run. A first attempt at
+# it passed the deselections through and measured 3000. Reporting any
+# of them as collected made the decomposition sum past the total — three times
+# now, and on one of those the derived rows were right and the part was wrong,
 # which is the harder way round to notice.
 #
-# The first line is this hook end to end on its fast path, timed in an isolated
-# copy of the repository so that the concurrent editor could not turn it into a
-# full pass mid-measurement. The rest are the pytest invocation alone, which is
-# all but the entire cost: the hook's own work ahead of pytest is that same
-# 0.07-0.10s, so add it to any line below rather than measuring it again.
+# The first line is this hook end to end on its fast path — the real script, fed
+# a Bash payload with nothing watched newer than the stamp. The rest are the
+# pytest invocation alone, which is all but the entire cost: the hook's own work
+# ahead of pytest is that same fast-path cost, so add it to any line below
+# rather than measuring it again.
 #
 # DECOMPOSITION — each module timed alone, portability carrying the same two
 # deselections run_focused_modules passes. This is the durable half: WHICH
 # module dominates, and by how much, survives a change of machine.
 #
-#   tests/test_claude_hooks.py     122 tests      118 - 123s         3
-#   tests/test_portability.py       95 tests      9.6 - 9.9s         3
-#   tests/test_capabilities.py     116 tests     0.90 - 0.93s        3
-#   tests/test_claude_agents.py     19 tests     0.14 - 0.18s        3
-#   tests/test_secure_fs.py        133 tests      1.1 - 1.5s         3
-#   tests/test_preflight.py        285 tests      3.9 - 5.1s         3
+#   tests/test_claude_hooks.py     123 tests    108.8 - 129.2s       4
+#   tests/test_portability.py      177 tests     10.3 - 11.6s        3
+#   tests/test_capabilities.py     116 tests      0.6 - 0.8s         3
+#   tests/test_claude_agents.py     19 tests      0.2 - 0.2s         3
+#   tests/test_secure_fs.py        138 tests      1.1 - 1.3s         3
+#   tests/test_preflight.py        289 tests      3.9 - 4.2s         3
 #
 # The agent-definition row above and the agents row here are the SAME
 # invocation — that trigger selects that module alone — and are stated with the
@@ -785,8 +832,10 @@ apply_red_checks
 # started drifting from itself the first time.
 #
 # Read the preflight line as a RATIO, which is the half that survives a change
-# of machine: it sits between capabilities and portability, and is roughly a
-# twenty-fifth of the hooks module that dominates every total here. A skill edit
+# of machine: it sits between capabilities and portability, and is somewhere
+# between a twenty-sixth and a thirty-third of the hooks module that dominates every
+# total here — a spread that wide on a ratio is itself the reason to distrust any
+# single reading of the seconds it comes from. A skill edit
 # selects it alongside portability, capabilities and secure_fs, which is where
 # its cost actually lands. It has grown against its neighbours three times: the
 # launcher tests EXECUTE `run.sh` in a subprocess rather than asserting against
@@ -797,34 +846,185 @@ apply_red_checks
 # tmp_path and fabrication, which is why the row moved much less than its count.
 #
 # ARITHMETIC, stated because a block whose parts do not add up is a block a
-# reader stops believing: those six sum to 134s at their minima and 141s at
-# their maxima, against 138-139s measured for the six run together. Parts
-# should exceed the whole slightly — six interpreter starts and six collections
-# instead of one — and this sitting cannot show that: the ranges OVERLAP,
-# because the difference being looked for (a few seconds) is smaller than the
-# hooks module's own run-to-run swing. Read it as "they agree", which is all
-# this comparison can resolve, and not as a measurement of collection overhead.
+# reader stops believing. Those six sum to 124.9s at their minima and 147.3s at
+# their maxima, against 121.8-138.9s measured for the six run together — so this
+# sitting the parts do NOT bracket the whole, they sit above it by about 6%. That
+# 6% is the hooks module's own spread and nothing else: it read 108.8-129.2s
+# across four back-to-back runs, a 20-second swing, wider than every other module
+# added together, and the paragraph below states why parts and whole can only ever
+# agree to within it. Six separate invocations each paying an interpreter start
+# pushes the same way, and is worth well under a second of it. What separates this
+# from the count-column patch the header forbids is the other half, which is
+# EXACT: 177 + 116 + 289 + 138 = 720 for a skill edit, plus 123 + 19 = 862 for a
+# cold pass, both matching the trigger table above to the test. That sentence
+# itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
+# part and a superseded sum, green the whole time because the mechanical check
+# reads the TABLE and this line is prose. It moves with the table now. A decomposition
+# error shows up there first, because counts do not drift — and it now shows up
+# MECHANICALLY: `test_the_measured_costs_counts_match_live_collection` collects
+# each module and re-derives both sums, so a stale count column is a red suite
+# rather than a figure a reader has to distrust on their own. What neither half is
+# evidence about, in either direction, is collection overhead — a previous
+# revision claimed that and had the parts exceeding the whole because a count
+# column had been hand-patched.
 #
-# EVERY line above was measured together, most recently 2026-08-16, on an idle
+# EVERY SECOND above was measured together, most recently 2026-08-18, on an idle
 # machine, and re-measured END TO END rather than patched where a count moved:
-# 15 tests were added to the preflight and secure_fs modules that sitting, and
-# patching two rows over stale neighbours is what left the derived rows wrong
-# the last time. This sitting reads SLOWER throughout than the one earlier the
-# same day (`pytest tests/` 194-199s against 174-179s, the cold pass 138-139s
-# against 120-122s) while the 15 added tests account for under two seconds of
-# it. Nearly all of the shift is the hooks module's own row moving, which is
-# well inside the between-sitting spread recorded above — do NOT read a cause
-# into it, and do read the ratios rather than the seconds.
+# twenty-four tests were added across the suite that round, seven of them to a
+# module this hook selects, and patching one row over stale neighbours is what left the
+# derived rows wrong three revisions ago. Against the previous end-to-end sitting
+# — the day before, the same host — the picture is mixed rather than uniform, which
+# is itself the point: the hooks module WIDENED hard (108.8-129.2s against
+# 113-120s, straddling it in both directions), portability came down (10.3-11.6s
+# against 11.2-11.4s) while gaining seven tests, the cold pass came down and
+# widened (121.8-138.9s against 123-132s), and `pytest tests/`
+# (190.5-209.6s against 199-204s) came down at the BOTTOM and went up at the top,
+# widening in both directions. Twenty-four tests worth well
+# under a second cannot produce any of that, and no single reading of it should be
+# read as a trend. It is the between-sitting spread recorded above, on a host idle
+# for both: do NOT read a cause into it, and do read the ratios, not the seconds.
 #
-# THE COUNTS ARE NEWER THAN THE SECONDS, deliberately, and this is the policy
-# stated below rather than a lapse. A later round on the same branch added 13
-# tests to the preflight module — the absent-locked-package comparison and the
-# marker evaluator it needs — so its row moved and, with it, the two rows
-# derived from it (the skill edit and the cold pass) and the `pytest tests/`
-# line. The seconds are still that sitting's set: 13 tests that fabricate
-# distributions and write a two-line lock into tmp_path are a small fraction of
-# that row's own run-to-run spread, and re-reading ONE row against neighbours
-# measured in another sitting is the failure this block has shipped twice.
+# COUNTS ARE TWO HUNDRED AND ELEVEN TESTS AHEAD OF THE SECONDS, and this is the
+# note that says so. Every COUNT above is current as of the review round that
+# fixed this block; every SECOND above is still the sitting recorded below,
+# unmoved. That is the order this block prescribes for itself: counts are
+# derivable in a second and go first, seconds cost half an hour of an
+# otherwise-idle machine and are re-read as a SET when the branch settles.
+# Against the counts the seconds were taken at, the suite has gained two hundred
+# and eleven tests (3010 to 3221) and the portability row thirty-eight (139 to
+# 177), with secure_fs moved once as well (133 to 138). The seven rounds BEFORE the
+# last one each moved the scale row ALONE, by four, then three, then three, then five,
+# then four, then three, then one: they added tests to projection,
+# tax_computations, withholding, tax_calendar, ptet, retirement_dashboard and
+# irs_dates, and NONE of the six modules this hook selects — measured, not
+# assumed, the six re-collecting at exactly the counts above every time. That
+# shape is what makes a counts-only refresh legitimate here rather than the
+# patch the header forbids: the derived rows are sums of the six, so a round
+# that touches none of them cannot move either one. Three rounds back that
+# stopped holding twice running — one test to portability and five to
+# secure_fs, then three more to portability — so the derived rows were
+# re-derived from the six rather than carried over (688 to 694 to 697, 830 to
+# 836 to 839). It has now run twice more: eight tests to projection and ONE to
+# portability, then five more to portability alone, so the derived rows were
+# re-derived each time (697 to 698 to 703, 839 to 840 to 845) rather than
+# carried over on the assumption that a projection-only round had happened, and
+# once more since, for four tests to portability alone (703 to 707, 845 to 849),
+# and once again after that for two tests to PROJECTION alone, which left the
+# derived rows exactly where they stood (707, 849) — the projection-only shape
+# the seven rounds above describe, back again after four rounds that were not,
+# and measured rather than assumed on the strength of that. The round after it
+# was the OTHER shape, and the one the sentence below predicts: five tests to
+# projection and two to portability, because it edited a SKILL and a reference
+# beside the engine branch they describe, so both derived rows moved (707 to
+# 709, 849 to 851). The round after THAT was the same shape again and wider —
+# three tests to projection, three to portability and one to irs_dates, a
+# six-finding round touching two skills, a reference, AGENTS.md and two engine
+# modules — so the derived rows moved again (709 to 712, 851 to 854) while the
+# scale row moved by seven rather than by their three, irs_dates being a module
+# this hook does not select. The round after it was the PROJECTION-ONLY shape
+# again in the strict sense — three tests, two to retirement_dashboard and one
+# to projection, and NONE to the six — so the derived rows did not move at all
+# (712, 854) and only the scale row did, by three. It edited two ENGINE modules
+# and no skill, which is the case that shape belongs to. A
+# review round that edits a SKILL is the case to expect a portability move in,
+# portability being the module that reads the skills. The round after it was
+# exactly that case, and the narrowest form of it: ONE finding, one portability
+# test replaced by two and nothing added anywhere else, so all three moving rows
+# moved by one together (712 to 713, 854 to 855, scale 3205 to 3206). A
+# skill-only round is a portability-only round, and this sitting is where the two
+# are visibly the same statement. The round after it was the MIXED shape and the
+# commonest one: a defect stated in ten places across four skills, two engine
+# modules, a template and a design note, which put one test in portability and two
+# in projection — so the derived rows moved by ONE (713 to 714, 855 to 856) while
+# the scale row moved by THREE (3206 to 3209). The gap between them is the whole
+# reason the derived rows are re-derived from the six rather than tracked off the
+# scale row. The round after THAT repeated it to the test — one finding stated in
+# an engine note, two skill documents and the design note behind them, again one
+# portability test and two projection tests, derived rows 714 to 715 and 856 to
+# 857 against a scale row 3209 to 3212. Twice running is not a rule: it is the
+# commonest shape recurring, and the sums were still re-derived from the six. The
+# round after IT broke the run and took the NARROW skill-only shape instead — one
+# finding in step 0 of one skill and the design note behind it, no engine change at
+# all, so ONE portability test and nothing anywhere else — and all three moving rows
+# moved by one together again (715 to 716, 857 to 858, scale 3212 to 3213). That is
+# the same shape as the ONE-finding round four back, and the same statement it made:
+# a skill-only round is a portability-only round. The round after IT was the MIXED
+# shape once more, and the widest instance of it yet on the SKILL side: two findings,
+# one of them a single wrong line number stated in four separate documents — a skill's
+# own intake plus the three sibling skills that write the same field — and the other an
+# engine note. That put TWO tests in portability and ONE in projection, so the derived
+# rows moved by two (716 to 718, 858 to 860) while the scale row moved by three
+# (3213 to 3216). Four documents and two derived-row tests is the ratio to expect from
+# a SWEEP finding: the sweep is one test over N files, not N tests. The round after THAT
+# went back to the NARROW shape — one finding, one skill's step 0 plus the step-1 line
+# that already held the same check, one portability test and nothing outside it — so all
+# three moving rows moved by one together (718 to 719, 860 to 861, scale 3216 to 3217).
+# That is now three skill-only rounds in the last six, each moving the three rows by
+# exactly the count of portability tests it added, which is what a skill-only round IS.
+# The round after those went back to the MIXED shape, in its narrowest form and
+# with an outside module none of the earlier mixed rounds used: one P1 in a
+# skill's step 4 and one P2 in the DATE engine's California comments, which put
+# ONE test in portability and TWO in irs_dates. So the derived rows moved by one
+# (719 to 720, 861 to 862) while the scale row moved by THREE (3217 to 3220) —
+# irs_dates being a module this hook does not select, which is the whole of the
+# gap, and the second module after projection to play that part. Reading the
+# scale row's three as the derived rows' three is exactly the error the
+# re-derivation from the six exists to prevent. The round after IT was the
+# PROJECTION-ONLY shape in the strict sense — no move in any of the six, so the
+# derived rows stood at 720 and 862 and only the scale row moved, by ONE (3220
+# to 3221) — and it reached that shape by a route none of the earlier rounds
+# did. It edited a portability test and a TEMPLATE the portability module reads,
+# which is the fingerprint of a portability move, and added no portability test
+# at all: the finding was a fifth site for an EXISTING sweep, so the fix widened
+# that sweep's tuple and its one test now covers five files instead of four.
+# A sweep is one test over N files (the round five back says the same thing
+# about the other direction), so EXTENDING one is the case where the file count
+# moves and the test count does not. Which is why the shape is measured and
+# never inferred from the diff: this round's diff looks exactly like a mixed
+# round and counts like a projection-only one.
+# Which case a round
+# is, is MEASURED by
+# `test_the_measured_costs_counts_match_live_collection`, never assumed. Two hundred and eleven tests are worth well under a second and
+# cannot move a row that spans 17 seconds at its narrowest, so the ranges
+# stand — but a reader deriving anything from the gap should know it is there
+# rather than infer that the sitting covered it.
+#
+# THE HAND-REFRESH FAILED AGAIN, which is why the counts are no longer kept by
+# hand. The revision that made this block the SOLE owner of these figures — it
+# deleted the count from docs/contributing/test-invariants.md in the same
+# change — shipped a portability row five tests light and a scale row twenty,
+# under the very paragraph below asserting every count had been re-derived by
+# measurement. Four hand-refreshes, four drifts. So the rule this block states
+# is now ENFORCED: `test_the_measured_costs_counts_match_live_collection` in
+# tests/test_claude_hooks.py collects each of the six modules and the whole
+# suite, derives portability's gap from the hook's own `--deselect` flags, and
+# re-computes both derived rows as sums of the parts. A stale count column is a
+# red suite. The SECONDS stay unenforceable — they need an idle machine — which
+# is exactly why the two halves are recorded and dated separately.
+#
+# EVERY COUNT ABOVE WAS RE-DERIVED BY MEASUREMENT, not by adding this round's
+# delta to the previous figures, and the difference is the point: the suite row
+# had drifted NINE tests while the note above it claimed to be current to seven,
+# so a reader adding a delta to it would have carried the error forward and
+# widened it. `--collect-only -q` on each module answers this in about a second.
+# Do that instead, every time — or just read the failure the test above prints.
+# Re-reading ONE row against neighbours measured in
+# another sitting is the separate failure this block has shipped twice; that is
+# why the SECONDS get a note and not a patched row, while the COUNTS get
+# re-measured outright.
+#
+# What the previous revision recorded here, kept because it is the same lesson
+# arriving from the other side: that revision ran eight tests ahead, the branch
+# settled, the whole block was re-read and the gap note came out with it. The
+# gap re-opened one round later. It will keep re-opening, and the block stays
+# honest by SAYING which half is current rather than by pretending they never
+# diverge. What it must never do is patch a count column and carry the seconds —
+# nor, as this round found, patch the seconds and carry a count SENTENCE: the
+# fourth round's header said fourteen tests and eight to portability where the
+# real deltas were twenty-four and seven — deltas its OWN table three lines below
+# carried, reading 2978 to 3002 and 131 to 138 as it then stood, while the same
+# paragraph went on to say "gaining seven tests" in its very next clause. Prose
+# absolutes go stale exactly as fast as the columns do, and are harder to see.
 #
 # Counts are derivable in a second, so a stale one has no excuse and they are
 # refreshed with every change; seconds cost half an hour of a machine that has
@@ -844,33 +1044,60 @@ apply_red_checks
 # parts and whole can only ever agree to within ITS noise. A future reading where
 # they disagree by more than that is a reading where something real changed.
 #
-# SPREAD is what justifies filtering at all: three orders of magnitude from the
-# fast path to the cold pass, both in the first table. The previous behaviour
+# SPREAD is what justifies filtering at all: three and a half orders of magnitude
+# from the fast path to the cold pass, both in the first table. The previous behaviour
 # ran the checks after every Bash call, which made `ls` and `git status` pay the
 # cold-pass line rather than the fast-path one.
 #
 # WHERE THE COST IS is one module, and the bound is arithmetic rather than
 # approximate: portability, capabilities, agents, secure_fs and preflight
-# together are at most 18s even taking each at its slowest, so of a cold
-# pass that never measured below 138s, at least 87% is
+# together are at most 19s even taking each at its slowest, so of a cold
+# pass that never measured below 121.8s, at least 84% is
 # tests/test_claude_hooks.py. A hook can only be tested by running it — that
-# module spawns bash processes across its 122 tests, more than one per case
-# (205 over 105 tests when last counted with a `bash` shim on PATH; the
-# RATIO is what carries forward, not the absolute) and holds deliberate
+# module spawns bash processes across its 123 tests, more than one per case
+# (205 spawns over 105 cases when last counted with a `bash` shim on PATH;
+# the RATIO is what carries forward, not the absolute) and holds deliberate
 # sleeps — five tests at about 4.5s each. Selecting a subset is therefore the
-# whole win: a skill edit skips that module and costs roughly a ninth of a
-# cold pass (15.0-16.1s against 138-139s), an
-# agent-definition edit roughly a five-hundredth. When this gets tight the lever
+# whole win: a skill edit skips that module and costs between a seventh and an
+# eighth of a cold pass (16.4-17.2s against 121.8-138.9s), an
+# agent-definition edit roughly a six-hundredth. When this gets tight the lever
 # is that module's own runtime, not this list and not the timeout.
 #
 # HEADROOM is the cold pass against the timeout registered for this hook in
-# .claude/settings.json. That timeout is 300s and the worst observed cold pass
-# is 139s, so the margin is 2.2x. Plan against the WORST — the run that overruns
-# is by definition the slow one. It has narrowed from 2.5x on the sitting
-# before, and the floor `test_the_skill_hook_has_headroom_over_its_measured_
-# runtime` derives from the selected modules' collected count is nearer the
-# registered timeout than the measurement is. The next block of work here needs
-# the timeout raised WITH it rather than after that test says so.
+# .claude/settings.json. That timeout is 480s and the worst observed cold pass
+# is 138.9s, so the margin is 3.5x. Plan against the WORST — the run that overruns
+# is by definition the slow one. It was 2.2x at the 300s this branch started on,
+# having narrowed from 2.5x the sitting before that, and it was RAISED here rather
+# than measured again: the floor `test_the_skill_hook_has_headroom_over_its_measured_
+# runtime` derives from the selected modules' collected count had reached 289s
+# against that 300s — eleven seconds, about thirty more tests anywhere in the six.
+# That is the instruction this paragraph used to carry ("the next block of work
+# here needs the timeout raised WITH it rather than after that test says so")
+# being followed, one round late, by the block of work that spent the margin.
+# The seconds did not move: 480 is a BUDGET chosen above this block, not a
+# measurement, which is why it may be edited alone when the ratio narrows again.
+#
+# WHY THE OTHER LEVER WAS NOT PULLED, since the paragraph above names it as the
+# right one and then reaches past it. The three sentences after this settle a
+# review finding that read the raise as buying a single round; it did not, and
+# the correction and the concession both belong here.
+#
+# What it bought is measurable without a stopwatch, because the floor is a
+# function of the COLLECTED count: at 0.35s per collected test the gate re-fires
+# only after roughly another two-thirds of the current selection is added — call
+# it many rounds, not one. The thirty-tests figure was true against the 300s the
+# branch started on and is what the raise removed.
+#
+# The concession stands anyway: the runtime was NOT reduced, and the module that
+# dominates it cannot be made cheap without giving up what it tests. Its slowest
+# tests drive a real hook through real signals — a stamp overlap tied to this
+# script's own one-second backdating, subprocess shims that sleep to hold a pass
+# open while a concurrent write lands, a TERM delivered mid-pass. Every one of
+# those seconds IS the assertion; shortening them buys a faster gate that no
+# longer proves the thing it exists to prove, which is the worse trade of the
+# two. Parallelism is the honest lever left (the module is nearly all subprocess
+# wait), and it needs a dependency this lock does not carry — a change to make
+# deliberately, with before/after numbers, not as a footnote to a review round.
 #
 # It bit once already. At the previous 180s the margin had fallen to 1.7x and
 # `test_the_skill_hook_has_headroom_over_its_measured_runtime` went red, because
@@ -897,8 +1124,8 @@ apply_red_checks
 # adding such a literal to either turns the hooks module red while the arms
 # above select only that module's own tests. By the import-edge argument used
 # for rollover.py, those two arms should therefore also carry RUN_HOOKS. They
-# deliberately do not: the hooks module is 86% of a cold pass (MEASURED COSTS),
-# and both files are edited constantly, so that edge would put the most
+# deliberately do not: the hooks module is at least 84% of a cold pass
+# (MEASURED COSTS), and both files are edited constantly, so that edge would put the most
 # expensive module on the most frequent edit — the fast path this hook exists to
 # protect, spent on a signal CI produces two minutes later anyway. A gate that
 # slow on routine work gets switched off, and a switched-off gate catches
