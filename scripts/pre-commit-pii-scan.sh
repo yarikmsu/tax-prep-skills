@@ -375,11 +375,38 @@ _grep_out() {
 # Nothing else in the file is exempt: a stray SSN on a requirements line is
 # still scanned, because only the digest tokens are removed, not the lines
 # holding them.
+#
+# The acceptance record is the second path with the same shape and the same
+# stakes. It pins four sha256 digests — two agent definitions, two replay
+# inputs — and renewing one means committing one, so the every-regeneration
+# clause above applies verbatim: a pin whose digest happens to hold a nine-digit
+# run blocks the commit that records the re-run, and `--no-verify` is the
+# documented way out. Its token is `sha256 ` followed by a BACKTICKED 64 hex
+# characters, which is the shape that file writes and the shape it tells a
+# renewer to write; anything else there, digest-shaped or not, is scanned.
+#
+# What this was chosen OVER is the reason it is scoped here at all, and it is an
+# alternative that was DECLINED rather than one that ever shipped: exempting the
+# nine-digit run inside one of those digests in `.pii-allowlist`. That file is
+# global and matched by value, so a valid-shaped nine-digit number listed there
+# would be suppressed in every file and every pathname in the repository, and a
+# real SSN equal to it would commit clean. An exemption that can be bound to a
+# path and a token has to be, and this is where both bounds exist.
+#
+# Stated as a rejected option and not as history, because it was written here as
+# history in three places at once — this comment, the acceptance record and
+# docs/contributing/test-invariants.md — and no revision of `.pii-allowlist` has
+# ever carried a digest's digits. A reader auditing the tightening looks for the
+# removed entry, finds nothing, and is left deciding whether the whole rationale
+# is fiction or a squash ate it.
 strip_artifact_digests() {
   # $1 — repo-relative path, $2 — added text
   case "$1" in
     requirements.txt|requirements.in)
       printf '%s' "$2" | sed -E 's/--hash=sha256:[0-9a-f]{64}//g'
+      ;;
+    docs/ops/review-subagent-acceptance.md)
+      printf '%s' "$2" | sed -E 's/sha256 `[0-9a-f]{64}`//g'
       ;;
     *) printf '%s' "$2" ;;
   esac

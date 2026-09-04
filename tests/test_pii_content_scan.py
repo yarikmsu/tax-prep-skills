@@ -10,6 +10,7 @@ behaviour under test is a git-diff interaction that a unit test cannot reach.
 """
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -1449,6 +1450,13 @@ def test_no_unredacted_patch_survives_the_scan(tmp_path):
 FAKE_DIGEST = "a" * 20 + "12345" + "6789" + "b" * 35
 _LOCK_LINE = f"pdfplumber==0.11.10 \\\n    --hash=sha256:{FAKE_DIGEST}\n"
 
+# The second exempt path, and the one whose digests a re-run of the acceptance
+# replays REWRITES. Its token is the `sha256 ` word plus a backticked digest, on
+# one line — the shape the record writes and the shape it instructs a renewer to
+# write.
+_RECORD = "docs/ops/review-subagent-acceptance.md"
+_RECORD_LINE = f"**Input.** `5c23279:agents/lib/x.py`,\nsha256 `{FAKE_DIGEST}`.\n"
+
 
 def test_dependency_lock_digests_do_not_false_positive(tmp_path):
     """Pinning the tree with --generate-hashes must not block the commit.
@@ -1464,6 +1472,53 @@ def test_dependency_lock_digests_do_not_false_positive(tmp_path):
     assert len(FAKE_DIGEST) == 64, "digest must be sha256-shaped to be exempt"
     assert _run(repo).returncode == 0
 
+    # The acceptance record pins four of them and a re-run rewrites them, so it
+    # is the same every-regeneration clause on a file whose whole purpose is to
+    # be re-committed after a replay.
+    _stage(repo, _RECORD, _RECORD_LINE)
+    assert _run(repo).returncode == 0, (
+        "renewing an acceptance pin blocks its own commit, and the documented "
+        "escape from that is --no-verify on the PII gate")
+
+    # ...and the live record is written in the shape the exemption keys on. The
+    # gate and the document are one mechanism in two files: rewrap a pin so the
+    # `sha256` word and its digest fall on separate lines and the exemption —
+    # which sed applies a LINE at a time — stops covering it, with the first
+    # symptom a blocked commit during a season-open re-run.
+    #
+    # Per TOKEN, which is how `strip_artifact_digests` strips them: its `sed` is
+    # a global substitution, so every digest on a line has to carry its own
+    # `sha256 ` word. Asked per LINE — which is what this was — ONE well-formed
+    # token excused every other backticked digest beside it, and the shape that
+    # slips through is the one a renewal writes: `sha256 \`<new>\` (was
+    # \`<old>\`)`. The test passed, the hook\'s six modules passed, and the real
+    # gate blocked the commit, because Replay A\'s current digest carries a run
+    # of exactly nine bare digits. A control that reads the file at a coarser
+    # grain than the thing it models will always have a gap that shape.
+    record = (REPO / _RECORD).read_text()
+    loose = []
+    for n, line in enumerate(record.splitlines(), 1):
+        for m in re.finditer(r"`[0-9a-f]{64}`", line):
+            if not line[:m.start()].endswith("sha256 "):
+                loose.append(f"{_RECORD}:{n}")
+    assert not loose, (
+        f"a digest in {_RECORD} is written outside the exempt token shape "
+        f"(`sha256 ` immediately before it, on one line): {sorted(set(loose))}")
+
+    # ...and the control on that reading, because the corpus is currently clean
+    # and a per-line check passes over it exactly as a per-token one does. The
+    # second digest here is the one the real gate counts.
+    two = f"sha256 `{FAKE_DIGEST}` (was `{FAKE_DIGEST}`)"
+    assert any(not two[:m.start()].endswith("sha256 ")
+               for m in re.finditer(r"`[0-9a-f]{64}`", two)), (
+        "a second digest written beside a well-formed token was read as exempt "
+        "— that is the per-line reading the gate does not share")
+    repo = _make_repo(tmp_path / "renewal")
+    _stage(repo, _RECORD, two + "\n")
+    assert _run(repo).returncode == 1, (
+        "the gate exempted a bare digest sitting beside a well-formed token, "
+        "so the shape this test holds the record to is stricter than the gate\'s")
+
 
 def test_a_real_ssn_in_the_lock_file_still_blocks(tmp_path):
     """The exemption removes the DIGEST TOKENS, not the file.
@@ -1476,6 +1531,21 @@ def test_a_real_ssn_in_the_lock_file_still_blocks(tmp_path):
     _stage(repo, "requirements.txt", _LOCK_LINE + f"# contact {FAKE_SSN}\n")
     assert _run(repo).returncode == 1
 
+    repo = _make_repo(tmp_path / "record")
+    _stage(repo, _RECORD, _RECORD_LINE + f"Reviewed by {FAKE_SSN}.\n")
+    assert _run(repo).returncode == 1, (
+        "the acceptance record is exempt for one TOKEN, not as a file")
+
+    # The token's own bounds, both halves. A bare digest carries no `sha256`
+    # word and is not the shape the record writes; nine digits typed as a digest
+    # are nine digits. Neither is exempt, and the second is the one that decides
+    # whether this is a hiding place or an exemption.
+    repo = _make_repo(tmp_path / "loose")
+    _stage(repo, _RECORD, f"sha256\n`{FAKE_DIGEST}`.\n")
+    assert _run(repo).returncode == 1, (
+        "a digest wrapped away from its `sha256` word was exempted anyway, so "
+        "the shape the record is held to is not the shape the gate reads")
+
 
 def test_the_digest_exemption_does_not_leak_to_other_paths(tmp_path):
     """Scoped by exact path, never by token shape alone.
@@ -1487,3 +1557,10 @@ def test_the_digest_exemption_does_not_leak_to_other_paths(tmp_path):
     repo = _make_repo(tmp_path)
     _stage(repo, "notes.md", _LOCK_LINE)
     assert _run(repo).returncode == 1
+
+    for n, elsewhere in enumerate(("notes.md", "docs/ops/other-record.md",
+                                   "review-subagent-acceptance.md")):
+        repo = _make_repo(tmp_path / f"elsewhere{n}")
+        _stage(repo, elsewhere, _RECORD_LINE)
+        assert _run(repo).returncode == 1, (
+            f"the acceptance record's token laundered a digest in {elsewhere}")

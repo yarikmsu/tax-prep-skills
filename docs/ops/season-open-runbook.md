@@ -96,6 +96,21 @@ python3 -m pytest tests/ -q                            # full suite
 FRESH populated cache is the green light to open the season; an INCOMPLETE one
 names the block(s) still to fetch.
 
+## 5. Re-run the review-subagent acceptance
+
+`tax-law-freshness-auditor` is the only check on the freshness contract this
+runbook exists to satisfy, so this runbook LEANS ON it and must not be the thing
+that first discovers it has regressed. Replay both reviewers per
+`docs/ops/review-subagent-acceptance.md` — from a FRESH session, since a
+definition loads at session start — and re-record the verdicts there. The
+record's own "When to re-run" list names this runbook as its first trigger; this
+step is the other half of that sentence, and without it the trigger names a
+document that never mentions it.
+
+An acceptance run scored against an old cache proves nothing about the new
+year's figures, so it goes AFTER the fetch and after the freshness gate above,
+never before them.
+
 ---
 
 ## When you add a NEW fetched block in a future epic

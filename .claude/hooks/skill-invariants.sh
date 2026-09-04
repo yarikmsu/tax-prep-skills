@@ -151,6 +151,8 @@ WATCHED_ROOTS='
 .claude/hooks
 .claude/settings.json
 .claude/skills
+.github/ISSUE_TEMPLATE
+.github/workflows/ci.yml
 .gitignore
 .pii-allowlist
 .vscode/settings.json
@@ -162,6 +164,7 @@ README.md
 agents
 docs/QUICKSTART.md
 docs/contributing
+docs/ops
 requirements.in
 requirements.txt
 scripts
@@ -178,8 +181,58 @@ RUN_PORTABILITY=0
 RUN_CAPABILITIES=0
 RUN_AGENTS=0
 RUN_HOOKS=0
+RUN_HOOKSDEPS=0
 RUN_PREFLIGHT=0
 RUN_SECUREFS=0
+
+# The assertions in tests/test_claude_hooks.py that an edit to one of the OTHER
+# five TEST modules can turn red — the ones that read those modules' source, or
+# name one of them. A check in its own right, wired through every one of the
+# seven name lists beside the six module flags, because a narrowing that is not
+# a check cannot be carried forward when it goes red.
+#
+# It replaces `RUN_HOOKS=1` on the five test-module arms, and the paragraph that
+# argued for the whole module — "a partial run reported as a module's verdict is
+# how a check comes to mean less than it says" — was right about the wrong
+# thing. That sentence is about reporting a SUBSET as the hooks module's verdict;
+# this is a subset reported as its own. The WIN is the module it replaces, which
+# dominates every total in MEASURED COSTS. The subset is not free, and the
+# sentence that stood here implied it was by quoting the preflight-to-hooks
+# ratio — a ratio about the module the narrowing SPARES, which says nothing
+# about what replaced it. THE TRIGGER WITH NO ROW, in MEASURED COSTS, is where
+# the subset's own cost is now stated.
+#
+# WHAT IS DELIBERATELY ABSENT is `test_the_measured_costs_counts_match_live_
+# collection`, and leaving it out is the same judgement the `--deselect` pair in
+# `run_focused_modules` records. It goes red the instant a test is ADDED to any
+# of the five, and stays red until the MEASURED COSTS table, its two derived
+# rows, the ARITHMETIC sentence and the counts-ahead paragraph have all been
+# refreshed — a hand edit in six places that can only be made coherently once a
+# round's tests are final. Selected here it blocked every tool call in between,
+# on correct in-progress work, and the red carry-forward re-blocked on each one
+# until the refresh landed: the gates-that-cry-wolf pattern, arriving through a
+# check that is factually RIGHT and firing at a moment nothing can be done about
+# it. It still runs in CI, in the review, and on every edit that takes
+# `RUN_HOOKS` — which is every edit to the file the block itself lives in.
+#
+# PINNED by `test_the_hooks_dependents_are_real_and_complete` as a SET and in
+# both directions, the way the deselect pair beside it is pinned: every id here
+# resolves to a test that exists, and the membership is exact, so neither a
+# rename nor a quiet addition nor a quiet removal can move it without that test
+# being edited too. A renamed id would otherwise select nothing at all and read
+# exactly like an arm that never fired.
+HOOKS_DEPENDENTS=(
+    "tests/test_claude_hooks.py::TestSkillInvariantsHook::test_the_watched_set_still_covers_what_the_modules_read"
+    "tests/test_claude_hooks.py::TestSkillInvariantsHook::test_every_watched_source_path_reaches_its_module"
+    # ...and the deselect pin, which was missing while this list claimed to be
+    # "the whole of what an edit to one of those modules can turn red". It
+    # ast-parses tests/test_portability.py to prove both `--deselect` ids still
+    # resolve, and pytest ignores a `--deselect` that matches nothing — so
+    # renaming either of those two tests puts the registry pair silently back
+    # inside the gate for every skill edit, with tests/test_claude_hooks.py the
+    # only thing red and CI the only place it shows.
+    "tests/test_claude_hooks.py::TestHookRegistration::test_only_the_registry_pair_is_deselected_and_both_ids_resolve"
+)
 
 # Takes a REPOSITORY-RELATIVE path and turns on the modules it can break. The
 # directory roots appear both bare and with a `/*` suffix because find prints
@@ -216,10 +269,65 @@ select_modules_for() {
         .claude/agents|.claude/agents/*.md)
             RUN_AGENTS=1
             ;;
+        docs/ops/review-subagent-acceptance.md)
+            # An ASSERTED artifact, not prose, and asserted by TWO modules:
+            # test_claude_agents requires it to exist and to name every agent in
+            # EXPECTED_AGENTS, and test_preflight's DOCUMENTS tuple covers it
+            # for the launcher rule. Folding this into the agents arm above was
+            # the first attempt and it made an agent-definition edit pay for the
+            # preflight module, which two tests caught by pinning that edit's
+            # selection to AGENTS alone — a good reminder that these arms are
+            # per-PATH, never per-directory-that-feels-related.
+            RUN_AGENTS=1
+            RUN_PREFLIGHT=1
+            ;;
+        docs/ops/season-open-runbook.md)
+            # test_preflight's DOCUMENTS again. It was in NEITHER list before —
+            # a documented gap. Adding `docs/ops` to WATCHED_ROOTS without this
+            # arm was the half-covered shape the header warns about, in its
+            # worse direction: visible to a Bash call and selecting nothing,
+            # which reads as covered and is not.
+            RUN_PREFLIGHT=1
+            # ...and the agents module, which reads it as the ASSERTED other end
+            # of a pointer. The acceptance record names this runbook as its first
+            # re-run trigger, so the runbook has to name the acceptance back —
+            # a pointer that resolves in one direction is how the re-run came to
+            # be documented in every file except the one a maintainer follows at
+            # season open.
+            RUN_AGENTS=1
+            ;;
+        docs/ops)
+            # The bare directory is what a DELETE looks like, and both modules
+            # assert that a document under here EXISTS.
+            RUN_PREFLIGHT=1
+            RUN_AGENTS=1
+            ;;
         .claude/hooks|.claude/hooks/*.sh|.claude/settings.json|\
         tests/test_claude_hooks.py)
             RUN_HOOKS=1
             ;;
+        # EVERY one of the six test modules also selects the hooks CHECK, and
+        # the arms below each say so. test_claude_hooks re-derives the read set
+        # by PARSING all six — that is what keeps the hand-written mapping above
+        # honest — so a path literal added to any of them can turn it red while
+        # the module the contributor edited stays green. That is the CI-only
+        # failure this hook exists to convert into a local one, and the mapping's
+        # own comment already warns the transcription goes stale.
+        #
+        # Five of them select `RUN_HOOKSDEPS` and not `RUN_HOOKS`, which is the
+        # difference between the three assertions that reach them and the module
+        # that dominates every total in MEASURED COSTS. The paragraph that stood
+        # here argued for the whole module on the ground that "a partial run
+        # reported as a module's verdict is how a check comes to mean less than
+        # it says" — true, and about a different thing: that sentence is about
+        # reporting a SUBSET as the hooks module's verdict, and this is a subset
+        # reported as its own check, carried forward under its own name. What
+        # the trade costs on BOTH sides — the module spared and the three ids
+        # that replaced it, which are not free — is stated once, in MEASURED
+        # COSTS under THE TRIGGER WITH NO ROW. It is not restated here: this
+        # comment quoted the spared module's ratio as though it settled the
+        # subset's cost, which is the two-copies-of-one-quantity failure that
+        # block exists to end.
         scripts/pre-commit-pii-scan.sh)
             RUN_HOOKS=1
             RUN_PORTABILITY=1
@@ -254,8 +362,57 @@ select_modules_for() {
             RUN_PORTABILITY=1
             RUN_SECUREFS=1
             ;;
+        # ptet.py is the SECOND engine module the agents test reads, and it got
+        # there without an arm: the acceptance guards derive the planted SALT cap
+        # from `_salt_cap`, so the OBBBA window in that file decides whether the
+        # fixture is corrupt at all. Editing the window is precisely the change
+        # that turns those guards red, and the generic `agents/lib/*.py` arm
+        # below sets everything EXCEPT agents — so the one edit boundary they
+        # exist to watch was the one the hook did not select them for, leaving it
+        # to CI. Half-covered is the failure mode this whole block is built
+        # around: a path in the roots but not in the selector looks identical to
+        # a path that is genuinely clean.
+        agents/lib/ptet.py)
+            RUN_AGENTS=1
+            RUN_PREFLIGHT=1
+            RUN_PORTABILITY=1
+            RUN_SECUREFS=1
+            ;;
+        # ...and the THIRD, arriving by a different edge and missed for the
+        # same reason. The two above are read for their DATA — a schema key, an
+        # OBBBA window — and both were noticed while writing a test that names
+        # the file. This one is read for its BEHAVIOUR: the Replay A guard
+        # imports `tax_computations` and asserts what the shipped
+        # `compute_qbi_deduction` returns on the record's own case, so a change
+        # to the Form 8995 cap turns test_claude_agents red. An import edge is
+        # invisible to `test_the_watched_set_still_covers_what_the_modules_read`
+        # — that test recovers `REPO / "..."` literals, and there is no path
+        # literal here to recover — which is exactly why the hand list this arm
+        # belongs to still exists, and exactly why a new edge slips past it.
+        agents/lib/tax_computations.py)
+            RUN_AGENTS=1
+            RUN_PREFLIGHT=1
+            RUN_PORTABILITY=1
+            RUN_SECUREFS=1
+            ;;
+        # A TEST module in the selector, and this arm is about the OTHER
+        # module that reads it. `test_claude_hooks.py` derives the MEASURED
+        # COSTS count column from live collection, so a test added or removed
+        # HERE moves a figure asserted THERE — and an arm that selected only the
+        # module it touched would leave that assertion to fail at CI instead,
+        # which is the whole failure this hook exists to move forward in time.
+        # The reverse edge needs no arm: the hooks module already selects itself.
+        #
+        # The comment that stood here was a verbatim paste of the
+        # `tax_computations.py` rationale above it, describing an import edge
+        # this arm has nothing to do with. A reader following it would either
+        # "repair" this arm with engine selections or delete the identically
+        # commented one as a duplicate — after which tax_computations.py falls to
+        # the generic `agents/lib/*.py` arm and stops selecting the agents module
+        # at all.
         tests/test_claude_agents.py)
             RUN_AGENTS=1
+            RUN_HOOKSDEPS=1
             ;;
         # The directory AND every module under it. The roster test is only half
         # the reason and was, on its own, the wrong half: it pins the roster
@@ -342,13 +499,25 @@ select_modules_for() {
             ;;
         tests/test_preflight.py)
             RUN_PREFLIGHT=1
+            RUN_HOOKSDEPS=1
             ;;
         tests/test_secure_fs.py)
             RUN_SECUREFS=1
+            RUN_HOOKSDEPS=1
             ;;
-        agents/templates/taxpayer_profile_template.json|\
+        # SPLIT from the arm below, and the split is the whole point. The six
+        # test-module arms select the hooks module because test_claude_hooks
+        # PARSES their source to re-derive this mapping — a dependency on the
+        # SOURCE, which a template edit does not touch. Sharing one arm charged
+        # every edit of this template a full hooks pass, the dominant row in
+        # MEASURED COSTS, for a dependency it does not have. First-match-wins
+        # means the cheap arm has to come first and carry its own selections.
+        agents/templates/taxpayer_profile_template.json)
+            RUN_CAPABILITIES=1
+            ;;
         tests/test_capabilities.py)
             RUN_CAPABILITIES=1
+            RUN_HOOKSDEPS=1
             ;;
         # test_portability builds a prior-year return from result_template to
         # prove raw line 24 is ignored, then checks the explicit completed
@@ -390,10 +559,60 @@ select_modules_for() {
             RUN_PORTABILITY=1
             RUN_SECUREFS=1
             ;;
-        AGENTS.md|CLAUDE.md|LICENSE|.gitignore|\
-        .pii-allowlist|.vscode/settings.json|\
-        docs/contributing|docs/contributing/*.md|tests/test_portability.py)
+        # CLAUDE.md is split out because a SECOND module reads it: the
+        # acceptance guards require the fresh-session constraint to survive in
+        # the file an agent actually has loaded, that constraint having been
+        # deleted once already by a rewrite of the paragraph holding it. Left in
+        # the portability-only arm below, editing CLAUDE.md ran the module that
+        # checks its LENGTH and not the one that checks that sentence is still
+        # there — half-covered at the exact boundary the guard was written for.
+        CLAUDE.md)
             RUN_PORTABILITY=1
+            RUN_AGENTS=1
+            ;;
+        # AGENTS.md is split out for the same reason CLAUDE.md above is: a
+        # SECOND module reads it. test_preflight's DOCUMENTS sweeps it for a
+        # bare-interpreter engine call, per-line and by heredoc, so adding one
+        # to §7's `python3 -m venv` paragraph turns that module red at CI while
+        # the portability-only arm ran the length check and nothing else.
+        AGENTS.md)
+            RUN_PORTABILITY=1
+            RUN_PREFLIGHT=1
+            ;;
+        # Same list, and the only entry in it that is not prose. The template
+        # quotes the commands a reporter is asked to run, so it is scanned like
+        # any other document.
+        #
+        # By its exact path, on the terms the workflow arm below states. DOCUMENTS
+        # names bug_report.yml and nothing else under that directory, so a
+        # `.github/ISSUE_TEMPLATE/*` glob charged every edit of config.yml and
+        # state_module.yml a preflight pass for a read no module makes. The BARE
+        # directory stays beside it: it is a watched root, and find prints the
+        # root itself when a file is added directly beneath it — the addition
+        # this arm cannot see the name of yet.
+        .github/ISSUE_TEMPLATE|.github/ISSUE_TEMPLATE/bug_report.yml)
+            RUN_PREFLIGHT=1
+            ;;
+        # The WORKFLOW, by its exact path and not by its directory. It was
+        # deliberately absent while its only reader was
+        # tests/test_pii_content_scan.py, which is not one of the six modules
+        # this hook runs; the agents module now reads it too, to pin the
+        # checkout depth that decides whether the acceptance record's Replay A
+        # guard can reach the revision it replays. A directory arm would select
+        # for every other file under `.github/workflows/`, which no selected
+        # module reads — the over-broad shape this table has already paid for
+        # once, and which only a COST assertion can catch.
+        .github/workflows/ci.yml)
+            RUN_AGENTS=1
+            ;;
+        LICENSE|.gitignore|\
+        .pii-allowlist|.vscode/settings.json|\
+        docs/contributing|docs/contributing/*.md)
+            RUN_PORTABILITY=1
+            ;;
+        tests/test_portability.py)
+            RUN_PORTABILITY=1
+            RUN_HOOKSDEPS=1
             ;;
         # LAST, and this is the half the `agents|scripts` arm above was missing.
         # That arm matches those two words EXACTLY — a `case` pattern is not a
@@ -423,6 +642,7 @@ select_every_module() {
     RUN_CAPABILITIES=1
     RUN_AGENTS=1
     RUN_HOOKS=1
+    RUN_HOOKSDEPS=1
     RUN_PREFLIGHT=1
     RUN_SECUREFS=1
 }
@@ -430,6 +650,7 @@ select_every_module() {
 nothing_selected() {
     [ "$RUN_PORTABILITY" -eq 0 ] && [ "$RUN_CAPABILITIES" -eq 0 ] \
         && [ "$RUN_AGENTS" -eq 0 ] && [ "$RUN_HOOKS" -eq 0 ] \
+        && [ "$RUN_HOOKSDEPS" -eq 0 ] \
         && [ "$RUN_PREFLIGHT" -eq 0 ] && [ "$RUN_SECUREFS" -eq 0 ]
 }
 
@@ -456,6 +677,7 @@ apply_red_checks() {
             capabilities) RUN_CAPABILITIES=1 ;;
             agents) RUN_AGENTS=1 ;;
             hooks) RUN_HOOKS=1 ;;
+            hooksdeps) RUN_HOOKSDEPS=1 ;;
             preflight) RUN_PREFLIGHT=1 ;;
             securefs) RUN_SECUREFS=1 ;;
         esac
@@ -474,6 +696,7 @@ remember_red_checks() {
     [ "$RUN_CAPABILITIES" -eq 1 ] && NEW_RED="${NEW_RED}capabilities"$'\n'
     [ "$RUN_AGENTS" -eq 1 ] && NEW_RED="${NEW_RED}agents"$'\n'
     [ "$RUN_HOOKS" -eq 1 ] && NEW_RED="${NEW_RED}hooks"$'\n'
+    [ "$RUN_HOOKSDEPS" -eq 1 ] && NEW_RED="${NEW_RED}hooksdeps"$'\n'
     [ "$RUN_PREFLIGHT" -eq 1 ] && NEW_RED="${NEW_RED}preflight"$'\n'
     [ "$RUN_SECUREFS" -eq 1 ] && NEW_RED="${NEW_RED}securefs"$'\n'
     # `return 0` explicitly, never the fall-through. With the LAST flag in the
@@ -628,7 +851,7 @@ read_red_checks() {
     local line
     while IFS= read -r line; do
         case "$line" in
-            portability|capabilities|agents|hooks|preflight|securefs)
+            portability|capabilities|agents|hooks|preflight|securefs|hooksdeps)
                 KNOWN_RED="${KNOWN_RED}${line}"$'\n' ;;
         esac
     done <<< "$(sed -n '2,$p' "$STAMP" 2>/dev/null)"
@@ -787,21 +1010,36 @@ apply_red_checks
 # included — because that is what the tool call waits on. pytest's own "in
 # 0.39s" footer is the smaller number and reading one convention as the other is
 # how a row ends up looking halved. The fixed overhead is under 0.2s on this
-# host, which is the whole of the agents row and a rounding error on the hooks
-# module.
+# host, which WAS the whole of the agents row when these were taken and is a
+# rounding error on the hooks module.
+#
+# THE AGENTS ROW'S SECONDS ARE THE ONE READING KNOWN TO BE STALE, and it is named
+# here rather than patched, because re-reading ONE row against neighbours
+# measured in another sitting is the separate failure this block has shipped
+# twice. That module now starts `git` subprocesses — Replay A's pinned blob, the
+# two calls that classify a failure to read it, and the fixture repository that
+# controls those — where at the sitting it started none, and three runs since
+# have read between two and five times the row. Where it now SITS among the six
+# is therefore unknown — a row read at several times its stated seconds may have
+# passed capabilities, which sits just above it — and this said "still the
+# smallest of the six by a wide margin" on the strength of the stale reading
+# alone. Nothing here depends on the order of the rows, so the honest statement
+# costs nothing: the order is not re-derived until the block is re-measured as a
+# set. What does move is the sentence above, which no longer holds for this one:
+# the git calls are most of what that row costs now, not the interpreter start.
 #
 #   what triggers it               what runs     observed range    runs
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.04 - 0.05s         6
-#   agent-definition edit           19 tests      0.2 - 0.2s         3
-#   skill .md edit                 720 tests     16.4 - 17.2s        3
-#   cold pass, all six modules     862 tests    121.8 - 138.9s       3
-#   (for scale) `pytest tests/`   3221 tests    190.5 - 209.6s       2
+#   agent-definition edit           38 tests      0.2 - 0.2s         3
+#   skill .md edit                 781 tests     16.4 - 17.2s        3
+#   cold pass, all six modules     945 tests    121.8 - 138.9s       3
+#   (for scale) `pytest tests/`   3304 tests    190.5 - 209.6s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
-# the hooks module holds two platform skips, so it collects 125 and runs 123.
-# `pytest tests/` collects 3223 and runs 3221 for the same skips — and that row
+# the hooks module holds two platform skips, so it collects 128 and runs 126.
+# `pytest tests/` collects 3306 and runs 3304 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -819,12 +1057,12 @@ apply_red_checks
 # deselections run_focused_modules passes. This is the durable half: WHICH
 # module dominates, and by how much, survives a change of machine.
 #
-#   tests/test_claude_hooks.py     123 tests    108.8 - 129.2s       4
+#   tests/test_claude_hooks.py     126 tests    108.8 - 129.2s       4
 #   tests/test_portability.py      177 tests     10.3 - 11.6s        3
 #   tests/test_capabilities.py     116 tests      0.6 - 0.8s         3
-#   tests/test_claude_agents.py     19 tests      0.2 - 0.2s         3
+#   tests/test_claude_agents.py     38 tests      0.2 - 0.2s         3
 #   tests/test_secure_fs.py        138 tests      1.1 - 1.3s         3
-#   tests/test_preflight.py        289 tests      3.9 - 4.2s         3
+#   tests/test_preflight.py        350 tests      3.9 - 4.2s         3
 #
 # The agent-definition row above and the agents row here are the SAME
 # invocation — that trigger selects that module alone — and are stated with the
@@ -845,6 +1083,39 @@ apply_red_checks
 # an environment rather than merely the wrong version. Both of those classes are
 # tmp_path and fabrication, which is why the row moved much less than its count.
 #
+# THE TRIGGER WITH NO ROW is a test-module edit, and this is where its cost
+# lives: this block owns a trigger's cost whether or not the trigger has a row,
+# and this one has none because what it runs is not a module. It selects the
+# edited module plus the three node ids in `HOOKS_DEPENDENTS`, never the hooks
+# module those ids sit in — the log entry below that records `RUN_HOOKS=1` on
+# those arms was narrowed fourteen rounds later, and read as current it
+# describes a policy that has not been in force since.
+#
+# What the three ids cost was stated NOWHERE, and every comment beside them
+# implied it was nothing by quoting the preflight-to-hooks ratio — a ratio about
+# the module the narrowing SPARES, which says nothing at all about what replaced
+# it. Measured as a RATIO against the preflight row, back to back in one
+# sitting, a ratio being the only thing a sitting other than the seconds' may
+# contribute here: the three ids cost between TWO and two and a half of that
+# module. Two of them drive the real hook once per watched path, a subprocess
+# each, and that is where all of it goes; the third is an `ast.parse` worth
+# nothing measurable.
+#
+# So a save of tests/test_preflight.py pays about three of its own module, and a
+# save of tests/test_capabilities.py — the cheapest of the five — pays many
+# times its own. Composed through the preflight row above, the three ids are
+# somewhere between a twelfth and a fifteenth of the hooks module they stand in
+# for: the narrowing still buys the order of magnitude it was made for, but it
+# is not the rounding error the earlier wording made it, and the next narrowing
+# has to come out of those two subprocess loops rather than out of this list.
+#
+# No SECONDS row, deliberately. They were taken in a different sitting from the
+# table above, and this block's own rule is that a row added later is
+# re-measured with the set rather than appended to an older run — which is the
+# failure it records under ARITHMETIC and again under EVERY SECOND. The ratio is
+# what a separate sitting can carry; the row waits for the next end-to-end
+# measurement.
+#
 # ARITHMETIC, stated because a block whose parts do not add up is a block a
 # reader stops believing. Those six sum to 124.9s at their minima and 147.3s at
 # their maxima, against 121.8-138.9s measured for the six run together — so this
@@ -855,11 +1126,17 @@ apply_red_checks
 # agree to within it. Six separate invocations each paying an interpreter start
 # pushes the same way, and is worth well under a second of it. What separates this
 # from the count-column patch the header forbids is the other half, which is
-# EXACT: 177 + 116 + 289 + 138 = 720 for a skill edit, plus 123 + 19 = 862 for a
+# EXACT: 177 + 116 + 350 + 138 = 781 for a skill edit, plus 126 + 38 = 945 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
-# reads the TABLE and this line is prose. It moves with the table now. A decomposition
+# reads the TABLE and this line is prose. It then went stale a SECOND time, at
+# "322 ... 753 ... 36 ... 913" against a table already reading 343 and 37, under
+# the very clause claiming it moves with the table — because "it moves with the
+# table" was a promise a person keeps, not a check. It is checked now: the same
+# test reads this sentence, requires its four parts to be the four module rows
+# and its two sums to be the two derived rows, so the three ways this block has
+# stated one quantity are one figure or a red suite. A decomposition
 # error shows up there first, because counts do not drift — and it now shows up
 # MECHANICALLY: `test_the_measured_costs_counts_match_live_collection` collects
 # each module and re-derives both sums, so a stale count column is a red suite
@@ -884,17 +1161,42 @@ apply_red_checks
 # read as a trend. It is the between-sitting spread recorded above, on a host idle
 # for both: do NOT read a cause into it, and do read the ratios, not the seconds.
 #
-# COUNTS ARE TWO HUNDRED AND ELEVEN TESTS AHEAD OF THE SECONDS, and this is the
-# note that says so. Every COUNT above is current as of the review round that
-# fixed this block; every SECOND above is still the sitting recorded below,
-# unmoved. That is the order this block prescribes for itself: counts are
-# derivable in a second and go first, seconds cost half an hour of an
-# otherwise-idle machine and are re-read as a SET when the branch settles.
+# THE COUNTS ARE AHEAD OF THE SECONDS, and this is the note that says so — the
+# gap stated ONCE, in the suite pair below, because a headline carrying its own
+# numeral is a second copy of one quantity and this paragraph shipped exactly
+# that: it read "two hundred and forty-eight" over a parenthetical giving 259,
+# the headline being the round-before's figure left unrefreshed. Every COUNT
+# above is current as of the review round that fixed this block; every SECOND
+# above is still the sitting recorded below, unmoved. That is the order this
+# block prescribes for itself: counts are derivable in a second and go first,
+# seconds cost half an hour of an otherwise-idle machine and are re-read as a
+# SET when the branch settles.
+#
 # Against the counts the seconds were taken at, the suite has gained two hundred
-# and eleven tests (3010 to 3221) and the portability row thirty-eight (139 to
-# 177), with secure_fs moved once as well (133 to 138). The seven rounds BEFORE the
-# last one each moved the scale row ALONE, by four, then three, then three, then five,
-# then four, then three, then one: they added tests to projection,
+# and ninety-four tests (3010 to 3304). Of the six modules this hook selects,
+# portability has gained thirty-eight (139 to 177), preflight sixty-one
+# (289 to 350), the agents module nineteen (19 to 38), secure_fs five
+# (133 to 138), the hooks module three (123 to 126) and capabilities none
+# (116 to 116). EVERY pair is measured from the SITTING and not from the round
+# before it, which is the other half of what shipped wrong here: two of them
+# were last-round deltas spliced into a sentence whose stated baseline is the
+# seconds, so the six could not be reconciled against the total by anyone who
+# tried. A module that SHRINKS is written `has lost <words>`, which is a shape
+# the reader of this paragraph could not parse at all until it was asked for —
+# the guard blocked the honest refresh in the one direction no round had yet
+# taken. They sum to one hundred and twenty-six; the remaining one hundred and
+# sixty-eight are modules this hook does not select, which is why the derived
+# rows moved far less than the scale row did.
+#
+# Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
+# reads every `(A to B)` pair in this paragraph, requires each B to be a figure
+# the block states elsewhere, and re-derives the suite gap from its own pair.
+# The prose used to be the half nothing read, which is how one quantity came to
+# have two values under a mechanical check that was green throughout.
+#
+# The seven rounds BEFORE the last one each moved the scale row ALONE, by four,
+# then three, then three, then five, then four, then three, then one: they added
+# tests to projection,
 # tax_computations, withholding, tax_calendar, ptet, retirement_dashboard and
 # irs_dates, and NONE of the six modules this hook selects — measured, not
 # assumed, the six re-collecting at exactly the counts above every time. That
@@ -982,12 +1284,509 @@ apply_red_checks
 # moves and the test count does not. Which is why the shape is measured and
 # never inferred from the diff: this round's diff looks exactly like a mixed
 # round and counts like a projection-only one.
-# Which case a round
-# is, is MEASURED by
-# `test_the_measured_costs_counts_match_live_collection`, never assumed. Two hundred and eleven tests are worth well under a second and
-# cannot move a row that spans 17 seconds at its narrowest, so the ranges
-# stand — but a reader deriving anything from the gap should know it is there
-# rather than infer that the sitting covered it.
+# The round after IT is the first in this whole log to move the AGENTS row, and
+# the first whose two derived rows move by DIFFERENT AMOUNTS. Two tests went to
+# `test_claude_agents.py` — a fixture-vacuity guard and a coverage check for the
+# review-subagent acceptance record — and three to `test_preflight.py`, a heredoc
+# form of the launcher rule that the existing per-line check could not see. The
+# agents module sits in the cold-pass row alone; preflight sits in both. Two
+# tests went to agents and THREE to preflight — the heredoc guard plus the
+# positive and negative controls a later self-review pass added to it. So the
+# skill-edit row moved by THREE (720 to 723) and the cold-pass row by FIVE (862
+# to 867), with the scale row also five (3221 to 3226). Every earlier round in this
+# log moved the two derived rows by the same amount or left one of them still,
+# because every earlier round moved PORTABILITY, which is in both. Stepping one
+# derived row from the other — in EITHER direction — is the error the sums-from-
+# the-six rule exists to prevent, and this is the round that finally makes the
+# two disagree numerically rather than merely one-sidedly.
+# The round after IT put the two back in step, and by the OTHER module that sits
+# in both rows. One review finding: the heredoc opener the round above added
+# anchored end-of-line straight after the terminator, so `python3 - <<'PY' >
+# fixture.json` — an opener carrying any redirection, pipeline or operator —
+# registered as no heredoc at all and its body went unread. The fix widened that
+# tail to a closed class of shell syntax, and its two tests are the controls on
+# either side of the new boundary: one that the tails are now seen, one that
+# prose QUOTING an opener still is not. Both went to `test_preflight.py`, so all
+# three moving rows moved by TWO together (723 to 725, 867 to 869, scale 3226 to
+# 3228). Every earlier round that moved the derived rows in step moved
+# PORTABILITY; this is the first to do it through preflight, and the pairing is
+# the same arithmetic for the same reason — a module in both rows moves both.
+# The round after IT is the first to move the AGENTS row ALONE, and so the first
+# where the two derived rows move by different amounts in the OTHER direction:
+# agents sits in the cold pass and not in the skill-edit row, so the skill-edit
+# row stood at 725 while the cold pass went 869 to 870 and the scale row 3228 to
+# 3229. Five review findings, four of them fixed in tests already counted — a
+# selector arm for `ptet.py`, a widened heredoc terminator, two controls added
+# inside an existing test — and only the fifth added a test function: the
+# acceptance guard now EXECUTES the record's fenced generator and audits the
+# cache it writes, rather than re-deriving from its source what it ought to have
+# written. That is the shape to expect from a review round whose findings are
+# about a guard's discriminating power rather than its coverage: controls and
+# arms go inside tests that already exist, so the counts move far less than the
+# diff suggests.
+# The round after IT was the AGENTS-ONLY shape a second time — one finding, one
+# test — so the skill-edit row stood again at 725 while the cold pass went 870 to
+# 871 and the scale row 3229 to 3230. Twice running in the last two rounds, after
+# a log in which the agents row had never moved at all: the branch's subject is
+# the review subagents, so the module that reads them is where its findings land.
+# That is the same statement the skill-only rounds make about portability, from
+# the other end of the table.
+# The round after IT went back to PREFLIGHT, and to the pairing that module makes:
+# both derived rows moved by TWO (725 to 727, 871 to 873) with the scale row also
+# two (3230 to 3232). One finding, two tests — the third consecutive round on the
+# same heredoc opener, and the one that stopped widening the pattern and changed
+# what it is keyed on. Three rounds of tails is the signal worth keeping here: a
+# regex being asked to tell a command from a sentence had been given no way to,
+# and each widening bought one form and moved the false-positive edge. The two
+# tests are the fence's two directions plus the malformed-block bound, which is
+# the shape a discrimination fix takes — one test per side, never one per form.
+# The round after IT was PREFLIGHT again and the fourth in a row on that module,
+# but the first whose findings were about the guard's PREDICATES rather than its
+# pattern: an engine import stopped at a dot after `lib`, so the package-level
+# `from agents.lib import x` was not an engine call, and routing was read off the
+# whole line, so a launcher anywhere left of the interpreter cleared it. Two
+# findings, THREE tests — and the third is the shape worth recording. Both
+# defects had a SIBLING in the older skills-side audit that neither finding
+# cited, sharing the dot and the line-wide read, so the fix hoisted one
+# `_owning_command` and one import spelling for both audits and the third test is
+# the control pair on that older one, which had none. All three moving rows moved
+# by three (727 to 730, 873 to 876, scale 3232 to 3235). A round that sweeps a
+# sibling costs one more test than the findings do, never N more: the sibling
+# shares the fix, so what it needs is a control, not a copy.
+# The round after IT moved BOTH of the modules this branch has been alternating
+# between, and so is the first where the two derived rows part company by THREE:
+# preflight sits in both rows and gained one test, agents sits in the cold pass
+# alone and gained three, so the skill-edit row went 730 to 731 while the cold
+# pass went 876 to 880 and the scale row 3235 to 3239. Three findings. The
+# preflight one is the fifth consecutive round on the same heredoc opener and,
+# like the two before it, spent its test on a CONTROL rather than on coverage:
+# the terminator now matches sh's rule — the delimiter alone on the line, tabs
+# stripped for `<<-` and nothing stripped for `<<` — instead of `.strip()`'s, and
+# the one added test is the cases either side of that boundary. The other two are
+# the agents module's, and they are one defect asked of two different things: a
+# recorded PASS was bound neither to the definition bytes it judged nor to the
+# claim CLAUDE.md makes about it, so an edited prompt and a regressed re-run both
+# left the trust signal green. Two audits and ONE shared control is three tests
+# for two findings — the sibling-sweep arithmetic above read from the other end.
+# A round whose findings are about a record's EVIDENCE rather than a pattern's
+# reach pays for the control once, however many audits come to share it.
+# The round after IT is the first in this log whose findings landed OUTSIDE the
+# six modules as well as inside them, and so the first where a routing arm moved
+# for a reason the counts do not show. One test went to preflight (731 to 732,
+# 880 to 881, scale 3239 to 3240) and the other three findings cost no test at
+# all: two were new cases inside the agents module's existing control, and the
+# third was a MAPPING defect — test_preflight's DOCUMENTS grew two entries,
+# AGENTS.md and the issue template, that this hook routed to portability and to
+# nothing. Editing either turned preflight red at CI with no local signal. The
+# arm is fixed, and so is the reason nobody saw it: the read-set locator in
+# tests/test_claude_hooks.py recovers `REPO / "literal"` chains and cannot see a
+# path read over a loop, which is exactly how a swept document set is written. It
+# now also recovers a constant tuple whose every element names an existing file —
+# measured against these six modules that is one constant and no noise, where
+# "any literal that happens to be a path" was fifty-four entries of `.git` and
+# `.venv`. A round can move this table by one test and still be the round that
+# closed the largest gap in it.
+# The round after IT parted the two derived rows again, by ONE this time rather
+# than by three: one test to preflight and one to agents, so the skill-edit row
+# went 732 to 733 and the cold pass 881 to 883 with the scale row also two (3240
+# to 3242). Three findings, and all three were the same defect in three places —
+# a guard that reads a SHELL construct one line, or one claim, at a time. A
+# `\`-continued heredoc opener put the interpreter and the delimiter on
+# different lines and was not seen at all; an escaped quote inside a `-c` body
+# split one command into two, so neither half was an invocation; and a second
+# `**Both PASSED <date>**` in CLAUDE.md was resolved by `re.search` to the older
+# claim, which the record still backs. Two tests for three findings is the
+# controls-inside-an-existing-test shape this log has recorded twice before: the
+# escape fix went into the activation control that already stood, and only the
+# forms with no control of their own — the continued opener, the doubled claim —
+# needed a test function. This round also found the prose half of THIS block
+# holding one quantity at two values, 225 in two sentences against 230 in a
+# third, which is the drift the mechanical check does not reach because the
+# figure is spelled in words. Refreshed with the rest; a round that edits the
+# table refreshes them together or the next one inherits three values.
+# The round after IT is the first in this whole log to move NOTHING — not the
+# derived rows, not the scale row, not even by one. Two findings, both real, both
+# fixed, and every control they needed went inside a test that already existed;
+# the only other structural change was a RENAME, `test_the_per_line_check_...`
+# becoming `test_the_document_check_...` because the check it names stopped
+# reading one line at a time. Earlier rounds in this log recorded the
+# projection-only shape as the floor — no move in the six, one in the scale row —
+# and this is the floor beneath it. The findings were that the launcher rule
+# asked for the launcher's LITERAL rather than its execution, so a mention in a
+# comment or a quoted body cleared a bare engine call, and that the documents
+# audit read physical lines, so a `\`-continued invocation matched nothing. What
+# a round like this costs is not tests but PREDICATES: three of them were merged
+# into one the two audits now share. A count column is a poor proxy for the size
+# of a change, and this is the round that says so most plainly.
+# The round after IT moved PREFLIGHT alone by one — all three moving rows by one
+# together (733 to 734, 883 to 884, scale 3242 to 3243), the pairing that module
+# makes. Three findings, and every one of them was a predicate reading TEXT where
+# the shell reads STRUCTURE. A `NAME=value` prefix is not a command word, so
+# `RUNNER=agents/lib/run.sh python3 -m agents.lib.ptet` read as routed and the
+# compliant mirror read as bare — one construct, both directions wrong. A `<<`
+# inside a quoted string is not a redirection, so a block that only ECHOED an
+# example was indicted. And the LAST `<<` on a command is the one python is fed,
+# so `<<A <<B` had its executed body read as ordinary text. One test for the
+# three, because the last two are one rule about which `<<` is real and they
+# bound each other: taking the last is only safe once the quoted ones are gone.
+# The round also had to teach the quote scanner that `$( ... )` inside double
+# quotes is ACTIVE — an existing test caught that immediately, which is the
+# system working as designed, and is why the seventh finding this branch has
+# produced against its own guards cost nothing to find.
+# The round after IT moved no row either — five findings, every control inside a
+# test that already stood — but it is the first to change what a TRIGGER costs
+# rather than what a row counts. Editing any of the six test modules now selects
+# the hooks module as well, because test_claude_hooks PARSES all six to re-derive
+# this mapping, so a path constant added to one of them could only ever go red in
+# CI. Nothing in the table above moves: none of its four triggers is a test-module
+# edit. What moves is the trigger that is NOT listed — a test-module edit, which
+# went from its own module to a cold pass — and the reason it is worth writing
+# down here is that this block is where the cost of a trigger is supposed to live,
+# whether or not the trigger has a row. The arms were a hand edit until the read-
+# set locator was widened to see a lone string constant naming a file; now the
+# coverage test demands them, and reverting one names the dependency in its own
+# failure message. SUPERSEDED fourteen rounds later, and this pointer is the
+# whole of why the entry stays: the arms take a node-id subset now, not the
+# module, so the cost stated here is the cost of a policy no longer in force.
+# THE TRIGGER WITH NO ROW, above, is the current one — a log is a history, and
+# the standing statement of a trigger's cost cannot live inside one. A reader
+# who stops at the first entry naming the trigger stops at the wrong one, which
+# is the whole reason this pointer is not left to the reader's diligence.
+# The round after IT moved no row either — a third in a row, and the shape is now
+# the branch's own: four findings, every control inside a test that already stood.
+# Two were the previous round's fixes arriving incomplete, which is worth the note.
+# Making the not-accepted state WRITABLE guarded the two audits and not the
+# CONTROL beside them, so the state was still uncommittable — by a TypeError three
+# frames down rather than by an assertion. And the withdrawal was checked AFTER
+# the pass claim was returned, so a file carrying both sentences resolved to the
+# stale PASS. A fix for a workflow-blocking guard has to be committable in the
+# state it unblocks, and a fix that adds a second state has to say what happens
+# when both are present; neither is something the fix's own tests will ask.
+# The round after IT took the AGENTS-ONLY shape for the third time in this log —
+# one test to that module and none anywhere else, so the skill-edit row stood at
+# 734 while the cold pass went 884 to 885 and the scale row 3243 to 3244. Four
+# findings, and the one that bought the test is the only kind that can: the other
+# three were a predicate swap, an added assertion and a rewritten fixture, all
+# inside tests that already stood. That one is worth the note because it is a
+# class this log has not recorded before — a REMEDY that does not work. The audit
+# printed `shasum -a 256` for renewing a pin while the pin is taken with the
+# carriage returns stripped, so a maintainer on a CRLF checkout who followed the
+# failure message recorded a digest the same audit rejects, and the only way out
+# of the loop is to stop believing the guard. The command now lives in one
+# constant that both the message and the record are checked against. A guard's
+# accuracy and its remedy's accuracy are separate properties and only the first
+# has ever had a test here.
+# The round after IT moved the HOOKS row, which no round in this log had moved
+# before — so the cold pass went 885 to 886 and the scale row 3244 to 3245 while
+# the skill-edit row stood at 734, the hooks module sitting in the cold pass
+# alone. Three findings, and the one that added the test is the reason this
+# paragraph is here at all: the round BEFORE it added `RUN_HOOKS=1` to the six
+# test-module arms, and one of those arms also named
+# `agents/templates/taxpayer_profile_template.json`. So every edit of a JSON
+# template began paying for the slowest module in this table, and nothing in the
+# suite could see it — every other assertion about the mapping is a LOWER bound
+# ("does this path reach the module that reads it"), which an arm selecting
+# everything satisfies perfectly. Cost is the only thing that makes an
+# over-broad arm wrong, so cost is the only thing that can catch one, and this
+# block is where the cost of a trigger has always lived. The new test is the
+# first UPPER bound on the mapping. Its own first draft then collided with the
+# read-set locator — a constant tuple of existing paths is exactly what that
+# locator reads as "this module reads these", so a list declaring two paths
+# UNCOUPLED from the hooks module made the coverage test demand they select it,
+# and two tests asserted opposite things about the same two paths. Pairing each
+# path with the module that does read it fixed both halves at once.
+# The round after IT moved NOTHING — the second such round in this log, and the
+# second in five. Two findings, both in the shell scanners, both fixed inside
+# tests that already stood. What they have in common is worth more than the
+# arithmetic: each was a character the shell reads as part of ONE token that the
+# scanner read as two. `&>` is a redirection whose first character is the
+# separator `&`, so `python3 &>/dev/null -m agents.lib.ptet` was cut in half and
+# neither half held an interpreter AND an engine target; a `<<` inside a `#`
+# comment is a sentence, so the greedy reach for the LAST `<<` took the
+# commented one as the delimiter and closed the body before the import. Both
+# report CLEAN, which is the fail-open direction, and neither needed a test
+# function because both audits already had a control asking exactly this
+# question of a different character. A round that adds no test can still be the
+# round that closes two silent passes; the count column measures coverage, not
+# reach.
+# The round after IT parted the two derived rows by TWO, the widest gap this log
+# has recorded, and did it with both of the modules this branch alternates
+# between moving at once: two tests to preflight, which sits in both rows, and
+# two to agents, which sits in the cold pass alone — so the skill-edit row went
+# 734 to 736 while the cold pass went 886 to 890 and the scale row 3245 to 3249.
+# Three findings. Two were the launcher rule read as TEXT again: routing was
+# granted by `startswith`, so every executable the launcher's path is a prefix of
+# — `run.sh.bak`, a rename, a half-finished edit — inherited the clearance, and
+# the heredoc BODY was still read one physical line at a time, so a `\`-continued
+# `from agents.` / `lib import ptet` executed the engine while neither half named
+# it. The third is the one worth the note: the acceptance record has TWO replay
+# fixtures and only the generated one had a guard. The other is a git SHA, and a
+# SHA moved to the FIX rather than its parent leaves an honest empty report that
+# reads exactly like a broken reviewer's — the class this whole module exists for,
+# reached through the input nobody was watching. It cost the second agents test
+# too, for a reason none of the earlier rounds had: the guard SKIPS what a shallow
+# clone cannot reach, and CI checks out shallow by default, so the workflow's
+# depth became part of whether the guard runs at all and is now pinned. That in
+# turn moved the ROUTING table — a test module read `.github/workflows/ci.yml`
+# for the first time — and the read-set locator said so within the same pass,
+# which is the second time this log records the coverage test catching a mapping
+# gap the same hour it was created rather than at CI.
+# The round after IT was the NARROWEST shape this branch has: ONE test to
+# preflight and nothing anywhere else, so all three moving rows moved by one
+# together (736 to 737, 890 to 891, scale 3249 to 3250). Two findings, both in
+# the heredoc scanner and both the SAME defect the round before it fixed at one
+# site: the launcher read as text rather than as a POSITION. A near-miss check
+# written as `LAUNCHER in head` indicted `echo sh agents/lib/run.sh.bak <<'PY'`,
+# which runs nothing, and a `case` arm or a function definition put a token
+# ending in `)` where the command word goes, so `yes) python3 - <<'PY'` opened no
+# heredoc at all. One is a gate firing on a document that quotes the rule
+# correctly and one is a silent pass, which is the pair this scanner keeps
+# producing from the same root. Two findings closed by one anchored regex and one
+# prefix, and only the second needed a test function: the first is a third case
+# added to the control that already asks where the launcher sits.
+#
+# And the round after THAT repeated the shape exactly — one test to preflight,
+# nothing else, all three moving rows plus one (737 to 738, 891 to 892, scale
+# 3250 to 3251) — for a third consecutive round of the same root. `env -u` takes
+# an OPERAND, and the prefix that unwraps the exec words consumed the option
+# without it, leaving `PYTHONPATH` standing where the command word goes: an
+# argument handed back as an executable, which is the position error the two
+# rounds before it fixed in two other spellings. Its two siblings needed no test
+# at all. One was an acceptance criterion whose fail condition named a KEY where
+# its pass criterion names a FINDING, so an auditor that found the fixture's
+# unplanted source-pin defect and missed the planted stale value satisfied it —
+# the identical criterion-versus-condition gap Replay A had, one replay along.
+# The other was this file: `tax_computations.py` became the third engine module
+# `test_claude_agents.py` reads and got no arm, so the QBI assertion added with
+# it could go red at CI while the hook ran five modules and exited 0. That edge
+# is an IMPORT, and the derivation test recovers path literals, so the hand list
+# was the only place it could have been caught.
+#
+# The round after THAT moved the AGENTS row again, 30 to 31 — the FOURTH round
+# in this log to move it, after the three recorded above, and the first to move
+# it in the same round as PREFLIGHT. That pairing is what is new, and it is what
+# makes the three moving rows disagree three ways at once: two tests to
+# preflight and one to agents means the skill row gained two (738 to 740) and
+# the cold pass three (892 to 895), against a scale row that also moved three
+# (3251 to 3254). Read either derived row off the scale row's three and one of
+# them is wrong; that is the arithmetic the re-derivation from the six exists to
+# do. The agent-definition TRIGGER row moved with it, being the same
+# measurement under another name. Two of the three findings were the heredoc
+# scanner again and were one root wearing both faces: `$( ... )` NESTS, and only
+# the `$(` half was counted, so a subshell's `)` popped the substitution and the
+# double quote under it made the rest of the line inert — opener, delimiter and
+# all — while `<<<` is a here-string whose last two `<` the opener pattern
+# happily matched, inventing a heredoc terminated by a word no line equals. One
+# silent pass and one gate crying wolf, from one habit of reading a construct
+# two characters at a time. The third was the acceptance record: `## Replay`
+# sections collapsed through a `dict`, which is the identical collapse `##
+# Results` had fixed one function above, so an appended revision left the marker
+# check reading the LAST section while the pin and the criterion read the FIRST.
+# Which case a round is, is MEASURED by
+# `test_the_measured_costs_counts_match_live_collection`, never assumed. The gap
+# stated above — and stated ONCE, this sentence having carried a second copy of
+# it that was two tests stale, inside the block whose whole subject is a figure
+# written twice — is worth well under a second and cannot move a
+# row that spans 17 seconds at its narrowest, so the ranges stand — but a reader
+# deriving anything from the gap should know it is there rather than infer that
+# the sitting covered it.
+#
+# The round after that moved the SAME two rows by one each, and the derived rows
+# came apart a third way: preflight and agents each gained a test, so the skill
+# row went 740 to 741 while the cold pass went 895 to 897 and the scale row also
+# two (3254 to 3256). The cold pass and the scale row have now agreed twice
+# running, which is not a rule and must not be read as one — they agree exactly
+# when every test a round adds lands inside the six, and three rounds back the
+# scale row moved ALONE. What is structural is the other gap: an agents test
+# never reaches the skill row, so the skill row trails the cold pass by the
+# agents delta every time, one here and one last round.
+#
+# Both findings were fail-open, and the scanner one is the same habit a third
+# round running — a construct read at the wrong granularity. A command
+# substitution that is not the FIRST token: `_inert` handed the `$(` the flag of
+# whatever surrounded it, so inside a double quote the OPENER was inert while
+# everything it contained, its own `)` included, stayed active. `_commands`
+# splits at an active `(`, so the split never happened, `echo "$(python3 -
+# <<'PY')"` was one command with `echo` for a head, no heredoc was counted and
+# the body was never read. One line deleted. The rule that DID cover the leading
+# form went with it: it now fires nowhere in the tree and no test kills its
+# removal, and leaving it would leave the trap, because the obvious repair is to
+# widen it from the first token to any position — and `_command_head` returns
+# ONE position, so entering the substitution discards the command that OWNS it
+# and `python3 -m agents.lib.ptet "$(date)"` reads as a `date)"` that calls no
+# engine. A line holding a substitution holds two commands, so splitting is the
+# only answer to it. Measured across the corpus before adoption: seven more
+# command units, two fewer heads moved, and ZERO verdicts changed — the hole
+# closed is entirely prospective. The other finding was the replay pin's
+# shallow-clone skip, keyed on shallowness ALONE: `git show` fails on a
+# misspelled path too, so a broken record in a `--depth` clone was excused by a
+# message asserting the checkout lacked a commit it was holding. A guard
+# reporting the wrong reason for its own silence is worse than an absent one,
+# the message being what stops anyone looking. `git cat-file -e <sha>^{commit}`
+# separates them, and the test builds a real two-object shallow repository —
+# `.git/shallow` is a file — rather than stubbing the `git` calls it changed.
+#
+# The round after that moved ONE row, and it is the first time in this log that
+# the derived rows can be read off a single delta without being wrong: both
+# findings landed in preflight, so the skill row and the cold pass and the scale
+# row all moved by its two (741 to 743, 897 to 899, 3256 to 3258) while the
+# agents row stood. That is the shape the seven rounds before last had, and it
+# is a property of WHERE the tests went, never a rule — the re-derivation from
+# the six is what says which case a round is.
+#
+# Both findings were about the same function again — `_command_head`, which is
+# now the fourth round running — and this time about the grammar it enumerates
+# rather than about a construct read at the wrong granularity. `[assignments]
+# [redirections] word...` is the shell's own shape for a simple command, and
+# REDIRECTIONS had no rule at all, so `2>/dev/null python3 - <<'PY'` handed back
+# `2>/dev/null` as the executable: not an interpreter, no heredoc counted, body
+# never opened. `time` had a rule one token short — `-p` is the only option
+# bash's `time` takes — and left `-p` standing in the same place. Both silent.
+# The new rule is deliberately NARROWER than POSIX, and that was measured rather
+# than preferred: the grammar-faithful spelling moves 140 command heads in this
+# tree and 126 of them are markdown BLOCKQUOTES, the one class most likely to
+# quote a command; requiring the target to be attached and path-shaped leaves 2,
+# both prose. Zero verdicts change under any spelling, so the choice was about
+# which noise to invite. The second finding was the body scan reading a heredoc
+# as flat text, so a python COMMENT or a string that merely quotes the rule was
+# reported as the engine running on a bare interpreter — the shell-side `echo
+# 'python3 - <<PY'` case one language over. The body is tokenized now, with two
+# bounds that keep the fix from being a hole: a body that calls exec/eval/
+# compile has its strings read raw, and a body the tokenizer refuses is read raw
+# as well, which is exactly the behaviour that shipped.
+#
+# The round after that is the AGENTS-AND-PREFLIGHT shape a second time, and the
+# largest single move in this log: ten tests to preflight and one to agents, so
+# the skill row gained ten (743 to 753), the cold pass eleven (899 to 910) and
+# the scale row eleven with it (3258 to 3269). The two derived rows come apart
+# for the fifth time and by the widest margin yet, which is the arithmetic the
+# re-derivation from the six exists to do — read the skill row off the scale
+# row's eleven and it is out by one.
+#
+# The round after THAT is AGENTS-ONLY, a shape this log had not seen: three
+# tests to test_claude_agents.py and none anywhere else, so the skill row did not
+# move at all (753) while the cold pass gained three (910 to 913) and the scale
+# row three with it (3269 to 3272). It is the sharpest form of the argument for
+# re-deriving both rows from the six rather than tracking the scale row: read
+# the skill row off the scale row's three and it is out by exactly three, on a round
+# whose whole content is a module the skill row does not select. Preflight
+# collected the same 322 across it, having gained cases rather than tests — a
+# widened predicate exercised through the existing controls, which moves no
+# count and is why a count is not a measure of coverage.
+#
+# It was a review round rather than a feature one, and the size is the shape:
+# fifteen findings, none of them a live red, almost all of them a guard that
+# declines to LOOK rather than one that looks and is wrong. Six were fail-open
+# holes in the heredoc scanner — a pipe into an interpreter, an exec wrapper the
+# prefix list did not name, a second heredoc on one line, a backslash-quoted
+# delimiter, a four-backtick fence read inside out, a body written to a file and
+# run later — and three were the same scanner crying wolf, on a routed line's
+# comment, on `re.compile` reading as a dynamic exec, and on a t-string that
+# lexed differently between the two interpreters CI runs. A guard that silently
+# declines to look and one that looks and finds nothing are the same green, which
+# is this branch's own subject arriving inside the branch.
+#
+# THE ROUND AFTER IT WENT UNLOGGED, and that omission is the finding this entry
+# and the two below it settle. It moved preflight twenty-one (322 to 343) and
+# the agents module one (36 to 37), so the skill row went 753 to 774, the cold
+# pass 913 to 935 and the scale row 3272 to 3294 — an AGENTS-AND-PREFLIGHT round,
+# the third in this log, parting the two derived rows by one. The table was
+# refreshed for it and the ARITHMETIC sentence four paragraphs up was not, so the
+# block carried 753 and 913 in prose against 774 and 935 in its own columns for a
+# whole round: one quantity, two values, under a clause promising it "moves with
+# the table now". A log entry is not decoration here — it is where a refresh is
+# reconciled, and a round with no entry is a round nobody reconciled.
+#
+# The round after THAT is this one, and it is the AGENTS-AND-PREFLIGHT shape's
+# sibling: PREFLIGHT AND HOOKS. Seven tests to preflight (343 to 350) and two to
+# the hooks module (124 to 126) and one to the agents module (37 to 38), so the
+# skill row moved by SEVEN (774 to 781) and the cold pass by TEN (935 to 945),
+# with the scale row also ten (3294 to 3304).
+# The two derived rows part company for the sixth time, and by two modules at
+# once — read the skill row off the scale row's ten and it is out by three, which
+# is the hooks module and the agents module, both sitting in the cold pass alone.
+#
+# Ten review findings, six of them in the preflight lexers and every one the
+# same root a fourth branch running: a predicate that recognises a construct by
+# its SPELLING. `-c` had to be detached, so `python3 -uc '` opened no join; a
+# redirection among the arguments was read as the script operand, so
+# `python3 2>&1 <<'PY'` opened no body; a quoted assignment spanning lines was
+# not joined, so the name it binds read as empty; a heredoc bound to a variable
+# had no reading at all; and the interpreter itself was `python` or `python3` and
+# nothing else, so the Windows launcher, a path with an interior `..`, a
+# cwd-relative operand after a `cd` and an alias each reached the engine green.
+# Two more were this block: the arithmetic sentence above, and a reconciliation
+# that could express only non-negative deltas.
+#
+# The tenth is the one that moved the HOOKS row and the reason a trigger's cost
+# changed again. `RUN_HOOKS=1` on the five remaining test-module arms — added
+# two rounds after the arm this log already records as an over-broad selection —
+# charged every save of a test module the dominant row in this table for a
+# dependency that is THREE assertions. They are selected by node id now, as a
+# check of their own; the two tests are the upper bound that would have caught
+# it and the pin that keeps the ids real. A lower bound is satisfied by an arm
+# that selects everything, which is why cost is the only thing that catches one,
+# and this is the second time that sentence has had to be written here.
+#
+# A cross-file tracer then landed two more against the same round and neither
+# moved a count, which is why they sit in this entry rather than a new one. The
+# first is the sibling sweep this repository keeps re-learning: a rationale
+# written as HISTORY — an allowlist entry said to have been REPLACED, in a file
+# whose every revision says otherwise — stood in THREE places, two documents were
+# corrected and the scanner's own comment was the one left. The second is the row
+# above: the hooks module's RUN figure is the only one no collection can reach,
+# platform skips being conditional, so it is pinned to the block's stated skip
+# count from both sides with a tripwire under it. A skip added to an EXISTING
+# test moves no collected count, so every assertion here stayed green while that
+# row and the cold pass summed from it drifted — the drift this block's header
+# records four instances of, arriving through the one quantity none of them was
+# about.
+#
+# THE ROUND AFTER THAT moved NOTHING — the third such round in this log — and it
+# is the one that made this block's ownership of a trigger's cost true rather
+# than merely claimed. Nine findings, every control inside a test that already
+# stood, so no row and no derived row and not the scale row moved. FIVE of them
+# were about the entry immediately above — the round that introduced
+# `RUN_HOOKSDEPS` — which is the sibling sweep this repository keeps re-learning
+# arriving inside the fix that created it, and the count is the argument: a
+# round that narrows a gate has to be swept as one change and was not.
+#
+# The first is the one that changes behaviour. `RUN_HOOKSDEPS` had the counts
+# check in it, so ADDING a test to any of the five turned the gate red and the
+# red carry-forward re-blocked every tool call until this block was refreshed in
+# six places — a refresh that can only be made coherently once a round's tests
+# are final. A gate firing on correct in-progress work is the pattern the
+# `--deselect` pair at `run_focused_modules` already records, met a second time
+# through a check that is factually RIGHT and fires where nothing can be done
+# about it. It is out of the list and stays in CI, in the review, and on every
+# edit that takes `RUN_HOOKS` — which is every edit to the file this block lives
+# in. The second is the other direction: the list called itself the whole of
+# what a test-module edit can turn red while omitting the deselect pin, and its
+# own guard was a lower bound over two hardcoded names, which cannot see an
+# omission. Pinned as a SET now, both directions, the way the deselect pair
+# beside it is. The third is THE TRIGGER WITH NO ROW above, which is the cost
+# neither of those two decisions could be judged against.
+#
+# The pin's resolution check was a substring search, which a strict PREFIX
+# satisfies while collecting nothing — and pytest answers a selection like that
+# with exit 4 for the whole pass, which this hook holds its stamp on and reports
+# as a block with no verdict behind it. A wedge, from a rename, with the suite
+# green. Two more were the preflight lexers reading a CONSTRUCT by its spelling,
+# which is now a fifth branch running: a script operand was relocated only when
+# it was a bare FILENAME, so `cd agents && python3 lib/ptet.py` cleared while the
+# `-m` twin of the same command was reported, and a `read` option was tested as
+# a whole WORD, so the bundled `read -rd '' CODE` — the spelling every runbook
+# uses — bound nothing and its body went unread. One was the replay pin's
+# blobless arm, keyed on partial-and-present without asking whether the commit's
+# TREE holds the path: the shallow arm's own defect, one environment along, and
+# the control that catches it is the one the shallow arm already had. The last
+# was a vocabulary closed at what the corpus happened to contain — no thousand,
+# and words the only accepted spelling — so the first four-figure delta would
+# have had no writable form and the exit would have been to edit the test. The
+# ninth cost nothing to fix and is the same round's: CLAUDE.md described the
+# selection as "six test modules and a node-id subset of the seventh", and there
+# is no seventh — the subset is of tests/test_claude_hooks.py, which is one of
+# the six. A miscount in the one file an agent has loaded at session start.
 #
 # THE HAND-REFRESH FAILED AGAIN, which is why the counts are no longer kept by
 # hand. The revision that made this block the SOLE owner of these figures — it
@@ -1054,7 +1853,7 @@ apply_red_checks
 # together are at most 19s even taking each at its slowest, so of a cold
 # pass that never measured below 121.8s, at least 84% is
 # tests/test_claude_hooks.py. A hook can only be tested by running it — that
-# module spawns bash processes across its 123 tests, more than one per case
+# module spawns bash processes across its 126 tests, more than one per case
 # (205 spawns over 105 cases when last counted with a `bash` shim on PATH;
 # the RATIO is what carries forward, not the absolute) and holds deliberate
 # sleeps — five tests at about 4.5s each. Selecting a subset is therefore the
@@ -1118,18 +1917,56 @@ apply_red_checks
 # are far too slow to run here. Editing that one skill still has CI as its only
 # signal.
 #
-# KNOWN GAP, the same trade from the other direction: test_claude_hooks.py READS
-# test_preflight.py and test_secure_fs.py — its watched-set coverage test opens
-# all six module files and recovers every `REPO / "literal"` path they name — so
-# adding such a literal to either turns the hooks module red while the arms
-# above select only that module's own tests. By the import-edge argument used
-# for rollover.py, those two arms should therefore also carry RUN_HOOKS. They
-# deliberately do not: the hooks module is at least 84% of a cold pass
-# (MEASURED COSTS), and both files are edited constantly, so that edge would put the most
-# expensive module on the most frequent edit — the fast path this hook exists to
-# protect, spent on a signal CI produces two minutes later anyway. A gate that
-# slow on routine work gets switched off, and a switched-off gate catches
-# nothing at all. The lever, when this matters, is that module's runtime.
+# WHAT THE TEST-MODULE ARMS COST, since it is a real trade and the paragraph
+# here has now argued both sides of it as current policy. test_claude_hooks.py
+# READS every one of the six module files — its watched-set coverage test opens
+# them and recovers every `REPO / "literal"` path they name — and NAMES one of
+# them, the deselect pin resolving both `--deselect` ids against
+# tests/test_portability.py's own source. So adding such a literal to any of the
+# six turns the hooks module red while that module's own tests stay green, which
+# is the CI-only failure this hook exists to convert into a local one, and it is
+# why all six arms select the hooks check.
+#
+# FIVE of them select `RUN_HOOKSDEPS`, which is that dependency and nothing
+# else: the three assertions in that module that reach the other five. Only
+# tests/test_claude_hooks.py itself takes `RUN_HOOKS`. The whole module was the
+# policy for three rounds and the bill was the dominant row in the DECOMPOSITION
+# above, so a save of the file this branch grows fastest paid that module on top
+# of its own row for three assertions. That is the fast path this hook exists to
+# protect, and a gate that slow on routine work is one that gets switched off,
+# which is the outcome no assertion constrains.
+#
+# What the three ids cost INSTEAD is not nothing, and this paragraph used to
+# imply it was by quoting the preflight-to-hooks ratio — which is about the
+# module the narrowing spares. The figure is THE TRIGGER WITH NO ROW, above,
+# stated once and not restated here.
+#
+# The COUNTS check is deliberately not among the three, and that is a cost
+# decision in the other direction: it goes red the moment a test is ADDED to any
+# of the five and stays red until this block is refreshed in six places, which
+# is a hand edit a round can only make once its tests are final. Selected here
+# it blocked every tool call in between — the gates-that-cry-wolf pattern, and
+# the same judgement the `--deselect` pair below records. See HOOKS_DEPENDENTS.
+#
+# The bound is PINNED in both directions, because a narrowing goes wrong
+# silently in one of them: `test_the_hooks_dependents_are_real_and_complete`
+# requires every node id to resolve EXACTLY to a test that exists and the
+# membership to be the pinned SET — a lower bound over two hardcoded names stood
+# here first and could not see the one dependent that was missing — and
+# `test_a_test_module_edit_does_not_pay_for_the_whole_hooks_module` is the upper
+# bound, a lower bound being satisfied by an arm that selects everything, so
+# cost is the only thing that catches an arm widened back.
+#
+# What was considered and declined is a filtered subset reported AS the hooks
+# module's verdict, which is a different thing: a subset standing in for a
+# module is how a check comes to mean less
+# than it says. The selection is PINNED, in both directions, so neither reading
+# of this trade can be applied to the arms by hand:
+# `test_the_watched_set_still_covers_what_the_modules_read` recovers the six
+# module-name constants out of test_claude_hooks.py's own source and requires an
+# edit to each of those paths to select the hooks module, and
+# `test_a_template_edit_does_not_pay_for_the_hooks_module` holds the upper bound
+# for the two templates that sit in the same `case` list and must NOT.
 #
 # The two deselected assertions are the registry pair, and they are excluded
 # because they necessarily fail while a NEW skill is being written — the
@@ -1156,6 +1993,11 @@ run_focused_modules() {
         && modules[${#modules[@]}]=tests/test_claude_agents.py
     [ "$RUN_HOOKS" -eq 1 ] \
         && modules[${#modules[@]}]=tests/test_claude_hooks.py
+    # ...or the three assertions in it that a test-module edit can reach, when
+    # nothing asked for the whole thing. The RUN_HOOKS guard comes first so a
+    # pass that wants both does not hand pytest the same node ids twice.
+    [ "$RUN_HOOKS" -eq 0 ] && [ "$RUN_HOOKSDEPS" -eq 1 ] \
+        && modules+=("${HOOKS_DEPENDENTS[@]}")
     [ "$RUN_PREFLIGHT" -eq 1 ] \
         && modules[${#modules[@]}]=tests/test_preflight.py
     [ "$RUN_SECUREFS" -eq 1 ] \

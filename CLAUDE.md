@@ -29,12 +29,12 @@ Neither replaces them; the git hooks are what cover other agents.
   A Write/Edit is filtered by its path; a Bash payload is opaque, so it is filtered by
   `.claude/.skill-invariants-stamp` plus one `find -newercm`, and exits 0 in milliseconds
   when nothing watched moved, which is what stops `ls` and `git status` buying a pytest
-  run. It then runs only the subset of six test modules the changed paths can turn red. A
-  new source file behind an assertion ALWAYS goes in `select_modules_for` (or editing it
-  selects nothing), and in `WATCHED_ROOTS` only where no entry there already contains it
-  — they are `find` ROOTS, so `agents` reaches `agents/lib`. Exit 0 silent, 2
-  blocking with the failing tail, 1 when TERM/INT/HUP killed the pass — no verdict, so it
-  must not block. No-ops without `jq` or a `.venv`.
+  run. It then runs only the CHECKS the changed paths can turn red — six test modules, or
+  a node-id subset of one of THEM. A new source file behind an assertion ALWAYS goes in
+  `select_modules_for` (or editing it selects nothing), and in `WATCHED_ROOTS` only where
+  no entry already contains it — they are `find` ROOTS, so `agents` reaches `agents/lib`.
+  Exit 0 silent, 2 blocking with the failing tail, 1 when TERM/INT/HUP killed the pass —
+  no verdict, so it must not block. No-ops without `jq` or a `.venv`.
 - `harden-runtime-perms.sh` (`Write|Edit|NotebookEdit|Bash`, timeout 60s) — re-asserts
   AGENTS.md §1's `chmod 600` on the runtime artifacts and its `chmod 700` on the runtime
   directories. `Bash` is in the matcher because `result.json` is written by a script.
@@ -88,11 +88,11 @@ resolve its own findings cannot be trusted about them.
   NOTHING that is not a directional-bias or unstated-precondition finding. Codex already
   reviews everything else, and a second general reviewer is noise.
 
-**Acceptance before trusting either:** replay a known answer, never plausibility. Feed
-`bias-direction-reviewer` the pre-fix state of a commit that fixed a directional bug
-(`git log --grep=P1 -i`, then `git show <sha>^ -- <file>`) and check it names it
-unprompted; hand-corrupt a COPY of `tax_law_<year>.json` with a prior-year `salt_cap`.
-Definitions load at session start — so, a later session.
+**Acceptance before trusting either:** replay a known answer, never plausibility, from a FRESH
+session — definitions load at session start, so an edited one is not what a same-session replay
+tests. **Both PASSED 2026-08-27**; recipe, pre-committed criteria and the traps (a squash merge
+leaves nothing in `<sha>^`, so `--grep=P1` is the wrong search) are in
+`docs/ops/review-subagent-acceptance.md`. Re-run before the season-open runbook.
 
 ## Feature workflow
 

@@ -22,6 +22,14 @@ jobs:
         python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, because a test REPLAYS one: the review-subagent
+          # acceptance record pins a pre-fix revision by SHA, and the guard that
+          # checks the pin still carries the defect it is scored on reads that
+          # blob with `git show`. On the default shallow checkout the object is
+          # absent, so the guard skips and the record's Replay A goes unchecked
+          # in the one place every contributor's change passes through.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
