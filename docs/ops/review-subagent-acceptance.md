@@ -10,10 +10,9 @@ This file is the record of that replay. It exists so the next run compares again
 known result rather than re-litigating the question — the same reason the 08-12
 backlog records R1's one benign PII finding instead of just declaring the audit clean.
 
-Backlog item: **T2** of the 2026-08-12 product-owner review, which is still on an
-unmerged branch as this lands — so it is named here rather than linked, a link into a
-branch being a link that resolves for nobody. T2 gates T1, the season-open runbook
-leaning on the freshness auditor.
+Backlog item: **T2** of [`docs/roadmap/2026-08-12-product-owner-review.md`](../roadmap/2026-08-12-product-owner-review.md),
+which was still on an unmerged branch when this record landed and is merged now. T2
+gates T1, the season-open runbook leaning on the freshness auditor.
 
 ## The rule that makes this a replay
 

@@ -108,9 +108,9 @@ AGENTS.md gives the push command; this is the per-agent convention it defers to.
   confirm, open the PR with `gh pr create`. Never commit to `main` — the user
   squash-merges. Delete a remote branch with
   `git push origin --no-verify --delete <branch>`, the plain form being blocked.
-- **Waiting on CI: bind the poll to the commit** — `gh run list --commit "$SHA"`.
-  `gh pr checks` may still report the *previous* commit's finished runs, and an empty
-  check list trivially satisfies "nothing pending" — both exit on an unmeasured green.
+- **Waiting on CI: bind the poll to the commit** — `gh run list --commit "$SHA"`. Three ways to
+  exit on an unmeasured green: `gh pr checks` reads the PREVIOUS commit's runs; an empty check
+  list is "nothing pending"; MCP `get_status` reads STATUSES, not CHECK RUNS: `total_count: 0`.
 - Merging a stack: `gh pr update-branch --rebase` puts each PR on the new `main`;
   `git merge-tree --write-tree <base> <head>` dry-runs the merge for conflicts.
 - `git grep -E` is POSIX ERE — `\s` and `\d` match nothing and report a clean "no

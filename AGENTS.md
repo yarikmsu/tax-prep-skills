@@ -463,7 +463,7 @@ Nothing below is duplicated in this file — follow the pointer when you need it
 | Feature specs and implementation plans | `docs/superpowers/` |
 
 **Roadmap status** (`docs/roadmap/` holds several backlogs — which is
-which): the active one is `2026-07-20-product-owner-review.md` (Epics M-O);
-Epics I-L and P are shipped. State-support context is
+which): the active one is `2026-08-12-product-owner-review.md` (Epics R-U);
+Epics I-Q are shipped bar O3, carried there as U1. State-support context is
 `2026-07-12-three-perspective-review.md` and `2026-state-support-ny-fl-wa.md`,
 portability `2026-multi-agent-portability.md`.

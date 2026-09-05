@@ -1,5 +1,13 @@
 # Product-Owner Review + Next Backlog — 2026-07-20
 
+> **Successor:** every scheduled item below is shipped — Epic M (golden-path fixture,
+> season-open runbook, §6601/§6622 interest), Epic N (N1 CA Schedule P, N2 Form 8995-A,
+> N3 Forms 8889 and 2441, N4 `state.ptet` — PRs #55–#59) and
+> Epic O1/O2 (the agent-neutral AGENTS.md split, PRs #66–#75, and the README rewrite).
+> The active backlog is now `2026-08-12-product-owner-review.md` (Epic R publish and
+> survive being public, S the seasonal advisory wedge, T season operations, U
+> carry-forwards). **O3 is the one carry-forward**, tracked there as U1.
+
 Reviewer lenses: product owner with tax-adviser / CPA / IRS-officer / enrolled-agent /
 investor background. Every defect claim below was verified against source before being
 written down (file:line checked; full suite re-run: **1646 passing** on `main`).
