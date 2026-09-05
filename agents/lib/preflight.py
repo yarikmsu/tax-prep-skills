@@ -43,8 +43,9 @@ import importlib
 # its submodules, so `importlib.metadata.distributions()` raised AttributeError
 # on the interpreter that had not already imported it for some other reason —
 # an error inside the gate, on a machine where nothing else happened to pull it
-# in first.
+# in first. `importlib.util` is here for that same reason, not a second one.
 import importlib.metadata
+import importlib.util
 import io
 import json
 import math
@@ -52,8 +53,10 @@ import os
 import platform
 import re
 import shlex
+import shutil
 import stat
 import sys
+import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,6 +131,17 @@ _PROBE_BRACKETS = [
 ]
 _PROBE_INCOME = 2000.0
 _PROBE_EXPECTED = 300.0  # 1000 @ 10% + 1000 @ 20%
+
+# The package itself, checked APART from the roster because it does not fit that
+# shape: `_cli_dispatch_error` looks for `<stem>.py` beside this file and a
+# package has no such leaf, and an initialiser must not carry a `__main__`
+# dispatch anyway.
+_GUARD_MODULE = "agents.lib"
+_GUARD_ROLE = "the host-interpreter guard every engine import passes through"
+_GUARD_SYMBOL = "host_interpreter_defect"
+# The status the initialiser exits with when it refuses — preflight's own
+# "blocked", so a skill branching on the status reads the two the same way.
+_GUARD_STATUS = 2
 
 def _venv_layout(venv=None) -> str:
     """The subdirectory a venv keeps its activate script in — `bin`, or
@@ -788,6 +802,12 @@ class PreflightReport:
     # opposite-answer field is: the renderer had the roster's length and printed
     # the roster's contents, so a check of one module announced four gates.
     gates_available: tuple = ()
+    # WHY the host-interpreter guard could not be certified, which is the
+    # opposite of an empty one: empty means it WAS certified. A fault of the
+    # probe's own environment — no space in `$TMPDIR`, a sandbox that refuses
+    # the write — never a verdict about the engine, and so never blocking.
+    # `_probe_environment_fault` carries the argument.
+    guard_probe_error: str = ""
 
     def __post_init__(self):
         """The two fields are mutually exclusive, and were so only by accident.
@@ -1008,6 +1028,282 @@ def _cli_dispatch_error(name: str):
             "`if __name__ == \"__main__\":` dispatch — the skills run this "
             "file as a command, and without it it would exit 0 having done "
             "nothing", False, False)
+
+
+def _probe_environment_fault(what, exc):
+    """A failure of the PROBE's own environment — never a verdict about the
+    engine, and never a block.
+
+    Both probes below need a throwaway tree to answer their question in, and
+    every step of building one can fail for reasons that say nothing about this
+    clone: a full `/tmp`, a `$TMPDIR` inside a sandbox this process may not
+    write to, a mount gone read-only. Those failures used to arrive through the
+    same `except Exception` as a guard that RAISED, so a healthy engine in the
+    correct virtualenv reported `engine_missing`, blocked every taxpayer-facing
+    skill, and answered with `import_failure_remedy` — a re-clone and a
+    reinstall, for a disk with no space on it, with the OS error redacted away.
+    Reported against PR #82.
+
+    So it is carried separately and it WARNS. What is lost is certification of
+    the guard, not the guard itself: `importlib.import_module` succeeded a few
+    lines above, which means the module-level refusal already ran in this
+    process. Blocking every skill on a state the engine is not in is the
+    cry-wolf shape AGENTS.md §4 names, and the gate an agent reasons past next
+    is the tie-out.
+    """
+    return "", False, False, f"{what}: {type(exc).__name__}: {exc}"
+
+
+def _guard_raised(exc):
+    """The other half of the split above: the guard itself blew up.
+
+    That IS a verdict about the engine — a stubbed or half-edited initialiser
+    reaches here — so it blocks, and it is redacted because the exception text
+    can carry the probe's temp path.
+    """
+    return (f"{type(exc).__name__}: the host-interpreter guard raised on the "
+            f"known-answer probe: {exc}", True, False, "")
+
+
+@contextlib.contextmanager
+def _as_a_dash_c_invocation():
+    """Make this process look like `python -c …` to the guard, and put it back.
+
+    The wiring probe EXECUTES a copy of the initialiser, and that copy reads
+    its inputs off `sys` rather than taking them as arguments. Preflight is
+    exempt from the guard, so left alone the copy would take the exemption and
+    the probe would read clean against any initialiser at all — vacuous, green,
+    and measuring nothing. `_guard_error`'s probe escapes the same trap by
+    passing the three inputs explicitly; this one cannot, so it changes them.
+
+    THREE inputs, because the exemption reads three: `__main__.__file__` first,
+    then `sys.argv[0]`, then `sys.orig_argv`. A `-c` invocation is the state
+    where all three agree that the program is not preflight, and it is the one
+    CPython itself produces — so the probe measures the guard against a real
+    command line rather than an impossible hybrid.
+
+    EVERY assignment happens before the caller's first filesystem call. The
+    previous version set `sys.orig_argv` after building its temp tree, so an
+    OSError during that build ran a `finally` holding `del sys.orig_argv`
+    against a `sys` that had never had one — an AttributeError replacing the
+    handled exception, and on a pre-3.10 interpreter that is exactly the
+    MIN_PYTHON report preflight exists to deliver. Reported against PR #82.
+    """
+    absent = object()
+    main = sys.modules.get("__main__")
+    saved_argv = sys.argv
+    saved_orig = getattr(sys, "orig_argv", absent)
+    saved_file = absent if main is None else getattr(main, "__file__", absent)
+    sys.argv = ["-c", ""]
+    sys.orig_argv = ["python", "-c", ""]
+    if main is not None and saved_file is not absent:
+        del main.__file__
+    try:
+        yield
+    finally:
+        sys.argv = saved_argv
+        if saved_orig is absent:
+            # Below MIN_PYTHON there was no attribute to begin with, and
+            # leaving a synthetic one behind would silently switch the guard's
+            # own fallback branch off for the rest of this process.
+            del sys.orig_argv
+        else:
+            sys.orig_argv = saved_orig
+        if main is not None and saved_file is not absent:
+            main.__file__ = saved_file
+
+
+def _guard_error():
+    """Certify the host-interpreter guard, which no module roster can see.
+
+    `agents/lib/__init__.py` is the one engine file whose ABSENCE is invisible
+    to every other check here. Python treats `agents/lib/` with no initialiser
+    as a NAMESPACE package, so every sibling still imports, every roster entry
+    still passes, and the guard that refuses a host interpreter is simply gone
+    — on exactly the partial copy this module exists to detect. An emptied or
+    zero-truncated initialiser is the same failure at a coarser cut, and both
+    are the shape `ENGINE_MODULES` is deliberately blind to, because the roster
+    is keyed on file stems and this file's stem is not its module name.
+
+    IMPORTABLE IS NOT CORRECT here either, for the reason `_probe` exists: a
+    guard reduced to `return ""` — half-applied merge, a debugging edit left in
+    — passes an existence check and certifies nothing. So it is answered on a
+    known input in BOTH directions. A root with no `.venv` must produce no
+    opinion, because a guard that refuses one would block CI and every clone
+    before `tax-setup` Step 6; the same root WITH one, judged from an
+    interpreter that is not it, must produce a refusal.
+
+    The probe passes a `-c` invocation on purpose, and passes all THREE of the
+    inputs the exemption reads. The guard exempts preflight, so leaving any of
+    them to default would take the exemption whenever preflight is what is
+    running — which it always is here — and the probe would read "" in both
+    directions: present, green, and measuring nothing. `main_file` is the one
+    that made this concrete: with only the argv overridden, the probe read the
+    real `__main__.__file__`, saw preflight, and certified a stub.
+
+    Returns `(error, needs_redaction, file_missing, environment_fault)`. The
+    fourth is the non-blocking channel `_probe_environment_fault` argues for;
+    when it is set the first is empty, because a probe that could not run has
+    no verdict to give about the engine.
+    """
+    initialiser = _HERE / "__init__.py"
+    try:
+        if not initialiser.stat().st_size:
+            return ("IncompleteModule: the package initialiser is present and "
+                    "EMPTY, so nothing refuses a host interpreter and every "
+                    "sibling still imports", False, False, "")
+    except FileNotFoundError:
+        return ("ModuleNotFoundError: the package initialiser is missing, so "
+                "`agents.lib` imports as a NAMESPACE package — every module "
+                "below still loads and nothing refuses a host interpreter",
+                False, True, "")
+    except OSError as e:
+        # Unverifiable is not verified, and the bias runs one way: what is left
+        # uncertified here is the refusal that stands between a host
+        # interpreter and a return. This one is NOT routed to
+        # `_probe_environment_fault`: it is a failure to read the ENGINE's own
+        # file, which is a fact about this clone rather than about a temp
+        # directory. The OS wrote this and it can name a path.
+        return (f"{type(e).__name__}: the package initialiser could not be "
+                f"inspected: {e}", True, False, "")
+    try:
+        # `importlib` directly, not `_load`: that helper stats `<stem>.py`
+        # beside this file to tell a missing module from a broken one, and a
+        # package has no such leaf — it answered "no lib.py beside
+        # preflight.py" for a package sitting right here. `SystemExit` is
+        # caught alongside `Exception` for the reason `_load` catches it: the
+        # thing being imported is a module that may exit on import, and this
+        # check has to survive that to report it.
+        module = importlib.import_module(_GUARD_MODULE)
+    except (Exception, SystemExit) as e:
+        return (f"{type(e).__name__}: the package could not be imported: {e}",
+                True, False, "")
+    guard = getattr(module, _GUARD_SYMBOL, None)
+    if guard is None:
+        return (f"AttributeError: imported but exposes no `{_GUARD_SYMBOL}` — "
+                f"the initialiser is present and stubbed", False, False, "")
+    as_dash_c = dict(prefix="/probe", base_prefix="/probe", main_file=None,
+                     argv=["-c", ""], orig_argv=["python", "-c", ""])
+    # `mkdtemp` plus an unconditional `rmtree(ignore_errors=True)`, not
+    # `TemporaryDirectory`: that context manager raises from its own cleanup,
+    # and a cleanup failure arriving as the probe returns would overwrite a
+    # real engine verdict with an environment one — the misclassification this
+    # whole split exists to end, reintroduced at the exit.
+    try:
+        root = tempfile.mkdtemp()
+    except OSError as e:
+        return _probe_environment_fault(
+            "the known-answer probe could not create a temporary workspace", e)
+    try:
+        try:
+            quiet = guard(root=root, **as_dash_c)
+        except Exception as e:
+            return _guard_raised(e)
+        try:
+            os.mkdir(os.path.join(root, ".venv"))
+        except OSError as e:
+            return _probe_environment_fault(
+                "the known-answer probe could not create the `.venv` its "
+                "second half is measured against", e)
+        try:
+            loud = guard(root=root, **as_dash_c)
+        except Exception as e:
+            return _guard_raised(e)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    if quiet:
+        return ("IncompleteModule: the host-interpreter guard refuses a "
+                "workspace that has no `.venv` — that state is CI and every "
+                "clone before `tax-setup` Step 6, and a gate that fires on it "
+                "teaches its reader to reason past it", False, False, "")
+    if not loud:
+        return ("IncompleteModule: the host-interpreter guard passed an "
+                "interpreter that is not the workspace venv on the "
+                "known-answer probe — present, and certifying nothing", False,
+                False, "")
+    return _wiring_error(initialiser)
+
+
+def _wiring_error(initialiser):
+    """The module-level CALL, which importing a correct file cannot reveal.
+
+    `_guard_error` answers the exported function on a known input in both
+    directions, and a cut one line further down passes every one of those
+    checks: truncate the initialiser after its last `return` and
+    `host_interpreter_defect` is still there, still right, and never called.
+    The package then imports cleanly on any interpreter, every engine module
+    loads behind it, and the refusal is simply gone — "present and certifying
+    nothing" again, one level out from the shape `_probe` exists for, and
+    reported against PR #82.
+
+    So it is answered the same way, by EXECUTING the file in a state where a
+    wired guard must refuse: a copy of the real initialiser in a temp root that
+    HAS a `.venv` this interpreter is not. The copy reads its inputs off `sys`
+    rather than taking them as arguments, so `_as_a_dash_c_invocation` supplies
+    that state and restores it — preflight is exempt, and a copy left to read
+    this process's own inputs would take the exemption and measure nothing.
+
+    A source scan for the `if ... : sys.exit(...)` line was the cheaper option
+    and is what `_cli_dispatch_error` does for `__main__`. It is not enough
+    here: that check answers "is the text present", and the whole argument of
+    this module is that present is not wired.
+    """
+    with _as_a_dash_c_invocation():
+        try:
+            root = tempfile.mkdtemp()
+        except OSError as e:
+            return _probe_environment_fault(
+                "the import-time probe could not create a temporary "
+                "workspace", e)
+        try:
+            try:
+                package = Path(root) / "agents" / "lib"
+                package.mkdir(parents=True)
+                copy = package / "__init__.py"
+                copy.write_bytes(initialiser.read_bytes())
+                os.mkdir(os.path.join(root, ".venv"))
+            except OSError as e:
+                return _probe_environment_fault(
+                    "the import-time probe could not build the throwaway "
+                    "package it executes", e)
+            spec = importlib.util.spec_from_file_location(
+                "_engine_guard_wiring_probe", copy)
+            module = importlib.util.module_from_spec(spec)
+            # Deliberately NOT registered in `sys.modules`: this is a second
+            # execution of a module that is already imported under its real
+            # name, and registering it would leave the copy shadowing the real
+            # package for everything preflight imports afterwards.
+            #
+            # The refusal writes to stderr before it exits. That stream is this
+            # gate's report, so it is swallowed here — the verdict below is
+            # what preflight has to say about it, not the probe's own copy of a
+            # message the reader is not being blocked by.
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    spec.loader.exec_module(module)
+            except SystemExit as refusal:
+                if refusal.code == _GUARD_STATUS:
+                    return "", False, False, ""
+                return (f"IncompleteModule: the host-interpreter guard refuses "
+                        f"at import with status {refusal.code!r} rather than "
+                        f"{_GUARD_STATUS} — the skills branch on that status, "
+                        f"and this one does not read as blocked",
+                        False, False, "")
+            except Exception as e:
+                # The temp root reaches this message through several of the
+                # exceptions it can carry, so it is redacted for the reason
+                # every other path here redacts: a workspace path may carry a
+                # taxpayer's name.
+                return (f"{type(e).__name__}: the package initialiser raised "
+                        f"on the import-time known-answer probe: {e}",
+                        True, False, "")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+    return ("IncompleteModule: the host-interpreter guard is defined but never "
+            "CALLED at import — the package imported without refusing an "
+            "interpreter that is not the workspace venv, so the refusal every "
+            "engine import is supposed to pass through is not there", False,
+            False, "")
 
 
 def _probe(math_module) -> str:
@@ -1793,6 +2089,15 @@ def check(modules=ENGINE_MODULES, workspace=None) -> PreflightReport:
         elif name == probe_name:
             math_module = module
 
+    # The guard is checked whatever roster was passed, because `modules` is a
+    # caller's choice and this one is not optional: it is the file whose
+    # absence leaves every other module importing perfectly.
+    guard_error, guard_redaction, guard_missing, guard_probe_error = \
+        _guard_error()
+    if guard_error:
+        failures.append(ModuleFailure(_GUARD_MODULE, _GUARD_ROLE, guard_error,
+                                      guard_redaction, guard_missing))
+
     # When the math module failed to load its own failure is already reported
     # and a probe error would just repeat it.
     probe_error = _probe(math_module) if math_module is not None else ""
@@ -1856,6 +2161,7 @@ def check(modules=ENGINE_MODULES, workspace=None) -> PreflightReport:
         dependency_lock_error=lock_error,
         probe_ran=probe_ran,
         gates_available=gates_available,
+        guard_probe_error=guard_probe_error,
         no_workspace_venv=no_venv)
 
 
@@ -2087,6 +2393,16 @@ def render_markdown(report: PreflightReport) -> str:
                 "the lock exists because a republished parsing library changes "
                 "what a document parses to.\n\n"
                 f"{no_venv_remedy(_remedy_root(report))}")
+        if report.guard_probe_error:
+            warnings.append(
+                "**The host-interpreter guard was not CERTIFIED.** "
+                f"{_redact(report.guard_probe_error)}\n\n"
+                "This says nothing against the engine, which is why it is a "
+                "warning: the package imported, so the refusal that stands "
+                "between a host interpreter and a return did run for this "
+                "process. What went unanswered is whether it would refuse a "
+                "wrong one. Re-run this check once the temporary directory is "
+                "writable again.")
         # Computed ONCE, above the branch. The warning branch had its own
         # hardcoded "and computing correctly" and so re-made, three lines from
         # the fix, the over-claim the plain-OK branch was rewritten to stop: a
@@ -2247,6 +2563,13 @@ def render_markdown(report: PreflightReport) -> str:
                       "workspace venv — activate and re-run before treating it "
                       "as an engine fault.", ""]
 
+    # On this path too, and for the reason it is not part of `blocking`: the
+    # reader has a root cause already, and dropping the line would leave the
+    # one uncertified gate unmentioned in the document that lists every other.
+    if report.guard_probe_error:
+        lines += [f"- the host-interpreter guard was not certified: "
+                  f"{_redact(report.guard_probe_error)}", ""]
+
     unactivated = report.unactivated
 
     if not report.python_ok and report.failures and not files_missing:
@@ -2289,6 +2612,10 @@ def _report_to_dict(report: PreflightReport) -> dict:
                       else f.error}
                      for f in report.failures],
         "probe_error": _redact(report.probe_error),
+        # Separate from `failures` on purpose: a consumer that treated this as
+        # one would block on an environment fault, which is the whole thing
+        # `_probe_environment_fault` splits apart.
+        "guard_probe_error": _redact(report.guard_probe_error),
         # An empty `probe_error` means one of two things and the markdown path
         # distinguishes them ("and computing correctly" against "arithmetic NOT
         # probed"). Emitting only the error left the JSON channel asserting the

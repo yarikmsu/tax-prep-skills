@@ -437,7 +437,12 @@ def test_cli_diff_json_output(tmp_path):
 
     repo = Path(__file__).resolve().parent.parent
     proc = subprocess.run(
-        ["python3", "-m", "agents.lib.rollover", "diff",
+    # `sys.executable`, never a bare "python3" off PATH. The engine refuses
+    # to import on an interpreter that is not the workspace venv, so a PATH
+    # lookup made these pass or fail on whether the shell had been
+    # activated: ten of them failed under `.venv/bin/python -m pytest` on a
+    # tree that was green under an activated shell.
+        [sys.executable, "-m", "agents.lib.rollover", "diff",
          "--from", str(tmp_path / "archive" / "2024"),
          "--to", str(tmp_path),
          "--year", "2025",
@@ -459,7 +464,7 @@ def test_cli_apply_writes_files(tmp_path):
 
     repo = Path(__file__).resolve().parent.parent
     proc = subprocess.run(
-        ["python3", "-m", "agents.lib.rollover", "apply",
+        [sys.executable, "-m", "agents.lib.rollover", "apply",
          "--from", str(tmp_path / "archive" / "2024"),
          "--to", str(tmp_path),
          "--year", "2025",
@@ -481,7 +486,7 @@ def test_cli_categories_trim_spaces(tmp_path):
 
     repo = Path(__file__).resolve().parent.parent
     proc = subprocess.run(
-        ["python3", "-m", "agents.lib.rollover", "diff",
+        [sys.executable, "-m", "agents.lib.rollover", "diff",
          "--from", str(tmp_path / "archive" / "2024"),
          "--to", str(tmp_path), "--year", "2025", "--json",
          "--categories", "carryforwards, dependents"],
@@ -497,7 +502,7 @@ def test_cli_rejects_invalid_categories(tmp_path, categories):
     """Invalid tokens must fail instead of producing a partial clean-looking diff."""
     repo = Path(__file__).resolve().parent.parent
     proc = subprocess.run(
-        ["python3", "-m", "agents.lib.rollover", "diff",
+        [sys.executable, "-m", "agents.lib.rollover", "diff",
          "--from", str(tmp_path), "--to", str(tmp_path), "--year", "2025",
          "--categories", categories],
         capture_output=True, text=True, cwd=str(repo),
@@ -510,7 +515,7 @@ def test_cli_rejects_invalid_categories(tmp_path, categories):
 def test_cli_rejects_path_traversal(tmp_path):
     repo = Path(__file__).resolve().parent.parent
     proc = subprocess.run(
-        ["python3", "-m", "agents.lib.rollover", "diff",
+        [sys.executable, "-m", "agents.lib.rollover", "diff",
          "--from", "../../../etc",
          "--to", str(tmp_path),
          "--year", "2025"],
@@ -523,7 +528,7 @@ def test_cli_rejects_path_traversal(tmp_path):
 def test_cli_rejects_invalid_year(tmp_path):
     repo = Path(__file__).resolve().parent.parent
     proc = subprocess.run(
-        ["python3", "-m", "agents.lib.rollover", "diff",
+        [sys.executable, "-m", "agents.lib.rollover", "diff",
          "--from", str(tmp_path), "--to", str(tmp_path),
          "--year", "2025; rm -rf /"],
         capture_output=True, text=True, cwd=str(repo),

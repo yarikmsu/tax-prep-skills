@@ -224,6 +224,16 @@ ran on another — on a stock macOS, a 3.12 virtualenv certified while
 toolkit does not support. `preflight.py` enforces the other half: it BLOCKS when
 a workspace `.venv` exists that it is not running in.
 
+The engine enforces it too, one layer lower, so that a bare interpreter which
+never reaches preflight still fails: `agents/lib/__init__.py` refuses to import
+on an interpreter that is not that venv, exit 2, with a message naming the
+launcher. Every way in — `-m`, a script path, `-c`, a heredoc — imports the
+package first, so the spelling of the command cannot matter. Silent in both
+directions worth knowing about: with NO `.venv` the guard has no opinion at all
+(CI installs into the runner's own interpreter, and a fresh clone has no venv
+until `tax-setup` Step 6 makes one), and preflight itself is exempt, because it
+has to be able to REPORT this defect rather than be stopped by it.
+
 Re-sourcing per command costs the caller's shell nothing, and for a reason that
 has changed: `run.sh` runs in a CHILD shell, so the activation happens inside a
 process that exits, and the calling shell's `PATH` is never touched at all. The

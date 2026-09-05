@@ -29,7 +29,7 @@ Neither replaces them; the git hooks are what cover other agents.
   A Write/Edit is filtered by its path; a Bash payload is opaque, so it is filtered by
   `.claude/.skill-invariants-stamp` plus one `find -newercm`, and exits 0 in milliseconds
   when nothing watched moved, which is what stops `ls` and `git status` buying a pytest
-  run. It then runs only the CHECKS the changed paths can turn red — six test modules, or
+  run. It then runs only the CHECKS the changed paths can turn red — seven test modules, or
   a node-id subset of one of THEM. A new source file behind an assertion ALWAYS goes in
   `select_modules_for` (or editing it selects nothing), and in `WATCHED_ROOTS` only where
   no entry already contains it — they are `find` ROOTS, so `agents` reaches `agents/lib`.

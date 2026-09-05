@@ -1331,7 +1331,12 @@ def test_render_markdown_flags_wash_blocked_lots():
 def test_cli_writes_scenario_and_chmod_600(tmp_path):
     ws = _ws(tmp_path)
     out = subprocess.run(
-        ["python3", "-m", "agents.lib.loss_harvest",
+    # `sys.executable`, never a bare "python3" off PATH. The engine refuses
+    # to import on an interpreter that is not the workspace venv, so a PATH
+    # lookup made these pass or fail on whether the shell had been
+    # activated: ten of them failed under `.venv/bin/python -m pytest` on a
+    # tree that was green under an activated shell.
+        [sys.executable, "-m", "agents.lib.loss_harvest",
          "--result", "result.json", "--workspace", str(ws),
          "--year", "2026", "--holdings", "holdings.json",
          "--name", "cli-test", "--today", "2026-12-15", "--json"],
@@ -1349,7 +1354,7 @@ def test_cli_writes_scenario_and_chmod_600(tmp_path):
 def test_cli_refuses_path_traversal_name(tmp_path):
     ws = _ws(tmp_path)
     out = subprocess.run(
-        ["python3", "-m", "agents.lib.loss_harvest",
+        [sys.executable, "-m", "agents.lib.loss_harvest",
          "--result", "result.json", "--workspace", str(ws),
          "--year", "2026", "--holdings", "holdings.json",
          "--name", "../escape", "--today", "2026-12-15"],
@@ -1362,7 +1367,7 @@ def test_cli_refuses_path_traversal_name(tmp_path):
 def test_cli_no_save_skips_write(tmp_path):
     ws = _ws(tmp_path)
     out = subprocess.run(
-        ["python3", "-m", "agents.lib.loss_harvest",
+        [sys.executable, "-m", "agents.lib.loss_harvest",
          "--result", "result.json", "--workspace", str(ws),
          "--year", "2026", "--holdings", "holdings.json",
          "--name", "no-save-test", "--no-save", "--today", "2026-12-15"],
@@ -1375,7 +1380,7 @@ def test_cli_no_save_skips_write(tmp_path):
 def test_cli_markdown_output(tmp_path):
     ws = _ws(tmp_path)
     out = subprocess.run(
-        ["python3", "-m", "agents.lib.loss_harvest",
+        [sys.executable, "-m", "agents.lib.loss_harvest",
          "--result", "result.json", "--workspace", str(ws),
          "--year", "2026", "--holdings", "holdings.json",
          "--name", "md-test", "--today", "2026-12-15"],
@@ -1388,7 +1393,7 @@ def test_cli_markdown_output(tmp_path):
 def test_cli_rejects_bad_year(tmp_path):
     ws = _ws(tmp_path)
     out = subprocess.run(
-        ["python3", "-m", "agents.lib.loss_harvest",
+        [sys.executable, "-m", "agents.lib.loss_harvest",
          "--result", "result.json", "--workspace", str(ws),
          "--year", "abc", "--holdings", "holdings.json",
          "--today", "2026-12-15"],
@@ -1400,7 +1405,7 @@ def test_cli_rejects_bad_year(tmp_path):
 def test_cli_rejects_holdings_outside_workspace(tmp_path):
     ws = _ws(tmp_path)
     out = subprocess.run(
-        ["python3", "-m", "agents.lib.loss_harvest",
+        [sys.executable, "-m", "agents.lib.loss_harvest",
          "--result", "result.json", "--workspace", str(ws),
          "--year", "2026", "--holdings", "/etc/passwd",
          "--today", "2026-12-15"],

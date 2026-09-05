@@ -85,6 +85,7 @@ AGENTS = "tests/test_claude_agents.py"
 HOOKS = "tests/test_claude_hooks.py"
 PREFLIGHT = "tests/test_preflight.py"
 SECUREFS = "tests/test_secure_fs.py"
+HOSTGUARD = "tests/test_host_guard.py"
 
 # The stamp is deliberately backdated one second, so a file written in the same
 # coarse filesystem tick as the pass start still reads as newer than it. A test
@@ -668,8 +669,35 @@ class TestSkillInvariantsHook:
         ("agents/lib/run.sh", SECUREFS),
         ("tests/skill_text.py", PREFLIGHT),
         ("tests/skill_text.py", CAPABILITIES),
+        # conftest.py runs before EVERY module below and can end the run before
+        # one test of any of them executes, so its arm selects all seven and
+        # every one of them is pinned here. It was watched one by one before
+        # `tests` became a root, and until it was listed the file that can stop
+        # collection reached `nothing_selected` and an edit to it got no local
+        # signal at all. Reported against PR #82, which is the commit that added
+        # the file.
+        ("tests/conftest.py", PORTABILITY),
+        ("tests/conftest.py", CAPABILITIES),
+        ("tests/conftest.py", AGENTS),
+        ("tests/conftest.py", HOOKS),
+        ("tests/conftest.py", PREFLIGHT),
+        ("tests/conftest.py", SECUREFS),
+        ("tests/conftest.py", HOSTGUARD),
         ("scripts/pre-commit-pii-scan.sh", PORTABILITY),
         ("scripts/pre-commit-pii-scan.sh", SECUREFS),
+        # EVERY module in tests/ is source behind
+        # `TestNoTestSpawnsABareInterpreter`, which globs the directory whole.
+        # The seven with arms of their own are the easy half; the ~forty
+        # without were the gap, and the locator in the test below cannot see it
+        # — it recovers `REPO / "literal"` reads and a glob is not one. Three
+        # shapes are pinned: a module with a rich arm, the hooks module (whose
+        # arm was split off `.claude/hooks` for this), and one with no arm at
+        # all, which reaches the catch-all or nothing.
+        ("tests/test_preflight.py", HOSTGUARD),
+        ("tests/test_claude_hooks.py", HOSTGUARD),
+        ("tests/skill_text.py", HOSTGUARD),
+        ("tests/test_scenario.py", HOSTGUARD),
+        ("tests/test_tax_computations.py", HOSTGUARD),
     ]
 
     def test_every_watched_source_path_reaches_its_module(
@@ -718,6 +746,15 @@ class TestSkillInvariantsHook:
         path already reaching `test_claude_agents.py` satisfies it while missing
         two others. Derive the arms FROM THE SCRIPT rather than listing them —
         a fifth per-file arm added later is covered the day it is written.
+
+        BOTH SIDES from the script, not one. The per-file arms were derived and
+        the generic selection was a hardcoded set of three, so when the
+        `agents/lib/*.py` arm gained the host-guard flag the set did not, and
+        this test stayed green over five arms that never selected it: editing
+        `secure_fs.py` to drop its package import turned
+        `test_host_guard.py::TestEveryModuleIsCovered` red at CI while the hook
+        exited 0. Reported by review against PR #82. A half-derived comparison
+        is the same failure this test's first paragraph records, one level up.
         """
         script = (HOOKS_DIR / "skill-invariants.sh").read_text()
         arms = re.findall(r"^\s{8}((?:agents/lib/\w+\.py\|?)+)\)$",
@@ -727,7 +764,18 @@ class TestSkillInvariantsHook:
             f"no per-file engine arms found — the pattern stopped matching the "
             f"script, so this test now asserts nothing (found {paths})")
 
-        generic = {PREFLIGHT, SECUREFS, PORTABILITY}
+        generic_arm = re.search(
+            r"^\s{8}agents/lib/\*\.py\)\n((?:.*\n)*?)^\s{12};;$",
+            script, re.MULTILINE)
+        assert generic_arm, "the `agents/lib/*.py` arm no longer parses"
+        by_flag = {"PORTABILITY": PORTABILITY, "CAPABILITIES": CAPABILITIES,
+                   "AGENTS": AGENTS, "HOOKS": HOOKS, "PREFLIGHT": PREFLIGHT,
+                   "SECUREFS": SECUREFS, "HOSTGUARD": HOSTGUARD}
+        generic = {by_flag[f] for f in
+                   re.findall(r"RUN_(\w+)=1", generic_arm.group(1))}
+        assert generic >= {PREFLIGHT, SECUREFS, PORTABILITY, HOSTGUARD}, (
+            f"the generic engine arm selects only {sorted(generic)} — the "
+            "derivation lost a flag, or the arm did")
         _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
         short = []
         for relative in paths:
@@ -851,7 +899,8 @@ class TestSkillInvariantsHook:
         """
         _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
         widened = []
-        for module in (PORTABILITY, CAPABILITIES, AGENTS, PREFLIGHT, SECUREFS):
+        for module in (PORTABILITY, CAPABILITIES, AGENTS, PREFLIGHT, SECUREFS,
+                       HOSTGUARD):
             _clear_red_carry_forward(quiescent_workspace)
             selected = _selected_modules(
                 _run_skill_hook(quiescent_workspace,
@@ -872,6 +921,44 @@ class TestSkillInvariantsHook:
             f"editing these test modules runs the whole hooks module: {widened}. "
             "It is the slowest in the suite (MEASURED COSTS) and the dependency "
             "is three assertions — check whether an arm went back to RUN_HOOKS")
+
+    def test_an_unarmed_test_module_pays_the_host_guard_and_no_more(
+            self, quiescent_workspace):
+        """The catch-all is scoped, and a catch-all is where scope goes to die.
+
+        `tests/test_scenario.py` has no arm of its own and no module here reads
+        it, so the only thing its edit can turn red is the bare-interpreter
+        sweep — the cheapest row in MEASURED COSTS. Widening the arm to
+        `select_every_module`, or to the hooks module, would satisfy the
+        coverage row above just as well and put a cold pass behind every save
+        in a directory of forty-odd files. The lower bound cannot see that;
+        this is the upper one.
+        """
+        _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
+        _clear_red_carry_forward(quiescent_workspace)
+        selected = _selected_modules(
+            _run_skill_hook(quiescent_workspace,
+                            str(quiescent_workspace / "tests/test_scenario.py")))
+        assert selected == [HOSTGUARD], (
+            f"an unarmed test module selects {selected}; the sweep that makes "
+            f"it watched at all lives in {HOSTGUARD} and nothing else here "
+            f"reads it")
+
+    def test_compiled_test_bytecode_selects_nothing(self, quiescent_workspace):
+        """`tests` is a find ROOT now, so a pytest run's own `__pycache__`
+        writes are printed by the scan on the next Bash call. The arm is scoped
+        to `*.py` for exactly that reason — a bare `tests/*` would put a pytest
+        module behind every `ls` that followed a test run, which is the fast
+        path this hook exists to protect."""
+        _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
+        _clear_red_carry_forward(quiescent_workspace)
+        r = _run_skill_hook(
+            quiescent_workspace,
+            str(quiescent_workspace
+                / "tests/__pycache__/test_scenario.cpython-312.pyc"))
+        assert r.returncode == 0, (
+            "compiled bytecode is not source the sweep parses, and every test "
+            "run rewrites it")
 
     def test_the_hooks_dependents_are_real_and_complete(self):
         """A node id that names no test selects nothing, and pytest says so only
@@ -922,13 +1009,13 @@ class TestSkillInvariantsHook:
 
         found = {node.split("::", 1)[1] for node in listed}
         assert found == HOOKS_DEPENDENTS, (
-            f"the hook selects {sorted(found)} for an edit to one of the five "
+            f"the hook selects {sorted(found)} for an edit to one of the six "
             f"other test modules; this suite pins {sorted(HOOKS_DEPENDENTS)}. "
             "Adding one is a cost decision (MEASURED COSTS, THE TRIGGER WITH "
             "NO ROW) and removing one drops a check to CI — either way, say so "
             "here as well as there")
         assert HOOKS_DEPENDENTS_EXCLUDED not in found, (
-            f"{HOOKS_DEPENDENTS_EXCLUDED} is selected by the five test-module "
+            f"{HOOKS_DEPENDENTS_EXCLUDED} is selected by the six test-module "
             "arms again. It goes red the moment a test is ADDED to one of them "
             "and stays red until MEASURED COSTS is refreshed in six places, so "
             "it blocks every tool call of the round that makes the refresh "
@@ -1062,7 +1149,7 @@ class TestSkillInvariantsHook:
                            r'|Path\(\s*REPO_ROOT\s*,((?:\s*"[^"]+"\s*,?)+)\)')
         reads: dict[str, set[str]] = {}
         for module in (PORTABILITY, CAPABILITIES, AGENTS, HOOKS, PREFLIGHT,
-                       SECUREFS):
+                       SECUREFS, HOSTGUARD):
             for rel in _path_constants((REPO / module).read_text()):
                 reads.setdefault(rel, set()).add(module)
             for match in chain.finditer((REPO / module).read_text()):
@@ -1151,7 +1238,8 @@ class TestSkillInvariantsHook:
 
         assert r.returncode == 2, r.stderr
         assert _selected_modules(r) == [PORTABILITY, CAPABILITIES, AGENTS,
-                                        HOOKS, PREFLIGHT, SECUREFS], (
+                                        HOOKS, PREFLIGHT, SECUREFS,
+                                        HOSTGUARD], (
             "an unusable stamp must force the full pass, never skip it")
         assert outside.read_text() == "external sentinel", (
             "the hook wrote its stamp through a symlink outside the workspace")
@@ -1254,7 +1342,8 @@ class TestSkillInvariantsHook:
         r = _run_skill_hook_bash(tmp_path)
         assert r.returncode == 2
         assert _selected_modules(r) == [PORTABILITY, CAPABILITIES, AGENTS,
-                                        HOOKS, PREFLIGHT, SECUREFS], (
+                                        HOOKS, PREFLIGHT, SECUREFS,
+                                        HOSTGUARD], (
             "an untrustworthy stamp must force every module, not silently skip "
             "every change")
 
@@ -4583,7 +4672,8 @@ class TestHookRegistration:
         costs = block[start:end]
 
         # ONE collection, attributed per file from the node ids. This test runs
-        # inside the module MEASURED COSTS calls at least 84% of a cold pass,
+        # inside the module MEASURED COSTS calls the dominant share of a cold
+        # pass,
         # and it used to shell out seven times — six per-module collections
         # plus a whole-suite one — adding that to every cold pass of the hook
         # it measures. The block names this module's runtime as the lever when
@@ -4633,8 +4723,8 @@ class TestHookRegistration:
         # The per-module decomposition rows: "tests/test_x.py   N tests".
         rows = {p: int(n) for p, n in
                 re.findall(r"(tests/test_\w+\.py)\s+(\d+) tests", costs)}
-        assert len(rows) == 6, (
-            f"the decomposition names {sorted(rows)} — six module rows are "
+        assert len(rows) == 7, (
+            f"the decomposition names {sorted(rows)} — seven module rows are "
             "what the derived rows below are summed from")
 
         # Portability's gap is the hook's own --deselect flags: derivable, so
@@ -4673,17 +4763,24 @@ class TestHookRegistration:
         # The derived rows. A skill edit selects the four non-hook, non-agent
         # modules; a cold pass adds the other two. The block calls this half
         # EXACT, and a decomposition error shows up here first.
-        skill_edit = sum(rows[p] for p in rows if p not in (
-            "tests/test_claude_hooks.py", "tests/test_claude_agents.py"))
+        # A skill edit selects four of the seven. The host guard sits with
+        # hooks and agents on the other side of that line: an `agents/lib/`
+        # edit selects it, skill prose never does.
+        ADDED_BY_A_COLD_PASS = ("tests/test_claude_hooks.py",
+                                "tests/test_claude_agents.py",
+                                "tests/test_host_guard.py")
+        skill_edit = sum(rows[p] for p in rows
+                         if p not in ADDED_BY_A_COLD_PASS)
         cold = sum(rows.values())
         stated_skill = int(re.search(r"skill \.md edit\s+(\d+) tests", costs).group(1))
-        stated_cold = int(re.search(r"cold pass, all six modules\s+(\d+) tests",
+        stated_cold = int(re.search(r"cold pass, all seven modules\s+(\d+) tests",
                                     costs).group(1))
         assert stated_skill == skill_edit, (
             f"the skill-edit row reads {stated_skill}; its four parts sum to "
             f"{skill_edit}")
         assert stated_cold == cold, (
-            f"the cold-pass row reads {stated_cold}; its six parts sum to {cold}")
+            f"the cold-pass row reads {stated_cold}; its seven parts sum to "
+            f"{cold}")
 
         # The ARITHMETIC sentence, which is the block's own third statement of
         # these two rows and was the half nothing read. It shipped reading
@@ -4705,15 +4802,16 @@ class TestHookRegistration:
             "a cold pass` — reword around that shape rather than through it, "
             "or this sentence goes back to being prose nothing reads")
         four = sorted(int(n) for n in sums.group(1).split("+"))
-        two = sorted(int(n) for n in sums.group(3).split("+"))
-        assert four == sorted(rows[p] for p in rows if p not in (
-            "tests/test_claude_hooks.py", "tests/test_claude_agents.py")), (
+        added = sorted(int(n) for n in sums.group(3).split("+"))
+        by_a_skill_edit = sorted(rows[p] for p in rows
+                                 if p not in ADDED_BY_A_COLD_PASS)
+        assert four == by_a_skill_edit, (
             f"the arithmetic sentence adds {four}; the four rows a skill edit "
-            f"selects are {sorted(rows[p] for p in rows if p not in ('tests/test_claude_hooks.py', 'tests/test_claude_agents.py'))}")
-        assert two == sorted((rows["tests/test_claude_hooks.py"],
-                              rows["tests/test_claude_agents.py"])), (
-            f"the arithmetic sentence adds {two} for the two a cold pass adds; "
-            f"their rows are {sorted((rows['tests/test_claude_hooks.py'], rows['tests/test_claude_agents.py']))}")
+            f"selects are {by_a_skill_edit}")
+        assert added == sorted(rows[p] for p in ADDED_BY_A_COLD_PASS), (
+            f"the arithmetic sentence adds {added} for the three a cold pass "
+            f"adds; their rows are "
+            f"{sorted(rows[p] for p in ADDED_BY_A_COLD_PASS)}")
         assert int(sums.group(2)) == skill_edit, (
             f"the arithmetic sentence totals the skill edit at {sums.group(2)}; "
             f"its own parts sum to {skill_edit}")
@@ -4853,13 +4951,14 @@ class TestHookRegistration:
                    "the agents module": "tests/test_claude_agents.py",
                    "secure_fs": "tests/test_secure_fs.py",
                    "the hooks module": "tests/test_claude_hooks.py",
-                   "capabilities": "tests/test_capabilities.py"}
+                   "capabilities": "tests/test_capabilities.py",
+                   "the host guard": "tests/test_host_guard.py"}
         deltas = {}
         for name, path in by_name.items():
             pair = re.search(MODULE_PAIR.format(name=name), flat)
             assert pair, (
                 f"the counts-ahead paragraph states no `{name} <words> "
-                "(<sitting> to <now>)` pair — all six modules are stated so "
+                "(<sitting> to <now>)` pair — all seven modules are stated so "
                 "the total can be reconciled against them")
             moved = _pair_delta(pair)
             assert moved is not None, (
@@ -4979,7 +5078,7 @@ class TestHookRegistration:
         assert stated_share == {derived}, (
             f"the script states the hooks share as {sorted(stated_share)}%; the "
             f"block's own seconds ({floor_s}s cold pass, at most {others}s for "
-            f"the other five) give at least {derived}%")
+            f"the other six) give at least {derived}%")
 
         # No SECOND spelling of the same quantity. A sentence that names the
         # hooks module and a cold pass together may carry the canonical

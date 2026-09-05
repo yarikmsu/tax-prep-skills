@@ -62,6 +62,17 @@ import os
 import re
 import stat
 import subprocess
+import sys
+from pathlib import Path
+
+# Run as a SCRIPT PATH (`python3 agents/lib/secure_fs.py`) a module is not
+# inside its package, so nothing imports `agents.lib` and the
+# host-interpreter guard living there never runs. Every sibling already
+# carries these two lines, incidentally, because it imports another sibling
+# through the package; this is the one leaf that imports none — and the one
+# module AGENTS.md §1 tells every agent to run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 
 # A runtime PATH is sensitive data here, not just a diagnostic string. AGENTS.md
 # §1 restricts the runtime DIRECTORIES precisely because an owner-only file

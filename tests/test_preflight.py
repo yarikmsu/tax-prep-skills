@@ -7,6 +7,27 @@ P2: every skill that invokes the engine carries the gate, and the gate's
     editing. That sentence is the only thing standing between a skill copied
     away from `agents/lib/` and a return computed with no hard gates at all,
     because the script cannot report its own absence.
+
+SCOPE, and it is FROZEN. The launcher audits — `_bare_engine_units` and
+everything it calls — model an HONEST author writing a bare interpreter call in
+a shape this corpus plausibly contains. They are a documentation lint standing
+behind an engine that refuses a host interpreter at import
+(`agents/lib/__init__.py`), not a security boundary, and bash grammar is larger
+than any approximation of it here will be. So a miss on a shape no document in
+the tree writes is ACCEPTED and recorded, not fixed. A fix is taken only when
+all three hold: the shape exists in the corpus or an author would plausibly
+write it, the miss is SILENT, and the fix does not widen the parser. Otherwise
+the finding is refuted by citing this paragraph — twenty rounds of widening this
+file added parser surface for the next round to find bugs in, and the round that
+prescribed joining implicit `|` continuations would itself have fail-opened on
+69 markdown table rows and a YAML `run: |`.
+
+KNOWN AND ACCEPTED, each zero-for-zero against the corpus as of 2026-09-04:
+an implicit continuation after a trailing `|` is not joined; a `SEPARATOR`
+inside a shell comment splits a span before `_blank_comments` runs; and
+`_piped_engine` reads its downstream head without `_shell_unescape`, so a
+pipe whose downstream head is split by a backslash continuation before
+`python3 -` clears.
 """
 import io
 import json
@@ -30,6 +51,21 @@ from tests.skill_text import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / ".agents" / "skills"
+
+
+
+def _complete_package(pkg):
+    """A fake engine package that is complete APART from the file under test.
+
+    These fixtures repoint `P._HERE` at a throwaway directory and used to leave
+    its `__init__.py` empty, which is now a defect in its own right: preflight
+    certifies the host-interpreter guard living there, so an empty initialiser
+    blocks and every assertion below it would be measuring that instead of the
+    one file it altered. Copying the real one keeps each fixture's single
+    deliberate defect the only defect in it.
+    """
+    (pkg / "__init__.py").write_text(
+        (REPO / "agents" / "lib" / "__init__.py").read_text())
 
 
 GATE_HEADING = "### Engine preflight (HARD GATE — runs before every other step)"
@@ -2610,47 +2646,8 @@ def _join_units(lines):
         i += 1
 
 
-# A handful of tests assert the gate PASSES here, which is only true when the
-# suite itself runs on the workspace interpreter. Run from an unchained shell —
-# the exact mistake AGENTS.md §7 chains the activation to prevent — they would
-# report four failures about the code when the fault is the environment. Skipped
-# with a message that names the real problem instead.
-# Routed through the library rather than spelled as a repo-relative literal.
-# The watched-set coverage test in test_claude_hooks.py locates each module's
-# inputs by scanning for that literal form, and it scans the raw file — comments
-# included, which is how the first version of THIS note tripped it. Spelling the
-# virtualenv that way enrols it as a repository path the hook must watch, firing
-# the whole selection on every `pip install`. It is an environment probe, not an
-# input.
-_WORKSPACE_VENV = P._workspace_venv(REPO)
-def _running_on_workspace_venv():
-    """`os.path.samefile`, for the reason `_venv_error` uses it.
-
-    `resolve()` does not canonicalise case, so on a case-insensitive filesystem
-    reached through a differently-cased path a correctly activated venv compares
-    unequal under `==` — and the guard below would then SKIP four green-path
-    tests with a message blaming the operator. Vacuity with no failure, in a
-    guard written to prevent a confusing failure.
-    """
-    if sys.prefix == sys.base_prefix:
-        return False
-    try:
-        return os.path.samefile(sys.prefix, _WORKSPACE_VENV)
-    except OSError:
-        return False
-
-
-_OUTSIDE_WORKSPACE_VENV = (
-    _WORKSPACE_VENV.is_dir() and not _running_on_workspace_venv()
-)
-needs_workspace_venv = pytest.mark.skipif(
-    _OUTSIDE_WORKSPACE_VENV,
-    reason="suite is not running on the workspace .venv — activate it first: "
-           "source .venv/bin/activate")
-
 
 class TestEngineCheck:
-    @needs_workspace_venv
     def test_a_full_clone_passes(self):
         # workspace=REPO, matching the guard above: with workspace=None this
         # resolves `.venv` through the CWD while the guard resolves it
@@ -2731,7 +2728,7 @@ class TestEngineCheck:
         """
         pkg = tmp_path / "hollow"
         pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
+        _complete_package(pkg)
         (pkg / "tie_out.py").write_text("")            # imports, exposes nothing
         monkeypatch.syspath_prepend(str(tmp_path))
         monkeypatch.setattr(P, "_HERE", pkg)
@@ -2772,10 +2769,27 @@ class TestEngineCheck:
         listed, and the check would pass over its absence. So the roster is
         explicit, and this test is what keeps it in step when a module is ADDED.
         `preflight` itself is excluded: it cannot report its own absence.
+        `__init__` is excluded from THIS roster and checked by `_guard_error`
+        instead, which is a separation and not a gap: the roster is keyed on
+        file stems, `__init__.py`'s stem is not its module name, and
+        `_cli_dispatch_error` would look for a `lib.py` beside preflight that a
+        package does not have. The class below is what keeps that half honest.
         """
         on_disk = {p.stem for p in (REPO / "agents" / "lib").glob("*.py")}
         listed = {e[0].rsplit(".", 1)[-1] for e in P.ENGINE_MODULES}
         assert listed == on_disk - {"__init__", "preflight"}
+
+    def test_the_package_itself_is_checked_somewhere(self):
+        """The roster's exclusion above is only safe while this holds.
+
+        Two exclusions sit on one line and they are not alike: preflight cannot
+        report its own absence, and there is nothing to be done about that;
+        `__init__.py` CAN be reported, and the line would read the same either
+        way if nobody checked.
+        """
+        assert P._GUARD_MODULE == "agents.lib"
+        assert P._GUARD_SYMBOL == "host_interpreter_defect"
+        assert hasattr(P, "_guard_error")
 
     def test_every_module_names_what_is_lost_with_it(self):
         """A failure line is only actionable if it says what stopped working."""
@@ -2818,7 +2832,7 @@ class TestEngineCheck:
         """
         pkg = tmp_path / "exiting_pkg"
         pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
+        _complete_package(pkg)
         (pkg / "boom.py").write_text("import sys\nsys.exit(3)\n")
         monkeypatch.syspath_prepend(str(tmp_path))
         monkeypatch.setattr(P, "_HERE", pkg)     # the file check must pass
@@ -3196,7 +3210,6 @@ class TestCLI:
             [sys.executable, "agents/lib/preflight.py"],
             cwd=cwd, capture_output=True, text=True)
 
-    @needs_workspace_venv
     def test_exit_zero_in_a_full_clone(self):
         result = self._run(REPO)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -3266,7 +3279,6 @@ class TestCLI:
         assert "Do not compute" in result.stdout
         assert "git clone" in result.stdout
 
-    @needs_workspace_venv
     def test_json_output_carries_the_verdict(self):
         import json
         result = subprocess.run(
@@ -4677,7 +4689,6 @@ class TestARefusalAlwaysCarriesItsWayOut:
         assert "git clone" in d["remedy"]
         assert "workspace" in d
 
-    @needs_workspace_venv
     def test_a_passing_report_carries_no_remedy(self):
         """Nothing to proceed from, so nothing to say — and a WARNING is
         something to proceed from.
@@ -4937,6 +4948,78 @@ class TestTheLauncherActuallyRuns:
         assert "WRONG-python3" not in r.stdout, (
             "`python3` ran inside a Scripts/ venv — on a real Windows host that "
             "name does not exist there and the HOST interpreter would answer")
+
+    def test_an_incomplete_venv_is_refused_with_the_rebuild_recipe(self,
+                                                                    tmp_path):
+        """The third state, executed. `python3 -m venv .venv` on a system that
+        packages the stdlib venv module separately fails inside `_setup_pip`,
+        before `setup_scripts`, and leaves a `.venv/` with no activate script.
+        The launcher used to fall through it to the HOST interpreter, and the
+        guard's refusal then prescribed the launcher — the loop the branch
+        exists to end. It shipped with no test executing it; the docs said one
+        did.
+        """
+        (tmp_path / ".venv" / "bin").mkdir(parents=True)
+        r = self._run("-c", "print('HOST')", cwd=tmp_path,
+                      launcher=self._workspace(tmp_path))
+        assert r.returncode == 2, (r.returncode, r.stderr)
+        assert "HOST" not in r.stdout, "the host interpreter ran"
+        assert "rm -rf .venv" in r.stderr, r.stderr
+        assert "ensurepip" in r.stderr, "the rebuild recipe lost its hint"
+        assert str(tmp_path) not in r.stderr, "the workspace path leaked"
+
+    def test_a_dangling_venv_symlink_is_the_incomplete_state(self, tmp_path):
+        """`-e` does not see a dangling link; the header says `-L` is tested
+        too. A `.venv` pointing at an unmounted volume is present-but-unusable,
+        not absent, and absent would exec the host interpreter."""
+        (tmp_path / ".venv").symlink_to(tmp_path / "nowhere")
+        r = self._run("-c", "print('HOST')", cwd=tmp_path,
+                      launcher=self._workspace(tmp_path))
+        assert r.returncode == 2, (r.returncode, r.stderr)
+        assert "HOST" not in r.stdout, "a dangling .venv link ran the host"
+        assert "rm -rf .venv" in r.stderr, r.stderr
+
+    @pytest.mark.parametrize("denied, mode", [
+        (".venv", 0o000),                 # the root itself cannot be searched
+        (".venv/bin", 0o000),             # the directory holding the script
+        (".venv/bin/activate", 0o000),    # the script exists and is unreadable
+    ])
+    def test_an_inaccessible_venv_is_not_told_to_delete_itself(
+            self, tmp_path, denied, mode):
+        """`-f` answers false for an activate script under a directory this
+        process may not search, exactly as for one that is not there, so an
+        intact virtualenv behind a permission problem was refused with `rm -rf
+        .venv`. That is the destructive half of the conflation
+        `_activate_path` already refuses one layer up — and preflight is
+        reached through this launcher, so its "do not delete it on this
+        evidence" verdict could never be shown for the state it was written
+        for. Reported against PR #82.
+
+        The unreadable-script case is the third row for a second reason: `-f`
+        is TRUE there, `.` then aborts the shell with its own diagnostic, which
+        names the file by its full workspace path and exits 1 — a path this
+        script is written never to print, and a status no skill branches on.
+        """
+        self._stub_venv(tmp_path, "bin", "python3")
+        target = tmp_path / denied
+        os.chmod(target, mode)
+        try:
+            r = self._run("-c", "print('HOST')", cwd=tmp_path,
+                          launcher=self._workspace(tmp_path))
+        finally:
+            os.chmod(target, 0o644 if target.is_file() else 0o755)
+        assert r.returncode == 2, (r.returncode, r.stderr)
+        assert "HOST" not in r.stdout, "the host interpreter ran"
+        assert "RAN-bin-python3" not in r.stdout, (
+            "the venv activated through a permission it does not have")
+        assert "rm -rf" not in r.stderr, (
+            f"an intact virtualenv is deleted over a permission error: "
+            f"{r.stderr!r}")
+        assert "Do not delete it on this evidence" in r.stderr, r.stderr
+        assert "ls -ld .venv" in r.stderr, "no way offered to find out which"
+        assert str(tmp_path) not in r.stderr, (
+            f"the workspace path leaked through a shell diagnostic: "
+            f"{r.stderr!r}")
 
 
 class TestTheRemedyCannotBeTheCommandThatFailed:
@@ -8757,7 +8840,7 @@ class TestAGateModuleThatWouldExitZeroDoingNothing:
     def _headless(self, tmp_path, monkeypatch, body):
         pkg = tmp_path / "headless"
         pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
+        _complete_package(pkg)
         (pkg / "tie_out.py").write_text(body)
         monkeypatch.syspath_prepend(str(tmp_path))
         monkeypatch.setattr(P, "_HERE", pkg)
@@ -9507,3 +9590,314 @@ class TestTheInstalledVersionIsComparedAgainstThePinThatApplies:
                    f"foo==1.0 ; platform_python_implementation != '{impl}'")
         self._installed(monkeypatch, ("foo", "9.9"))
         assert P._drifted_dependencies() == ((), "")
+
+
+class TestThePackageInitialiserIsCertified:
+    """The one engine file whose absence every other check reads as health.
+
+    Python treats `agents/lib/` with no `__init__.py` as a NAMESPACE package,
+    so on the partial copy this whole module exists to detect, every sibling
+    still imports, every roster entry still passes, and the host-interpreter
+    guard is simply gone. Reported by Codex against PR #82 and fixed there: the
+    enforcement that replaced a documentation audit could itself go missing
+    behind a green verdict.
+    """
+
+    def _fake_here(self, tmp_path, monkeypatch, initialiser):
+        pkg = tmp_path / "lib"
+        pkg.mkdir()
+        if initialiser is not None:
+            (pkg / "__init__.py").write_text(initialiser)
+        monkeypatch.setattr(P, "_HERE", pkg)
+        return pkg
+
+    def test_a_missing_initialiser_blocks(self, tmp_path, monkeypatch):
+        self._fake_here(tmp_path, monkeypatch, None)
+        error, _redaction, missing, _fault = P._guard_error()
+        assert "namespace package" in error.lower()
+        assert missing is True, (
+            "a file that is GONE is the missing-file class, which is what "
+            "selects the re-clone remedy rather than the truncated-file one")
+        assert P.check(modules=()).blocking
+
+    def test_an_emptied_initialiser_blocks(self, tmp_path, monkeypatch):
+        """The coarser cut, and the one that imports perfectly."""
+        self._fake_here(tmp_path, monkeypatch, "")
+        error, _redaction, _missing, _fault = P._guard_error()
+        assert "EMPTY" in error
+        assert P.check(modules=()).blocking
+
+    def test_an_initialiser_that_is_only_a_comment_blocks(self, tmp_path,
+                                                          monkeypatch):
+        """What this file WAS before the guard, byte for byte.
+
+        A revert is the likeliest way the guard disappears, and it leaves a
+        non-empty file — so a size check alone would certify it.
+
+        THE VERDICT, not the size. This asserted `st_size` and nothing else:
+        it never called `_guard_error`, so the revert case it is named for was
+        covered only incidentally, by `_wiring_error`'s fall-through branch —
+        and a later refactor that weakened that branch would leave
+        `git checkout main -- agents/lib/__init__.py` passing preflight while
+        this test stayed green on the bytes. Reported against PR #82. The
+        import-time probe is what catches it: the symbol probe reads the
+        IMPORTED package rather than this file, so only executing the file can
+        see that nothing in it refuses.
+        """
+        self._fake_here(tmp_path, monkeypatch,
+                        "# Tax preparation agent utilities\n")
+        assert (P._HERE / "__init__.py").stat().st_size, (
+            "the fixture is empty, so the EMPTY branch would answer this and "
+            "the revert case would go unmeasured")
+        error, _redaction, _missing, fault = P._guard_error()
+        assert "never CALLED at import" in error
+        assert fault == "", (
+            "a reverted initialiser is an engine defect, and routing it to the "
+            "environment channel would downgrade it to a warning")
+        assert P.check(modules=()).blocking
+
+    def test_a_neutered_guard_blocks(self, monkeypatch):
+        """Importable is not correct, for the reason `_probe` exists.
+
+        A guard reduced to `return ""` — a half-applied merge, a debugging edit
+        left in — passes an existence check and certifies nothing.
+        """
+        monkeypatch.setattr(P.importlib, "import_module",
+                            lambda name: _Stub(lambda **kw: ""))
+        error, _redaction, _missing, _fault = P._guard_error()
+        assert "certifying nothing" in error
+
+    def test_a_guard_that_refuses_a_venvless_workspace_blocks(self, monkeypatch):
+        """The other direction, and it is not symmetrical noise.
+
+        A guard that fires with no `.venv` present blocks CI and every clone
+        before `tax-setup` Step 6 — a gate firing on a correct state, which
+        teaches its reader to reason past it.
+        """
+        monkeypatch.setattr(P.importlib, "import_module",
+                            lambda name: _Stub(lambda **kw: "always"))
+        error, _redaction, _missing, _fault = P._guard_error()
+        assert "no `.venv`" in error
+
+    def test_a_guard_that_raises_is_reported_not_propagated(self, monkeypatch):
+        def boom(**kwargs):
+            raise RuntimeError("probe exploded")
+        monkeypatch.setattr(P.importlib, "import_module",
+                            lambda name: _Stub(boom))
+        error, redaction, _missing, _fault = P._guard_error()
+        assert "RuntimeError" in error and "probe exploded" in error
+        assert redaction is True
+
+    def test_a_package_that_exits_on_import_is_reported(self, monkeypatch):
+        """`SystemExit` is not an `Exception`, and this module's whole subject
+        is a package that exits on import."""
+        def exiting(name):
+            raise SystemExit(2)
+        monkeypatch.setattr(P.importlib, "import_module", exiting)
+        error, _redaction, _missing, _fault = P._guard_error()
+        assert "SystemExit" in error
+
+    def test_the_probe_does_not_take_the_preflight_exemption(self):
+        """The probe would be vacuous if it did.
+
+        The guard exempts preflight by `sys.orig_argv`, and this check runs
+        INSIDE preflight — so handing it the real argv would return "" in both
+        directions and the probe would measure nothing while reading green.
+        """
+        source = (REPO / "agents" / "lib" / "preflight.py").read_text()
+        body = source[source.index("def _guard_error"):
+                      source.index("def _wiring_error(")]
+        assert ("main_file=None" in body and '"-c"' in body
+                and "orig_argv=" in body), (
+            "the known-answer probe no longer passes ALL THREE of the inputs "
+            "the exemption reads — it would take the exemption and read clean "
+            "against any guard at all. `main_file` is the one that made this "
+            "concrete rather than theoretical: with only the argv overridden "
+            "the probe read the real `__main__.__file__`, saw preflight, and "
+            "certified a stub")
+
+    def _initialiser(self, replacement=None):
+        """The REAL initialiser, optionally damaged one way.
+
+        Written against the shipped file rather than a hand-made stand-in
+        because the thing under test is whether that file, executed, refuses —
+        a stand-in would only re-assert the shape this test was written from.
+        """
+        source = (REPO / "agents" / "lib" / "__init__.py").read_text()
+        if replacement is None:
+            return source
+        old, new = replacement
+        assert old in source, f"the initialiser no longer contains {old!r}"
+        return source.replace(old, new)
+
+    def test_a_guard_that_is_defined_but_never_called_blocks(self, tmp_path,
+                                                             monkeypatch):
+        """The finding this probe answers, reported against PR #82.
+
+        Truncating the initialiser after its last `return` leaves a valid
+        module whose `host_interpreter_defect` still returns both expected
+        values — so every check above passes — while removing the module-level
+        call that is the only thing enforcing the rule. The package then
+        imports cleanly on any interpreter and a partial copy in exactly that
+        state computes on the host behind a green preflight.
+        """
+        source = self._initialiser()
+        truncated = source[:source.index("if _defect :=")]
+        self._fake_here(tmp_path, monkeypatch, truncated)
+        error, _redaction, _missing, _fault = P._guard_error()
+        assert "never CALLED at import" in error
+        assert P.check(modules=()).blocking
+
+    def test_a_guard_whose_call_is_neutered_blocks(self, tmp_path, monkeypatch):
+        """And this is why the check EXECUTES the file rather than reading it.
+
+        The call is still on the page here, so a source scan for it — the
+        cheaper check, and what `_cli_dispatch_error` does for `__main__` —
+        certifies this file. Only running it can tell the two apart.
+        """
+        self._fake_here(tmp_path, monkeypatch, self._initialiser(
+            ("if _defect := host_interpreter_defect():",
+             "if False and host_interpreter_defect():")))
+        error, _redaction, _missing, _fault = P._guard_error()
+        assert "never CALLED at import" in error
+
+    def test_a_guard_that_exits_with_the_wrong_status_blocks(self, tmp_path,
+                                                             monkeypatch):
+        """Exit 2 is preflight's "blocked" and the skills branch on it, so a
+        refusal that exits 1 reads as "could not run" and a 0 as success."""
+        self._fake_here(tmp_path, monkeypatch,
+                        self._initialiser(("sys.exit(2)", "sys.exit(1)")))
+        error, _redaction, _missing, _fault = P._guard_error()
+        assert "status 1" in error and "does not read as blocked" in error
+
+    def test_the_probe_leaves_orig_argv_as_it_found_it(self, tmp_path,
+                                                       monkeypatch):
+        """It overrides `sys.orig_argv` to escape the preflight exemption, and
+        the process carries on afterwards — a synthetic argv left behind would
+        silently change what the guard decides for the rest of this run."""
+        self._fake_here(tmp_path, monkeypatch, self._initialiser())
+        before = list(sys.orig_argv)
+        assert P._guard_error() == ("", False, False, "")
+        assert sys.orig_argv == before
+
+    def test_the_probe_does_not_shadow_the_real_package(self, tmp_path,
+                                                        monkeypatch):
+        """It executes a COPY of the initialiser. Registering that copy under
+        any name would leave it standing in for the package that preflight
+        keeps importing after this returns."""
+        self._fake_here(tmp_path, monkeypatch, self._initialiser())
+        before = set(sys.modules)
+        P._guard_error()
+        assert set(sys.modules) - before == set()
+
+    def test_a_healthy_tree_is_certified(self):
+        assert P._guard_error() == ("", False, False, "")
+
+    def _no_space(self, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    def test_a_probe_that_cannot_build_its_tree_warns_rather_than_blocks(
+            self, monkeypatch):
+        """A full `$TMPDIR` is not an engine defect, and it used to read as one.
+
+        Both probes build a throwaway tree, and every step of that build used
+        to arrive through the same `except Exception` as a guard that RAISED.
+        So ENOSPC on `/tmp`, or EACCES under a sandboxed `$TMPDIR`, reported
+        `engine_missing` on a healthy clone in the correct virtualenv — which
+        blocks the hard gate of every taxpayer-facing skill, and answers it
+        with `import_failure_remedy`: re-clone the engine and reinstall the
+        lock, for a disk with no space on it, with the OS error redacted away.
+        Reported against PR #82.
+
+        The bias argument is AGENTS.md §4's: what is lost is certification of
+        the guard, not the guard — the package imported a few lines above, so
+        the refusal already ran for this process. A gate that fires on a state
+        the engine is not in is what teaches an agent to reason past the next
+        one.
+        """
+        monkeypatch.setattr(P.tempfile, "mkdtemp", self._no_space)
+        error, _redaction, missing, fault = P._guard_error()
+        assert error == "" and missing is False, (
+            "an environment fault produced an engine verdict")
+        assert "No space left on device" in fault
+
+        report = P.check(modules=())
+        assert not report.blocking, (
+            "a temp directory that cannot be written blocks every skill")
+        assert report.failures == ()
+        assert report.guard_probe_error
+        rendered = P.render_markdown(report)
+        assert "not CERTIFIED" in rendered
+        assert "git checkout" not in rendered, (
+            "the re-clone remedy is the one this split exists to stop offering")
+
+    def test_a_probe_that_cannot_create_its_venv_warns(self, monkeypatch):
+        """The second half of the same tree, and its own OSError."""
+        real = P.os.mkdir
+
+        def refuse(path, *args, **kwargs):
+            if str(path).endswith(".venv"):
+                raise PermissionError(13, "Permission denied")
+            return real(path, *args, **kwargs)
+
+        monkeypatch.setattr(P.os, "mkdir", refuse)
+        error, _redaction, _missing, fault = P._guard_error()
+        assert error == ""
+        assert "Permission denied" in fault
+
+    def test_a_guard_that_raises_is_still_an_engine_verdict(self, monkeypatch):
+        """The control on the split above. Routing OSError to the environment
+        channel is only right for the SETUP; a guard that raises one is a
+        broken guard, and downgrading that to a warning would be a fail-open
+        reached through the fix for a fail-closed."""
+        def boom(**kwargs):
+            raise OSError(5, "Input/output error")
+        monkeypatch.setattr(P.importlib, "import_module",
+                            lambda name: _Stub(boom))
+        error, redaction, _missing, fault = P._guard_error()
+        assert "OSError" in error and redaction is True
+        assert fault == ""
+
+    def test_the_wiring_probe_reports_a_setup_failure_without_raising(
+            self, tmp_path, monkeypatch):
+        """And the `finally` that restores `sys.orig_argv` cannot raise.
+
+        The assignment used to sit AFTER the temp-tree setup while the
+        `finally` held an unconditional `del sys.orig_argv`, so an OSError
+        during that setup, on an interpreter with no `orig_argv` to begin with,
+        raised AttributeError from the `finally` and replaced the handled
+        exception. That propagates to `_main`'s catch-all, which prints
+        `ERROR: AttributeError` and returns 1 — "could not run" — instead of
+        the exit-2 report carrying the MIN_PYTHON remedy, on precisely the
+        pre-3.10 interpreter preflight exists to diagnose. Reported against
+        PR #82; every assignment now happens before the first filesystem call.
+        """
+        self._fake_here(tmp_path, monkeypatch, self._initialiser())
+        monkeypatch.delattr(sys, "orig_argv", raising=False)
+        monkeypatch.setattr(P.tempfile, "mkdtemp", self._no_space)
+        error, _redaction, _missing, fault = P._wiring_error(
+            P._HERE / "__init__.py")
+        assert error == ""
+        assert "No space left on device" in fault
+        assert not hasattr(sys, "orig_argv"), (
+            "the probe left a synthetic argv behind on an interpreter that has "
+            "none, which switches the guard's own pre-3.10 fallback off for "
+            "the rest of this process")
+
+    def test_the_probe_leaves_main_file_as_it_found_it(self, tmp_path,
+                                                       monkeypatch):
+        """It hides `__main__.__file__` to escape the preflight exemption —
+        the copy it executes reads that attribute rather than taking it as an
+        argument — and the process carries on afterwards."""
+        self._fake_here(tmp_path, monkeypatch, self._initialiser())
+        main = sys.modules["__main__"]
+        before = getattr(main, "__file__", None)
+        assert P._guard_error() == ("", False, False, "")
+        assert getattr(main, "__file__", None) == before
+
+
+class _Stub:
+    """A stand-in for the imported package, exposing one guard function."""
+
+    def __init__(self, guard):
+        self.host_interpreter_defect = guard

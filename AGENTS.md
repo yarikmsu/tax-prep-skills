@@ -8,8 +8,7 @@ This file is ordered by criticality on purpose. Several agents truncate
 instruction files silently (Codex caps the combined chain at 32 KiB; Copilot CLI
 has an open truncation bug around 160 lines). The security rules and the tax-law
 freshness contract come first so that anything lost to truncation is a
-convenience, never a safeguard — which is also why the description of what this
-toolkit IS sits at §3 rather than above them.
+convenience, never a safeguard.
 
 ---
 
@@ -186,8 +185,7 @@ are plain Markdown instructions and are written to be executable that way.
 
 - **No hardcoded personal data** — taxpayer info lives in
   `taxpayer_profile.json`, never in skill or library code.
-- **No hardcoded tax law** — see §2. Every computation function takes rates and
-  brackets as parameters.
+- **No hardcoded tax law** — see §2.
 - **Modular** — each skill works independently; inapplicable sections are
   skipped rather than guessed at.
 - **Parallel where available** — document parsing splits into independent
@@ -224,7 +222,7 @@ are plain Markdown instructions and are written to be executable that way.
 - **A skill without its engine must not compute** — every gate above, and every
   planning skill's whole computation, runs as a script under `agents/lib/`, a
   SIBLING of `.agents/skills/` that does not travel when a skill is copied
-  elsewhere (a skill store, a gist, a zip). Every TAXPAYER-FACING engine-calling
+  elsewhere. Every TAXPAYER-FACING engine-calling
   skill opens with `agents/lib/preflight.py`, and a failure to RUN it — the file
   not existing included — IS the block, never a step to skip: it ships inside the
   directory whose disappearance is the failure, so it cannot report its own
@@ -234,7 +232,9 @@ are plain Markdown instructions and are written to be executable that way.
   call the engine (two forms; a grep cannot): `docs/contributing/skill-catalog.md`.
   **Every engine call goes through `sh agents/lib/run.sh`** — one launcher; it
   activates the workspace venv (either layout) and execs the interpreter that
-  venv installed. Why: `docs/contributing/agents-compat.md`.
+  venv installed, and `agents/lib/__init__.py` refuses to import outside that
+  venv (exit 2) whenever one exists — preflight excepted, so it can still
+  report the defect. Why: `docs/contributing/agents-compat.md`.
 - **State regimes are typed** — `tax_law state.type` (`graduated_income` |
   `none`): a no-income-tax state is a POSITIVE declaration, never an empty
   section. See `docs/contributing/state-module-playbook.md`.

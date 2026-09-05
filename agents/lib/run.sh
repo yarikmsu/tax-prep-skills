@@ -64,15 +64,96 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." 2>/dev/null && pwd) || {
 # had already been redefined by the first, and `TAXPY=python` set whichever
 # layout actually holds the interpreter. `elif` costs nothing and makes the
 # states what they are.
-if [ -f "$ROOT/.venv/bin/activate" ]; then
+# `-r` beside `-f`, and not for symmetry. `-f` is true of an activate script
+# this process cannot read, and `.` on such a file makes a non-interactive
+# shell abort with ITS OWN diagnostic, which names the file by its full path
+# — the workspace path this script is written not to print — and exits 1
+# rather than the 2 every skill branches on. Testing readability first
+# routes that state to the access branch below, which says what to do
+# without saying where.
+if [ -f "$ROOT/.venv/bin/activate" ] && [ -r "$ROOT/.venv/bin/activate" ]; then
     . "$ROOT/.venv/bin/activate"
 # A stdlib venv on Windows puts `python.exe` in `Scripts/` and NEVER
 # `python3.exe` — CPython's `['python', 'python3', 'python3.X']` link loop is
 # the POSIX branch only — so activating a Scripts venv and then running
 # `python3` finds the host interpreter anyway.
-elif [ -f "$ROOT/.venv/Scripts/activate" ]; then
+elif [ -f "$ROOT/.venv/Scripts/activate" ] && [ -r "$ROOT/.venv/Scripts/activate" ]; then
     . "$ROOT/.venv/Scripts/activate"
     TAXPY=python
+# INACCESSIBLE IS NOT ABSENT, and the tests above cannot tell them apart: `-f`
+# answers false for an activate script that exists under a directory this
+# process may not search, exactly as it does for one that is not there. With
+# no branch between them an intact virtualenv behind a permission problem —
+# a `.venv` restored from a backup with its modes lost, a `chmod` that reached
+# one directory too many — fell through to the branch below and was told
+# `rm -rf .venv`. That is the destructive direction of the conflation
+# `preflight._activate_path` already refuses, fixed there and not here; and
+# since preflight is reached THROUGH this launcher, its "do not delete it on
+# this evidence" verdict was unreachable for the one state it was written for.
+# Reported against PR #82.
+#
+# Each test below is a way the tests above could have answered "absent" for a
+# reason other than absence: a directory on the path to the script that exists
+# and cannot be searched, or the script itself, present and unreadable. Root
+# passes every one of them and so never lands here, which is correct — root
+# would have activated.
+elif { [ -d "$ROOT/.venv" ] && ! [ -x "$ROOT/.venv" ]; } \
+  || { [ -d "$ROOT/.venv/bin" ] && ! [ -x "$ROOT/.venv/bin" ]; } \
+  || { [ -d "$ROOT/.venv/Scripts" ] && ! [ -x "$ROOT/.venv/Scripts" ]; } \
+  || { [ -f "$ROOT/.venv/bin/activate" ] && ! [ -r "$ROOT/.venv/bin/activate" ]; } \
+  || { [ -f "$ROOT/.venv/Scripts/activate" ] && ! [ -r "$ROOT/.venv/Scripts/activate" ]; }; then
+    # NO PATH, as below. The remedy is the one preflight's `inspect_remedy`
+    # gives, in the launcher's own words, because the launcher is the layer
+    # that sees this state first and preflight cannot be reached to give it.
+    echo "run.sh: this workspace has a .venv that cannot be inspected — a" \
+         "directory on the way to its activate script refuses to be searched," \
+         "or the script itself refuses to be read." >&2
+    echo "That says nothing about the virtualenv, which may be intact." \
+         "Do not delete it on this evidence. From the directory that holds" \
+         "agents/, find out which:" >&2
+    echo "    ls -ld .venv .venv/bin .venv/bin/activate" >&2
+    echo "(a Windows-layout virtualenv keeps them under .venv/Scripts). Fix the" \
+         "permission the failing line names, then re-run this command." >&2
+    exit 2
+# PRESENT BUT UNUSABLE is a THIRD state, and it used to be the silent one.
+# `python3 -m venv .venv` on a system whose stdlib venv module is packaged
+# separately — Debian and Ubuntu without `python3-venv` — fails inside
+# `EnvBuilder._setup_pip`, which runs BEFORE `setup_scripts`, so it leaves a
+# `.venv/` directory behind with no activate script in it. That is exactly what
+# `tax-setup` Step 6 produces there. With no branch for it this fell through and
+# exec'd the HOST `python3`; the engine guard then refused, and the first two
+# remedies that refusal prints are `sh agents/lib/run.sh ...` — byte for byte
+# the command that produced it. Reported against PR #82.
+#
+# Refusing HERE ends that loop, because this is the layer that can tell the
+# three states apart. Exit 2 is "blocked", the status every skill already
+# branches on. The message carries the WHOLE remedy rather than deferring to
+# preflight: preflight is reached through this same launcher, so a refusal that
+# said "run preflight" would be one more circle.
+#
+# `-e` does not see a dangling symlink, so `-L` is tested too — a `.venv` link
+# whose target is gone is this state, not an absence. This branch is reached
+# only once the access branch above has ruled out a permission problem, so
+# "no activate script" here is a finding and not a guess.
+elif [ -e "$ROOT/.venv" ] || [ -L "$ROOT/.venv" ]; then
+    # NO PATH, for the reason the ROOT failure above gives: the workspace
+    # directory is named by the person who made it. `.venv` and `agents/` are
+    # literals of this toolkit's own, and neither discloses anything.
+    echo "run.sh: this workspace has a .venv holding no activate script, in" \
+         "either bin/ or Scripts/ — so there is no virtualenv interpreter" \
+         "here to run the engine on." >&2
+    echo "Falling back to the host interpreter is what this launcher exists to" \
+         "prevent: a return computed against dependency versions nothing" \
+         "pinned." >&2
+    echo "Delete the incomplete environment and rebuild it, from the directory" \
+         "that holds agents/:" >&2
+    echo "    rm -rf .venv" >&2
+    echo "    python3 -m venv .venv" >&2
+    echo "    sh agents/lib/run.sh -m pip install -r requirements.txt" >&2
+    echo "If that rebuild stops at \"ensurepip is not available\", this system" \
+         "packages the standard library's venv module separately — install it" \
+         "(Debian/Ubuntu: python3-venv) and rebuild." >&2
+    exit 2
 fi
 
 # No arguments is never a real call, and it is the one that must not be run.
