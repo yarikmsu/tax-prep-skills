@@ -8,6 +8,22 @@
 > 2026-09-05: CA first, alongside the agent-reliability P1s; FL and NYC P2; NC and
 > WA P3. Epic letters continue from U.
 
+> **Second review folded in, 2026-09-05.** An independent agent-engineering review
+> of `9f3bdb7` re-checked every finding here with synthetic probes and added one this
+> review missed: the parse CLI prints raw document text, so a full SSN crosses into
+> tool output before the agent is told to redact it (now V0, the only P0). Its other
+> conclusions are adopted below: the three confirmed directional defects X1-X3 move
+> to P1 ahead of the orchestrator; V3 gates V1 and V2 per migrated slice, not as a
+> whole; V4, V6 and V7 gain enforceable acceptance criteria, V6 rising to P1/M;
+> V8-V11 are new; W3 drops to P3. Part 2c holds the evidence. Two of its details
+> were corrected on folding: the rollover defect is every non-finite value, not
+> "+Infinity" alone, and the fix belongs at the JSON load boundary (E6); the
+> truncating open it cited at `scenario.py:483` is at `:524`, and `tie_out.py` has
+> a twin (E8). Its privacy item was narrowed to SSN/ITIN masking so the employer
+> block the summaries need is not stripped, and its "refuse when isolation cannot be
+> established" clause was bounded so the sequential fallback AGENTS.md §4 promises
+> every non-Claude agent survives (V6).
+
 Reviewer lens: staff engineer for AI-agent systems — reliability of the agent-mediated
 path, evaluation, determinism, tooling and maintainability. Tax-domain correctness was
 NOT re-audited; the three prior reviews found the engine sound and this one takes that
@@ -21,6 +37,13 @@ The engine and the integrity chain are in good shape. The security posture (PII 
 source pinning, capability gate, tie-out) is unusually rigorous for a project of this
 size. The weak spots are on the agent-engineering side, and they are structural:
 
+- **Raw document text crosses into tool output.** `parse_utils.py extract` and
+  `tables` print page text and tables unmasked; the `redact` helper in `secure_fs`
+  masks SSN shapes in paths and error messages but is never applied to extracted
+  content. The worker is told to mask the SSN AFTER reading it, by which point the
+  full number sits in the session transcript on disk — the "intermediate file"
+  AGENTS.md §1 forbids. The exposure is local (transcripts and tool logs), not the
+  network; it still conflicts with the security contract and is the one P0 here.
 - **The return itself is computed by prose, not by code.** `tax-compute` is ~1,700
   lines of Markdown instructing the agent to call 27 pure functions through inline
   `run.sh -c` snippets and hand-assemble `result.json`. Every run re-derives the wiring
@@ -53,7 +76,7 @@ size. The weak spots are on the agent-engineering side, and they are structural:
 | Hooks (bash) | 2,330 + 1,473 lines | tested by 5,201 lines of Python |
 | AGENTS.md + CLAUDE.md | 39 KB | loaded into every Claude Code session before any skill |
 | Local venv | Python 3.14 | lock compiled for 3.12 |
-| Lint findings | 5 unused imports | `archive`, `crypto_importer`, `loss_harvest` |
+| Lint findings | 12 pyflakes | 7 unused imports, 1 unused local, 4 placeholder-less f-strings; re-run before W1, the count moves |
 
 ## Part 2b — State coverage against the named next users
 
@@ -80,16 +103,46 @@ discriminator (Epic 0) shipped in #65 and Epic 1 (FL) done. What follows is that
 document's sequencing re-cut against the named users; the stories themselves are not
 restated here.
 
+## Part 2c — Evidence from the second review, re-verified on folding
+
+| ID | Observation | Where, and confidence |
+|---|---|---|
+| E1 | Raw document content reaches CLI stdout. | `agents/lib/parse_utils.py`: `extract_pdf_text` returns page text unchanged and the `extract` / `tables` commands print it. Reproduced with a mocked PDF carrying a synthetic marker; no taxpayer document was used. → V0 |
+| E2 | The parse-worker boundary is prompt-level, and self-contradictory. | `tax-parse/SKILL.md` worker template rule 4 forbids reading outside `summaries/`; step 1 nine lines later runs `extract` on a file under `documents/`. `.claude/settings.json` supplies post-tool hooks, not a sandbox. → V6 |
+| E3 | The agent assembles intake and computation more than once. | `tax-parse` Steps 5 and 6.5; `tax-compute` and its five references. → V1, V2 |
+| E4 | Generation has no machine-checkable "still valid" receipt. | `tax-generate/SKILL.md` never mentions the tie-out; its hard stops cover cache/regime checks only. A package can be generated after a failed gate, or after an input changed. → V8 |
+| E5 | Missing preferential-income thresholds silently select ordinary rates. | `compute_scenario` falls to `compute_bracket_tax` when either limit is `None`, and `projection.py` (near line 1353) has the same fall-through without calling `compute_scenario`. `loss_harvest.py` guards this; `scenario.py`, `roth_ladder.py` and `projection.py` do not. Over-states tax on preferential income. → X2 |
+| E6 | Rollover accepts non-finite carryforwards and merges loss character. | `rollover.py::_transform_capital_loss`: +inf passes `v > 0`; a NaN in the explicit block is skipped and falls to the legacy `line_16_combined` path, where NaN and -inf pass `raw >= 0` and come out as `nan` / `inf`. `_read_json` is a bare `json.loads`; the `_abs`, `_ftc_unused` and `_ira_basis` transforms pass non-finite values the same way. ST and LT are summed. → X3 |
+| E7 | Cache save time stands in for retrieval time. | `tax_law_fetcher.py::save_tax_law` rewrites `_meta.fetched` on every save, so editing one figure re-dates the whole cache. → V4 |
+| E8 | Not every runtime writer is atomic. | `scenario.py:524` and `tie_out.py:1745` open their targets with `O_TRUNC` in place — the second is the hard gate's own report; the cache, rollover and calendar writers each hand-roll `mkstemp` + `os.replace`, and `secure_fs` exposes no shared writer. → V10 |
+| E9 | CI runs PRs only, on Ubuntu 3.12 and 3.14. | No Windows job, no schedule, no push-to-main run, no model-driven eval. → W6, V3 |
+| E10 | Instruction and safeguard weight. | Byte and line counts match Part 2 exactly. → Y5, W2, W3 |
+
 ## Part 3 — Backlog
 
-Priorities: **P1** before the TY2026 season opens; **P2** next quarter; **P3**
-opportunistic. Size: XS / S / M / L.
+Priorities: **P0** before the next real-document parse; **P1** before the TY2026
+season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
 
-### EPIC V — Agent reliability and determinism — **P1**
+### EPIC V — Agent reliability and determinism — **P0 for V0; P1 for V1-V4, V6, V8**
 
 > As the operator, I want the numbers on the return produced by code I can test, with
 > the agent asking questions and explaining, not doing arithmetic and transcription.
 
+- **V0 (P0, S-M): Mask SSN/ITIN at the extraction boundary.** A new SSN/ITIN-only
+  masker — not `secure_fs.redact`, which substitutes `[REDACTED]` and masks any run of
+  nine or more digits, so it would erase routing and account numbers and the last four
+  digits alike — applied to every string `extract_pdf_text`, `extract_tables` and the
+  Excel/CSV readers return, preserving `XXX-XX-{last4}`, and to any exception text that
+  quotes document content. Scope is identifiers only: employer names, addresses, EINs,
+  routing and account numbers and every box amount must survive unchanged — a test
+  feeds each extraction route a synthetic page carrying all of those plus an SSN and
+  asserts only the SSN moved. No full identifier is persisted as a fixture. The CLI is
+  not the only route into the transcript: the worker template forbids other shell
+  commands but not the agent's own file-read tool, and Steps 4 and 6.7 name no
+  extractor — V0 closes those by instruction and V6 by enforcement. The Step 5
+  redaction sweep stays as the belt-and-suspenders layer it already is. Ship with the
+  E2 wording fix: rule 4 of the worker template reads "outside `documents/` (read) and
+  `summaries/` (write)".
 - **V1 (P1, L): Deterministic return orchestrator.** A `return_builder` module under
   `agents/lib` takes profile + tax law + structured parsed inputs and writes
   `result.json`. The skill shrinks to: run it, explain, ask the interview questions,
@@ -101,43 +154,104 @@ opportunistic. Size: XS / S / M / L.
 - **V3 (P1, M): Agent-level eval harness.** Synthetic fixture workspaces (W-2 and 1099
   PDFs generated with reportlab), parse + compute run headless via the agents' batch
   modes, `result.json` diffed against a golden with tolerances. Nightly or on release
-  tags, not per PR. **Prerequisite for V1 and V2** — it is what makes those refactors
-  safe.
+  tags, not per PR. **Gates V1 and V2 per slice, not as a whole:** each migrated form
+  slice needs an independent worksheet golden (hand-computed, not the old agent's
+  output) before it moves; the first model-driven trial starts with the first slice,
+  and the cross-agent matrix grows alongside. Cases must include a missing and a
+  corrected document, hostile document text, a stale cache, a context interruption
+  and a valid zero-income return; record agent version, instruction revision, repeat
+  count and cost. Any observed privacy or false-completion failure blocks release.
 - **V4 (P1, S): Tax-law ingest CLI.** `tax_law_fetcher.py set <dotted.path> <value>
   --source <url> --year <y>` with schema validation, year assertion and sanity ranges
   (brackets monotonic, deduction positive, MFJ ≥ single). The agent stops writing the
-  cache JSON by hand.
+  cache JSON by hand. **Retrieval time is per block, not per file (E7):** `_sources`
+  already pins block path → URL and `verify_source_pinning` audits it; what is
+  missing is WHEN each block was verified, since `save_tax_law` rewrites
+  `_meta.fetched` for the whole cache on every save. Add a sibling per-block map of
+  retrieval time and applicable period beside the string-valued `_sources` pins —
+  not inside them, because `_source_host_authoritative` requires a string and an
+  object value would mark every existing cache INCOMPLETE — and make freshness the
+  minimum over blocks with `_meta.fetched` as the legacy fallback. An allowlisted
+  host certifies the source, never the figure's meaning.
 - **V5 (P2, S): Headless answers contract.** A schema for `answers.md` (or an
   `answers.json`) plus a `--check-required` script that lists missing required answers
-  before a run starts, instead of a hard stop mid-compute.
-- **V6 (P2, S): Enforced parse-worker sandbox.** A `tax-parse-worker` subagent under
-  `.claude/agents/` with no WebFetch/WebSearch, and a deny rule for `curl` and `wget`
-  in project permissions. Today the "no network" rule for parse sub-tasks is
-  prompt-level only.
-- **V7 (P2, S): Isolate the freshness auditor.** Run it against a copy of
-  `tax_law_<year>.json` in a temp directory, so the only network-capable agent never
-  has the workspace in reach. Its "read nothing else" scope is prompt-level only.
+  by stable id before a run starts, instead of a hard stop mid-compute. Persisted
+  answers never satisfy a gate that requires a fresh explicit acknowledgement, and the
+  engine CLIs converge on one success / blocked / could-not-run exit contract with
+  tested JSON output — the freshness report and the gates disagree today.
+- **V6 (P1, M): Enforced parse-worker boundary.** A `tax-parse-worker` subagent under
+  `.claude/agents/` with no WebFetch/WebSearch and a closed tool set, plus the
+  equivalent for the sequential path. Acceptance is adversarial: a document whose text
+  instructs an outbound request or an unrelated read/write produces neither, through
+  the general shell and Python tools included — a deny rule on `curl` and `wget` alone
+  does not qualify. Where a host cannot establish isolation, the DELEGATED mode
+  refuses and the sequential path AGENTS.md §4 promises every agent still runs in the
+  main session under the prompt-level rules, with the summary header stating that the
+  boundary was not enforced — Codex, Kimi and Copilot have no closed tool set to give a
+  sub-task, and a season-open toolkit that refuses to parse on them is a portability
+  regression `docs/contributing/agents-compat.md` must record. Today the "no network"
+  rule for parse sub-tasks is prompt-level only.
+- **V7 (P2, S): Isolate the freshness auditor.** Run it against a schema-validated
+  copy of `tax_law_<year>.json` in a temp directory, so the only network-capable agent
+  never has the workspace in reach. Acceptance: a sentinel taxpayer file in the
+  workspace is unreadable to it, and a free-text cache field cannot carry identity
+  data into the copy. Its "read nothing else" scope is prompt-level only.
+- **V8 (P1, M): Validation receipt bound to current inputs.** Tie-out and the
+  capability gate write a receipt naming the document, input, law and result hashes
+  plus engine and schema versions and each gate's outcome; `tax-generate` re-validates
+  it and refuses a filing package whose inputs changed or whose tie-out failed. A
+  valid zero-income return still passes; a draft export, if kept, is marked incomplete
+  on page 1. A hash receipt detects staleness — it is not a signature against a
+  hostile process. A receipt that fires on a harmless edit teaches the agent to
+  reason past it, so the invalidation set is the input set and nothing wider (the
+  gates-that-cry-wolf lesson from the CA cache fix, PR #69).
+- **V9 (P2, M): Maintained PDF renderer.** Replace the per-workspace generated
+  `generate_tax_pdf.py` with a tracked renderer and a shared field map that consumes
+  validated `result.json`, never embeds the taxpayer's name in source, keeps the
+  page-1 limitations manifest and rejects an incompatible schema version. Synthetic
+  PDFs for zero-tax, refund, balance-due and long-manifest cases get layout and
+  field-presence checks. Retires the "check the generator by hand" rule in AGENTS.md
+  §8 and the PII gate's by-name block for that file.
+- **V10 (P2, M): Atomic writes and resumable state.** Extract one temp-then-replace
+  writer into `secure_fs` from the three hand-rolled copies (`tax_law_fetcher`,
+  `rollover`, `tax_calendar`) and route every runtime writer through it —
+  `scenario.py:524` and `tie_out.py:1745` write in place today, and the second is
+  the hard gate's own report, the artifact V8 binds generation to. A restart after
+  interruption resumes from validated inputs without duplicating income or mixing
+  artifact generations; concurrent runs serialize or refuse.
+- **V11 (P2, M): Parser resource budgets.** Time, memory, decompression and output
+  caps on every adapter — the 100 MB source-file cap bounds neither a decompressed
+  workbook nor extracted output. Synthetic compressed-workbook and excessive-page
+  cases terminate with a controlled error and no partial record is accepted.
 
 ### EPIC W — Engineering hygiene and maintainability — **P2**
 
 - **W1 (P2, S): `pyproject.toml` with ruff and mypy** (gradual, untyped defs off), both
-  in CI. Fix the five pyflakes findings in the same PR.
+  in CI. Baseline the existing findings and enforce on changed modules and new
+  contracts first; clear the current pyflakes baseline (12 at `9f3bdb7`) in the same
+  PR.
 - **W2 (P2, M): Split the monoliths.** `tax_computations.py` into a `federal/` package
   by form and a `state/` package by state; `projection.py` likewise. Pure moves, tests
   unchanged.
-- **W3 (P2, L): Rewrite the two Claude hooks in Python.** 3,800 lines of bash tested by
+- **W3 (P3, L): Move the hook state machine to Python.** 3,800 lines of bash tested by
   5,200 lines of Python is the wrong language boundary; the stamp and red-carry-forward
   logic is a state machine bash makes hard to read. Python also lets the hook share
-  `secure_fs`.
-- **W4 (P2, S): Suite speed.** pytest-xdist plus a `slow` marker on the hook and
-  preflight modules. The suite is I/O-bound at 38% CPU, so xdist alone should roughly
-  halve wall time; an engine-only run should finish well under a minute.
+  `secure_fs`. Contracts first, extracted incrementally, exit codes and output
+  preserved; a wholesale rewrite is not the acceptance criterion, and the bootstrap
+  (a hook that must run before the venv exists) needs a stated answer.
+- **W4 (P2, S): Suite speed.** A `slow` marker on the hook and preflight modules
+  first, then trial pytest-xdist only after checking the shared subprocess, git and
+  stamp-file resources the hook tests touch. The suite is I/O-bound at 38% CPU, which
+  suggests xdist could roughly halve wall time; demonstrate it on the same host rather
+  than promise it. An engine-only run should finish well under a minute.
 - **W5 (P2, S): Pin the dev interpreter.** `.python-version` (3.12) and a `uv sync`
   recipe. The local venv is 3.14 while the lock targets 3.12, which AGENTS.md §7
   itself warns about.
 - **W6 (P2, S): CI gaps.** A scheduled weekly run, a push-to-main run, coverage upload,
   and a `windows-latest` job for `secure_fs` and `run.sh` — Windows behavior is claimed
-  in 27 places and exercised nowhere.
+  in 27 places and exercised nowhere. Each trigger gets its own PII-scan range (the
+  `pull_request` base/head variables are empty on push and schedule), a pinned dev-tool
+  lock covers pytest, and the model-driven evals of V3 run on their own schedule.
 - **W7 (P3, M): ADRs.** Move multi-paragraph "why" comments into `docs/adr/` and leave
   a one-line rule plus a link in code. The narrative style is valuable, but preflight
   carries ~890 comment lines for an existence check.
@@ -147,17 +261,32 @@ opportunistic. Size: XS / S / M / L.
   `foreign_holdings_detail._comment` is a ~2,000-character paragraph inside JSON; it
   belongs in a schema doc.
 
-### EPIC X — Tax correctness, known and unfixed — **P2**
+### EPIC X — Tax correctness, known and unfixed — **P1 for X1-X3, P3 for the rest**
 
-Carried from the memory of prior reviews; none has a user behind it yet, all are
-directional.
+Carried from the memory of prior reviews and re-confirmed by the second review
+(Part 2c E5, E6). They are small, they are directional, and they touch CA filers, so
+they run ahead of the orchestrator rather than waiting behind it.
 
-- **X1 (P2, M):** MFS and HOH capital-gains brackets collapse to single in the schema
-  and in compute, projection and scenario. A real directional error, not a gap.
-- **X2 (P2, S):** Promote the capital-gains threshold check into `compute_scenario` so
-  all three anchored skills fail closed when the limits are unfetched.
-- **X3 (P2, S):** Capital-loss carryforward rolls the combined net only; split short
-  and long term.
+- **X1 (P1, M):** MFS and HOH capital-gains brackets collapse to single in the schema
+  and in compute, projection and scenario. A real directional error, not a gap. Verify
+  the required distinctions against the year's instructions, fetch every
+  status-specific value, and replace the divergent `_binary_status_key` mappings with
+  one shared accessor tested per status, old caches included.
+- **X2 (P1, S):** One shared accessor for the status-keyed capital-gains limits that
+  raises when preferential income exists and a limit is `None`, used by
+  `compute_scenario` AND by `projection.py`'s own worksheet branch, which never calls
+  `compute_scenario`. Today only `loss_harvest.py` guards; `scenario.py`,
+  `roth_ladder.py` and `projection.py` fall through to ordinary rates and over-state
+  the tax. An ordinary-income-only case stays usable. X1 and X2 share the root cause
+  (four divergent read sites), so X1 lands on the same accessor.
+- **X3 (P1, S):** Capital-loss carryforward rolls the combined net only; split short
+  and long term through profile, compute and the next rollover. Apply AGENTS.md §8's
+  `math.isfinite` rule at `rollover._read_json` (a bare `json.loads` today) so NaN,
+  ±Infinity and booleans never reach any transform — `_transform_capital_loss`'s
+  legacy `line_16_combined` path turns NaN into `nan` and -inf into `inf`, and the
+  `_abs`, `_ftc_unused` and `_ira_basis` transforms pass them the same way. A legacy
+  combined-only figure requires an explicit resolution rather than a guessed split,
+  and an explicit zero is distinguished from an absent block.
 - **X4 (P3, S):** Add `prior_overpayment_applied` (line 36) to the result template and
   generator.
 - **X5 (P3, S):** Extend the safe-harbor "no dollar figure in prose" lint to
@@ -187,7 +316,8 @@ directional.
   every Claude Code session before any skill. Move the hook and Codex-loop internals to
   `docs/contributing/` and keep the two files to rules only.
 - **Y6 (P3, S): Pre-push hook runs the PII scan and passes**, instead of blocking, so
-  the documented push command no longer needs `--no-verify`. R2 names this sharp edge
+  the documented push command no longer needs `--no-verify`. A normal push scans every
+  outgoing commit, fails closed, and passes a clean branch. R2 names this sharp edge
   ("commit-time gating is the only local gate that actually runs"); this closes it.
 
 ### EPIC Z — State coverage for the named next users — **P2 for FL and NY/NYC, P3 for NC and WA**
@@ -270,16 +400,31 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
 ## Part 4 — Sequencing
 
 Owner ruling 2026-09-05: the P1s and CA first; FL and NYC second; NC and WA last.
+Revised on folding in the second review: contain the exposure and fix the confirmed
+defects before any infrastructure, because they are small and they do not depend on
+the harness.
 
-1. **Y1 and V4 first** — both small, both change what the next season can trust.
-2. **V3 on a CA fixture** — the eval harness is what makes V1 and V2 safe, and CA is
-   the supported path it must protect before any state is added.
-3. **V1, then V2**, one form at a time behind the harness, on the CA + federal return.
-4. **Y2 and X1-X3** before the first real TY2026 return — the P1 season items and the
-   directional errors that touch CA filers too.
-5. **Z7 then Z1-Z3 as one delivery (P2)** — the residency guardrails are prose and
+1. **V0 with the E2 wording fix** before the next real document is parsed — the only
+   P0. **X2** is the next small PR after it; neither waits for an orchestrator or an
+   eval harness.
+2. **Y1 and V4** — publishing is the owner's action; V4 with per-block provenance is
+   what the next season's cache can trust.
+3. **X1 and X3** — the remaining confirmed directional defects, scoped against the
+   year's instructions.
+4. **V3's first CA golden together with V2's document contract**, then **V1 in
+   slices** on the CA + federal return, each slice behind its own golden. Do not build
+   V1 around the Markdown summaries and migrate inputs twice.
+5. **V6, V8 and Y2 before the first real TY2026 return** — the remaining P1s: the
+   enforced parse boundary, the validation receipt, and the season-open runbook after
+   the subagent replay. V7 rides with V6.
+6. **V9** — a filing package is not complete until validation and generation consume
+   the same input generation; the first V1 slice can land before V8, but the workflow
+   is not whole until V8 and V9 do.
+7. **Z7 then Z1-Z3 as one delivery (P2)** — the residency guardrails are prose and
    serve CA/FL/NY movers; NY/NYC builds on the orchestrator once it has landed, and
    the bar is parity with CA, not an unblock. Any FL follow-up sits at the same tier.
-6. **Z4 and Z5 (P3)** when those users appear; Z4 is small enough to be a first
+8. **Z4 and Z5 (P3)** when those users appear; Z4 is small enough to be a first
    outside contribution.
-7. **W1, W4, W5** as a single hygiene PR at any point.
+9. **W1, W4, W5** as a single hygiene PR at any point — W5 is one file AGENTS.md §7
+   already asks for. **V5, V10, V11, W6, Y3, Y4** at any point after step 5; W3 only
+   with its bootstrap answered.
