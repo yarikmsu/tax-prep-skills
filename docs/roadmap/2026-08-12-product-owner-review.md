@@ -8,6 +8,9 @@
 > T1 and T3 are calendar-triggered; U1 is filler; R2's controls are permanent and
 > standing. The header and Parts 1-3 are the review as written on 2026-08-12 and are
 > left that way; the Part 4 status markers and Part 5 sequencing are maintained.
+> A PROPOSED agent-engineering backlog (Epics V-Z, not yet adopted) sits beside this
+> file in `2026-09-05-staff-agent-review.md`; its overlaps (R6, T1, T3, U1) defer here,
+> and its Epic Z re-cuts `2026-state-support-ny-fl-wa.md` against the named next users.
 
 Reviewer lenses: product owner with tax-adviser / enrolled-agent / IRS-officer /
 security-officer / maintainer background.
@@ -235,7 +238,10 @@ additional states. Each is real work with no user behind it. *(Corrected 2026-09
 been — see the tax-adviser lens above. Scheduling shipped work is the expensive
 direction of this error, so the list is fixed rather than annotated in place.)* The
 07-20 review already said usage decides these; Epic R is what makes usage possible.
-Building any of them before then is inventing a persona.
+Building any of them before then is inventing a persona. *(Superseded in part
+2026-09-05: the owner named the next users — CA first, FL and NYC at P2, NC and WA at P3 — so
+"NYC" and "additional states" now have a persona. They are scheduled as Epic Z in
+`2026-09-05-staff-agent-review.md`; part-year / nonresident stays deferred there as Z8.)*
 
 ## Part 5 — Sequencing
 
