@@ -17,7 +17,9 @@ The JSON file (tax_law_<year>.json) is the cache. If missing, skills re-fetch.
 """
 
 import json
+import math
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -67,7 +69,7 @@ def load_tax_law(year: int, workspace: str = ".") -> dict | None:
             "Remove it and re-run /tax-setup to re-fetch tax law data."
         )
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         # Corrupt cache — remove so caller re-fetches, but warn
         print(
@@ -84,24 +86,68 @@ def load_tax_law(year: int, workspace: str = ".") -> dict | None:
                 file=sys.stderr,
             )
         return None
+    # `json.loads` admits the NaN/Infinity literals and reads `1e400` as inf.
+    # A non-finite figure passes every `is None` guard downstream and defeats
+    # every comparison (each NaN comparison is False), which is how a corrupt
+    # cache prices a whole preferential stack at 0%. Refused at the ONE read
+    # site every consumer shares, so no accessor has to re-check finiteness.
+    bad = _first_non_finite(data)
+    if bad is not None:
+        raise ValueError(
+            f"{redact(path)} holds a non-finite number at {bad} — the cache is "
+            "corrupt; re-run /tax-setup to re-fetch tax law data.")
+    return data
 
 
-def save_tax_law(year: int, data: dict, workspace: str = ".") -> str:
+def _first_non_finite(node, dotted: str = "") -> "str | None":
+    """The dotted path of the first non-finite float in a parsed JSON tree."""
+    if isinstance(node, float) and not math.isfinite(node):
+        return dotted or "(top level)"
+    if isinstance(node, dict):
+        for k, v in node.items():
+            found = _first_non_finite(v, f"{dotted}.{k}" if dotted else str(k))
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            found = _first_non_finite(v, f"{dotted}[{i}]")
+            if found is not None:
+                return found
+    return None
+
+
+def save_tax_law(year: int, data: dict, workspace: str = ".", *,
+                 stamp_fetched: bool = True) -> str:
     """Save tax law data to cache file atomically. Returns path.
 
     Uses write-to-temp-then-rename to prevent corrupt partial writes.
     Makes a shallow copy of data before adding _meta, so the caller's
     original dict is not mutated. Nested dicts are shared, not deep-copied.
+
+    `stamp_fetched=True` (the `create` path) dates the whole cache now.
+    `set_figure` passes False and keeps the `_meta` it loaded: re-dating the
+    cache-wide stamp on every per-block write is E7 of the 09-05 review —
+    editing one figure made every other block look freshly retrieved. The
+    per-block time lives in `_provenance`; `_meta.fetched` is the legacy
+    fallback for a block with no entry there, so it has to stay what it was.
     """
     path = get_tax_law_path(year, workspace)
 
     # Copy to avoid mutating caller's dict
     to_save = dict(data)
-    to_save["_meta"] = {
-        "tax_year": year,
-        "fetched": datetime.now().isoformat(),
-        "source": "IRS.gov / state tax authority / web search",
-    }
+    if stamp_fetched:
+        to_save["_meta"] = {
+            "tax_year": year,
+            "fetched": datetime.now().isoformat(),
+            "source": "IRS.gov / state tax authority / web search",
+        }
+    elif not isinstance(to_save.get("_meta"), dict):
+        # A hand-written or legacy cache with no usable `_meta`. Its blocks
+        # have no `_provenance` either, so a `fetched` minted here would date
+        # every one of them today — E7 by the fallback door. Without the
+        # stamp they stay undatable and the cache reads STALE, which is true.
+        to_save["_meta"] = {"tax_year": year,
+                            "source": "IRS.gov / state tax authority / web search"}
 
     # Ensure parent directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -338,6 +384,18 @@ def create_empty_tax_law(year: int) -> dict:
         # reports a NON-AUTHORITATIVE recorded URL as INCOMPLETE and lists
         # populated-but-unpinned core blocks as an advisory.
         "_sources": {},
+        # NOT seeded here: `_provenance`, the V4 per-block sibling of
+        # `_sources` — {pin path: {"retrieved": <ISO datetime>, "applies_to":
+        # <tax year, or the period the block covers>}}. A sibling rather than
+        # a richer value inside `_sources`, because `_source_host_authoritative`
+        # requires a string and an object there would mark every existing
+        # cache INCOMPLETE. `set_figure` creates it on first write and
+        # `check_freshness` dates each block from it, falling back to
+        # `_meta.fetched` for a block with no entry. It stays out of this seed
+        # because the freshness auditor's acceptance fixture is a digest of
+        # this function's output (docs/ops/review-subagent-acceptance.md):
+        # a seeded key would move that digest and demand the fresh-session
+        # replay, for a block the auditor is not yet scored on.
     }
 
 
@@ -671,14 +729,8 @@ def _has_real_data(node) -> bool:
 
 
 def _block_populated(data: dict, dotted: str) -> bool:
-    """Whether a dotted block path holds real (non-None, non-empty) data —
-    scaffold dicts with all-None leaves do NOT count."""
-    node = data
-    for seg in dotted.split("."):
-        if not isinstance(node, dict) or seg not in node:
-            return False
-        node = node[seg]
-    return _has_real_data(node)
+    """Whether the block at `dotted` holds real data (see `_has_real_data`)."""
+    return _has_real_data(_get_path(data, dotted))
 
 
 def _fetched_federal_blocks(data: dict) -> list:
@@ -733,6 +785,20 @@ def verify_source_pinning(data: dict) -> dict:
             continue
         if not _source_host_authoritative(url):
             non_authoritative.append((block, url))
+    expected = _expected_pins(data)
+    unpinned = [src for src, path in expected
+                if _block_populated(data, path) and src not in sources]
+    return {"non_authoritative": non_authoritative, "unpinned": unpinned}
+
+
+def _expected_pins(data: dict) -> "list[tuple[str, str]]":
+    """`(pin key, data path)` for every populated block that needs provenance.
+
+    The one roster `verify_source_pinning` audits `_sources` against and
+    `check_freshness` dates block by block from `_provenance`; deriving it in
+    two places is how a block could be pinned but never dated, or the
+    reverse.
+    """
     # (source_key, data_path): every populated structured federal block pins by
     # its own path (derived from the cache, so child_tax_credit / niit / amt /
     # etc. are all audited, not just filing_statuses + capital_gains_rates). The
@@ -763,9 +829,42 @@ def verify_source_pinning(data: dict) -> dict:
     # scales reported USD foreign income / FBAR values — audit it too.
     if _block_populated(data, "exchange_rates"):
         expected.append(("exchange_rates", "exchange_rates"))
-    unpinned = [src for src, path in expected
-                if _block_populated(data, path) and src not in sources]
-    return {"non_authoritative": non_authoritative, "unpinned": unpinned}
+    ptet = data.get("ptet")
+    if isinstance(ptet, dict):
+        for code, block in ptet.items():
+            if isinstance(code, str) and not code.startswith("_") \
+                    and _has_real_data(block):
+                expected.append((f"ptet.{code}", f"ptet.{code}"))
+    return expected
+
+
+def _naive(when: datetime) -> datetime:
+    """A stored timestamp as local wall clock, whether or not it carries an offset.
+
+    `datetime.fromisoformat` returns an AWARE datetime for a stamp written
+    `...+00:00` or with the `Z` a fetched page's own timestamp usually carries,
+    and comparing one against the naive `datetime.now()` this module dates
+    everything from raises TypeError — a crash where a freshness verdict
+    belongs, reachable through the public writer by passing an aware `now` to
+    `set_figure`. Converting to local time and dropping the offset puts both
+    sides in one frame.
+    """
+    return when.astimezone().replace(tzinfo=None) if when.tzinfo else when
+
+
+def _populated_leaves(node, prefix: str) -> list:
+    """Every figure actually present under `prefix`, as dotted paths.
+
+    A list is one figure, not a container — a bracket table is retrieved and
+    dated whole. An empty list and a null are the unfetched state and are not
+    figures, so a block holding only those has nothing for an entry to cover.
+    """
+    if isinstance(node, dict):
+        found = []
+        for key, value in node.items():
+            found.extend(_populated_leaves(value, f"{prefix}.{key}" if prefix else key))
+        return found
+    return [] if node is None or node == [] else [prefix]
 
 
 def check_freshness(year: int, workspace: str = ".") -> dict:
@@ -780,7 +879,15 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
       null_fields: list of field paths that are still None
       recommendation: human-readable next step
     """
-    data = load_tax_law(year, workspace)
+    try:
+        data = load_tax_law(year, workspace)
+    except ValueError as e:
+        return {
+            "status": "INCOMPLETE",
+            "age_days": None,
+            "null_fields": [str(e)],
+            "recommendation": "The cache holds a non-finite number; re-run /tax-setup to re-fetch tax law data.",
+        }
     if data is None:
         return {
             "status": "NOT_FOUND",
@@ -795,7 +902,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     fetched_str = meta.get("fetched")
     if fetched_str:
         try:
-            fetched_dt = datetime.fromisoformat(fetched_str)
+            fetched_dt = _naive(datetime.fromisoformat(fetched_str))
             age_days = (datetime.now() - fetched_dt).days
         except (ValueError, TypeError) as e:
             # Malformed timestamp (e.g., manual edit or corrupt write). Treat as
@@ -962,6 +1069,12 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 null_fields.append(f"{path} (empty list)")
             else:
                 for i, item in enumerate(obj):
+                    # A bracket table is open at the top: the LAST bracket's
+                    # null `max` is the schedule's shape, not an unfetched
+                    # figure (a closed top bracket is what `set` refuses).
+                    if (path.endswith("brackets") and i == len(obj) - 1
+                            and isinstance(item, dict) and item.get("max") is None):
+                        item = {k: v for k, v in item.items() if k != "max"}
                     _walk(item, f"{path}[{i}]")
 
     _walk(data)
@@ -1203,6 +1316,95 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     except ValueError as e:
         null_fields.append(f"_sources ({e})")
 
+    # V4 per-block retrieval time. `_meta.fetched` stood in for every block's
+    # retrieval time and `save_tax_law` rewrote it on every save (E7), so one
+    # edited figure re-dated the whole cache. Each populated block is dated
+    # from `_provenance` now, the cache-wide stamp serving only a block with
+    # no entry (a legacy cache, or one hand-edited around this command), and
+    # the OLDEST block decides — a cache is as fresh as its stalest figure.
+    now = datetime.now()
+    expected = _expected_pins(data)
+    expected_pins = {pin for pin, _p in expected}
+    provenance = data.get("_provenance")
+    if provenance is not None and not isinstance(provenance, dict):
+        null_fields.append(
+            f"_provenance (must be an object keyed by figure or block, got "
+            f"{type(provenance).__name__})")
+        provenance = {}
+    provenance = provenance or {}
+    # Entries are keyed by the figure WRITTEN (a dotted path) or, for a
+    # whole-block write, by the block's pin; every entry groups under the
+    # pin `_pin_key` gives its path, and the OLDEST entry under a pin dates
+    # the block — one re-fetched leaf never re-dates its siblings.
+    entry_ages: dict = {}
+    for key, entry in provenance.items():
+        pin = key if key in expected_pins else _pin_key(key, data)
+        try:
+            if not isinstance(entry, dict):
+                raise TypeError
+            retrieved = _naive(datetime.fromisoformat(entry.get("retrieved")))
+        except (TypeError, ValueError):
+            null_fields.append(
+                f"_provenance.{key} (each entry is an object with an ISO "
+                "`retrieved` time and an `applies_to` period)")
+            entry_ages.setdefault(pin, []).append(None)
+            continue
+        if retrieved > now:
+            null_fields.append(
+                f"_provenance.{key} (retrieved {entry.get('retrieved')} is in the "
+                "future — a block cannot be younger than now)")
+            entry_ages.setdefault(pin, []).append(None)
+            continue
+        entry_ages.setdefault(pin, []).append((now - retrieved).days)
+        period = entry.get("applies_to")
+        if pin not in _MULTI_PERIOD_PINS and period is not None and (
+                isinstance(period, bool) or not isinstance(period, int)
+                or period != year):
+            null_fields.append(
+                f"_provenance.{key} (applies_to {period!r} — this figure was "
+                f"retrieved for another period than the {year} cache it sits in)")
+    try:
+        legacy_age = (now - _naive(datetime.fromisoformat(fetched_str))).days \
+            if fetched_str else None
+    except (ValueError, TypeError):
+        legacy_age = None
+    block_ages: dict = {}
+    for pin, path in expected:
+        ages = list(entry_ages.get(pin, ()))
+        # An entry keyed by the PIN, or by any path above a figure, covers
+        # everything under it — that is the whole-block write. A DOTTED entry
+        # covers one figure, and the block's other figures are still as old as
+        # `_meta.fetched` says they are: taking the leaf's age for the block
+        # reported every untouched sibling as freshly retrieved, which is a
+        # legacy cache updated one `set` at a time reading FRESH on figures
+        # nobody has looked at. The legacy stamp drops out only once every
+        # populated figure under the pin is covered, so re-fetching a block
+        # figure by figure still clears it.
+        # `ages` is non-empty exactly when some entry sits under this pin; a
+        # block with an entry and nothing populated yet is covered by it, which
+        # is what a whole-block write of a block that is legitimately empty
+        # looks like.
+        # An entry keyed by the PIN covers its block whatever the block's path
+        # is — a state pin is `state.TX` over a block at `state`, so matching
+        # entry keys against leaf paths alone would leave every state figure
+        # uncovered and the block dated by a stamp its own entry supersedes.
+        leaves = _populated_leaves(_get_path(data, path), path)
+        covered = bool(ages) and (pin in provenance or all(
+            any(leaf == key or leaf.startswith(f"{key}.") for key in provenance)
+            for leaf in leaves))
+        if not covered:
+            ages.append(legacy_age)
+        block_ages[pin] = (None if not ages or any(a is None for a in ages)
+                           else max(ages))
+    dated = {pin: age for pin, age in block_ages.items() if age is not None}
+    oldest_block = max(dated, key=dated.get) if dated else None
+    if block_ages:
+        age_days = block_ages[oldest_block] if len(dated) == len(block_ages) else None
+    # The write path's rules run over the whole cache here too — a cache
+    # written before this command, or hand-edited around it, is otherwise the
+    # one population none of them ever sees.
+    null_fields.extend(validate_cache(data, year))
+
     # Determine status
     if null_fields:
         status = "INCOMPLETE"
@@ -1218,8 +1420,9 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         )
     elif age_days > _FRESHNESS_DAYS:
         status = "STALE"
+        which = f" ({oldest_block} is the oldest block)" if oldest_block else ""
         recommendation = (
-            f"Tax law data is {age_days} days old. "
+            f"Tax law data is {age_days} days old{which}. "
             "Search the web for new legislation since the fetch date, re-fetch if found."
         )
     else:
@@ -1238,16 +1441,585 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         "age_days": age_days,
         "null_fields": null_fields,
         "unpinned_sources": unpinned_sources,
+        "block_ages": block_ages,
+        "oldest_block": oldest_block,
         "recommendation": recommendation,
     }
 
 
+# ---------------------------------------------------------------------------
+# V4 — the ingest path: `set <dotted.path> <value> --source <url> --year <y>`
+#
+# The agent used to write this cache by hand, and every defect of a hand-written
+# JSON file arrived in real returns: a figure under the wrong key (which reads
+# as "unfetched" and falls to a default), a bracket list out of order, an MFJ
+# figure below the single one, a blog URL pasted under `_sources`, and — E7 of
+# the 2026-09-05 review — `save_tax_law` re-dating the WHOLE cache on every save,
+# so a one-figure edit made every stale block look freshly retrieved. `set_figure`
+# is the one write dotted: the path must exist in the schema seed, the value must
+# have the seed's shape and pass the range checks below, the source host must be
+# one `_source_host_authoritative` accepts, and the block is dated in
+# `_provenance` while `_meta.fetched` is left alone.
+#
+# An allowlisted host certifies the SOURCE, never the figure's meaning: the
+# checks here are shape and sanity, and the year assertion is against the cache
+# the agent named — whether the page actually names the tax year being filed is
+# still the agent's reading and the freshness auditor's check.
+# ---------------------------------------------------------------------------
+
+class TaxLawSetError(ValueError):
+    """A refused `set`: nothing was written."""
+
+
+# Key names whose value is a fraction of one. Everything else numeric is an
+# amount (dollars, a year, a count), which must be finite and POSITIVE: for an
+# indexed figure a zero is the unfetched state wearing a number.
+_RATE_KEY_SUFFIXES = ("rate", "factor")
+# Dynamic-keyed dicts: the seed ships them empty and the KEY is data.
+_DYNAMIC = {
+    "exchange_rates": ("currency", r"^[A-Z]{3}$", "a 3-letter upper-case ISO currency code"),
+    "federal.historical_top_rate": ("year", r"^(19|20)[0-9]{2}$", "a 4-digit calendar year"),
+    "ptet": ("state", r"^[A-Z]{2}$", "a 2-letter upper-case state code"),
+}
+# Blocks whose applicable period is not the return's tax year, so a
+# `_provenance.applies_to` naming another period is correct there and nowhere
+# else: a calendar year for the historical top rate, `YYYY-Qn` for an
+# underpayment-rate quarter.
+_MULTI_PERIOD_PINS = frozenset({"federal.underpayment_rates",
+                                "federal.historical_top_rate"})
+_QUARTER = re.compile(r"^(19|20)[0-9]{2}-Q[1-4]$")
+# (higher, lower) pairs that are NOT sibling single/mfj leaves — those are
+# derived from the schema by `_sibling_pairs`, so a block the table has not
+# met is covered the day it is seeded.
+_ORDERED_PAIRS = (
+    ("federal.filing_statuses.mfj.standard_deduction",
+     "federal.filing_statuses.single.standard_deduction"),
+    ("federal.filing_statuses.hoh.standard_deduction",
+     "federal.filing_statuses.single.standard_deduction"),
+    ("federal.filing_statuses.single.standard_deduction",
+     "federal.filing_statuses.mfs.standard_deduction"),
+    ("federal.capital_gains_rates.fifteen_pct_limit.single",
+     "federal.capital_gains_rates.zero_pct_limit.single"),
+    ("federal.capital_gains_rates.fifteen_pct_limit.mfj",
+     "federal.capital_gains_rates.zero_pct_limit.mfj"),
+    ("federal.amt.exemption.single", "federal.amt.exemption.mfs"),
+    ("federal.amt.phaseout_start.single", "federal.amt.phaseout_start.mfs"),
+    ("federal.salt_cap.amount", "federal.salt_cap.mfs_amount"),
+    # §24(d)(1)(A): the refundable portion is a subset of the credit.
+    ("federal.child_tax_credit.amount_per_child",
+     "federal.child_tax_credit.refundable_limit"),
+)
+# Path patterns whose value is a table with its own validator. Anchored on the
+# PATH, never the bare leaf name: a future key called `schedule` or `brackets`
+# elsewhere in the schema must not inherit a validator meant for another.
+_TABLE_VALIDATORS = (
+    (re.compile(r"^(federal\.filing_statuses\.[a-z]+|state)\.brackets$"), "brackets"),
+    (re.compile(r"^federal\.underpayment_rates$"), "underpayment_rates"),
+    (re.compile(r"^ptet\.[A-Z]{2}\.schedule$"), "ptet_schedule"),
+    (re.compile(r"^federal\.irmaa\.tiers\.(single|mfj)$"), "tiers"),
+)
+
+
+def _is_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _is_rate_key(key: str) -> bool:
+    return key.endswith(_RATE_KEY_SUFFIXES)
+
+
+def _get_path(data, dotted: str):
+    node = data
+    for seg in dotted.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            return None
+        node = node[seg]
+    return node
+
+
+def _zero_is_a_figure(dotted: str) -> bool:
+    """Whether a zero AMOUNT at this path is a figure or the unfetched state.
+
+    A state can genuinely have no standard deduction and no personal exemption
+    — New Jersey has neither — and the schema's null means "not fetched", so
+    refusing zero everywhere left no way to say "this state has none" and the
+    cache stayed INCOMPLETE for ever on a figure that had been read correctly.
+    The asymmetry is deliberate: every federal amount here is indexed and none
+    of them is ever zero, so a federal zero is still the unfetched state
+    wearing a number.
+    """
+    return dotted.split(".", 1)[0] == "state"
+
+
+def _check_number(dotted: str, value, *, is_rate: "bool | None" = None,
+                  allow_zero: bool = False) -> None:
+    if is_rate is None:
+        is_rate = _is_rate_key(dotted.rsplit(".", 1)[-1])
+    if not _is_number(value):
+        raise TaxLawSetError(
+            f"{dotted}: expected a finite number, got {type(value).__name__}")
+    if value < 0:
+        raise TaxLawSetError(f"{dotted}: a tax figure cannot be negative ({value})")
+    if is_rate and value > 1:
+        raise TaxLawSetError(
+            f"{dotted}: a rate is a fraction of one, got {value} — write 0.07, not 7")
+    if not is_rate and not allow_zero and value == 0 and not _zero_is_a_figure(dotted):
+        raise TaxLawSetError(
+            f"{dotted}: an indexed amount of zero is the unfetched state wearing "
+            "a number; leave the seed's null in place until the figure is read")
+
+
+def _check_brackets(dotted: str, value) -> None:
+    """A progressive schedule: contiguous, ascending, open at the top.
+
+    Bounds are HALF-OPEN — each bracket's `min` equals the previous `max`,
+    which is how `compute_bracket_tax` sizes them. The IRS prints them
+    inclusive ("over $11,925 but not over $48,475", then "over $48,475"), so a
+    `min` one dollar above the previous `max` is the published reading and is
+    normalised in place, not refused. The last `max` must be null: a closed top
+    bracket leaves income above it untaxed, silently, in every consumer.
+    """
+    if not isinstance(value, list):
+        raise TaxLawSetError(f"{dotted}: brackets must be a list of "
+                             "{{rate, min, max}} objects")
+    if not value:
+        raise TaxLawSetError(f"{dotted}: an empty bracket list is the unfetched "
+                             "state, not a figure")
+    prev_max, prev_rate = 0, -1.0
+    for i, b in enumerate(value):
+        if not isinstance(b, dict) or not {"rate", "min", "max"} <= set(b):
+            raise TaxLawSetError(
+                f"{dotted}[{i}]: each bracket needs rate, min and max")
+        rate, lo, hi = b["rate"], b["min"], b["max"]
+        if not _is_number(rate) or not 0 < rate <= 1:
+            raise TaxLawSetError(f"{dotted}[{i}]: rate must be in (0, 1], got {rate!r}")
+        if not _is_number(lo) or lo < 0:
+            raise TaxLawSetError(f"{dotted}[{i}]: min must be a non-negative number")
+        if i == 0 and lo != 0:
+            raise TaxLawSetError(f"{dotted}[0]: the first bracket starts at zero, got {lo}")
+        if i > 0 and lo == prev_max + 1:
+            b["min"] = lo = prev_max          # the inclusive reading, normalised
+        if i > 0 and lo != prev_max:
+            raise TaxLawSetError(
+                f"{dotted}[{i}]: brackets must be contiguous — min {lo} does not "
+                f"meet the previous max {prev_max} (bounds are half-open: each "
+                "min equals the previous max; the IRS's 'over X' reading is "
+                "accepted as X + 1 and normalised)")
+        if rate <= prev_rate:
+            raise TaxLawSetError(f"{dotted}[{i}]: rates must be ascending")
+        if hi is None:
+            if i != len(value) - 1:
+                raise TaxLawSetError(
+                    f"{dotted}[{i}]: only the last bracket may have max null")
+        elif not _is_number(hi) or hi <= lo:
+            raise TaxLawSetError(f"{dotted}[{i}]: max must exceed min")
+        elif i == len(value) - 1:
+            raise TaxLawSetError(
+                f"{dotted}[{i}]: the last bracket's max must be null — a closed "
+                "top bracket leaves every dollar above it untaxed")
+        prev_max, prev_rate = hi, rate
+
+
+def _check_ascending(dotted: str, value, *, fields: tuple, order_by: str,
+                     key_of=None, first_is_zero: bool = False,
+                     rate_fields: tuple = ()) -> None:
+    """A non-empty list of entries, each carrying `fields`, strictly ascending
+    by `order_by` (through `key_of`, e.g. a date parse), every numeric field a
+    valid figure. Shared by the dated lists, the IRMAA tiers and the PTET
+    schedule, which used to be three copies of this loop."""
+    if not isinstance(value, list) or not value:
+        raise TaxLawSetError(f"{dotted}: expected a non-empty list")
+    prev = None
+    for i, e in enumerate(value):
+        if not isinstance(e, dict) or not set(fields) <= set(e):
+            raise TaxLawSetError(f"{dotted}[{i}]: each entry needs {', '.join(fields)}")
+        try:
+            k = key_of(e[order_by]) if key_of else e[order_by]
+        except (TypeError, ValueError):
+            raise TaxLawSetError(f"{dotted}[{i}]: {order_by} is not readable") from None
+        if i == 0 and first_is_zero and k != 0:
+            raise TaxLawSetError(f"{dotted}[0]: the first {order_by} is 0")
+        if prev is not None and not k > prev:
+            raise TaxLawSetError(f"{dotted}: entries must be ascending by {order_by}")
+        prev = k
+        for f in fields:
+            if f != order_by or key_of is None:
+                _check_number(f"{dotted}[{i}].{f}", e[f], is_rate=f in rate_fields,
+                              allow_zero=True)
+
+
+def _check_table(kind: str, dotted: str, value) -> None:
+    if kind == "brackets":
+        _check_brackets(dotted, value)
+    elif kind == "underpayment_rates":
+        _check_ascending(dotted, value, fields=("effective_from", "annual_rate"),
+                         order_by="effective_from", rate_fields=("annual_rate",),
+                         key_of=lambda d: datetime.strptime(str(d), "%Y-%m-%d"))
+    elif kind == "tiers":
+        _check_ascending(dotted, value,
+                         fields=("magi_threshold", "annual_surcharge_per_person"),
+                         order_by="magi_threshold")
+    elif kind == "ptet_schedule":
+        rows = []
+        for i, row in enumerate(value if isinstance(value, list) else []):
+            if not isinstance(row, list) or len(row) != 3:
+                raise TaxLawSetError(f"{dotted}[{i}]: each row is [lower, rate, base_tax]")
+            rows.append(dict(zip(("lower", "rate", "base_tax"), row)))
+        _check_ascending(dotted, rows or value, fields=("lower", "rate", "base_tax"),
+                         order_by="lower", first_is_zero=True, rate_fields=("rate",))
+
+
+def _check_against(dotted: str, ref, value, *, top: bool = True,
+                   strict: bool = True) -> None:
+    """`value` has the shape `ref` (the seed at `dotted`) prescribes, recursively.
+
+    `top` is the leaf or block the command names. Below it, a whole-block write
+    (the agent pasting `create_state_template` output, then filling fields one
+    by one) may carry the seed's own unfetched leaves — a null where the seed
+    is null, an empty list where the seed's is empty. The figure named on the
+    command line is never allowed to be one of those. A block write must carry
+    EXACTLY the seed's keys (`strict`): a partial block would replace a fuller
+    one, and the freshness walker cannot see a key that is gone. The freshness
+    audit runs this over caches it did not write, so it validates the keys that
+    are present and leaves absence to the walker.
+    """
+    if value is None:
+        if not top and ref is None:
+            return
+        raise TaxLawSetError(f"{dotted}: null is the unfetched state, not a figure")
+    if not top and isinstance(ref, list) and value == []:
+        return
+    for pattern, kind in _TABLE_VALIDATORS:
+        if pattern.match(dotted):
+            _check_table(kind, dotted, value)
+            return
+    if isinstance(ref, list):
+        if not isinstance(value, list):
+            raise TaxLawSetError(f"{dotted}: expected a list")
+    elif isinstance(ref, dict):
+        if not isinstance(value, dict) or not value:
+            raise TaxLawSetError(f"{dotted}: expected a non-empty object with keys "
+                                 f"{sorted(ref)}")
+        dynamic = _DYNAMIC.get(dotted)
+        if strict and not dynamic and set(value) != set(ref):
+            raise TaxLawSetError(
+                f"{dotted}: a block is written with exactly the schema's keys "
+                f"{sorted(ref)} — extra {sorted(set(value) - set(ref))}, missing "
+                f"{sorted(set(ref) - set(value))}; set one leaf at a time, or "
+                "paste the seed's block and fill it")
+        for k, v in value.items():
+            child = f"{dotted}.{k}"
+            if dynamic:
+                _check_dynamic_key(dotted, k)
+                _check_against(child, _dynamic_ref(dotted), v, top=False, strict=strict)
+            elif k in ref:
+                _check_against(child, ref[k], v, top=False, strict=strict)
+    elif isinstance(ref, bool):
+        if not isinstance(value, bool):
+            raise TaxLawSetError(f"{dotted}: expected true or false")
+    elif isinstance(ref, str):
+        if not isinstance(value, str) or not value.strip():
+            raise TaxLawSetError(f"{dotted}: expected a non-empty string")
+    else:
+        # A None seed (unfetched) or a numeric structural constant.
+        parent = dotted.rsplit(".", 1)[0] if "." in dotted else ""
+        _check_number(dotted, value, is_rate=(parent == "federal.historical_top_rate") or None)
+        if parent in ("exchange_rates", "federal.historical_top_rate") and value <= 0:
+            raise TaxLawSetError(f"{dotted}: must be positive")
+
+
+def _check_dynamic_key(parent: str, key: str) -> None:
+    what, pattern, desc = _DYNAMIC[parent]
+    if not isinstance(key, str) or not re.match(pattern, key):
+        raise TaxLawSetError(f"{parent}.{key}: the {what} key must be {desc}")
+
+
+def _dynamic_ref(parent: str):
+    """The seed a dynamic dict's entries are validated against."""
+    if parent == "ptet":
+        return {"schedule": [], "vintage": ""}
+    return None  # a number: an exchange rate or a historical top rate
+
+
+def _seed_root(dotted: str, data: dict, year: int):
+    """The schema tree `dotted` is resolved in, and the segments under it."""
+    segs = dotted.split(".")
+    if segs[0] == "state" and len(segs) > 1:
+        current = data.get("state")
+        if not isinstance(current, dict) or not isinstance(current.get("code"), str):
+            raise TaxLawSetError(
+                f"{dotted}: no state block yet — set `state` to the "
+                "create_state_template output first, then its fields")
+        return create_state_template(current["code"], tax_year=year), segs[1:], "state"
+    return create_empty_tax_law(year), segs, ""
+
+
+def _reference_for(dotted: str, data: dict, value, year: int):
+    """The seed node at `dotted`, or a TaxLawSetError naming why there is none."""
+    segs = dotted.split(".")
+    if any(seg.startswith("_") for seg in segs) or dotted == "tax_year":
+        raise TaxLawSetError(
+            f"{dotted}: identity and metadata are not figures — tax_year is set "
+            "by `create`, and _sources/_provenance are written by this command")
+    if dotted in ("federal", "ptet"):
+        raise TaxLawSetError(
+            f"{dotted}: too coarse — every block under it is pinned and dated on "
+            f"its own, so write `{dotted}.<block>` (or a leaf) one at a time")
+    if dotted == "state":
+        if not isinstance(value, dict) or not isinstance(value.get("code"), str):
+            raise TaxLawSetError("state: the whole block must be an object "
+                                 "carrying a 2-letter `code`")
+        return create_state_template(value["code"], tax_year=year)
+    node, segs, dotted = _seed_root(dotted, data, year)
+    for seg in segs:
+        parent = dotted
+        dotted = f"{dotted}.{seg}" if dotted else seg
+        if parent in _DYNAMIC:
+            _check_dynamic_key(parent, seg)
+            node = _dynamic_ref(parent)
+            continue
+        if not isinstance(node, dict) or seg not in node:
+            where = f"under {parent}" if parent else "at the top level"
+            known = sorted(k for k in node if not k.startswith("_")) \
+                if isinstance(node, dict) else []
+            raise TaxLawSetError(
+                f"{dotted}: not in the schema {where} — known keys are {known} "
+                "(see create_empty_tax_law / create_state_template)")
+        node = node[seg]
+    return node
+
+
+def _set_path(data: dict, dotted: str, value, year: int) -> None:
+    """Write `value` at `dotted`, materialising a missing parent from the
+    SCHEMA rather than as `{}`: an empty parent hides every sibling the
+    freshness walker would otherwise report absent."""
+    import copy
+    seed, segs, _ = _seed_root(dotted, data, year)
+    node = data
+    if dotted.startswith("state.") and segs is not dotted.split("."):
+        node = data["state"]
+    for seg in segs[:-1]:
+        nxt = node.get(seg)
+        if not isinstance(nxt, dict):
+            nxt = copy.deepcopy(seed.get(seg)) if isinstance(seed, dict) and \
+                isinstance(seed.get(seg), dict) else {}
+            node[seg] = nxt
+        node = nxt
+        seed = seed.get(seg) if isinstance(seed, dict) else None
+    node[segs[-1]] = value
+
+
+def _pin_key(dotted: str, data: dict) -> str:
+    """The `_sources` / `_provenance` pin a dotted path belongs to."""
+    segs = dotted.split(".")
+    if segs[0] in ("federal", "ptet"):
+        return ".".join(segs[:2])
+    if segs[0] == "state":
+        code = _state_pin_code(data.get("state") or {})
+        if code == "FL" and dotted == "state.sales_tax.county_surtax_rate":
+            return "state.FL.county_surtax_rate"
+        return f"state.{code}"
+    return segs[0]
+
+
+def _sibling_pairs(data: dict) -> "list[tuple[str, str]]":
+    """Every dict in the cache holding both a `mfj` and a `single` leaf, as a
+    (higher, lower) pair — derived, so a block the ordering table never met is
+    covered the day it is seeded."""
+    pairs = []
+
+    def walk(node, dotted):
+        if not isinstance(node, dict):
+            return
+        if _is_number(node.get("mfj")) and _is_number(node.get("single")):
+            pairs.append((f"{dotted}.mfj", f"{dotted}.single"))
+        for k, v in node.items():
+            if not str(k).startswith("_"):
+                walk(v, f"{dotted}.{k}" if dotted else str(k))
+    walk(data, "")
+    return pairs
+
+
+def _sanity(data: dict) -> None:
+    """Cross-field checks over the whole cache after a write."""
+    for higher, lower in _sibling_pairs(data) + list(_ORDERED_PAIRS):
+        hi, lo = _get_path(data, higher), _get_path(data, lower)
+        if _is_number(hi) and _is_number(lo) and hi < lo:
+            raise TaxLawSetError(
+                f"{higher} ({hi}) is below {lower} ({lo}) — the joint or "
+                "higher figure can never sit below the other; one of the "
+                "two was read wrong")
+
+
+def validate_cache(data: dict, year: int) -> "list[str]":
+    """The write path's rules over a whole cache: every populated block against
+    its seed (unfetched leaves allowed), then the cross-field orderings. One
+    string per violation, for `check_freshness` to report as INCOMPLETE."""
+    problems = []
+    for _pin, path in _expected_pins(data):
+        value = _get_path(data, path)
+        if not _has_real_data(value):
+            continue
+        try:
+            if path == "state":
+                ref = create_state_template(_state_pin_code(value), tax_year=year)
+            else:
+                ref = _reference_for(path, data, value, year)
+            _check_against(path, ref, value, top=False, strict=False)
+        except TaxLawSetError as e:
+            problems.append(str(e))
+    try:
+        _sanity(data)
+    except TaxLawSetError as e:
+        problems.append(str(e))
+    return problems
+
+
+def _check_applies_to(pin: str, dotted: str, period, year: int):
+    """The period a figure covers: the tax year unless the pin is multi-period."""
+    if pin not in _MULTI_PERIOD_PINS:
+        if period is None:
+            return year
+        if isinstance(period, bool) or not isinstance(period, int) or period != year:
+            raise TaxLawSetError(
+                f"{dotted}: applies_to {period!r} — this figure is a {year} figure "
+                f"or it does not belong in the {year} cache; --applies-to is "
+                "only for historical_top_rate (a year) and underpayment_rates "
+                "(a YYYY-Qn quarter)")
+        return year
+    if pin == "federal.historical_top_rate":
+        key_year = int(dotted.rsplit(".", 1)[-1]) if dotted != pin else None
+        if period is None:
+            period = key_year
+        if isinstance(period, bool) or not isinstance(period, int) \
+                or (key_year is not None and period != key_year):
+            raise TaxLawSetError(
+                f"{dotted}: applies_to must be the calendar year the rate "
+                f"applied to ({key_year})")
+        return period
+    # underpayment_rates: every entry carries its own effective date, so the
+    # period is optional — a year or a YYYY-Qn quarter when given.
+    if period is None:
+        return year
+    if (isinstance(period, bool) or not (isinstance(period, int)
+                                          or (isinstance(period, str) and _QUARTER.match(period)))):
+        raise TaxLawSetError(
+            f"{dotted}: applies_to must be a calendar year or a YYYY-Qn quarter")
+    return period
+
+
+def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
+               *, applies_to=None, now: "datetime | None" = None) -> dict:
+    """Write ONE validated figure into `tax_law_<year>.json`, pin its source
+    and date it. Returns {"dotted", "pin", "retrieved", "applies_to"}.
+
+    Refuses, writing nothing, when: the cache does not exist (run `create`),
+    its `tax_year` is not `year`, the dotted is outside the schema, the value
+    is null or the wrong shape or out of range, a block write does not carry
+    the schema's exact keys, an ordering is violated, the period is not the
+    one the pin allows, or the source host is not one the pinning policy
+    accepts.
+
+    `_provenance` is keyed by the FIGURE written (the block's pin when the
+    whole block is), each entry carrying its own source, so one re-fetched
+    leaf never re-dates its siblings; `_sources[pin]` records the first
+    source a block was read from and is replaced only by a whole-block write.
+    """
+    year = int(year)
+    if not _source_host_authoritative(source):
+        raise TaxLawSetError(
+            f"source {source!r} is not authoritative — an http(s) URL on a "
+            ".gov host or one of the explicit primary-authority exceptions "
+            "(_source_host_authoritative); a figure without a primary source "
+            "is not written")
+    if not isinstance(dotted, str) or not dotted or not all(dotted.split(".")):
+        raise TaxLawSetError(f"path {dotted!r} is not a dotted key path")
+    data = load_tax_law(year, workspace)
+    if data is None:
+        raise TaxLawSetError(
+            f"no tax_law_{year}.json in {redact(workspace)} — run `create {year}` "
+            "first; this command writes figures into the seed, never a new file")
+    if data.get("tax_year") != year:
+        raise TaxLawSetError(
+            f"the cache declares tax_year {data.get('tax_year')!r} but --year is "
+            f"{year} — refusing to write a figure for one year into another's cache")
+    ref = _reference_for(dotted, data, value, year)
+    _check_against(dotted, ref, value)
+    _set_path(data, dotted, value, year)
+    _sanity(data)
+    pin = _pin_key(dotted, data)
+    period = _check_applies_to(pin, dotted, applies_to, year)
+    when = (now or datetime.now()).replace(microsecond=0).isoformat()
+    whole_block = dotted == "state" or dotted in {p for _pin, p in _expected_pins(data)}
+    sources = data.get("_sources")
+    if not isinstance(sources, dict):
+        sources = {}
+    if whole_block or pin not in sources:
+        sources[pin] = source
+    data["_sources"] = sources
+    provenance = data.get("_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    key = pin if whole_block else dotted
+    # A write REPLACES everything under its own path, so an entry for a figure
+    # inside it is superseded. Left behind, that entry goes on dating the block
+    # from a retrieval this write has just overwritten — a re-fetched block
+    # could never clear STALE, which is a gate crying wolf on correct data.
+    for superseded in [k for k in provenance if k.startswith(f"{key}.")]:
+        del provenance[superseded]
+    provenance[key] = {"retrieved": when, "applies_to": period, "source": source}
+    data["_provenance"] = provenance
+    save_tax_law(year, data, workspace, stamp_fetched=False)
+    return {"dotted": dotted, "pin": pin, "retrieved": when, "applies_to": period}
+
+
+def _parse_cli_value(raw: str):
+    """JSON when it parses; a bare word is a string. A value that starts like
+    JSON and fails is a refusal, not a string — `[{bad` is a typo, not a name."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        if raw.lstrip()[:1] in ("[", "{", '"'):
+            raise TaxLawSetError(f"value is not valid JSON: {redact(e)}") from None
+        return raw
+
+
+def _set_main(argv: list) -> int:
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="tax_law_fetcher.py set",
+        description="Write one validated tax-law figure, pin its source and date its block.")
+    p.add_argument("dotted", help="dotted key path, e.g. federal.filing_statuses.mfj.standard_deduction")
+    p.add_argument("value", help="the figure as JSON (a number, a list, an object); a bare word is a string")
+    p.add_argument("--source", required=True, help="the authoritative URL the figure was read from")
+    p.add_argument("--year", required=True, type=int, help="the tax year; must equal the cache's tax_year")
+    p.add_argument("--workspace", default=".")
+    p.add_argument("--applies-to", default=None,
+                   help="the period the figure covers when it is not the tax year "
+                        "(a calendar year for historical_top_rate, a quarter for underpayment_rates)")
+    args = p.parse_args(argv)
+    try:
+        period = args.applies_to
+        if period is not None and re.fullmatch(r"\d{4}", period):
+            period = int(period)
+        out = set_figure(args.year, args.dotted, _parse_cli_value(args.value),
+                         args.source, args.workspace, applies_to=period)
+    except ValueError as e:  # TaxLawSetError is one
+        print(f"Error: {redact(e)}", file=sys.stderr)
+        return 1
+    print(json.dumps(out))
+    return 0
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python tax_law_fetcher.py <create|load|freshness|state> <year> [state|workspace] [workspace]")
+        print("Usage: python tax_law_fetcher.py <create|load|freshness|state> <year> [state|workspace] [workspace]\n"
+              "       python tax_law_fetcher.py set <dotted.path> <value> --source <url> --year <y> [--workspace .] [--applies-to <period>]")
         sys.exit(1)
 
     cmd = sys.argv[1]
+    if cmd == "set":
+        sys.exit(_set_main(sys.argv[2:]))
     if len(sys.argv) > 2:
         try:
             year = int(sys.argv[2])
@@ -1288,6 +2060,6 @@ if __name__ == "__main__":
         template = create_state_template(state, tax_year=year)
         print(json.dumps(template, indent=2))
     else:
-        print(f"Error: Unknown command '{cmd}'. Valid commands: create, load, freshness, state",
+        print(f"Error: Unknown command '{cmd}'. Valid commands: create, load, freshness, state, set",
               file=sys.stderr)
         sys.exit(1)

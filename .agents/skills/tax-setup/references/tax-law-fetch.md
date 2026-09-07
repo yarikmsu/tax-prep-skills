@@ -154,15 +154,17 @@ a figure from a prior year.
   only its fetched fields:
   - FL: Search `"Florida general state sales and use tax rate {year}
     site:floridarevenue.com"` and confirm the authoritative DOR result is
-    current/effective for `{year}` → `state.sales_tax.state_rate` (decimal).
-    Pin that general-rate page under `_sources["state.FL"]`. Then search
+    current/effective for `{year}` → `set state.sales_tax.state_rate` (decimal),
+    with `--source` the general-rate page — the command pins it under
+    `_sources["state.FL"]`. Then search
     `"Florida {county recorded in answers.md} county discretionary
     sales surtax rate {year} site:floridarevenue.com"` — use the county the
     taxpayer named in the Group 2 FL interview above (never infer it from the
-    ZIP) → `state.sales_tax.county_surtax_rate` (decimal, e.g. 0.01; 0.0 for
-    no-surtax counties). Pin the county table/page separately under
-    `_sources["state.FL.county_surtax_rate"]` (the authoritative-host audit
-    checks every source entry; `state.FL` remains the required state-block pin).
+    ZIP) → `set state.sales_tax.county_surtax_rate` (decimal, e.g. 0.01; 0.0 for
+    no-surtax counties), with `--source` the county table/page — the command
+    pins that one separately under `_sources["state.FL.county_surtax_rate"]`
+    (the authoritative-host audit checks every source entry; `state.FL` remains
+    the required state-block pin).
     If either current-year figure cannot be verified live, STOP under the
     freshness rule rather than retaining the template's `null`.
 - For other states: Search `"{state} {year} income tax rates"`. `type:
@@ -217,16 +219,49 @@ a figure from a prior year.
 **Check for new tax legislation:**
 - Search: `"federal tax law changes {year}"` to catch any mid-year legislation (like OBBBA for 2025)
 
-Save all fetched rates to `tax_law_{year}.json` using the structure from `agents/lib/tax_law_fetcher.py`.
+**Write every figure with the ingest command — never edit `tax_law_{year}.json`
+by hand.** The cache starts from the `create` command at the top of Step 4;
+each fetched figure then goes in through:
 
-**Pin the source per block (H4).** As you populate EACH fetched block, record
-the AUTHORITATIVE URL you fetched it from in the `_sources` map, keyed by block
-path — every populated federal rate/bracket block (`federal.filing_statuses`,
-`federal.capital_gains_rates`, `federal.child_tax_credit`, `federal.amt`,
-`federal.salt_cap`, `federal.qbi_threshold`, …), the single state block keyed by
-its **2-letter code** (`state.CA`), AND `exchange_rates` when foreign currencies
-are used. Example:
-`"_sources": {"federal.filing_statuses": "https://www.irs.gov/pub/irs-drop/rp-24-40.pdf", "federal.capital_gains_rates": "https://www.irs.gov/...", "state.CA": "https://www.ftb.ca.gov/...", "exchange_rates": "https://www.irs.gov/individuals/international-taxpayers/yearly-average-currency-exchange-rates"}`.
+```bash
+sh agents/lib/run.sh agents/lib/tax_law_fetcher.py set <dotted.path> '<value as JSON>' --source '<authoritative URL>' --year {year}
+```
+
+For example `set federal.filing_statuses.mfj.standard_deduction 32200 --source
+'https://www.irs.gov/pub/irs-drop/rp-25-32.pdf' --year {year}`, or a whole list:
+`set federal.filing_statuses.mfj.brackets '[{"rate":0.10,"min":0,"max":24800}, …]'`.
+The state block is written first from its template, then field by field:
+`set state "$(sh agents/lib/run.sh agents/lib/tax_law_fetcher.py state {year} CA)" --source '<FTB URL>' --year {year}`,
+then `set state.sdi_rate 0.012 --source '<EDD URL>' --year {year}`. The command
+REFUSES, writing nothing, when the path is not in the schema, the value has the
+wrong shape or is out of range (a rate above 1, a negative or ZERO amount — for an
+indexed figure a zero is the unfetched state wearing a number — a bracket list
+out of order, with a gap, or with a closed top bracket, any joint figure below
+its single one, a whole block carrying fewer keys than the seed), the cache's
+`tax_year` is not `--year`, or the source host is not authoritative — a refusal
+is a wrong reading to fix, never a reason to open the file in an editor.
+Brackets are half-open (each `min` equals the previous `max`); the IRS's "over
+$11,925" reading, transcribed as `min` 11926, is normalised, not refused. The
+last bracket's `max` is null. `--applies-to` names the period a figure covers
+only for `historical_top_rate` (the calendar year in the key) and
+`underpayment_rates` (a `YYYY-Qn` quarter, optional — the list dates itself);
+for every other figure the period IS the tax year, and any other value is
+refused at write time.
+
+**The command pins and dates the block (H4 + E7).** Each `set` records the
+`--source` URL under `_sources` keyed by block path — every fetched federal
+rate/bracket block (`federal.filing_statuses`, `federal.capital_gains_rates`,
+`federal.child_tax_credit`, `federal.amt`, `federal.salt_cap`,
+`federal.qbi_threshold`, …), the single state block keyed by its **2-letter
+code** (`state.CA`), `exchange_rates`, and `ptet.<STATE>` — the FIRST source a
+block was read from, replaced only by a whole-block write — and writes the
+retrieval time, applicable period and source under `_provenance`, keyed by the
+FIGURE written (the block's pin for a whole-block write). `freshness` is per
+block: the OLDEST entry under a pin dates the block, the OLDEST block decides,
+and the report names it (`oldest_block`, `block_ages`), so re-fetching one
+figure never re-dates its siblings. `freshness` also runs this command's
+validation over the whole cache, so a figure hand-edited around the command
+reads INCOMPLETE, never FRESH.
 Use only PRIMARY sources accepted by
 `tax_law_fetcher._source_host_authoritative` — any US-government `.gov` site
 (irs.gov, ftb.ca.gov, edd.ca.gov, tax.ny.gov, nj.gov, ssa.gov, treasury.gov,

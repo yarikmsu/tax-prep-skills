@@ -20,9 +20,14 @@ acceptance that a unit test cannot cover.
 
 ## 1. Fetch the year's law (`/tax-setup`, or by hand into `tax_law_<year>.json`)
 
-Fetch every block, from the authoritative source, and record the URL under
-`_sources` (K2). The sources are the IRS annual Revenue Procedure(s) and the
-enacting statute; state figures come from the state tax authority.
+Fetch every block, from the authoritative source, and write each figure with
+the ingest command — `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py set
+<dotted.path> '<value>' --source '<url>' --year <year>` — never by hand into the
+JSON. It validates the path and value against the schema seed, refuses a
+non-authoritative host, records the URL under `_sources` (K2) and the retrieval
+time and applicable period under `_provenance` (V4), so `freshness` can date
+each block on its own. The sources are the IRS annual Revenue Procedure(s) and
+the enacting statute; state figures come from the state tax authority.
 
 | Block | Source | Notes |
 |-------|--------|-------|
@@ -70,7 +75,8 @@ confirm each against the year's guidance and update the constant if it moved:
 ## 2. Pin every source (K2)
 
 Every fetched block records its authoritative URL in `tax_law_<year>.json`
-`_sources`. Then run the pinning verifier:
+`_sources`, and — written through `set` — its retrieval time in `_provenance`.
+Then run the pinning verifier:
 
 ```bash
 sh agents/lib/run.sh -c "from agents.lib.tax_law_fetcher import verify_source_pinning; \

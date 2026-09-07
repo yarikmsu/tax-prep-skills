@@ -140,6 +140,18 @@ sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json
 
 ### 4. Fetch Current Tax Law
 
+Seed the cache first, then write every fetched figure through the ingest
+command — never by editing the JSON:
+
+```bash
+sh agents/lib/run.sh agents/lib/tax_law_fetcher.py create {year}
+sh agents/lib/run.sh agents/lib/tax_law_fetcher.py set <dotted.path> '<value>' --source '<authoritative URL>' --year {year}
+```
+
+`set` validates the path and value against the schema, refuses a
+non-authoritative source, pins it under `_sources` and dates the block under
+`_provenance`; a refusal is a misread figure to fix, not a file to open.
+
 To fetch tax rates for the specified year from authoritative sources, search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL):
 
 The per-figure search list (federal, state, exchange rates, new-legislation

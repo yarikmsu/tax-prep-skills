@@ -94,3 +94,95 @@ layer. Enforcement of the read boundary (a closed tool set for the worker) is V6
   SUCCESS path while the refusal beside it redacted the very same name. The keys
   are masked; two sheets that mask to one key are a refusal rather than a
   silently shorter dict, which would drop a sheet of a return.
+
+## V4 — Tax-law ingest CLI with per-block provenance (P1) — PR #87
+
+**Defect (E7 and the hand-written cache):** the agent wrote `tax_law_<year>.json`
+by hand — wrong keys, unordered brackets, MFJ below single, blog URLs under
+`_sources` — and `save_tax_law` rewrote `_meta.fetched` on every save, so editing
+one figure re-dated the whole cache.
+
+**Shipped:**
+- `tax_law_fetcher.py set <dotted.path> <value> --source <url> --year <y>
+  [--applies-to <period>]` (`set_figure`): schema-validated path and value, year
+  assertion against the cache, sanity ranges (rates in [0, 1], amounts
+  non-negative, brackets contiguous and ascending from zero, dated lists and
+  tiers ascending, MFJ ≥ single, fifteen ≥ zero, standard deductions positive),
+  authoritative-source refusal. Every refusal writes nothing.
+- `_provenance`, a sibling of `_sources` keyed by the same pin: `{retrieved,
+  applies_to}` per block. Created lazily, not seeded — the auditor's acceptance
+  fixture is a digest of the seed.
+- `check_freshness` dates each block from `_provenance` (legacy fallback
+  `_meta.fetched`), the oldest block decides, and the report carries
+  `block_ages` and `oldest_block`. `_expected_pins` is the one roster for pinning
+  and dating. `save_tax_law(stamp_fetched=False)` preserves the legacy stamp.
+- tax-setup Step 4 gains `create` then `set`; the fetch reference and the
+  season-open runbook name the command and forbid hand edits.
+
+**Deferred, deliberately:** the freshness auditor definition is digest-pinned by
+the acceptance record; teaching it `_provenance` is an edit that demands the
+fresh-session replay, which rides with Y2 (the season-open runbook).
+
+**Review round (bias reviewer 6, code review 7, cleanup 16; before merge):**
+- `_meta` fallback minted a `fetched` stamp for a cache with no usable `_meta`,
+  dating every un-provenanced block today — E7 by the fallback door; a
+  `stamp_fetched=False` save now writes `_meta` without one, so such a cache
+  stays undatable and reads STALE.
+- `_provenance` was keyed at BLOCK scope, so one re-fetched leaf re-dated its
+  siblings and replaced the block's source with a page holding only that leaf.
+  It is keyed by the figure written (the pin for a whole-block write), each
+  entry carrying its source; the oldest entry under a pin dates the block, and
+  `_sources[pin]` keeps the first source unless the whole block is rewritten.
+- `_check_brackets` accepted a closed top bracket, and `compute_bracket_tax`
+  returned the tax on the part below it — an unbounded silent under-statement.
+  The last `max` must be null, and the engine raises when income runs past a
+  closed table. The IRS's inclusive "over X" reading is normalised, not refused.
+- `applies_to` was checked only when it happened to be an `int`; it is validated
+  at write time (the tax year, a calendar year for `historical_top_rate`, an
+  optional `YYYY-Qn` for `underpayment_rates`), and a `retrieved` in the future
+  is INCOMPLETE.
+- A block written with fewer keys than the seed replaced a fuller one, and a
+  leaf under a missing parent materialised `{}` — both invisible to the
+  freshness walker. A block write must carry exactly the seed's keys; a missing
+  parent is seeded from the schema. Whole `federal`/`ptet` writes are refused
+  (they crashed in the pin key).
+- The MFJ-at-least-single rule is derived from the schema (every dict with
+  numeric `mfj`/`single` leaves) plus a short table of non-sibling orderings
+  (hoh ≥ single ≥ mfs, 15% ≥ 0% breakpoints, `refundable_limit` ≤
+  `amount_per_child` per §24(d)(1)(A)); an indexed amount of zero is refused
+  everywhere, not at five listed paths.
+- `check_freshness` runs the write path's validation (`validate_cache`) over the
+  whole cache, so a hand-edited figure reads INCOMPLETE; `load_tax_law` refuses
+  a cache holding any non-finite number (`1e400` parses to inf and defeated every
+  `is None` guard), reported as INCOMPLETE by `freshness`.
+- Cleanup: one dotted walker, one ascending-list validator, path-anchored table
+  validators, `_check_number` derives the rate-ness from the path, one `now` per
+  audit.
+
+**Review round (Codex, local, against the branch below):** four findings, all
+fixed. Three of them are about a figure's AGE, which is the whole of what the
+freshness contract measures.
+
+- **A leaf write re-dated the figures beside it.** A block was dated from its
+  `_provenance` entries alone once it had any, so one `set` against a cache
+  written before this command reported every untouched figure in that block as
+  retrieved today — stale law passing the freshness contract, the direction
+  AGENTS.md §4 makes a hard error, reached by the ingest path's ordinary use.
+  A dotted entry now dates ONE figure and the block keeps `_meta.fetched` for
+  the rest; the legacy stamp drops out once every populated figure under the
+  pin is covered, so re-fetching a block figure by figure still clears it.
+- **A block write left the entries inside it behind.** They went on dating the
+  block from a retrieval the write had just overwritten, so a complete
+  re-fetch could not clear STALE — a gate crying wolf on correct data. A write
+  now supersedes every entry under its own path.
+- **A `retrieved` time with an offset crashed the check.** `fromisoformat`
+  returns an AWARE datetime for a stamp written `+00:00` or with a `Z`, and
+  comparing one against the naive `datetime.now()` this module dates
+  everything from raises TypeError — reachable through `set_figure` itself by
+  passing an aware `now`. Both sides are normalised to local wall clock.
+- **A state could not say it has no standard deduction.** New Jersey has none;
+  the schema's null means "not fetched", so refusing every zero left the
+  figure unstatable — writing it failed and leaving it null read INCOMPLETE
+  for ever on a figure that had been read correctly. A zero is a figure under
+  `state.`; a federal zero is still the unfetched state wearing a number,
+  every federal amount here being indexed.

@@ -101,7 +101,7 @@ def _complete_federal_ty2026_tax_law():
     fed = tl["federal"]
     brackets = [{"rate": 0.10, "min": 0, "max": 12000},
                 {"rate": 0.22, "min": 12000, "max": 200000},
-                {"rate": 0.35, "min": 200000, "max": 99999999}]
+                {"rate": 0.35, "min": 200000, "max": None}]
     for s in ("single", "mfj", "mfs", "hoh"):
         fed["filing_statuses"][s]["standard_deduction"] = 15750
         fed["filing_statuses"][s]["brackets"] = brackets

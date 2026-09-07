@@ -3,7 +3,7 @@ null exception (Codex P1 on PR #29)."""
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -348,7 +348,7 @@ def test_freshness_unpinned_is_advisory_not_status_flip(tmp_path):
             "fbar_threshold": 10000,
             "filing_statuses": {"single": {"standard_deduction": 15000,
                                            "brackets": [{"rate": 0.10, "min": 0,
-                                                         "max": 11925}]}},
+                                                         "max": None}]}},
             "amt": {"exemption": {"single": 88100, "mfj": 137000, "mfs": 68500},
                     "phaseout_start": {"single": 626350, "mfj": 1252700,
                                        "mfs": 626350},
@@ -1231,3 +1231,693 @@ class TestCacheReparsePointGuard:
         cache = get_tax_law_path(2025, str(tmp_path))
         cache.write_text(json.dumps(create_empty_tax_law(2025)))
         assert load_tax_law(2025, str(tmp_path))["tax_year"] == 2025
+
+
+# ---------------------------------------------------------------------------
+# V4 — the tax-law ingest CLI and per-block provenance.
+#
+# The agent used to write `tax_law_<year>.json` by hand: a figure typed into the
+# wrong key, a bracket list out of order, a `.com` source pasted under
+# `_sources`, and `save_tax_law` re-dating the WHOLE cache on every save (E7),
+# so editing one figure made every other block look freshly retrieved. `set`
+# is the one write path now: schema-validated, year-asserted, source-checked,
+# and dated per block in `_provenance` beside the string-valued `_sources`.
+# ---------------------------------------------------------------------------
+
+from agents.lib.tax_law_fetcher import (  # noqa: E402
+    TaxLawSetError,
+    _expected_pins,
+    set_figure,
+)
+
+IRS = "https://www.irs.gov/pub/irs-drop/rp-25-32.pdf"
+FTB = "https://www.ftb.ca.gov/forms/2026/2026-540-booklet.html"
+NOW = datetime(2026, 9, 5, 12, 0, 0)
+
+
+def _fresh_cache(tmp_path, year=2026):
+    """A `create`d scaffold whose `_meta.fetched` is a month old, so a test can
+    tell a preserved stamp from a re-dated one."""
+    save_tax_law(year, create_empty_tax_law(year), str(tmp_path))
+    p = tmp_path / f"tax_law_{year}.json"
+    data = json.loads(p.read_text())
+    data["_meta"]["fetched"] = datetime(2026, 8, 1).isoformat()
+    p.write_text(json.dumps(data))
+    return p
+
+
+def _set(tmp_path, path, value, source=IRS, year=2026, **kw):
+    kw.setdefault("now", NOW)
+    return set_figure(year, path, value, source, workspace=str(tmp_path), **kw)
+
+
+def _read(tmp_path, year=2026):
+    return json.loads((tmp_path / f"tax_law_{year}.json").read_text())
+
+
+class TestSetFigureWritesOneValidatedFigure:
+
+    def test_a_leaf_is_written_pinned_and_dated_per_block(self, tmp_path):
+        _fresh_cache(tmp_path)
+        out = _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction", 32200)
+        data = _read(tmp_path)
+        assert data["federal"]["filing_statuses"]["mfj"]["standard_deduction"] == 32200
+        assert data["_sources"]["federal.filing_statuses"] == IRS
+        # Dated per FIGURE: one re-fetched leaf never re-dates its siblings.
+        prov = data["_provenance"]["federal.filing_statuses.mfj.standard_deduction"]
+        assert prov == {"retrieved": NOW.isoformat(), "applies_to": 2026, "source": IRS}
+        assert "federal.filing_statuses" not in data["_provenance"]
+        assert out["pin"] == "federal.filing_statuses"
+        # E7: the cache-wide stamp is NOT re-dated by a per-block write.
+        assert data["_meta"]["fetched"] == datetime(2026, 8, 1).isoformat()
+        assert data["tax_year"] == 2026
+
+    def test_the_year_must_match_the_cache(self, tmp_path):
+        _fresh_cache(tmp_path)
+        (tmp_path / "tax_law_2027.json").write_text(
+            json.dumps(dict(_read(tmp_path), tax_year=2026)))
+        with pytest.raises(TaxLawSetError, match="tax_year"):
+            _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction",
+                 32200, year=2027)
+
+    def test_a_missing_cache_is_refused_not_created(self, tmp_path):
+        with pytest.raises(TaxLawSetError, match="create"):
+            _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction", 32200)
+        assert not (tmp_path / "tax_law_2026.json").exists()
+
+    @pytest.mark.parametrize("path", [
+        "tax_year", "_meta.fetched", "_sources.federal.amt",
+        "_provenance.federal.amt", "federal._note", "nonsense",
+        "federal.no_such_block", "federal.filing_statuses.mfj.bonus",
+        "federal.filing_statuses.qss.standard_deduction",
+    ])
+    def test_a_path_outside_the_schema_is_refused(self, tmp_path, path):
+        _fresh_cache(tmp_path)
+        before = (tmp_path / "tax_law_2026.json").read_text()
+        with pytest.raises(TaxLawSetError):
+            _set(tmp_path, path, 1)
+        assert (tmp_path / "tax_law_2026.json").read_text() == before
+
+    def test_a_non_authoritative_source_is_refused_and_nothing_is_written(self, tmp_path):
+        _fresh_cache(tmp_path)
+        before = (tmp_path / "tax_law_2026.json").read_text()
+        for url in ("https://smartasset.com/taxes", "javascript://www.irs.gov/x",
+                    "irs.gov", "", None):
+            with pytest.raises(TaxLawSetError, match="authoritative"):
+                _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction",
+                     32200, source=url)
+        assert (tmp_path / "tax_law_2026.json").read_text() == before
+
+    @pytest.mark.parametrize("value", [None, True, "32200", float("nan"),
+                                       float("inf"), -1, [32200], {"x": 1}])
+    def test_a_number_leaf_takes_only_a_finite_non_negative_number(self, tmp_path, value):
+        _fresh_cache(tmp_path)
+        with pytest.raises(TaxLawSetError):
+            _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction", value)
+
+    def test_a_rate_leaf_is_bounded_to_the_unit_interval(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "state", create_state_template("CA"), source=FTB)
+        _set(tmp_path, "state.sdi_rate", 0.012, source=FTB)
+        with pytest.raises(TaxLawSetError, match="rate"):
+            _set(tmp_path, "state.sdi_rate", 1.2, source=FTB)
+        with pytest.raises(TaxLawSetError, match="rate"):
+            _set(tmp_path, "federal.additional_medicare_tax.rate", 9)
+
+    def test_a_structural_constant_keeps_its_type(self, tmp_path):
+        _fresh_cache(tmp_path)
+        with pytest.raises(TaxLawSetError):
+            _set(tmp_path, "federal.capital_gains_rates.twenty_pct_above", 1)
+        _set(tmp_path, "federal.capital_gains_rates.twenty_pct_above", False)
+        assert _read(tmp_path)["federal"]["capital_gains_rates"]["twenty_pct_above"] is False
+
+
+class TestSetFigureValidatesBrackets:
+    GOOD = [{"rate": 0.10, "min": 0, "max": 24800},
+            {"rate": 0.12, "min": 24800, "max": 100800},
+            {"rate": 0.22, "min": 100800, "max": None}]
+
+    def test_a_contiguous_ascending_list_is_accepted(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.filing_statuses.mfj.brackets", self.GOOD)
+        assert _read(tmp_path)["federal"]["filing_statuses"]["mfj"]["brackets"] == self.GOOD
+
+    @pytest.mark.parametrize("bad, why", [
+        ([], "empty"),
+        ([{"rate": 0.10, "min": 0, "max": 100}, {"rate": 0.12, "min": 200, "max": None}], "contiguous"),
+        ([{"rate": 0.10, "min": 0, "max": 100}, {"rate": 0.09, "min": 100, "max": None}], "ascending"),
+        ([{"rate": 1.5, "min": 0, "max": None}], "rate"),
+        ([{"rate": 0.10, "min": 0, "max": 100}, {"rate": 0.12, "min": 100, "max": 50}], "max"),
+        ([{"rate": 0.10, "min": 0, "max": None}, {"rate": 0.12, "min": 100, "max": None}], "last"),
+        ([{"rate": 0.10, "min": 5, "max": None}], "zero"),
+        ([{"rate": 0.10, "max": None}], "min"),
+        ("not a list", "list"),
+    ])
+    def test_a_malformed_list_is_refused(self, tmp_path, bad, why):
+        _fresh_cache(tmp_path)
+        with pytest.raises(TaxLawSetError, match=why):
+            _set(tmp_path, "federal.filing_statuses.mfj.brackets", bad)
+
+    def test_underpayment_rates_need_dated_ascending_entries(self, tmp_path):
+        _fresh_cache(tmp_path)
+        good = [{"effective_from": "2026-04-01", "annual_rate": 0.07},
+                {"effective_from": "2026-07-01", "annual_rate": 0.08}]
+        _set(tmp_path, "federal.underpayment_rates", good)
+        with pytest.raises(TaxLawSetError, match="ascending"):
+            _set(tmp_path, "federal.underpayment_rates", list(reversed(good)))
+        with pytest.raises(TaxLawSetError, match="effective_from"):
+            _set(tmp_path, "federal.underpayment_rates",
+                 [{"effective_from": "April", "annual_rate": 0.07}])
+
+    def test_irmaa_tiers_need_ascending_thresholds(self, tmp_path):
+        _fresh_cache(tmp_path)
+        good = [{"magi_threshold": 106000, "annual_surcharge_per_person": 888},
+                {"magi_threshold": 133000, "annual_surcharge_per_person": 2220}]
+        _set(tmp_path, "federal.irmaa.tiers.single", good)
+        with pytest.raises(TaxLawSetError, match="ascending"):
+            _set(tmp_path, "federal.irmaa.tiers.single", list(reversed(good)))
+
+
+class TestSetFigureCrossChecksTheStatuses:
+
+    def test_mfj_must_be_at_least_single(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction", 32200)
+        with pytest.raises(TaxLawSetError, match="mfj"):
+            _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 40000)
+        _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 16100)
+        _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit",
+             {"single": 49450, "mfj": 98900})
+        with pytest.raises(TaxLawSetError, match="mfj"):
+            _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit",
+                 {"single": 545500, "mfj": 500000})
+
+    def test_fifteen_must_be_above_zero_limit(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit",
+             {"single": 49450, "mfj": 98900})
+        with pytest.raises(TaxLawSetError, match="fifteen_pct_limit"):
+            _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit",
+                 {"single": 40000, "mfj": 98900})
+
+    def test_a_block_value_may_not_carry_keys_the_schema_lacks(self, tmp_path):
+        _fresh_cache(tmp_path)
+        with pytest.raises(TaxLawSetError, match="hoh"):
+            _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit",
+                 {"single": 49450, "mfj": 98900, "hoh": 66000})
+
+
+class TestSetFigureOnStateAndDynamicBlocks:
+
+    def test_the_state_block_is_written_from_its_template_and_pinned_by_code(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "state", create_state_template("CA"), source=FTB)
+        _set(tmp_path, "state.standard_deduction.mfj", 11080, source=FTB)
+        data = _read(tmp_path)
+        assert data["state"]["code"] == "CA"
+        assert data["state"]["standard_deduction"]["mfj"] == 11080
+        assert data["_sources"] == {"state.CA": FTB}
+        # The whole-block write is dated under the pin; the leaf under its path.
+        assert set(data["_provenance"]) == {"state.CA", "state.standard_deduction.mfj"}
+
+    def test_a_state_field_needs_the_block_first(self, tmp_path):
+        _fresh_cache(tmp_path)
+        with pytest.raises(TaxLawSetError, match="state"):
+            _set(tmp_path, "state.sdi_rate", 0.012, source=FTB)
+
+    def test_a_state_block_with_the_wrong_key_set_is_refused(self, tmp_path):
+        _fresh_cache(tmp_path)
+        block = dict(create_state_template("CA"))
+        block["nyc_tax"] = {}
+        with pytest.raises(TaxLawSetError, match="nyc_tax"):
+            _set(tmp_path, "state", block, source=FTB)
+        block = dict(create_state_template("CA"))
+        del block["sdi_rate"]
+        with pytest.raises(TaxLawSetError, match="sdi_rate"):
+            _set(tmp_path, "state", block, source=FTB)
+
+    def test_a_state_field_outside_the_template_is_refused(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "state", create_state_template("CA"), source=FTB)
+        with pytest.raises(TaxLawSetError, match="sales_tax"):
+            _set(tmp_path, "state.sales_tax.state_rate", 0.06, source=FTB)
+
+    def test_florida_county_rate_takes_its_own_pin(self, tmp_path):
+        _fresh_cache(tmp_path)
+        dor = "https://floridarevenue.com/taxes/taxesfees/Pages/sales_tax.aspx"
+        _set(tmp_path, "state", create_state_template("FL"), source=dor)
+        _set(tmp_path, "state.sales_tax.state_rate", 0.06, source=dor)
+        county = "https://floridarevenue.com/forms_library/current/dr15dss.pdf"
+        _set(tmp_path, "state.sales_tax.county_surtax_rate", 0.01, source=county)
+        data = _read(tmp_path)
+        assert data["_sources"] == {"state.FL": dor,
+                                    "state.FL.county_surtax_rate": county}
+        assert data["_provenance"]["state.FL.county_surtax_rate"]["retrieved"] == NOW.isoformat()
+
+    def test_exchange_rates_take_an_upper_case_currency_and_a_positive_rate(self, tmp_path):
+        _fresh_cache(tmp_path)
+        url = "https://www.irs.gov/individuals/international-taxpayers/yearly-average-currency-exchange-rates"
+        _set(tmp_path, "exchange_rates.EUR", 0.92, source=url)
+        data = _read(tmp_path)
+        assert data["exchange_rates"] == {"EUR": 0.92}
+        assert data["_sources"]["exchange_rates"] == url
+        with pytest.raises(TaxLawSetError, match="currency"):
+            _set(tmp_path, "exchange_rates.eur", 0.92, source=url)
+        with pytest.raises(TaxLawSetError):
+            _set(tmp_path, "exchange_rates.GBP", 0, source=url)
+
+    def test_historical_top_rate_is_keyed_by_year_and_is_a_rate(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.historical_top_rate.2019", 0.37, applies_to=2019)
+        prov = _read(tmp_path)["_provenance"]["federal.historical_top_rate.2019"]
+        assert prov["applies_to"] == 2019
+        with pytest.raises(TaxLawSetError, match="calendar year"):
+            _set(tmp_path, "federal.historical_top_rate.2018", 0.37, applies_to=2019)
+        with pytest.raises(TaxLawSetError, match="year"):
+            _set(tmp_path, "federal.historical_top_rate.abc", 0.37)
+        with pytest.raises(TaxLawSetError, match="rate"):
+            _set(tmp_path, "federal.historical_top_rate.2018", 37)
+
+    def test_ptet_takes_a_schedule_per_entity_state(self, tmp_path):
+        _fresh_cache(tmp_path)
+        url = "https://www.ftb.ca.gov/file/business/credits/pass-through-entity-elective-tax.html"
+        _set(tmp_path, "ptet.CA", {"schedule": [[0, 0.093, 0]], "vintage": "AB 150"},
+             source=url)
+        data = _read(tmp_path)
+        assert data["ptet"]["CA"]["schedule"] == [[0, 0.093, 0]]
+        assert data["_sources"]["ptet.CA"] == url
+        with pytest.raises(TaxLawSetError, match="lower"):
+            _set(tmp_path, "ptet.NY", {"schedule": [[1000, 0.0685, 0]], "vintage": "x"},
+                 source="https://www.tax.ny.gov/bus/ptet/")
+        with pytest.raises(TaxLawSetError, match="state"):
+            _set(tmp_path, "ptet.California", {"schedule": [[0, 0.093, 0]], "vintage": "x"},
+                 source=url)
+
+
+class TestFreshnessIsPerBlock:
+    """E7: `_meta.fetched` stood in for retrieval time, and `save_tax_law`
+    rewrote it on every save. Freshness is the OLDEST block now, with the
+    cache-wide stamp as the legacy fallback for a block that has no entry."""
+
+    def _populated(self, tmp_path, meta_fetched, provenance, others=None):
+        """A cache the walker reports no gaps on — the readiness fixture's
+        complete federal side plus a no-tax state — so status turns on age
+        alone. Every populated block is pinned. `others` dates every block
+        `provenance` does not name; left None, those blocks have no entry and
+        fall back to the cache-wide stamp."""
+        from tests.test_ty2026_readiness import _complete_federal_ty2026_tax_law
+        data = _complete_federal_ty2026_tax_law()
+        data["state"] = create_state_template("TX", tax_year=2026)
+        data["_sources"] = {pin: IRS for pin, _ in _expected_pins(data)}
+        if others is not None and isinstance(provenance, dict):
+            provenance = dict({pin: {"retrieved": others.isoformat(), "applies_to": 2026}
+                               for pin, _ in _expected_pins(data)}, **provenance)
+        data["_provenance"] = provenance
+        data["_meta"] = {"tax_year": 2026, "fetched": meta_fetched.isoformat(),
+                         "source": "x"}
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        res = check_freshness(2026, str(tmp_path))
+        return res, [f for f in res["null_fields"] if "_provenance" in f]
+
+    def test_the_oldest_block_decides(self, tmp_path):
+        res, _ = self._populated(
+            tmp_path, datetime.now(),
+            {"federal.filing_statuses": {"retrieved": datetime.now().isoformat(),
+                                         "applies_to": 2026},
+             "federal.capital_gains_rates": {
+                 "retrieved": (datetime.now() - timedelta(days=40)).isoformat(),
+                 "applies_to": 2026}},
+            others=datetime.now())
+        assert res["status"] == "STALE"
+        assert res["age_days"] == 40
+        assert res["oldest_block"] == "federal.capital_gains_rates"
+        assert "federal.capital_gains_rates" in res["recommendation"]
+        assert res["block_ages"]["federal.filing_statuses"] == 0
+        assert res["block_ages"]["federal.capital_gains_rates"] == 40
+        assert set(res["block_ages"]) == {p for p, _ in _expected_pins(
+            json.loads((tmp_path / "tax_law_2026.json").read_text()))}
+
+    def test_a_stale_cache_wide_stamp_does_not_age_blocks_that_are_dated(self, tmp_path):
+        recent = datetime.now().isoformat()
+        res, _ = self._populated(
+            tmp_path, datetime.now() - timedelta(days=300),
+            {"federal.filing_statuses": {"retrieved": recent, "applies_to": 2026},
+             "federal.capital_gains_rates": {"retrieved": recent, "applies_to": 2026}},
+            others=datetime.now())
+        assert res["status"] == "FRESH", res
+        assert res["age_days"] == 0
+
+    def test_a_block_without_an_entry_falls_back_to_the_legacy_stamp(self, tmp_path):
+        res, _ = self._populated(
+            tmp_path, datetime.now() - timedelta(days=300),
+            {"federal.filing_statuses": {"retrieved": datetime.now().isoformat(),
+                                         "applies_to": 2026}})
+        assert res["status"] == "STALE"
+        assert res["age_days"] == 300
+        assert res["block_ages"]["federal.filing_statuses"] == 0
+        assert res["block_ages"]["federal.capital_gains_rates"] == 300
+        assert res["block_ages"][res["oldest_block"]] == 300
+
+    def test_a_legacy_cache_with_no_provenance_reads_as_before(self, tmp_path):
+        res, _ = self._populated(tmp_path, datetime.now() - timedelta(days=3), {})
+        assert res["status"] == "FRESH" and res["age_days"] == 3
+        assert res["oldest_block"] is None or res["oldest_block"] in res["block_ages"]
+
+    def test_a_malformed_provenance_block_is_incomplete(self, tmp_path):
+        for bad in (["x"], {"federal.filing_statuses": "2026-01-01"},
+                    {"federal.filing_statuses": {"retrieved": "yesterday",
+                                                 "applies_to": 2026}}):
+            res, prov = self._populated(tmp_path, datetime.now(), bad)
+            assert res["status"] == "INCOMPLETE", bad
+            assert prov, bad
+
+    def test_a_block_that_applies_to_another_year_is_incomplete(self, tmp_path):
+        res, prov = self._populated(
+            tmp_path, datetime.now(),
+            {"federal.filing_statuses": {"retrieved": datetime.now().isoformat(),
+                                         "applies_to": 2025}})
+        assert res["status"] == "INCOMPLETE"
+        assert any("applies_to" in f and "2025" in f for f in prov)
+
+    def test_the_multi_period_blocks_may_name_another_year(self, tmp_path):
+        data = create_empty_tax_law(2026)
+        data["federal"]["historical_top_rate"] = {"2019": 0.37}
+        data["federal"]["underpayment_rates"] = [
+            {"effective_from": "2027-01-01", "annual_rate": 0.07}]
+        data["_sources"] = {"federal.historical_top_rate": IRS,
+                            "federal.underpayment_rates": IRS}
+        data["_provenance"] = {
+            "federal.historical_top_rate": {"retrieved": datetime.now().isoformat(),
+                                            "applies_to": 2019},
+            "federal.underpayment_rates": {"retrieved": datetime.now().isoformat(),
+                                           "applies_to": "2027-Q1"}}
+        data["_meta"] = {"tax_year": 2026, "fetched": datetime.now().isoformat()}
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        res = check_freshness(2026, str(tmp_path))
+        assert not [f for f in res["null_fields"] if "_provenance" in f], res["null_fields"]
+
+    def test_expected_pins_is_the_shared_block_roster(self):
+        data = create_empty_tax_law(2026)
+        data["federal"]["salt_cap"] = {"amount": 40400, "mfs_amount": 20200}
+        data["state"] = create_state_template("FL")
+        data["state"]["sales_tax"] = {"state_rate": 0.06, "county_surtax_rate": 0.01}
+        data["exchange_rates"] = {"EUR": 0.92}
+        assert [k for k, _ in _expected_pins(data)] == [
+            "federal.salt_cap", "state.FL", "state.FL.county_surtax_rate",
+            "exchange_rates"]
+
+
+class TestTheSetCli:
+
+    def _run(self, *args, cwd):
+        import subprocess
+        return subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parent.parent
+                                 / "agents" / "lib" / "tax_law_fetcher.py"), *args],
+            capture_output=True, text=True, cwd=str(cwd))
+
+    def test_set_round_trips_through_the_command_line(self, tmp_path):
+        _fresh_cache(tmp_path)
+        proc = self._run("set", "federal.filing_statuses.mfj.standard_deduction",
+                         "32200", "--source", IRS, "--year", "2026", cwd=tmp_path)
+        assert proc.returncode == 0, proc.stderr
+        data = _read(tmp_path)
+        assert data["federal"]["filing_statuses"]["mfj"]["standard_deduction"] == 32200
+        assert "federal.filing_statuses.mfj.standard_deduction" in data["_provenance"]
+        proc = self._run("set", "federal.filing_statuses.mfj.brackets",
+                         json.dumps(TestSetFigureValidatesBrackets.GOOD),
+                         "--source", IRS, "--year", "2026", cwd=tmp_path)
+        assert proc.returncode == 0, proc.stderr
+        assert len(_read(tmp_path)["federal"]["filing_statuses"]["mfj"]["brackets"]) == 3
+
+    def test_a_refusal_is_one_error_line_and_exit_1(self, tmp_path):
+        _fresh_cache(tmp_path)
+        proc = self._run("set", "federal.filing_statuses.mfj.standard_deduction",
+                         "32200", "--source", "https://nerdwallet.com/x",
+                         "--year", "2026", cwd=tmp_path)
+        assert proc.returncode == 1
+        assert proc.stderr.startswith("Error: ") and "Traceback" not in proc.stderr
+        proc = self._run("set", "federal.filing_statuses.mfj.brackets", "[{bad",
+                         "--source", IRS, "--year", "2026", cwd=tmp_path)
+        assert proc.returncode == 1 and "JSON" in proc.stderr
+
+    def test_a_bare_word_is_a_string_and_a_numeral_is_a_number(self, tmp_path):
+        _fresh_cache(tmp_path)
+        proc = self._run("set", "state", json.dumps(create_state_template("CA")),
+                         "--source", FTB, "--year", "2026", cwd=tmp_path)
+        assert proc.returncode == 0, proc.stderr
+        proc = self._run("set", "state.sdi_rate", "0.012", "--source", FTB,
+                         "--year", "2026", cwd=tmp_path)
+        assert proc.returncode == 0, proc.stderr
+        assert _read(tmp_path)["state"]["sdi_rate"] == 0.012
+        # The bare word: no quotes on the command line, a string in the file.
+        proc = self._run("set", "state.type", "graduated_income", "--source", FTB,
+                         "--year", "2026", cwd=tmp_path)
+        assert proc.returncode == 0, proc.stderr
+        assert _read(tmp_path)["state"]["type"] == "graduated_income"
+
+
+class TestTheDocumentsNameTheIngestPath:
+
+    def test_the_fetch_reference_writes_through_set_and_never_by_hand(self):
+        fetch = (Path(__file__).resolve().parent.parent / ".agents" / "skills"
+                 / "tax-setup" / "references" / "tax-law-fetch.md").read_text()
+        assert "tax_law_fetcher.py set" in fetch
+        assert "--source" in fetch and "--year" in fetch
+        assert "by hand" in fetch.lower()
+        assert "_provenance" in fetch
+
+    def test_the_runbook_writes_through_set_and_names_the_per_block_dates(self):
+        """The auditor definition is deliberately NOT updated here: its bytes
+        are digest-pinned by the acceptance record, and an edit demands the
+        fresh-session replay — scheduled with the season-open runbook (Y2)."""
+        root = Path(__file__).resolve().parent.parent
+        runbook = (root / "docs" / "ops" / "season-open-runbook.md").read_text()
+        assert "tax_law_fetcher.py set" in runbook
+        assert "_provenance" in runbook
+
+
+class TestTheReviewRoundRules:
+    """The rules the pre-merge review round added to `set` and to the
+    freshness audit. Each is a door the first cut left open, named in the
+    docstring; every synthetic figure is a plausible transcription slip."""
+
+    def test_a_closed_top_bracket_is_refused_and_a_closed_table_cannot_undertax(self, tmp_path):
+        """Dropping the "and over" row passed every check, and
+        `compute_bracket_tax` returned the tax on the part below it."""
+        from agents.lib.tax_computations import compute_bracket_tax
+        _fresh_cache(tmp_path)
+        closed = [{"rate": 0.10, "min": 0, "max": 11925},
+                  {"rate": 0.12, "min": 11925, "max": 48475}]
+        with pytest.raises(TaxLawSetError, match="last bracket's max must be null"):
+            _set(tmp_path, "federal.filing_statuses.single.brackets", closed)
+        with pytest.raises(ValueError, match="closed bracket table"):
+            compute_bracket_tax(60000, closed)
+        assert compute_bracket_tax(40000, closed)[0] == pytest.approx(1192.5 + 0.12 * 28075)
+
+    def test_the_irs_inclusive_reading_is_normalised_not_refused(self, tmp_path):
+        """'Over $11,925 but not over $48,475' transcribes as min 11926; the
+        bounds are half-open, so it is normalised to the previous max."""
+        _fresh_cache(tmp_path)
+        inclusive = [{"rate": 0.10, "min": 0, "max": 11925},
+                     {"rate": 0.12, "min": 11926, "max": None}]
+        _set(tmp_path, "federal.filing_statuses.single.brackets", inclusive)
+        assert _read(tmp_path)["federal"]["filing_statuses"]["single"]["brackets"][1]["min"] == 11925
+        with pytest.raises(TaxLawSetError, match="half-open"):
+            _set(tmp_path, "federal.filing_statuses.single.brackets",
+                 [{"rate": 0.10, "min": 0, "max": 11925},
+                  {"rate": 0.12, "min": 12000, "max": None}])
+
+    def test_a_partial_block_is_refused_and_a_leaf_write_seeds_its_parent(self, tmp_path):
+        """A block written with fewer keys than the seed replaced a fuller one,
+        and a leaf under a missing parent materialised `{}` — both invisible
+        to the freshness walker, which only sees keys that are present."""
+        _fresh_cache(tmp_path)
+        with pytest.raises(TaxLawSetError, match="exactly the schema's keys"):
+            _set(tmp_path, "federal.filing_statuses.single", {"standard_deduction": 15000})
+        data = _read(tmp_path)
+        del data["federal"]["amt"]
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        _set(tmp_path, "federal.amt.exemption.single", 90400)
+        amt = _read(tmp_path)["federal"]["amt"]
+        assert amt["exemption"] == {"single": 90400, "mfj": None, "mfs": None}
+        assert set(amt) == set(create_empty_tax_law(2026)["federal"]["amt"])
+        res = check_freshness(2026, str(tmp_path))
+        assert any("federal.amt.exemption.mfj" in f for f in res["null_fields"])
+
+    def test_a_whole_federal_or_ptet_write_is_refused_not_a_traceback(self, tmp_path):
+        _fresh_cache(tmp_path)
+        for dotted in ("federal", "ptet"):
+            with pytest.raises(TaxLawSetError, match="too coarse"):
+                _set(tmp_path, dotted, {"x": 1})
+
+    def test_provenance_is_per_figure_and_the_oldest_entry_under_a_pin_dates_the_block(self, tmp_path):
+        """One re-fetched leaf used to re-date the whole block (E7 at block
+        scope) and overwrite the block's source with a page holding only
+        that leaf."""
+        _fresh_cache(tmp_path)
+        old = NOW.replace(year=NOW.year - 1)
+        _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction", 32200, now=old)
+        _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 16100)
+        data = _read(tmp_path)
+        assert set(data["_provenance"]) == {
+            "federal.filing_statuses.mfj.standard_deduction",
+            "federal.filing_statuses.single.standard_deduction"}
+        assert data["_sources"]["federal.filing_statuses"] == IRS
+        res = check_freshness(2026, str(tmp_path))
+        assert res["block_ages"]["federal.filing_statuses"] >= 364
+        assert res["oldest_block"] == "federal.filing_statuses"
+
+    def test_a_cache_with_no_usable_meta_is_not_re_dated_by_a_set(self, tmp_path):
+        """`save_tax_law(stamp_fetched=False)` minted `_meta.fetched` when
+        `_meta` was missing, dating every un-provenanced block today."""
+        _fresh_cache(tmp_path)
+        data = _read(tmp_path)
+        del data["_meta"]
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        _set(tmp_path, "federal.fbar_threshold", 10000)
+        data = _read(tmp_path)
+        assert "fetched" not in data["_meta"]
+        assert check_freshness(2026, str(tmp_path))["status"] != "FRESH"
+
+    def test_applies_to_is_checked_at_write_time_whatever_its_spelling(self, tmp_path):
+        """Only an `int` period was compared to the year, so "TY2019" pinned a
+        prior-year figure into the cache with no complaint."""
+        _fresh_cache(tmp_path)
+        for period in ("TY2019", "2019", 2019, 2019.0):
+            with pytest.raises(TaxLawSetError, match="applies_to"):
+                _set(tmp_path, "federal.filing_statuses.single.standard_deduction",
+                     15750, applies_to=period)
+        _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 15750,
+             applies_to=2026)
+
+    def test_a_retrieved_time_in_the_future_is_incomplete(self, tmp_path):
+        _fresh_cache(tmp_path)
+        data = _read(tmp_path)
+        data["_provenance"] = {"federal.filing_statuses": {
+            "retrieved": NOW.replace(year=NOW.year + 2).isoformat(), "applies_to": 2026}}
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        res = check_freshness(2026, str(tmp_path))
+        assert any("in the future" in f for f in res["null_fields"])
+
+    def test_the_audit_runs_the_write_rules_over_a_cache_it_did_not_write(self, tmp_path):
+        """A hand-edited swap of the single and joint figures, and a zero
+        where an indexed amount belongs, are INCOMPLETE — not FRESH."""
+        _fresh_cache(tmp_path)
+        data = _read(tmp_path)
+        data["federal"]["schedule_1a"]["overtime_cap"] = {"single": 25000, "mfj": 12500}
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        res = check_freshness(2026, str(tmp_path))
+        assert res["status"] == "INCOMPLETE"
+        assert any("overtime_cap.mfj" in f and "below" in f for f in res["null_fields"])
+
+    def test_the_sibling_rule_is_derived_from_the_schema(self, tmp_path):
+        """The hand table covered seven of the fifteen single/mfj pairs; the
+        rule now reads the cache, so `schedule_1a` is covered too."""
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.schedule_1a.overtime_cap.single", 12500)
+        with pytest.raises(TaxLawSetError, match="below"):
+            _set(tmp_path, "federal.schedule_1a.overtime_cap.mfj", 6000)
+        with pytest.raises(TaxLawSetError, match="unfetched state wearing a number"):
+            _set(tmp_path, "federal.child_tax_credit.amount_per_child", 0)
+        _set(tmp_path, "federal.child_tax_credit.amount_per_child", 2200)
+        with pytest.raises(TaxLawSetError, match="below"):
+            _set(tmp_path, "federal.child_tax_credit.refundable_limit", 2500)
+
+    def test_a_non_finite_number_anywhere_in_the_cache_refuses_to_load(self, tmp_path):
+        """`1e400` parses to inf and passed every `is None` guard; `_is_number`
+        guards then SKIPPED it, and the next save wrote the literal Infinity."""
+        _fresh_cache(tmp_path)
+        raw = (tmp_path / "tax_law_2026.json").read_text()
+        assert ": null" in raw
+        (tmp_path / "tax_law_2026.json").write_text(raw.replace(": null", ": 1e400", 1))
+        with pytest.raises(ValueError, match="non-finite"):
+            load_tax_law(2026, str(tmp_path))
+        res = check_freshness(2026, str(tmp_path))
+        assert res["status"] == "INCOMPLETE" and "non-finite" in res["null_fields"][0]
+        with pytest.raises(ValueError, match="non-finite"):   # the loader's, before any write
+            _set(tmp_path, "federal.social_security.wage_base", 184500)
+
+
+class TestTheCodexRoundRules:
+    """The local `codex review --base` pass over this branch. Three of its
+    four findings are about a figure's AGE — the quantity the whole freshness
+    contract is — and the fourth is a figure a state had no way to state."""
+
+    def _legacy_pair(self, tmp_path):
+        """A cache carrying an UNPROVENANCED figure beside the one a `set` is
+        about to write: the shape every cache written before this command has,
+        and the only one in which the legacy stamp still says anything."""
+        _fresh_cache(tmp_path)
+        data = _read(tmp_path)
+        data["federal"]["filing_statuses"]["mfj"]["standard_deduction"] = 32200
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        return (datetime.now() - datetime(2026, 8, 1)).days
+
+    def test_a_leaf_write_leaves_its_untouched_siblings_as_old_as_they_were(
+            self, tmp_path):
+        """A block was dated from its entries ALONE once it had any, so one
+        `set` against a legacy cache reported every other figure in that block
+        as retrieved today — stale law passing the freshness contract, which
+        is the direction AGENTS.md §4 makes a hard error. The ingest path
+        writes one figure at a time, so this is its ordinary use."""
+        legacy = self._legacy_pair(tmp_path)
+        _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 15750)
+        res = check_freshness(2026, str(tmp_path))
+        assert res["block_ages"]["federal.filing_statuses"] == legacy
+
+    def test_the_legacy_stamp_drops_out_once_every_figure_is_covered(self, tmp_path):
+        """...and the rule cannot be "a legacy cache is stale for ever", which
+        is a gate crying wolf on a block that has been re-read in full."""
+        self._legacy_pair(tmp_path)
+        _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 15750)
+        _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction", 32200)
+        res = check_freshness(2026, str(tmp_path))
+        assert res["block_ages"]["federal.filing_statuses"] == (
+            datetime.now() - NOW).days
+
+    def test_a_block_write_supersedes_the_entries_inside_it(self, tmp_path):
+        """An entry for a figure the write has just replaced went on dating the
+        block from a retrieval that no longer describes anything in it, so a
+        complete re-fetch could not clear STALE."""
+        _fresh_cache(tmp_path)
+        last_year = NOW.replace(year=NOW.year - 1)
+        _set(tmp_path, "federal.salt_cap.amount", 40400, now=last_year)
+        _set(tmp_path, "federal.salt_cap", {"amount": 40400, "mfs_amount": 20200})
+        data = _read(tmp_path)
+        assert [k for k in data["_provenance"] if k.startswith("federal.salt_cap")] \
+            == ["federal.salt_cap"]
+        res = check_freshness(2026, str(tmp_path))
+        assert res["block_ages"]["federal.salt_cap"] == (datetime.now() - NOW).days
+
+    def test_a_state_can_say_it_has_no_standard_deduction(self, tmp_path):
+        """New Jersey has none. The schema's null means "not fetched", so
+        refusing every zero left the figure unstatable: writing it failed and
+        leaving it null read INCOMPLETE for ever on a figure read correctly."""
+        _fresh_cache(tmp_path)
+        data = _read(tmp_path)
+        data["state"] = create_state_template("CA")
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        _set(tmp_path, "state.standard_deduction.single", 0, source=FTB)
+        assert _read(tmp_path)["state"]["standard_deduction"]["single"] == 0
+
+    def test_a_federal_zero_is_still_the_unfetched_state(self, tmp_path):
+        """The asymmetry: every federal amount here is indexed, and none of
+        them is ever zero."""
+        _fresh_cache(tmp_path)
+        with pytest.raises(TaxLawSetError, match="zero"):
+            _set(tmp_path, "federal.fbar_threshold", 0)
+
+    def test_a_retrieved_time_carrying_an_offset_is_read_not_crashed_on(
+            self, tmp_path):
+        """`fromisoformat` returns an AWARE datetime for a stamp written with
+        an offset or a `Z`, and comparing one against the naive `datetime.now()`
+        this module dates everything from raised TypeError — a crash where a
+        freshness verdict belongs, reachable through `set_figure` itself."""
+        from datetime import timezone
+        _fresh_cache(tmp_path)
+        out = _set(tmp_path, "federal.filing_statuses.single.standard_deduction",
+                   15750, now=NOW.replace(tzinfo=timezone.utc))
+        res = check_freshness(2026, str(tmp_path))
+        assert isinstance(res["block_ages"][out["pin"]], int)
+        assert not [f for f in res["null_fields"] if "_provenance" in f]

@@ -127,6 +127,14 @@ def compute_bracket_tax(taxable_income: float, brackets: list[dict]) -> tuple[fl
             "tax": round(tax, 2),
         })
 
+    if remaining > 0:
+        # A table whose last bracket is closed — a transcription that dropped
+        # the "and over" row — used to return the tax on the part below it
+        # and nothing on the rest: an unbounded silent under-statement.
+        raise ValueError(
+            f"taxable_income exceeds the top of a closed bracket table by "
+            f"{remaining:,.2f}; the last bracket's max must be null. Re-run "
+            "/tax-setup to re-fetch the brackets.")
     return round(total_tax, 2), breakdown
 
 
