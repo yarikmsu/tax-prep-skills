@@ -8,8 +8,8 @@
 > T1 and T3 are calendar-triggered; U1 is filler; R2's controls are permanent and
 > standing. The header and Parts 1-3 are the review as written on 2026-08-12 and are
 > left that way; the Part 4 status markers and Part 5 sequencing are maintained.
-> A PROPOSED agent-engineering backlog (Epics V-Z, not yet adopted) sits beside this
-> file in `2026-09-05-staff-agent-review.md`; its overlaps (R6, T1, T3, U1) defer here,
+> The agent-engineering backlog (Epics V-Z, ADOPTED 2026-09-05, in progress) sits beside
+> this file in `2026-09-05-staff-agent-review.md`; its overlaps (R6, T1, T3, U1) defer here,
 > and its Epic Z re-cuts `2026-state-support-ny-fl-wa.md` against the named next users.
 
 Reviewer lenses: product owner with tax-adviser / enrolled-agent / IRS-officer /

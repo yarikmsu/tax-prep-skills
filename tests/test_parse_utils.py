@@ -1,9 +1,12 @@
 """Tests for agents/lib/parse_utils.py — document classification and the
 reparse-point guards on the two paths that read taxpayer documents."""
-import os
+import csv
+import re
+import subprocess
 import sys
 from pathlib import Path
 
+import openpyxl
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -12,6 +15,7 @@ from agents.lib.parse_utils import (  # noqa: E402
     classify_document,
     scan_workspace,
 )
+from tests.skill_text import skill_text  # noqa: E402
 
 
 def _uncommented(path):
@@ -161,16 +165,23 @@ def test_classify_3921_beats_cost_basis_shadow():
 
 # --- The XXE guard is a guard, not an announcement ---------------------------
 
-def _workbook(path):
+def _workbook(path, rows=(("Wages", 1234),), title=None):
     """A real .xlsx, so a refusal that was really a parse failure would be
     visible as one."""
-    import openpyxl
-
     wb = openpyxl.Workbook()
-    wb.active["A1"] = "Wages"
-    wb.active["B1"] = 1234
+    if title is not None:
+        wb.active.title = title
+    for row in rows:
+        wb.active.append(list(row))
     wb.save(path)
     return path
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, str(Path("agents/lib/parse_utils.py")), *args],
+        capture_output=True, text=True,
+        cwd=str(Path(__file__).resolve().parent.parent))
 
 
 def test_excel_extraction_refuses_when_defusedxml_is_absent(tmp_path,
@@ -435,3 +446,611 @@ def test_every_locked_distribution_is_classified():
         "requirements.txt and the parse-boundary classification have diverged: "
         "put each new pin in _PARSING_TREE if a document parse runs on it, in "
         "_GENERATION_TREE if nothing under `documents/` ever reaches it")
+
+
+# ---------------------------------------------------------------------------
+# V0 — SSN/ITIN masking at the extraction boundary.
+#
+# `parse_utils.py extract` / `tables` print page text to stdout, and the parse
+# worker is told to mask the SSN AFTER reading it — by which point the full
+# number sits in the session transcript, the "intermediate file" AGENTS.md §1
+# forbids. Every string an extraction route returns now passes through
+# `secure_fs.mask_ssn`, which preserves `XXX-XX-{last4}` and nothing else.
+#
+# No full identifier is persisted as a fixture: every synthetic SSN below is
+# assembled at runtime from area 000 (never issued) so no test line carries a
+# nine-digit identifier the PII gate would have to allowlist.
+# ---------------------------------------------------------------------------
+
+from agents.lib.secure_fs import mask_ssn, mask_table, redact  # noqa: E402
+
+LAST4 = "6789"
+MASKED = f"XXX-XX-{LAST4}"
+# Nine bare digits is also the shape the PII gate's token rule blocks, so the
+# synthetic routing number is assembled at runtime for the same reason.
+ROUTING = "".join(("021", "000", "021"))
+
+
+def _ssn(sep: str) -> str:
+    """A synthetic SSN in one spelling, built at runtime (see the header)."""
+    return sep.join(("000", "00", LAST4))
+
+
+def _itin() -> str:
+    """ITINs share the SSN shape: 9XX-(50-65,70-88,90-92,94-99)-XXXX."""
+    return "-".join(("900", "70", LAST4))
+
+
+# Everything on a W-2 or 1099 that is NOT a taxpayer identifier and must
+# therefore survive extraction byte-for-byte. Routing numbers are exactly nine
+# digits — the one shape that cannot be told from a bare SSN by digits alone,
+# which is why the bare form is masked only under an identifier label. The
+# cents-column rows are the whitespace spelling to the digit (three digits, a
+# two-digit cents column, a four-digit figure), which is why that spelling is
+# masked only under a label too.
+SURVIVORS = (
+    "Acme Widgets LLC",
+    "1234 Market St, San Francisco, CA 94105-1234",
+    "EIN 12-3456789",
+    f"Routing {ROUTING}",
+    f"Awaiting wire {ROUTING}",
+    f"Crediting account {ROUTING}",
+    f"Homeowners Assn. acct {ROUTING}",
+    f"Itinerary {ROUTING}",
+    f"PAYER'S TIN {ROUTING}",
+    "Account 1234567890",
+    "Box 1 100,000.00",
+    "Box 2 12,345.67",
+    " ".join(("Interest income 850", "00", "2026")),
+    " ".join(("Wages 42,150", "00", "1234")),
+    "Phone 415-555-0100",
+    "Date 2026-01-31",
+    "Prior XXX-XX-1111",
+)
+
+
+class TestMaskSsn:
+    """The masker is SSN/ITIN-only: it is not `redact`, which substitutes
+    `[REDACTED]` and masks any nine-plus digit run, erasing routing and account
+    numbers and the last four digits alike."""
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/", " ", "\t", "  ", "\u00a0"])
+    def test_every_spelling_masks_to_last4_under_a_label(self, sep):
+        text = f"Employee's SSN {_ssn(sep)} Wages 50,000.00"
+        out = mask_ssn(text)
+        assert _ssn(sep) not in out
+        assert out == f"Employee's SSN {MASKED} Wages 50,000.00"
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    def test_the_hyphen_dot_and_slash_spellings_mask_without_a_label(self, sep):
+        assert mask_ssn(f"Ref {_ssn(sep)}") == f"Ref {MASKED}"
+
+    def test_an_itin_is_masked_the_same_way(self):
+        assert mask_ssn(f"ITIN {_itin()}") == f"ITIN {MASKED}"
+
+    @pytest.mark.parametrize("sep", ["", " ", "\t", "\u00a0"])
+    def test_the_bare_and_whitespace_spellings_are_masked_only_under_a_label(
+            self, sep):
+        """Nine bare digits is a routing number as often as an SSN, and
+        `850 00` followed by `2026` is a sub-$1,000 amount with its cents
+        in their own column and then a year — the whitespace spelling to the digit. A
+        comma lookbehind protected only amounts of $1,000 and up; below that
+        line the masker erased the box amount the return is computed from."""
+        value = _ssn(sep)
+        assert mask_ssn(f"SSN: {value}") == f"SSN: {MASKED}"
+        assert mask_ssn(f"Social Security Number {value}") == \
+            f"Social Security Number {MASKED}"
+        assert mask_ssn(f"social security no. {value}") == \
+            f"social security no. {MASKED}"
+        assert mask_ssn(f"Ref {value}") == f"Ref {value}"
+        assert mask_ssn(f"Routing {ROUTING}") == f"Routing {ROUTING}"
+        row = " ".join(("Interest income 850", "00", "2026", "Form 1099-INT"))
+        assert mask_ssn(row) == row
+
+    @pytest.mark.parametrize("label", [
+        "RECIPIENT'S TIN", "Recipient\u2019s TIN", "RECIPIENTS TIN",
+        "EMPLOYEE'S TIN", "PAYEE'S TIN", "BORROWER'S TIN", "STUDENT'S TIN",
+        "Partner's TIN", "WINNER'S TIN", "DEBTOR'S TIN", "TRANSFEROR'S TIN",
+        "PARTICIPANT'S TIN", "Beneficiary's Social Security Number",
+        "Spouse's identification number", "Shareholder's identifying number",
+    ])
+    def test_the_labels_irs_forms_print_beside_the_taxpayers_number(self, label):
+        """Every 1099 prints the recipient's number under "RECIPIENT'S TIN",
+        not "SSN"; a W-2G says winner, a 1099-C debtor, a 1099-S transferor,
+        a 5498 participant, a K-1 "identifying number". The possessor is NOT
+        enumerated on this side: a form family the list had not met would be
+        an SSN in the transcript."""
+        assert mask_ssn(f"{label} {_ssn('')}") == f"{label} {MASKED}"
+
+    @pytest.mark.parametrize("label", [
+        "PAYER'S TIN", "TIN", "Employer identification number",
+        "FILER'S TIN", "ISSUER'S TIN", "LENDER'S TIN", "TRUSTEE'S TIN",
+        "Creditor's TIN", "Account identification number",
+    ])
+    def test_a_payer_side_number_is_an_ein_and_survives(self, label):
+        """The enumerated side is the payer's, where a miss masks an EIN the
+        forms print hyphenated anyway. No possessive, no label."""
+        assert mask_ssn(f"{label} {ROUTING}") == f"{label} {ROUTING}"
+
+    @pytest.mark.parametrize("prose", [
+        "Awaiting wire", "Crediting account", "Homeowners Assn. acct",
+        "Itinerary", "Auditing ref",
+    ])
+    def test_a_label_inside_a_word_is_not_a_label(self, prose):
+        """`ITIN` sits inside "Awaiting" and "Crediting", `SSN` inside "Assn.";
+        under IGNORECASE an unbounded label masks the account number a bank
+        statement prints right after them — the routing/account corruption
+        the bare rule was narrowed to avoid."""
+        assert mask_ssn(f"{prose} {ROUTING}") == f"{prose} {ROUTING}"
+
+    def test_a_label_above_its_value_masks_the_value_line(self):
+        """A W-2 box and every 1099 print the label on one line and the number
+        on the next; pdfplumber keeps that layout. The W-2 also prints "OMB
+        No. 1545-0008" to the right of the box label, so the rule is "no
+        identifier-shaped run after the label", not "no digits"."""
+        page = f"a Employee's social security number OMB No. 1545-0008\n{_ssn('')} 50,000.00"
+        assert mask_ssn(page) == \
+            f"a Employee's social security number OMB No. 1545-0008\n{MASKED} 50,000.00"
+        boxed = f"PAYER'S TIN RECIPIENT'S TIN\n{ROUTING} {_ssn('')}\nBox 1 100.00"
+        out = mask_ssn(boxed)
+        assert _ssn("") not in out and out.endswith("\nBox 1 100.00")
+        assert out.split("\n")[1] == f"XXX-XX-{ROUTING[-4:]} {MASKED}"
+
+    def test_a_label_line_that_carries_its_value_leaves_the_next_line_alone(self):
+        """A statement line "SSN: XXX-XX-1234", or the hyphenated SSN, is the
+        same-line layout; the routing number under it is not the value."""
+        for value in (_ssn(""), _ssn("-"), "XXX-XX-1234", "***-**-1234"):
+            out = mask_ssn(f"SSN {value}\nRouting {ROUTING}")
+            assert out.endswith(f"\nRouting {ROUTING}"), out
+        out = mask_ssn(f"Employer identification number\n{ROUTING}")
+        assert out == f"Employer identification number\n{ROUTING}"
+
+    @pytest.mark.parametrize("box", [
+        "3 Social security wages", "4 Social security tax withheld",
+        "7 Social security tips",
+    ])
+    def test_a_social_security_box_label_is_not_an_identifier_label(self, box):
+        """The three W-2 boxes named after the program hold AMOUNTS. While the
+        noun after "social security" was optional they read as identifier
+        labels, and box 3's amount printed with its cents in their own column
+        — `850 00` then a year — was masked to XXX-XX-2026, erasing the wage
+        the return is computed from."""
+        row = " ".join(("850", "00", "2026"))
+        assert mask_ssn(f"{box}\n{row}") == f"{box}\n{row}"
+        assert mask_ssn(f"{box} {row}") == f"{box} {row}"
+
+    def test_the_box_that_does_carry_the_number_still_says_number(self):
+        """Requiring the noun costs nothing on the box that holds the SSN:
+        every form that prints one prints "number" with it."""
+        for label in ("Employee's social security number",
+                      "Social Security No.", "social security #",
+                      "SOCIAL SECURITY NUMBERS"):
+            assert mask_ssn(f"{label} {_ssn('')}") == f"{label} {MASKED}"
+
+    def test_a_labeled_bare_run_must_be_exactly_nine_digits(self):
+        """A ten-digit account number under an SSN label is not an SSN, and
+        truncating it to a masked last-four would hide the mismatch."""
+        assert mask_ssn("SSN 0123456789") == "SSN 0123456789"
+        assert mask_ssn("SSN 12345678") == "SSN 12345678"
+
+    def test_only_the_identifier_moves(self):
+        page = "\n".join(SURVIVORS + (f"Employee SSN {_ssn('-')}",))
+        out = mask_ssn(page)
+        for survivor in SURVIVORS:
+            assert survivor in out, f"{survivor!r} did not survive masking"
+        assert _ssn("-") not in out
+        assert out == page.replace(_ssn("-"), MASKED)
+
+    def test_a_delimited_ssn_inside_a_longer_digit_run_is_left_alone(self):
+        """Digit boundaries on both sides: the middle of a longer number is
+        not an SSN, and a masker that fires there corrupts an amount."""
+        raw = "1" + _ssn("-") + "1"
+        assert mask_ssn(raw) == raw
+
+    def test_every_occurrence_is_masked(self):
+        text = f"{_ssn('-')} and spouse {_ssn('.')}"
+        assert mask_ssn(text) == f"{MASKED} and spouse {MASKED}"
+
+    def test_masking_is_idempotent_and_leaves_masked_input_alone(self):
+        once = mask_ssn(f"SSN {_ssn('-')}")
+        assert mask_ssn(once) == once
+        assert mask_ssn(MASKED) == MASKED
+        assert mask_ssn("***-**-1234") == "***-**-1234"
+
+    def test_non_strings_pass_through_untouched(self):
+        """Table and workbook cells can be None, ints or dates — an SSN typed
+        as a number has no delimiter and no label, so it is outside the
+        masker's shape; it is not coerced or lost."""
+        assert mask_ssn(None) is None
+        assert mask_ssn(123) == 123
+
+    def test_redact_is_unchanged(self):
+        """`redact` stays the error-message redactor: it still erases the
+        whole identifier, last four included, and still masks nine-digit runs
+        — a path or a message never needs the last four."""
+        assert redact(f"W2_{_ssn('-')}.pdf") == "W2_[REDACTED].pdf"
+        assert redact("statement_0000000000.pdf") == "statement_[REDACTED].pdf"
+
+
+class TestATableCarriesItsLabelInAnotherCell:
+    """The label that makes a bare nine-digit run an identifier sits in a
+    NEIGHBOURING cell — a column header, or the cell to its left — and a
+    per-cell masker cannot see it. A CSV exported with an `SSN` column reached
+    the worker unmasked through the reader built to prevent exactly that."""
+
+    def test_a_column_header_governs_the_column_below_it(self):
+        rows = [["Holder", "SSN", "Routing"],
+                ["Ann", _ssn(""), ROUTING],
+                ["Bo", _ssn(" "), ROUTING]]
+        out = mask_table(rows)
+        assert [row[1] for row in out[1:]] == [MASKED, MASKED]
+        assert [row[2] for row in out[1:]] == [ROUTING, ROUTING], (
+            "an unlabelled nine-digit column is a routing number")
+        assert [row[0] for row in out] == ["Holder", "Ann", "Bo"]
+
+    def test_a_label_cell_governs_the_cell_to_its_right(self):
+        """The left-column layout a PDF table and a hand-built workbook print."""
+        out = mask_table([["Employee's SSN", _ssn(" ")],
+                          ["Routing", ROUTING],
+                          ["Box 1", "100,000.00"]])
+        assert out == [["Employee's SSN", MASKED],
+                       ["Routing", ROUTING],
+                       ["Box 1", "100,000.00"]]
+
+    def test_an_identifier_stored_as_a_number_is_masked_under_its_label(self):
+        """`mask_ssn` leaves a numeric cell alone because an SSN typed as a
+        number has neither delimiter nor label. In a labelled column it has
+        one, and a workbook stores what looks like an integer as an integer."""
+        stored = int(_itin().replace("-", ""))   # area 000 loses its zeros
+        out = mask_table([["SSN", "Amount"],
+                          [stored, 85000],
+                          [None, 1234.56]])
+        assert out[1] == [MASKED, 85000], "the amount column is not governed"
+        assert out[2] == [None, 1234.56]
+
+    def test_a_cell_that_carries_its_own_value_governs_nothing_after_it(self):
+        """The tempered rule the text layout uses: a label that already has
+        its value beside it is the same-line layout, and what follows is
+        something else."""
+        out = mask_table([[f"SSN {_ssn('-')}"], [ROUTING], [_ssn("")]])
+        assert out == [[f"SSN {MASKED}"], [ROUTING], [_ssn("")]]
+
+    def test_a_label_governs_only_from_its_own_row_down(self):
+        out = mask_table([["Prior balance", ROUTING],
+                          ["Holder", "SSN"],
+                          ["Ann", _ssn("")]])
+        assert out[0] == ["Prior balance", ROUTING]
+        assert out[2] == ["Ann", MASKED]
+
+    def test_a_row_that_is_not_a_sequence_is_still_masked(self):
+        assert mask_table([f"Employee SSN {_ssn('-')}", None]) == \
+            [f"Employee SSN {MASKED}", None]
+
+
+def _page_lines():
+    return list(SURVIVORS) + [f"Employee SSN {_ssn('-')}",
+                              f"Spouse ITIN {_itin()}",
+                              f"Old-style SSN {_ssn(' ')}"]
+
+
+def _build_pdf(path):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+    styles = getSampleStyleSheet()
+    story = [Paragraph(line, styles["Normal"]) for line in _page_lines()]
+    story.append(Spacer(1, 12))
+    table = Table([["Field", "Value"],
+                   ["Employer EIN", "12-3456789"],
+                   ["Routing", ROUTING],
+                   ["Employee SSN", _ssn("-")],
+                   ["Box 1", "100,000.00"]])
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black)]))
+    story.append(table)
+    SimpleDocTemplate(str(path), pagesize=letter).build(story)
+    return path
+
+
+def _raw_pdf(path):
+    """The UNMASKED pdfplumber read of the fixture."""
+    import pdfplumber
+    text, tables = {}, {}
+    with pdfplumber.open(str(path)) as pdf:
+        for i, page in enumerate(pdf.pages):
+            text[i] = page.extract_text() or ""
+            if found := page.extract_tables():
+                tables[i] = found
+    return text, tables
+
+
+class TestEveryExtractionRouteMasks:
+    """Each route is compared against the UNMASKED library read of the same
+    file, so the assertion is "the route applies `mask_ssn` and nothing else
+    changed", not merely "the SSN is gone"."""
+
+    def test_pdf_text(self, tmp_path):
+        from agents.lib.parse_utils import extract_pdf_text
+        pdf = _build_pdf(tmp_path / "w2.pdf")
+        raw_text, _ = _raw_pdf(pdf)
+        assert _ssn("-") in raw_text[0], "fixture does not carry the SSN"
+        out = extract_pdf_text(str(pdf), workspace=str(tmp_path))
+        assert out == {i: mask_ssn(t) for i, t in raw_text.items()}
+        assert _ssn("-") not in out[0] and _itin() not in out[0]
+        # Three in the prose lines plus the table row's, which page text includes.
+        assert out[0].count(MASKED) == 4
+        for survivor in SURVIVORS:
+            assert survivor in out[0]
+
+    def test_pdf_text_page_subset(self, tmp_path):
+        from agents.lib.parse_utils import extract_pdf_text
+        pdf = _build_pdf(tmp_path / "w2.pdf")
+        out = extract_pdf_text(str(pdf), pages=[0], workspace=str(tmp_path))
+        assert list(out) == [0] and _ssn("-") not in out[0]
+
+    def test_pdf_tables(self, tmp_path):
+        from agents.lib.parse_utils import extract_tables
+        pdf = _build_pdf(tmp_path / "w2.pdf")
+        _, raw_tables = _raw_pdf(pdf)
+        flat_raw = [c for page in raw_tables.values() for t in page
+                    for r in t for c in r]
+        assert _ssn("-") in flat_raw, "fixture table does not carry the SSN"
+        out = extract_tables(str(pdf), workspace=str(tmp_path))
+        assert out == {i: [[[mask_ssn(c) for c in row] for row in table]
+                           for table in tables]
+                       for i, tables in raw_tables.items()}
+        flat = [c for page in out.values() for t in page for r in t for c in r]
+        assert _ssn("-") not in flat and MASKED in flat
+        assert ROUTING in flat and "12-3456789" in flat
+
+    def test_excel(self, tmp_path):
+        from agents.lib.parse_utils import extract_excel
+        rows = [["Holder", "SSN", "Routing", "Balance"],
+                ["Acme Widgets LLC", _ssn("-"), ROUTING, 1234.56],
+                ["Spouse", f"SSN {_ssn('')}", 21000021, None]]
+        book = _workbook(tmp_path / "bank.xlsx", rows, title="Accounts")
+        out = extract_excel(str(book), workspace=str(tmp_path))
+        assert out == {"Accounts": [[mask_ssn(c) for c in row] for row in rows]}
+        assert out["Accounts"][1][1] == MASKED
+        assert out["Accounts"][2][1] == f"SSN {MASKED}"
+        assert out["Accounts"][1][2] == ROUTING
+        assert out["Accounts"][1][3] == 1234.56
+        assert out["Accounts"][2][2] == 21000021
+
+    def test_csv(self, tmp_path):
+        from agents.lib.parse_utils import extract_csv
+        doc = tmp_path / "export.csv"
+        rows = [["Holder", "SSN", "Routing", "Amount"],
+                ["Acme Widgets LLC", _ssn("/"), ROUTING, "1,234.56"]]
+        with doc.open("w", newline="") as f:
+            csv.writer(f).writerows(rows)
+        out = extract_csv(str(doc), workspace=str(tmp_path))
+        assert out == [[mask_ssn(c) for c in row] for row in rows]
+        assert out[1][1] == MASKED and out[1][2] == ROUTING
+
+    def test_csv_with_a_bare_identifier_column(self, tmp_path):
+        """The export that got through: an `SSN` header over bare nine-digit
+        runs, which is the spelling masked only under a label — and the label
+        is a cell away."""
+        from agents.lib.parse_utils import extract_csv
+        doc = tmp_path / "payroll.csv"
+        rows = [["Employee", "SSN", "Routing", "Gross"],
+                ["Ann", _ssn(""), ROUTING, "42,150.00"]]
+        with doc.open("w", newline="") as f:
+            csv.writer(f).writerows(rows)
+        out = extract_csv(str(doc), workspace=str(tmp_path))
+        assert _ssn("") not in [c for row in out for c in row]
+        assert out[1] == ["Ann", MASKED, ROUTING, "42,150.00"]
+
+    def test_excel_masks_the_sheet_name(self, tmp_path):
+        """The sheet name is a string this module returns — `excel` prints it
+        as a JSON key, and the refusal path beside it redacts the same name."""
+        from agents.lib.parse_utils import extract_excel
+        book = _workbook(tmp_path / "bank.xlsx", [["Balance", 1234.56]],
+                         title=f"Owner {_ssn('-')}")
+        out = extract_excel(str(book), workspace=str(tmp_path))
+        assert list(out) == [f"Owner {MASKED}"]
+        proc = _run_cli("excel", str(book))
+        assert proc.returncode == 0, proc.stderr
+        assert _ssn("-") not in proc.stdout
+
+    def test_two_sheets_that_mask_to_one_name_are_a_refusal(self, tmp_path):
+        """Silently keyed by the masked name, one sheet of a return would be
+        dropped — the understatement direction AGENTS.md §4 calls a hard
+        error."""
+        from agents.lib.parse_utils import extract_excel
+        book = _workbook(tmp_path / "bank.xlsx", [["Balance", 1234.56]],
+                         title=f"Owner {_ssn('-')}")
+        wb = openpyxl.load_workbook(book)
+        wb.create_sheet(f"Owner {_ssn('.')}")
+        wb.save(book)
+        with pytest.raises(ValueError, match="mask to the same name"):
+            extract_excel(str(book), workspace=str(tmp_path))
+
+
+class TestTheCliNeverPrintsAnUnredactedFailure:
+    """Only three exception classes were caught; an IndexError, a RuntimeError
+    or a parser exception quoting document bytes propagated as a full
+    traceback — into the same transcript the masking exists to keep clean."""
+
+    def test_a_page_out_of_range_is_one_redacted_line_not_a_traceback(self, tmp_path):
+        pdf = _build_pdf(
+            tmp_path / f"W2_{_ssn('-')}.pdf")
+        proc = _run_cli("extract", str(pdf), "7")
+        assert proc.returncode == 1
+        assert "Traceback" not in proc.stderr
+        assert "IndexError" in proc.stderr
+        assert _ssn("-") not in proc.stderr and _ssn("-") not in proc.stdout
+
+    def test_extract_prints_masked_text(self, tmp_path):
+        pdf = _build_pdf(tmp_path / "w2.pdf")
+        proc = _run_cli("extract", str(pdf))
+        assert proc.returncode == 0, proc.stderr
+        assert _ssn("-") not in proc.stdout and MASKED in proc.stdout
+        assert "Acme Widgets LLC" in proc.stdout
+
+    def test_csv_and_excel_have_a_masked_cli_route(self, tmp_path):
+        """A workbook or CSV had no CLI route at all: `extract` refuses anything
+        but a PDF, so the Excel/CSV group could only be read by the worker's
+        own file-read tool or an ad-hoc interpreter call — neither masks."""
+        doc = tmp_path / "export.csv"
+        with doc.open("w", newline="") as f:
+            csv.writer(f).writerows([["SSN", "Routing"], [_ssn("-"), ROUTING]])
+        proc = _run_cli("csv", str(doc))
+        assert proc.returncode == 0, proc.stderr
+        assert _ssn("-") not in proc.stdout
+        assert MASKED in proc.stdout and ROUTING in proc.stdout
+
+        book = _workbook(tmp_path / "bank.xlsx", [[f"SSN {_ssn('')}", 1234.56]],
+                         title="Accounts")
+        proc = _run_cli("excel", str(book), "Accounts")
+        assert proc.returncode == 0, proc.stderr
+        assert _ssn("") not in proc.stdout
+        assert MASKED in proc.stdout and "1234.56" in proc.stdout
+        assert "Accounts" in proc.stdout
+
+
+class TestEveryStringTheModuleReturnsIsMasked:
+    """The invariant is at the MODULE boundary, not the CLI: every string a
+    public route returns is masked, so the CLI is a plain printer and a
+    library importer (`crypto_importer`) gets the same guarantee."""
+
+    @pytest.mark.parametrize("sep", ["-", ".", "", " "])   # never "/" in a name
+    def test_scan_refuses_a_filename_that_carries_an_identifier(
+            self, tmp_path, sep):
+        """A file named after an SSN discloses it — the PII gate treats a
+        pathname as content for the same reason, in every spelling and with no
+        label to disambiguate the bare one. Masking the name kept the digits
+        out and returned a `path` that opens nothing, and `scan` is the
+        routing table /tax-parse dispatches from: the next step was a
+        FileNotFoundError on a document sitting right there. The name is what
+        has to change, so the file is refused and the remedy is stated."""
+        docs = tmp_path / "documents"
+        docs.mkdir()
+        _build_pdf(docs / f"W2_{_ssn(sep)}.pdf")
+        assert scan_workspace(str(docs)) == []
+        proc = _run_cli("scan", str(docs))
+        assert proc.returncode == 0, proc.stderr
+        assert _ssn(sep) not in proc.stdout and _ssn(sep) not in proc.stderr
+        assert "Rename the file" in proc.stderr
+
+    def test_a_scanned_path_is_one_the_extractor_can_open(self, tmp_path):
+        """`scan` hands the next step a path, not a display name."""
+        docs = tmp_path / "documents"
+        docs.mkdir()
+        _build_pdf(docs / "W2_Acme.pdf")
+        (doc,) = scan_workspace(str(docs))
+        assert Path(doc["path"]).is_file() and doc["filename"] == "W2_Acme.pdf"
+
+    def test_json_output_keeps_non_ascii_readable(self, tmp_path):
+        """A Russian bank's export has Cyrillic column labels; `\\u0414...`
+        escapes make telling the interest column from the balance column a
+        decode-by-hand exercise per cell."""
+        doc = tmp_path / "export.csv"
+        with doc.open("w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerows([["Дата", "Проценты"], ["2026-01-31", "12.34"]])
+        proc = _run_cli("csv", str(doc))
+        assert proc.returncode == 0, proc.stderr
+        assert "Проценты" in proc.stdout and "\\u041f" not in proc.stdout
+
+
+class TestAnUnknownSheetIsARefusal:
+    """`{}` with exit 0 was the answer for a misspelled, wrong-case or
+    trailing-space sheet name — the one output that reads as "nothing in this
+    workbook", for the worker whose only workbook reader this now is."""
+
+    def _book(self, tmp_path):
+        return _workbook(tmp_path / "bank.xlsx", [["Balance", 1234.56]],
+                         title="Accounts")
+
+    @pytest.mark.parametrize("name", ["Acounts", "accounts", "Accounts "])
+    def test_the_library_names_the_sheets_that_exist(self, tmp_path, name):
+        from agents.lib.parse_utils import extract_excel
+        book = self._book(tmp_path)
+        with pytest.raises(ValueError, match="No sheet named") as exc:
+            extract_excel(str(book), sheet_names=[name], workspace=str(tmp_path))
+        assert "Accounts" in str(exc.value)
+
+    def test_the_cli_exits_1_with_the_reason(self, tmp_path):
+        book = self._book(tmp_path)
+        proc = _run_cli("excel", str(book), "Acounts")
+        assert proc.returncode == 1
+        assert proc.stdout == "" and "No sheet named" in proc.stderr
+
+    def test_the_template_quotes_the_sheet_name(self):
+        """A sheet name with a space is split by the shell into a wrong name
+        plus a dropped argument unless it is quoted like the path."""
+        flat = " ".join(skill_text("tax-parse").split())
+        assert "excel '{filepath}' '{sheet}'" in flat
+
+
+class TestTheSkillsReadDocumentsOnlyThroughTheMaskingCli:
+    """The CLI is not the only route into the transcript: a worker's own
+    file-read tool, a bare pdfplumber call, or an unnamed extractor in a step
+    all bypass the masker. The skills close those by instruction (V6 closes
+    them by enforcement)."""
+
+    PARSING_SKILLS = ("tax-parse", "tax-verify", "tax-parse-crypto")
+
+    @pytest.mark.parametrize("name", PARSING_SKILLS)
+    def test_the_worker_rules_name_the_cli_as_the_only_reader(self, name):
+        # A sentence ends at `.`/`!`/`?` followed by whitespace and a
+        # non-lowercase character: `parse_utils.py extract` must not split.
+        sentences = [s.lower() for s in
+                     re.split(r"(?<=[.!?])\s+(?=[^a-z])", skill_text(name))]
+        assert any("file-read tool" in s and "parse_utils.py" in s
+                   for s in sentences), (
+            f"{name}: no single sentence forbids the worker's own file-read tool "
+            "and names parse_utils.py as the only route — a direct read puts the "
+            "full SSN in the transcript before any instruction to mask it")
+
+    @pytest.mark.parametrize("name, read_scope", [
+        ("tax-parse", "outside documents/, except `tax_law_{year}.json`"),
+        ("tax-verify", "other than the return at '{pdf_path}'"),
+    ])
+    def test_the_read_scope_and_the_write_scope_are_stated_separately(
+            self, name, read_scope):
+        """E2: rule 4 forbade reading outside `summaries/` while step 1 ran the
+        extractor on a file under `documents/`. A self-contradictory rule is
+        one the agent learns to reason past. tax-verify's one input is the
+        software return at whatever path the user gave, so its read scope is
+        that file, not a directory."""
+        text = skill_text(name)
+        assert read_scope in text, (
+            f"{name}: the worker template's file rule must state the read "
+            "scope and the write scope separately")
+        assert "outside the summaries/ directory" not in text, (
+            f"{name}: the contradictory read-scope wording is still present")
+
+    def test_the_foreign_document_step_reads_a_file_the_rule_allows(self):
+        """Step 4.3 has the worker read the exchange rate from
+        `tax_law_{year}.json`, so rule 4 and the security bullet must allow
+        that one read — a rule the step contradicts is one the agent learns
+        to reason past, and the next file it reaches for is the PDF."""
+        text = skill_text("tax-parse")
+        assert "exchange_rates.{CURRENCY}" in text
+        assert text.count("except `tax_law_{year}.json`") >= 2
+
+    def test_tax_verify_lets_the_worker_re_read_its_own_output(self):
+        """The template accumulates every page into one file; a rule that
+        forbids re-opening it forbids appending to it."""
+        text = " ".join(skill_text("tax-verify").split())
+        assert ("other than the return at '{pdf_path}' and your own output "
+                "under summaries/") in text
+        assert "secure_fs 'summaries/software_return_extraction.md'" in text
+
+    @pytest.mark.parametrize("heading, next_heading", [
+        ("### 4. Handle Foreign Documents", "### 5."),
+        ("### 6.7. Second-read verification", "### 6.8."),
+    ])
+    def test_the_steps_that_re_read_a_document_name_the_extractor(
+            self, heading, next_heading):
+        text = skill_text("tax-parse")
+        start = text.index(heading)
+        section = text[start:text.index(next_heading, start)]
+        assert "parse_utils.py" in section, (
+            f"{heading!r} names no extractor — an agent free to choose one "
+            "chooses its own file-read tool, which does not mask")
+        assert "pdfplumber (it handles" not in section, (
+            "Step 4 still tells the worker to call pdfplumber directly")

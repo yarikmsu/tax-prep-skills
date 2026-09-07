@@ -93,8 +93,11 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 # array out of that script so a family added THERE and not here fails too. A
 # prose claim of parity is what let the AWS-secret family sit in the detector
 # alone; the test is the claim now.
+# The hyphen, dot and slash spellings, shared with `_ID_DELIMITED` below so a
+# spelling the gate learns reaches the redactor and the masker together.
+_SSN_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
 _SSN_DELIMITED = re.compile(
-    r"[0-9]{3}(-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/|\s+[0-9]{2}\s+)[0-9]{4}")
+    rf"[0-9]{{3}}(?:{_SSN_DELIMS}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
     r"(AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}"
     r"|github_pat_[A-Za-z0-9_]{40,}")
@@ -144,6 +147,213 @@ def redact(text) -> str:
         out = pattern.sub("[REDACTED]", out)
     return out
 
+
+# The SSN/ITIN shapes `mask_ssn` rewrites in EXTRACTED DOCUMENT TEXT. Not
+# `redact`'s patterns, and deliberately so: `redact` is the error-message
+# redactor — it substitutes `[REDACTED]`, which erases the last four digits the
+# skills are told to keep, and its `_NINE_DIGITS` masks any nine-plus digit run,
+# which on a W-2 or a bank statement is a routing number, an account number or
+# an EIN typed without its hyphen. A masker that erases those breaks FBAR intake
+# and the EIN the worker template says to record in full.
+#
+# Every pattern is digit-bounded on either side, which `_SSN_DELIMITED` is not:
+# in a path the surrounding characters are the redactor's concern too, but in a
+# page of extracted text the middle of a longer number is not an SSN, and a
+# masker that fires there corrupts an amount the return is computed from — the
+# over-statement direction AGENTS.md §4 makes a hard error.
+#
+# Only the hyphen, dot and slash spellings are masked UNLABELED. The
+# whitespace spelling and the bare nine-digit run are masked only under an
+# identifier label, because both are shapes a document prints for other
+# things: nine bare digits is a routing number exactly as often as an SSN, and
+# a form that prints cents in their own column extracts as `850 00` — followed
+# by a four-digit figure (a year, a box number, the next amount) that is the
+# whitespace spelling to the digit. A lookbehind for a comma or dollar sign
+# protected only amounts of $1,000 or more; below that line the masker erased
+# the box amount. Under a label the ambiguity is gone.
+#
+# A label is SSN, ITIN, "social security number", or a POSSESSIVE followed by
+# TIN / "identification number" / "identifying number" — "RECIPIENT'S TIN" on
+# every 1099, "Winner's TIN" on a W-2G, "Shareholder's identifying number" on a
+# K-1. The possessor is not enumerated on the taxpayer side, where a missed
+# form family is an SSN in the transcript; it is enumerated on the PAYER side
+# (payer, employer, filer, issuer, lender, trustee, creditor, corporation,
+# partnership, estate, trust), where the number is an EIN and a miss masks an
+# identifier the forms print hyphenated anyway. "TIN" with no possessive is not
+# a label. Each label is word-bounded — `ITIN` sits inside "Awaiting" and
+# account number right after both.
+#
+# The NOUN after "social security" is REQUIRED, and that is the whole of
+# what keeps a W-2 readable. Boxes 3, 4 and 7 are "Social security wages",
+# "Social security tax withheld" and "Social security tips" — bare labels
+# accepted while the noun was optional, so the amount printed under box 3
+# with its cents in their own column — a `850 00` cents column, then a
+# year — was masked to XXX-XX-<year> and the wage the return is computed
+# from was gone. The number
+# those labels do sit over is an amount, never an identifier; the box that
+# does carry the SSN says "Employee's social security NUMBER", as does every
+# other form that prints one. Requiring the noun gives up a bare "Social
+# Security" over a nine-digit run, which is the direction that costs
+# nothing here: the hyphenated spelling that box would print is masked with
+# no label at all.
+#
+# Two layouts. Same line: label, up to a short run of non-digits, the number.
+# Label ABOVE the value, which is how a W-2 box and every 1099 print it: a line
+# that carries a label with no identifier-shaped run after it (a W-2 prints
+# "OMB No. 1545-0008" to the right of the box label, so "no digits" is the wrong
+# test) is followed by a line whose every identifier-shaped run is masked. On a
+# 1099 that value line is "PAYER'S TIN RECIPIENT'S TIN" side by side, so a
+# payer EIN typed without its hyphen is masked there too — the safe direction,
+# and the forms print it hyphenated.
+_ID_DELIMITED = re.compile(
+    rf"(?<![0-9])[0-9]{{3}}{_SSN_DELIMS}([0-9]{{4}})(?![0-9])")
+_PAYER_SIDE = (r"(?:payer|employer|filer|issuer|lender|trustee|creditor"
+               r"|corporation|partnership|estate|trust)")
+_ID_LABEL = (
+    r"(?<![A-Za-z])(?:(?:SSN|ITIN)s?(?![A-Za-z])"
+    r"|social security[^\S\n]+(?:numbers?|nos?\.?|#)(?![A-Za-z])"
+    r"|individual taxpayer identification(?: number)?"
+    rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])[A-Za-z]+['\u2019]?s[^\S\n]+"
+    r"(?:TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
+# Bare, or grouped 3-2-4 by horizontal whitespace of any kind: a cell pasted
+# from a web table carries U+00A0 where the page had a space.
+_ID_VALUE_RE = re.compile(
+    r"(?<![0-9])[0-9]{3}[^\S\n]*[0-9]{2}[^\S\n]*([0-9]{4})(?![0-9])")
+_ID_LABELED_SAME_LINE = re.compile(
+    rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
+# A label line that already carries its value — in any spelling, or already
+# masked — is a same-line layout, and the line under it is something else.
+_ID_LABEL_ENDS_LINE = re.compile(
+    rf"{_ID_LABEL}(?:(?!{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}"
+    rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-[0-9]{{4}})[^\n])*$", re.IGNORECASE)
+
+
+def _mask_under_labels(text: str) -> str:
+    """Mask every identifier-shaped run on a line whose PREVIOUS line carries
+    an identifier label with no value after it — the label-above-value box of
+    a W-2 or 1099. Runs on the RAW text, before the same-line masking, so a
+    value the same-line pass has just rewritten still counts as present."""
+    lines = text.split("\n")
+    for i in range(1, len(lines)):
+        if _ID_LABEL_ENDS_LINE.search(lines[i - 1]):
+            lines[i] = _ID_VALUE_RE.sub(r"XXX-XX-\1", lines[i])
+    return "\n".join(lines)
+
+
+def mask_ssn(value):
+    """Mask every SSN/ITIN shape in extracted document text to `XXX-XX-{last4}`.
+
+    The extraction boundary is where this runs — every string
+    `parse_utils.extract_pdf_text`, `extract_tables`, `extract_excel` and
+    `extract_csv` return — because the parse worker is told to mask the SSN
+    AFTER reading it, by which point the full number sits in the session
+    transcript: the "intermediate file" AGENTS.md §1 forbids. Scope is
+    identifiers only; employer names, addresses, EINs, routing and account
+    numbers and every box amount pass through unchanged. A non-string (a
+    `None` table cell, a numeric workbook cell) is returned as-is: an SSN
+    typed as a number has neither delimiter nor label, and coercing every cell
+    to text to look for one would change what the worker reads. A cell whose
+    COLUMN carries the label is `mask_table`'s case below — it is the one place
+    the shape is unambiguous, and the only place a number is masked.
+    """
+    # Nine bare digits is the shortest maskable shape; every shorter cell
+    # (most of a CSV) skips both regex passes.
+    if not isinstance(value, str) or len(value) < 9:
+        return value
+    out = _mask_under_labels(value)
+    out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
+    return _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
+
+
+
+# A TABLE has a layout free text does not: the label in one CELL and the value
+# in another. `mask_ssn` sees one cell at a time, so it cannot see the label at
+# all — a CSV exported with an `SSN` column, a workbook header row naming one,
+# a PDF table whose left column is the label all reach it as a bare nine-digit
+# run with nothing beside it, and the bare spelling is masked only under a
+# label. That is the designated safe reader handing back the number it exists
+# to withhold.
+#
+# So the two text layouts are re-stated with a cell boundary where the line
+# break was: a label cell governs the cell to its RIGHT (the same-line layout)
+# and its own COLUMN from that row down (the label-above-value layout, which is
+# what a header row is). A label cell is one that carries a label and no value
+# of its own — `_ID_LABEL_ENDS_LINE`, the same tempered pattern the text rule
+# uses, which is why a cell that reads "SSN:" and then the hyphenated number
+# governs nothing after it.
+def _is_id_label_cell(cell) -> bool:
+    """True when this cell is an identifier LABEL carrying no value itself."""
+    return isinstance(cell, str) and bool(_ID_LABEL_ENDS_LINE.search(cell))
+
+
+def _mask_id_value(cell):
+    """Mask every identifier-shaped run in a cell a label GOVERNS.
+
+    An integer is masked here and nowhere else. `mask_ssn` leaves a numeric
+    cell alone because an SSN typed as a number carries neither delimiter nor
+    label — under a label it carries one, and a workbook that stores the nine
+    bare digits in its SSN column is exactly the case that rationale excluded.
+    The masked value comes back as a string, because it is an identifier and
+    not a number; a governed cell that holds no identifier shape keeps its own
+    type, so an amount in the column below a label is returned untouched.
+    """
+    if isinstance(cell, bool):
+        return cell
+    if isinstance(cell, int):
+        text = str(cell)
+    elif isinstance(cell, str):
+        text = cell
+    else:
+        return cell
+    masked = _ID_VALUE_RE.sub(r"XXX-XX-\1",
+                              _ID_DELIMITED.sub(r"XXX-XX-\1", text))
+    return masked if masked != text else cell
+
+
+def mask_table(rows):
+    """`mask_ssn` over every cell, plus the labels only the TABLE can see.
+
+    Rows of cells in, rows of cells out — every extraction route that returns
+    a table (`extract_csv`, `extract_excel`, `extract_tables`) goes through
+    this rather than through `mask_ssn` cell by cell. A row that is not a
+    sequence is masked as a value, so a malformed table cannot slip past
+    untouched.
+    """
+    masked = []
+    governed: set = set()
+    for row in rows:
+        if not isinstance(row, (list, tuple)):
+            masked.append(mask_ssn(row))
+            continue
+        out = [mask_ssn(cell) for cell in row]
+        # The columns a PREVIOUS row's label governs, before this row's own
+        # labels are read: a header governs what is under it, never itself.
+        for column in governed:
+            if column < len(out):
+                out[column] = _mask_id_value(out[column])
+        for column, cell in enumerate(row):
+            if _is_id_label_cell(cell):
+                governed.add(column)
+                if column + 1 < len(out):
+                    out[column + 1] = _mask_id_value(out[column + 1])
+        masked.append(out)
+    return masked
+
+
+def names_an_identifier(name: str) -> bool:
+    """True when a FILENAME carries an SSN or ITIN in any spelling.
+
+    Wider than `mask_ssn`, and deliberately. In a page of text nine bare
+    digits is a routing number as often as an SSN, which is why that spelling
+    is masked only under a label; a filename has no label and no line above it,
+    and `scripts/pre-commit-pii-scan.sh` runs its widened set against a
+    PATHNAME "before any exemption" for the same reason. A file named after an
+    identifier discloses it whatever it holds, so the caller's answer is to
+    refuse the file and say to rename it — not to hand back a masked name,
+    which is a path that opens nothing and which two different documents can
+    collide on.
+    """
+    return bool(_ID_DELIMITED.search(name) or _ID_VALUE_RE.search(name))
 
 # The window a bare integer may be PRINTED in. Not a validity check — every
 # caller has its own accepted range and applies it after this — but the bound

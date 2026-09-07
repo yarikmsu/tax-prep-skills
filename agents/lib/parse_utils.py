@@ -13,7 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import preflight  # noqa: E402
-from agents.lib.secure_fs import is_reparse_point, redact  # noqa: E402
+from agents.lib.secure_fs import (  # noqa: E402
+    is_reparse_point, mask_ssn, mask_table, names_an_identifier, redact)
 
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
 # Must be called before any XML parsing (including openpyxl imports).
@@ -44,6 +45,18 @@ except ImportError:
 
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB — prevents DoS via oversized files
+
+# Every string this module returns — page text, a table or workbook cell, a
+# CSV cell, a sheet name — passes through a masker before it leaves the
+# function that read it; see `secure_fs.mask_ssn` for the shape and why it is
+# not `redact`. The CLI below is a plain printer of those returns.
+#
+# TABLES go through `secure_fs.mask_table` rather than through `mask_ssn` cell
+# by cell, because the label that makes a bare nine-digit run an identifier
+# sits in a NEIGHBOURING cell — a column header, or the cell to its left — and
+# a per-cell masker cannot see it. A `_mask_deep` that walked the rows
+# individually is what this replaced, and a CSV with an `SSN` column came
+# straight back out of it.
 
 
 # Every distribution `requirements.txt` pins that a document parse actually runs
@@ -216,7 +229,7 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             text = pdf.pages[i].extract_text() or ""
-            result[i] = text
+            result[i] = mask_ssn(text)
     return result
 
 
@@ -254,7 +267,7 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
                     f"({num_pages} pages)")
             tables = pdf.pages[i].extract_tables() or []
             if tables:
-                result[i] = tables
+                result[i] = [mask_table(table) for table in tables]
     return result
 
 
@@ -298,14 +311,39 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
     _validate_file_path(path, {".xlsx"}, workspace=workspace)
 
     wb = openpyxl.load_workbook(path, data_only=True)
-    result = {}
-    targets = sheet_names if sheet_names is not None else wb.sheetnames
-    for name in targets:
-        if name in wb.sheetnames:
-            ws = wb[name]
-            result[name] = [list(row) for row in ws.iter_rows(values_only=True)]
-    wb.close()
-    return result
+    try:
+        targets = sheet_names if sheet_names is not None else wb.sheetnames
+        # A sheet that is not there is a refusal naming the ones that are. It
+        # used to be skipped, and `{}` with exit 0 is the one answer that reads
+        # as "nothing in this workbook" for a misspelled or wrong-case name —
+        # the worker records no figures and the tie-out gate cannot see the
+        # balances it never learned about.
+        for name in targets:
+            if name not in wb.sheetnames:
+                raise ValueError(
+                    f"No sheet named {redact(name)!r} in {redact(path)}. "
+                    f"Sheets: {[redact(n) for n in wb.sheetnames]}")
+        # The sheet NAME is a string this module returns, and it was the one
+        # that left unmasked: `excel` prints it as a JSON key, so a workbook
+        # with a sheet named after an identifier disclosed it on the success
+        # path while the refusal above redacted the very same name. The masked
+        # key is not a name this CLI can be handed back — no more than the
+        # redacted ones in that refusal are — and renaming the sheet is the
+        # answer to that; two sheets whose names differ only in the digits
+        # being masked would collide into one key, which would drop a sheet of
+        # a return, so that is a refusal rather than a silently shorter dict.
+        extracted = {}
+        for name in targets:
+            safe = mask_ssn(name)
+            if safe in extracted:
+                raise ValueError(
+                    f"Two sheets in {redact(path)} mask to the same name "
+                    f"{safe!r}, so one would be dropped. Rename them.")
+            extracted[safe] = mask_table(
+                list(wb[name].iter_rows(values_only=True)))
+        return extracted
+    finally:
+        wb.close()
 
 
 def extract_csv(path: str, encoding: str = "utf-8-sig", workspace: str | None = None) -> list[list[str]]:
@@ -326,7 +364,7 @@ def extract_csv(path: str, encoding: str = "utf-8-sig", workspace: str | None = 
     _validate_file_path(path, {".csv"}, workspace=workspace)
 
     with open(path, newline="", encoding=encoding) as f:
-        return list(csv.reader(f))
+        return mask_table(list(csv.reader(f)))
 
 
 def pdf_page_count(path: str, workspace: str | None = None) -> int:
@@ -446,6 +484,23 @@ def scan_workspace(workspace_dir: str) -> list[dict]:
         if any(p in f.name for p in skip_patterns):
             continue
 
+        # A file named after an SSN discloses it — `scan` prints this list
+        # verbatim — so the name never reaches the transcript. It used to be
+        # MASKED, which kept the digits out and handed the worker a `path`
+        # that opens nothing: `scan` is the routing table /tax-parse dispatches
+        # from, so the next step was a FileNotFoundError on a document that is
+        # sitting right there, and two files can mask to one path. The name is
+        # the thing that has to change, so this refuses by name the way the
+        # symlink arm above does and says so. Ignoring the warning does not
+        # quietly drop the document: tie_out's coverage check reads
+        # documents/ itself and fails on a file with no ledger record.
+        if names_an_identifier(f.name):
+            print(f"WARNING: Skipping {redact(f.name)} — its FILENAME carries "
+                  f"an identifier, which this list would disclose. Rename the "
+                  f"file (the last four digits are all a name may keep) and "
+                  f"scan again.", file=sys.stderr)
+            continue
+
         doc = {
             "path": str(f),
             "filename": f.name,
@@ -507,36 +562,65 @@ if __name__ == "__main__":
     # CLI: python parse_utils.py scan <dir>
     # CLI: python parse_utils.py classify <pdf>
     # CLI: python parse_utils.py extract <pdf> [page_num]
+    # CLI: python parse_utils.py tables <pdf> [page_num]
+    # CLI: python parse_utils.py csv <csv>
+    # CLI: python parse_utils.py excel <xlsx> [sheet_name]
+    #
+    # `csv` and `excel` exist so that a workbook or a CSV has a masked route
+    # into the worker's transcript at all. Without them the parse-task template
+    # named `extract` for every file, which refuses anything but a PDF, and the
+    # worker's only way to read the Excel/CSV group was its own file-read tool
+    # or an ad-hoc interpreter call — both of which bypass `mask_ssn` and one of
+    # which rule 5 of that template forbids.
     if len(sys.argv) < 3:
-        print("Usage: python parse_utils.py <scan|classify|extract|tables> <path> [page]")
+        print("Usage: python parse_utils.py "
+              "<scan|classify|extract|tables|csv|excel> <path> [page|sheet]")
         sys.exit(1)
 
     cmd, path = sys.argv[1], sys.argv[2]
+    arg3 = sys.argv[3] if len(sys.argv) > 3 else None
+
+    def _print_json(obj):
+        # `ensure_ascii=False` because the worker reads this: a Cyrillic
+        # column header as `\u0414\u0430...` is a decode-by-hand exercise per
+        # cell, and the stdout run.sh hands us is UTF-8.
+        print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
 
     try:
         if cmd == "scan":
-            docs = scan_workspace(path)
-            print(json.dumps(docs, indent=2))
+            _print_json(scan_workspace(path))
         elif cmd == "classify":
             text = extract_pdf_text(path, pages=[0])
             doc_type = classify_document(text.get(0, ""))
             print(f"Document type: {doc_type}")
         elif cmd == "extract":
-            pages = [int(sys.argv[3])] if len(sys.argv) > 3 else None
+            pages = [int(arg3)] if arg3 is not None else None
             text = extract_pdf_text(path, pages=pages)
             for pg, content in sorted(text.items()):
                 print(f"=== Page {pg} ===")
                 print(content)
                 print()
         elif cmd == "tables":
-            pages = [int(sys.argv[3])] if len(sys.argv) > 3 else None
-            tables = extract_tables(path, pages=pages)
-            print(json.dumps(tables, indent=2, default=str))
+            pages = [int(arg3)] if arg3 is not None else None
+            _print_json(extract_tables(path, pages=pages))
+        elif cmd == "csv":
+            _print_json(extract_csv(path))
+        elif cmd == "excel":
+            sheets = [arg3] if arg3 is not None else None
+            _print_json(extract_excel(path, sheet_names=sheets))
         else:
             print(f"Error: Unknown command '{redact(cmd)}'. "
-              f"Valid commands: scan, classify, extract, tables",
+                  f"Valid commands: scan, classify, extract, tables, csv, excel",
                   file=sys.stderr)
             sys.exit(1)
     except (FileNotFoundError, ValueError, NotADirectoryError) as e:
         print(f"Error: {redact(e)}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001 — the boundary, not a handler
+        # Everything else — a page out of range, an off-lock refusal, a parser
+        # exception quoting the bytes it choked on — propagated as a full
+        # traceback, into the same transcript the masking above exists to keep
+        # clean. One redacted line, class named so the failure is still
+        # diagnosable, and the traceback stays out of the worker's context.
+        print(f"Error: {type(e).__name__}: {redact(e)}", file=sys.stderr)
         sys.exit(1)

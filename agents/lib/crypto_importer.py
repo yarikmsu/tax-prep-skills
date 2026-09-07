@@ -1191,12 +1191,11 @@ def _sd_row(label: str, t: dict) -> str:
 # --------------------------------------------------------------------------
 
 def _read_csv(path: str) -> 'list[list[str]]':
-    import csv
-    p = Path(path)
-    if not p.is_file():
-        raise CryptoImportError(f"file not found: {redact(path)}")
-    with open(p, newline="", encoding="utf-8-sig") as f:
-        return list(csv.reader(f))
+    # Through `parse_utils.extract_csv`, so the path guards and the per-cell
+    # masking apply here too — an adapter's error quotes the row it rejected,
+    # and `adapt` prints the notes column through to the normalized JSON.
+    from agents.lib.parse_utils import extract_csv
+    return extract_csv(path)
 
 
 def _flag_value(argv: 'list[str]', flag: str) -> str:
@@ -1298,6 +1297,12 @@ def main(argv: 'list[str]') -> int:
         return 2
     except CryptoImportError as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
+        return 1
+    except Exception as e:  # noqa: BLE001 — the boundary, not a handler
+        # Everything else — a Latin-1 export's UnicodeDecodeError, a refused
+        # path — used to propagate as a traceback into the same transcript
+        # the masking exists to keep clean. Same shape as parse_utils's.
+        print(f"ERROR: {type(e).__name__}: {redact(e)}", file=sys.stderr)
         return 1
 
 

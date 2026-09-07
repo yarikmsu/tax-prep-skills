@@ -11,6 +11,7 @@ One file per epic, newest first, plus the pre-epic base engine:
 
 | File | Scope |
 |------|-------|
+| [`epic-V.md`](epic-V.md) | Agent reliability and determinism (SSN/ITIN masking at the extraction boundary) |
 | [`epic-P.md`](epic-P.md) | Florida state module (`type: "none"` regime discriminator, sales-tax election, property calendar, no-income-tax review step) |
 | [`epic-O.md`](epic-O.md) | Hygiene (changelog refactor, README refresh, planning-tool carry-forwards) |
 | [`epic-N.md`](epic-N.md) | In-persona coverage tier 2 (CA Schedule P, Form 8995-A, Form 8889, Form 2441) |

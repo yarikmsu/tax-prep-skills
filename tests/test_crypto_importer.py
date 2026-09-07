@@ -975,3 +975,41 @@ def test_cli_compute_empty_file_is_clean_error():
 def test_cli_bad_year_is_clean_error():
     p = _run("compute", str(FIX / "transactions.json"), "--year", "notayear")
     assert p.returncode == 1 and "ERROR:" in p.stderr
+
+
+def test_read_csv_masks_an_ssn_shaped_cell_and_leaves_the_rest(tmp_path):
+    """V0: the importer reads through `parse_utils.extract_csv` — an adapter
+    error quotes the row it rejected and `adapt` prints the notes column
+    through, so the read masks. The value is built at runtime; no full
+    identifier is persisted as a fixture."""
+    import csv
+    ssn = "-".join(("000", "00", "4321"))
+    routing = "".join(("021", "000", "021"))
+    doc = tmp_path / "coinbase.csv"
+    with doc.open("w", newline="") as f:
+        csv.writer(f).writerows([
+            ["Timestamp", "Transaction Type", "Notes"],
+            ["2024-06-01T00:00:00Z", "Sell", f"ref {ssn} acct {routing}"]])
+    rows = ci._read_csv(str(doc))
+    assert rows[1][2] == f"ref XXX-XX-4321 acct {routing}"
+    assert rows[0] == ["Timestamp", "Transaction Type", "Notes"]
+
+
+def test_read_csv_is_the_parse_utils_boundary(tmp_path):
+    """A second reader re-implemented the read minus `_validate_file_path`'s
+    guards, and `main` caught only CryptoImportError — so a Latin-1 export
+    reached the terminal as a UnicodeDecodeError traceback, the class of
+    output the parse boundary exists to keep out of the transcript. The
+    reader now IS `extract_csv`, and `main`'s boundary is every exception."""
+    doc = tmp_path / "coinbase.csv"
+    doc.write_bytes("Timestamp,Notes\n2024-06-01T00:00:00Z,caf\xe9\n".encode("latin-1"))
+    with pytest.raises(ValueError):
+        ci._read_csv(str(doc))
+    p = _run("adapt", str(doc), "--exchange", "coinbase")
+    assert p.returncode == 1
+    assert "Traceback" not in p.stderr and "ERROR: UnicodeDecodeError" in p.stderr
+    with pytest.raises(FileNotFoundError):
+        ci._read_csv(str(tmp_path / "missing.csv"))
+    (tmp_path / "export.txt").write_text("a,b\n")
+    with pytest.raises(ValueError, match="Unexpected file type"):
+        ci._read_csv(str(tmp_path / "export.txt"))

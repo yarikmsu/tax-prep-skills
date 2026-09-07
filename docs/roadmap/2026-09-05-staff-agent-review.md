@@ -1,6 +1,8 @@
 # Staff Agent-Developer Review + Backlog — 2026-09-05
 
-> **Status 2026-09-05 — this backlog is PROPOSED, not yet adopted.** It sits beside
+> **Status 2026-09-05 — ADOPTED; implementation started the same day, one task per
+> PR, in the Part 4 order (Y1 postponed until the owner asks).** Shipped: V0 (PR #85).
+> This backlog sits beside
 > `2026-08-12-product-owner-review.md`, which remains the active product backlog (Epics
 > R-U). Items here that duplicate one there (Y1 = R6, Y2 = T1, X6 = T3, X7 = U1) defer
 > to that file's status markers; Y4 and Y6 retire the two risks R2 polices. Epic Z
