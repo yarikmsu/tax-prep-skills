@@ -309,10 +309,11 @@ exposes a `_main` CLI entry point; run with no arguments a few
   for Next Year" section as the new year's checklist
 - `scenarios/` — derived planning artifacts; never mutated elsewhere
 - `tax_calendar_<year>.ics` — RFC 5545 calendar of the year's deadlines
-- `generate_tax_pdf.py` — the PDF generator `tax-generate` writes per workspace.
-  Source code, and runtime data all the same: the taxpayer's name sits in its
-  section headers, which is why the PII gate blocks it by NAME — the content
-  scan reads it and finds nothing
+- `generate_tax_pdf.py` — LEGACY: the per-workspace generator `tax-generate`
+  wrote before `agents/lib/pdf_render.py` replaced it. Source code and runtime
+  data at once — the taxpayer's name sits in its section headers, which is why
+  the PII gate blocks it by NAME while the content scan reads it and finds
+  nothing. Older workspaces still have one; never run it
 
 ## 7. Tooling and tests
 
@@ -405,10 +406,9 @@ a parser version the lock does not pin.
   rate; $500 ODC) are hardcoded constants, not in the cache.
 
 **Modifying templates**
-- `result_template.json` field names must match what the PDF generator
-  (`generate_tax_pdf.py`) reads. That file is a per-workspace runtime artifact,
-  gitignored and blocked by name at the PII gate, so renaming a template field
-  has no compile-time or test-time signal — check the generator by hand.
+- `result_template.json` field names reach the summary PDF through
+  `agents/lib/pdf_render.py`, which is tracked and tested against this template:
+  a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
 - Sections should be conditional — `tax-setup` removes inapplicable ones.
 
 **Modifying skills**

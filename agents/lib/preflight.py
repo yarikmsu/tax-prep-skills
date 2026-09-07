@@ -106,6 +106,7 @@ SKILL_MODULES = (
     ("agents.lib.irs_dates", "the §7503 next-business-day deadline arithmetic", "next_business_day"),
     ("agents.lib.loss_harvest", "/tax-harvest's wash-sale scanner", "derive_holding_period"),
     ("agents.lib.parse_utils", "/tax-parse's document extraction", "extract_pdf_text"),
+    ("agents.lib.pdf_render", "/tax-generate's summary-PDF renderer", "render"),
     ("agents.lib.projection", "/tax-project's mid-year projection", "_main"),
     ("agents.lib.ptet", "/tax-ptet's election analyzer", "ptet_tax"),
     ("agents.lib.receipt", "the validation receipt /tax-generate refuses a "

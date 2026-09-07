@@ -1153,14 +1153,14 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.10 - 0.13s         6
 #   agent-definition edit           38 tests      1.6 - 1.6s         3
-#   skill .md edit                 807 tests     23.3 - 24.0s        3
-#   cold pass, all seven modules  1066 tests    148.9 - 150.7s       3
-#   (for scale) `pytest tests/`   3708 tests    256.9 - 280.9s       2
+#   skill .md edit                 808 tests     23.3 - 24.0s        3
+#   cold pass, all seven modules  1067 tests    148.9 - 150.7s       3
+#   (for scale) `pytest tests/`   3746 tests    256.9 - 280.9s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3710 and runs 3708 for the same skips — and that row
+# `pytest tests/` collects 3748 and runs 3746 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1182,7 +1182,7 @@ apply_red_checks
 #   tests/test_portability.py      177 tests     15.6 - 16.8s        3
 #   tests/test_capabilities.py     116 tests      1.3 - 1.4s         3
 #   tests/test_claude_agents.py     38 tests      1.6 - 1.6s         3
-#   tests/test_secure_fs.py        139 tests      1.8 - 1.9s         3
+#   tests/test_secure_fs.py        140 tests      1.8 - 1.9s         3
 #   tests/test_preflight.py        375 tests      7.3 - 7.6s         3
 #   tests/test_host_guard.py        93 tests      1.8 - 1.9s         3
 #
@@ -1274,7 +1274,7 @@ apply_red_checks
 # invocations each paying an interpreter start pushes the same way and is worth
 # well under a second of it. What separates this from the count-column patch the
 # header forbids is the other half, which is EXACT:
-# 116 + 139 + 177 + 375 = 807 for a skill edit, plus 38 + 93 + 128 = 1066 for a
+# 116 + 140 + 177 + 375 = 808 for a skill edit, plus 38 + 93 + 128 = 1067 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1327,8 +1327,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained two hundred and eighty-nine
-# tests (3419 to 3708). The sitting took the counts and the seconds TOGETHER,
+# Against the counts the seconds were taken at, the suite has gained three hundred and twenty-seven
+# tests (3419 to 3746). The sitting took the counts and the seconds TOGETHER,
 # and six rounds have landed since. First, five launcher tests, executing the
 # two present-but-unusable `.venv` states `run.sh` refuses — the one with no
 # activate script, which had shipped untested, and the one it cannot inspect,
@@ -1375,23 +1375,43 @@ apply_red_checks
 #
 # Then its third: one more case, on verifying the bytes a package is
 # assembled from rather than the file underneath them.
+#
+# Then the tracked summary renderer (V9): twenty-two cases in
+# tests/test_pdf_render.py, and the one that moves a row — secure_fs sweeps
+# every module under agents/lib for a network import and a raw path in a
+# message, so a new module is a new case there.
+#
+# Then that renderer's own Codex round: four more cases, on a limitations
+# sentence that ran off the page, a section that IS a list, and a
+# computation warning read as commentary.
+#
+# Then its second: four more, on field names that are not the official line,
+# an amount in the payer's own currency, a name reportlab read as markup,
+# and a narrative taller than the page.
+#
+# Then its third: three more, on an override that belonged to another form,
+# cents lost with the dollar sign, and a partial PDF left at the umask's
+# mode when the build failed.
+#
+# Then its third: five more, on an override that belonged to another form,
+# cents lost with the dollar sign, a partial PDF left behind, a carryforward
+# read as a year, and an alphabet the embedded font does not carry.
 # The seconds are carried,
 # which is what this paragraph is for. The scale row's
 # were read again on the V0 branch as a check, not a refresh — one plain
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained none (177 to 177), preflight five (370 to 375), the
-# agents module none (38 to 38), secure_fs has gained one (138 to 139), the hooks module
-# none (128 to 128), capabilities none (116 to 116) and the host guard none
-# (93 to 93). EVERY pair is measured from the SITTING and not from the round
+# portability has gained none (177 to 177), preflight has gained five (370 to 375), the
+# agents module none (38 to 38), secure_fs has gained two (138 to 140), the hooks module
+# none (128 to 128), capabilities has gained none (116 to 116) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
 # the seconds, so the six could not be reconciled against the total by anyone
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. They sum to six; the remaining two hundred and eighty-three are modules this hook
+# yet taken. They sum to seven; the remaining three hundred and twenty are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
@@ -1894,7 +1914,7 @@ apply_red_checks
 #
 # THE ROUND AFTER IT WENT UNLOGGED, and that omission is the finding this entry
 # and the two below it settle. It moved preflight twenty-one (322 to 343) and
-# the agents module one (36 to 37), so the skill row went 753 to 774, the cold
+# the agents module has gained two (36 to 38), so the skill row went 753 to 774, the cold
 # pass 913 to 935 and the scale row 3272 to 3294 — an AGENTS-AND-PREFLIGHT round,
 # the third in this log, parting the two derived rows by one. The table was
 # refreshed for it and the ARITHMETIC sentence four paragraphs up was not, so the
@@ -1905,7 +1925,7 @@ apply_red_checks
 #
 # The round after THAT is this one, and it is the AGENTS-AND-PREFLIGHT shape's
 # sibling: PREFLIGHT AND HOOKS. Seven tests to preflight (343 to 350) and two to
-# the hooks module (124 to 126) and one to the agents module (37 to 38), so the
+# the hooks module has gained four (124 to 128) and one to the agents module (37 to 38), so the
 # skill row moved by SEVEN (774 to 781) and the cold pass by TEN (935 to 945),
 # with the scale row also ten (3294 to 3304).
 # The two derived rows part company for the sixth time, and by two modules at

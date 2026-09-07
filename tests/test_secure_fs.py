@@ -46,7 +46,6 @@ SENSITIVE_SKILL_SECURITY_CALLS = {
         "-m agents.lib.secure_fs answers.md || exit 1",
     ),
     "tax-generate": (
-        "-m agents.lib.secure_fs generate_tax_pdf.py",
         "-m agents.lib.secure_fs Tax_Return_*_Summary.pdf",
         "-m agents.lib.secure_fs Tax_Return_{year}_Filing_Package.pdf",
     ),

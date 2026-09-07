@@ -178,85 +178,46 @@ Before generating the PDF, verify result.json internal consistency:
 
 If any of checks 1-5 fails: print warnings and ask "Proceed with PDF generation anyway, or fix first?" (**Check 6, and THREE checks that open check 4, are hard stops and are never bypassed this way** (Codex round-16 P2 — a later summary line can't quietly override what the detailed bullets above already declared non-bypassable): the cache-vs-taxpayer cross-check, the cache-year cross-check (round 13), and the regime-vs-code validation (round 10) — all three fire BEFORE any state branch is selected and all three are individually marked "excluded from the 'proceed anyway?' prompt" in their own bullets above. Only the rest of check 4's state-CONTENT warnings (missing state return section, etc.) — the parts that run AFTER those three checks pass — follow the "proceed anyway?" prompt.)
 
-### 2. Check PDF Generator
+### 2. Render the summary PDF
 
-If `generate_tax_pdf.py` does not exist, create one that:
-- Reads `result.json`
-- Uses reportlab to produce a multi-page PDF
-- **Renders a "Scope & Limitations" box on PAGE 1** from `meta.limitations` —
-  every line, verbatim, before any dollar figures. The taxpayer must see what
-  this return does NOT cover (acknowledged gaps, manual worksheets, state
-  scope) with the same prominence as the results themselves.
-- Includes all sections present in result.json
-- Skips sections that are absent or have `_include_if` markers
-- Follows the same format as the existing generator (if one exists)
-- **Treats a null value as absent, not as a present value.** `result.json`
-  ships `null` placeholders for every unpopulated field, and
-  `d.get("k", default)` does NOT return the default when the key exists with
-  value null — so the default is exactly the case that never fires. The None
-  then reaches `Paragraph()`, `float()`, or an f-string `:,` spec and raises.
-  Route every read through small coercions (text → `""`, nested dict → `{}`,
-  list → `[]`, number → `0` for arithmetic, em dash for display) rather than
-  relying on `.get` defaults. A generator that crashes on
-  `agents/templates/result_template.json` — whose fields are ALL null — has
-  this bug; run it against that file as a smoke test before trusting it.
-- **Never hardcodes taxpayer data.** Names, amounts, and narrative findings
-  come from `result.json` (AGENTS.md §4). A generator carrying one filer's
-  name in a section header prints that name on somebody else's return, and it
-  puts real PII in a file the PII scan does not cover — that scan matches SSNs
-  and credentials, not names.
-- **Carries no AI-assistant attribution.** The PDF's `author`/`creator`
-  metadata, and any visible footer, must not name an assistant or tool vendor;
-  use the toolkit name. Every generated return inherits this metadata.
+The renderer is TRACKED, tested and shared — `agents/lib/pdf_render.py` (V9).
+There is nothing to write and nothing to check by hand:
 
-If `generate_tax_pdf.py` already exists, verify it references all current sections in result.json.
-If result.json has new sections the PDF generator doesn't handle, update the generator.
-**Specifically check that the existing generator renders `meta.limitations` as the
-page-1 "Scope & Limitations" box** — generators created before the C2 manifest
-existed don't, and reusing one silently drops the box even though the
-completeness check passed. If it doesn't, update it before generating.
-
-**Check the three rules above against the existing generator too**, for the
-same reason and with more force: `generate_tax_pdf.py` is gitignored, so a
-workspace that has ever run this skill takes THIS branch, not the create
-branch — an existing generator is the common case, not the edge case.
-
-- **Null safety:** run it against `agents/templates/result_template.json`,
-  whose fields are all null. A generator that crashes there treats null as a
-  present value and will crash on any partially-populated return.
-- **No hardcoded taxpayer data:** grep the source for names, employers,
-  institutions and literal dollar amounts. Generators written for one filer
-  carry that filer's details in section headers and narrative — which then
-  print on somebody else's return, and put PII in a file the PII scan cannot
-  vet (it matches SSN and credential shapes, not names). Anything not backed
-  by a `result.json` field must be derived from one or removed; a section with
-  no backing data should skip rather than print stale text.
-- **No AI-assistant attribution:** check the `author`/`creator` metadata and
-  any footer.
-
-If any of these fail, update the generator before generating.
-
-After creating or modifying `generate_tax_pdf.py`, immediately restrict it to
-the current OS identity. The generated source can contain taxpayer names, so it
-is a runtime PII artifact even though its extension is `.py`:
 ```bash
-sh agents/lib/run.sh -m agents.lib.secure_fs generate_tax_pdf.py
+sh agents/lib/run.sh -m agents.lib.pdf_render --result result.json --workspace .
 ```
 
-### 3. Generate PDF
+It reads every value from `result.json` and takes nothing from anywhere else, so
+the taxpayer's name reaches the page as data and never as source. It renders the
+`meta.limitations` manifest as the page-1 **Scope & Limitations** box before any
+dollar figure, treats a null as ABSENT rather than as a value, skips an optional
+section nobody filled in, keeps the official line numbers in its labels, names
+the toolkit (never an assistant or a vendor) in the PDF metadata, and secures the
+output owner-only.
 
-Run:
-```bash
-sh agents/lib/run.sh generate_tax_pdf.py
-```
+**It REFUSES (exit 2) when the validation receipt is stale** — when
+/tax-compute's Step 0.7 and Step 12.7 gates did not run, did not pass, or passed
+against inputs that have since changed. Re-run `/tax-compute` rather than working
+around it. `--draft` renders anyway and stamps **NOT VALIDATED** in the page-1
+box with the reason; never file from a draft.
 
-### 4. Verify Output
+**A workspace that has run an older version of this skill still has a
+`generate_tax_pdf.py` at its root.** It is no longer used. Leave it alone or
+delete it — do NOT run it, do not update it, and do not copy anything out of it:
+it is per-workspace source code carrying the taxpayer's name, which is why the
+PII gate still blocks it by name.
 
-Check that the output PDF was created and set restrictive permissions:
+### 3. Verify the output
+
 ```bash
 ls -la Tax_Return_*_Summary.pdf
 sh agents/lib/run.sh -m agents.lib.secure_fs Tax_Return_*_Summary.pdf
 ```
+
+The renderer already secured the file it wrote; the call above is idempotent and
+covers a workspace where the PDF arrived some other way.
+
+### 4. Report
 
 Report:
 - Output file path

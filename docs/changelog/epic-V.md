@@ -286,7 +286,7 @@ its inputs and the receipt describing them.
   gate has the window the other way round — it captures, then reads — which
   fails toward drift and refuses the package, so it is left as it is.
 
-**Third Codex round:** three more, all fixed.
+**Third Codex round:** six more, all fixed.
 
 - **[P1] The tie-out gate's EVALUATION handler did not know the receipt's error
   type.** `gate_inputs` runs inside it, and an unreadable document raised
@@ -303,4 +303,123 @@ its inputs and the receipt describing them.
   workspace root could never be packaged again — its gates would read as never
   having run — and the next year's gates would overwrite the evidence for the
   old one.
+
+## V9 — A tracked, tested summary renderer (P2) — PR #92
+
+**Defect:** `/tax-generate` INSTRUCTED the agent to write a
+`generate_tax_pdf.py` into the workspace and then run it. That generator was a
+per-workspace artifact — gitignored, blocked by name at the PII gate because it
+carried the taxpayer's name in its own source, and, being source code written
+fresh per return, the one file in the pipeline with no test, no review and no
+way to tell a good one from a bad one except by reading it. AGENTS.md §8 said as
+much: "check the generator by hand". The skill carried three pages of rules a
+reader had to apply by eye each time — null-is-absent, no hardcoded taxpayer
+data, no assistant attribution — and every one of them was a rule about code
+nobody could run a test against.
+
+**Shipped:**
+- `agents/lib/pdf_render.py`: every value comes from `result.json` and nothing
+  from anywhere else, so the taxpayer's name reaches the page as data and never
+  as source. What it renders is decided by the SHAPE of the result rather than
+  by per-section layouts — a return's sections vary, and thirty-four hand-written
+  layouts is thirty-four places for the next section to be forgotten.
+- The three prose rules are now three tested behaviours: a null is ABSENT (the
+  shipped all-null template renders, which is the smoke test the skill has asked
+  for since the generator was prose); the filer's name is read (two results with
+  two names, and the module's own source is swept for either); and no assistant
+  or vendor appears in the metadata or the page.
+- Page 1 carries the `meta.limitations` manifest as the Scope & Limitations box
+  before any dollar figure, and a `--draft` render stamps NOT VALIDATED in the
+  same box with the reasons — a reader who reads one box reads that one.
+- **Generation and validation consume the same input generation.** The renderer
+  makes V8's check the way `filing_package` does: a stale receipt is exit 2 with
+  every reason named, and `--draft` is the banner-marked way through. That is
+  step 6 of the backlog's sequencing, which is why V9 follows V8.
+- A number is an AMOUNT unless its key says otherwise: "Tax year $2,026.00" was
+  the first thing the renderer printed, and years, codes, counts, ratios and
+  rates are keyed out. A misclassification prints a figure without its dollar
+  sign, which is legible, rather than inventing one.
+- An OPTIONAL section nobody filled in is skipped (`_include_if` present, every
+  figure zero or No); a section without that marker prints even when it is all
+  zeros, because `balance_due_summary` saying the refund is $0.00 is the answer
+  rather than the absence of one.
+
+**Kept, against the backlog's own wording:** the PII gate still blocks
+`generate_tax_pdf.py` by name. Retiring that rule would remove a live protection
+from every workspace that has already run the old skill, and those workspaces
+still have the file — AGENTS.md §6 now calls it legacy and says never to run it.
+AGENTS.md §8's "check the generator by hand" rule is gone, replaced by the
+tracked renderer's own tests.
+
+**Review round (Codex, local, against `main`):** three findings, all fixed, and
+all three are things a POPULATED return loses that the template's own emptiness
+hid.
+
+- **A real limitations sentence ran off the page.** reportlab draws a plain
+  string in a table cell on ONE line and lets it past the frame; a long section
+  VALUE is clipped instead, which loses the half nobody can see. Every cell is a
+  wrapping, escaped `Paragraph` now — escaped because an ampersand in an
+  employer's name would otherwise read as markup. The layout test measures the
+  drawn words' positions, because a text assertion cannot see a sentence that is
+  present and off-page.
+- **A section that IS a list rendered nothing.** `dependents` is one, and a
+  walker that only descended into dicts dropped the whole section without a
+  word.
+- **A computation warning was read as commentary.** `compute_form_2210` returns
+  a ZERO penalty with a note saying a penalty applies but the rate is unfetched;
+  classifying every `notes` field as commentary left `$0.00` standing alone — a
+  loud degrade turned quiet, which AGENTS.md §4 says must never happen. Only
+  UNDERSCORED keys are commentary now: some `note` fields are template labels
+  and printing one is harmless, while dropping a warning is not.
+
+**Second Codex round:** four more, all fixed.
+
+- **A field name is not always the official line.** `line_1c_1099b_box_c` is
+  Schedule D line 3 and `line_14c_qualified_medical` is Form 8889 line 15 — a
+  filer transcribing by our labels would put the figure on the wrong line of a
+  real form. /tax-generate's own caveat list is now a table in the renderer, and
+  those rows say what they are instead of claiming a number they do not have.
+- **An amount in the payer's own currency printed with a dollar sign**, beside
+  the converted USD figure from the same section: two different amounts wearing
+  one unit.
+- **A taxpayer's name went through reportlab's markup parser unescaped.** An
+  unknown tag was swallowed; a recognised one raised a ValueError carrying the
+  whole name into a traceback, which is identity data in terminal output. One
+  `_escape` now covers the headings as well as the cells.
+- **A narrative longer than a page took the whole document down.** A table
+  splits BETWEEN rows by default, so one worksheet note pasted into `notes` made
+  a row taller than the frame and raised LayoutError for the entire summary.
+  Rows split inside now, and the section heading is no longer wrapped in a
+  `KeepTogether` that contradicts it.
+
+**Third Codex round:** six more, all fixed.
+
+- **An override belonged to another form.** `line_15_taxable_distributions`
+  exists in `form_8606` too, and a global by-field-name correction labelled an
+  IRA distribution "Form 8889 line 16" — sending the reader to an unrelated HSA
+  form. The table is keyed by section as well as field now.
+- **Dropping the dollar sign dropped the cents.** `:g` carries six significant
+  digits, so a local-currency 12345.67 printed as 12345.7 and larger amounts
+  lost whole units. A currency figure is an AMOUNT with two decimal places; only
+  years, codes and counts print bare.
+- **A failed render left a partial PDF at the umask's mode.** reportlab creates
+  the file and then writes it, so the securing step at the end never ran on a
+  build that died part way through — an exhausted quota is the ordinary case.
+  The document is built into a SECURED temp file beside the target and renamed,
+  and a failure removes it.
+- **A carryforward was read as a year.** `carryforward_to_next_year` ends in
+  "year" and is dollars; the suffix rule printed it bare and rounded. A key that
+  says carryforward, basis, balance, credit, tax, income, loss or payment is an
+  amount whatever its last word is.
+- **Box A and Box D name both destinations.** Those transactions reach Schedule
+  D lines 1a/8a only when they carry no adjustment; an adjusted one routes
+  through Form 8949 to 1b/8b, and a label stating one destination is wrong half
+  the time.
+- **An alphabet the font does not carry is DECLARED.** The renderer embeds
+  Bitstream Vera (bundled with reportlab: Latin and Greek), so a Cyrillic or CJK
+  name prints as empty boxes — page 1 now says how many characters and where to
+  read them instead, rather than losing a name in silence. Shipping a font that
+  covers them is a licence-and-size decision, recorded as Q6 in the backlog
+  rather than taken here. The characters themselves are not echoed into that
+  message: they are the ones the font cannot draw.
 

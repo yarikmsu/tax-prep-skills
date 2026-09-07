@@ -4,7 +4,7 @@
 > until the owner asks).** Shipped and MERGED: V0 (PR #85), X2 (PR #86), V4 (PR #87; the
 > auditor's `_provenance` check waits for the Y2 replay), X3 (PR #88), X1 (PR #89; the
 > auditor's own keying note joins the Y2 replay) — steps 1-3 complete — and W1/W4/W5 as
-> the step-9 hygiene PR, and V8 (PR #91). Each was reviewed locally (code review, cleanup, bias
+> the step-9 hygiene PR, V8 (PR #91) and V9 (PR #92). Each was reviewed locally (code review, cleanup, bias
 > direction) and then by `codex review --base <its base branch>`; the findings and their
 > fixes are recorded in `docs/changelog/epic-V.md` and `epic-X.md`. **Step 4 is blocked
 > on the owner rulings in Part 5**, which is why step 9 was taken ahead of it.
@@ -484,4 +484,15 @@ step 5)* The review-subagent acceptance replay only tests what it claims from a 
 session — a definition loads at session start, so the session that edits one cannot
 score it — and `docs/ops/season-open-runbook.md` places it after the year's live fetch.
 Nothing to rule on; it has to be run at the right moment by whoever opens the season.
+
+**Q6 — should the toolkit SHIP a font?** *(blocks nothing; it changes what a
+non-Latin name looks like on the summary PDF)* `agents/lib/pdf_render.py`
+embeds Bitstream Vera, which reportlab bundles: Latin and Greek. A Cyrillic or
+CJK name prints as empty boxes, and page 1 says so in the limitations box with a
+count and the instruction to read those fields from `result.json` — loud, per §4,
+but not fixed. Fixing it means committing a font file (DejaVu Sans is the usual
+choice at about 750 KB, under a permissive licence) or depending on one the host
+happens to have, which differs between a contributor's macOS and CI's Ubuntu.
+*No default:* a binary asset and its licence in a repository that handles
+taxpayer data is your call, not a renderer's.
 
