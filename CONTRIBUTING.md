@@ -136,6 +136,8 @@ afterwards does not clear the commit that introduced it.
 The emergency bypass is `git commit --no-verify`. Use it deliberately, never routinely;
 CI will still scan what you push.
 
+The gates' `validation_receipt.json` is a runtime artifact like the rest — gitignored, owner-only, and blocked by name at the gate. Its digests are not sensitive; the PATHS it names are the taxpayer's own documents, and a listing is a disclosure (AGENTS.md §1). It is not named in AGENTS.md §6's list only because that file is at the byte cap `test_agents_md_exists_and_under_size_cap` enforces — content past it is invisible to Codex with no error.
+
 ## Branching and pull requests
 
 - **Always work on a feature branch.** The pre-commit hook blocks direct commits to

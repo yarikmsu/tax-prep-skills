@@ -108,6 +108,8 @@ SKILL_MODULES = (
     ("agents.lib.parse_utils", "/tax-parse's document extraction", "extract_pdf_text"),
     ("agents.lib.projection", "/tax-project's mid-year projection", "_main"),
     ("agents.lib.ptet", "/tax-ptet's election analyzer", "ptet_tax"),
+    ("agents.lib.receipt", "the validation receipt /tax-generate refuses a "
+                           "stale filing package on", "verify"),
     ("agents.lib.retirement_dashboard", "/tax-retirement's contribution dashboard", "compute_401k_employee_limit"),
     ("agents.lib.rollover", "/tax-rollover's carryforward pull", "_main"),
     ("agents.lib.roth_ladder", "/tax-roth-convert's conversion ladder", "_main"),

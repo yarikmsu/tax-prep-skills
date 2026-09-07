@@ -276,6 +276,14 @@ package has four parts:
    ```bash
    sh agents/lib/run.sh -m agents.lib.filing_package --result result.json --workspace .
    ```
+   **This command REFUSES (exit 2) when the validation receipt is stale** — when
+   /tax-compute's Step 0.7 and Step 12.7 gates did not run, did not pass, or
+   passed against inputs that have since changed (a document that arrived after
+   the tie-out, an edited figure, a re-fetched cache). It names each one. Re-run
+   `/tax-compute` rather than working around it: the gates rewrite the receipt.
+   `--draft` assembles anyway and marks the package **NOT VALIDATED** at the top;
+   carry that banner onto page 1 of the PDF beside the Scope & Limitations box,
+   and never file from a draft.
    Render its table (Form 1040 first, then every present form by its
    official Attachment Sequence No., state forms last) and its checklist
    (signature, W-2 Copy B, withholding-only 1099 rule, Form 8949/1040-V/

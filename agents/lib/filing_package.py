@@ -30,6 +30,7 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
 )
+from agents.lib import receipt  # noqa: E402
 from agents.lib.yoy_diff import _section_present  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 
@@ -347,25 +348,79 @@ def render_markdown(result: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _draft_banner(checked) -> str:
+    """The NOT VALIDATED header a draft carries, or "" for a validated package.
+
+    On PAGE ONE, beside the limitations manifest the generated PDF already
+    prints there: a reader who sees only the assembled forms cannot tell a draft
+    from a return, and the one place they are certain to look is the top.
+    """
+    if checked.valid:
+        return ""
+    lines = ["# NOT VALIDATED — DRAFT ONLY", "",
+             "This package was assembled with `--draft`. It does NOT describe "
+             "the workspace as it stands:", ""]
+    lines += [f"- {reason}" for reason in checked.reasons]
+    lines += ["", "Re-run /tax-compute — its Step 0.7 and Step 12.7 gates "
+                  "rewrite the validation receipt — and assemble again before "
+                  "anything here is filed.", "", "---", ""]
+    return "\n".join(lines)
+
+
 def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.filing_package")
     parser.add_argument("--result", required=True)
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--draft", action="store_true",
+                        help="assemble anyway when the validation receipt is "
+                             "stale, marked NOT VALIDATED on page 1")
     args = parser.parse_args(argv)
     try:
         workspace = Path(args.workspace).resolve()
         result_path = _validate_subpath(Path(args.result).resolve(), workspace)
-        result = json.loads(result_path.read_text())
+        # Read ONCE, and check THESE bytes below: re-reading to verify checks a
+        # file that may no longer be the one being packaged.
+        raw = result_path.read_bytes()
+        result = json.loads(raw)
+        # V8: the package is assembled from gates that PASSED on the inputs that
+        # are here NOW. Without this, a document arriving after Step 12.7 — the
+        # second 1099 on Thursday — produced a filing package on a tie-out that
+        # never saw it, and nothing in the package said so.
+        #
+        # `--draft` is the escape hatch, and it is banner-marked rather than
+        # silent: a refusal with no way through is one an agent routes around by
+        # not running this command at all, and a draft nobody can tell from a
+        # final package is worse than either.
+        checked = receipt.verify(workspace)
+        # ...and the file being PACKAGED has to be the file the tie-out gate
+        # validated. `--result` takes any path inside the workspace, so a
+        # receipt covering `result.json` would otherwise certify a package
+        # assembled from `result_draft.json` — a valid receipt on a return no
+        # gate ever saw, which is the same defect one level up.
+        packaged = receipt.covers_result(workspace, result_path, contents=raw)
+        if packaged:
+            checked = receipt.VerifyReport(False, checked.reasons + [packaged])
+        if not checked.valid and not args.draft:
+            print("REFUSED: the filing package would not describe this "
+                  "workspace.", file=sys.stderr)
+            for reason in checked.reasons:
+                print(f"  - {reason}", file=sys.stderr)
+            print("\nRe-run /tax-compute (Step 0.7 and Step 12.7 rewrite the "
+                  "receipt), or pass --draft for a NOT VALIDATED copy.",
+                  file=sys.stderr)
+            return 2
         if args.json:
             print(json.dumps({
                 "assembly_order": assembly_order(result),
                 "attachment_checklist": attachment_checklist(result),
+                "validated": checked.valid,
+                "receipt": checked.to_dict(),
             }, indent=2))
         else:
-            print(render_markdown(result))
-    except (FilingPackageError, RolloverError, OSError,
+            print(_draft_banner(checked) + render_markdown(result))
+    except (FilingPackageError, RolloverError, receipt.ReceiptError, OSError,
             json.JSONDecodeError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1

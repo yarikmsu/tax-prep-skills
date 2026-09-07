@@ -186,7 +186,7 @@ IGNORE_PATTERNS=(
     "taxpayer_profile.json" "tax_law_*.json" "result.json" "parse_ledger.json"
     "answers.md" "summaries/" "documents/*" "!documents/.gitkeep" "projections/"
     "withholding/" "archive/" "scenarios/" "reviews/" "FBAR_*.md" "*.pdf" "holdings.json"
-    "crypto_transactions.json" "tax_calendar_*.ics"
+    "crypto_transactions.json" "tax_calendar_*.ics" "validation_receipt.json"
     # projection_inputs.json holds YTD wages, withholding and estimated payments
     # — the mid-year input to tax-project and tax-withholding. It was in the
     # tracked .gitignore, in the PII gate's sensitive-filename case AND in the

@@ -66,6 +66,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib import receipt  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -1790,6 +1791,11 @@ def _main(argv: list) -> int:
         workspace = Path(args.workspace).resolve()
         ledger_path = _validate_subpath((workspace / "parse_ledger.json").resolve(), workspace)
         result_path = _validate_subpath((workspace / "result.json").resolve(), workspace)
+        # BEFORE anything is read: the digests this gate's verdict will be
+        # bound to. Hashing after the verdict would bind a PASS to a document
+        # that arrived while the report was being written — a gate certifying a
+        # file it never saw, which is what the receipt exists to catch (V8).
+        gate_inputs = receipt.gate_inputs(workspace, "tie_out")
         ledger = load_ledger(_read_json(ledger_path, "parse_ledger.json"))
         result = _read_json(result_path, "result.json")
         # A PFIC taxable event acknowledged in the profile REQUIRES a computed
@@ -1856,7 +1862,7 @@ def _main(argv: list) -> int:
                           pfic_multiyear_disposition_ids=pfic_multiyear_disposition_ids,
                           pfic_recompute_failures=pfic_recompute_failures)
         markdown = render_markdown(report)
-    except (TieOutError, RolloverError) as e:
+    except (TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
@@ -1889,7 +1895,15 @@ def _main(argv: list) -> int:
     exit_code = 2 if report.failed else 0
     try:
         write_report(workspace, markdown)
-    except (TieOutError, RolloverError) as e:
+        # ...and the receipt, for the same reason and under the same rule: it
+        # is written AFTER the verdict is printed, a failure here never lowers
+        # the verdict's exit code, and a FAILED gate is RECORDED as failed
+        # rather than left unwritten — /tax-generate can tell "this gate failed"
+        # from "this gate never ran", and both refuse a filing package (V8).
+        receipt.record(workspace, "tie_out",
+                       receipt.PASS if not report.failed else "FAILED",
+                       inputs=gate_inputs)
+    except (TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         # Never below 1 (the write really did fail, so this is not a clean
         # pass) and never below the verdict's own code — 2 outranks it, so a

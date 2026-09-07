@@ -109,6 +109,11 @@ skip one because a reference file did not mention it.
 
 ## Gates that run regardless
 
+Both gates write their verdict, and the digest of every file they read, into
+`validation_receipt.json` — `/tax-generate --filing-package` refuses to assemble
+a package whose gates never ran or ran against other inputs. Nothing here to do:
+the tools write it. Do NOT edit that file; re-run the gate instead.
+
 ### Step 12.7: Parse-to-return tie-out (HARD GATE)
 
 Prove every parsed document landed on the return — the CP2000 killer:

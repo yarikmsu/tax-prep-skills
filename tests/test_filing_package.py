@@ -253,23 +253,72 @@ def test_render_markdown_carries_not_efile_banner():
 FIX_REPO = Path(__file__).resolve().parent.parent
 
 
-def test_cli_json_and_markdown(tmp_path):
+def _package(tmp_path, *flags):
     result = _result(schedule_d={"line_16": 5000})
     p = tmp_path / "result.json"
     p.write_text(json.dumps(result))
-    out = subprocess.run(
+    return subprocess.run(
         [sys.executable, "-m", "agents.lib.filing_package",
-         "--result", str(p), "--workspace", str(tmp_path), "--json"],
+         "--result", str(p), "--workspace", str(tmp_path), *flags],
         capture_output=True, text=True, cwd=FIX_REPO)
+
+
+def test_cli_json_and_markdown(tmp_path):
+    """`--draft`, because V8 refuses an unvalidated package: this workspace has
+    no receipt, so the shape assertions run on the draft the escape hatch
+    produces."""
+    out = _package(tmp_path, "--json", "--draft")
     assert out.returncode == 0, out.stderr
     data = json.loads(out.stdout)
     assert data["assembly_order"][0]["key"] == "form_1040"
     assert any("Sign and date" in x for x in data["attachment_checklist"])
-    out2 = subprocess.run(
-        [sys.executable, "-m", "agents.lib.filing_package",
-         "--result", str(p), "--workspace", str(tmp_path)],
-        capture_output=True, text=True, cwd=FIX_REPO)
+    assert data["validated"] is False
+    out2 = _package(tmp_path, "--draft")
     assert "Filing package" in out2.stdout
+    assert out2.stdout.startswith("# NOT VALIDATED — DRAFT ONLY")
+
+
+def test_the_package_is_refused_when_the_gates_did_not_run(tmp_path):
+    """V8: a filing package assembled on gates that never ran, or that ran
+    against other inputs, does not describe the return it is packaging. The
+    refusal names which gate and prints nothing on stdout — a caller piping
+    this into a file gets an empty file, not half a package."""
+    out = _package(tmp_path)
+    assert out.returncode == 2
+    assert out.stdout == ""
+    assert "REFUSED" in out.stderr and "validation_receipt.json" in out.stderr
+    assert "--draft" in out.stderr
+
+
+def test_a_valid_receipt_assembles_with_no_banner(tmp_path):
+    from agents.lib import receipt
+    (tmp_path / "taxpayer_profile.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    receipt.record(tmp_path, "capabilities", receipt.PASS)
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    out = _package(tmp_path)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.startswith("# Filing package") or "Filing package" in out.stdout
+    assert "NOT VALIDATED" not in out.stdout
+
+
+def test_a_document_that_arrives_after_the_tie_out_refuses_the_package(tmp_path):
+    """The Thursday 1099. The gate passed on Wednesday's documents, and nothing
+    bound its verdict to that set until the receipt did."""
+    from agents.lib import receipt
+    (tmp_path / "taxpayer_profile.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    (tmp_path / "documents").mkdir()
+    (tmp_path / "documents" / "w2.pdf").write_bytes(b"%PDF-1.4 first")
+    receipt.record(tmp_path, "capabilities", receipt.PASS)
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    assert _package(tmp_path).returncode == 0
+    (tmp_path / "documents" / "1099int.pdf").write_bytes(b"%PDF-1.4 second")
+    late = _package(tmp_path)
+    assert late.returncode == 2
+    assert "1099int.pdf appeared after that gate ran" in late.stderr
 
 
 def test_cli_path_traversal_rejected(tmp_path):
@@ -280,3 +329,25 @@ def test_cli_path_traversal_rejected(tmp_path):
          "--result", str(outside), "--workspace", str(tmp_path)],
         capture_output=True, text=True, cwd=FIX_REPO)
     assert out.returncode == 1
+
+
+def test_a_valid_receipt_does_not_certify_another_result_file(tmp_path):
+    """`--result` takes any path inside the workspace, and the gates only ever
+    validate result.json: verifying the receipt while packaging some other file
+    is a valid receipt on a return no gate has seen."""
+    from agents.lib import receipt
+    (tmp_path / "taxpayer_profile.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text("{}")
+    result = json.dumps(_result(schedule_d={"line_16": 5000}))
+    (tmp_path / "result.json").write_text(result)
+    receipt.record(tmp_path, "capabilities", receipt.PASS)
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    other = tmp_path / "result_draft.json"
+    other.write_text(result)
+    out = subprocess.run(
+        [sys.executable, "-m", "agents.lib.filing_package",
+         "--result", str(other), "--workspace", str(tmp_path)],
+        capture_output=True, text=True, cwd=FIX_REPO)
+    assert out.returncode == 2
+    assert "no gate has seen this file" in out.stderr
+

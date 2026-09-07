@@ -18,6 +18,9 @@ reviews/
 archive/
 holdings.json
 parse_ledger.json
+# The gates' validation receipt: hashes, but the PATHS it names are the
+# taxpayer's own documents, and a listing is a disclosure (AGENTS.md §1).
+validation_receipt.json
 crypto_transactions.json
 tax_calendar_*.ics
 # The PDF generator is written per workspace by tax-generate, so it is a

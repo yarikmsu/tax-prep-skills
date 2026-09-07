@@ -45,8 +45,11 @@ class ArchiveReport:
 # parse_ledger.json belongs to the year (the tie-out record — /tax-amend's
 # "what changed" baseline); reviews/ holds the persisted /tax-review
 # workpapers that /tax-rollover surfaces next year.
+# `validation_receipt.json` moves WITH the return: left behind, the archived
+# year could never be packaged again (its gates would read as never having run)
+# and the next year's gates would overwrite the evidence for the old one.
 EXPECTED_TOP_LEVEL_FILES = ("result.json", "taxpayer_profile.json", "answers.md",
-                            "parse_ledger.json")
+                            "parse_ledger.json", "validation_receipt.json")
 EXPECTED_TOP_LEVEL_DIRS = ("summaries", "documents", "reviews")
 
 

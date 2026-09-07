@@ -644,7 +644,7 @@ for scope in "${SCOPES[@]}"; do
         # is what let `git add -f generate_tax_pdf.py` commit a taxpayer's name.
         # The filename rule is the only layer with any grip on this file.
         case "$filename" in
-          taxpayer_profile.json|result.json|answers.md|parse_ledger.json|holdings.json|projection_inputs.json|crypto_transactions.json|generate_tax_pdf.py)
+          taxpayer_profile.json|result.json|answers.md|parse_ledger.json|holdings.json|projection_inputs.json|crypto_transactions.json|validation_receipt.json|generate_tax_pdf.py)
             BLOCKED+=("  BLOCKED FILENAME ($(redact "$filename")): $safe_file")
             continue ;;
         esac

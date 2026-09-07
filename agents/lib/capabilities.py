@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.lib import receipt  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -819,14 +820,23 @@ def _main(argv: list) -> int:
             raise CapabilityError(
                 f"{redact(profile_path)} does not exist — run /tax-setup first.")
         try:
-            profile = json.loads(profile_path.read_text())
+            # Read ONCE, and record the digest of these bytes: re-reading the
+            # file to hash it evaluated one profile and recorded another, so a
+            # flag flipped in that window produced a PASS receipt for a
+            # situation this gate would have blocked.
+            raw = profile_path.read_bytes()
+            profile = json.loads(raw)
         except json.JSONDecodeError as e:
             raise CapabilityError(f"taxpayer_profile.json is malformed: {redact(e)}")
+        # Captured before the evaluation, for the reason receipt.record's
+        # docstring gives: the verdict is bound to the profile this gate read.
         extra = None
         if args.acknowledge:
             extra = {s.strip() for s in args.acknowledge.split(",") if s.strip()}
+        gate_inputs = receipt.gate_inputs(
+            workspace, "capabilities", contents={"taxpayer_profile.json": raw})
         report = evaluate(profile, extra_acknowledged=extra)
-    except (CapabilityError, RolloverError) as e:
+    except (CapabilityError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
@@ -834,7 +844,22 @@ def _main(argv: list) -> int:
         print(json.dumps(_report_to_dict(report), indent=2))
     else:
         print(render_markdown(report))
-    return 2 if report.blocking else 0
+
+    exit_code = 2 if report.blocking else 0
+    # The receipt is written AFTER the verdict is printed and cannot lower its
+    # exit code: this gate's job is to block an out-of-scope return, and a
+    # permissions fault must not be able to mask that. A BLOCKED gate is
+    # recorded as blocked — /tax-generate refuses a filing package on it either
+    # way, and the reason it prints is the difference between a gate that failed
+    # and one that never ran (V8).
+    try:
+        receipt.record(workspace, "capabilities",
+                       receipt.PASS if not report.blocking else "BLOCKED",
+                       inputs=gate_inputs)
+    except (receipt.ReceiptError, RolloverError, OSError) as e:
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
+        return max(exit_code, 1)
+    return exit_code
 
 
 if __name__ == "__main__":

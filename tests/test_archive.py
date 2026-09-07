@@ -59,16 +59,23 @@ def test_happy_path_moves_files(workspace):
 
 def test_reviews_and_parse_ledger_archived(workspace):
     """C3/A1 artifacts belong to the year: the persisted /tax-review
-    workpaper and the parse ledger must ride the year-end cutover."""
+    workpaper and the parse ledger must ride the year-end cutover.
+
+    So does the gates' validation receipt (V8). Left behind, the archived year
+    could never be packaged again — its gates would read as never having run —
+    and the next year's gates would overwrite the evidence for the old one."""
     (workspace / "reviews").mkdir()
     (workspace / "reviews" / "2024-review.md").write_text("# Review")
     (workspace / "parse_ledger.json").write_text(json.dumps({"records": []}))
+    (workspace / "validation_receipt.json").write_text(json.dumps({"gates": {}}))
     archive_year(2024, root=workspace)
     archive = workspace / "archive" / "2024"
     assert (archive / "reviews" / "2024-review.md").exists()
     assert (archive / "parse_ledger.json").exists()
+    assert (archive / "validation_receipt.json").exists()
     assert not (workspace / "reviews").exists()
     assert not (workspace / "parse_ledger.json").exists()
+    assert not (workspace / "validation_receipt.json").exists()
 
 
 def test_refuses_if_archive_exists(workspace):
