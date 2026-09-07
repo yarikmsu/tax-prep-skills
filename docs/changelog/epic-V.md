@@ -542,3 +542,29 @@ carrying a parameter that passes either way.
   left that work outside its own budget. The PDF and workbook routes mask inside
   their loops, so their trailing tick already covered it.
 
+## The six open questions, ruled — 2026-09-07
+
+Part 5 of `docs/roadmap/2026-09-05-staff-agent-review.md` recorded six questions rather
+than guessing at them. All six are now ruled, and the roadmap keeps each ruling beside its
+question so the trade is visible rather than inherited:
+
+- **V3's first golden** is a SYNTHETIC CA + federal MFJ return, hand-computed from the
+  worksheets — buildable in the open, and it unblocks step 4.
+- **The model-driven eval runs LOCALLY, on demand**, with the workflow written but
+  disabled: no API key becomes a repository secret.
+- **The cross-agent matrix starts at ONE agent** and grows when a second is in use. The
+  cost is named: the five-agent portability promise stays unexercised for now.
+- **V6's enforcement mechanism is to be investigated against the installed build**, with
+  the residual written down — and if nothing clears the adversarial bar, V6 ships as the
+  sequential fallback with a header saying the boundary was not enforced, rather than as a
+  claim that reads enforced and is not.
+- **Y2 keeps its definitions and its acceptance record untouched.** The season-open
+  runbook's step 5 is now the ordered procedure — make the two queued definition edits,
+  fetch, fresh session, replay both reviewers, re-record — and the record points at it, so
+  neither half can be done without the other.
+- **No font ships.** The PII gate blocks a binary blob outright, so shipping one would
+  mean widening the gate this repository guards most carefully; a Cyrillic or CJK name
+  keeps its page-1 declaration instead. The cost is named in the ruling: this toolkit
+  already handles Cyrillic elsewhere, so a taxpayer whose own name is Cyrillic gets a
+  summary that cannot print it.
+

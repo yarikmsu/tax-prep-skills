@@ -480,7 +480,11 @@ working directory that does not contain the repository.
 
 ## When to re-run
 
-- Before T1, the season-open runbook, since it leans on the freshness auditor.
+- Before T1, the season-open runbook, since it leans on the freshness auditor. That
+  runbook's step 5 is the ORDERED procedure for it — edits, fetch, fresh session, replay,
+  re-record, in one sitting — because two definition edits are deliberately queued behind
+  this replay (V4's `_provenance` check and X1's item-7 keying note) and an edit made
+  without a replay leaves the digests below certifying bytes that are no longer there.
 - After editing either definition in `.claude/agents/` — **from a new session**,
   per the rule above; the running one still holds the definition it started with.
 - After a schema change that moves any path an agent names — `tests/test_claude_agents.py`

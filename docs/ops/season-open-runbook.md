@@ -102,20 +102,38 @@ python3 -m pytest tests/ -q                            # full suite
 FRESH populated cache is the green light to open the season; an INCOMPLETE one
 names the block(s) still to fetch.
 
-## 5. Re-run the review-subagent acceptance
+## 5. Make the queued definition edits, then re-run the review-subagent acceptance
 
-`tax-law-freshness-auditor` is the only check on the freshness contract this
-runbook exists to satisfy, so this runbook LEANS ON it and must not be the thing
-that first discovers it has regressed. Replay both reviewers per
-`docs/ops/review-subagent-acceptance.md` — from a FRESH session, since a
-definition loads at session start — and re-record the verdicts there. The
-record's own "When to re-run" list names this runbook as its first trigger; this
-step is the other half of that sentence, and without it the trigger names a
-document that never mentions it.
+`tax-law-freshness-auditor` is the only check on the freshness contract this runbook
+exists to satisfy, so this runbook LEANS ON it and must not be the thing that first
+discovers it has regressed. It also carries the two definition edits that were
+deliberately DEFERRED to this moment, and they have to be made and scored in the same
+sitting — the acceptance record digest-pins the definition bytes, so an edit without a
+replay leaves the record certifying something that is no longer there.
 
-An acceptance run scored against an old cache proves nothing about the new
-year's figures, so it goes AFTER the fetch and after the freshness gate above,
-never before them.
+**Do these in order, and do not split them across sittings.** A replay run before the
+fetch scores the auditor against last year's figures and proves nothing about this year's;
+a definition edited in the session that replays it is not what the replay tested, because
+a definition loads at SESSION START.
+
+1. **The fetch and the freshness gate above are already done.** If they are not, stop:
+   steps 1-4 come first, and this step is worthless before them.
+2. **Make the two queued edits** to `.claude/agents/tax-law-freshness-auditor.md`:
+   - the `_provenance` check (V4, `docs/changelog/epic-V.md`): the auditor reads
+     `_sources` today and cannot see WHEN a block was retrieved, which is exactly the
+     staleness it exists to catch;
+   - the item-7 keying note (X1, `docs/changelog/epic-X.md`).
+   Do NOT touch `docs/ops/review-subagent-acceptance.md` yet.
+3. **Start a FRESH session.** Not a new sub-agent, not a cleared context — a new session,
+   because that is when the edited definition is loaded.
+4. **Replay both reviewers** exactly per `docs/ops/review-subagent-acceptance.md`: its
+   pre-committed criteria, its known answers, and its traps (a squash merge leaves nothing
+   in `<sha>^`, so `--grep=P1` is the wrong search).
+5. **Re-record the verdicts and the new digests** in that record, with the date, in the
+   same session that ran them.
+
+An acceptance run scored against an old cache proves nothing about the new year's figures,
+so this step goes AFTER the fetch and the freshness gate, never before them.
 
 ---
 

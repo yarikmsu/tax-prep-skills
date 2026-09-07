@@ -439,60 +439,67 @@ the harness.
 
 ---
 
-## Part 5 — Open questions, and what is blocked behind each
+## Part 5 — The questions, and the owner's rulings
 
 Recorded rather than asked mid-flight (owner instruction 2026-09-07: document the
-question, skip that task, take the next one). Each names what it blocks and what gets
-built under each answer, so answering is a sentence rather than a meeting. Where a
-default is stated, that is what will be built if the question goes unanswered — and it
-is stated so the silence is a decision rather than a stall.
+question, skip that task, take the next). **All six were ruled on 2026-09-07**; each is
+kept with its question so a later reader can see what was traded away, and none of them
+is re-opened by an implementer without the owner.
 
-**Q1 — V3's first golden: whose return shape?** *(blocks step 4, and V1/V2 behind it)*
-A golden is only as good as the case it covers. **A:** a synthetic CA + federal MFJ
-return — W-2, 1099-INT/DIV/B, one Schedule D lot — hand-computed from the worksheets,
-which is what `tests/fixtures/` already reaches for and needs nothing from you.
-**B:** the shape of your own return, which would catch what A cannot but which nobody
-can see from here. *Default if unanswered:* **A**, because it can be built and reviewed
-in the open, and B lands later as a second golden without redoing the harness.
+**Q1 — V3's first golden: whose return shape?** *(gated step 4, and V1/V2 behind it)*
+A golden is only as good as the case it covers. The alternatives were a synthetic
+CA + federal MFJ return, hand-computed from the worksheets, and the shape of the owner's
+own return.
+**RULED: the synthetic one.** W-2, 1099-INT/DIV/B, one Schedule D lot, CA 540, computed
+from the IRS worksheets and committed as a fixture — buildable and reviewable in the open,
+and it needs nothing from the owner. What it cannot catch is a defect that only appears in
+a shape nobody put in it; a second golden can be added later without redoing the harness.
 
-**Q2 — where do V3's model-driven runs happen, and on whose budget?** *(blocks the
-model half of step 4; the deterministic half does not wait on it)* A nightly GitHub
-Actions job needs an API key in a repository that handles taxpayer data, and costs money
-per night. The alternative is a local run triggered before a release tag. The harness is
-identical either way; only the trigger and the secret differ. *Default if unanswered:*
-**local, on demand**, with the workflow written but not enabled — a secret is not
-something to add to this repository by default.
+**Q2 — where do V3's model-driven runs happen, and on whose budget?** *(gated the model
+half of step 4; the deterministic half never waited on it)*
+**RULED: locally, on demand.** A script run before a release tag, using credentials
+already on the owner's machine. The workflow file is written but left DISABLED, so
+enabling a scheduled run later is a one-line change; no API key becomes a repository
+secret, and there is no per-night spend. The cost accepted: nobody runs it unless somebody
+remembers to, which is why it belongs in the release procedure rather than in a habit.
 
-**Q3 — which agents form V3's cross-agent matrix for the first slice?** *(blocks the
-matrix, not the harness)* The portability contract names five. Running all five per
-slice is five times the cost for a question the first slice may not need to ask.
-*Default if unanswered:* **prove the slice on one agent; grow the matrix when a second
-one is actually in use.**
+**Q3 — which agents form V3's cross-agent matrix?** *(gated the matrix, not the harness)*
+**RULED: one agent for the first slice, growing when a second is actually in use.** The
+matrix is a configuration list, not a rewrite, so widening it later is cheap. The cost
+accepted, and stated because it is the reason the question existed: AGENTS.md's
+five-agent portability promise stays unexercised, and the agent that runs the eval is one
+of the two that wrote the code, so a blind spot shared between them stays invisible.
 
-**Q4 — V6: what counts as "isolation established" on the host you run?** *(blocks V6,
-step 5)* The acceptance is adversarial and explicitly rules out a deny rule on `curl`
-and `wget`. A Claude Code subagent's closed `tools:` list cannot contain a general shell
-and still be closed — but the parse worker has to run
-`sh agents/lib/run.sh -m agents.lib.parse_utils`, which needs one. The two candidate
-mechanisms are an allowlist-only permission set scoped to that single command, and a
-narrow wrapper given to the worker INSTEAD of a shell. Which exists depends on the
-Claude Code version in front of you. *No default:* this is a capability question about
-your host, and the cost of guessing is a security claim that reads enforced and is not.
+**Q4 — V6: what counts as "isolation established" on the host?** *(gates V6, step 5)*
+The acceptance is adversarial and rules out a deny rule on `curl` and `wget`, because
+`python3 -c` reaches the network too — while the worker still has to run
+`sh agents/lib/run.sh -m agents.lib.parse_utils`, which needs a shell.
+**RULED: the implementer investigates the installed Claude Code** — version, settings
+schema, whether per-subagent permissions and a network-off sandbox exist — picks the
+strongest mechanism that build actually supports, and writes the residual down: what it
+does NOT stop. **If nothing available clears the adversarial bar, V6 ships as the
+sequential fallback with the summary header stating that the boundary was not enforced,
+rather than as a claim that reads enforced and is not.**
 
-**Q5 — Y2 needs a fresh session and a live fetch, not a decision.** *(blocks Y2,
-step 5)* The review-subagent acceptance replay only tests what it claims from a FRESH
-session — a definition loads at session start, so the session that edits one cannot
-score it — and `docs/ops/season-open-runbook.md` places it after the year's live fetch.
-Nothing to rule on; it has to be run at the right moment by whoever opens the season.
+**Q5 — Y2 needs a fresh session and a live fetch, not a decision.** The review-subagent
+acceptance replay only tests what it claims from a FRESH session — a definition loads at
+session start, so the session that edits one cannot score it — and the runbook puts it
+after the year's live fetch.
+**RULED: write the procedure, touch nothing.** Both reviewer definitions and
+`docs/ops/review-subagent-acceptance.md` stay exactly as they are — certified, and with
+their digest pins matching — and the season-open runbook carries one ordered procedure for
+the whole thing. Nothing is left formally uncertified in the meantime, which is the state
+the digest pin exists to make visible rather than silent.
 
-**Q6 — should the toolkit SHIP a font?** *(blocks nothing; it changes what a
-non-Latin name looks like on the summary PDF)* `agents/lib/pdf_render.py`
-embeds Bitstream Vera, which reportlab bundles: Latin and Greek. A Cyrillic or
-CJK name prints as empty boxes, and page 1 says so in the limitations box with a
-count and the instruction to read those fields from `result.json` — loud, per §4,
-but not fixed. Fixing it means committing a font file (DejaVu Sans is the usual
-choice at about 750 KB, under a permissive licence) or depending on one the host
-happens to have, which differs between a contributor's macOS and CI's Ubuntu.
-*No default:* a binary asset and its licence in a repository that handles
-taxpayer data is your call, not a renderer's.
-
+**Q6 — should the toolkit SHIP a font?** `agents/lib/pdf_render.py` embeds Bitstream Vera,
+which reportlab bundles: Latin and Greek. A Cyrillic or CJK name prints as empty boxes,
+and page 1 declares how many characters and says to read those fields from `result.json`.
+Fixing it means committing a font binary — and the PII gate BLOCKS any binary blob
+outright ("content not scannable", failing closed), so it would also mean widening the one
+gate this repository guards most carefully.
+**RULED: keep the declaration; ship no font.** The cost accepted is real and worth
+naming: this toolkit already handles Cyrillic elsewhere (`ensure_ascii=False` exists for a
+Russian bank's column headers, and the PFIC fixtures carry RU-domiciled funds), so a
+taxpayer whose own name is Cyrillic gets a summary that cannot print it. The loud
+declaration is what stands in for that, and this ruling is what stops it being
+re-litigated as a bug.
