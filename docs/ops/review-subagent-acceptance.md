@@ -389,6 +389,95 @@ there is not. Treat this agent's *findings* as leads to verify and its *cross-re
 to repository artifacts* as unreliable — it cites confidently from files it has not
 opened.
 
+## Results — 2026-09-06
+
+Re-run because X1 of the 2026-09-05 backlog added `mfs` and `hoh` keys under
+`federal.capital_gains_rates` in `create_empty_tax_law`, which moved Replay B's fixture
+digest — the "after a schema change" trigger below, arriving as the red test it was
+built to arrive as. Neither definition changed, and `tr -d '\r' | shasum -a 256` over
+each still gives the digest the 2026-08-27 section pins, which is what makes an
+in-session dispatch valid here: the definitions this session loaded at start ARE the
+bytes on disk. Both replays were re-run (a verdict section is read whole, and one
+carrying only the moved fixture's agent would leave the other's PASS backing a claim
+under a date it was never scored on), from the same fixtures the recipes above build,
+prompts naming neither the repository nor the plant. The 2026-08-27 section is kept
+below as history.
+
+### `tax-law-freshness-auditor` — PASS
+
+**Definition.** `.claude/agents/tax-law-freshness-auditor.md`,
+sha256 `32d68f63acb8f675550e1fa5299fad0b0934574a72b60a83e8459d98d326e3b8`.
+
+**Input.** The cache Replay B's generator writes,
+sha256 `e2a9d7a31e88195851b429b7100a4eafdd34c456bf42b59f8c9e28ed413ff440`.
+
+**Model.** `claude-fable-5-1`.
+
+Named the plant as its first finding, under STALE, with the number the cache carries
+($10,000 / $5,000 — `_salt_cap(2024, …)` from the generator) and the number the
+source says is right for the payload year ($40,400 / $20,200), from a page that names
+TY2026 (Pub 505 (2026), plus the 2026 Form 1040-ES correction notice). The VALUE was
+scored, not the key. It also traced the consequence unprompted — `ptet._salt_cap`
+prefers the cache, so the stale entry defeats the statutory fallback — and, as on
+08-27, caught that the pinned Topic 503 page names no tax year and disagrees with the
+cache besides (credit, not the bar).
+
+Seeds flagged: six populated `create_empty_tax_law` constants reported under COULD
+NOT VERIFY for want of a page naming TY2026 (`se_tax` rate and factor,
+`foreign_tax_credit_simplified`, `form_8938_thresholds`, `fbar_threshold`,
+`qbi_deduction_rate`), each with the governing statute cited and the figure confirmed
+against it; three seeds VERIFIED against Pub 505 (2026) and Pub 15 (2026). That is an
+audit that ran out of year-named pages, not an enumeration, and the by-product ticket
+the 08-27 verdict raised — a structural constant and a fetched figure are
+indistinguishable in the cache — still stands.
+
+Scope was honoured: the planted file and `tax_law_fetcher.py` for the schema; no
+taxpayer file was opened.
+
+**This dispatch was the second of two, and the first found a defect in the seed
+that nobody planted.** Dispatched against the generator's output on the X1 tree, the
+auditor reported `federal.form_8938_thresholds.mfj_us` as STALE: the seed carried
+$200,000 / $300,000 — the foreign-resident SINGLE row of the Form 8938 instructions —
+under the US-resident MFJ key, whose row is $100,000 / $150,000, and it read the
+defect back to `create_empty_tax_law` by line. A domestic couple with $120,000 abroad
+was being told no Form 8938 was due. The same doubled pair sat in
+`check_form_8938_required`'s hardcoded fallback, in the FBAR skill's example and in
+the test fixture, and all four were corrected before the second dispatch. Correcting
+the seed moved the fixture digest again, so the run recorded here is the one against
+the corrected seed; the first run is not recorded as a verdict, and its finding is
+recorded here as what the acceptance apparatus is for.
+
+### `bias-direction-reviewer` — PASS
+
+**Definition.** `.claude/agents/bias-direction-reviewer.md`,
+sha256 `bd3025c7093e6681f66d52696933ea42888d1c50a6cf0a9f41c856d80ea3bf91`.
+
+**Input.** `5c23279fc28efd008ed9d2aa8d4770e00f7fcb45:agents/lib/tax_computations.py`,
+sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
+
+**Model.** `claude-fable-5-1`.
+
+Named the required finding unprompted, as finding 2: `compute_scenario` calls
+`compute_qbi_deduction` without the §199A(a)(2)(B) taxable-income cap (nor the
+half-SE-tax netting), direction OVER-stating the deduction and UNDER-stating tax,
+demonstrated on $40,000 of SE net against a $30,000 standard deduction — $8,000
+deducted where the cap allows $1,435. Form 8959 Part IV (finding 4) named with worked
+figures; the CTC refundable split and the ODC were NOT named this run (its CTC finding
+is the parameter fall-through instead), so of the two credit items one was earned.
+Seven findings in all, every one directional with a severity, a `file:line` and a
+triggering input, none outside its lens.
+
+**Finding against the agent, recorded as the contamination check requires.** The
+prompt named one path and nothing else; the report nonetheless compares the fixture
+against the tracked `agents/lib/tax_computations.py` and against `tests/` in the
+working tree ("a regression against the tracked module", with tracked line numbers
+and test ids). It opened the fixed engine. The QBI hit is therefore not the clean
+rediscovery the 08-27 run was — the finding is still correct and still demonstrated
+on the fixture's own code, and every fail condition above is met, so the verdict
+stands as a PASS on the criteria; but a dispatch that reads beyond its named input
+is the thing this check exists to notice, and the next replay should give the agent a
+working directory that does not contain the repository.
+
 ## When to re-run
 
 - Before T1, the season-open runbook, since it leans on the freshness auditor.

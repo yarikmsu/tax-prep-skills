@@ -131,11 +131,15 @@
     "capital_gains_rates": {
       "zero_pct_limit": {
         "single": 48000,
-        "mfj": 96700
+        "mfj": 96700,
+        "mfs": 48000,
+        "hoh": 72350
       },
       "fifteen_pct_limit": {
         "single": 533400,
-        "mfj": 600050
+        "mfj": 600050,
+        "mfs": 300025,
+        "hoh": 566725
       }
     },
     "child_tax_credit": {

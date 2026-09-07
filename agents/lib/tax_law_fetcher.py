@@ -31,6 +31,7 @@ from agents.lib.capabilities import (  # noqa: E402
     _TN_HALL_REPEAL_YEAR,
 )
 from agents.lib.secure_fs import first_non_finite, is_reparse_point  # noqa: E402
+from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 
 
@@ -204,9 +205,11 @@ def create_empty_tax_law(year: int) -> dict:
                 "lookback_years": 2,
                 "tiers": {"single": [], "mfj": []},
             },
+            # Four status keys, not two (X1); the statute and the legacy-cache
+            # behaviour are at the one read site, `projection.capital_gains_limits`.
             "capital_gains_rates": {
-                "zero_pct_limit": {"single": None, "mfj": None},
-                "fifteen_pct_limit": {"single": None, "mfj": None},
+                "zero_pct_limit": {"single": None, "mfj": None, "mfs": None, "hoh": None},
+                "fifteen_pct_limit": {"single": None, "mfj": None, "mfs": None, "hoh": None},
                 "twenty_pct_above": True,
             },
             "social_security": {
@@ -251,12 +254,13 @@ def create_empty_tax_law(year: int) -> dict:
                 "max_single": 300,
                 "max_mfj": 600,
             },
-            "form_8938_thresholds": {
-                "mfj_us": {"year_end": 200000, "any_time": 300000},
-                "single_us": {"year_end": 50000, "any_time": 75000},
-                "mfj_foreign": {"year_end": 400000, "any_time": 600000},
-                "single_foreign": {"year_end": 200000, "any_time": 300000},
-            },
+            # §6038D reporting thresholds (Form 8938 instructions, "Reporting
+            # thresholds"): US-resident MFJ is $100,000 / $150,000 — the seed
+            # carried the foreign-resident SINGLE pair ($200,000 / $300,000)
+            # under this key until the 2026-09-06 acceptance replay of the
+            # freshness auditor found it, doubling the threshold and telling a
+            # domestic couple with $120K abroad that no Form 8938 was due.
+            "form_8938_thresholds": {k: dict(v) for k, v in FORM_8938_THRESHOLDS.items()},
             "fbar_threshold": 10000,
             "qbi_deduction_rate": 0.20,
             # Section 199A taxable-income threshold (indexed annually; keyed
@@ -1476,23 +1480,66 @@ _QUARTER = re.compile(r"^(19|20)[0-9]{2}-Q[1-4]$")
 # derived from the schema by `_sibling_pairs`, so a block the table has not
 # met is covered the day it is seeded.
 _ORDERED_PAIRS = (
+    # The four standard deductions sit transposed (filing_statuses.<status>.
+    # standard_deduction), so the chain rule cannot see them; the joint/single
+    # pair is stated directly so it holds before head of household is fetched.
     ("federal.filing_statuses.mfj.standard_deduction",
      "federal.filing_statuses.single.standard_deduction"),
+    ("federal.filing_statuses.mfj.standard_deduction",
+     "federal.filing_statuses.hoh.standard_deduction"),
     ("federal.filing_statuses.hoh.standard_deduction",
      "federal.filing_statuses.single.standard_deduction"),
     ("federal.filing_statuses.single.standard_deduction",
      "federal.filing_statuses.mfs.standard_deduction"),
+    # The 15% breakpoint sits above the 0% one, per status.
     ("federal.capital_gains_rates.fifteen_pct_limit.single",
      "federal.capital_gains_rates.zero_pct_limit.single"),
     ("federal.capital_gains_rates.fifteen_pct_limit.mfj",
      "federal.capital_gains_rates.zero_pct_limit.mfj"),
-    ("federal.amt.exemption.single", "federal.amt.exemption.mfs"),
-    ("federal.amt.phaseout_start.single", "federal.amt.phaseout_start.mfs"),
+    ("federal.capital_gains_rates.fifteen_pct_limit.mfs",
+     "federal.capital_gains_rates.zero_pct_limit.mfs"),
+    ("federal.capital_gains_rates.fifteen_pct_limit.hoh",
+     "federal.capital_gains_rates.zero_pct_limit.hoh"),
     ("federal.salt_cap.amount", "federal.salt_cap.mfs_amount"),
     # §24(d)(1)(A): the refundable portion is a subset of the credit.
     ("federal.child_tax_credit.amount_per_child",
      "federal.child_tax_credit.refundable_limit"),
 )
+# Every per-status map in the cache descends this way: joint, then head of
+# household, then single, then separate (half of joint). It holds for every
+# map the seed and the state templates carry — an empirical regularity of
+# the indexed figures, not a theorem — so a map that legitimately breaks it
+# is named here and skipped, rather than the rule weakened for all.
+_STATUS_CHAIN = ("mfj", "hoh", "single", "mfs")
+_UNORDERED_STATUS_MAPS = frozenset()
+# The relations §1(h) actually imposes on the breakpoints, beyond "not below":
+# head of household's own amount sits STRICTLY above the "any other
+# individual" amount (§1(h)(1)(D)(i)(II)/(III)), and the 15% breakpoint for a
+# separate filer is half of joint, strictly below single's. A copied `single`
+# column — the likeliest ingest slip, since many secondary tables print only
+# single/joint/separate — satisfies every non-strict pair and none of these.
+_STRICT_PAIRS = (
+    ("federal.capital_gains_rates.zero_pct_limit.hoh",
+     "federal.capital_gains_rates.zero_pct_limit.single"),
+    ("federal.capital_gains_rates.fifteen_pct_limit.hoh",
+     "federal.capital_gains_rates.fifteen_pct_limit.single"),
+    ("federal.capital_gains_rates.fifteen_pct_limit.single",
+     "federal.capital_gains_rates.fifteen_pct_limit.mfs"),
+)
+# §1(h)(1)(B)(i) puts separate and single in the same class for the 0% amount:
+# equal in every published table.
+_EQUAL_PAIRS = (
+    ("federal.capital_gains_rates.zero_pct_limit.mfs",
+     "federal.capital_gains_rates.zero_pct_limit.single"),
+)
+# Blocks the seed ships COMPLETE — bill-fixed rates and thresholds, excluded
+# from source pinning because nothing indexes them. A cache whose copy differs
+# from the seed was written by an older seed (the Form 8938 `mfj_us` row was
+# wrong until 2026-09-06) or by hand, and reads INCOMPLETE until re-created.
+_STRUCTURAL_BLOCKS = ("federal.se_tax", "federal.niit",
+                      "federal.additional_medicare_tax",
+                      "federal.foreign_tax_credit_simplified",
+                      "federal.form_8938_thresholds")
 # Path patterns whose value is a table with its own validator. Anchored on the
 # PATH, never the bare leaf name: a future key called `schedule` or `brackets`
 # elsewhere in the schema must not inherit a validator meant for another.
@@ -1807,16 +1854,19 @@ def _pin_key(dotted: str, data: dict) -> str:
 
 
 def _sibling_pairs(data: dict) -> "list[tuple[str, str]]":
-    """Every dict in the cache holding both a `mfj` and a `single` leaf, as a
-    (higher, lower) pair — derived, so a block the ordering table never met is
-    covered the day it is seeded."""
+    """Every per-status map in the cache, as (higher, lower) pairs down the
+    `_STATUS_CHAIN` over whichever of its keys hold numbers — derived, so a
+    block the ordering table never met is covered the day it is seeded, and a
+    fifth status is one entry in the chain."""
     pairs = []
 
     def walk(node, dotted):
         if not isinstance(node, dict):
             return
-        if _is_number(node.get("mfj")) and _is_number(node.get("single")):
-            pairs.append((f"{dotted}.mfj", f"{dotted}.single"))
+        if dotted not in _UNORDERED_STATUS_MAPS:
+            present = [k for k in _STATUS_CHAIN if _is_number(node.get(k))]
+            pairs.extend((f"{dotted}.{hi}", f"{dotted}.{lo}")
+                         for hi, lo in zip(present, present[1:]))
         for k, v in node.items():
             if not str(k).startswith("_"):
                 walk(v, f"{dotted}.{k}" if dotted else str(k))
@@ -1833,6 +1883,40 @@ def _sanity(data: dict) -> None:
                 f"{higher} ({hi}) is below {lower} ({lo}) — the joint or "
                 "higher figure can never sit below the other; one of the "
                 "two was read wrong")
+    for higher, lower in _STRICT_PAIRS:
+        hi, lo = _get_path(data, higher), _get_path(data, lower)
+        if _is_number(hi) and _is_number(lo) and hi <= lo:
+            raise TaxLawSetError(
+                f"{higher} ({hi}) is not above {lower} ({lo}) — §1(h) gives it "
+                "its own, strictly higher amount; a copied column is the usual "
+                "cause")
+    for left, right in _EQUAL_PAIRS:
+        a, b = _get_path(data, left), _get_path(data, right)
+        if _is_number(a) and _is_number(b) and a != b:
+            raise TaxLawSetError(
+                f"{left} ({a}) differs from {right} ({b}) — §1(h) puts the two "
+                "in the same class; they are equal in every published table")
+
+
+def _structural_drift(data: dict, year: int) -> "list[str]":
+    """Leaves of the seed-complete blocks whose cache value is not the seed's."""
+    seed = create_empty_tax_law(year)
+    problems = []
+
+    def walk(ref, node, dotted):
+        if isinstance(ref, dict):
+            for k, v in ref.items():
+                walk(v, (node or {}).get(k) if isinstance(node, dict) else None,
+                     f"{dotted}.{k}")
+        elif _is_number(ref) and _is_number(node) and node != ref:
+            problems.append(
+                f"{dotted} ({node}) differs from the seed's {ref} — a bill-fixed "
+                "figure this command never writes; the cache was created by an "
+                "older seed or edited by hand. Re-run `create` and `set` the "
+                "fetched figures again")
+    for block in _STRUCTURAL_BLOCKS:
+        walk(_get_path(seed, block), _get_path(data, block), block)
+    return problems
 
 
 def validate_cache(data: dict, year: int) -> "list[str]":
@@ -1856,6 +1940,21 @@ def validate_cache(data: dict, year: int) -> "list[str]":
         _sanity(data)
     except TaxLawSetError as e:
         problems.append(str(e))
+    problems.extend(_structural_drift(data, year))
+    # The walker sees only keys that are present. A cache keyed single/mfj
+    # (pre-X1) reads None for head of household and separate at the accessor,
+    # which then refuses naming /tax-setup — while FRESH said proceed.
+    cg = _get_path(data, "federal.capital_gains_rates")
+    if isinstance(cg, dict):
+        for limit in ("zero_pct_limit", "fifteen_pct_limit"):
+            per_status = cg.get(limit)
+            if isinstance(per_status, dict) and any(_is_number(v) for v in per_status.values()):
+                for status in ("single", "mfj", "mfs", "hoh"):
+                    if status not in per_status:
+                        problems.append(
+                            f"federal.capital_gains_rates.{limit}.{status} (key absent — "
+                            "the §1(h) breakpoints are keyed by all four statuses; a "
+                            "two-key cache predates that and must be re-fetched)")
     return problems
 
 

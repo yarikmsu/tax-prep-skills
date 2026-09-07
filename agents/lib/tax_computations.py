@@ -30,6 +30,16 @@ SE_TAX_THRESHOLD = 400
 # excess carries forward. Structural statutory constants.
 CAPITAL_LOSS_LIMIT = 3000
 CAPITAL_LOSS_LIMIT_MFS = 1500
+# Form 8938 reporting thresholds (the instructions' four rows; stable since
+# FATCA inception). ONE table: the tax-law seed is built from it, and the
+# `mfj_us` row carried the foreign-resident single pair in three hand-mirrored
+# copies until the 2026-09-06 auditor replay caught one of them.
+FORM_8938_THRESHOLDS = {
+    "mfj_us": {"year_end": 100000, "any_time": 150000},
+    "single_us": {"year_end": 50000, "any_time": 75000},
+    "mfj_foreign": {"year_end": 400000, "any_time": 600000},
+    "single_foreign": {"year_end": 200000, "any_time": 300000},
+}
 
 # Schedule 8812 structural statutory constants (IRC §24(d)): the refundable ACTC
 # is 15% of earned income over $2,500. Neither is indexed. The per-child
@@ -4105,36 +4115,28 @@ def check_form_8938_required(
             f"Must be one of {sorted(_valid_statuses)}."
         )
 
-    # Use tax_law JSON thresholds if provided, otherwise fall back to IRS defaults
+    # IRS Form 8938 thresholds: MFJ has its own row; every other status
+    # (single, MFS, HoH) takes "single". The cache's block when it has one,
+    # else the instructions' table, which the seed is built from too.
+    thresholds = (form_8938_thresholds if form_8938_thresholds is not None
+                  else FORM_8938_THRESHOLDS)
+    threshold_key = ("mfj" if filing_status == "mfj" else "single") + \
+        ("_foreign" if lives_abroad else "_us")
+    threshold = thresholds.get(threshold_key, {})
     if form_8938_thresholds is not None:
-        abroad_suffix = "_foreign" if lives_abroad else "_us"
-        # IRS Form 8938 thresholds: MFJ has its own; all others (single, MFS, HoH) use "single"
-        fs_key = "mfj" if filing_status == "mfj" else "single"
-        threshold_key = f"{fs_key}{abroad_suffix}"
-        threshold = form_8938_thresholds.get(threshold_key, {})
-        # Validate threshold structure
+        # Validate the cache's structure; the built-in table needs no check.
         if "year_end" not in threshold or "any_time" not in threshold:
             raise ValueError(
                 f"form_8938_thresholds['{threshold_key}'] must contain 'year_end' and 'any_time' keys. "
                 f"Got keys: {list(threshold.keys())}. "
                 f"Available top-level keys: {list(form_8938_thresholds.keys())}. "
-                "Expected structure: {'mfj_us': {'year_end': 200000, 'any_time': 300000}, ...}"
+                "Expected structure: {'mfj_us': {'year_end': 100000, 'any_time': 150000}, ...}"
             )
         if threshold["year_end"] is None or threshold["any_time"] is None:
             raise ValueError(
                 f"Form 8938 thresholds for '{threshold_key}' contain None values — "
                 "not yet populated from tax_law JSON. Run /tax-setup to fetch."
             )
-    else:
-        # Fallback: hardcoded IRS defaults (stable since FATCA inception)
-        _defaults = {
-            "mfj": {"year_end": 200000, "any_time": 300000} if not lives_abroad
-                    else {"year_end": 400000, "any_time": 600000},
-            "single": {"year_end": 50000, "any_time": 75000} if not lives_abroad
-                      else {"year_end": 200000, "any_time": 300000},
-        }
-        fs_key = "mfj" if filing_status == "mfj" else "single"
-        threshold = _defaults[fs_key]
 
     total_year_end = 0.0
     total_max = 0.0

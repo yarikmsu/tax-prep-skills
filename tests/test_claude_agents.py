@@ -2443,7 +2443,17 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         later = "2999-01-01"
         assert later not in MODEL_UNRECORDED_DATES, (
             "this control's date was grandfathered, so it proves nothing")
-        assert (len(_unpinned(only(section, later), later, EXPECTED_AGENTS))
+        # Built, not read off the record: the 2026-08-27 verdicts were the
+        # only ones for a while and they read "Not recorded", so this control
+        # once used `section` as it stood — and went red the day a later
+        # section named its model, having asserted a fixture shape the record
+        # no longer had.
+        unrecorded = re.sub(r"\*\*Model\.\*\* [^\n]*",
+                            "**Model.** Not recorded — see above.", section)
+        assert "**Model.**" in section, "the section carries no model line to unrecord"
+        assert "**Model.** Not recorded — see above." in unrecorded, (
+            "the model-unrecording fixture edit landed nowhere")
+        assert (len(_unpinned(only(unrecorded, later), later, EXPECTED_AGENTS))
                 == len(EXPECTED_AGENTS)), (
             "`Not recorded` was accepted under a date outside "
             "MODEL_UNRECORDED_DATES, so the exemption is a default")

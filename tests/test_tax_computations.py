@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tests.skill_text import skill_text  # noqa: E402
+from agents.lib.tax_law_fetcher import create_empty_tax_law  # noqa: E402
 from agents.lib.tax_computations import (
     qdcg_worksheet_applies,
     _coerce_numeric,
@@ -1185,18 +1186,30 @@ class TestComputeForm8606:
 class TestCheckForm8938Required:
     """Tests for check_form_8938_required — FATCA threshold analysis."""
 
-    THRESHOLDS = {
-        "mfj_us": {"year_end": 200000, "any_time": 300000},
-        "single_us": {"year_end": 50000, "any_time": 75000},
-        "mfj_foreign": {"year_end": 400000, "any_time": 600000},
-        "single_foreign": {"year_end": 200000, "any_time": 300000},
-    }
+    # The Form 8938 instructions' four rows, read from the ONE table the seed
+    # and the engine's fallback share (three hand-mirrored copies carried the
+    # foreign-resident single pair under `mfj_us` until the 2026-09-06
+    # auditor replay found one of them).
+    THRESHOLDS = create_empty_tax_law(2026)["federal"]["form_8938_thresholds"]
 
     def test_mfj_us_below_threshold(self):
-        """MFJ US, totals below thresholds → not required."""
+        """MFJ US, totals AT the thresholds → not required ("more than")."""
         accts = [{"year_end_value_usd": 100000, "max_value_usd": 150000}]
         result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
         assert result["required"] is False
+
+    def test_mfj_us_thresholds_are_the_instructions_row_everywhere(self):
+        """A domestic MFJ couple with $120K abroad at year end IS required to
+        file; the doubled pair said no. The seed, the engine fallback and this
+        fixture must all carry the instructions' $100K / $150K."""
+        from agents.lib.tax_law_fetcher import create_empty_tax_law
+        seed = create_empty_tax_law(2026)["federal"]["form_8938_thresholds"]
+        assert seed["mfj_us"] == {"year_end": 100000, "any_time": 150000}
+        assert seed["single_foreign"] == {"year_end": 200000, "any_time": 300000}
+        accts = [{"year_end_value_usd": 120000, "max_value_usd": 120000}]
+        assert check_form_8938_required(accts, "mfj", False, seed)["required"] is True
+        assert check_form_8938_required(accts, "mfj", False, None)["required"] is True
+        assert check_form_8938_required(accts, "mfj", True, None)["required"] is False
 
     def test_mfj_us_year_end_triggers(self):
         """MFJ US, year-end exceeds threshold → required."""
@@ -1205,13 +1218,13 @@ class TestCheckForm8938Required:
             {"year_end_value_usd": 100000, "max_value_usd": 130000},
         ]
         result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
-        assert result["required"] is True  # total_ye=210K > 200K
+        assert result["required"] is True  # total_ye=210K > 100K
 
     def test_mfj_us_any_time_triggers(self):
         """MFJ US, any-time max exceeds threshold → required."""
         accts = [{"year_end_value_usd": 100000, "max_value_usd": 310000}]
         result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
-        assert result["required"] is True  # max=310K > 300K
+        assert result["required"] is True  # max=310K > 150K
 
     def test_single_us_threshold(self):
         """Single US, year-end exceeds single threshold → required."""
@@ -1253,7 +1266,7 @@ class TestCheckForm8938Required:
 
     def test_exactly_at_threshold_not_required(self):
         """Exactly at threshold (not exceeding) → NOT required."""
-        accts = [{"year_end_value_usd": 200000, "max_value_usd": 300000}]
+        accts = [{"year_end_value_usd": 100000, "max_value_usd": 150000}]
         result = check_form_8938_required(accts, "mfj", False, self.THRESHOLDS)
         assert result["required"] is False
 
@@ -4610,3 +4623,15 @@ def test_the_capital_gains_limits_are_read_at_one_site():
             reads[f.name] = len(hits)
     assert reads == {"projection.py": 2}, (
         f"a capital-gains breakpoint is read outside the accessor: {reads}")
+
+
+def test_the_fbar_skill_states_the_form_8938_figures_the_engine_holds():
+    """The skill's parenthetical is the fourth copy of the table and the one
+    that drifted last; it is derived from `FORM_8938_THRESHOLDS` here the way
+    tax-safe-harbor's figures are pinned to the engine's constants."""
+    from agents.lib.tax_computations import FORM_8938_THRESHOLDS as T
+    text = skill_text("tax-fbar")
+    k = lambda n: f"${n // 1000}K"
+    line = next(l for l in text.splitlines() if "form_8938_thresholds" in l and "MFJ in US" in l)
+    assert f"MFJ in US = {k(T['mfj_us']['year_end'])} year-end / {k(T['mfj_us']['any_time'])} any time" in line
+    assert f"unmarried abroad = {k(T['single_foreign']['year_end'])} / {k(T['single_foreign']['any_time'])}" in line

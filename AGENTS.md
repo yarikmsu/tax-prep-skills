@@ -391,10 +391,10 @@ a parser version the lock does not pin.
   `federal.irmaa.tiers.<single|mfj>` (a list of
   `{magi_threshold, annual_surcharge_per_person}`), `federal.salt_cap`
   (`{amount, mfs_amount}`), `state.{brackets,standard_deduction}`.
-- Gotcha: `capital_gains_rates`, `child_tax_credit.phase_out_start` and
-  `qbi_threshold` are keyed ONLY `single`/`mfj` (map MFJ/QSS→mfj, else→single);
+- Gotcha: `child_tax_credit.phase_out_start` and `qbi_threshold` are keyed
+  ONLY `single`/`mfj` (map MFJ/QSS→mfj, else→single);
   `additional_medicare_tax.threshold` and `niit.threshold` add `mfs`;
-  `filing_statuses` has all four. `irmaa.tiers` ships EMPTY — `tax-setup` must
+  `filing_statuses` and `capital_gains_rates` have all four. `irmaa.tiers` ships EMPTY — `tax-setup` must
   fetch it and `tax-roth-convert` degrades to "IRMAA not modeled" when it is.
 - Fetched **per year, and indexed**, so a carried-over value goes stale silently:
   `salt_cap` (the OBBBA base indexes roughly 1%/yr for 2026-2029; `ptet._salt_cap`

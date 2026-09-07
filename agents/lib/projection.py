@@ -192,7 +192,7 @@ def _binary_status_key(filing_status: "str | None",
                        where: str = "tax computation") -> str:
     """`mfj` or `single` for a VALUE-CHECKED status — see `_full_status_key`.
 
-    The single/mfj-keyed maps (capital-gains limits, CTC phase-out, IRMAA
+    The single/mfj-keyed maps (CTC phase-out, IRMAA
     tiers) collapse MFS and HoH onto `single` BY DESIGN, which is why the
     silent fallback hid here so well: the wrong answer is spelled the same as
     the right one for two of the five statuses.
@@ -217,16 +217,24 @@ def capital_gains_limits(tax_law: dict, filing_status: "str | None",
     run against a corrupt cache fails closed, where a merely unfetched one
     still runs, because a corrupt figure says the cache was not produced by
     the fetch and nothing else in it can be trusted either.
+
+    The key is the FULL status key (X1): §1(h) gives head of household its own
+    0%/15% breakpoints and married filing separately half of joint, so the
+    old `_binary_status_key` collapse onto `single` under-stated HoH's 0% band
+    and over-stated MFS's 15% band. QSS reads `mfj`. A legacy cache keyed
+    single/mfj only reads `None` for HoH and MFS — never the single figure —
+    and `tax_computations.qdcg_worksheet_applies` refuses to price
+    preferential income on it, naming /tax-setup.
     """
-    bin_key = _binary_status_key(filing_status, where)
+    key = _full_status_key(filing_status, where)
     cg = (tax_law.get("federal", {}) or {}).get("capital_gains_rates", {}) or {}
 
     def _limit(name, per_status):
         if per_status is not None and not isinstance(per_status, dict):
             raise ProjectionError(
                 f"federal.capital_gains_rates.{name} must be a per-status map "
-                f"(single/mfj). Run /tax-setup to fetch current rates.")
-        value = (per_status or {}).get(bin_key)
+                f"(single/mfj/mfs/hoh). Run /tax-setup to fetch current rates.")
+        value = (per_status or {}).get(key)
         # `None` is "not fetched", and is the guard's question. Anything else
         # must be a positive finite number HERE, at the read site, because
         # the worksheet's `min(qdcg, limit - ordinary)` resolves against NaN
@@ -238,7 +246,7 @@ def capital_gains_limits(tax_law: dict, filing_status: "str | None",
         # the positivity and ordering rules are this site's own either way.
         if value is not None and (_indexed_limit_bad(value) or value <= 0):
             raise ProjectionError(
-                f"federal.capital_gains_rates.{name}.{bin_key} must be a "
+                f"federal.capital_gains_rates.{name}.{key} must be a "
                 f"positive finite number. Run /tax-setup to fetch current rates.")
         return value
 
@@ -246,8 +254,8 @@ def capital_gains_limits(tax_law: dict, filing_status: "str | None",
     fifteen = _limit("fifteen_pct_limit", cg.get("fifteen_pct_limit"))
     if zero is not None and fifteen is not None and fifteen < zero:
         raise ProjectionError(
-            f"federal.capital_gains_rates fifteen_pct_limit.{bin_key} is below "
-            f"zero_pct_limit.{bin_key}. Run /tax-setup to fetch current rates.")
+            f"federal.capital_gains_rates fifteen_pct_limit.{key} is below "
+            f"zero_pct_limit.{key}. Run /tax-setup to fetch current rates.")
     return zero, fifteen
 
 
@@ -4573,9 +4581,23 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
         has_prior_state = prior_state_code is not None
     if not has_prior_state and (resident is None or resident != code):
         return None
-    bin_key = _binary_status_key(filing_status)
+    # The FULL status key: California gives head of household the joint
+    # amount, and the template carries `hoh`, so collapsing it onto `single`
+    # halved the deduction and over-stated the state tax the taxpayer pays
+    # as an estimate. A status the map does not carry takes its stand-in
+    # (separate and, where the template has no `hoh` row — the generic
+    # bracket-estimate states — head of household read single; surviving
+    # spouse reads joint), never a silent zero; a key the map carries at None
+    # is an unfetched cache, refused like the capital-gains breakpoints are.
     std_map = state_cfg.get("standard_deduction") or {}
-    std = _num(std_map.get(bin_key), "state.standard_deduction")
+    std_key = _full_status_key(filing_status, "state projection")
+    if std_key not in std_map:
+        std_key = {"mfs": "single", "hoh": "single", "qss": "mfj"}.get(std_key, std_key)
+    if std_key in std_map and std_map[std_key] is None:
+        raise ProjectionError(
+            f"state.standard_deduction.{std_key} is unfetched. Run /tax-setup "
+            "to fetch current rates.")
+    std = _num(std_map.get(std_key), "state.standard_deduction")
     # Same capital-gains netting + loss cap as the federal side (v1 assumption:
     # the state taxes capital gains as ordinary income and conforms to the
     # federal $3K/$1.5K-MFS loss limit, as CA does) — the split

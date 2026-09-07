@@ -35,7 +35,13 @@ a figure from a prior year.
 - Search: `"IRS {year} 401k contribution limit"`
 - Search: `"IRS {year} IRA contribution limit phase out"`
 - Search: `"IRS {year} social security wage base"`
-- Search: `"IRS {year} capital gains tax brackets"`
+- Search: `"IRS {year} capital gains tax brackets"` — populate
+  `federal.capital_gains_rates.zero_pct_limit` and `fifteen_pct_limit` for ALL
+  FOUR statuses (`single`, `mfj`, `mfs`, `hoh`; QSS reads `mfj`) from the Rev.
+  Proc. §1(h) table: head of household has its own breakpoints and married
+  filing separately is half of joint. A cache carrying only `single`/`mfj`
+  makes the engine REFUSE to price preferential income for an HoH or MFS
+  filer rather than use the single figure.
 - Search: `"Medicare IRMAA {year} income brackets Part B Part D"` — populate `federal.irmaa.tiers`
   (`single`/`mfj` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
   monthly Part B + Part D surcharge above the standard premium). Optional but unlocks IRMAA

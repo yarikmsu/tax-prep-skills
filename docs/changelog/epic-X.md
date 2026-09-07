@@ -129,3 +129,69 @@ an answer.
   zero bound now carries the profile's own value, so approving it changes
   nothing, and it proposes no split write at all: only a bound that EXISTS can
   be run past.
+
+## X1 — Status-specific capital-gains breakpoints (P1) — PR #89
+
+**Defect:** the schema keyed the §1(h) 0%/15% breakpoints `single`/`mfj` only and
+every reader collapsed HoH and MFS onto `single`. Head of household has its own
+breakpoints (higher than single) and MFS is half of joint (its 15% breakpoint is far
+below single), so the collapse under-stated one filer's 0% band and over-stated the
+other's 15% band.
+
+**Shipped:**
+- Seed: `zero_pct_limit` / `fifteen_pct_limit` keyed `single`, `mfj`, `mfs`, `hoh`.
+- `projection.capital_gains_limits` reads `_full_status_key` (QSS → mfj). A legacy
+  cache reads `None` for HoH/MFS and X2's guard refuses — never the single figure.
+- `set` orders the four (HoH between single and joint, MFS never above single,
+  fifteen above zero per status); the fetch reference populates all four;
+  AGENTS.md §8's gotcha corrected; the five fixture caches gained the keys.
+- Both acceptance replays re-run (the seed change moved Replay B's fixture digest)
+  and filed under `## Results — 2026-09-06`; CLAUDE.md's claim moved with them.
+- **Found by that replay, unplanted:** `create_empty_tax_law` seeded the Form 8938
+  US-resident MFJ thresholds with the foreign-resident single pair ($200K/$300K
+  instead of $100K/$150K), and `check_form_8938_required`'s fallback, the FBAR skill
+  text and the test fixture all carried the same doubled pair — a domestic couple
+  with $120K abroad was told no Form 8938 was due. Corrected in all four places;
+  the auditor was dispatched a second time against the corrected seed and that run
+  is the one recorded.
+
+**Deferred, deliberately:** the auditor definition still says the map is keyed
+single/mfj (its item 7); editing it needs the fresh-session replay — Y2, with the
+`_provenance` check from V4.
+
+**Review round (bias reviewer 3, cleanup 10; before merge):**
+- A cache created before this branch still carries the doubled Form 8938
+  `mfj_us` pair, the engine prefers the cache, and nothing pinned it. The
+  seed-complete blocks (`se_tax`, `niit`, `additional_medicare_tax`,
+  `foreign_tax_credit_simplified`, `form_8938_thresholds`) are bill-fixed, so
+  `validate_cache` reads a leaf that differs from the seed as INCOMPLETE, naming
+  the older seed as the cause. The table itself lives once, in
+  `tax_computations.FORM_8938_THRESHOLDS`, and the seed and the engine's
+  fallback both read it.
+- The four-status orderings were non-strict, so a copied `single` column — the
+  usual slip, since many secondary tables print only single/joint/separate —
+  passed every pair. §1(h)'s own relations are checked: head of household is
+  STRICTLY above single for both breakpoints, the separate 15% breakpoint
+  strictly below single's, and the separate 0% breakpoint EQUAL to single's.
+- The chain joint ≥ head of household ≥ single ≥ separate is derived from the
+  schema for every per-status map (`_sibling_pairs` walks `_STATUS_CHAIN`), so
+  the ordering table shrank to what the chain cannot see; `niit.threshold` and
+  the like are covered for the first time.
+- `project_state_tax` read the state standard deduction through
+  `_binary_status_key`, collapsing head of household onto single: California
+  gives HoH the joint amount, so the deduction was halved and the state
+  estimate over-stated. It reads the full status (separate → single, surviving
+  spouse → joint as stand-ins) and refuses an unfetched key.
+- Cleanup: `_tax_law_2026()` in the projection tests is current-shaped with an
+  explicit `_legacy()`; the 8938 test table is read from the seed; the
+  acceptance-record control asserts its precondition and postcondition; the
+  `_binary_status_key` docstring no longer names the capital-gains limits.
+- Code review of the round's own fixes: the full-status state deduction gave
+  head of household a ZERO deduction where a template carries no `hoh` row (the
+  generic states); it takes single as the stand-in. A two-key breakpoint cache
+  reads INCOMPLETE from `validate_cache` — the walker cannot see an absent key,
+  so FRESH said proceed while the accessor refused. tax-compute's worksheet
+  steps name the filer's status key and STOP on a missing breakpoint. The FBAR
+  skill's Form 8938 figures are derived from the one table by test. The rebase's
+  four duplicated invariant bullets are removed. The auditor definition's
+  keying note stays deferred to the Y2 fresh-session replay.

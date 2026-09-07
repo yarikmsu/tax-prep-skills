@@ -111,8 +111,8 @@ def _complete_federal_ty2026_tax_law():
         "single": [{"magi_threshold": 106000, "annual_surcharge_per_person": 1000}],
         "mfj": [{"magi_threshold": 212000, "annual_surcharge_per_person": 1000}]}
     fed["capital_gains_rates"] = {
-        "zero_pct_limit": {"single": 49000, "mfj": 98000},
-        "fifteen_pct_limit": {"single": 540000, "mfj": 608000}}
+        "zero_pct_limit": {"single": 49000, "mfj": 98000, "mfs": 49000, "hoh": 65600},
+        "fifteen_pct_limit": {"single": 540000, "mfj": 608000, "mfs": 304000, "hoh": 574000}}
     fed["social_security"]["wage_base"] = 184500
     fed["ira_limits"].update({"contribution_limit": 7500, "catch_up_50_plus": 1100})
     fed["ira_limits"]["traditional_deduction_phaseout"] = {

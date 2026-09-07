@@ -24,7 +24,11 @@ Use `compute_qdcg_tax()` from `agents/lib/tax_computations.py`:
 - **net_ltcg: Schedule D line 15 (NET long-term, AFTER foreign losses)**
   ⚠️ CRITICAL: Use NET LTCG, not gross capital gain distributions
 - brackets: from `tax_law_{year}.json`
-- cg_zero_limit / cg_fifteen_limit: from `tax_law_{year}.json`
+- cg_zero_limit / cg_fifteen_limit: from `tax_law_{year}.json` at
+  `federal.capital_gains_rates.{zero,fifteen}_pct_limit.<single|mfj|mfs|hoh>` — the
+  FILER'S status key (QSS reads `mfj`); if that key is absent or null, **STOP** and
+  run `/tax-setup` — never substitute another status's breakpoint (MFS's 15%
+  breakpoint is half of joint, far below single's)
 
 If no qualified dividends and no net capital gain: use regular bracket tax via `compute_bracket_tax()`.
 

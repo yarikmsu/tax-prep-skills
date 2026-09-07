@@ -1407,24 +1407,24 @@ class TestSetFigureCrossChecksTheStatuses:
             _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 40000)
         _set(tmp_path, "federal.filing_statuses.single.standard_deduction", 16100)
         _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit",
-             {"single": 49450, "mfj": 98900})
+             {"single": 49450, "mfj": 98900, "mfs": 49450, "hoh": 66200})
         with pytest.raises(TaxLawSetError, match="mfj"):
             _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit",
-                 {"single": 545500, "mfj": 500000})
+                 {"single": 545500, "mfj": 500000, "mfs": 272750, "hoh": 517450})
 
     def test_fifteen_must_be_above_zero_limit(self, tmp_path):
         _fresh_cache(tmp_path)
         _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit",
-             {"single": 49450, "mfj": 98900})
+             {"single": 49450, "mfj": 98900, "mfs": 49450, "hoh": 66200})
         with pytest.raises(TaxLawSetError, match="fifteen_pct_limit"):
             _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit",
-                 {"single": 40000, "mfj": 98900})
+                 {"single": 40000, "mfj": 98900, "mfs": 20000, "hoh": 66200})
 
     def test_a_block_value_may_not_carry_keys_the_schema_lacks(self, tmp_path):
         _fresh_cache(tmp_path)
-        with pytest.raises(TaxLawSetError, match="hoh"):
+        with pytest.raises(TaxLawSetError, match="qss"):
             _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit",
-                 {"single": 49450, "mfj": 98900, "hoh": 66000})
+                 {"single": 49450, "mfj": 98900, "qss": 98900})
 
 
 class TestSetFigureOnStateAndDynamicBlocks:
@@ -1837,6 +1837,126 @@ class TestTheReviewRoundRules:
         assert res["status"] == "INCOMPLETE" and "non-finite" in res["null_fields"][0]
         with pytest.raises(ValueError, match="non-finite"):   # the loader's, before any write
             _set(tmp_path, "federal.social_security.wage_base", 184500)
+
+
+class TestTheCapitalGainsBreakpointsAreStatusSpecific:
+    """X1: the seed carries four keys, `set` takes all four, and the ordering
+    HoH between single and joint, MFS never above single, is a refusal."""
+
+    def test_the_seed_keys_all_four_statuses(self):
+        cg = create_empty_tax_law(2026)["federal"]["capital_gains_rates"]
+        assert set(cg["zero_pct_limit"]) == {"single", "mfj", "mfs", "hoh"}
+        assert set(cg["fifteen_pct_limit"]) == {"single", "mfj", "mfs", "hoh"}
+
+    def test_set_takes_all_four_and_orders_them(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit",
+             {"single": 48350, "mfj": 96700, "mfs": 48350, "hoh": 64750})
+        _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit",
+             {"single": 533400, "mfj": 600050, "mfs": 300000, "hoh": 566700})
+        with pytest.raises(TaxLawSetError, match="hoh"):
+            _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit.hoh", 99000)
+        with pytest.raises(TaxLawSetError, match="mfs"):
+            _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit.mfs", 540000)
+
+    def test_the_fetch_reference_and_agents_md_say_all_four(self):
+        root = Path(__file__).resolve().parent.parent
+        fetch = (root / ".agents" / "skills" / "tax-setup" / "references"
+                 / "tax-law-fetch.md").read_text()
+        assert "`mfs`, `hoh`" in fetch and "half of joint" in fetch
+        agents_md = (root / "AGENTS.md").read_text()
+        assert "`filing_statuses` and `capital_gains_rates` have all four" in agents_md
+        assert "`capital_gains_rates`, `child_tax_credit.phase_out_start`" not in agents_md
+
+
+class TestTheStatusChainIsDerivedFromTheSchema:
+    """joint ≥ head of household ≥ single ≥ separate, for every per-status
+    map in the cache — derived by walking it, so the ordering table holds only
+    what the chain cannot see (the transposed standard deductions, the 15% ≥
+    0% breakpoints, the SALT and CTC pairs)."""
+
+    def test_a_map_the_old_table_never_listed_is_ordered(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.niit.threshold",
+             {"single": 200000, "mfj": 250000, "mfs": 125000})
+        with pytest.raises(TaxLawSetError, match="below"):
+            _set(tmp_path, "federal.niit.threshold",
+                 {"single": 200000, "mfj": 250000, "mfs": 260000})
+
+    def test_the_four_status_breakpoints_follow_the_chain(self, tmp_path):
+        _fresh_cache(tmp_path)
+        good = {"single": 49450, "mfj": 98900, "mfs": 49450, "hoh": 66200}
+        _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit", good)
+        for bad in ({**good, "hoh": 99000}, {**good, "mfs": 50000}, {**good, "hoh": 40000}):
+            with pytest.raises(TaxLawSetError, match="below"):
+                _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit", bad)
+
+    def test_a_populated_cache_satisfies_the_chain(self):
+        from agents.lib.tax_law_fetcher import _get_path, _sibling_pairs, _STATUS_CHAIN
+        assert _STATUS_CHAIN == ("mfj", "hoh", "single", "mfs")
+        law = _populated()
+        pairs = _sibling_pairs(law)
+        assert pairs, "the walk found no per-status map"
+        for hi, lo in pairs:
+            assert _get_path(law, hi) >= _get_path(law, lo), (hi, lo)
+
+
+class TestTheBreakpointRelationsTheStatuteImposes:
+    """Not just "not below": head of household is STRICTLY above single, the
+    separate 15% breakpoint strictly below single's, and the separate 0%
+    breakpoint EQUAL to single's. A copied single column — the usual slip —
+    passes every non-strict pair and none of these."""
+
+    GOOD = {"single": 48350, "mfj": 96700, "mfs": 48350, "hoh": 64750}
+    GOOD15 = {"single": 533400, "mfj": 600050, "mfs": 300000, "hoh": 566700}
+
+    def test_a_copied_single_column_is_refused(self, tmp_path):
+        _fresh_cache(tmp_path)
+        _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit", self.GOOD)
+        _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit", self.GOOD15)
+        with pytest.raises(TaxLawSetError, match="not above"):
+            _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit.hoh", 48350)
+        with pytest.raises(TaxLawSetError, match="not above"):
+            _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit.mfs", 533400)
+        with pytest.raises(TaxLawSetError, match="same class"):
+            _set(tmp_path, "federal.capital_gains_rates.zero_pct_limit.mfs", 40000)
+
+
+class TestAStructuralConstantThatDriftedFromTheSeedIsIncomplete:
+    """The Form 8938 `mfj_us` row was wrong in the seed until 2026-09-06;
+    every cache created before that still carries the doubled pair, the
+    engine prefers the cache, and nothing pinned it — a domestic couple with
+    $180K abroad was told no Form 8938 was due."""
+
+    def test_the_old_doubled_pair_reads_incomplete(self, tmp_path):
+        _fresh_cache(tmp_path)
+        data = _read(tmp_path)
+        data["federal"]["form_8938_thresholds"]["mfj_us"] = {"year_end": 200000, "any_time": 300000}
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+        res = check_freshness(2026, str(tmp_path))
+        assert res["status"] == "INCOMPLETE"
+        assert any("form_8938_thresholds.mfj_us.year_end" in f and "older seed" in f
+                   for f in res["null_fields"])
+
+    def test_the_seed_itself_is_clean(self, tmp_path):
+        from agents.lib.tax_law_fetcher import _structural_drift
+        assert _structural_drift(create_empty_tax_law(2026), 2026) == []
+
+
+def test_a_two_key_breakpoint_cache_reads_incomplete(tmp_path):
+    """The walker sees only present keys, so a pre-X1 cache keyed single/mfj
+    was FRESH while the accessor read None for HoH/MFS and refused, naming
+    /tax-setup — a loop for the filer."""
+    _fresh_cache(tmp_path)
+    data = _read(tmp_path)
+    data["federal"]["capital_gains_rates"] = {
+        "zero_pct_limit": {"single": 48350, "mfj": 96700},
+        "fifteen_pct_limit": {"single": 533400, "mfj": 600050}}
+    (tmp_path / "tax_law_2026.json").write_text(json.dumps(data))
+    res = check_freshness(2026, str(tmp_path))
+    assert res["status"] == "INCOMPLETE"
+    assert any("zero_pct_limit.hoh (key absent" in f for f in res["null_fields"])
+    assert any("fifteen_pct_limit.mfs (key absent" in f for f in res["null_fields"])
 
 
 class TestTheCodexRoundRules:

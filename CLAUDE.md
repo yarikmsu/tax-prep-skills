@@ -90,7 +90,7 @@ resolve its own findings cannot be trusted about them.
 
 **Acceptance before trusting either:** replay a known answer, never plausibility, from a FRESH
 session — definitions load at session start, so an edited one is not what a same-session replay
-tests. **Both PASSED 2026-08-27**; recipe, pre-committed criteria and the traps (a squash merge
+tests. **Both PASSED 2026-09-06**; recipe, pre-committed criteria and the traps (a squash merge
 leaves nothing in `<sha>^`, so `--grep=P1` is the wrong search) are in
 `docs/ops/review-subagent-acceptance.md`. Re-run before the season-open runbook.
 

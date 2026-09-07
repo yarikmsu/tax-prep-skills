@@ -222,8 +222,9 @@ def _tax_law_2026():
                            "brackets": [{"rate": 0.10, "min": 0, "max": 10000},
                                         {"rate": 0.20, "min": 10000, "max": None}]},
             },
-            "capital_gains_rates": {"zero_pct_limit": {"mfj": 90000, "single": 45000},
-                                    "fifteen_pct_limit": {"mfj": 550000, "single": 490000}},
+            "capital_gains_rates": {
+                "zero_pct_limit": {"mfj": 90000, "single": 45000, "mfs": 45000, "hoh": 60000},
+                "fifteen_pct_limit": {"mfj": 550000, "single": 490000, "mfs": 275000, "hoh": 520000}},
             "child_tax_credit": {"amount_per_child": 2000, "phase_out_start": {"mfj": 400000, "single": 200000}},
             "additional_medicare_tax": {"rate": 0.009, "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}},
             "social_security": {"wage_base": 176100},
@@ -233,6 +234,14 @@ def _tax_law_2026():
                   "brackets": [{"rate": 0.01, "min": 0, "max": 20000},
                                {"rate": 0.05, "min": 20000, "max": None}]},
     }
+
+
+def _legacy(law):
+    """The cache shape before X1: breakpoints keyed single/mfj only."""
+    for limit in law["federal"]["capital_gains_rates"].values():
+        limit.pop("mfs", None)
+        limit.pop("hoh", None)
+    return law
 
 
 def _profile_mfj(deps=None):
@@ -271,16 +280,21 @@ def test_project_federal_ordinary_only_still_runs_without_cg_limits():
     assert fed.tax_before_credits == 12000
 
 
-def test_capital_gains_limits_accessor_reads_the_binary_status_key():
-    """The one read site for `federal.capital_gains_rates`: MFJ/QSS map to
-    `mfj`, everything else to `single` (the X1 collapse, to be fixed on this
-    same accessor); an absent block reads as (None, None), never a KeyError."""
+def test_capital_gains_limits_accessor_reads_the_full_status_key():
+    """X1: §1(h) gives head of household its own 0%/15% breakpoints and
+    married filing separately half of joint, so the accessor reads the FULL
+    status key (QSS → mfj). A legacy cache keyed single/mfj reads None for
+    HoH and MFS — never the single figure — and X2's guard then refuses.
+    An absent block reads as (None, None), never a KeyError."""
     law = _tax_law_2026()
     assert P.capital_gains_limits(law, "MFJ") == (90000, 550000)
     assert P.capital_gains_limits(law, "QSS") == (90000, 550000)
     assert P.capital_gains_limits(law, "Single") == (45000, 490000)
-    assert P.capital_gains_limits(law, "HoH") == (45000, 490000)
-    assert P.capital_gains_limits(law, "MFS") == (45000, 490000)
+    assert P.capital_gains_limits(law, "HoH") == (60000, 520000)
+    assert P.capital_gains_limits(law, "MFS") == (45000, 275000)
+    legacy = _legacy(_tax_law_2026())
+    assert P.capital_gains_limits(legacy, "HoH") == (None, None)
+    assert P.capital_gains_limits(legacy, "MFS") == (None, None)
     assert P.capital_gains_limits({"federal": {}}, "Single") == (None, None)
     assert P.capital_gains_limits({}, "MFJ") == (None, None)
     with pytest.raises(P.ProjectionError):
@@ -333,6 +347,26 @@ def test_a_nan_breakpoint_reaches_the_projection_as_a_refusal_not_a_zero_rate():
     law["federal"]["capital_gains_rates"]["zero_pct_limit"]["mfj"] = float("nan")
     with pytest.raises(P.ProjectionError, match="positive finite"):
         P.project_federal_tax(_proj(qualified_dividends=5000), _profile_mfj(), law)
+
+
+def test_project_federal_prices_hoh_on_its_own_breakpoints_or_refuses():
+    """The collapse onto `single` under-stated an HoH filer's 0% band. With
+    the HoH breakpoint fetched, a $60K-taxable HoH filer's qualified
+    dividends sit inside the 0% band that the single breakpoint would have
+    put at 15%; on a legacy cache the same filer is refused, not priced on
+    the single figure."""
+    law = _tax_law_2026()
+    law["federal"]["filing_statuses"]["hoh"] = law["federal"]["filing_statuses"]["single"]
+    profile = {"filing_status": "HoH", "dependents": []}
+    inputs = _proj(wages=65000, qualified_dividends=10000, ordinary_dividends=10000)
+    hoh = P.project_federal_tax(inputs, profile, law)
+    law["federal"]["capital_gains_rates"]["zero_pct_limit"]["hoh"] = 45000
+    as_single = P.project_federal_tax(inputs, profile, law)
+    assert hoh.tax_before_credits < as_single.tax_before_credits
+    legacy = _legacy(_tax_law_2026())
+    legacy["federal"]["filing_statuses"]["hoh"] = legacy["federal"]["filing_statuses"]["single"]
+    with pytest.raises(P.ProjectionError, match="tax-setup"):
+        P.project_federal_tax(inputs, profile, legacy)
 
 
 def test_project_federal_wages_only_matches_bracket_tax():
@@ -6064,3 +6098,33 @@ class TestTheProvedPriorYearFloorReachesEveryWarningItSettles:
         assert not hasattr(fed, "prior_year_floor_applied")
         assert P._prior_year_floor_applied(fed) is False
         assert "and it attaches" in P._federal_status(fed)
+
+
+def test_state_standard_deduction_reads_the_full_status_and_refuses_an_unfetched_one():
+    """California gives head of household the joint amount; `_binary_status_key`
+    read `single` for HoH, halving the deduction and over-stating the state
+    estimate. A key the map carries at None is an unfetched cache, refused."""
+    law = _tax_law_2026()
+    law["state"]["standard_deduction"] = {"mfj": 11000, "single": 5500, "hoh": 11000}
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    hoh = P.project_state_tax(_proj(), prior, law, filing_status="HoH")
+    single = P.project_state_tax(_proj(), prior, law, filing_status="Single")
+    mfs = P.project_state_tax(_proj(), prior, law, filing_status="MFS")
+    assert hoh is not None and single is not None and mfs is not None
+    assert hoh.taxable_income == single.taxable_income - 5500
+    assert mfs.taxable_income == single.taxable_income
+    law["state"]["standard_deduction"]["hoh"] = None
+    with pytest.raises(P.ProjectionError, match="unfetched"):
+        P.project_state_tax(_proj(), prior, law, filing_status="HoH")
+
+
+def test_state_standard_deduction_falls_to_single_where_the_template_has_no_hoh_row():
+    """The full-status read gave head of household a ZERO deduction whenever
+    the map had no `hoh` key — the generic bracket-estimate states, and this
+    module's own fixture. The stand-in is single, as before, never zero."""
+    law = _tax_law_2026()
+    assert "hoh" not in law["state"]["standard_deduction"]
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+    hoh = P.project_state_tax(_proj(), prior, law, filing_status="HoH")
+    single = P.project_state_tax(_proj(), prior, law, filing_status="Single")
+    assert hoh.taxable_income == single.taxable_income
