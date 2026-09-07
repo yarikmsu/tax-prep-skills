@@ -1,0 +1,63 @@
+# Tool configuration. There is no `[project]` table on purpose: this repository
+# is not a distributable package — the skills and the engine run from the clone
+# (AGENTS.md §5), and `agents/lib/__init__.py` refuses to import outside the
+# workspace virtualenv, which a wheel installed elsewhere would defeat.
+#
+# W1 of docs/roadmap/2026-09-05-staff-agent-review.md. The versions CI installs
+# are pinned in .github/workflows/ci.yml; W6 folds them into a hashed dev lock.
+
+[tool.ruff]
+# The interpreter requirements.txt is compiled for, and what .python-version
+# names — never the 3.14 a contributor's `python3 -m venv` happens to give.
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "generate_tax_pdf.py"]
+
+[tool.ruff.lint]
+# The PYFLAKES-equivalent set and nothing wider, deliberately. Ruff's default
+# selection reports about nine hundred findings on this tree, nearly all of them
+# style opinions nobody has ruled on — and a gate that fires nine hundred times
+# on the day it lands is the gates-that-cry-wolf shape this repository has been
+# bitten by (PR #69). `F` is the set W1 names, it was cleared in the same commit
+# that turned it on, and it stays green from there. Widen one rule family at a
+# time, with that family's findings fixed in the same change.
+select = ["F"]
+
+[tool.mypy]
+python_version = "3.12"
+# Gradual, per W1: annotated code is checked, unannotated code is not, so the
+# engine's 61-function modules do not have to be typed before the gate can run.
+disallow_untyped_defs = false
+check_untyped_defs = false
+# `agents.lib` is imported through a sys.path insert rather than an installed
+# package; without this every module reads as missing to mypy.
+ignore_missing_imports = true
+explicit_package_bases = true
+
+# THE BASELINE, and it is a list of modules rather than a suppressed rule set:
+# every module NOT named here is enforced, so a new annotated contract in one of
+# them fails CI, and a module leaves this list by being cleared. The count beside
+# each is what mypy reported when the gate landed — it is a starting line, not a
+# budget, and it is not maintained as one; if a number here goes UP the module
+# was edited without clearing its errors, which is what the list exists to make
+# visible.
+[[tool.mypy.overrides]]
+module = [
+    "agents.lib.tax_computations",      # 68
+    "agents.lib.tie_out",               # 30
+    "agents.lib.projection",            # 8
+    "agents.lib.roth_ladder",           # 6
+    "agents.lib.tax_law_fetcher",       # 5
+    "agents.lib.rollover",              # 4
+    "agents.lib.filing_package",        # 3
+    "agents.lib.crypto_importer",       # 3
+    "agents.lib.loss_harvest",          # 2
+    "agents.lib.retirement_dashboard",  # 1
+    "agents.lib.irs_dates",             # 1
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: drives a subprocess per case (the hook and preflight modules). `-m \"not slow\"` is the engine-only run; the cost of what it skips is in skill-invariants.sh MEASURED COSTS.",
+]

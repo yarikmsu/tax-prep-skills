@@ -949,7 +949,7 @@ def test_build_events_k1_states_missing_emits_warning_when_has_k1():
         f"expected exactly one K-1-states-missing note, got {len(notes)}"
     )
     note = notes[0]
-    assert note.uid == f"note-k1-states-missing-2026@tax-prep-skills"
+    assert note.uid == "note-k1-states-missing-2026@tax-prep-skills"
     assert "TY2026" in note.summary
     # Sanity: deterministic UID across calls (no UUID or time component).
     events2 = cal.build_events(p, 2026)

@@ -778,13 +778,13 @@ def events_fl_property(tax_year: int, *, business_tpp: bool,
         # (2000), so an unqualified exemption promise misdescribes pre-2008
         # years. Pre-2008 keeps the filing deadline + penalties only.
         exemption_note = (
-            f" A timely initial filing is required to claim the $25,000 "
-            f"exemption (F.S. 196.183). Once that initial return is filed, "
-            f"subsequent annual returns are generally WAIVED while the "
-            f"property's value stays at or below $25,000 — unless the "
-            f"county property appraiser requests one (F.S. 196.183); this "
-            f"reminder recurs every year regardless, since eligibility for "
-            f"the waiver can change year to year."
+            " A timely initial filing is required to claim the $25,000 "
+            "exemption (F.S. 196.183). Once that initial return is filed, "
+            "subsequent annual returns are generally WAIVED while the "
+            "property's value stays at or below $25,000 — unless the "
+            "county property appraiser requests one (F.S. 196.183); this "
+            "reminder recurs every year regardless, since eligibility for "
+            "the waiver can change year to year."
         ) if tax_year >= _FL_TPP_EXEMPTION_YEAR else ""
         events.append(CalendarEvent(
             uid=f"state-property-fl-dr405-{tax_year}@{_UID_NAMESPACE}",
@@ -798,8 +798,8 @@ def events_fl_property(tax_year: int, *, business_tpp: bool,
                 f"property SITS, not where you reside — you can owe this "
                 f"even if you live outside Florida."
                 + exemption_note +
-                f" Late filing: 5%/month penalty up to 25%; "
-                f"failure to file: 25%."
+                " Late filing: 5%/month penalty up to 25%; "
+                "failure to file: 25%."
                 + _fl_county_observed_note(stat)
             ),
             category="state_property",
@@ -1076,14 +1076,14 @@ def _k1_states_missing_note(tax_year: int) -> CalendarEvent:
         uid_slug="note-k1-states-missing",
         summary="K-1 entity states not specified",
         description=(
-            f"You reported K-1 income but `flags.k1_states` is empty. "
-            f"PTET is an entity-level state tax — the partnership / "
-            f"S-corp files in the state where it operates, NOT where "
-            f"the partner resides — so the calendar needs the entity "
-            f"state(s) to surface PTET deadlines. List every state "
-            f"where your K-1 income originates in taxpayer_profile.json "
-            f"under flags.k1_states (e.g. [\"CA\", \"NY\"]), then "
-            f"re-run /tax-calendar."
+            "You reported K-1 income but `flags.k1_states` is empty. "
+            "PTET is an entity-level state tax — the partnership / "
+            "S-corp files in the state where it operates, NOT where "
+            "the partner resides — so the calendar needs the entity "
+            "state(s) to surface PTET deadlines. List every state "
+            "where your K-1 income originates in taxpayer_profile.json "
+            "under flags.k1_states (e.g. [\"CA\", \"NY\"]), then "
+            "re-run /tax-calendar."
         ),
     )
 

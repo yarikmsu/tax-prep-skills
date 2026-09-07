@@ -15,6 +15,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from tests.skill_text import CONTRIBUTOR_SKILLS, skill_text
 
 REPO = Path(__file__).resolve().parent.parent

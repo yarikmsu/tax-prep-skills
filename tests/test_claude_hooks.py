@@ -34,6 +34,12 @@ from pathlib import Path
 
 import pytest
 
+# W4: this module drives the real hook in a subprocess once per case and a
+# handful of cases sleep on purpose, which is why it dominates every total in
+# skill-invariants.sh MEASURED COSTS. `-m "not slow"` is the engine-only run.
+pytestmark = pytest.mark.slow
+
+
 REPO = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO / ".claude" / "hooks"
 SETTINGS = REPO / ".claude" / "settings.json"

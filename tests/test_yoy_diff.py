@@ -7,14 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agents.lib.yoy_diff import (
-    HeadlineMetric,
-    LineMover,
-    SectionChange,
-    YoYReport,
     compute_headlines,
     compute_line_movers,
     compute_section_changes,

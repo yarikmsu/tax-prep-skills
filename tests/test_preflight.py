@@ -49,6 +49,14 @@ from agents.lib import preflight as P  # noqa: E402
 from tests.skill_text import (  # noqa: E402
     CONTRIBUTOR_SKILLS, ENGINE_FREE_SKILLS, skill_text)
 
+# W4: this module EXECUTES `run.sh` and the package initialiser in subprocesses
+# rather than asserting against their text — the trade that bought a test able
+# to catch a hang — and it fabricates environments on disk to do it. That is why
+# it is the row skill-invariants.sh MEASURED COSTS puts between the agents module
+# and portability. `-m "not slow"` is the engine-only run.
+pytestmark = pytest.mark.slow
+
+
 REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / ".agents" / "skills"
 
@@ -3756,7 +3764,7 @@ class TestSkillGate:
                        # sitting in the argv of a command that is already
                        # routed. A flatten that joined a subshell to whatever
                        # followed it would report the second.
-                       f'sh "$(git rev-parse --show-toplevel)/agents/lib/run.sh"'
+                       'sh "$(git rev-parse --show-toplevel)/agents/lib/run.sh"'
                        " -m agents.lib.ptet",
                        f'{LAUNCHER} -m agents.lib.ptet "$(date)"',
                        f"(cd x && python3 -c ok); {LAUNCHER} -m agents.lib.ptet",
@@ -5846,8 +5854,8 @@ class TestTheLauncherRuleReachesBeyondTheSkills:
             "the launcher inside an attached `-S` operand was read as bare")
         assert self._heredoc_offenders(
             "synthetic.md", ["```sh", "env -S'python3 -' <<'PY'"] + body
-            ) == ([f"synthetic.md:4: heredoc opened at line 2 reaches the "
-                   f"engine: from agents.lib.ptet import _salt_cap"], 1), (
+            ) == (["synthetic.md:4: heredoc opened at line 2 reaches the "
+                   "engine: from agents.lib.ptet import _salt_cap"], 1), (
             "an attached `-S` operand opened no heredoc, so its body went "
             "unread")
 
@@ -6911,8 +6919,8 @@ class TestTheLauncherRuleReachesBeyondTheSkills:
         for opener in ("python3 - <<\'PY\'", "python3 - <<PY", "python3 - << PY"):
             assert self._heredoc_offenders(
                 "synthetic.md", ["```sh", opener] + body) == (
-                [f"synthetic.md:4: heredoc opened at line 2 reaches the "
-                 f"engine: from agents.lib.ptet import _salt_cap"], 1), (
+                ["synthetic.md:4: heredoc opened at line 2 reaches the "
+                 "engine: from agents.lib.ptet import _salt_cap"], 1), (
                 f"the here-string guard took a real heredoc with it: {opener}")
         found, seen = self._heredoc_offenders(
             "synthetic.md", ["```sh", "python3 - <<-PY", "import json",

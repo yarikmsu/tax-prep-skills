@@ -3,7 +3,6 @@
 
 import json
 import os
-import stat
 import sys
 from pathlib import Path
 
@@ -498,7 +497,6 @@ def test_uninspectable_destination_raises_archive_error_not_a_bare_oserror(
 def test_uninspectable_path_raises_archive_error_in_dry_run(workspace, monkeypatch):
     """The dry-run loop is the other out-of-try site."""
     real_is_reparse_point = archive_module.is_reparse_point
-    calls = {"n": 0}
 
     def fake(path):
         # Let the two destination components through so the failure lands in

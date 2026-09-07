@@ -5,7 +5,6 @@ and a deterministic synthetic baseline (MFJ brackets: 10% to 20k, 20% to 200k,
 30% above; standard deduction 30k). Update the comments if you change them.
 """
 import json
-import math
 import shutil
 import subprocess
 import sys

@@ -1,9 +1,13 @@
 # Staff Agent-Developer Review + Backlog — 2026-09-05
 
-> **Status 2026-09-05 — ADOPTED; implementation started the same day, one task per
-> PR, in the Part 4 order (Y1 postponed until the owner asks).** Shipped: V0 (PR #85),
-> X2 (PR #86), V4 (PR #87; the auditor's `_provenance` check waits for the Y2 replay),
-> X3 (PR #88), X1 (PR #89; the auditor's own keying note joins the Y2 replay).
+> **Status 2026-09-07 — ADOPTED; one task per PR, in the Part 4 order (Y1 postponed
+> until the owner asks).** Shipped and MERGED: V0 (PR #85), X2 (PR #86), V4 (PR #87; the
+> auditor's `_provenance` check waits for the Y2 replay), X3 (PR #88), X1 (PR #89; the
+> auditor's own keying note joins the Y2 replay) — steps 1-3 complete — and W1/W4/W5 as
+> the step-9 hygiene PR. Each was reviewed locally (code review, cleanup, bias
+> direction) and then by `codex review --base <its base branch>`; the findings and their
+> fixes are recorded in `docs/changelog/epic-V.md` and `epic-X.md`. **Step 4 is blocked
+> on the owner rulings in Part 5**, which is why step 9 was taken ahead of it.
 > This backlog sits beside
 > `2026-08-12-product-owner-review.md`, which remains the active product backlog (Epics
 > R-U). Items here that duplicate one there (Y1 = R6, Y2 = T1, X6 = T3, X7 = U1) defer
@@ -432,3 +436,52 @@ the harness.
 9. **W1, W4, W5** as a single hygiene PR at any point — W5 is one file AGENTS.md §7
    already asks for. **V5, V10, V11, W6, Y3, Y4** at any point after step 5; W3 only
    with its bootstrap answered.
+
+---
+
+## Part 5 — Open questions, and what is blocked behind each
+
+Recorded rather than asked mid-flight (owner instruction 2026-09-07: document the
+question, skip that task, take the next one). Each names what it blocks and what gets
+built under each answer, so answering is a sentence rather than a meeting. Where a
+default is stated, that is what will be built if the question goes unanswered — and it
+is stated so the silence is a decision rather than a stall.
+
+**Q1 — V3's first golden: whose return shape?** *(blocks step 4, and V1/V2 behind it)*
+A golden is only as good as the case it covers. **A:** a synthetic CA + federal MFJ
+return — W-2, 1099-INT/DIV/B, one Schedule D lot — hand-computed from the worksheets,
+which is what `tests/fixtures/` already reaches for and needs nothing from you.
+**B:** the shape of your own return, which would catch what A cannot but which nobody
+can see from here. *Default if unanswered:* **A**, because it can be built and reviewed
+in the open, and B lands later as a second golden without redoing the harness.
+
+**Q2 — where do V3's model-driven runs happen, and on whose budget?** *(blocks the
+model half of step 4; the deterministic half does not wait on it)* A nightly GitHub
+Actions job needs an API key in a repository that handles taxpayer data, and costs money
+per night. The alternative is a local run triggered before a release tag. The harness is
+identical either way; only the trigger and the secret differ. *Default if unanswered:*
+**local, on demand**, with the workflow written but not enabled — a secret is not
+something to add to this repository by default.
+
+**Q3 — which agents form V3's cross-agent matrix for the first slice?** *(blocks the
+matrix, not the harness)* The portability contract names five. Running all five per
+slice is five times the cost for a question the first slice may not need to ask.
+*Default if unanswered:* **prove the slice on one agent; grow the matrix when a second
+one is actually in use.**
+
+**Q4 — V6: what counts as "isolation established" on the host you run?** *(blocks V6,
+step 5)* The acceptance is adversarial and explicitly rules out a deny rule on `curl`
+and `wget`. A Claude Code subagent's closed `tools:` list cannot contain a general shell
+and still be closed — but the parse worker has to run
+`sh agents/lib/run.sh -m agents.lib.parse_utils`, which needs one. The two candidate
+mechanisms are an allowlist-only permission set scoped to that single command, and a
+narrow wrapper given to the worker INSTEAD of a shell. Which exists depends on the
+Claude Code version in front of you. *No default:* this is a capability question about
+your host, and the cost of guessing is a security claim that reads enforced and is not.
+
+**Q5 — Y2 needs a fresh session and a live fetch, not a decision.** *(blocks Y2,
+step 5)* The review-subagent acceptance replay only tests what it claims from a FRESH
+session — a definition loads at session start, so the session that edits one cannot
+score it — and `docs/ops/season-open-runbook.md` places it after the year's live fetch.
+Nothing to rule on; it has to be run at the right moment by whoever opens the season.
+

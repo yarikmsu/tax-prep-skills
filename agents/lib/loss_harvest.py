@@ -44,17 +44,15 @@ import json
 import math
 import sys
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.projection import (  # noqa: E402
     ProjectionError,
-    _binary_status_key,
     _cache_state_code_present_but_invalid,
     _capital_loss_limit,
-    _full_status_key,
     _money,
     _none_type_allowed,
     _normalize_state_code,

@@ -1488,12 +1488,12 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
         if hsa_coverage == "none" and hsa_ytd_total > 0:
             # Data-vs-flag contradiction: corrective action required.
             hsa_note = (
-                f"HSA contributions reported but `hsa_coverage` is 'none' "
-                f"— every contributed dollar is excess. Verify HDHP "
-                f"eligibility; if eligible, set `hsa_coverage` to your "
-                f"tier in projection_inputs.json and re-run. If not "
-                f"eligible, withdraw the excess before April 15 to avoid "
-                f"the 6% excise tax per year on the excess."
+                "HSA contributions reported but `hsa_coverage` is 'none' "
+                "— every contributed dollar is excess. Verify HDHP "
+                "eligibility; if eligible, set `hsa_coverage` to your "
+                "tier in projection_inputs.json and re-run. If not "
+                "eligible, withdraw the excess before April 15 to avoid "
+                "the 6% excise tax per year on the excess."
             )
         if hsa_kind == "hsa_non_conforming":
             hsa_kind_note = (

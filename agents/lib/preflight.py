@@ -2214,7 +2214,6 @@ def _remedy_text(report: PreflightReport) -> str:
         return workspace_remedy(report.workspace)
     unactivated = report.unactivated
     files_missing = report.files_missing
-    engine_missing = report.engine_missing
     # A refusal states the remedy for the failure AT HAND, and a remedy that
     # cannot resolve what was reported is worse than none: it is followed, it
     # fails, and the reader is back here with no route out. "Re-clone the

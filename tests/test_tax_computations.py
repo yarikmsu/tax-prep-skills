@@ -6,7 +6,6 @@ Tolerance: $0.01 (exact match after rounding to 2 decimal places).
 """
 
 import json
-import math
 import pytest
 import sys
 import os
@@ -53,7 +52,6 @@ from agents.lib.tax_computations import (
     compute_sales_tax_deduction,
     prior_year_agi_threshold,
     prior_year_prong,
-    SE_TAX_THRESHOLD,
 )
 
 # TY2025 MFJ Brackets (OBBBA)
@@ -347,7 +345,7 @@ class TestComputeSeTax:
     def test_se_w2_exceeds_ss_base(self):
         """$50K SE + $180K W-2. SS room = 0. Only Medicare applies."""
         result = compute_se_tax(50_000, ss_wage_base=self.SS_WAGE_BASE_2025, w2_ss_wages=180_000)
-        se_earnings = 50_000 * 0.9235  # 46175.0
+        # SE earnings: 50_000 * 0.9235 = 46175.0
         assert result["se_earnings"] == 46175.00
         assert result["ss_room"] == 0
         assert result["ss_tax"] == 0
@@ -369,7 +367,7 @@ class TestComputeSeTax:
     def test_exactly_at_threshold(self):
         """$400 profit (exactly at threshold) → SE IS computed."""
         result = compute_se_tax(400, ss_wage_base=self.SS_WAGE_BASE_2025)
-        se_earnings = 400 * 0.9235  # 369.40
+        # SE earnings: 400 * 0.9235 = 369.40
         expected_tax = round(369.40 * 0.124 + 369.40 * 0.029, 2)
         assert result["se_earnings"] == 369.40
         assert result["se_tax"] == expected_tax

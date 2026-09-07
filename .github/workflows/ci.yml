@@ -40,6 +40,31 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v
 
+  lint:
+    name: Lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The interpreter .python-version names and requirements.txt is
+          # compiled for. A linter run on another one reports another language.
+          python-version: "3.12"
+      # PINNED, unlike the pytest and pip-audit installs above: a linter is the
+      # one dependency whose new release adds FINDINGS, so an unpinned one turns
+      # an unrelated PR red on a rule nobody in this repository has ruled on.
+      # W6 folds these into the hashed dev lock that covers pytest too.
+      - name: Install linters
+        run: pip install ruff==0.16.6 mypy==2.3.1
+      # Configured in pyproject.toml: ruff runs the pyflakes-equivalent set,
+      # cleared in the commit that turned it on; mypy checks annotated code and
+      # carries a named per-module baseline, so a module not on that list fails
+      # here rather than accumulating quietly.
+      - name: Ruff
+        run: ruff check .
+      - name: Mypy
+        run: mypy -p agents
+
   pii-scan:
     name: PII file scan
     runs-on: ubuntu-latest

@@ -48,6 +48,22 @@ outside this clone, useful only if you want the skills available in *other* dire
 under Claude Code, and inert under anything else. On a Windows clone without developer
 mode, where symlinks fail, that global install needs `--copy`.
 
+**Use Python 3.12.** `.python-version` names it, the lock is compiled for it, and CI's
+linters run on it. A bare `python3 -m venv` follows whatever `python3` happens to be —
+on a current macOS that is 3.14, and the interpreter alone decides some results, which
+is why CI runs both. With [uv](https://docs.astral.sh/uv/) installed, the pinned
+interpreter and the locked tree come from two commands that read `.python-version` and
+`requirements.txt` themselves:
+
+```bash
+uv venv                                # 3.12, per .python-version
+uv pip sync requirements.txt           # exactly the lock, hashes verified
+uv pip install pytest                  # AFTER the sync: `sync` makes the
+                                       # environment exactly the lock, which is
+                                       # the point of it and also why it removes
+                                       # a test runner the lock does not pin
+```
+
 New here? Run `docs/QUICKSTART.md` first. It produces real figures from bundled
 fixtures in about fifteen minutes and needs no personal data.
 
@@ -70,6 +86,26 @@ source .venv/bin/activate && python3 -m pytest tests/ -q
   (`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer`) run a built-in
   self-test when invoked with no arguments — `sh agents/lib/run.sh agents/lib/tax_computations.py`
   is the one to run after touching the math.
+- **`-m "not slow"` is the engine-only run.** Two modules — the Claude hooks and
+  preflight — execute real scripts in a subprocess once per case, and they are most of
+  the suite's wall clock; the marker lets you iterate on the engine without them. Run
+  the whole suite before you push: the marker skips the modules, not the risk.
+
+## Lint and types
+
+```bash
+ruff check .          # the pyflakes-equivalent set, and it is green
+mypy -p agents        # annotated code, against a named per-module baseline
+```
+
+Both are configured in `pyproject.toml` and run in CI on 3.12, with the versions pinned
+there — a linter is the one dependency whose new release adds findings. `ruff`'s rule
+selection is deliberately narrow (`F`): the default set reports about nine hundred
+findings here, nearly all of them style opinions nobody has ruled on, and a gate that
+fires nine hundred times on arrival is one contributors learn to reason past. Widen it
+one rule family at a time, fixing that family in the same change. `mypy`'s baseline is a
+LIST OF MODULES, not a suppressed rule set: every module not named in `pyproject.toml`
+is enforced, and a module leaves the list by being cleared.
 
 ## Dependencies
 

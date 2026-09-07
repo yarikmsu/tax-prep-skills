@@ -1,7 +1,6 @@
 """Tests for tax_law_fetcher freshness logic — the sdi_wage_limit year-aware
 null exception (Codex P1 on PR #29)."""
 import json
-import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path

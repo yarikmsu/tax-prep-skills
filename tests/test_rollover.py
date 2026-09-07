@@ -3,7 +3,6 @@
 
 import json
 import os
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -910,7 +909,7 @@ def test_compute_diff_amt_credit_zero_skipped():
 
 # --- foreign_holdings (PFIC / §988) history rollover -------------------------
 
-from agents.lib.rollover import _roll_foreign_holdings_forward, _diff_foreign_holdings
+from agents.lib.rollover import _roll_foreign_holdings_forward
 
 
 def _pfic_holding(**over):

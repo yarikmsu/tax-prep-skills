@@ -11,6 +11,7 @@ One file per epic, newest first, plus the pre-epic base engine:
 
 | File | Scope |
 |------|-------|
+| [`epic-W.md`](epic-W.md) | Engineering hygiene (ruff and mypy in CI, the `slow` marker, the pinned dev interpreter) |
 | [`epic-X.md`](epic-X.md) | Tax correctness, known and unfixed (capital-gains breakpoints fail closed) |
 | [`epic-V.md`](epic-V.md) | Agent reliability and determinism (SSN/ITIN masking at the extraction boundary) |
 | [`epic-P.md`](epic-P.md) | Florida state module (`type: "none"` regime discriminator, sales-tax election, property calendar, no-income-tax review step) |
