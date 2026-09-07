@@ -58,12 +58,14 @@ appear to be. An ordinary failure does not stop it.
 # any supported syntax; this one may not.
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import re
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Run as a SCRIPT PATH (`python3 agents/lib/secure_fs.py`) a module is not
@@ -658,6 +660,72 @@ def secure_path(path) -> None:
                 f"Could not restrict {redact(path_str)} to the owner only: "
                 f"{redact(e)}") from None
 
+
+
+# THE ONE WRITER (V10). Five modules had hand-rolled a temp-then-rename and two
+# more wrote in PLACE — `scenario.py` and `tie_out.py` opened the real target
+# with O_TRUNC, so an interrupted write left a truncated scenario or a truncated
+# tie-out report, and the second is the hard gate's own record, the artifact V8
+# binds a filing package to.
+#
+# Every property the copies had earned separately is kept here, once:
+#   - created at 0600 BEFORE the first byte, not written-then-chmod'd, with
+#     `secure_fd` on the descriptor so Windows gets its ACL at the same moment;
+#   - a unique temp name in the TARGET's directory, so the rename is on one
+#     filesystem and two runs cannot collide on it;
+#   - `os.replace`, which is atomic on POSIX and carries the mode across;
+#   - the temp removed on ANY failure, so a half-written file never survives
+#     under a name something else will read.
+@contextlib.contextmanager
+def atomic_path(target):
+    """A secured temp path beside `target`, renamed onto it on a clean exit.
+
+    For a writer that takes a PATH and opens it itself — reportlab is the case
+    that needs this shape. Yields the temp path; on any exception it is removed
+    and nothing replaces the target.
+    """
+    target = Path(target)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent),
+                               prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        # INSIDE the cleanup scope: securing the descriptor can fail — Windows
+        # ACL enforcement shells out, and that can fail like anything else — and
+        # a failure there used to leave the temp on disk to accumulate over
+        # retries. The descriptor is closed either way; the file is removed by
+        # the handler below.
+        try:
+            secure_fd(fd, tmp)
+        finally:
+            os.close(fd)
+        yield Path(tmp)
+        # ...and again after the caller has written it: a writer that recreated
+        # the path (reportlab replaces the file it was handed) would otherwise
+        # publish whatever the umask gave it.
+        secure_path(Path(tmp))
+        os.replace(tmp, str(target))
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+@contextlib.contextmanager
+def atomic_write(target, *, binary: bool = False, encoding: str = "utf-8"):
+    """An open file object whose contents replace `target` on a clean exit."""
+    with atomic_path(target) as tmp:
+        if binary:
+            with open(tmp, "wb") as handle:
+                yield handle
+        else:
+            with open(tmp, "w", encoding=encoding, newline="") as handle:
+                yield handle
+
+
+def write_secure(target, data) -> Path:
+    """Replace `target` with `data` (str or bytes), atomically and owner-only."""
+    with atomic_write(target, binary=isinstance(data, (bytes, bytearray))) as handle:
+        handle.write(data)
+    return Path(target)
 
 def secure_fd(fd: int, path) -> None:
     """Restrict a just-opened file descriptor's file to owner-only access.

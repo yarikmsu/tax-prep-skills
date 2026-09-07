@@ -14,7 +14,6 @@ and rollover.py path/year validation.
 
 import datetime
 import json
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +34,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
     _validate_year_arg,
 )
-from agents.lib.secure_fs import redact, secure_fd, secure_path  # noqa: E402
+from agents.lib.secure_fs import atomic_write, redact, secure_path  # noqa: E402
 from agents.lib.tax_computations import (  # noqa: E402
     SCENARIO_INPUT_KEYS,
     _coerce_numeric,
@@ -521,38 +520,18 @@ def save_scenario(workspace: Path, name: str, data: dict) -> Path:
     # it falls back there to the same PowerShell-ACL-based enforcement
     # secure_path uses everywhere else on that platform.
     content = json.dumps(data, indent=2, default=str)
+    # ONE writer for every runtime artifact (V10, `secure_fs.atomic_write`).
+    # This wrote IN PLACE: `O_TRUNC` on the real target, so an interrupted write
+    # left a truncated scenario file under a name the next run reads as good.
+    # The helper creates the temp owner-only before the first byte — the file
+    # holds a projected return — renames it on a clean exit and removes it on
+    # any failure.
     try:
-        fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    except OSError as e:
-        raise ScenarioError(
-            f"Could not create {redact(out_path)}: {redact(e)}") from e
-    try:
-        # os.fdopen ADOPTS the descriptor only once it returns; if it raises
-        # (MemoryError building the buffered wrapper, an OSError from the
-        # seekable/isatty probe on an exotic filesystem) nothing else will
-        # ever close fd, and the `with` below covers the success path only.
-        # A session that re-saves repeatedly on a failing filesystem would
-        # otherwise walk to EMFILE, at which point every later os.open in the
-        # process fails — including the ones writing result.json.
-        try:
-            handle = os.fdopen(fd, "w")
-        except BaseException:
-            os.close(fd)
-            raise
-        with handle as f:
-            secure_fd(f.fileno(), out_path)
+        with atomic_write(out_path) as f:
             f.write(content)
     except OSError as e:
-        out_path.unlink(missing_ok=True)
         raise ScenarioError(
             f"Could not write {redact(out_path)}: {redact(e)}") from e
-    try:
-        secure_path(out_path)
-    except OSError as e:
-        out_path.unlink(missing_ok=True)
-        raise ScenarioError(
-            f"Could not secure {redact(out_path)} (chmod 600): "
-            f"{redact(e)}") from None
     return out_path
 
 

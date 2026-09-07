@@ -717,7 +717,7 @@ def test_save_scenario_fails_closed_when_directory_chmod_fails(tmp_path, monkeyp
             raise OSError("simulated chmod failure")
         return real_chmod(path, *args, **kwargs)
 
-    monkeypatch.setattr("agents.lib.scenario.os.chmod", refuse)
+    monkeypatch.setattr("agents.lib.secure_fs.os.chmod", refuse)
     with pytest.raises(sc.ScenarioError, match="scenarios"):
         sc.save_scenario(tmp_path, "ok", {"schema": "tax-scenario/v1"})
     assert not (tmp_path / "scenarios" / "ok.json").exists()
@@ -731,11 +731,11 @@ def test_save_scenario_fails_closed_when_file_chmod_fails(tmp_path, monkeypatch)
     real_chmod = os.chmod
 
     def refuse(path, *args, **kwargs):
-        if Path(path).name == "ok.json":
+        if "ok.json" in Path(path).name:   # the temp beside it, too
             raise OSError("simulated chmod failure")
         return real_chmod(path, *args, **kwargs)
 
-    monkeypatch.setattr("agents.lib.scenario.os.chmod", refuse)
+    monkeypatch.setattr("agents.lib.secure_fs.os.chmod", refuse)
     with pytest.raises(sc.ScenarioError, match="ok.json"):
         sc.save_scenario(tmp_path, "ok", {"schema": "tax-scenario/v1"})
     assert not (tmp_path / "scenarios" / "ok.json").exists(), \

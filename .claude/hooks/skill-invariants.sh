@@ -1153,14 +1153,14 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.10 - 0.13s         6
 #   agent-definition edit           38 tests      1.6 - 1.6s         3
-#   skill .md edit                 808 tests     23.3 - 24.0s        3
-#   cold pass, all seven modules  1067 tests    148.9 - 150.7s       3
-#   (for scale) `pytest tests/`   3746 tests    256.9 - 280.9s       2
+#   skill .md edit                 813 tests     23.3 - 24.0s        3
+#   cold pass, all seven modules  1072 tests    148.9 - 150.7s       3
+#   (for scale) `pytest tests/`   3751 tests    256.9 - 280.9s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3748 and runs 3746 for the same skips — and that row
+# `pytest tests/` collects 3753 and runs 3751 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1182,7 +1182,7 @@ apply_red_checks
 #   tests/test_portability.py      177 tests     15.6 - 16.8s        3
 #   tests/test_capabilities.py     116 tests      1.3 - 1.4s         3
 #   tests/test_claude_agents.py     38 tests      1.6 - 1.6s         3
-#   tests/test_secure_fs.py        140 tests      1.8 - 1.9s         3
+#   tests/test_secure_fs.py        145 tests      1.8 - 1.9s         3
 #   tests/test_preflight.py        375 tests      7.3 - 7.6s         3
 #   tests/test_host_guard.py        93 tests      1.8 - 1.9s         3
 #
@@ -1274,7 +1274,7 @@ apply_red_checks
 # invocations each paying an interpreter start pushes the same way and is worth
 # well under a second of it. What separates this from the count-column patch the
 # header forbids is the other half, which is EXACT:
-# 116 + 140 + 177 + 375 = 808 for a skill edit, plus 38 + 93 + 128 = 1067 for a
+# 116 + 145 + 177 + 375 = 813 for a skill edit, plus 38 + 93 + 128 = 1072 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1327,8 +1327,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained three hundred and twenty-seven
-# tests (3419 to 3746). The sitting took the counts and the seconds TOGETHER,
+# Against the counts the seconds were taken at, the suite has gained three hundred and thirty-two
+# tests (3419 to 3751). The sitting took the counts and the seconds TOGETHER,
 # and six rounds have landed since. First, five launcher tests, executing the
 # two present-but-unusable `.venv` states `run.sh` refuses — the one with no
 # activate script, which had shipped untested, and the one it cannot inspect,
@@ -1396,6 +1396,14 @@ apply_red_checks
 # Then its third: five more, on an override that belonged to another form,
 # cents lost with the dollar sign, a partial PDF left behind, a carryforward
 # read as a year, and an alphabet the embedded font does not carry.
+#
+# Then one writer for every runtime artifact (V10's first half): four cases
+# in tests/test_secure_fs.py, which is one of the seven — the temp-then-
+# rename five modules had each hand-rolled, and the two that wrote in place.
+#
+# Then that writer's own Codex round: one more case, on a failure to SECURE
+# the temp file leaving it behind — the securing sat outside the cleanup
+# scope.
 # The seconds are carried,
 # which is what this paragraph is for. The scale row's
 # were read again on the V0 branch as a check, not a refresh — one plain
@@ -1403,7 +1411,7 @@ apply_red_checks
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
 # portability has gained none (177 to 177), preflight has gained five (370 to 375), the
-# agents module none (38 to 38), secure_fs has gained two (138 to 140), the hooks module
+# agents module none (38 to 38), secure_fs has gained seven (138 to 145), the hooks module
 # none (128 to 128), capabilities has gained none (116 to 116) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
@@ -1411,7 +1419,7 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. They sum to seven; the remaining three hundred and twenty are modules this hook
+# yet taken. They sum to twelve; the remaining three hundred and twenty are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

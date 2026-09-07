@@ -2195,7 +2195,7 @@ def test_write_report_fails_closed_when_directory_chmod_fails(tmp_path, monkeypa
             raise OSError("simulated chmod failure")
         return real_chmod(path, *args, **kwargs)
 
-    monkeypatch.setattr("agents.lib.tie_out.os.chmod", refuse)
+    monkeypatch.setattr("agents.lib.secure_fs.os.chmod", refuse)
     with pytest.raises(T.TieOutError, match="summaries"):
         T.write_report(tmp_path, "# tie-out\n")
     assert not (tmp_path / "summaries" / "_tie_out.md").exists()
@@ -2209,11 +2209,11 @@ def test_write_report_fails_closed_when_file_chmod_fails(tmp_path, monkeypatch):
     real_chmod = os.chmod
 
     def refuse(path, *args, **kwargs):
-        if Path(path).name == "_tie_out.md":
+        if "_tie_out.md" in Path(path).name:   # the temp beside it, too
             raise OSError("simulated chmod failure")
         return real_chmod(path, *args, **kwargs)
 
-    monkeypatch.setattr("agents.lib.tie_out.os.chmod", refuse)
+    monkeypatch.setattr("agents.lib.secure_fs.os.chmod", refuse)
     with pytest.raises(T.TieOutError, match="_tie_out.md"):
         T.write_report(tmp_path, "# tie-out\n")
     assert not (tmp_path / "summaries" / "_tie_out.md").exists(), \

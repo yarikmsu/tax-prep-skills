@@ -1377,17 +1377,21 @@ def test_write_calendar_tmp_cleanup_on_write_failure(tmp_path, monkeypatch):
     profile_path = tmp_path / "taxpayer_profile.json"
     profile_path.write_text(json.dumps(_profile()))
 
-    real_replace = cal.os.replace
+    from agents.lib import secure_fs
+
+    real_replace = secure_fs.os.replace
 
     def boom(src, dst):
         raise OSError("simulated disk full")
 
-    monkeypatch.setattr(cal.os, "replace", boom)
+    # Patched where the rename LIVES since V10: one writer for every runtime
+    # artifact, so this module's cleanup invariant is exercised through it.
+    monkeypatch.setattr(secure_fs.os, "replace", boom)
     with pytest.raises(cal.CalendarError, match="failed to write"):
         cal.write_calendar(profile_path, tmp_path, tax_year=2026)
 
     # Restore so other test infra isn't broken.
-    monkeypatch.setattr(cal.os, "replace", real_replace)
+    monkeypatch.setattr(secure_fs.os, "replace", real_replace)
 
     # Critically: no orphan .tmp files left behind.
     tmps = list(tmp_path.glob("*.tmp"))
@@ -2088,7 +2092,7 @@ def test_write_calendar_tmp_file_is_600_before_replace(tmp_path, monkeypatch):
         seen["mode"] = os.stat(src).st_mode & 0o777
         return real_replace(src, dst)
 
-    monkeypatch.setattr("agents.lib.tax_calendar.os.replace", spying_replace)
+    monkeypatch.setattr("agents.lib.secure_fs.os.replace", spying_replace)
     old_umask = os.umask(0o022)  # a permissive umask, or the assertion is vacuous
     try:
         cal.write_calendar(profile_path, tmp_path, tax_year=2026)

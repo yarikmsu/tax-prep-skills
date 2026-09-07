@@ -18,10 +18,8 @@ The JSON file (tax_law_<year>.json) is the cache. If missing, skills re-fetch.
 
 import json
 import math
-import os
 import re
 import sys
-import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -30,7 +28,8 @@ from agents.lib.capabilities import (  # noqa: E402
     _NO_INCOME_TAX_STATES,
     _TN_HALL_REPEAL_YEAR,
 )
-from agents.lib.secure_fs import first_non_finite, is_reparse_point  # noqa: E402
+from agents.lib.secure_fs import (  # noqa: E402
+    atomic_write, first_non_finite, is_reparse_point)
 from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 
@@ -137,21 +136,13 @@ def save_tax_law(year: int, data: dict, workspace: str = ".", *,
     # Ensure parent directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Atomic write: temp file in same directory, then rename
-    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(to_save, f, indent=2)
-        os.replace(tmp_path, str(path))
-    except BaseException:
-        # BaseException (not Exception) intentional: ensures temp file cleanup
-        # even on KeyboardInterrupt/SystemExit. Always re-raises after cleanup.
-        try:
-            os.unlink(tmp_path)
-        except OSError as cleanup_err:
-            print(f"WARNING: Could not remove temp file {redact(tmp_path)}: {redact(cleanup_err)}",
-                  file=sys.stderr)
-        raise
+    # ONE writer for every runtime artifact (V10): temp file beside the target,
+    # created owner-only before the first byte, renamed on a clean exit and
+    # removed on any failure. This module's own copy of that dance was one of
+    # five; the cache is public figures rather than taxpayer data, but the
+    # atomicity is the same problem and the mode costs nothing.
+    with atomic_write(path) as handle:
+        json.dump(to_save, handle, indent=2)
 
     return str(path)
 

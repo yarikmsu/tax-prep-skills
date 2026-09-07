@@ -351,12 +351,14 @@ class TestTheCodexRoundRules:
         through left a partial PDF of return data at whatever the umask allowed
         — and the securing step below it never ran."""
         import agents.lib.pdf_render as module
+        from agents.lib import secure_fs
 
         # The securing step is what used to run LAST, on a file reportlab had
         # already published: when it failed, the return data stayed on disk at
-        # whatever the umask allowed. Now it runs on the temp file, before the
-        # rename, so a failure there leaves nothing at all.
-        monkeypatch.setattr(module, "secure_path",
+        # whatever the umask allowed. Since V10 it runs inside
+        # `secure_fs.atomic_path`, on the temp file and before the rename, so a
+        # failure there leaves nothing at all — patched at that boundary.
+        monkeypatch.setattr(secure_fs, "secure_path",
                             lambda p: (_ for _ in ()).throw(OSError("denied")))
         with pytest.raises(module.PdfRenderError, match="could not write"):
             _render(tmp_path, _result())

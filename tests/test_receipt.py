@@ -280,8 +280,11 @@ class TestTheCodexRoundRules:
         """The permissions half failing must not leave the receipt on disk: it
         names the taxpayer's own documents, and `mkstemp` establishes no
         owner-only ACL on Windows, which AGENTS.md §1 covers too."""
+        from agents.lib import secure_fs
         _workspace(tmp_path)
-        monkeypatch.setattr(receipt, "secure_path",
+        # Patched where the securing LIVES since V10 — one writer for every
+        # runtime artifact, so this invariant is tested at its own boundary.
+        monkeypatch.setattr(secure_fs, "secure_path",
                             lambda p: (_ for _ in ()).throw(OSError("denied")))
         with pytest.raises(ReceiptError, match="could not write"):
             receipt.record(tmp_path, "tie_out", receipt.PASS)

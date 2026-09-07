@@ -1874,3 +1874,83 @@ class TestYearOrShapeOnlyPrintsAYear:
         would also stop naming the one shape that reads like a year."""
         assert year_or_shape(True) == "a bool"
         assert year_or_shape(False) == "a bool"
+
+
+class TestTheOneWriter:
+    """V10: five modules had hand-rolled a temp-then-rename and two more wrote
+    IN PLACE — `scenario.py` and `tie_out.py` opened the real target with
+    O_TRUNC, so an interrupted write left a truncated scenario, or a truncated
+    tie-out report, under the name the next reader trusts. The second is the
+    hard gate's own record, the artifact V8 binds a filing package to."""
+
+    def _writer(self):
+        from agents.lib.secure_fs import atomic_write, write_secure
+        return atomic_write, write_secure
+
+    def test_the_file_is_owner_only_from_the_first_byte(self, tmp_path):
+        """Created at 600 rather than written-then-chmod'd: a file created at
+        the umask default holds the whole of its contents before anything
+        tightens it, and on Windows with no ACL at all until the call returns.
+        The mode is read at the moment of the RENAME, which is the only point
+        where the pre-fix window is observable."""
+        from agents.lib import secure_fs
+
+        seen = {}
+        real_replace = os.replace
+
+        def spying_replace(src, dst):
+            seen["mode"] = os.stat(src).st_mode & 0o777
+            return real_replace(src, dst)
+
+        atomic_write, _ = self._writer()
+        old = os.umask(0o022)   # permissive, or the assertion is vacuous
+        try:
+            secure_fs.os.replace = spying_replace
+            with atomic_write(tmp_path / "out.txt") as handle:
+                handle.write("data")
+        finally:
+            secure_fs.os.replace = real_replace
+            os.umask(old)
+        assert seen["mode"] == 0o600
+        assert (tmp_path / "out.txt").stat().st_mode & 0o777 == 0o600
+
+    def test_a_failed_write_leaves_the_target_as_it_was(self, tmp_path):
+        atomic_write, _ = self._writer()
+        target = tmp_path / "out.txt"
+        target.write_text("the good copy")
+        with pytest.raises(RuntimeError):
+            with atomic_write(target) as handle:
+                handle.write("half of something else")
+                raise RuntimeError("interrupted")
+        assert target.read_text() == "the good copy"
+        assert [p.name for p in tmp_path.iterdir()] == ["out.txt"]
+
+    def test_bytes_and_text_both_round_trip(self, tmp_path):
+        _, write_secure = self._writer()
+        assert write_secure(tmp_path / "a.txt", "héllo").read_text(encoding="utf-8") == "héllo"
+        assert write_secure(tmp_path / "b.bin", b"\r\n\x00").read_bytes() == b"\r\n\x00"
+
+    def test_the_temp_sits_beside_the_target(self, tmp_path):
+        """One filesystem, so the rename is atomic — a temp in /tmp is a COPY
+        across devices, which is neither atomic nor owner-only on arrival."""
+        from agents.lib.secure_fs import atomic_path
+        (tmp_path / "sub").mkdir()
+        with atomic_path(tmp_path / "sub" / "out.txt") as tmp:
+            assert tmp.parent == tmp_path / "sub"
+
+    def test_a_failure_securing_the_temp_leaves_nothing_behind(self, tmp_path,
+                                                               monkeypatch):
+        """Securing the descriptor can fail — the Windows ACL path shells out —
+        and it used to sit OUTSIDE the cleanup scope, so the temp stayed on
+        disk to accumulate over retries. Every writer this replaced cleaned up
+        in that case."""
+        from agents.lib import secure_fs
+
+        atomic_write, _ = self._writer()
+        monkeypatch.setattr(secure_fs, "secure_fd",
+                            lambda fd, path: (_ for _ in ()).throw(OSError("no ACL")))
+        with pytest.raises(OSError, match="no ACL"):
+            with atomic_write(tmp_path / "out.txt") as handle:
+                handle.write("never reached")
+        assert list(tmp_path.iterdir()) == []
+

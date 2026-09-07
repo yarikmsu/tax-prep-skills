@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import receipt  # noqa: E402
 from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
-from agents.lib.secure_fs import redact, secure_path  # noqa: E402
+from agents.lib.secure_fs import atomic_path, redact  # noqa: E402
 
 
 class PdfRenderError(Exception):
@@ -449,34 +449,26 @@ def render(result: dict, out_path: Path, *,
         raise PdfRenderError(
             f"reportlab is not installed: {redact(e)} — install the pinned tree "
             "with sh agents/lib/run.sh -m pip install -r requirements.txt") from e
-    import os
-    import tempfile
-
     styles = getSampleStyleSheet()
     story = build_story(result, styles, draft_reasons=list(draft_reasons or ()))
     meta = result.get("meta")
     year = meta.get("tax_year") if isinstance(meta, dict) else None
-    # Built into a SECURED temp file beside the target, then renamed. reportlab
-    # creates the file and then writes it, so a failure part way through — an
-    # exhausted quota is the ordinary one — left a partial PDF of return data at
-    # whatever the umask allowed, and the `secure_path` below it never ran.
-    fd, tmp = tempfile.mkstemp(dir=str(out_path.parent), suffix=".pdf.tmp")
-    os.close(fd)
+    # Built into a SECURED temp file beside the target and renamed
+    # (`secure_fs.atomic_path`, V10). reportlab creates the file and then writes
+    # it, so a failure part way through — an exhausted quota is the ordinary one
+    # — used to leave a partial PDF of return data at whatever the umask
+    # allowed, with the securing step at the end never reached.
     try:
-        secure_path(Path(tmp))
-        SimpleDocTemplate(
-            tmp, pagesize=letter,
-            title=f"Tax Return Summary {year}" if year else "Tax Return Summary",
-            # The metadata every generated return inherits. Never an assistant
-            # and never a vendor — see PRODUCER.
-            author=PRODUCER, creator=PRODUCER, subject="Computed tax return summary",
-        ).build(story)
-        os.replace(tmp, str(out_path))
+        with atomic_path(out_path) as tmp:
+            SimpleDocTemplate(
+                str(tmp), pagesize=letter,
+                title=f"Tax Return Summary {year}" if year else "Tax Return Summary",
+                # The metadata every generated return inherits. Never an
+                # assistant and never a vendor — see PRODUCER.
+                author=PRODUCER, creator=PRODUCER,
+                subject="Computed tax return summary",
+            ).build(story)
     except Exception as e:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
         if isinstance(e, PdfRenderError):
             raise
         raise PdfRenderError(f"could not write {redact(out_path)}: {redact(e)}") from e

@@ -50,7 +50,6 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass
@@ -70,7 +69,8 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_year_arg,
 )
 from agents.lib.secure_fs import (  # noqa: E402
-    redact, secure_fd, secure_path, year_or_shape,
+    atomic_write,
+    redact, year_or_shape,
 )
 
 
@@ -1388,7 +1388,6 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
     # orphan events whose UIDs aren't in the new file).
     if out.exists():
         print(f"Replacing existing {redact(out.name)}", file=sys.stderr)
-    tmp = out.with_suffix(out.suffix + ".tmp")
     try:
         # Write bytes, not text, so the precise CRLF line endings produced
         # by to_ics() are preserved verbatim. Path.write_text() uses
@@ -1398,35 +1397,16 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
         # `os.linesep == '\n'` (Linux, macOS), so cross-platform tests
         # assert against bytes-on-disk rather than text.
         #
-        # Created at 600 up front rather than written-then-chmod'd: the .ics
-        # carries the taxpayer's filing status, state and payment schedule, and
-        # Path.write_bytes would create the file at the umask default (0644)
-        # holding all of it before secure_path tightened anything — on Windows
-        # with no ACL protection at all until the PowerShell call returned.
-        # `mode` on os.open is create-only (POSIX ignores it for a .tmp left
-        # behind by a failed prior run), so secure_fd runs on the descriptor
-        # before the first byte lands. rollover.py, scenario.py and tie_out.py
-        # hold the same line. os.replace then carries the mode across the
-        # rename onto the real target.
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            handle = os.fdopen(fd, "wb")
-        except BaseException:
-            # fdopen has not adopted the descriptor yet, so nothing else will
-            # ever close it — the `with` below only covers the success path.
-            os.close(fd)
-            raise
-        with handle as f:
-            secure_fd(f.fileno(), tmp)
-            f.write(ics.encode("utf-8"))
-        secure_path(tmp)
-        os.replace(tmp, out)  # atomic on POSIX
+        # ONE writer for every runtime artifact (V10, `secure_fs.atomic_write`):
+        # created owner-only BEFORE the first byte rather than
+        # written-then-chmod'd — the .ics carries the taxpayer's filing status,
+        # state and payment schedule, and a file created at the umask default
+        # would hold all of it before anything tightened it, on Windows with no
+        # ACL at all until the PowerShell call returned. The temp file is
+        # renamed on a clean exit and removed on any failure.
+        with atomic_write(out, binary=True) as handle:
+            handle.write(ics.encode("utf-8"))
     except OSError as e:
-        # Best-effort cleanup of the temp file before surfacing the error.
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise CalendarError(f"failed to write {redact(out)}: {redact(e)}") from e
     return out
 

@@ -423,3 +423,41 @@ hid.
   rather than taken here. The characters themselves are not echoed into that
   message: they are the ones the font cannot draw.
 
+## V10 (first half) — One writer for every runtime artifact (P2) — PR #93
+
+**Defect:** five modules had hand-rolled a temp-then-rename, each having earned
+the same properties separately, and two more wrote IN PLACE. `scenario.py` and
+`tie_out.py` opened the real target with `O_TRUNC`, so an interrupted write left
+a truncated scenario file, or a truncated tie-out report, under the name the
+next reader trusts — and the second is the hard gate's own record, the artifact
+V8's receipt binds a filing package to.
+
+**Shipped:** `secure_fs.atomic_path` / `atomic_write` / `write_secure`, and every
+one of those writers routed through them. What the copies had between them is
+kept once: created at 0600 BEFORE the first byte (with `secure_fd` on the
+descriptor, so Windows gets its ACL at the same moment) rather than
+written-then-chmod'd; a unique temp name in the TARGET's directory, so the
+rename is on one filesystem and two runs cannot collide; `os.replace`, atomic on
+POSIX and carrying the mode across; and the temp removed on ANY failure, so a
+half-written file never survives under a name something else will read.
+
+Routed: `tax_law_fetcher.save_tax_law`, `receipt._write`, `pdf_render.render`
+(which needs the PATH form — reportlab opens the file itself),
+`tax_calendar.write_calendar`, `scenario.save_scenario` and
+`tie_out.write_report`. The tests that pinned each copy's invariants now pin
+them at the one boundary that owns them.
+
+**Not in this PR, and named rather than implied:** `rollover.apply_changes`
+writes TWO files as one transaction, with a snapshot and a rollback if the
+second replace fails — a single-file helper cannot express that, and rewriting
+it deserves its own change. V10's other half (a restart that resumes from
+validated inputs; concurrent runs serializing or refusing) is a design about
+process state rather than about writing a file, and it is not started here.
+
+**Review round (Codex, local, against `main`):** one finding, fixed. Securing
+the temp file's DESCRIPTOR sat outside the cleanup scope, so a failure there —
+the Windows ACL path shells out, and that can fail like anything else — left the
+temp on disk to accumulate over retries. Every writer this replaced cleaned up
+in that case; the securing is inside the same scope now, with the descriptor
+closed either way.
+

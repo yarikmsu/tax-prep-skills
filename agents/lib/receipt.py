@@ -30,15 +30,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sys
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
-from agents.lib.secure_fs import redact, secure_path  # noqa: E402
+from agents.lib.secure_fs import atomic_write, redact  # noqa: E402
 
 
 class ReceiptError(Exception):
@@ -274,26 +272,15 @@ def _write(workspace: Path, data: dict) -> Path:
     one.
     """
     path = workspace / RECEIPT_NAME
-    fd, tmp = tempfile.mkstemp(dir=str(workspace), suffix=".tmp")
+    # `secure_fs.atomic_write` is where the temp-then-rename lives now (V10),
+    # secured before the first byte and removed on any failure. The receipt
+    # names the taxpayer's own documents — `documents/W2_Acme.pdf` names an
+    # employer before anyone opens it, AGENTS.md §1's listing rule — so an
+    # unsecured moment is a disclosure, not an untidiness.
     try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
-        # SECURED BEFORE IT IS PUBLISHED. The receipt names the taxpayer's own
-        # documents (`documents/W2_Acme.pdf` names an employer before anyone
-        # opens it — AGENTS.md §1's listing rule), and securing the published
-        # name afterwards leaves a window, and leaves an UNSECURED file in place
-        # when the chmod is what failed. `mkstemp` is 0600 on POSIX but
-        # establishes no owner-only ACL on Windows, which §1 covers too; the
-        # mode travels with the inode through the rename.
-        secure_path(Path(tmp))
-        os.replace(tmp, str(path))
-    except (OSError, ReceiptError) as e:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        if isinstance(e, ReceiptError):
-            raise
+        with atomic_write(path) as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+    except OSError as e:
         raise ReceiptError(f"could not write {redact(path)}: {redact(e)}") from e
     return path
 

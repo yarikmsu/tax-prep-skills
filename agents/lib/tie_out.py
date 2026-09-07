@@ -60,7 +60,6 @@ raw form boxes at parse time — the skill documents the box→category table.
 
 import json
 import math
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,9 +71,9 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
 )
 from agents.lib.secure_fs import (  # noqa: E402
+    atomic_write,
     is_reparse_point,
     redact,
-    secure_fd,
     secure_path,
 )
 from agents.lib.tax_computations import (  # noqa: E402
@@ -1742,31 +1741,15 @@ def write_report(workspace: Path, markdown: str) -> Path:
     # it; it does not exist on Windows, a supported platform, so it falls
     # back there to the same PowerShell-ACL-based enforcement secure_path
     # uses everywhere else on that platform.
+    # ONE writer for every runtime artifact (V10, `secure_fs.atomic_write`).
+    # This wrote IN PLACE, and it is the HARD GATE's own record — the artifact
+    # V8's receipt binds a filing package to — so an interrupted write left a
+    # truncated report under the name the next reader trusts.
     try:
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    except OSError as e:
-        raise TieOutError(f"Could not create {redact(target)}: {redact(e)}") from e
-    try:
-        # os.fdopen adopts the descriptor only on success — see scenario.py's
-        # note for why a raise here would otherwise leak it permanently.
-        try:
-            handle = os.fdopen(fd, "w")
-        except BaseException:
-            os.close(fd)
-            raise
-        with handle as f:
-            secure_fd(f.fileno(), target)
+        with atomic_write(target, encoding="utf-8") as f:
             f.write(markdown)
     except OSError as e:
-        target.unlink(missing_ok=True)
         raise TieOutError(f"Could not write {redact(target)}: {redact(e)}") from e
-    try:
-        secure_path(target)
-    except OSError as e:
-        target.unlink(missing_ok=True)
-        raise TieOutError(
-            f"Could not secure {redact(target)} (chmod 600): "
-            f"{redact(e)}") from None
     return target
 
 
