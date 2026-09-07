@@ -14,6 +14,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import (  # noqa: E402
+    _amount,
     RolloverError,
     _get_path,
     _read_json,
@@ -124,8 +125,7 @@ STATE_MOVER_FIELDS: list[tuple[str, str]] = [
 
 
 def _num(d: dict, dotted: str) -> float:
-    v = _get_path(d, dotted, default=0)
-    return float(v) if isinstance(v, (int, float)) else 0.0
+    return float(_amount(_get_path(d, dotted, default=0)))
 
 
 def _status_key(filing_status: str | None) -> str:

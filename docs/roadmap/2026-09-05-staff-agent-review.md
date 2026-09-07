@@ -2,7 +2,8 @@
 
 > **Status 2026-09-05 — ADOPTED; implementation started the same day, one task per
 > PR, in the Part 4 order (Y1 postponed until the owner asks).** Shipped: V0 (PR #85),
-> X2 (PR #86), V4 (PR #87; the auditor's `_provenance` check waits for the Y2 replay).
+> X2 (PR #86), V4 (PR #87; the auditor's `_provenance` check waits for the Y2 replay),
+> X3 (PR #88).
 > This backlog sits beside
 > `2026-08-12-product-owner-review.md`, which remains the active product backlog (Epics
 > R-U). Items here that duplicate one there (Y1 = R6, Y2 = T1, X6 = T3, X7 = U1) defer

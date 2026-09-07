@@ -144,14 +144,23 @@ the worksheet:
   can only LOWER taxable benefits and is NOT modeled — the computed line 6b is
   an upper bound the user should verify in tax software before filing.
 
-**Capital loss carryforward (Schedule D):** When line 16 is a net LOSS, cap the
-line 7 deduction at $3,000 ($1,500 MFS) and fill
-`schedule_d.loss_carryforward_to_next_year` (short_term / long_term split) in
-result.json using the Capital Loss Carryover Worksheet from the Schedule D
-instructions — short-term loss is used first, and the amount actually used can
-be LESS than $3,000 when taxable income is low. `/tax-rollover` carries this
-explicit block into next year's `prior_year.capital_loss_carryforward`; leaving
-it zero silently loses the carryforward.
+**Capital loss carryforward (Schedule D):** the PRIOR year's carryforward
+enters this return BY CHARACTER — `prior_year.capital_loss_carryforward_short_term`
+on Schedule D line 6 (record it in `schedule_d.part_i_short_term.line_6_prior_year_carryover`,
+inside line 7's net) and `prior_year.capital_loss_carryforward_long_term` on
+line 14 (`schedule_d.part_ii_long_term.line_14_prior_year_carryover`, inside
+line 15's net). The profile fields are POSITIVE magnitudes; lines 6 and 14 take
+the carryover as a NEGATIVE number, so each enters its net as a subtraction. If only the LEGACY combined `prior_year.capital_loss_carryforward`
+is non-zero and both split fields are zero, **STOP**: ask the user for the split
+from the prior return's Capital Loss Carryover Worksheet (lines 8 and 13), record
+the answer in answers.md, write the split fields, and never divide a combined
+figure by guess — short-term loss offsets ordinary income first, so a wrong split
+changes the tax. When line 16 is a net LOSS, cap the line 7 deduction at $3,000
+($1,500 MFS) and fill `schedule_d.loss_carryforward_to_next_year` (short_term /
+long_term split) in result.json using the Capital Loss Carryover Worksheet from
+the Schedule D instructions — the amount actually used can be LESS than $3,000
+when taxable income is low. `/tax-rollover` carries this explicit block into next
+year's split fields; leaving it zero silently loses the carryforward.
 
 **Employer-stock basis adjustment — Form 8949 code B (J1):** Brokers report the
 1099-B cost basis for RSU/ESPP/NQSO shares EXCLUDING the compensation already in

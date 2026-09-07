@@ -58,6 +58,7 @@ appear to be. An ordinary failure does not stop it.
 # any supported syntax; this one may not.
 from __future__ import annotations
 
+import math
 import os
 import re
 import stat
@@ -264,6 +265,29 @@ def mask_ssn(value):
     out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
     return _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
 
+
+def first_non_finite(node, _path: tuple = ()) -> "str | None":
+    """The dotted path of the first non-finite float in a parsed JSON tree,
+    or None. `json.loads` admits the NaN/Infinity literals and reads `1e400`
+    as inf; both pass `isinstance(x, (int, float))` and defeat every
+    comparison (each NaN comparison is False), so every runtime JSON reader
+    refuses them at its boundary through this one walk. The path is joined
+    only on a hit; a clean pass allocates nothing per node.
+    """
+    if isinstance(node, float) and not math.isfinite(node):
+        return ".".join(_path) if _path else "(top level)"
+    if isinstance(node, dict):
+        for k, v in node.items():
+            found = first_non_finite(v, _path + (str(k),))
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            found = first_non_finite(v, _path[:-1] + (f"{_path[-1]}[{i}]",) if _path
+                                     else (f"[{i}]",))
+            if found is not None:
+                return found
+    return None
 
 
 # A TABLE has a layout free text does not: the label in one CELL and the value

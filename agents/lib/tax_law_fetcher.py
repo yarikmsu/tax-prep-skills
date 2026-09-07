@@ -30,7 +30,7 @@ from agents.lib.capabilities import (  # noqa: E402
     _NO_INCOME_TAX_STATES,
     _TN_HALL_REPEAL_YEAR,
 )
-from agents.lib.secure_fs import is_reparse_point  # noqa: E402
+from agents.lib.secure_fs import first_non_finite, is_reparse_point  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 
 
@@ -91,29 +91,13 @@ def load_tax_law(year: int, workspace: str = ".") -> dict | None:
     # every comparison (each NaN comparison is False), which is how a corrupt
     # cache prices a whole preferential stack at 0%. Refused at the ONE read
     # site every consumer shares, so no accessor has to re-check finiteness.
-    bad = _first_non_finite(data)
+    bad = first_non_finite(data)
     if bad is not None:
         raise ValueError(
             f"{redact(path)} holds a non-finite number at {bad} — the cache is "
             "corrupt; re-run /tax-setup to re-fetch tax law data.")
     return data
 
-
-def _first_non_finite(node, dotted: str = "") -> "str | None":
-    """The dotted path of the first non-finite float in a parsed JSON tree."""
-    if isinstance(node, float) and not math.isfinite(node):
-        return dotted or "(top level)"
-    if isinstance(node, dict):
-        for k, v in node.items():
-            found = _first_non_finite(v, f"{dotted}.{k}" if dotted else str(k))
-            if found is not None:
-                return found
-    elif isinstance(node, list):
-        for i, v in enumerate(node):
-            found = _first_non_finite(v, f"{dotted}[{i}]")
-            if found is not None:
-                return found
-    return None
 
 
 def save_tax_law(year: int, data: dict, workspace: str = ".", *,

@@ -78,49 +78,345 @@ def _load_current(fixture_name: str) -> CurrentState:
 
 
 def test_compute_diff_capital_loss_carryforward():
+    """X3: the clean fixture archive carries only `line_16_combined = -4000`
+    — no Capital Loss Carryover Worksheet block — so the split is UNKNOWN.
+    The derived lower bound (abs(loss) − $3,000 = 1000) lands on the LEGACY
+    combined field as an `ask`, never split by guess; /tax-compute then stops
+    for the short/long split before Schedule D lines 6 and 14."""
     prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
     current = _load_current("current_2025_empty")
     diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
     changes = diff["carryforwards"]
     cap_loss = [c for c in changes if c.json_path == "prior_year.capital_loss_carryforward"]
     assert len(cap_loss) == 1
-    # Prior schedule_d.line_16_combined = -4000; carryforward = abs(-4000) - 3000 = 1000
     assert cap_loss[0].prior_value == 1000
-    assert cap_loss[0].action_suggested == "apply"
+    assert cap_loss[0].action_suggested == "ask"
+    assert "split" in cap_loss[0].reason
+    assert not [c for c in changes if c.json_path.startswith(
+        "prior_year.capital_loss_carryforward_")]
 
 
-def test_transform_capital_loss_prefers_explicit_block():
-    """The Capital Loss Carryover Worksheet block written by /tax-compute wins
-    over the line_16 derivation (which assumes the full $3K was used)."""
-    from agents.lib.rollover import _transform_capital_loss
+def _split(raw, status="MFJ"):
+    from agents.lib.rollover import _capital_loss_carryforward
+    return _capital_loss_carryforward(raw, status)
+
+
+ZEROS = {"short_term": 0, "long_term": 0}
+
+
+def test_capital_loss_explicit_block_keeps_its_character():
+    """The worksheet block written by /tax-compute is the answer, per side —
+    a combined figure cannot be placed on Schedule D (line 6 is short-term,
+    line 14 is long-term)."""
     raw = {"line_16_combined": -10000,
            "loss_carryforward_to_next_year": {"short_term": 4000, "long_term": 3500}}
-    assert _transform_capital_loss(raw) == 7500
+    assert _split(raw) == {"short_term": 4000, "long_term": 3500}
+    # More than the bound is fine: the worksheet used less than the cap.
+    raw["loss_carryforward_to_next_year"] = {"short_term": 0, "long_term": 9000}
+    assert _split(raw) == {"short_term": 0, "long_term": 9000}
 
 
-def test_transform_capital_loss_zero_block_falls_back_to_derivation():
-    """All-zero explicit block = template scaffolding, not a computed result —
-    fall back to abs(loss) - 3000 so a real carryforward is not dropped."""
-    from agents.lib.rollover import _transform_capital_loss
+def test_capital_loss_block_totalling_less_than_the_bound_is_a_contradiction():
+    """A correct worksheet total is never below abs(line 16) − cap, so a block
+    below it is the template's scaffolding (all zero), a half-filled one, or
+    a sign slip — one comparison catches all three. The lower bound is
+    offered on the legacy field for RESOLUTION, never split by guess."""
     raw = {"line_16_combined": -10000,
            "loss_carryforward_to_next_year": {"short_term": 0, "long_term": 0}}
-    assert _transform_capital_loss(raw) == 7000
+    assert _split(raw) == {"combined": 7000, "unresolved": "contradiction", "cap_assumed": False}
+    raw["loss_carryforward_to_next_year"] = {"short_term": 0, "long_term": 3500}
+    assert _split(raw) == {"combined": 7000, "unresolved": "contradiction", "cap_assumed": False}
+    raw["loss_carryforward_to_next_year"] = {"short_term": -4000, "long_term": 3000}
+    assert _split(raw) == {"combined": 7000, "unresolved": "contradiction", "cap_assumed": False}
+    # ...and an explicit zero beside a loss INSIDE the cap is a computed zero.
+    raw["line_16_combined"] = -2000
+    raw["loss_carryforward_to_next_year"] = {"short_term": 0, "long_term": 0}
+    assert _split(raw) == ZEROS
 
 
-def test_transform_capital_loss_dict_without_block_derives():
-    from agents.lib.rollover import _transform_capital_loss
-    assert _transform_capital_loss({"line_16_combined": -5000}) == 2000
-    assert _transform_capital_loss({"line_16_combined": 5000}) == 0
-    assert _transform_capital_loss({}) == 0
+def test_capital_loss_a_gain_year_is_an_answer_not_silence():
+    """The archive saying "nothing carries" must retire a stale figure in the
+    target profile; only an archive with no Schedule D figure at all is silent."""
+    assert _split({"line_16_combined": 5000}) == ZEROS
+    assert _split(5000) == ZEROS
+    # A loss INSIDE the cap with no block: the worksheet uses less than the
+    # cap when taxable income is low, so a carryforward may remain — a zero
+    # bound offered for resolution, loud, not proof that nothing carries.
+    assert _split(-2000) == {"combined": 0, "unresolved": "legacy", "cap_assumed": False}
+    assert _split({}) == {}
+    assert _split(None) == {}
 
 
-def test_transform_capital_loss_legacy_number_still_works():
-    """Older archives resolved source_path to the bare line_16 number."""
-    from agents.lib.rollover import _transform_capital_loss
-    assert _transform_capital_loss(-5000) == 2000
-    assert _transform_capital_loss(-2000) == 0  # within the $3K used
-    assert _transform_capital_loss(None) == 0
-    assert _transform_capital_loss(True) == 0  # bool is not an amount
+def test_capital_loss_block_above_the_loss_or_beside_a_gain_is_a_contradiction():
+    """The likeliest authoring slip is the PRE-deduction loss written where the
+    carryover belongs; a block above abs(line 16), or any non-zero block in a
+    gain year, was applied silently — the over-statement direction."""
+    block = {"short_term": 4000, "long_term": 3000}
+    assert _split({"line_16_combined": 5000, "loss_carryforward_to_next_year": block}) == \
+        {"combined": 0, "unresolved": "contradiction", "cap_assumed": False}
+    assert _split({"line_16_combined": -4000, "loss_carryforward_to_next_year": block}) == \
+        {"combined": 1000, "unresolved": "contradiction", "cap_assumed": False}
+    assert _split({"line_16_combined": -7000, "loss_carryforward_to_next_year": block}) == block
+
+
+def test_capital_loss_absent_block_derives_a_combined_lower_bound():
+    assert _split({"line_16_combined": -5000}) == {"combined": 2000, "unresolved": "legacy", "cap_assumed": False}
+    # Older archives resolved source_path to the bare line_16 number.
+    assert _split(-5000) == {"combined": 2000, "unresolved": "legacy", "cap_assumed": False}
+
+
+def test_capital_loss_derivation_uses_the_engine_cap_and_assumes_3000_when_unreadable():
+    """The cap is the engine's constant, by the PRIOR year's status in any
+    spelling this module reads. A status it cannot read takes the $3,000 cap,
+    the SMALLER bound: the bound is a value the ask lands, so it must be one
+    no filer's true carryforward sits below (the MFS one is $1,500 higher)."""
+    from agents.lib.tax_computations import CAPITAL_LOSS_LIMIT, CAPITAL_LOSS_LIMIT_MFS
+    assert CAPITAL_LOSS_LIMIT_MFS < CAPITAL_LOSS_LIMIT
+    for status in ("MFS", "Married Filing Separately", "married filing separately"):
+        assert _split({"line_16_combined": -5000}, status)["combined"] == 5000 - CAPITAL_LOSS_LIMIT_MFS
+    assert _split({"line_16_combined": -5000}, "Married Filing Jointly")["combined"] == 5000 - CAPITAL_LOSS_LIMIT
+    unread = _split({"line_16_combined": -5000}, "married_filing_separately")
+    assert unread == {"combined": 5000 - CAPITAL_LOSS_LIMIT,
+                      "unresolved": "legacy", "cap_assumed": True}
+    assert _split({"line_16_combined": -5000}, None)["cap_assumed"] is True
+
+
+def test_compute_diff_splits_the_carryforward_and_retires_the_legacy_field():
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["schedule_d"] = {
+        "line_16_combined": -10000,
+        "loss_carryforward_to_next_year": {"short_term": 4000, "long_term": 3000}}
+    current = _load_current("current_2025_partial")   # legacy field holds 3000
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    by_path = {c.json_path: c for c in diff["carryforwards"]}
+    st = by_path["prior_year.capital_loss_carryforward_short_term"]
+    lt = by_path["prior_year.capital_loss_carryforward_long_term"]
+    assert (st.prior_value, st.action_suggested) == (4000, "apply")
+    assert (lt.prior_value, lt.action_suggested) == (3000, "apply")
+    legacy = by_path["prior_year.capital_loss_carryforward"]
+    assert legacy.prior_value == 0 and legacy.current_value == 3000
+    assert "superseded" in legacy.reason
+
+
+def test_compute_diff_contradiction_asks_on_the_legacy_field():
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["schedule_d"] = {
+        "line_16_combined": -10000,
+        "loss_carryforward_to_next_year": {"short_term": 0, "long_term": 0}}
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    legacy = [c for c in diff["carryforwards"]
+              if c.json_path == "prior_year.capital_loss_carryforward"]
+    assert len(legacy) == 1
+    assert legacy[0].prior_value == 7000 and legacy[0].action_suggested == "ask"
+    assert "worksheet" in legacy[0].reason.lower()
+
+
+def _prior(result_extra, profile_status="MFJ", year=2025):
+    from agents.lib.rollover import PriorReturn
+    result = {"meta": {"filing_status": profile_status}}
+    result.update(result_extra)
+    return PriorReturn(year=year, result=result, profile={"filing_status": profile_status})
+
+
+def _cap_changes(result_extra, profile, prior_status="MFJ"):
+    from agents.lib.rollover import _capital_loss_changes
+    prior = _prior(result_extra, prior_status)
+    return {c.json_path: c for c in _capital_loss_changes(
+        prior, profile, result_extra.get("schedule_d"))}
+
+
+def test_a_gain_year_retires_a_stale_split_in_the_profile_as_an_ask():
+    """The interview runs before the chained rollover and asks for the split,
+    so a figure can already sit in the profile; a gain year used to emit
+    nothing, and $9,000 that no longer existed landed on Schedule D line 6."""
+    profile = {"filing_status": "MFJ", "prior_year": {
+        "capital_loss_carryforward_short_term": 9000,
+        "capital_loss_carryforward_long_term": 0, "capital_loss_carryforward": 0}}
+    changes = _cap_changes({"schedule_d": {"line_16_combined": 50000,
+                                           "loss_carryforward_to_next_year": {"short_term": 0, "long_term": 0}}},
+                           profile)
+    st = changes["prior_year.capital_loss_carryforward_short_term"]
+    assert st.action_suggested == "ask" and st.prior_value == 0 and st.current_value == 9000
+    assert "no carryforward remains" in st.reason
+    assert "prior_year.capital_loss_carryforward_long_term" not in changes
+
+
+def test_a_joint_year_carryforward_is_never_applied_onto_a_separate_year_return():
+    """Reg. §1.1212-1(c) allocates a joint carryover between the spouses by
+    each one's own net loss; a decedent's dies with them (Rev. Rul. 74-175)."""
+    block = {"schedule_d": {"line_16_combined": -50000,
+                            "loss_carryforward_to_next_year": {"short_term": 40000, "long_term": 7000}}}
+    for new_status in ("Single", "MFS", "QSS", "HOH"):
+        profile = {"filing_status": new_status, "prior_year": {}}
+        changes = _cap_changes(block, profile, prior_status="Married Filing Jointly")
+        for side in ("short_term", "long_term"):
+            c = changes[f"prior_year.capital_loss_carryforward_{side}"]
+            assert c.action_suggested == "ask" and "1.1212-1(c)" in c.reason, new_status
+    same = _cap_changes(block, {"filing_status": "MFJ", "prior_year": {}})
+    assert same["prior_year.capital_loss_carryforward_short_term"].action_suggested == "apply"
+    # Fails CLOSED: the template ships filing_status null, and null is not "MFJ".
+    unset = _cap_changes(block, {"filing_status": None, "prior_year": {}})
+    assert unset["prior_year.capital_loss_carryforward_short_term"].action_suggested == "ask"
+
+
+def test_a_gain_year_retires_a_legacy_figure_as_an_ask_not_a_silent_apply():
+    """The legacy field was retired with `apply` and a reason claiming a split
+    superseded it — true when a split exists, false in a gain year."""
+    profile = {"filing_status": "MFJ", "prior_year": {"capital_loss_carryforward": 3000}}
+    changes = _cap_changes({"schedule_d": {"line_16_combined": 5000}}, profile)
+    legacy = changes["prior_year.capital_loss_carryforward"]
+    assert legacy.action_suggested == "ask" and legacy.prior_value == 0
+    assert "no carryforward remains" in legacy.reason
+
+
+def test_a_non_finite_workspace_file_is_one_error_line_from_the_cli(tmp_path):
+    """`_load_current_state` sat outside the CLI's error boundary, so the
+    refusal it now raises printed a traceback and blamed 'the archived file'."""
+    import shutil, subprocess
+    ws = tmp_path / "ws"
+    shutil.copytree(FIXTURES / "current_2025_empty", ws)
+    (ws / "archive" / "2024").mkdir(parents=True)
+    for f in ("result.json", "taxpayer_profile.json"):
+        shutil.copy(FIXTURES / "prior_2024_clean" / f, ws / "archive" / "2024" / f)
+    (ws / "result.json").write_text('{"meta": {"junk": NaN}}')
+    proc = subprocess.run(
+        [sys.executable, "-m", "agents.lib.rollover", "diff", "--from", str(ws / "archive" / "2024"),
+         "--to", str(ws), "--year", "2025", "--categories", "carryforwards"],
+        capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr and "ERROR:" in proc.stderr
+    assert "non-finite" in proc.stderr and "archived" not in proc.stderr
+
+
+def test_the_combined_bound_asks_to_zero_a_split_that_would_disarm_the_compute_stop():
+    """/tax-compute STOPs on a combined-only figure only while both split
+    fields are zero; a non-zero split beside the bound let it run past."""
+    profile = {"filing_status": "MFJ", "prior_year": {
+        "capital_loss_carryforward_short_term": 9000, "capital_loss_carryforward": 0}}
+    changes = _cap_changes({"schedule_d": {"line_16_combined": -4000}}, profile)
+    legacy = changes["prior_year.capital_loss_carryforward"]
+    assert legacy.action_suggested == "ask" and legacy.prior_value == 1000
+    st = changes["prior_year.capital_loss_carryforward_short_term"]
+    assert st.action_suggested == "ask" and st.prior_value == 0 and "STOP" in st.reason
+    assert "prior_year.capital_loss_carryforward_long_term" not in changes
+
+
+def test_the_split_targets_do_not_collide_with_the_field_map():
+    """The two split paths are written outside FIELD_MAP, so the registry's
+    duplicate-target test cannot see them; this one can."""
+    from agents.lib.rollover import FIELD_MAP, _CAPITAL_LOSS_SPLIT, _CAPITAL_LOSS_LEGACY
+    targets = {e["target_path"] for e in FIELD_MAP.values()}
+    assert _CAPITAL_LOSS_LEGACY in targets
+    assert not set(_CAPITAL_LOSS_SPLIT.values()) & targets
+
+
+def test_the_non_finite_walk_is_the_one_secure_fs_walk():
+    """Two readers, one rule: rollover and the tax-law cache refuse through
+    the same `secure_fs.first_non_finite`."""
+    import inspect
+    from agents.lib import rollover, tax_law_fetcher, secure_fs
+    assert rollover.first_non_finite is secure_fs.first_non_finite
+    assert tax_law_fetcher.first_non_finite is secure_fs.first_non_finite
+    assert "first_non_finite(" in inspect.getsource(rollover._refuse_non_finite)
+    assert secure_fs.first_non_finite({"a": [1, {"b": float("nan")}]}) == "a[1].b"
+    assert secure_fs.first_non_finite({"a": [1.5, 2]}) is None
+
+
+def test_apply_changes_writes_both_split_fields(tmp_path):
+    import shutil
+    shutil.copytree(FIXTURES / "current_2025_partial", tmp_path / "ws")
+    targets = WritePaths(result=tmp_path / "ws" / "result.json",
+                         profile=tmp_path / "ws" / "taxpayer_profile.json")
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["schedule_d"] = {
+        "line_16_combined": -10000,
+        "loss_carryforward_to_next_year": {"short_term": 4000, "long_term": 3000}}
+    current = _load_current("current_2025_partial")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    apply_changes(diff, category_decisions={"carryforwards": "apply"}, targets=targets)
+    prior_year = json.loads(targets.profile.read_text())["prior_year"]
+    assert prior_year["capital_loss_carryforward_short_term"] == 4000
+    assert prior_year["capital_loss_carryforward_long_term"] == 3000
+    assert prior_year["capital_loss_carryforward"] == 0
+
+
+class TestTheJsonBoundaryRefusesWhatNoTransformShouldSee:
+    """AGENTS.md §8: `json.loads` accepts NaN and Infinity, both pass
+    `isinstance(x, (int, float))`, and every comparison with NaN is False —
+    so `+inf` passed `v > 0` in the explicit block, a NaN skipped it and fell
+    to the legacy path where NaN and −inf passed `raw >= 0`, and came out as
+    `nan` / `inf` carryforwards. Refused at `_read_json`, the one boundary."""
+
+    @pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+    def test_a_non_finite_number_in_an_archived_file_is_refused(self, tmp_path, token):
+        from agents.lib.rollover import _read_json
+        f = tmp_path / "result.json"
+        f.write_text('{"schedule_d": {"line_16_combined": ' + token + '}}')
+        with pytest.raises(RolloverError, match="finite"):
+            _read_json(f)
+
+    def test_apply_reads_its_targets_through_the_same_boundary(self, tmp_path):
+        import shutil
+        shutil.copytree(FIXTURES / "current_2025_empty", tmp_path / "ws")
+        targets = WritePaths(result=tmp_path / "ws" / "result.json",
+                             profile=tmp_path / "ws" / "taxpayer_profile.json")
+        targets.profile.write_text('{"prior_year": {"ira_basis": NaN}}')
+        changes = {"carryforwards": [Change(
+            category="carryforwards", json_path="prior_year.ira_basis",
+            target_file="taxpayer_profile.json", prior_value=1000, current_value=0,
+            action_suggested="apply", reason="test")]}
+        with pytest.raises(RolloverError, match="finite"):
+            apply_changes(changes, category_decisions={"carryforwards": "apply"}, targets=targets)
+
+    def test_no_transform_reads_a_boolean_as_an_amount(self):
+        from agents.lib.rollover import (_transform_abs, _transform_ftc_unused,
+                                         _transform_ira_basis)
+        assert _transform_abs(True) == 0
+        assert _transform_abs(-4000) == 4000
+        assert _transform_ftc_unused({"foreign_tax_paid_usd": True, "ftc_allowed": 0}) == 0
+        assert _transform_ftc_unused({"foreign_tax_paid_usd": 500, "ftc_allowed": False}) == 500
+        assert _transform_ira_basis(True) == 0
+
+
+class TestTheSplitRunsThroughProfileComputeAndSetup:
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def test_the_profile_template_carries_the_split_and_the_legacy_field(self):
+        prior_year = json.loads((self.ROOT / "agents" / "templates"
+                                 / "taxpayer_profile_template.json").read_text())["prior_year"]
+        assert prior_year["capital_loss_carryforward_short_term"] == 0
+        assert prior_year["capital_loss_carryforward_long_term"] == 0
+        assert prior_year["capital_loss_carryforward"] == 0
+        assert "_comment_capital_loss_carryforward" in prior_year
+
+    def test_the_result_template_has_schedule_d_lines_6_and_14(self):
+        sd = json.loads((self.ROOT / "agents" / "templates"
+                         / "result_template.json").read_text())["schedule_d"]
+        assert sd["part_i_short_term"]["line_6_prior_year_carryover"] == 0
+        assert sd["part_ii_long_term"]["line_14_prior_year_carryover"] == 0
+
+    def test_compute_consumes_the_split_and_stops_on_a_combined_only_figure(self):
+        text = (self.ROOT / ".agents" / "skills" / "tax-compute" / "references"
+                / "income-and-agi.md").read_text()
+        assert "capital_loss_carryforward_short_term" in text
+        assert "capital_loss_carryforward_long_term" in text
+        assert "line_6_prior_year_carryover" in text
+        assert "line_14_prior_year_carryover" in text
+        para = text[text.index("**Capital loss carryforward (Schedule D):**"):]
+        para = para[:para.index("\n\n")]
+        assert "STOP" in para and "never" in para.lower()
+
+    def test_setup_asks_for_the_split_and_rollover_names_it(self):
+        interview = (self.ROOT / ".agents" / "skills" / "tax-setup" / "references"
+                     / "interview.md").read_text()
+        group9 = interview[interview.index("**Group 9"):]
+        nxt = group9.find("**Group ", 8)
+        group9 = group9[:nxt] if nxt > 0 else group9
+        assert "short" in group9.lower() and "long" in group9.lower()
+        assert "capital_loss_carryforward_short_term" in group9
+        rollover = (self.ROOT / ".agents" / "skills" / "tax-rollover" / "SKILL.md").read_text()
+        assert "capital_loss_carryforward" in rollover and "split" in rollover
 
 
 def test_compute_diff_qbi_loss_carryforward():
@@ -786,3 +1082,36 @@ def test_apply_foreign_holdings_writes_rolled_list(tmp_path):
     holdings = written["foreign_holdings_detail"]["holdings"]
     assert len(holdings) == 1
     assert holdings[0]["preceding_holding_years"] == 4
+
+
+def test_an_empty_worksheet_block_is_not_a_computed_zero():
+    """`_amount` reads a missing figure as 0, which is the right default for
+    something being summed and the wrong answer to "did anybody write this
+    down?". A worksheet object nobody filled in therefore read as "the return
+    establishes that nothing carries", and the changes below retired a live
+    carryforward out of the profile on it."""
+    loss = {"line_16_combined": -2000}
+    assert _split(dict(loss, loss_carryforward_to_next_year={})) == {
+        "combined": 0, "unresolved": "contradiction", "cap_assumed": False}
+    for half in ({"short_term": 0}, {"short_term": 0, "long_term": None},
+                 {"short_term": "0", "long_term": 0}):
+        assert _split(dict(loss, loss_carryforward_to_next_year=half)
+                      ).get("unresolved") == "contradiction", half
+    # ...and a pair of zeros actually written down is still the answer.
+    assert _split(dict(loss, loss_carryforward_to_next_year=dict(ZEROS))) == ZEROS
+
+
+def test_a_zero_bound_cannot_land_and_erase_what_the_profile_holds():
+    """`apply_changes` writes an `ask`'s prior_value once its category is
+    approved. A bound of ZERO establishes nothing — this change's own reason
+    says a carryforward may remain — and landing it wrote "none remains" into
+    the profile and zeroed a split the filer may have keyed from the paper
+    worksheet, leaving all three fields zero and /tax-compute's STOP unarmed."""
+    profile = {"filing_status": "MFJ", "prior_year": {
+        "capital_loss_carryforward": 2500,
+        "capital_loss_carryforward_short_term": 1200}}
+    changes = _cap_changes({"schedule_d": {"line_16_combined": -2000}}, profile)
+    legacy = changes["prior_year.capital_loss_carryforward"]
+    assert legacy.action_suggested == "ask" and "may remain" in legacy.reason
+    assert legacy.prior_value == 2500 == legacy.current_value   # a no-op write
+    assert "prior_year.capital_loss_carryforward_short_term" not in changes

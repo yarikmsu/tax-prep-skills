@@ -53,3 +53,79 @@ bullet for the cache, not two adjacent ones.
 
 **Kept:** `loss_harvest`'s own entry-point guard, whose message names the exact
 keys; it is the keystone's guard wrapped in a harvest-specific message now.
+
+## X3 — Capital-loss carryforward by character; finite values at rollover's boundary (P1) — PR #88
+
+**Defect (E6 and the combined carryforward):** `prior_year.capital_loss_carryforward`
+was one combined figure with no Schedule D line to land on (line 6 is short-term,
+line 14 long-term), and `rollover._read_json` was a bare `json.loads`, so `NaN` and
+`±Infinity` passed every transform's range check and came out as `nan`/`inf`.
+
+**Shipped:**
+- Profile template: `capital_loss_carryforward_short_term` / `_long_term`; the legacy
+  combined field stays, documented. Result template: Schedule D
+  `line_6_prior_year_carryover` / `line_14_prior_year_carryover`.
+- `rollover._capital_loss_carryforward` returns the split from the worksheet block,
+  or a combined lower bound (MFS-aware cap) flagged `contradiction` (explicit zero
+  block beside a loss beyond the cap) or `legacy` (no block). `_capital_loss_changes`
+  writes both split fields and retires a non-zero legacy value, or offers the lower
+  bound as an `ask` on the legacy field — never a guessed split.
+- `_read_json` refuses non-finite floats everywhere in a document; `apply_changes`
+  reads through it; `_amount` makes every transform boolean-proof.
+- tax-compute consumes the split on lines 6/14 and STOPs on a combined-only figure;
+  tax-setup Group 9 asks for the split; tax-rollover names the `ask`.
+
+**Review round (bias reviewer 5, cleanup 12; before merge):**
+- A gain year, or a loss inside the cap, emitted NOTHING, so a stale split the
+  interview had already put in the profile survived the roll and landed on
+  Schedule D. The archive saying "nothing carries" is an answer: zeros are
+  returned and a non-zero target is offered an `ask` to retire it; only an
+  archive with no Schedule D figure at all is silent.
+- A joint-year carryforward rolled unprompted onto a separate-year return. Reg.
+  §1.1212-1(c) allocates it between the spouses by each one's own net loss, and
+  a decedent's dies with them (Rev. Rul. 74-175): an MFJ → anything transition
+  turns every split write into an `ask` naming both.
+- The combined-bound branch left a non-zero split in place, which disarmed
+  /tax-compute's STOP (armed only while both split fields are zero); it asks to
+  zero the split beside the bound it offers.
+- A one-sided or sign-slipped worksheet block was trusted whole. The
+  contradiction test is now a TOTAL: a block whose total is below abs(line 16) −
+  cap — impossible for a correct worksheet — is offered for resolution.
+- `_capital_loss_cap` silently took the $3,000 branch for any status it could
+  not read; it takes the engine's constants, reads every spelling, and for an
+  unreadable one keeps the $3,000 cap — the SMALLER bound, because the bound is a
+  value the `ask` lands — and says so (the code review caught the first cut
+  assuming the MFS cap, which over-states the bound for every non-MFS filer).
+- The block was bounded below but not above: a block above abs(line 16), or any
+  non-zero block beside a gain, is the pre-deduction loss written where the
+  carryover belongs and is a contradiction too. A loss inside the cap with no
+  block is a zero bound offered loud, not proof that nothing carries. The
+  joint-to-separate guard fails closed on a null current status. The legacy
+  figure is retired as an `ask` in a gain year. `_load_current_state` sits
+  inside the CLI's error boundary. Schedule D lines 6/14 take the carryover as
+  a NEGATIVE number, which the compute reference now says.
+- Cleanup: the non-finite walk is `secure_fs.first_non_finite`, shared with the
+  tax-law cache reader; `yoy_diff` reads amounts through `_amount` (its own
+  reader took `true` as 1); the split targets are pinned against FIELD_MAP.
+
+**Review round (Codex, local, against the branch below):** two findings, both
+fixed, and both the same mistake in different clothes — reading an ABSENCE as
+an answer.
+
+- **An unfilled worksheet block read as a computed zero.** `_amount` reads a
+  missing figure as 0, which is the right default for something being summed
+  and the wrong answer to "did anybody write this down?", so
+  `loss_carryforward_to_next_year: {}` beside a loss inside the cap came back
+  as "the return establishes that nothing carries" — and the changes then
+  retired a live carryforward out of the target profile. Both sides must be
+  written down for the block to be an answer; a half-filled one stays the
+  contradiction the docstring already called it.
+- **A bound of zero could land.** `apply_changes` writes an `ask`'s
+  prior_value once its category is approved, so the zero offered for a loss
+  inside the cap wrote "no carryforward remains" into the profile on the
+  strength of an archive whose own reason says one may remain, and the split
+  asks beside it zeroed a figure the filer may have keyed from the paper
+  worksheet — all three fields zero, and /tax-compute's STOP never armed. A
+  zero bound now carries the profile's own value, so approving it changes
+  nothing, and it proposes no split write at all: only a bound that EXISTS can
+  be run past.

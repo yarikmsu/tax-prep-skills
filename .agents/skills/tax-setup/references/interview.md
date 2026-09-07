@@ -590,7 +590,12 @@ own state of residence)**:**
   warn the user now)
 
 **Group 9 — Prior year carryforwards:**
-- Capital loss carryforward from prior year? Amount?
+- Capital loss carryforward from prior year? Ask for the SHORT-term and
+  LONG-term amounts separately (the prior return's Capital Loss Carryover
+  Worksheet, lines 8 and 13) → `prior_year.capital_loss_carryforward_short_term`
+  and `prior_year.capital_loss_carryforward_long_term`. A figure the user only
+  knows combined goes in the legacy `prior_year.capital_loss_carryforward`; do
+  not split it by guess — `/tax-compute` stops for the split before Schedule D.
 - QBI (qualified business income) loss carryforward?
 - Unused foreign tax credit carryforward?
 - Net operating loss (NOL) carryforward?

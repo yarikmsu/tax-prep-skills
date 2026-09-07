@@ -221,6 +221,7 @@
       "line_1a_1099b_box_a": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
       "line_2_1099b_box_b": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
       "line_1c_1099b_box_c": {"proceeds": 0, "cost": 0, "adjustment": 0, "adjustment_code": null, "employer_stock": false, "gain": 0, "source": null},
+      "line_6_prior_year_carryover": 0,
       "line_7_net_short_term": 0
     },
     "part_ii_long_term": {
@@ -230,6 +231,7 @@
       "line_11_1099b": 0,
       "line_12_not_reported": 0,
       "line_13_cap_gain_dist": 0,
+      "line_14_prior_year_carryover": 0,
       "line_15_net_long_term": 0
     },
     "line_16_combined": 0,

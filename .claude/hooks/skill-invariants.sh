@@ -1155,12 +1155,12 @@ apply_red_checks
 #   agent-definition edit           38 tests      1.6 - 1.6s         3
 #   skill .md edit                 806 tests     23.3 - 24.0s        3
 #   cold pass, all seven modules  1065 tests    148.9 - 150.7s       3
-#   (for scale) `pytest tests/`   3630 tests    256.9 - 280.9s       2
+#   (for scale) `pytest tests/`   3653 tests    256.9 - 280.9s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3632 and runs 3630 for the same skips — and that row
+# `pytest tests/` collects 3655 and runs 3653 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1327,9 +1327,9 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained two hundred and eleven
-# tests (3419 to 3630). The sitting took the counts and the seconds
-# TOGETHER, and four rounds have landed since. First, five launcher tests, executing the
+# Against the counts the seconds were taken at, the suite has gained two hundred and thirty-four
+# tests (3419 to 3653). The sitting took the counts and the seconds TOGETHER,
+# and five rounds have landed since. First, five launcher tests, executing the
 # two present-but-unusable `.venv` states `run.sh` refuses — the one with no
 # activate script, which had shipped untested, and the one it cannot inspect,
 # which had been refused with `rm -rf`. Then the round that masked SSN/ITIN at
@@ -1341,16 +1341,22 @@ apply_red_checks
 # test_projection.py, test_roth_ladder.py and test_ptet.py — again none of the
 # seven. Then the tax-law ingest command with per-block provenance (V4):
 # seventy cases in tests/test_tax_law_fetcher.py, likewise outside the
-# seven.
+# seven. Then the capital-loss carryforward split with the finite-value
+# boundary at rollover (X3): twenty-one cases in tests/test_rollover.py, outside
+# the seven again.
 # Then the Codex review round on the V0 branch below: seventeen more cases
 # in tests/test_parse_utils.py, for the table layouts a per-cell masker
 # cannot see, the W-2 box labels that are not identifier labels, and a
 # filename refused rather than masked into a path that opens nothing.
 #
-# Then this branch's own Codex review round: six more cases in
+# Then the Codex review round on the V4 branch below: six more cases in
 # tests/test_tax_law_fetcher.py, on how a block is dated and on the zero a
 # state can state.
-# The seconds are carried, which is what this paragraph is for. The scale row's
+#
+# Then this branch's own: two more in tests/test_rollover.py, on an unfilled
+# worksheet block and on a bound of zero that must not land.
+# The seconds are carried, which is what this paragraph is
+# for. The scale row's
 # were read again on the V0 branch as a check, not a refresh — one plain
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
@@ -1365,7 +1371,7 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. They sum to five; the remaining two hundred and six are modules this hook
+# yet taken. They sum to five; the remaining two hundred and twenty-nine are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

@@ -7,6 +7,7 @@ Pure functions for diff/merge logic; thin I/O wrappers at edges.
 
 import copy
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib.secure_fs import redact, secure_fd, secure_path  # noqa: E402
+from agents.lib.secure_fs import first_non_finite, redact, secure_fd, secure_path  # noqa: E402
 
 
 class RolloverError(Exception):
@@ -31,14 +32,15 @@ FIELD_MAP: dict[str, dict] = {
     # Category 1: Carryforwards (dollar amounts)
     "capital_loss_carryforward": {
         "category": "carryforwards",
-        # Whole schedule_d block: the transform prefers the explicit
-        # loss_carryforward_to_next_year written by /tax-compute (Capital Loss
-        # Carryover Worksheet) and falls back to deriving from line_16_combined
-        # for older archived returns.
+        # Whole schedule_d block. `_capital_loss_changes` writes the
+        # short/long SPLIT fields when the archive carries the Capital Loss
+        # Carryover Worksheet block, and offers a combined lower bound on this
+        # legacy target — for resolution, never applied as a split — when it
+        # does not.
         "source_path": "schedule_d",
         "target_file": "taxpayer_profile.json",
         "target_path": "prior_year.capital_loss_carryforward",
-        "transform": "capital_loss_to_carryforward",
+        "transform": "capital_loss_split",
     },
     "qbi_loss_carryforward": {
         "category": "carryforwards",
@@ -157,13 +159,34 @@ class PriorReturn:
 
 # --- I/O ------------------------------------------------------------------
 
+def _refuse_non_finite(obj, name: str) -> None:
+    """AGENTS.md §8 at the one boundary every archived figure crosses.
+
+    `json.loads` accepts `NaN`, `Infinity` and `-Infinity`, and parses `1e999`
+    to `inf`. All of them pass `isinstance(x, (int, float))`, and every
+    comparison with NaN is False — so `+inf` passed the explicit block's
+    `v > 0`, a NaN skipped it and fell to the legacy path where NaN and −inf
+    passed `raw >= 0`, and the carryforward written into the profile was
+    `nan` or `inf` (E6 of the 2026-09-05 review). Refused here, no transform
+    has to know. The walk is `secure_fs.first_non_finite`, shared with the
+    tax-law cache reader.
+    """
+    where = first_non_finite(obj)
+    if where is not None:
+        raise RolloverError(
+            f"{name} holds a non-finite number at {where} — NaN and "
+            "Infinity are not figures; correct the file")
+
+
 def _read_json(path: Path) -> dict:
     if not path.exists():
         raise RolloverError(f"{redact(path)} does not exist")
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
     except json.JSONDecodeError as e:
         raise RolloverError(f"{redact(path.name)} is malformed: {redact(e)}")
+    _refuse_non_finite(data, redact(path.name))
+    return data
 
 
 def load_prior(archive_dir: Path, year: int) -> PriorReturn:
@@ -210,61 +233,250 @@ def _set_path(d: dict, dotted: str, value: Any) -> None:
     cur[segs[-1]] = value
 
 
-def _transform_capital_loss(raw):
-    """schedule_d block (or a bare line_16_combined number) → carryforward.
+def _is_amount(raw) -> bool:
+    """Whether an amount is actually THERE.
 
-    Prefers the explicit loss_carryforward_to_next_year block written by
-    /tax-compute via the Capital Loss Carryover Worksheet (ST + LT summed — the
-    profile field is a single figure in v1). Falls back to deriving from
-    line_16_combined for older archived returns: abs(loss) − $3,000, which
-    assumes the full non-MFS cap was used. The fallback is a LOWER bound of the
-    true carryforward (the worksheet only ever uses LESS than $3,000 — when
-    taxable income is low — never more), so an all-zero explicit block safely
-    falls through to the derivation instead of dropping a real carryforward.
+    `_amount` below reads an absent or unreadable one as 0, which is the right
+    default for something being summed and the wrong answer to "did anybody
+    write this figure down?". A bool is JSON's `true`, not a dollar, and
+    `abs(True)` is 1; `_read_json` refuses a non-finite float before any
+    transform runs, and this is the same rule for a caller that did not come
+    through it.
     """
+    return (not isinstance(raw, bool) and isinstance(raw, (int, float))
+            and math.isfinite(raw))
+
+
+def _amount(raw) -> float:
+    """`raw` as an amount, or 0 when it is absent or not one."""
+    return raw if _is_amount(raw) else 0
+
+
+_STATUS_CODES = {
+    "SINGLE": "SINGLE", "MFJ": "MFJ", "MFS": "MFS", "HOH": "HOH", "QSS": "QSS",
+    "MARRIED FILING JOINTLY": "MFJ", "MARRIED FILING SEPARATELY": "MFS",
+    "HEAD OF HOUSEHOLD": "HOH", "QUALIFYING SURVIVING SPOUSE": "QSS",
+    "QUALIFYING WIDOW(ER)": "QSS", "QUALIFYING WIDOWER": "QSS", "QUALIFYING WIDOW": "QSS",
+}
+
+
+def _status_code(filing_status) -> "str | None":
+    """The canonical short code, or None for a status this module cannot read.
+    Not `projection._canonical_status`: capabilities imports this module at
+    load and projection imports capabilities, so the mapping is spelled here."""
+    return _STATUS_CODES.get(str(filing_status or "").strip().upper())
+
+
+def _capital_loss_cap(filing_status) -> "tuple[int, bool]":
+    """The prior return's §1211(b) cap, and whether it had to be ASSUMED.
+
+    The constants are the engine's (`tax_computations.CAPITAL_LOSS_LIMIT*`),
+    imported inside the function: capabilities imports this module at load
+    and tax_computations sits behind projection on that path. A status this
+    module cannot read takes the $3,000 cap — the SMALLER bound — and says so:
+    the bound is a value the `ask` lands, so it must be the one no filer's
+    true carryforward sits below (an MFS filer's is $1,500 higher, and the
+    reason says that too).
+    """
+    from agents.lib.tax_computations import CAPITAL_LOSS_LIMIT, CAPITAL_LOSS_LIMIT_MFS
+    code = _status_code(filing_status)
+    if code is None:
+        return CAPITAL_LOSS_LIMIT, True
+    return (CAPITAL_LOSS_LIMIT_MFS if code == "MFS" else CAPITAL_LOSS_LIMIT), False
+
+
+def _capital_loss_carryforward(raw, filing_status=None) -> dict:
+    """The prior return's capital-loss carryforward, BY CHARACTER when known.
+
+    A carryforward is not one figure: Schedule D line 6 takes the short-term
+    part and line 14 the long-term part, and short-term loss offsets ordinary
+    income first, so a combined number cannot be placed on the next return
+    without a split nobody can guess (X3 of the 2026-09-05 review — the
+    profile carried one figure and the compute skill had nowhere to put it).
+
+    Returns one of:
+      {"short_term": x, "long_term": y} — the explicit Capital Loss Carryover
+        Worksheet block /tax-compute wrote, when its TOTAL sits between the
+        bounds line 16 implies: at least abs(line 16) − cap, at most
+        abs(line 16); the answer. Both ZERO when the archive positively
+        establishes that nothing carries (a gain year with no block, or an
+        explicit zero block beside a loss inside the cap) — an answer too,
+        because a stale figure in the target profile must be retired, and
+        "the archive says zero" is not "the archive is silent".
+      {"combined": z, "unresolved": "contradiction"} — a block is present but
+        its total is outside those bounds: below, it is the template's
+        scaffolding (all zero), a half-filled one, or a sign slip; above (or
+        any non-zero block beside a gain), it is the pre-deduction loss
+        written where the carryover belongs. The lower bound is offered for
+        RESOLUTION, never split by guess.
+      {"combined": z, "unresolved": "legacy"} — no block (an archive older
+        than the worksheet, or a bare line-16 number): the same lower bound,
+        the same resolution. A loss INSIDE the cap with no block is this too,
+        with a bound of zero: the worksheet uses less than the cap when
+        taxable income is low, so "inside the cap" is not proof that nothing
+        carries. `cap_assumed` is True when the prior filing status could not
+        be read and the $3,000 cap — the smaller bound — was taken.
+      {} — the archive is SILENT: no Schedule D figure at all.
+
+    The derivation is a LOWER bound: the worksheet only ever uses less than
+    the cap (when taxable income is low), never more.
+    """
+    zeros = {"short_term": 0, "long_term": 0}
+    if raw is None:
+        return {}
     if isinstance(raw, dict):
-        cf_block = raw.get("loss_carryforward_to_next_year")
-        if isinstance(cf_block, dict):
-            total = 0.0
-            has_explicit = False
-            for key in ("short_term", "long_term"):
-                v = cf_block.get(key)
-                if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
-                    total += v
-                    has_explicit = True
-            if has_explicit:
-                return total
-        raw = raw.get("line_16_combined")
-    if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw >= 0:
-        return 0
-    cf = abs(raw) - 3000
-    return max(cf, 0)
+        if "line_16_combined" not in raw and "loss_carryforward_to_next_year" not in raw:
+            return {}
+        block = raw.get("loss_carryforward_to_next_year")
+        line16 = _amount(raw.get("line_16_combined"))
+        has_block = isinstance(block, dict)
+        # An ANSWER needs both sides actually written down. A worksheet block
+        # whose amounts are missing is the template's scaffolding, and reading
+        # a missing amount as a computed zero turned "nobody filled this in"
+        # into "the return establishes that nothing carries" — which retires a
+        # live carryforward out of the target profile. A half-filled block
+        # stays a contradiction, which is what the docstring above already
+        # calls it.
+        answered = has_block and all(_is_amount(block.get(side))
+                                     for side in ("short_term", "long_term"))
+        st = max(_amount(block.get("short_term")), 0) if answered else 0
+        lt = max(_amount(block.get("long_term")), 0) if answered else 0
+    else:
+        line16, has_block, answered, st, lt = _amount(raw), False, False, 0, 0
+    cap, cap_assumed = _capital_loss_cap(filing_status)
+    lower_bound = max(abs(line16) - cap, 0) if line16 < 0 else 0
+    upper_bound = abs(line16) if line16 < 0 else 0
+    if answered and (st > 0 or lt > 0) and lower_bound <= st + lt <= upper_bound:
+        return {"short_term": st, "long_term": lt}
+    if answered and st == lt == 0 and lower_bound == 0:
+        return dict(zeros)            # a computed zero beside a loss inside the cap
+    if not has_block and line16 >= 0:
+        return dict(zeros)            # a gain year: nothing carries
+    return {"combined": lower_bound,
+            "unresolved": "contradiction" if has_block else "legacy",
+            "cap_assumed": cap_assumed}
 
 
 def _transform_abs(raw):
-    return abs(raw) if isinstance(raw, (int, float)) else 0
+    return abs(_amount(raw))
 
 
 def _transform_ftc_unused(raw):
     """raw is the form_1116_ftc block (dict). Unused = paid - allowed."""
     if not isinstance(raw, dict):
         return 0
-    paid = raw.get("foreign_tax_paid_usd", 0) or 0
-    allowed = raw.get("ftc_allowed", 0) or 0
+    paid = _amount(raw.get("foreign_tax_paid_usd"))
+    allowed = _amount(raw.get("ftc_allowed"))
     return max(paid - allowed, 0)
 
 
 def _transform_ira_basis(raw):
     """Form 8606 line 14 basis remaining → next-year line 2. Non-negative; 0 if absent."""
-    return raw if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0 else 0
+    return max(_amount(raw), 0)
 
 
 TRANSFORMS = {
-    "capital_loss_to_carryforward": _transform_capital_loss,
     "abs": _transform_abs,
     "ftc_unused": _transform_ftc_unused,
     "ira_basis": _transform_ira_basis,
 }
+
+_CAPITAL_LOSS_LEGACY = "prior_year.capital_loss_carryforward"
+_CAPITAL_LOSS_SPLIT = {"short_term": "prior_year.capital_loss_carryforward_short_term",
+                       "long_term": "prior_year.capital_loss_carryforward_long_term"}
+
+
+def _capital_loss_changes(prior: "PriorReturn", profile: dict, raw) -> list:
+    """The carryforward category's capital-loss entries, per `_capital_loss_carryforward`.
+
+    Two things the generic loop does not know. A joint-year carryforward is
+    not the separate-year filer's: Reg. §1.1212-1(c) allocates it between the
+    spouses by each one's own net loss, and a decedent's dies with them (Rev.
+    Rul. 74-175), so an MFJ → anything transition turns every split write
+    into an `ask`. And /tax-compute's STOP on a combined-only figure is armed
+    only while both split fields are zero, so the combined branch asks to
+    zero a non-zero split beside the bound it offers.
+    """
+    def change(json_path, prior_value, current_value, action, reason):
+        return Change(category="carryforwards", json_path=json_path,
+                      target_file="taxpayer_profile.json", prior_value=prior_value,
+                      current_value=current_value, action_suggested=action, reason=reason)
+    status = (prior.result.get("meta") or {}).get("filing_status") \
+        or prior.profile.get("filing_status")
+    # Fails CLOSED on a current status this module cannot read (the profile
+    # template ships `null`): the joint figure is applied only to a joint return.
+    left_joint = (_status_code(status) == "MFJ"
+                  and _status_code(profile.get("filing_status")) != "MFJ")
+    found = _capital_loss_carryforward(raw, status)
+    out = []
+    if "short_term" in found:
+        for side, json_path in _CAPITAL_LOSS_SPLIT.items():
+            prior_value = found[side]
+            current_value = _get_path(profile, json_path, default=0)
+            if not prior_value and not current_value:
+                continue
+            if current_value and current_value != prior_value:
+                why = ("the archived return shows no carryforward remains"
+                       if not prior_value else f"prior ({prior_value})")
+                out.append(change(json_path, prior_value, current_value, "ask",
+                                  f"Current value ({current_value}) differs from {why}"))
+            elif left_joint:
+                out.append(change(
+                    json_path, prior_value, current_value, "ask",
+                    "A joint-year carryforward is allocated between the spouses by "
+                    "each one's own net loss (Reg. §1.1212-1(c)), and a decedent's "
+                    "dies with them (Rev. Rul. 74-175) — confirm this filer's share"))
+            else:
+                out.append(change(json_path, prior_value, current_value, "apply",
+                                  "Pulled from schedule_d.loss_carryforward_to_next_year"
+                                  f".{side}"))
+        legacy_current = _get_path(profile, _CAPITAL_LOSS_LEGACY, default=0)
+        if legacy_current and (found["short_term"] or found["long_term"]):
+            out.append(change(_CAPITAL_LOSS_LEGACY, 0, legacy_current, "apply",
+                              "Legacy combined figure superseded by the short/long split"))
+        elif legacy_current:
+            out.append(change(_CAPITAL_LOSS_LEGACY, 0, legacy_current, "ask",
+                              f"Current value ({legacy_current}) differs from the archived "
+                              "return, which shows no carryforward remains"))
+    elif "combined" in found:
+        why = ("the archived worksheet block totals outside the bounds line 16 implies "
+               "(a correct carryover is between the loss beyond the cap and the loss)"
+               if found["unresolved"] == "contradiction"
+               else "the archived return predates the Capital Loss Carryover Worksheet block"
+               if found["combined"] else
+               "the archived return shows a loss inside the cap and no worksheet block; "
+               "the worksheet uses less than the cap when taxable income is low, so a "
+               "carryforward may remain")
+        if found.get("cap_assumed"):
+            why += ("; the prior filing status could not be read, so the $3,000 cap was "
+                    "assumed — an MFS filer's bound is $1,500 higher")
+        current_value = _get_path(profile, _CAPITAL_LOSS_LEGACY, default=0)
+        # A bound of ZERO establishes nothing, so it must not be able to LAND.
+        # `apply_changes` writes an `ask`'s prior_value once its category is
+        # approved, and a zero there wrote "no carryforward remains" into the
+        # profile on the strength of an archive saying the opposite — the
+        # reason on this very change says a carryforward may remain — and the
+        # split asks below zeroed a figure the filer may have keyed from the
+        # paper worksheet. With nothing to write, the change carries the
+        # profile's own value: the question still stands in the report, and
+        # approving it changes nothing.
+        landing = found["combined"] or current_value
+        out.append(change(
+            _CAPITAL_LOSS_LEGACY, landing, current_value, "ask",
+            f"Combined lower bound only — {why}; resolve the short/long split from the "
+            "prior return's Capital Loss Carryover Worksheet (lines 8 and 13) before "
+            "/tax-compute, which cannot place a combined figure on Schedule D lines 6 and 14"))
+        for side, json_path in _CAPITAL_LOSS_SPLIT.items():
+            current_value = _get_path(profile, json_path, default=0)
+            # Only a bound there IS can be run past: with no combined figure to
+            # arm the STOP, zeroing the split would delete the one carryforward
+            # in the workspace to protect a figure that is not there.
+            if current_value and found["combined"]:
+                out.append(change(
+                    json_path, 0, current_value, "ask",
+                    "The archive supports only a combined lower bound; a non-zero split "
+                    "here would let /tax-compute run past its STOP on that figure"))
+    return out
 
 
 def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Change]:
@@ -275,6 +487,9 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         raw = _get_path(prior.result, entry["source_path"])
         if raw is None:
             # Schema drift backward: missing source path
+            continue
+        if entry.get("transform") == "capital_loss_split":
+            out.extend(_capital_loss_changes(prior, current.profile, raw))
             continue
         transform = TRANSFORMS.get(entry.get("transform"))
         prior_value = transform(raw) if transform else raw
@@ -614,8 +829,8 @@ def apply_changes(
 ) -> ApplyReport:
     """Apply selected categories atomically. All-or-nothing across all selected categories."""
     report = ApplyReport()
-    profile = json.loads(targets.profile.read_text())
-    result = json.loads(targets.result.read_text())
+    profile = _read_json(targets.profile)
+    result = _read_json(targets.result)
 
     any_changes = False
     for category, change_list in changes.items():
@@ -795,12 +1010,14 @@ def _main(argv: list[str]) -> int:
         src = _validate_subpath(Path(args.src).resolve(), workspace)
         # CLI's --year is the NEW year; archive should contain prior return (year - 1)
         prior = load_prior(src, year - 1)
+        # Inside the boundary: the workspace files go through the same
+        # non-finite refusal as the archive, and it must print as one line.
+        current = _load_current_state(workspace, year)
+        diff = compute_diff(prior, current, categories=categories,
+                            tax_law_new=current.tax_law)
     except RolloverError as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
-
-    current = _load_current_state(workspace, year)
-    diff = compute_diff(prior, current, categories=categories, tax_law_new=current.tax_law)
 
     if args.cmd == "diff":
         if args.json:
