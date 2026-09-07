@@ -19,7 +19,10 @@ model that does not reproduce every credit/schedule of the filed return.
 
 ## Prerequisites
 - `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
-- `tax_law_{year}.json` (federal brackets for the filing status).
+- `tax_law_{year}.json` (federal brackets for the filing status), with populated `federal.capital_gains_rates` (both `zero_pct_limit`
+  and `fifteen_pct_limit` for the filing status) whenever the return has qualified
+  dividends or a net long-term gain: the engine REFUSES to price that income at ordinary
+  rates and names `/tax-setup` as the fix. A wages-only return runs without them.
 - `taxpayer_profile.json` (for CTC-eligible dependent count).
 
 ## Delta grammar

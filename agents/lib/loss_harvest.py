@@ -76,6 +76,7 @@ from agents.lib.scenario import (  # noqa: E402
     save_scenario,
 )
 from agents.lib.tax_computations import (  # noqa: E402
+    qdcg_worksheet_applies,
     _coerce_numeric,
     compute_niit,
     compute_scenario,
@@ -981,31 +982,33 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     rate_kwargs = _rate_kwargs(profile, tax_law, filing_status)
     base_inputs = extract_baseline_inputs(result)
 
-    # CG-threshold guard: refuse to compute when preferential income exists but
-    # `tax_law.federal.capital_gains_rates` is incomplete. compute_scenario's
-    # QDCG worksheet falls back to pricing LT cap gains / qualified dividends at
-    # ORDINARY rates when either limit is None, which INFLATES fed_savings (the
-    # opposite of NIIT/IRMAA/state missing-data, which UNDERSTATES — those use
-    # graceful degrade-with-banner). Over-recommendation on a planning skill is
-    # never acceptable; the fix is a single `/tax-setup` invocation. A harvest
-    # can only DECREASE capital_gains (we harvest losses, not gains), so an
-    # eager check on the baseline inputs is sufficient — if baseline has no
-    # preferential income, post-harvest has none either, and the keystone's
-    # threshold-fallback is moot.
-    _has_lt_cap_gain = _num(base_inputs.get("capital_gains", 0), "capital_gains") > 0
-    _has_qual_div = _num(base_inputs.get("qualified_dividends", 0),
-                         "qualified_dividends") > 0
-    if _has_lt_cap_gain or _has_qual_div:
-        if (rate_kwargs.get("cg_zero_limit") is None
-                or rate_kwargs.get("cg_fifteen_limit") is None):
-            raise LossHarvestError(
-                f"tax_law_{year}.json has incomplete federal.capital_gains_rates "
-                f"(missing zero_pct_limit or fifteen_pct_limit for filing status "
-                f"'{filing_status}'). Preferential income (LT capital gains or "
-                "qualified dividends) would be silently priced at ordinary rates, "
-                "INFLATING fed_savings. Run /tax-setup to fetch the thresholds, then "
-                "re-run /tax-harvest."
-            )
+    # CG-threshold guard, at the ENTRY point rather than inside the keystone:
+    # `compute_scenario` now refuses a missing breakpoint itself (X2), but its
+    # message names the engine, and a harvest is the one caller where the
+    # over-statement direction is fed_savings INFLATED (the opposite of
+    # NIIT/IRMAA/state missing-data, which UNDERSTATES and degrades with a
+    # banner). A harvest can only DECREASE capital_gains, so an eager check
+    # on the baseline is sufficient. The condition is the keystone's own
+    # guard over the keystone's own quantity — a net LOSS is not preferential
+    # and box 1b is capped at box 1a, the same expression `roth_ladder`
+    # spells — so what counts as preferential income cannot drift from it.
+    preferential = (max(0.0, _num(base_inputs.get("capital_gains", 0), "capital_gains"))
+                    + min(max(0.0, _num(base_inputs.get("qualified_dividends", 0),
+                                        "qualified_dividends")),
+                          max(0.0, _num(base_inputs.get("ordinary_dividends", 0),
+                                        "ordinary_dividends"))))
+    try:
+        qdcg_worksheet_applies(preferential, rate_kwargs.get("cg_zero_limit"),
+                               rate_kwargs.get("cg_fifteen_limit"))
+    except ValueError:
+        raise LossHarvestError(
+            f"tax_law_{year}.json has incomplete federal.capital_gains_rates "
+            f"(missing zero_pct_limit or fifteen_pct_limit for filing status "
+            f"'{filing_status}'). Preferential income (LT capital gains or "
+            "qualified dividends) would be silently priced at ordinary rates, "
+            "INFLATING fed_savings. Run /tax-setup to fetch the thresholds, then "
+            "re-run /tax-harvest."
+        ) from None
 
     line24 = round(_num(((result.get("form_1040", {}) or {})
                          .get("line_24_total_tax")), "line_24"), 2)

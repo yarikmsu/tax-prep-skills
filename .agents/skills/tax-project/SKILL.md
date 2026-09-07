@@ -18,6 +18,10 @@ taxpayer_profile.json. Re-runnable quarterly.
 
 ## Prerequisites
 - `taxpayer_profile.json` and `tax_law_{year}.json` exist (else: run `/tax-setup {year}` first).
+- `tax_law_{year}.json` with populated `federal.capital_gains_rates` (both `zero_pct_limit`
+  and `fifteen_pct_limit` for the filing status) whenever the return has qualified
+  dividends or a net long-term gain: the engine REFUSES to price that income at ordinary
+  rates and names `/tax-setup` as the fix. A wages-only return runs without them.
 - Optional: `archive/{year-1}/` (from `/tax-archive`) — supplies recurring-income
   defaults and CA prior-return data. It does NOT supply the federal prior-year AGI:
   that is paired explicitly via `prior_year_form_2210_agi`, from the same return the

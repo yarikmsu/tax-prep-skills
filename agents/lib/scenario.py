@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.projection import (  # noqa: E402
     ProjectionError,
     _binary_status_key,
+    capital_gains_limits,
     _capital_loss_limit,
     _full_status_key,
     _money,
@@ -234,15 +235,15 @@ def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None") -> d
         raise ScenarioError(
             f"No federal brackets for status '{full_key}' in tax_law. Run /tax-setup to fetch."
         )
-    cg = fed.get("capital_gains_rates", {}) or {}
+    cg_zero, cg_fifteen = capital_gains_limits(tax_law, filing_status, "scenario")
     ctc_cfg = fed.get("child_tax_credit", {}) or {}
     addl_cfg = fed.get("additional_medicare_tax", {}) or {}
     threshold_map = addl_cfg.get("threshold") or {}
     return {
         "brackets": brackets,
         "standard_deduction": _num(fstatus.get("standard_deduction"), "standard_deduction"),
-        "cg_zero_limit": (cg.get("zero_pct_limit") or {}).get(bin_key),
-        "cg_fifteen_limit": (cg.get("fifteen_pct_limit") or {}).get(bin_key),
+        "cg_zero_limit": cg_zero,
+        "cg_fifteen_limit": cg_fifteen,
         "ss_wage_base": (fed.get("social_security", {}) or {}).get("wage_base"),
         "qbi_rate": fed.get("qbi_deduction_rate", 0.20),
         "num_ctc_children": _num_ctc_children(profile),

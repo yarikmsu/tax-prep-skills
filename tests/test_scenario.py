@@ -107,14 +107,52 @@ def test_compute_scenario_capital_gains_uses_preferential_rate():
     assert out1["used_qdcg"] is True
 
 
-def test_compute_scenario_no_cg_limits_falls_back_to_ordinary():
+def test_compute_scenario_refuses_preferential_income_without_cg_limits():
+    """X2 (09-05 review, E5): with either limit None the keystone used to fall
+    through to `compute_bracket_tax`, pricing a $20K LTCG at the 20% ordinary
+    bracket instead of 0/15% — an OVER-statement of the number the user acts
+    on, the direction AGENTS.md §4 makes a hard error. It refuses now, naming
+    the fix. Only `loss_harvest` guarded this; scenario, roth_ladder, ptet and
+    projection's own worksheet branch all fell through."""
     base = {"wages": 150000}
     kw = dict(brackets=MFJ_BRACKETS, standard_deduction=30000)
-    out0 = compute_scenario(base, {}, **kw)
-    out1 = compute_scenario(base, {"capital_gains": 20000}, **kw)
-    # Without preferential limits, the gain is taxed at the 20% ordinary bracket.
-    assert round(out1["total_federal_tax"] - out0["total_federal_tax"], 2) == 4000.0
-    assert out1["used_qdcg"] is False
+    with pytest.raises(ValueError, match="tax-setup"):
+        compute_scenario(base, {"capital_gains": 20000}, **kw)
+    with pytest.raises(ValueError, match="tax-setup"):
+        compute_scenario(base, {"qualified_dividends": 1, "ordinary_dividends": 1}, **kw)
+    # One limit present is not enough: the worksheet needs both breakpoints.
+    with pytest.raises(ValueError, match="tax-setup"):
+        compute_scenario(base, {"capital_gains": 1},
+                         **dict(kw, cg_zero_limit=90000))
+
+
+def test_compute_scenario_ordinary_only_still_runs_without_cg_limits():
+    """The ordinary-income-only case stays usable: nothing preferential means
+    nothing the worksheet would price, so a cache without the limits is not
+    a defect for a wages-only what-if. A net capital LOSS is ordinary too
+    (it is capped and deducted, never worksheet-priced)."""
+    kw = dict(brackets=MFJ_BRACKETS, standard_deduction=30000)
+    out = compute_scenario({"wages": 150000}, {"ira_distribution": 20000}, **kw)
+    assert out["used_qdcg"] is False and out["total_federal_tax"] > 0
+    out = compute_scenario({"wages": 150000}, {"capital_gains": -20000}, **kw)
+    assert out["gross_income"] == 147000.0
+
+
+def test_rate_kwargs_reads_the_cg_limits_through_the_shared_accessor():
+    """X1 lands on the same accessor (status-specific keys), so every read
+    site has to BE the accessor, not a look-alike `.get` chain beside it.
+    Proven behaviourally: only the accessor refuses a NaN breakpoint."""
+    from agents.lib.projection import ProjectionError
+    b = [{"rate": 0.10, "min": 0, "max": None}]
+    tax_law = {"federal": {
+        "filing_statuses": {"mfj": {"standard_deduction": 30000, "brackets": b}},
+        "capital_gains_rates": {"zero_pct_limit": {"mfj": 11.0},
+                                "fifteen_pct_limit": {"mfj": 22.0}}}}
+    kw = sc._rate_kwargs({}, tax_law, "MFJ")
+    assert (kw["cg_zero_limit"], kw["cg_fifteen_limit"]) == (11.0, 22.0)
+    tax_law["federal"]["capital_gains_rates"]["zero_pct_limit"]["mfj"] = float("nan")
+    with pytest.raises(ProjectionError, match="positive finite"):
+        sc._rate_kwargs({}, tax_law, "MFJ")
 
 
 def test_compute_scenario_se_delta_adds_se_tax():
@@ -830,3 +868,18 @@ def test_a_bad_base_scenario_status_names_the_base_file_not_result_json():
     with pytest.raises(sc.ScenarioError) as exc:
         sc.resolve_base(current, base, 2026, "MFJ")
     assert "Cannot stack across filing statuses" in str(exc.value)
+
+
+@pytest.mark.parametrize("name", ["tax-scenario", "tax-roth-convert", "tax-project",
+                                  "tax-ptet", "tax-withholding", "tax-harvest"])
+def test_every_keystone_skill_states_the_cg_limit_refusal(name):
+    """X2: each skill that prices a return through the keystone or the
+    projection worksheet now refuses instead of falling through to ordinary
+    rates; the prerequisite that says so has to be in every one of them, or
+    an agent hits the refusal with no instruction pointing at /tax-setup."""
+    from tests.skill_text import skill_text
+    text = skill_text(name)
+    assert "capital_gains_rates" in text and "/tax-setup" in text, name
+    assert "REFUSES" in text, (
+        f"{name} does not tell the agent the engine refuses to price "
+        "preferential income without the 0%/15% breakpoints")

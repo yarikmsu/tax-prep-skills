@@ -526,3 +526,15 @@ def test_cli_basis_args(tmp_path):
     assert out["ira_basis"] == 20000 and out["ira_value"] == 100000
     by_amt = {x["amount"]: x for x in out["rungs"]}
     assert by_amt[10000]["taxable_conversion"] == 8000.00
+
+
+def test_build_ladder_refuses_when_the_cg_limits_are_missing():
+    """X2: the fixture return carries $8K qualified dividends and a $20K LTCG.
+    With the limits unfetched, every rung used to be priced with that income
+    at ordinary rates — a ladder whose marginal cost per dollar is wrong from
+    rung one. The engine refuses; `_main` lists ValueError, so the CLI shows
+    the `Error:` line rather than a traceback."""
+    law = _load("tax_law_2026.json")
+    del law["federal"]["capital_gains_rates"]
+    with pytest.raises(ValueError, match="tax-setup"):
+        _build(tax_law=law)

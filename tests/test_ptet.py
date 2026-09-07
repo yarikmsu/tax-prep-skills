@@ -767,6 +767,22 @@ def test_cli_reports_a_missing_tax_law_cache_the_same_way(tmp_path):
     assert res.stderr.startswith("Error: ")
 
 
+def test_cli_reports_missing_cg_limits_as_an_error_not_a_traceback(tmp_path):
+    """X2: the fixture return has qualified dividends and a LTCG, and the
+    keystone now refuses to price them without the 0%/15% breakpoints. That
+    refusal is a ValueError, a type this CLI's except tuple did not list —
+    the same shape as the ProjectionError gap above."""
+    ws = _ws(tmp_path)
+    law_path = ws / "tax_law_2026.json"
+    law = json.loads(law_path.read_text())
+    del law["federal"]["capital_gains_rates"]
+    law_path.write_text(json.dumps(law))
+    res = _run_cli(["--workspace", str(ws), "--year", "2026", "--income", "CA=200000"])
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "Traceback" not in res.stderr, res.stderr
+    assert res.stderr.startswith("Error: ") and "tax-setup" in res.stderr
+
+
 def test_obs_date_honours_the_conforming_holiday_set():
     """`_obs_date` delegates, and the delegation is the point.
 

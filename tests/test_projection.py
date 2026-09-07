@@ -163,6 +163,23 @@ def test_annualize_scales_steady_items_and_adds_overrides_full_year():
     assert proj.paychecks_remaining == P.paychecks_remaining("biweekly", frac)
 
 
+@pytest.mark.parametrize("recurring, reason", [
+    ({"ordinary_dividends": 1200, "qualified_dividends": -6000}, "non-negative"),
+    ({"ordinary_dividends": -1200, "qualified_dividends": 0}, "non-negative"),
+    ({"ordinary_dividends": 1200, "qualified_dividends": 1500}, "cannot exceed"),
+])
+def test_annualize_refuses_a_dividend_pair_that_is_not_a_split(recurring, reason):
+    """`qualified_dividends` went through `_num`, so a sign slip of -6000
+    beside a $5,000 LTCG summed to a negative `preferential_income`, which
+    the X2 guard read as "nothing to price" — and the gain was taxed at
+    ordinary rates with no refusal, the fall-through by the input door. Box 1b
+    is the qualified part of box 1a, so it is non-negative and never larger."""
+    as_of = datetime.date(2026, 7, 2)
+    with pytest.raises(P.ProjectionError, match=reason):
+        P.annualize(_ytd_half_year(), as_of, "biweekly",
+                    {"capital_gains_long": 5000}, recurring, {"federal": 0, "state": 0})
+
+
 def test_annualize_rejects_negative_schedule_1a():
     """Codex round-5 P2: a negative Schedule 1-A override must hard-error, not
     silently floor to $0 (which would drop the deduction and overstate tax)."""
@@ -230,6 +247,92 @@ def _proj(**overrides):
         estimated_fed_paid=0, estimated_state_paid=0, elapsed_fraction=0.5, paychecks_remaining=13)
     base.update(overrides)
     return P.ProjectedInputs(**base)
+
+
+def test_project_federal_refuses_preferential_income_without_cg_limits():
+    """X2: `project_federal_tax` has its own worksheet branch (it never calls
+    `compute_scenario`) with the same fall-through — qualified dividends or a
+    net LTCG priced at ordinary rates when a limit is None. Over-states the
+    projected tax and every safe-harbor figure derived from it."""
+    law = _tax_law_2026()
+    law["federal"]["capital_gains_rates"]["fifteen_pct_limit"] = {}
+    with pytest.raises(P.ProjectionError, match="tax-setup"):
+        P.project_federal_tax(_proj(qualified_dividends=5000),
+                              _profile_mfj(), law)
+    del law["federal"]["capital_gains_rates"]
+    with pytest.raises(P.ProjectionError, match="tax-setup"):
+        P.project_federal_tax(_proj(capital_gains=5000), _profile_mfj(), law)
+
+
+def test_project_federal_ordinary_only_still_runs_without_cg_limits():
+    law = _tax_law_2026()
+    del law["federal"]["capital_gains_rates"]
+    fed = P.project_federal_tax(_proj(), _profile_mfj(), law)
+    assert fed.tax_before_credits == 12000
+
+
+def test_capital_gains_limits_accessor_reads_the_binary_status_key():
+    """The one read site for `federal.capital_gains_rates`: MFJ/QSS map to
+    `mfj`, everything else to `single` (the X1 collapse, to be fixed on this
+    same accessor); an absent block reads as (None, None), never a KeyError."""
+    law = _tax_law_2026()
+    assert P.capital_gains_limits(law, "MFJ") == (90000, 550000)
+    assert P.capital_gains_limits(law, "QSS") == (90000, 550000)
+    assert P.capital_gains_limits(law, "Single") == (45000, 490000)
+    assert P.capital_gains_limits(law, "HoH") == (45000, 490000)
+    assert P.capital_gains_limits(law, "MFS") == (45000, 490000)
+    assert P.capital_gains_limits({"federal": {}}, "Single") == (None, None)
+    assert P.capital_gains_limits({}, "MFJ") == (None, None)
+    with pytest.raises(P.ProjectionError):
+        P.capital_gains_limits(law, "Married Filing Jointly")
+
+
+@pytest.mark.parametrize("zero, fifteen", [
+    (float("nan"), 490000), (45000, float("nan")),
+    (float("inf"), 490000), (45000, float("-inf")),
+    (0, 490000), (-45000, 490000), (True, 490000), ("45000", 490000),
+])
+def test_capital_gains_limits_refuses_a_breakpoint_that_is_not_a_positive_number(
+        zero, fifteen):
+    """The X2 guard asks `is None`; `load_tax_law` is a bare `json.loads`, so
+    NaN and Infinity reach the accessor and pass it. In the worksheet
+    `min(qdcg, nan - ordinary)` keeps qdcg (every NaN comparison is False), so
+    the whole preferential stack is taxed at 0% — the under-statement door.
+    Zero or a negative pushes it out of the 0% band: the over-statement door.
+    Both are refused at the one read site, so every keystone inherits it."""
+    law = _tax_law_2026()
+    law["federal"]["capital_gains_rates"]["zero_pct_limit"]["single"] = zero
+    law["federal"]["capital_gains_rates"]["fifteen_pct_limit"]["single"] = fifteen
+    with pytest.raises(P.ProjectionError, match="positive finite"):
+        P.capital_gains_limits(law, "Single")
+    assert P.capital_gains_limits(law, "MFJ") == (90000, 550000)
+
+
+def test_capital_gains_limits_refuses_an_inverted_pair():
+    law = _tax_law_2026()
+    law["federal"]["capital_gains_rates"]["fifteen_pct_limit"]["single"] = 40000
+    with pytest.raises(P.ProjectionError, match="below"):
+        P.capital_gains_limits(law, "Single")
+
+
+def test_capital_gains_limits_refuses_a_scalar_where_the_status_map_belongs():
+    """A cache that stores the breakpoint as a scalar instead of the per-status
+    map used to raise AttributeError, a class no CLI boundary lists. It is a
+    corrupt cache, so it fails closed like a corrupt value; only an ABSENT
+    block or key reads as `None`."""
+    law = _tax_law_2026()
+    law["federal"]["capital_gains_rates"]["zero_pct_limit"] = 45000
+    with pytest.raises(P.ProjectionError, match="per-status map"):
+        P.capital_gains_limits(law, "Single")
+    del law["federal"]["capital_gains_rates"]["zero_pct_limit"]
+    assert P.capital_gains_limits(law, "Single") == (None, 490000)
+
+
+def test_a_nan_breakpoint_reaches_the_projection_as_a_refusal_not_a_zero_rate():
+    law = _tax_law_2026()
+    law["federal"]["capital_gains_rates"]["zero_pct_limit"]["mfj"] = float("nan")
+    with pytest.raises(P.ProjectionError, match="positive finite"):
+        P.project_federal_tax(_proj(qualified_dividends=5000), _profile_mfj(), law)
 
 
 def test_project_federal_wages_only_matches_bracket_tax():

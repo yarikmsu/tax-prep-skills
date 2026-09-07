@@ -967,7 +967,7 @@ def _main(argv: list) -> int:
             ptet_cfg=(tax_law.get("ptet") if isinstance(tax_law, dict) else None))
         print(render_markdown(report))
         return 0
-    except (PtetError, ProjectionError, ScenarioError, RolloverError) as e:
+    except (PtetError, ProjectionError, ScenarioError, RolloverError, ValueError) as e:
         # ProjectionError belongs here because `_read_json` is projection's,
         # and it is what a missing result.json raises — the single most
         # ordinary way to run this skill wrong (before /tax-compute has been

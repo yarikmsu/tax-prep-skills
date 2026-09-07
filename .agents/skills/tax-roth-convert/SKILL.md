@@ -26,7 +26,10 @@ Read-only with respect to the baseline: never modifies `result.json` or
 
 ## Prerequisites
 - `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
-- `tax_law_{year}.json` (federal brackets, `niit`, `capital_gains_rates` for the status).
+- `tax_law_{year}.json` (federal brackets, `niit`), with populated `federal.capital_gains_rates` (both `zero_pct_limit`
+  and `fifteen_pct_limit` for the filing status) whenever the return has qualified
+  dividends or a net long-term gain: the engine REFUSES to price that income at ordinary
+  rates and names `/tax-setup` as the fix. A wages-only return runs without them.
 - `taxpayer_profile.json` (for CTC-eligible dependent count).
 - **For IRMAA flags:** `tax_law_{year}.json` must have `federal.irmaa.tiers.{single|mfj}`
   populated (MAGI thresholds + per-beneficiary annual surcharge). If empty, the ladder

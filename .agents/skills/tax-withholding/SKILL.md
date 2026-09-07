@@ -30,7 +30,10 @@ the federal report plus a "CA only" caveat.
 - `projection_inputs.json` (else: run `/tax-project` first, or create it from
   `agents/templates/projection_inputs_template.json` and fill YTD federal withholding,
   estimated payments, pay frequency, and as-of date).
-- `tax_law_{year}.json`.
+- `tax_law_{year}.json`, with populated `federal.capital_gains_rates` (both `zero_pct_limit`
+  and `fifteen_pct_limit` for the filing status) whenever the return has qualified
+  dividends or a net long-term gain: the engine REFUSES to price that income at ordinary
+  rates and names `/tax-setup` as the fix. A wages-only return runs without them.
 - Optional: `archive/{year-1}/` — supplies CA prior-return data. It does NOT supply
   the federal prior-year AGI: that is paired explicitly via `prior_year_form_2210_agi`,
   from the same return the tax base was composed from.

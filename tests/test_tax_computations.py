@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tests.skill_text import skill_text  # noqa: E402
 from agents.lib.tax_computations import (
+    qdcg_worksheet_applies,
     _coerce_numeric,
     compute_bracket_tax,
     compute_qdcg_tax,
@@ -4567,3 +4568,45 @@ class TestBigTicketQualifyingClassesDoc:
             assert term in compute_md, f"{term!r} missing from tax-compute.md"
         assert "furniture" in compute_md
         assert "double-count" in compute_md
+
+
+class TestQdcgWorksheetApplies:
+    """X2: one guard for "may the worksheet be skipped?", shared by
+    `compute_scenario` and `projection.project_federal_tax`. Skipping is
+    allowed only when there is nothing preferential to price."""
+
+    def test_no_preferential_income_skips_the_worksheet_whatever_the_limits(self):
+        assert qdcg_worksheet_applies(0.0, None, None) is False
+        assert qdcg_worksheet_applies(0.0, 90000, 550000) is False
+
+    def test_preferential_income_with_both_limits_applies(self):
+        assert qdcg_worksheet_applies(1.0, 90000, 550000) is True
+
+    @pytest.mark.parametrize("zero, fifteen", [(None, 550000), (90000, None), (None, None)])
+    def test_preferential_income_with_a_missing_limit_refuses(self, zero, fifteen):
+        with pytest.raises(ValueError, match="tax-setup"):
+            qdcg_worksheet_applies(1.0, zero, fifteen)
+
+    def test_a_net_capital_loss_is_not_preferential(self):
+        """The worksheet prices gains; a loss is capped and deducted from
+        ordinary income, so it must not trip the refusal."""
+        assert qdcg_worksheet_applies(-3000.0, None, None) is False
+
+
+def test_the_capital_gains_limits_are_read_at_one_site():
+    """Four divergent read sites were the root cause X1 and X2 share; the
+    accessor is the single one now, and this keeps it so. The schema
+    (`tax_law_fetcher`) and the AMT function's own parameter names are the
+    only other places the key may be spelled."""
+    import re
+    lib = Path(__file__).resolve().parent.parent / "agents" / "lib"
+    reads = {}
+    key = r"""["'](?:zero|fifteen)_pct_limit["']"""
+    for f in sorted(lib.glob("*.py")):
+        if f.name == "tax_law_fetcher.py":
+            continue
+        hits = re.findall(rf"""\.get\(\s*{key}|\[{key}\]""", f.read_text())
+        if hits:
+            reads[f.name] = len(hits)
+    assert reads == {"projection.py": 2}, (
+        f"a capital-gains breakpoint is read outside the accessor: {reads}")

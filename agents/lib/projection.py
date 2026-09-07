@@ -38,6 +38,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_niit,
     compute_qbi_deduction,
     compute_qdcg_tax,
+    qdcg_worksheet_applies,
     compute_se_tax,
     net_capital_gains,
     _SCH1A_EFFECTIVE_FROM,
@@ -197,6 +198,57 @@ def _binary_status_key(filing_status: "str | None",
     the right one for two of the five statuses.
     """
     return "mfj" if _canonical_status(filing_status, where) in _MFJ_LIKE else "single"
+
+
+def capital_gains_limits(tax_law: dict, filing_status: "str | None",
+                         where: str = "tax computation") -> "tuple[float | None, float | None]":
+    """`(zero_pct_limit, fifteen_pct_limit)` for the status — the ONE read site.
+
+    Four sites read `federal.capital_gains_rates` with their own `.get` chains
+    (`scenario._rate_kwargs`, this module's worksheet branch, and through the
+    first every planning skill), which is the root cause X1 and X2 of the
+    09-05 review share: the status collapse (MFS and HoH onto `single`) and
+    the missing-limit fall-through each had to be fixed in every copy. They
+    read here now, so the status-specific keys X1 adds land in one place. An
+    absent block or key reads as `None`; whether `None` is acceptable is the
+    caller's question, answered by `tax_computations.qdcg_worksheet_applies`
+    once it knows if there is preferential income to price. A breakpoint that
+    is PRESENT but unusable is refused here, unconditionally: a wages-only
+    run against a corrupt cache fails closed, where a merely unfetched one
+    still runs, because a corrupt figure says the cache was not produced by
+    the fetch and nothing else in it can be trusted either.
+    """
+    bin_key = _binary_status_key(filing_status, where)
+    cg = (tax_law.get("federal", {}) or {}).get("capital_gains_rates", {}) or {}
+
+    def _limit(name, per_status):
+        if per_status is not None and not isinstance(per_status, dict):
+            raise ProjectionError(
+                f"federal.capital_gains_rates.{name} must be a per-status map "
+                f"(single/mfj). Run /tax-setup to fetch current rates.")
+        value = (per_status or {}).get(bin_key)
+        # `None` is "not fetched", and is the guard's question. Anything else
+        # must be a positive finite number HERE, at the read site, because
+        # the worksheet's `min(qdcg, limit - ordinary)` resolves against NaN
+        # by keeping qdcg (every NaN comparison is False), which taxes the
+        # whole preferential stack at 0% — the under-statement door the guard
+        # cannot see, since `nan is None` is False. Zero or a negative pushes
+        # the stack out of the 0% band instead: the over-statement door.
+        # `load_tax_law` is a bare `json.loads`, which admits NaN/Infinity;
+        # the positivity and ordering rules are this site's own either way.
+        if value is not None and (_indexed_limit_bad(value) or value <= 0):
+            raise ProjectionError(
+                f"federal.capital_gains_rates.{name}.{bin_key} must be a "
+                f"positive finite number. Run /tax-setup to fetch current rates.")
+        return value
+
+    zero = _limit("zero_pct_limit", cg.get("zero_pct_limit"))
+    fifteen = _limit("fifteen_pct_limit", cg.get("fifteen_pct_limit"))
+    if zero is not None and fifteen is not None and fifteen < zero:
+        raise ProjectionError(
+            f"federal.capital_gains_rates fifteen_pct_limit.{bin_key} is below "
+            f"zero_pct_limit.{bin_key}. Run /tax-setup to fetch current rates.")
+    return zero, fifteen
 
 
 _DEGRADED_MODE_LINE = (
@@ -383,7 +435,7 @@ _SCH1A_NESTED_LIMITS = ("overtime_cap", "tips_overtime_phaseout_start",
                         "car_loan_phaseout_start", "senior_phaseout_start")
 
 
-def _sch1a_limit_bad(v) -> bool:
+def _indexed_limit_bad(v) -> bool:
     """A usable indexed cap/threshold must be a FINITE, NON-NEGATIVE real number
     (bool excluded). The compute path rejects string/NaN/Infinity/negative via
     _sched_a_amount, so the projection completeness check must reject them too —
@@ -405,12 +457,12 @@ def _sch1a_limits_incomplete(block) -> bool:
     if not isinstance(block, dict):
         return True
     for key in _SCH1A_SCALAR_LIMITS:
-        if _sch1a_limit_bad(block.get(key)):
+        if _indexed_limit_bad(block.get(key)):
             return True
     for key in _SCH1A_NESTED_LIMITS:
         nested = block.get(key)
         if not isinstance(nested, dict) or any(
-                _sch1a_limit_bad(nested.get(k)) for k in ("single", "mfj")):
+                _indexed_limit_bad(nested.get(k)) for k in ("single", "mfj")):
             return True
     return False
 
@@ -1188,6 +1240,19 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
             "other (the legacy field is treated as long-term)."
         )
 
+    qualified = _nonneg_num(recurring.get("qualified_dividends"), "qualified_dividends")
+    ordinary = _nonneg_num(recurring.get("ordinary_dividends"), "ordinary_dividends")
+    # Box 1b is the qualified SPLIT of box 1a, so it cannot exceed it. A
+    # negative or oversized figure used to reach the QDCG guard as
+    # `preferential_income`, where a sign slip read as "nothing to price" and
+    # the LTCG beside it was taxed at ordinary rates — the X2 fall-through by
+    # the input door. The scenario keystone clamps the same pair; a parse-time
+    # refusal is louder, and the sign the message would print is in the file.
+    if qualified > ordinary:
+        raise ProjectionError(
+            "qualified_dividends cannot exceed ordinary_dividends "
+            "(Form 1099-DIV box 1b is the qualified part of box 1a)")
+
     return ProjectedInputs(
         wages=wages,
         federal_withholding=ann("federal_withholding"),
@@ -1201,8 +1266,8 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
         schedule_1a_total=_nonneg_num(overrides.get("schedule_1a"), "schedule_1a"),
         schedule_1a_se_tips=_nonneg_num(
             overrides.get("schedule_1a_se_tips"), "schedule_1a_se_tips"),
-        qualified_dividends=_num(recurring.get("qualified_dividends"), "qualified_dividends"),
-        ordinary_dividends=_num(recurring.get("ordinary_dividends"), "ordinary_dividends"),
+        qualified_dividends=qualified,
+        ordinary_dividends=ordinary,
         taxable_interest=_num(recurring.get("taxable_interest"), "taxable_interest"),
         self_employment_net=_num(overrides.get("self_employment_net"), "self_employment_net"),
         other_income=_num(overrides.get("other_income"), "other_income"),
@@ -1331,6 +1396,8 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         if sch1a > 0 else 0.0)
     qbi_base = max(0.0, proj.self_employment_net - se_tips_qbi_excl)
     qbi_over_threshold = False
+    # Form 8995 line 12 and the QDCG worksheet price the same quantity.
+    net_capital_gain = proj.qualified_dividends + net_ltcg
     if qbi_base > 0:
         # §199A(c)(4) / Reg. §1.199A-3(b)(1)(vi): net the QBI base by the
         # deductible half of SE tax (the SE-tips exclusion is already applied in
@@ -1340,7 +1407,7 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         qbi_res = compute_qbi_deduction(
             qbi_base, 0.0, rate=fed.get("qbi_deduction_rate", 0.20),
             taxable_income_before_qbi=ti_before_qbi,
-            net_capital_gain=proj.qualified_dividends + net_ltcg,
+            net_capital_gain=net_capital_gain,
             threshold=(fed.get("qbi_threshold") or {}).get(bin_key),
             half_se_tax=se["deductible_half"],
         )
@@ -1350,10 +1417,15 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         qbi = 0.0
     taxable_income = max(0.0, ti_before_qbi - qbi)
 
-    cg = fed.get("capital_gains_rates", {}) or {}
-    cg_zero = (cg.get("zero_pct_limit") or {}).get(bin_key)
-    cg_fifteen = (cg.get("fifteen_pct_limit") or {}).get(bin_key)
-    if (proj.qualified_dividends or net_ltcg) and cg_zero is not None and cg_fifteen is not None:
+    cg_zero, cg_fifteen = capital_gains_limits(tax_law, fs, "federal projection")
+    # ProjectionError, not the engine's ValueError: this is the type every
+    # caller of this module already handles, and the error is a workspace
+    # state (an unfetched cache), not a bad argument.
+    try:
+        worksheet = qdcg_worksheet_applies(net_capital_gain, cg_zero, cg_fifteen)
+    except ValueError as e:
+        raise ProjectionError(str(e)) from None
+    if worksheet:
         qd = compute_qdcg_tax(taxable_income, proj.qualified_dividends, net_ltcg,
                               brackets, cg_zero, cg_fifteen)
         tax_before_credits = qd["final_tax"]

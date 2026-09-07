@@ -130,6 +130,47 @@ def compute_bracket_tax(taxable_income: float, brackets: list[dict]) -> tuple[fl
     return round(total_tax, 2), breakdown
 
 
+def qdcg_worksheet_applies(
+    preferential_income: float,
+    cg_zero_limit: "float | None",
+    cg_fifteen_limit: "float | None",
+) -> bool:
+    """Whether the QDCG worksheet must run — and refuse when it cannot.
+
+    The one guard shared by `compute_scenario`, `compute_form_6251`'s Part III
+    coordination, `loss_harvest`'s entry point and
+    `projection.project_federal_tax`, which has its own worksheet branch and
+    never calls `compute_scenario`. Both used to read `limit is not None` as
+    the condition for the worksheet and fall through to `compute_bracket_tax`
+    otherwise, so a cache whose `federal.capital_gains_rates` was never
+    fetched priced qualified dividends and net long-term gain at ORDINARY
+    rates. That over-states the tax the user acts on — a Roth rung's marginal
+    cost, a safe-harbor payment — which is the direction AGENTS.md §4 makes a
+    hard error, and it was silent: nothing downstream can tell 0/15/20% from
+    22/24/32% on a figure that looks plausible either way. Only `loss_harvest`
+    guarded it, at its own entry point.
+
+    `preferential_income` is qualified dividends plus net long-term gain; a net
+    LOSS is capped and deducted from ordinary income and is not preferential,
+    so a wages-only or loss-only case stays usable without the limits — an
+    ordinary-income what-if is not wrong for lack of a breakpoint it never
+    reaches. Returns False when there is nothing to price, True when both
+    breakpoints are present, and raises when income exists and either is
+    missing: half a worksheet is the same fall-through by another door.
+    """
+    if preferential_income <= 0:
+        return False
+    if cg_zero_limit is None or cg_fifteen_limit is None:
+        raise ValueError(
+            "Capital gains rate thresholds not loaded from tax_law JSON "
+            "(federal.capital_gains_rates zero_pct_limit / fifteen_pct_limit "
+            "for this filing status), and the return has qualified dividends "
+            "or a net long-term gain that they price. Refusing rather than "
+            "taxing that income at ordinary rates. Run /tax-setup to fetch "
+            "current rates.")
+    return True
+
+
 def compute_qdcg_tax(
     taxable_income: float,
     qualified_dividends: float,
@@ -3243,12 +3284,8 @@ def compute_form_6251(
             0.0, ex - po_rate * max(0.0, amti - ph_start))
         base = max(0.0, amti - exemption_allowed)
         cg = min(base, qd + ltcg)
-        if cg > 0:
-            if zero_pct_limit is None or fifteen_pct_limit is None:
-                raise ValueError(
-                    "capital_gains_rates limits are required for the Part "
-                    "III coordination when qualified dividends / net LTCG "
-                    "are present")
+        # The X2 guard: the same fall-through by the AMT door.
+        if qdcg_worksheet_applies(cg, zero_pct_limit, fifteen_pct_limit):
             z = _sched_a_amount(zero_pct_limit, "zero_pct_limit")
             f15 = _sched_a_amount(fifteen_pct_limit, "fifteen_pct_limit")
             ordinary = base - cg
@@ -4169,8 +4206,10 @@ def compute_scenario(
         delta: Signed additive adjustments (same key space). Applied on top of baseline.
         brackets: Ordinary-income brackets for the filing status.
         standard_deduction: Standard deduction for the filing status.
-        cg_zero_limit, cg_fifteen_limit: QDCG 0%/15% thresholds (binary status key). When
-                  either is None, preferential income is taxed at ordinary rates instead.
+        cg_zero_limit, cg_fifteen_limit: QDCG 0%/15% thresholds (binary status key).
+                  Required whenever the scenario has qualified dividends or a net
+                  long-term gain — `qdcg_worksheet_applies` raises otherwise; an
+                  ordinary-income-only scenario runs without them.
         ss_wage_base: SS wage base for SE tax; None falls back to the flat SE rate.
         qbi_rate: Sec 199A rate.
         num_ctc_children, ctc_per_child, ctc_phase_out_start: CTC params; credit is 0
@@ -4264,6 +4303,8 @@ def compute_scenario(
     # (line 12 = qualified dividends + net LTCG) for the overall cap, so it is
     # computed after AGI and the preferential-income figures.
     ti_before_qbi = max(0.0, agi - standard_deduction - schedule_1a_deduction)
+    # Form 8995 line 12 and the QDCG worksheet price the same quantity.
+    net_capital_gain = eff_qualified + net_ltcg
     if se_net > 0:
         # §199A(c)(4) / Reg. §1.199A-3(b)(1)(vi): net the QBI base by the
         # deductible half of SE tax (the only trade-attributable SE deduction the
@@ -4273,13 +4314,14 @@ def compute_scenario(
         qbi = compute_qbi_deduction(
             se_net, 0.0, rate=qbi_rate,
             taxable_income_before_qbi=ti_before_qbi,
-            net_capital_gain=eff_qualified + net_ltcg,
+            net_capital_gain=net_capital_gain,
             half_se_tax=se["deductible_half"],
         )["total_deduction"]
     else:
         qbi = 0.0
     taxable_income = max(0.0, ti_before_qbi - qbi)
-    if (eff_qualified or net_ltcg) and cg_zero_limit is not None and cg_fifteen_limit is not None:
+    if qdcg_worksheet_applies(net_capital_gain,
+                              cg_zero_limit, cg_fifteen_limit):
         qd = compute_qdcg_tax(taxable_income, eff_qualified, net_ltcg,
                               brackets, cg_zero_limit, cg_fifteen_limit)
         tax_before_credits = qd["final_tax"]
