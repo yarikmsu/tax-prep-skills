@@ -9,6 +9,8 @@ import csv
 import functools
 import json
 import sys
+import time
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -45,6 +47,157 @@ except ImportError:
 
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB — prevents DoS via oversized files
+
+# V11 — the budgets the on-disk cap above does NOT bound. Source documents are
+# untrusted input (AGENTS.md §1), and 100 MB of `.xlsx` is 100 MB of ZIP: the
+# XML inside it can be orders of magnitude larger, and neither the extracted
+# text nor the time spent producing it is bounded by the file's size at all.
+# Every one of these refuses rather than truncating — a partial extraction that
+# looks like a complete one is what the tie-out gate cannot see.
+#
+# The numbers are deliberately far above any real return and are stated here
+# rather than passed in: a budget a caller can raise is one the caller raises.
+# A consolidated brokerage 1099 runs to a few hundred pages and a few hundred
+# kilobytes of text; a workbook's XML is a handful of times its ZIP.
+MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024      # 1 GB of XML behind a workbook
+MAX_COMPRESSION_RATIO = 200                       # 100 KB expanding to 20 MB
+MAX_EXTRACTED_CHARS = 20 * 1024 * 1024            # 20 MB of returned text
+MAX_PAGES = 2000                                  # pages in one PDF
+PARSE_TIME_BUDGET_SECONDS = 300                   # wall clock inside one call
+
+
+class ParseBudgetError(ValueError):
+    """A document exceeded a parser budget. A `ValueError`, because every
+    caller already handles the size cap's refusal that way and a new exception
+    class here would slip past those handlers as a traceback."""
+
+
+class _Budget:
+    """The output and time budgets for ONE extraction call.
+
+    Checked incrementally — between pages, sheets and rows — because the point
+    is to stop a document that is still expanding, and a check that only runs
+    at the end has already paid the cost it exists to avoid.
+    """
+
+    def __init__(self, what: str):
+        self.what = what
+        self.chars = 0
+        self.started = time.monotonic()
+
+    def charge_cell(self, value) -> None:
+        """Charge one cell: its text as the result carries it, plus the
+        punctuation the JSON around it costs. `None` and a number are cells
+        too — they are in the returned rows and in the printed output."""
+        text = value if isinstance(value, str) else str(value)
+        self.charge(text + " " * _CELL_OVERHEAD)
+
+    def tick(self) -> None:
+        """The TIME half, checked at every row and page boundary whether or not
+        anything was produced.
+
+        Separate from `charge` because the two are bypassed differently: a
+        numeric-only worksheet, a blank CSV row and a PDF page with no tables
+        all produce no CHARACTERS, and a deadline checked only when a string
+        arrives is a deadline those documents never reach.
+        """
+        if time.monotonic() - self.started > PARSE_TIME_BUDGET_SECONDS:
+            raise ParseBudgetError(
+                f"{self.what} is still running after "
+                f"{PARSE_TIME_BUDGET_SECONDS}s. Refusing rather than returning "
+                "a partial extraction: split the file and parse the part you "
+                "need.")
+
+    def charge(self, produced) -> None:
+        """Charge a produced STRING — a page's text."""
+        self.chars += len(produced) if isinstance(produced, str) else 0
+        if self.chars > MAX_EXTRACTED_CHARS:
+            raise ParseBudgetError(
+                f"{self.what} produced more than "
+                f"{MAX_EXTRACTED_CHARS // (1024 * 1024)} MB of text, which no "
+                "tax document does. Refusing rather than returning a partial "
+                "extraction: split the file and parse the part you need.")
+        self.tick()
+
+
+# What a cell costs beyond its own text: the quotes, the comma and the space
+# the CLI's JSON puts around it. Small, and the point is that it is not ZERO —
+# a numeric or empty cell costs no CHARACTERS and still occupies memory and
+# prints, so charging strings alone let a 100x4 numeric sheet through a budget
+# it was twenty-six times over.
+_CELL_OVERHEAD = 2
+
+
+def _charge_deep(budget: "_Budget", node) -> None:
+    """Charge every CELL in a nested result, and every CONTAINER around them.
+
+    A container costs its own brackets, which is not pedantry: an empty row is
+    `[]`, it charged nothing while still being retained and returned, and a
+    file of nothing but newlines allocated a list per line under a budget that
+    never noticed.
+    """
+    if isinstance(node, dict):
+        budget.charge_cell("")
+        for value in node.values():
+            _charge_deep(budget, value)
+    elif isinstance(node, (list, tuple)):
+        budget.charge_cell("")
+        for value in node:
+            _charge_deep(budget, value)
+    else:
+        budget.charge_cell(node)
+
+
+def _refuse_a_zip_bomb(path: str) -> None:
+    """Refuse a workbook whose XML is far larger than its ZIP.
+
+    `.xlsx` is a ZIP, and the 100 MB cap above bounds the ZIP alone: a few
+    hundred kilobytes of highly compressible XML expands to gigabytes, and
+    openpyxl decompresses it into memory before this module sees a single cell.
+    Both the absolute size and the RATIO are checked — a bomb is small on disk,
+    which is the whole trick.
+
+    RESIDUAL, stated rather than implied: the sizes come from the ZIP's own
+    central directory, which a crafted file can understate. The output budget
+    downstream is what catches that; this check is what stops the ordinary bomb
+    before anything is decompressed at all.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+    except (zipfile.BadZipFile, OSError) as e:
+        raise ParseBudgetError(
+            f"{redact(path)} is not a readable workbook: {redact(e)}") from e
+    uncompressed = sum(entry.file_size for entry in entries)
+    compressed = sum(entry.compress_size for entry in entries) or 1
+    if uncompressed > MAX_UNCOMPRESSED_BYTES:
+        raise ParseBudgetError(
+            f"{redact(path)} declares {uncompressed // (1024 * 1024)} MB of "
+            f"content behind a {compressed // 1024} KB archive, over the "
+            f"{MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} MB budget. Refusing to "
+            "decompress it.")
+    if uncompressed // compressed > MAX_COMPRESSION_RATIO:
+        raise ParseBudgetError(
+            f"{redact(path)} expands {uncompressed // compressed}x, over the "
+            f"{MAX_COMPRESSION_RATIO}x budget — a real workbook does not. "
+            "Refusing to decompress it.")
+
+
+def _refuse_too_many_pages(requested: int, path: str) -> None:
+    """Bound what THIS CALL will extract, not what the file holds.
+
+    /tax-parse splits a long document into per-page sub-tasks (step 2.5's
+    page-count probe is what decides), and a cap on the document would refuse
+    every one of those slices for a file the workflow is already handling
+    correctly. What has to be bounded is the work one call does.
+    """
+    if requested > MAX_PAGES:
+        raise ParseBudgetError(
+            f"{redact(path)}: this call would extract {requested} pages, over "
+            f"the {MAX_PAGES}-page budget. Refusing rather than returning a "
+            "partial extraction: ask for the pages you need (the `pages` "
+            "argument) or split the file.")
+
 
 # Every string this module returns — page text, a table or workbook cell, a
 # CSV cell, a sheet name — passes through a masker before it leaves the
@@ -219,17 +372,23 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
 
     _validate_file_path(path, {".pdf"}, workspace=workspace)
 
+    budget = _Budget(f"Reading {redact(path)}")
     result = {}
     with pdfplumber.open(path) as pdf:
         num_pages = len(pdf.pages)
         target_pages = pages if pages is not None else range(num_pages)
+        _refuse_too_many_pages(len(target_pages), path)
         for i in target_pages:
             if i < 0 or i >= num_pages:
                 raise IndexError(
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
+            budget.tick()
             text = pdf.pages[i].extract_text() or ""
+            budget.tick()   # the page itself may have crossed the deadline
+            budget.charge(text)
             result[i] = mask_ssn(text)
+    budget.tick()
     return result
 
 
@@ -256,18 +415,27 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
 
     _validate_file_path(path, {".pdf"}, workspace=workspace)
 
+    budget = _Budget(f"Reading the tables in {redact(path)}")
     result = {}
     with pdfplumber.open(path) as pdf:
         num_pages = len(pdf.pages)
         target_pages = pages if pages is not None else range(num_pages)
+        _refuse_too_many_pages(len(target_pages), path)
         for i in target_pages:
             if i < 0 or i >= num_pages:
                 raise IndexError(
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
+            budget.tick()
             tables = pdf.pages[i].extract_tables() or []
+            # AFTER the extraction, and outside the `if`: a page that yields no
+            # table is the one that charges nothing, and the last such page had
+            # no check left after it at all.
+            budget.tick()
             if tables:
+                _charge_deep(budget, tables)
                 result[i] = [mask_table(table) for table in tables]
+    budget.tick()
     return result
 
 
@@ -309,7 +477,11 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
     import openpyxl
 
     _validate_file_path(path, {".xlsx"}, workspace=workspace)
+    # BEFORE `load_workbook`, which decompresses the whole archive into memory:
+    # the 100 MB cap bounds the ZIP, not the XML behind it.
+    _refuse_a_zip_bomb(path)
 
+    budget = _Budget(f"Reading {redact(path)}")
     wb = openpyxl.load_workbook(path, data_only=True)
     try:
         targets = sheet_names if sheet_names is not None else wb.sheetnames
@@ -339,8 +511,13 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
                 raise ValueError(
                     f"Two sheets in {redact(path)} mask to the same name "
                     f"{safe!r}, so one would be dropped. Rename them.")
-            extracted[safe] = mask_table(
-                list(wb[name].iter_rows(values_only=True)))
+            rows = []
+            for row in wb[name].iter_rows(values_only=True):
+                budget.tick()
+                _charge_deep(budget, row)
+                rows.append(row)
+            extracted[safe] = mask_table(rows)
+        budget.tick()
         return extracted
     finally:
         wb.close()
@@ -363,8 +540,21 @@ def extract_csv(path: str, encoding: str = "utf-8-sig", workspace: str | None = 
     """
     _validate_file_path(path, {".csv"}, workspace=workspace)
 
+    budget = _Budget(f"Reading {redact(path)}")
     with open(path, newline="", encoding=encoding) as f:
-        return mask_table(list(csv.reader(f)))
+        rows = []
+        for row in csv.reader(f):
+            budget.tick()
+            _charge_deep(budget, row)
+            rows.append(row)
+        # Masked BEFORE the last check, not after it: masking is the other
+        # substantial pass over the file, and a route that ticks and then does
+        # work has left that work outside its own budget. The PDF and workbook
+        # routes mask per page and per sheet, inside the loop, so their trailing
+        # tick already covers it.
+        masked = mask_table(rows)
+        budget.tick()
+        return masked
 
 
 def pdf_page_count(path: str, workspace: str | None = None) -> int:

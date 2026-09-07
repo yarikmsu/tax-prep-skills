@@ -478,3 +478,67 @@ temp on disk to accumulate over retries. Every writer this replaced cleaned up
 in that case; the securing is inside the same scope now, with the descriptor
 closed either way.
 
+## V11 — Parser resource budgets (P2) — PR #95
+
+**Defect:** the 100 MB cap in `parse_utils` bounds the FILE and nothing else.
+A `.xlsx` is a ZIP: a few hundred kilobytes of compressible XML expands to
+gigabytes, and openpyxl decompresses the whole archive into memory before this
+module sees a cell. The extracted text, the page count and the time spent are
+all unbounded by the file's size too. Source documents are untrusted input
+(AGENTS.md §1), and this is the parser they arrive at.
+
+**Shipped:**
+- `MAX_UNCOMPRESSED_BYTES` and `MAX_COMPRESSION_RATIO`, checked from the ZIP's
+  central directory BEFORE `load_workbook` runs. Both halves: a bomb is small on
+  disk, which is the trick, so an absolute cap alone lets a 100 KB file through.
+  The residual is stated rather than implied — a crafted archive can understate
+  its own sizes, and the output budget below is what catches that.
+- `MAX_EXTRACTED_CHARS`, charged incrementally per page, per row and per cell:
+  the point is to stop a document that is still expanding, and a check that only
+  runs at the end has already paid the cost it exists to avoid.
+- `PARSE_TIME_BUDGET_SECONDS`, checked on the same schedule.
+- `MAX_PAGES` bounds what ONE CALL extracts, not what the file holds —
+  /tax-parse splits a long document into per-page sub-tasks, and a cap on the
+  file would refuse every slice of a document the workflow is already handling
+  correctly.
+- Every one of them REFUSES rather than truncating, and a refusal returns
+  nothing: a partial extraction that looks complete is what the tie-out gate
+  structurally cannot see. `ParseBudgetError` is a `ValueError` so that every
+  caller's existing handler for the size cap covers it rather than letting it
+  through as a traceback.
+
+**Not knobs:** the budgets are module constants with no environment override. A
+budget a caller can raise is one the caller raises.
+
+**Review round (Codex, local, against `main`):** one finding, fixed. The TIME
+budget was checked only where a CHARACTER was produced, so a numeric-only
+worksheet and a PDF page with no tables ran past the deadline without ever
+reaching it. `tick()` is now its own check, called at every row and page
+boundary; `charge()` calls it too. `extract_pdf_text` was never bypassed — it
+charges the page's text unconditionally — and the test says so rather than
+carrying a parameter that passes either way.
+
+**Second Codex round:** two more, both fixed.
+
+- **A numeric or empty cell cost nothing.** It occupies memory and prints in
+  the CLI's JSON all the same, so charging strings alone let a 100x4 numeric
+  sheet through a budget it was many times over. Every CELL is charged now —
+  its text as the result carries it, plus the punctuation the JSON around it
+  costs.
+- **The last table-free page had no check after it.** The pre-call tick passed,
+  the charge was skipped because the page yielded nothing, and the call returned
+  `{}` having run well past the deadline. Both PDF routes tick AFTER the
+  extraction and once more before returning, and the test advances the clock
+  DURING the extraction rather than before it.
+
+**Third Codex round:** two more, both fixed.
+
+- **An empty row cost nothing.** A blank CSV line is `[]` — charged nothing
+  while still being retained and returned, so a file of nothing but newlines
+  allocated a list per line under a budget that never noticed. Every container
+  costs its own brackets now.
+- **The CSV route ticked and THEN masked.** Masking is the other substantial
+  pass over the file, and a route that checks its deadline before doing work has
+  left that work outside its own budget. The PDF and workbook routes mask inside
+  their loops, so their trailing tick already covered it.
+

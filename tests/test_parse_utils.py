@@ -1054,3 +1054,208 @@ class TestTheSkillsReadDocumentsOnlyThroughTheMaskingCli:
             "chooses its own file-read tool, which does not mask")
         assert "pdfplumber (it handles" not in section, (
             "Step 4 still tells the worker to call pdfplumber directly")
+
+
+class TestTheParserBudgets:
+    """V11: the 100 MB on-disk cap bounds the FILE, and nothing else. A `.xlsx`
+    is a ZIP whose XML can be orders of magnitude larger; the extracted text,
+    the page count and the time spent are all unbounded by the file's size.
+    Source documents are untrusted input (AGENTS.md §1), so each budget refuses
+    rather than truncating — a partial extraction that looks complete is what
+    the tie-out gate structurally cannot see."""
+
+    def _rows(self, n, width=4):
+        return [[f"cell {r}-{c}" for c in range(width)] for r in range(n)]
+
+    def test_a_workbook_that_expands_too_far_is_refused_before_it_opens(
+            self, tmp_path, monkeypatch):
+        """The ordinary zip bomb: small on disk, enormous decompressed. Refused
+        BEFORE `load_workbook`, which decompresses the whole archive into memory
+        before this module sees a cell."""
+        from agents.lib import parse_utils
+        book = _workbook(tmp_path / "bomb.xlsx", self._rows(200), title="Sheet1")
+        monkeypatch.setattr(parse_utils, "MAX_UNCOMPRESSED_BYTES", 1024)
+        with pytest.raises(ValueError, match="Refusing to decompress"):
+            parse_utils.extract_excel(str(book), workspace=str(tmp_path))
+
+    def test_a_workbook_with_an_absurd_ratio_is_refused(self, tmp_path, monkeypatch):
+        """Both halves are checked: a bomb is SMALL on disk, which is the trick,
+        so the absolute size alone would let a 100 KB file through."""
+        from agents.lib import parse_utils
+        book = _workbook(tmp_path / "ratio.xlsx",
+                         [["A" * 200] * 4 for _ in range(400)], title="Sheet1")
+        monkeypatch.setattr(parse_utils, "MAX_COMPRESSION_RATIO", 2)
+        with pytest.raises(ValueError, match="expands"):
+            parse_utils.extract_excel(str(book), workspace=str(tmp_path))
+
+    def test_a_file_that_is_not_a_readable_archive_is_one_refusal(self, tmp_path):
+        from agents.lib import parse_utils
+        fake = tmp_path / "not.xlsx"
+        fake.write_bytes(b"not a zip at all")
+        with pytest.raises(ValueError, match="not a readable workbook"):
+            parse_utils.extract_excel(str(fake), workspace=str(tmp_path))
+
+    @pytest.mark.parametrize("route", ["csv", "excel"])
+    def test_too_much_extracted_text_is_refused_not_truncated(
+            self, tmp_path, monkeypatch, route):
+        from agents.lib import parse_utils
+        monkeypatch.setattr(parse_utils, "MAX_EXTRACTED_CHARS", 100)
+        if route == "csv":
+            doc = tmp_path / "big.csv"
+            with doc.open("w", newline="") as f:
+                csv.writer(f).writerows(self._rows(100))
+            call = lambda: parse_utils.extract_csv(str(doc), workspace=str(tmp_path))
+        else:
+            doc = _workbook(tmp_path / "big.xlsx", self._rows(100), title="Sheet1")
+            call = lambda: parse_utils.extract_excel(str(doc), workspace=str(tmp_path))
+        with pytest.raises(ValueError, match="more than"):
+            call()
+
+    def test_the_page_budget_bounds_the_CALL_not_the_file(self, tmp_path, monkeypatch):
+        """/tax-parse splits a long document into per-page sub-tasks, so a cap
+        on the FILE would refuse every slice of a document the workflow is
+        already handling correctly."""
+        from agents.lib import parse_utils
+        pdf = _build_pdf(tmp_path / "w2.pdf")
+        monkeypatch.setattr(parse_utils, "MAX_PAGES", 0)
+        with pytest.raises(ValueError, match="over the 0-page budget"):
+            parse_utils.extract_pdf_text(str(pdf), workspace=str(tmp_path))
+        with pytest.raises(ValueError, match="over the 0-page budget"):
+            parse_utils.extract_tables(str(pdf), workspace=str(tmp_path))
+        monkeypatch.setattr(parse_utils, "MAX_PAGES", 1)
+        assert parse_utils.extract_pdf_text(str(pdf), pages=[0],
+                                            workspace=str(tmp_path))
+
+    def test_a_parse_that_runs_too_long_is_refused(self, tmp_path, monkeypatch):
+        """Checked BETWEEN rows: the point is to stop a document that is still
+        expanding, and a check that only runs at the end has already paid the
+        cost it exists to avoid."""
+        from agents.lib import parse_utils
+        doc = tmp_path / "slow.csv"
+        with doc.open("w", newline="") as f:
+            csv.writer(f).writerows(self._rows(50))
+        clock = iter([0.0] + [1000.0] * 200)
+        monkeypatch.setattr(parse_utils.time, "monotonic", lambda: next(clock))
+        with pytest.raises(ValueError, match="still running"):
+            parse_utils.extract_csv(str(doc), workspace=str(tmp_path))
+
+    def _text_only_pdf(self, path):
+        """A PDF with prose and NO table, so `extract_tables` walks its pages
+        and produces nothing at all."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate
+        styles = getSampleStyleSheet()
+        SimpleDocTemplate(str(path), pagesize=letter).build(
+            [Paragraph("no tables here", styles["Normal"])])
+        return path
+
+    @pytest.mark.parametrize("route", ["excel", "tables"])
+    def test_the_clock_is_checked_where_no_character_is_produced(
+            self, tmp_path, monkeypatch, route):
+        """A numeric-only worksheet and a page with no tables produce no
+        CHARACTERS, and a deadline checked only when a string arrives is a
+        deadline those documents never reach.
+
+        `extract_pdf_text` is deliberately not in this list: it charges the
+        page's text unconditionally — `or ""` — so it ticks on an empty page
+        too, and a parameter that passes either way is not a test.
+        """
+        from agents.lib import parse_utils
+        clock = iter([0.0] + [1000.0] * 500)
+        monkeypatch.setattr(parse_utils.time, "monotonic", lambda: next(clock))
+        if route == "excel":
+            doc = _workbook(tmp_path / "numbers.xlsx",
+                            [[1, 2, 3, 4] for _ in range(30)], title="Sheet1")
+            call = lambda: parse_utils.extract_excel(str(doc), workspace=str(tmp_path))  # noqa: E731
+        else:
+            doc = self._text_only_pdf(tmp_path / "prose.pdf")
+            call = lambda: parse_utils.extract_tables(str(doc), workspace=str(tmp_path))  # noqa: E731
+        with pytest.raises(ValueError, match="still running"):
+            call()
+
+    def test_a_numeric_cell_costs_budget_too(self, tmp_path, monkeypatch):
+        """A numeric or empty cell costs no CHARACTERS and still occupies
+        memory and prints in the CLI's JSON, so charging strings alone let a
+        numeric sheet through a budget it was many times over."""
+        from agents.lib import parse_utils
+        book = _workbook(tmp_path / "numbers.xlsx",
+                         [[1, 2, 3, 4] for _ in range(100)], title="Sheet1")
+        monkeypatch.setattr(parse_utils, "MAX_EXTRACTED_CHARS", 100)
+        with pytest.raises(ValueError, match="more than"):
+            parse_utils.extract_excel(str(book), workspace=str(tmp_path))
+
+    def test_the_deadline_is_checked_after_the_last_page_too(
+            self, tmp_path, monkeypatch):
+        """A page that yields no table charges nothing, and the LAST such page
+        had no check left after it: the pre-call tick passed, the charge was
+        skipped, and the call returned `{}` having run past the budget. The
+        clock advances DURING the extraction here, not before it."""
+        from agents.lib import parse_utils
+        doc = self._text_only_pdf(tmp_path / "prose.pdf")
+        ticks = iter([0.0, 0.0, 1000.0, 1000.0, 1000.0, 1000.0])
+        monkeypatch.setattr(parse_utils.time, "monotonic", lambda: next(ticks))
+        with pytest.raises(ValueError, match="still running"):
+            parse_utils.extract_tables(str(doc), workspace=str(tmp_path))
+
+    def test_an_empty_row_costs_its_own_brackets(self, tmp_path, monkeypatch):
+        """A blank line is `[]`: it charged nothing while still being retained
+        and returned, so a file of nothing but newlines allocated a list per
+        line under a budget that never noticed."""
+        from agents.lib import parse_utils
+        doc = tmp_path / "blank.csv"
+        doc.write_text("\n" * 200)
+        monkeypatch.setattr(parse_utils, "MAX_EXTRACTED_CHARS", 100)
+        with pytest.raises(ValueError, match="more than"):
+            parse_utils.extract_csv(str(doc), workspace=str(tmp_path))
+
+    def test_the_csv_deadline_covers_the_masking_pass(self, tmp_path, monkeypatch):
+        """Masking is the other substantial pass over the file, and a route
+        that ticks and THEN does work has left that work outside its own
+        budget."""
+        from agents.lib import parse_utils
+        doc = tmp_path / "small.csv"
+        with doc.open("w", newline="") as f:
+            csv.writer(f).writerows(self._rows(3))
+        # The clock crosses the deadline exactly WHILE masking runs, so the
+        # only check that can catch it is one after that pass.
+        state = {"masking": False}
+        real_mask = parse_utils.mask_table
+
+        def mask(rows):
+            state["masking"] = True
+            return real_mask(rows)
+
+        monkeypatch.setattr(parse_utils, "mask_table", mask)
+        monkeypatch.setattr(parse_utils.time, "monotonic",
+                            lambda: 1000.0 if state["masking"] else 0.0)
+        with pytest.raises(ValueError, match="still running"):
+            parse_utils.extract_csv(str(doc), workspace=str(tmp_path))
+
+    def test_a_refusal_returns_nothing_at_all(self, tmp_path, monkeypatch):
+        """"No partial record is accepted": the caller gets an exception, never
+        the rows read before the budget ran out."""
+        from agents.lib import parse_utils
+        doc = tmp_path / "big.csv"
+        with doc.open("w", newline="") as f:
+            csv.writer(f).writerows(self._rows(100))
+        monkeypatch.setattr(parse_utils, "MAX_EXTRACTED_CHARS", 100)
+        try:
+            parse_utils.extract_csv(str(doc), workspace=str(tmp_path))
+        except ValueError as e:
+            assert "cell 0-0" not in str(e)
+        else:
+            raise AssertionError("the budget did not refuse")
+
+    def test_the_cli_reports_a_budget_refusal_as_one_line(self, tmp_path):
+        """The budgets are module constants with no env knob on purpose — a
+        budget a caller can raise is one the caller raises — so the refusal
+        reached from the CLI is the archive check, on a file that is not a
+        readable workbook at all."""
+        fake = tmp_path / "not.xlsx"
+        fake.write_bytes(b"not a zip at all")
+        proc = _run_cli("excel", str(fake))
+        assert proc.returncode == 1
+        assert proc.stdout == "" and "Traceback" not in proc.stderr
+        assert "not a readable workbook" in proc.stderr
+

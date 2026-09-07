@@ -1155,12 +1155,12 @@ apply_red_checks
 #   agent-definition edit           38 tests      1.6 - 1.6s         3
 #   skill .md edit                 813 tests     23.3 - 24.0s        3
 #   cold pass, all seven modules  1072 tests    148.9 - 150.7s       3
-#   (for scale) `pytest tests/`   3754 tests    256.9 - 280.9s       2
+#   (for scale) `pytest tests/`   3769 tests    256.9 - 280.9s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3756 and runs 3754 for the same skips — and that row
+# `pytest tests/` collects 3771 and runs 3769 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1327,8 +1327,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained three hundred and thirty-five
-# tests (3419 to 3754). The sitting took the counts and the seconds TOGETHER,
+# Against the counts the seconds were taken at, the suite has gained three hundred and fifty
+# tests (3419 to 3769). The sitting took the counts and the seconds TOGETHER,
 # and six rounds have landed since. First, five launcher tests, executing the
 # two present-but-unusable `.venv` states `run.sh` refuses — the one with no
 # activate script, which had shipped untested, and the one it cannot inspect,
@@ -1409,6 +1409,28 @@ apply_red_checks
 # once the review limit reset: three more cases, on a non-finite figure
 # printed as a computed one, exchange rates lost with the meta block, and a
 # prerequisite naming the retired generator.
+#
+# Then the parser's resource budgets (V11): nine cases in
+# tests/test_parse_utils.py, which this hook does not select — the zip bomb,
+# the output and time budgets, and the page budget that bounds a CALL rather
+# than a file.
+#
+# Then that round's own: three more cases, on a clock checked only where a
+# character was produced — a numeric worksheet and a page with no tables
+# never reached the deadline.
+#
+# Then that round's own: two more cases, on a clock checked only where a
+# character was produced — a numeric worksheet and a page with no tables
+# never reached the deadline.
+#
+# Then its second: two more, on a numeric cell that cost no budget and a
+# table-free last page with no deadline check after it.
+#
+# Then its third: two more, on an empty row that cost nothing and a CSV
+# masking pass that ran outside the deadline it had just checked.
+#
+# Then its third: two more, on an empty row that cost nothing and a CSV
+# masking pass that ran outside the deadline it had just checked.
 # The seconds are carried,
 # which is what this paragraph is for. The scale row's
 # were read again on the V0 branch as a check, not a refresh — one plain
@@ -1424,7 +1446,7 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. They sum to twelve; the remaining three hundred and twenty-three are modules this hook
+# yet taken. They sum to twelve; the remaining three hundred and thirty-eight are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
