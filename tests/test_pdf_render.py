@@ -21,6 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import pdf_render, receipt  # noqa: E402
+from tests.skill_text import skill_text  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = json.loads((REPO / "agents" / "templates" / "result_template.json").read_text())
@@ -397,4 +398,41 @@ class TestTheCodexRoundRules:
         assert "outside the built-in font" in page1
         assert "read those fields from result.json" in page1
         assert name.split()[0] not in page1
+
+
+class TestTheFourthRoundRules:
+    """The pass Codex owed this branch after its usage limit reset, taken
+    against the merged commit."""
+
+    def test_a_non_finite_figure_is_refused(self, tmp_path):
+        """`json.loads` admits the NaN and Infinity literals, both pass
+        `isinstance(x, (int, float))`, and this module would have formatted
+        them — `($nan)`, `$inf` — into a document that looks like every other
+        one, receipt and all, because the receipt checks freshness and not
+        arithmetic."""
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(pdf_render.PdfRenderError, match="finite"):
+                _render(tmp_path, _result(form_1040=dict(
+                    TEMPLATE["form_1040"], line_1a_wages=bad)))
+        assert not list(tmp_path.iterdir())
+
+    def test_the_exchange_rates_survive_the_skipped_meta_block(self, tmp_path):
+        """They live in `meta`, which is rendered as the header and the
+        limitations box rather than as a table — and skipping the block whole
+        took them with it. Nothing else in the PDF states them, so a foreign
+        amount could not be reconciled with its USD figure at all."""
+        result = _result()
+        result["meta"] = dict(result["meta"], exchange_rates={"EUR": 1.08, "RUB": 0.011})
+        text = " ".join(_text(_render(tmp_path, result)).split())
+        assert "Exchange rates" in text
+        assert "EUR 1.08" in text and "RUB 0.011" in text
+
+    def test_the_skill_does_not_require_the_retired_generator(self):
+        """A fresh workspace cannot satisfy a prerequisite naming a file this
+        skill no longer creates, and an agent following the list stops before
+        it ever reaches the working renderer."""
+        flat = " ".join(skill_text("tax-generate").split())
+        head = flat[flat.index("## Prerequisites"):flat.index("## Steps")]
+        assert "generate_tax_pdf.py must exist" not in head
+        assert "pdf_render.py" in head
 

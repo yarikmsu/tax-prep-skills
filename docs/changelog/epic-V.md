@@ -423,6 +423,23 @@ hid.
   rather than taken here. The characters themselves are not echoed into that
   message: they are the ones the font cannot draw.
 
+**Fourth Codex round (against the merged commit, once the review limit reset):**
+three findings, all fixed in the follow-up PR.
+
+- **A non-finite figure printed as a computed one.** `json.loads` admits the NaN
+  and Infinity literals, both pass `isinstance(x, (int, float))`, and the
+  renderer formatted them — `($nan)`, `$inf` — into a document that looks like
+  every other one, receipt and all, because the receipt checks freshness and not
+  arithmetic. `secure_fs.first_non_finite` refuses the render, which is
+  AGENTS.md §8's parse-boundary rule applied at the boundary where a figure is
+  PRINTED.
+- **The exchange rates went with the `meta` block.** They are the only figures
+  in it, nothing else in the PDF states them, and a foreign-currency return
+  could not be reconciled without them; they render as their own short section.
+- **The skill still required the retired generator.** A fresh workspace cannot
+  satisfy a prerequisite naming a file this skill no longer creates, and an
+  agent following the list stops before it reaches the working renderer.
+
 ## V10 (first half) — One writer for every runtime artifact (P2) — PR #93
 
 **Defect:** five modules had hand-rolled a temp-then-rename, each having earned

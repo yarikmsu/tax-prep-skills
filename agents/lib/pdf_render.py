@@ -34,7 +34,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import receipt  # noqa: E402
 from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
-from agents.lib.secure_fs import atomic_path, redact  # noqa: E402
+from agents.lib.secure_fs import (  # noqa: E402
+    atomic_path, first_non_finite, redact)
 
 
 class PdfRenderError(Exception):
@@ -65,7 +66,9 @@ def _is_commentary(key: str) -> bool:
 # prints nothing rather than a page of em dashes.
 # `meta` is rendered as the header and the Scope & Limitations box, not as a
 # table: printing it twice put "Tax year" and the whole manifest a second time,
-# under a heading that means nothing to a taxpayer.
+# under a heading that means nothing to a taxpayer. Its `exchange_rates` are the
+# exception — see `_exchange_rates`: they are the only figures in that block, and
+# a foreign-currency return cannot be reconciled without them.
 _SKIP_SECTIONS = {"_comment", "_optional_sections_below", "meta"}
 
 # A number is an AMOUNT unless its key says otherwise. Years, codes, counts,
@@ -306,6 +309,20 @@ def _is_unfilled_optional(section, rows) -> bool:
     return all(value in ("", "$0.00", "No") for _label, value in rows)
 
 
+def _exchange_rates(result: dict) -> dict:
+    """The rates a foreign-currency return was converted at.
+
+    They live in `meta`, which is otherwise rendered as the header and the
+    limitations box rather than as a table — and skipping the block whole took
+    these with it. Nothing else in the PDF states them, so a reader could not
+    reconcile a foreign amount with its USD figure at all.
+    """
+    meta = result.get("meta")
+    rates = meta.get("exchange_rates") if isinstance(meta, dict) else None
+    return {k: v for k, v in rates.items() if v not in (None, "")} \
+        if isinstance(rates, dict) else {}
+
+
 def _limitations(result: dict) -> "list[str]":
     meta = result.get("meta")
     limits = meta.get("limitations") if isinstance(meta, dict) else None
@@ -434,13 +451,40 @@ def build_story(result: dict, styles, *,
         "summary of the computed return.", styles["Normal"]))
     story.append(Spacer(1, 12))
 
+    rates = _exchange_rates(result)
+    if rates:
+        story.append(Paragraph("Exchange rates", styles["Heading2"]))
+        table = Table([[cell(_escape(code)), cell(_display(rate, "rate"))]
+                       for code, rate in sorted(rates.items())],
+                      colWidths=[4.2 * inch, 2.3 * inch], splitInRow=1)
+        table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ]))
+        story.append(table)
+        story.append(Spacer(1, 10))
     story.extend(body)
     return story
 
 
 def render(result: dict, out_path: Path, *,
            draft_reasons: "list[str] | None" = None) -> Path:
-    """Write the summary PDF, owner-only. Returns the path."""
+    """Write the summary PDF, owner-only. Returns the path.
+
+    Refuses a result carrying a non-finite number. `json.loads` admits the NaN
+    and Infinity literals, both pass `isinstance(x, (int, float))`, and this
+    module would format them — `($nan)`, `$inf` — into a document that looks
+    like every other one, receipt and all, because the receipt checks freshness
+    and not arithmetic. AGENTS.md §8's rule for every parse boundary applies to
+    the boundary where a figure is PRINTED too.
+    """
+    bad = first_non_finite(result)
+    if bad is not None:
+        raise PdfRenderError(
+            f"{bad} is not a finite number, so this return cannot be rendered: "
+            "a summary carrying $nan or $inf reads as a computed figure. Fix "
+            "the value in result.json and re-run /tax-compute.")
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.styles import getSampleStyleSheet

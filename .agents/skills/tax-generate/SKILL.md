@@ -16,8 +16,8 @@ Generate a formatted PDF summary of the computed tax return.
 
 ## Prerequisites
 - `result.json` must exist with computed values (run `/tax-compute` first)
-- `generate_tax_pdf.py` must exist in the workspace
-- Python package: reportlab
+- Python package: reportlab (the renderer is `agents/lib/pdf_render.py`, tracked
+  in this clone — there is no per-workspace generator to create any more)
 
 ## Steps
 
