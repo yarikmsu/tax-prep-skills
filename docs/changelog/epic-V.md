@@ -1142,3 +1142,72 @@ CLAUDE.md's standing rule — definitions load at session start, so a same-sessi
 replay tests the wrong bytes — is the one that held, and it stays. This is the
 second time in two PRs that a plausible, confidently-stated second-hand claim was
 wrong in a way only a probe caught.
+
+### V6, second slice: the siblings
+
+`tax-parse` got the enforced boundary; `tax-verify` and `tax-parse-crypto` parse
+untrusted files the same way and got nothing — a 15-30 page tax-software return
+and exchange CSVs, under the same six prompt-level rules. Worse, the delegation
+reference the first slice added then stated a rule ("do not delegate to a
+general-purpose sub-task told not to use its tools") that both of them broke.
+This repository has a name for that: a finding's scope is where the defect lives,
+not where it was spotted.
+
+Both now carry the ENFORCED/SEQUENTIAL choice, the same worker, and the same
+banner. The worker's summary format became **caller-supplied** — three skills want
+three shapes (source documents by box, a software return by form and line, an
+exchange CSV as a normalized transaction list) — while everything above the format
+block, which is the part that matters, holds whatever the shape.
+
+**Found by self-review, and it is the reason this slice is not just prose:** for
+one revision each sibling said "the worker holds no tools, YOU extract" and then,
+four lines later, handed the sub-task a prompt telling it to run
+`parse_utils.py`. A rule the step beside it contradicts is one an agent learns to
+reason past — the same failure `gates that cry wolf` names. Each skill now has a
+real ENFORCED dispatch (parent extracts, fences with a per-dispatch nonce, names
+its own output shape, writes the result) with the old template relabelled as the
+SEQUENTIAL one, and a test pins that the enforced path says the PARENT extracts.
+
+`crypto_importer.py` is explicitly outside the boundary in either mode: it
+consumes the normalized file rather than the raw CSV, so it never runs on
+untrusted bytes.
+
+**What it cost.** The agents module now reads three skills, so `select_modules_for`
+puts it back on the whole `.agents/skills` arm — a skill edit runs 861 tests
+rather than 813. That is a decomposition change, not a count change, and the
+MEASURED COSTS block was re-measured end to end for it: the skill-edit row gained
+forty-eight tests without anyone touching a second.
+
+**The review pass then said the mechanism was wrong, and it was right.** The
+sweep propagated PROSE: a thirty-two-line contract byte-identical between the two
+siblings, a third wording in `tax-parse`, a fourth in its reference. The cost had
+already been paid inside the branch — one copy said the worker returns markdown
+while its own skill said JSON, before a second author ever touched it.
+
+`docs/contributing/parse-boundary.md` is the one home now, and the line it draws
+is the useful one: the RATIONALE lives there (which mode, what it costs, why the
+marker changes, what to do when a dispatch fails), while the two LITERALS stay in
+each skill, because an agent copies the rules into a prompt and emits the banner
+into a file, and neither travels with a `docs/` path. `tests/test_parse_utils.py`
+already pinned that each skill states the rules; the banner and the fence rule are
+now pinned verbatim in the contract AND across the three skills.
+
+Three more from the same pass, each a real defect in what I had written:
+
+- **The fence assertion was nearly free.** It checked that the words "marker" and
+  "dispatch" both appeared somewhere — and "dispatch" appears in a title and a
+  dozen unrelated sentences. A skill saying "use a FIXED marker" stayed green,
+  which is precisely the attack. It pins the phrase that carries the claim now.
+- **`PARSING_SKILLS` was a third copy** of a roster already in two test modules,
+  and `_skill_text` re-implemented `tests/skill_text.py::skill_text` — worse, by
+  `rglob`-ing a nested reference the layout forbids, so the two would disagree
+  the day someone nested a file. Both now come from the shared module, beside
+  `CONTRIBUTOR_SKILLS` and `ENGINE_FREE_SKILLS`, which exist there for this reason.
+- **The worker's frontmatter still said "Use when /tax-parse Step 3 dispatches"**,
+  false for two of three callers — and the description is the only text a host
+  loads before the body, so auto-selection would never have surfaced it for them.
+
+**Deferred, named:** the MEASURED COSTS reconciliation paragraph is hand-written
+English under a grammar the suite enforces, and expressing a zero this round took
+four sentences of it. Generating that paragraph from live collection is the right
+answer and belongs in its own PR — doing it inside a security sweep buries both.

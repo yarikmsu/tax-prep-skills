@@ -17,7 +17,7 @@ from agents.lib.parse_utils import (  # noqa: E402
     classify_document,
     scan_workspace,
 )
-from tests.skill_text import skill_text  # noqa: E402
+from tests.skill_text import PARSING_SKILLS, skill_text  # noqa: E402
 
 
 def _uncommented(path):
@@ -1166,7 +1166,7 @@ class TestTheSkillsReadDocumentsOnlyThroughTheMaskingCli:
     all bypass the masker. The skills close those by instruction (V6 closes
     them by enforcement)."""
 
-    PARSING_SKILLS = ("tax-parse", "tax-verify", "tax-parse-crypto")
+
 
     @pytest.mark.parametrize("name", PARSING_SKILLS)
     def test_the_worker_rules_name_the_cli_as_the_only_reader(self, name):

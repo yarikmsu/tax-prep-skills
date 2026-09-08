@@ -43,3 +43,14 @@ CONTRIBUTOR_SKILLS = {"codex-loop", "state-module"}
 # a skill here cannot silence the gate on one that needs it — the declaration is
 # a claim, and the claim is what gets checked.
 ENGINE_FREE_SKILLS = {"tax-safe-harbor"}
+
+# Skills that hand an UNTRUSTED FILE to somebody — a source document, a
+# tax-software return, an exchange CSV. Here beside the other two rosters and for
+# the same reason: it was written out in three test modules at once, and a skill
+# added to one and not the others is a skill silently exempt from two of the
+# three checks that exist to cover it.
+#
+# A different question from the two above, which partition skills by their
+# relation to the engine-preflight gate — membership does not correlate and these
+# must not be folded together.
+PARSING_SKILLS = ("tax-parse", "tax-verify", "tax-parse-crypto")

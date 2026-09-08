@@ -31,6 +31,8 @@ from agents.lib.tax_law_fetcher import (
     create_state_template,
 )
 
+from tests.skill_text import PARSING_SKILLS, skill_text  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 AGENTS_DIR = REPO / ".claude" / "agents"
 
@@ -861,20 +863,69 @@ class TestTheParseWorkerBoundaryIsDrawnByAbsence:
             "the worker's summary format and the reference's have diverged:\n"
             f"worker:\n{worker}\n\nreference:\n{reference}")
 
-    def test_the_parse_skill_names_the_worker_and_the_degrade_path(self):
-        """Doc-sync. An agent nothing dispatches is not a boundary, and a host
-        that cannot give a sub-task a closed tool set must still be able to
-        parse — AGENTS.md §4 promises the sequential path on every agent."""
-        skill = (REPO / ".agents" / "skills" / "tax-parse" / "SKILL.md").read_text()
-        reference = (REPO / ".agents" / "skills" / "tax-parse" / "references"
-                     / "parse-task-delegation.md")
-        assert reference.is_file(), "the delegation detail must have a reference"
-        both = skill + reference.read_text()
-        assert "tax-parse-worker" in both
-        assert "NOT enforced" in both, (
-            "the sequential path must say in the summary that the boundary was "
-            "not enforced — an unenforced boundary presented as enforced is "
-            "worse than none")
+    BOUNDARY_DOC = REPO / "docs" / "contributing" / "parse-boundary.md"
+
+    def test_every_skill_that_parses_an_untrusted_file_names_the_boundary(self):
+        """The sweep, and the shape it settled on.
+
+        V6 hardened `tax-parse` and left two siblings parsing untrusted files
+        under the same six prompt-level rules — a rule the delegation reference
+        then stated and they broke. A finding's scope is where the defect lives,
+        not where it was spotted.
+
+        What each skill must carry is the POINTER and the worker's name, not the
+        contract: three copies of it drifted inside a single round, one saying
+        the worker returns markdown while its own skill said JSON."""
+        for name in PARSING_SKILLS:
+            text = skill_text(name)
+            assert "parse-boundary.md" in text, (
+                f"{name} parses an untrusted file and does not point at the "
+                "boundary contract; a copy of it in each skill is what drifted")
+            assert "tax-parse-worker" in text, (
+                f"{name} names no enforced worker")
+
+    def test_the_boundary_contract_states_the_banner_and_the_fence_once(self):
+        """Both are LITERAL — an agent copies them — and both are the whole
+        distinction between an enforced parse and an unenforced one. Pinned
+        exactly, in the one file that holds them, so a reword is a decision.
+
+        The fence rule is pinned on the phrase that carries the claim rather than
+        on the word `marker`: a skill saying "use a fixed marker" would satisfy
+        any looser check, and a fixed marker is precisely the attack."""
+        banner = ("> Parse boundary NOT enforced — parsed in the main session "
+                  "under prompt-level\n> rules, because this agent cannot give a "
+                  "sub-task a closed tool set.")
+        contract = self.BOUNDARY_DOC.read_text()
+        assert banner in contract, "the verbatim banner is not in the contract"
+        assert "a fresh random marker\nper dispatch" in contract, (
+            "the contract must require a PER-DISPATCH marker — a fixed one lets "
+            "a file close its own data frame")
+        # And every skill EMITS it, so every skill carries it verbatim: the
+        # banner travels with a copied skill directory and this file does not.
+        off = [n for n in PARSING_SKILLS if banner not in skill_text(n)]
+        assert not off, (
+            f"these skills state the banner differently or not at all: {off}. "
+            "It is the only artifact distinguishing an enforced parse from an "
+            "unenforced one, and a reworded one reads as a different guarantee")
+
+    def test_enforced_mode_says_the_PARENT_extracts(self):
+        """The contradiction each skill had for one revision: a mode block
+        saying the worker holds no tools, and a prompt four lines later telling
+        it to run `parse_utils.py`. A rule the step beside it contradicts is one
+        an agent learns to reason past — this repository has a name for that."""
+        for name in PARSING_SKILLS:
+            text = skill_text(name)
+            assert "never touches" in text or "does the extraction" in text, (
+                f"{name}'s enforced mode does not say the PARENT extracts; a "
+                "worker with no file tool cannot run the command its own "
+                "prompt names")
+
+    def test_the_delegation_reference_still_exists(self):
+        """The one thing the sweep above does not cover: `tax-parse`'s dispatch
+        detail is a reference file, and `skill_text` folding it into the skill
+        would read a deleted one as a shorter skill rather than a missing step."""
+        assert (REPO / ".agents" / "skills" / "tax-parse" / "references"
+                / "parse-task-delegation.md").is_file()
 
 
 class TestFreshnessAuditorMatchesTheSchema:

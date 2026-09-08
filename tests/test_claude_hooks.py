@@ -594,9 +594,11 @@ class TestSkillInvariantsHook:
             str(quiescent_workspace / ".agents/skills/tax-setup/SKILL.md"))
         assert skill_edit.returncode == 2
         assert _selected_modules(skill_edit) == [PORTABILITY, CAPABILITIES,
-                                                  PREFLIGHT, SECUREFS], (
-            "a skill edit must run the two modules that read skill prose and "
-            "pay for neither of the other two")
+                                                  AGENTS, PREFLIGHT, SECUREFS], (
+            "a skill edit must run the modules that read skill prose — the "
+            "agents module among them since V6 put a boundary claim in three "
+            "skills — and pay for the hooks module and the host guard, neither "
+            "of which a skill edit can turn red, in neither case")
 
         _clear_red_carry_forward(quiescent_workspace)
         agent_edit = _run_skill_hook(
@@ -1515,10 +1517,10 @@ class TestSkillInvariantsHook:
         _fake_venv(tmp_path, exit_code=1, lines=["$*"])
         red = _run_skill_hook(tmp_path, str(skill))
         assert red.returncode == 2
-        assert _selected_modules(red) == [PORTABILITY, CAPABILITIES, PREFLIGHT,
-                                          SECUREFS]
+        assert _selected_modules(red) == [PORTABILITY, CAPABILITIES, AGENTS,
+                                          PREFLIGHT, SECUREFS]
         assert _stamp_body(tmp_path) == [SKILL_STAMP_VERSION, "portability",
-                                         "capabilities", "preflight",
+                                         "capabilities", "agents", "preflight",
                                          "securefs"], (
             "the failing pass recorded nothing, so nothing downstream can know "
             "a check is still red")
@@ -4766,14 +4768,23 @@ class TestHookRegistration:
             f"{stated_collects['portability']} against "
             f"{live['tests/test_portability.py']}")
 
-        # The derived rows. A skill edit selects the four non-hook, non-agent
-        # modules; a cold pass adds the other two. The block calls this half
-        # EXACT, and a decomposition error shows up here first.
-        # A skill edit selects four of the seven. The host guard sits with
-        # hooks and agents on the other side of that line: an `agents/lib/`
-        # edit selects it, skill prose never does.
+        # The derived rows. A skill edit selects five of the seven; a cold pass
+        # adds the other two. The block calls this half EXACT, and a
+        # decomposition error shows up here first.
+        #
+        # The hooks module and the host guard are what a skill edit does NOT buy:
+        # an `agents/lib/` edit selects the guard, skill prose never does, and no
+        # skill edit can turn a hook assertion red. The agents module was on this
+        # side of the line until V6 put a boundary claim — "this skill names the
+        # enforced worker, and its sequential path says the boundary was NOT
+        # enforced" — into three skills, at which point a skill edit could turn
+        # it red and had to run it.
+        #
+        # This tuple is a hand-kept second copy of `select_modules_for`'s arms,
+        # and it is the reason this assertion caught the change rather than
+        # riding along with it. Keep it that way: derived from the hook, it would
+        # agree with the hook by construction and check nothing.
         ADDED_BY_A_COLD_PASS = ("tests/test_claude_hooks.py",
-                                "tests/test_claude_agents.py",
                                 "tests/test_host_guard.py")
         skill_edit = sum(rows[p] for p in rows
                          if p not in ADDED_BY_A_COLD_PASS)
