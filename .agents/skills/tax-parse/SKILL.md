@@ -84,7 +84,24 @@ Group documents for parallel processing:
 
 ### 2.5. Document Confirmation & Missing Document Probe
 
-Before dispatching parsers, confirm completeness with the user. **First check `answers.md` — if document completeness was already confirmed, skip to Step 3.** Otherwise, ask the user, one topic at a time:
+Before dispatching parsers, confirm completeness with the user. **First run the
+required-answer check** — it reads `answers.md` and tells you which questions this
+workspace still owes, by id, instead of stopping one at a time later:
+
+```
+sh agents/lib/run.sh -m agents.lib.answers --workspace . --check-required --for tax-parse
+```
+
+Exit 0 means nothing is owed — skip to Step 3. Exit 2 lists what is missing; ask
+only those, and record each answer as `- **[id]** your answer` in `answers.md`,
+on one line (or on indented lines directly under the marker), because the id is
+what a later run matches on. Exit 1 means the check could not RUN, which blocks
+exactly as a missing engine does — never read it as "nothing owed". `--for
+tax-parse` keeps a question another skill owns from blocking the parse.
+
+The two this step owns are `document_set_complete` and `corrected_documents` —
+record them under exactly those ids, because prose alone is not read. Ask one
+topic at a time:
 
 > **Non-interactive runs:** if this session cannot prompt the user, take the
 > confirmation from `answers.md` and hard-stop when it is absent — never assume the

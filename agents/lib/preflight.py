@@ -100,6 +100,8 @@ GATE_MODULES = (
 # against the directory listing so a NEW module cannot be silently omitted.
 SKILL_MODULES = (
     ("agents.lib.amend", "/tax-amend's Form 1040-X three-column engine", "three_column"),
+    ("agents.lib.answers", "the required-answer contract a headless run stops on",
+     "REQUIRED_ANSWERS"),
     ("agents.lib.archive", "/tax-archive's year-end cutover", "archive_year"),
     ("agents.lib.crypto_importer", "/tax-parse-crypto's Form 8949 lot engine", "CryptoTransaction"),
     ("agents.lib.filing_package", "/tax-generate's filing-package assembly", "assembly_order"),

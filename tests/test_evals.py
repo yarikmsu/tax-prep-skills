@@ -336,19 +336,30 @@ class TestTheGoldenIsStillAKnownAnswer:
         assert GOLDEN["california_540"]["ca_standard_deduction"] == \
             F.CA_STANDARD_DEDUCTION["mfj"]
 
-    def test_the_answers_close_every_question_the_intake_asks(self):
-        """/tax-parse Step 2.5 asks whether the document set is COMPLETE and
-        whether any form is a correction. A headless run stops on an unanswered
-        one — correctly — and a case that stops is not a known answer."""
-        answers = F.ANSWERS.lower()
-        assert "complete" in answers and "corrected" in answers
-        assert "estimated tax payments" in answers and "digital asset" in answers
-        # ...and the deduction inputs, which state withholding makes mandatory:
-        # Schedule A asks for the prior-year state balance paid this year and
-        # for charitable gifts, and a cash gift would also create a §170(p)
-        # non-itemizer deduction.
-        assert "charitable contributions" in answers
-        assert "prior-year state income tax paid" in answers
+    def test_the_answers_close_every_required_question_by_ID(self, tmp_path):
+        """A headless run stops on an unanswered required question, and a case
+        that stops is not a known answer.
+
+        Asserted through the V5 contract rather than by matching prose: the
+        earlier spelling looked for phrases like "charitable contributions" in
+        the answers text, which a reword breaks and which could never have
+        noticed a question the fixture did not answer at all. `--check-required`
+        works out which questions THIS workspace owes and reports what is
+        missing, so the assertion is the real one."""
+        from agents.lib import answers as A
+        F.build_workspace(tmp_path)
+        owed, answers = A.missing(tmp_path)
+        assert not owed, (
+            "the fixture leaves required answers open: "
+            f"{sorted(a.id for a in owed)}")
+        # Not vacuous: the workspace must actually OWE several questions, or
+        # "nothing missing" would be true of an empty directory too.
+        applicable = {a.id for a in A.applicable(tmp_path)}
+        assert len(applicable) >= 4, applicable
+        assert applicable <= set(answers.recorded)
+        # The two the intake asks of every return, by name, because they are the
+        # ones a reader reaches for when a parse stops.
+        assert {"document_set_complete", "corrected_documents"} <= applicable
 
     def test_the_case_carries_its_own_safe_harbour_so_no_form_2210_belongs(self):
         """90% of this year's tax is 30,709.80 against 28,000 withheld, so

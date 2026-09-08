@@ -91,6 +91,9 @@ Before computing FBAR values, verify the account list is complete. **First check
    2. ...
    ```
    Ask: "Is this the COMPLETE list of foreign financial accounts you had at ANY point during {year}?"
+   Record the confirmation as `- **[foreign_account_completeness]** the answer` — the id is
+   what `agents.lib.answers --check-required` matches on, and an omitted account is an
+   unfiled FBAR.
 
 2. Remind about commonly forgotten accounts:
    - Accounts closed during the year (still reportable for FBAR)

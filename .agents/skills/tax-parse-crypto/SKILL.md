@@ -249,7 +249,10 @@ This prints a JSON result (`--markdown` for a human summary). Review:
 - `needs_basis` — **if non-empty, STOP and resolve with the user**: each listed disposal had
   no acquisition on record and was given **$0 basis**, which *overstates* the gain. Ask for
   the missing acquisition (or a `receive` with `basis_usd`) and re-run. Only proceed with $0
-  basis if the user explicitly accepts over-reporting on those rows.
+  basis if the user explicitly accepts over-reporting on those rows. That acceptance is the
+  `crypto_disposals_without_basis` ACKNOWLEDGEMENT: it is re-asked on every run and is
+  cleared for one invocation with `--acknowledge crypto_disposals_without_basis`, never by
+  a line in answers.md — the figures it was given for are this year's.
 
 ### 5. Merge into result.json
 

@@ -1095,7 +1095,7 @@ apply_red_checks
 # reproduce, and both times the copies elsewhere were left behind.
 #
 # RE-MEASURED END TO END, every row in ONE sitting, on the branch that added the
-# engine's host-interpreter guard. The sitting ran as several consecutive
+# required-answer registry (V5). The sitting ran as several consecutive
 # invocations with NOTHING touching the repository between them, the ten-minute
 # cap on a tool call being what splits them; that is a continuation of one
 # sitting and not the patch this paragraph forbids. FOUR earlier sets taken on
@@ -1132,6 +1132,14 @@ apply_red_checks
 # the red carry-forward means rewriting the stamp, and the obvious way to date
 # the rewrite is the way that forces the pass.
 #
+# A THIRD reader has now paid it, backdating BETWEEN every run rather than once
+# ahead of them, and got 0.08, 12.49, 0.10, 0.08, 0.08, 0.08 — one full pass
+# sitting in the middle of five fast ones, which reads as noise and is the trap
+# firing. The row above was re-taken with no touching at all, six runs after a
+# pass had already written a trustworthy stamp, and that is the shorter recipe:
+# do not backdate per run, and if a reading is two orders of magnitude off its
+# neighbours it is this and not the machine.
+#
 # READ THE RATIOS, NOT THE SECONDS, and the conditions are why. One macOS host,
 # `.venv/bin/python -m pytest`, every line taken three times, back to back, with
 # nothing else running against the repository — an earlier attempt at this same
@@ -1139,9 +1147,11 @@ apply_red_checks
 # the hook's own pytest underneath the measurement. Run-to-run spread is ±5% on
 # the slow lines here, and the spread BETWEEN sittings is far larger: readings of
 # `pytest tests/` on this same host have returned 139-155s, 175-209s, 179-191s,
-# 184-190s and 199-204s. The portability module moved further — 7.5-10.2s one day,
-# 12.7-13.4s the next, with no code between the two — which is why the ratios below are
-# stated as "roughly" and why a figure lifted from here to three significant
+# 184-190s, 199-204s, 248.7-250.5s and now 228.4-243.4s — the first reading in
+# seven to come DOWN while the suite GREW, by sixty-nine tests, which is the point
+# about weather made by the data. The portability module moved further — 7.5-10.2s
+# one day, 12.7-13.4s the next, with no code between the two — which is why the
+# ratios below are stated as "roughly" and why a figure lifted from here to three significant
 # figures would be wrong by the next reading. Every line is a RANGE with a run
 # count.
 #
@@ -1170,16 +1180,16 @@ apply_red_checks
 #
 #   what triggers it               what runs     observed range    runs
 #   ---------------------------------------------------------------------
-#   nothing watched changed        no pytest    0.07 - 0.08s         6
-#   agent-definition edit           48 tests      1.2 - 2.4s         3
-#   skill .md edit                 875 tests     24.5 - 26.6s        3
-#   cold pass, all seven modules  1096 tests    136.4 - 143.5s       3
-#   (for scale) `pytest tests/`   3904 tests    248.7 - 250.5s       2
+#   nothing watched changed        no pytest    0.08 - 0.11s         6
+#   agent-definition edit           48 tests      1.0 - 1.8s          6
+#   skill .md edit                 876 tests     19.7 - 23.4s         3
+#   cold pass, all seven modules  1097 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   3987 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3906 and runs 3904 for the same skips — and that row
+# `pytest tests/` collects 3989 and runs 3987 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1197,13 +1207,13 @@ apply_red_checks
 # deselections run_focused_modules passes. This is the durable half: WHICH
 # module dominates, and by how much, survives a change of machine.
 #
-#   tests/test_claude_hooks.py     128 tests    121.8 - 124.4s       4
-#   tests/test_portability.py      177 tests     15.6 - 16.8s        3
-#   tests/test_capabilities.py     116 tests      1.3 - 1.4s         3
-#   tests/test_claude_agents.py     48 tests      1.6 - 1.6s         3
-#   tests/test_secure_fs.py        159 tests      1.8 - 1.9s         3
-#   tests/test_preflight.py        375 tests      7.3 - 7.6s         3
-#   tests/test_host_guard.py        93 tests      1.8 - 1.9s         3
+#   tests/test_claude_hooks.py     128 tests    114.7 - 130.0s       4
+#   tests/test_portability.py      177 tests     11.1 - 13.1s        6
+#   tests/test_capabilities.py     116 tests      0.8 - 3.1s         6
+#   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
+#   tests/test_secure_fs.py        160 tests      1.4 - 2.1s         6
+#   tests/test_preflight.py        375 tests      5.6 - 7.2s         6
+#   tests/test_host_guard.py        93 tests      1.4 - 1.8s         6
 #
 # The agent-definition row above and the agents row here are the SAME
 # invocation — that trigger selects that module alone — and are stated with the
@@ -1212,12 +1222,15 @@ apply_red_checks
 #
 # Read the preflight line as a RATIO, which is the half that survives a change
 # of machine: it sits between the agents module and portability, and is
-# somewhere between a sixteenth and a seventeenth of the hooks module that
-# dominates every total here. That same ratio read a twentieth-to-a-twenty-second
-# one sitting ago and a thirteenth-to-a-twenty-third the sitting before that, on a
-# module that has gained fifteen tests across the three and lost none — it moves
-# because the SPREAD moves, not because the work does, which is itself the reason
-# to distrust any single reading of the seconds any of them comes from. A skill
+# somewhere between a sixteenth and a twenty-third of the hooks module that
+# dominates every total here. That same ratio read a sixteenth-to-a-seventeenth
+# one sitting ago, a twentieth-to-a-twenty-second the sitting before that, and a
+# thirteenth-to-a-twenty-third before THAT, on a module that has gained fifteen
+# tests across the four and lost none — it moves because the SPREAD moves, not
+# because the work does, which is itself the reason to distrust any single
+# reading of the seconds any of them comes from. This sitting is the clearest
+# case yet: the same module, measured twice with nothing touched between, gave
+# 6.3-7.2s and then 5.6-6.4s. A skill
 # edit
 # selects it alongside portability, capabilities and secure_fs, which is where
 # its cost actually lands. It has grown against its neighbours four times: the
@@ -1243,14 +1256,15 @@ apply_red_checks
 # implied it was nothing by quoting the preflight-to-hooks ratio — a ratio about
 # the module the narrowing SPARES, which says nothing at all about what replaced
 # it. Measured WITH this sitting, against the preflight row, back to back: the
-# three ids cost 11.9-12.0s over three runs, between one and a half and one and
-# two thirds of that module. Two of them drive the real hook once per watched
+# three ids cost 12.2-12.9s over three runs, between one and three quarters and
+# two and a third of that module. Two of them drive the real hook once per watched
 # path, a subprocess each, and that is where all of it goes; the third is an
-# `ast.parse` worth nothing measurable. The ratio was one and three quarters to
-# two and a quarter a sitting ago and TWO to two and a half the one before, and it
-# fell again here for a reason the seconds cannot show: the watched roots lost
-# nine entries and gained one — `tests` as a directory — so those two loops drive
-# the hook fewer times, while the preflight row they are stated against went up.
+# `ast.parse` worth nothing measurable. The ratio was one and a half to one and
+# two thirds a sitting ago, one and three quarters to two and a quarter the one
+# before, and TWO to two and a half before THAT. It rose back this sitting with
+# nothing about the ids changing: the preflight row they are stated against came
+# DOWN, which is the whole hazard of expressing one cost as a ratio to another
+# that is itself weather.
 #
 # THE HOST-GUARD MODULE RIDES ON EVERY ONE of them, and on the forty-odd test
 # modules that have no arm at all, where it is the whole of what the trigger
@@ -1261,11 +1275,10 @@ apply_red_checks
 # So a save of tests/test_preflight.py pays about three of its own module, and a
 # save of tests/test_host_guard.py — the cheapest of the seven — pays many times
 # its own. Against the hooks module they stand in for, the three ids are between
-# a tenth and an eleventh — 12.0 against 121.8 at one end and 11.9 against 124.4
-# at the other. The sitting before this one it read "a tenth to a twelfth" over
-# rows giving a NINTH at the top (11.7 against 112.2), which is a figure wrong in
-# the direction that flatters the narrowing, and the fourth time one in this block
-# has been: it still buys the order of magnitude it was made for, but it is not
+# a ninth and an eleventh — 12.9 against 114.7 at one end and 12.2 against 130.0
+# at the other. Two sittings ago it read "a tenth to a twelfth" over rows giving a
+# NINTH at the top (11.7 against 112.2), which is a figure wrong in the direction
+# that flatters the narrowing, and the fourth time one in this block has been: it still buys the order of magnitude it was made for, but it is not
 # the rounding error the earlier wording made it, and the next narrowing has to
 # come out of those two subprocess loops rather than out of this list.
 #
@@ -1278,22 +1291,25 @@ apply_red_checks
 # same terms as every row above it.
 #
 # ARITHMETIC, stated because a block whose parts do not add up is a block a
-# reader stops believing. Those seven sum to 151.2s at their minima and 155.6s at
-# their maxima, against 148.9-150.7s measured for the seven run together — so the
-# parts sit ABOVE the whole at both ends this sitting, by 2% at the bottom and 3%
-# at the top. Six sittings have now put them above by 6%, inside it, above by
-# 3-4%, above by 4-5%, above by 1-2% and above by 2-3%, on a decomposition whose
-# membership did not change: the term that moves is the per-module spread, which
-# the paragraph below says is the only accuracy parts and whole can ever have
-# between them. This sitting the widest line is the SCALE row (256.9-280.9s,
-# nearly a tenth of its own floor) — not a module row, and not the skill-edit
-# trigger that was widest last sitting, which came back inside a second: a second
-# reason not to read any one of these as a trend, since the widest line is not
-# even always the same KIND of line. Seven separate
-# invocations each paying an interpreter start pushes the same way and is worth
-# well under a second of it. What separates this from the count-column patch the
-# header forbids is the other half, which is EXACT:
-# 48 + 116 + 159 + 177 + 375 = 875 for a skill edit, plus 93 + 128 = 1096 for a
+# reader stops believing. Those seven sum to 136.0s at their minima and 159.1s at
+# their maxima, against 137.6-150.1s measured for the seven run together — so this
+# sitting the parts BRACKET the whole rather than sitting one side of it: 1% below
+# at the bottom, 6% above at the top. Seven sittings have now put them above by
+# 6%, inside it, above by 3-4%, above by 4-5%, above by 1-2%, above by 2-3% and
+# now straddling, on a decomposition whose membership did not change: the term
+# that moves is the per-module spread, which the paragraph below says is the only
+# accuracy parts and whole can ever have between them. The straddle is that
+# paragraph's own point arriving as a measurement — the cheap rows were taken
+# TWICE this sitting, once at its start and once near its end, and every one of
+# them came back 20-40% lower the second time on an idle machine with nothing
+# touched between (capabilities 1.4-3.1s then 0.8-0.9s; preflight 6.3-7.2s then
+# 5.6-6.4s). Both passes are in the ranges above, which is why they are wider
+# than any previous sitting's and why the sum straddles. A row here is a RANGE
+# and reading its floor as the figure is what the width is warning against.
+# Seven separate invocations each paying an interpreter start pushes the parts
+# up and is worth well under a second of it. What separates this from the
+# count-column patch the header forbids is the other half, which is EXACT:
+# 48 + 116 + 160 + 177 + 375 = 876 for a skill edit, plus 93 + 128 = 1097 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1312,31 +1328,34 @@ apply_red_checks
 # revision claimed that and had the parts exceeding the whole because a count
 # column had been hand-patched.
 #
-# EVERY SECOND above was measured together, most recently 2026-09-07, on an idle
+# EVERY SECOND above was measured together, most recently 2026-09-08, on an idle
 # machine, and re-measured END TO END rather than patched where a count moved:
-# V6 added six cases to the agents module, which moved that row and the cold
-# pass, and patching one row over stale neighbours is what left the derived rows
-# wrong four revisions ago.
-# Against the previous end-to-end sitting the direction REVERSED — the same host,
-# and every row came DOWN or held while the cold pass gained six cases: the cold
-# pass by nearly a tenth (136.6-139.9s against 148.9-150.7s) on MORE work, the
-# skill-edit row slightly (22.4-23.8s against 23.3-24.0s) on an unchanged 813,
-# and the quiescent fast path to under a tenth of a second (0.06-0.08s against
-# 0.10-0.13s). The reader should take from it that the previous sitting's
-# across-the-board rise was the HOST, not the suite — which is the argument for
-# re-measuring end to end rather than trusting any single row's history. The
-# agents row rose (1.4-1.7s against 1.6-1.6s) only because it gained the six
-# — so the module that gained the most tests moved the least in proportion. The
-# host guard more than DOUBLED (1.8-1.9s against 0.8-0.9s), and that one is work
-# rather than weather: it gained forty-one tests, three of them spawning a whole
-# pytest run of their own. The cold pass rose with them (148.9-150.7s against
-# 131.5-133.1s) and `pytest tests/` by a quarter (256.9-280.9s against
-# 196.9-199.3s). The FAST PATH is the other row with a cause (0.10-0.13s against
-# 0.05-0.06s): `tests` replaced nine file entries in WATCHED_ROOTS, and a
-# directory of thirty modules plus its `__pycache__` is more inodes for `find` to
-# walk than nine stats. Everything else here is the between-sitting spread
-# recorded above, on a host idle for both: do NOT read a cause into it, and do
-# read the ratios, not the seconds.
+# V5 added ONE case to secure_fs, which moves that row, the skill-edit row and
+# the cold pass at once, and patching one row over stale neighbours is what left
+# the derived rows wrong four revisions ago.
+#
+# THIS SITTING SAYS ONE THING LOUDER THAN ANY ROW. The cheap modules were
+# measured TWICE, at its start and near its end, with nothing touched between,
+# and every one came back 20-40% LOWER the second time: capabilities 1.4-3.1s
+# then 0.8-0.9s, preflight 6.3-7.2s then 5.6-6.4s, portability 12.5-13.1s then
+# 11.1-12.4s, secure_fs 1.8-2.1s then 1.4-1.5s, the host guard 1.6-1.8s then
+# 1.4-1.5s. Same host, same idle machine, same commands, half an hour apart. The
+# ranges above are the UNION of both passes, which is why they are wider than any
+# previous sitting's, and the reason to publish the union rather than the tidier
+# second pass is that a reader comparing a future row against a floor taken while
+# the machine was warm would read weather as a regression. Whatever the effect is
+# — filesystem cache, thermal, the full-suite runs earlier in the sitting — it is
+# LARGER than most of the between-round differences previous sittings narrated as
+# causes, and it is the strongest argument in this block for reading ratios.
+#
+# Against the previous end-to-end sitting every row came down: the hooks module
+# 114.7-130.0s against 121.8-124.4s (wider, and straddling it), the cold pass
+# 137.6-150.1s against 136.4-143.5s at the floor but reaching further, the
+# skill-edit row 19.7-23.4s against 24.5-26.6s, and `pytest tests/` 228.4-243.4s
+# against 248.7-250.5s — on a suite sixty-nine tests LARGER. None of that has a
+# cause anyone should name: one case was added to one selected module and nothing
+# was made faster. Read it as the same weather the double-measurement above
+# demonstrates inside a single sitting, and read the ratios, not the seconds.
 #
 # THE COUNTS ARE AHEAD OF THE SECONDS whenever a round adds tests without
 # re-measuring, and this is the note that says by how much — the gap stated
@@ -1348,17 +1367,19 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained twenty-four
-# tests (3880 to 3904). The sitting took the counts and the seconds TOGETHER,
-# and the seconds above were taken on 2026-09-08, after the V6 sibling sweep moved
-# the agents module ONTO the skill-edit path — a decomposition change rather than
-# a count change, and exactly the kind of move the "re-measure END TO END" rule
-# exists for, since the skill-edit row gained forty-eight tests without anyone
-# touching a second. FOURTEEN tests have landed since in secure_fs, for the
-# two-file transaction V10's second half routed through the one writer. Fourteen
-# cases inside a 159-test module sit well within that row's stated range, which
-# is what the pairs below carry: they hold the drift so the seconds are re-taken
-# when the DECOMPOSITION moves, not on every round.
+# Against the counts the seconds were taken at, the suite has gained fourteen
+# tests (3973 to 3987), and the gap was ZERO when the sitting ended: it took the
+# counts and the seconds TOGETHER and took them LAST, after every edit on the
+# branch was final. Then a review round landed fourteen more cases, all of them
+# in tests/test_answers.py — a module this hook has no arm for — which is the
+# case this whole mechanism exists for. The DECOMPOSITION did not move, so the
+# seconds stand and the drift is recorded here rather than paid for with another
+# half hour. The round the seconds were taken at was V5's required-answer
+# registry: sixty-eight cases in that new module, and ONE case in secure_fs,
+# which parametrises over `agents/lib/*.py` and so gains a case for every engine
+# module added. That single case is the only reason a decomposition row moved at
+# all (159 to 160), and it is the shape to expect from a new engine module: the
+# row it moves is never the module's own.
 # What follows is the history the previous sittings accumulated, kept because it
 # is the record of what those tests were FOR.
 # First, five launcher tests, executing the
@@ -1493,7 +1514,7 @@ apply_red_checks
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
 # portability has gained none (177 to 177), preflight has gained none (375 to 375), the
-# agents module none (48 to 48), secure_fs has gained fourteen (145 to 159), the hooks module
+# agents module none (48 to 48), secure_fs has gained none (160 to 160), the hooks module
 # none (128 to 128), capabilities has gained none (116 to 116) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
@@ -1501,10 +1522,14 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. One pair is non-zero this round and the rest read none: the seconds
-# were taken on 2026-09-08 and only secure_fs has moved since, so the sentence
-# below reconciles eight against eight rather than carrying a stale spread.
-# They sum to fourteen; the remaining ten are modules this hook
+# yet taken. EVERY pair reads none this round, and that is not the paragraph
+# going slack: the fourteen tests the suite has gained since the sitting all
+# landed in tests/test_answers.py, which this hook has no arm for, so no selected
+# module has moved at all. That is the ordinary case and the reason the pairs
+# exist — a round that adds tests OUTSIDE the seven costs the block a sentence,
+# not another half-hour sitting. The seconds are re-taken when the DECOMPOSITION
+# moves, and it has not.
+# They sum to zero; the remaining fourteen are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

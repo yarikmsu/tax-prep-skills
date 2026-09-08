@@ -64,6 +64,35 @@ Before any computation, verify tax law data is current:
    Top bracket: {rate}% on income over ${threshold}
    ```
 
+### Step 0.6: Required Answers
+
+Every question this return owes the taxpayer, at once, instead of stopping
+mid-compute one at a time. It runs before the capability gate because a
+question is cheaper to ask than a computation is to redo.
+
+```
+sh agents/lib/run.sh -m agents.lib.answers --workspace . --check-required --for tax-compute
+```
+
+- **Exit 0** — nothing owed; continue.
+- **Exit 2 — STOP.** Each missing answer is listed by id, with the step it
+  would have stopped at. Ask the taxpayer, then record each one in `answers.md`
+  as `- **[id]** the answer`, on one line (or with the answer on indented lines
+  directly under the marker). The id is what the next run matches on; prose
+  alone is not read.
+- **Exit 1** — the check could not run. That is the same blocking condition as
+  a missing engine: do not proceed on the assumption that nothing was owed.
+
+`--for tax-compute` narrows it to this skill's questions, so a question
+`tax-parse` owns cannot block a computation. Drop the flag for the
+whole-workspace survey.
+
+**An ACKNOWLEDGEMENT is re-asked every run, by design** — it accepts a known
+wrong-direction risk on THIS year's figures, so a recorded one never satisfies
+it again. Re-present it, and when the taxpayer accepts it again pass
+`--acknowledge <id>` on THIS invocation. It is written nowhere: consent that
+was never re-asked is not acceptance.
+
 ### Step 0.7: Capability Gate (scope guard)
 
 Before loading any data, verify the engine can actually compute this taxpayer's

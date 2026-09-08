@@ -106,21 +106,25 @@ never has to ask one.
   disposed of a digital asset.
 - **Foreign accounts:** none, so no FBAR and no Form 8938.
 - **Itemising:** no. The standard deduction is larger.
-- **Is the document set complete?** Yes. The four PDFs in `documents/` are every
-  tax document for {YEAR}: one Form W-2 and three information returns. There are
-  no others outstanding, expected or mislaid.
-- **Prior-year state income tax paid during {YEAR}:** none. The {YEAR - 1}
-  return was fully covered by withholding, so no balance was paid this year and
-  nothing is deductible on Schedule A line 5a beyond the {YEAR} withholding
-  itself.
-- **Charitable contributions:** none, cash or non-cash. Nothing is deductible
-  on Schedule A line 11-12, and the §170(p) non-itemizer deduction is therefore
-  zero as well.
+- **[document_set_complete]** Yes. The four PDFs in `documents/` are every tax
+  document for {YEAR}: one Form W-2 and three information returns. There are no
+  others outstanding, expected or mislaid.
+- **[state_taxes_paid_outside_withholding]** None of either. No state estimated
+  payments were made during {YEAR}, and the {YEAR - 1} return was fully covered by
+  withholding, so no prior-year balance was paid this year either — nothing is
+  deductible on Schedule A line 5a beyond the {YEAR} withholding itself.
+- **[charitable_gifts]** None, cash or non-cash. Nothing is deductible on
+  Schedule A line 11-12, and the §170(p) non-itemizer deduction is therefore zero
+  as well.
 - **Medical expenses, mortgage interest, property taxes, investment interest,
   misc 2% expenses:** none. State income tax withholding is the only Schedule A
   input this return has.
-- **Are any of them corrected or replacement forms?** No. Every one is an
-  original; no CORRECTED box is checked and no payer has reissued anything.
+- **[corrected_documents]** No. Every one is an original; no CORRECTED box is
+  checked and no payer has reissued anything.
+
+The markers are the V5 required-answer ids — `--check-required` reads them, and a
+headless run stops on any that is missing. This fixture answers every one that
+applies to it, which is what makes it a workspace the pipeline would accept.
 """
 
 

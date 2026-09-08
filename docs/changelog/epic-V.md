@@ -1398,3 +1398,166 @@ a gate wanting a fresh acknowledgement. A survey of all 55 `STOP`s across the
 skills puts the genuine missing-ANSWER stops at roughly a dozen — the rest are
 engine-absent, cache-stale or gate-blocked, which are not answers. That survey is
 the input to the registry and is the reason this slice shipped on its own.
+
+## V5, second half — the required-answer registry (`agents/lib/answers.py`)
+
+`answers.md` is the non-interactive input path (AGENTS.md §6) and had no way to
+say WHICH answers a workspace needs, so the hard stop arrived mid-compute, one
+question at a time, after the parse and most of the arithmetic. The registry is
+the list; `--check-required` asks it before the run starts and exits 2 while
+anything is owed, on the gates' usual 0 / 2 / 1 contract.
+
+An answer is recorded as `- **[id]** the answer`. A marker rather than a heading
+because a heading is a place and this is a FIELD: the file is written by an agent
+and read by one, and matching prose would make every reword a lost answer.
+
+**Two review findings were the same P0, found independently, and both were
+reproduced before being believed.** The marker regex ran over the whole file with
+`\s*` either side, and `\s` matches a newline: a blank marker absorbed the blank
+line under it and captured the NEXT question's heading as its answer. Run against
+the file `tax-setup` copies into every new workspace, all seven ids read as
+answered and the gate exited 0 — on a workspace where nothing had been asked, in
+the module whose entire purpose is to notice that. `tax-parse` Step 2.5 would have
+skipped the document-completeness confirmation, which is the intake-drop class the
+tie-out gate exists for.
+
+The tests missed it because every blank-body case was a one-line string with
+nothing after it, so `\s*` ran to end-of-input and the case passed either way.
+`_scan` now matches ONE LINE AT A TIME, and the mutation that goes red is the
+revert to the whole-file form — narrowing the whitespace classes alone does NOT,
+which is stated in the source so the comment credits the guard that actually
+holds. `TestTheShippedTemplateIsTheHardestCase` runs the real template.
+
+**The second P0: the only ACKNOWLEDGEMENT in the registry was dead code.** It
+globbed `summaries/crypto_*.json` for `needs_basis`, a key that file's schema
+never carries — `crypto_importer` merges it into `result.json`'s `crypto_summary`.
+So the FACT/ACKNOWLEDGEMENT distinction, the load-bearing half of V5, never fired
+in a real run, and the test that "covered" it fabricated the wrong shape. Both the
+predicate and the test now use the shape a real run produces, and the test asserts
+the OLD shape does not trigger.
+
+**Three triggers read the run's own OUTPUT.** They probed `result.json` for
+`line_24_total_tax` and `box_17_state_tax`, but the check runs at `tax-compute`
+Step 0, where `result.json` is still the copied template and every figure in it is
+zero. They reported nothing on the first pass — the pass the contract exists for —
+and only ever fired on a re-compute. Each now reads an input that exists before
+compute: the tax-law cache's state regime, the profile, or `crypto_summary`, which
+is written by `tax-parse-crypto` and so is a parse-time input rather than a
+computed one.
+
+**Registry corrections, each from reading what the skill actually says:**
+
+- `prior_year_tax_composition` REMOVED. `tax-and-credits.md` says pass `None` and
+  leave the prong unresolved rather than infer it — a documented DEGRADE, not a
+  stop. Registering it made the gate demand an answer on the repo's own known-answer
+  eval case (28,000 withheld against 34,122 tax, and `tests/test_evals.py` proves
+  that return has no Form 2210 penalty). A gate firing on correct data is
+  `gates-that-cry-wolf.md`, and this one was aimed at the eval fixture.
+- The Schedule A pair was keyed on STATE WITHHOLDING, so a filer in a state with no
+  income tax was never asked for charitable gifts. §170(p) is a NON-itemizer
+  deduction: unasked, line 13c is silently zero and the tax OVERSTATED — the
+  direction AGENTS.md §4 calls a hard error. `charitable_gifts` is now asked of
+  every return; the state question became
+  `state_taxes_paid_outside_withholding`, keyed on the regime having an income tax,
+  and it now carries BOTH figures that sentence asks for (estimated payments were
+  half of one question and were registered nowhere).
+- ADDED: `mfs_spouse_itemizes` (§63(c)(6)(A) forces itemizing whatever the total,
+  and it is decidable from the filing status alone) and
+  `foreign_account_completeness` — the direct twin of `document_set_complete`,
+  where an omission is an unfiled FBAR.
+
+**An acknowledgement that can never be cleared is its own cry-wolf.** A persisted
+one must never satisfy the gate again — that is the point of the kind — but the
+first version left no way to satisfy it at all, so a workspace with any
+`needs_basis` row exited 2 for ever while the skill said only "record it". An
+agent that must proceed past a permanent 2 learns to proceed past 2 generally, and
+it is the same code the freshness and capability gates use. `--acknowledge <id>`
+now accepts it for THAT INVOCATION and writes nothing, which is the shape
+`capabilities.py` already uses; an unknown id is a hard error and a FACT is
+refused with the remedy ("record the answer").
+
+**Each gate used to block on the other's questions** — one global owed set, one
+exit code, no scope, though every entry names the step that asks it. `--for
+<skill>` filters on that, so a Schedule A question cannot block a parse.
+
+Two structural fixes behind the rest. The condition moved ONTO the entry: it lived
+in an `if/elif` ladder keyed by id, where an entry added without its branch was
+silently never owed — the failure the registry exists to prevent, with the registry
+as the blind spot. A test now pins that every entry with a condition has a
+workspace that triggers it. And the template's Required-answers section is
+GENERATED from the registry rather than hand-copied, with the shipped file pinned
+against the render: it held 21 sentences duplicating the entries, free to drift
+into a taxpayer answering a question the gate no longer asks.
+
+Smaller, all from the same review: `_get_path`/`_amount` come from `rollover` now
+rather than being re-implemented, which brings the `math.isfinite` rejection
+AGENTS.md §8 requires at a parse boundary; `answers.md` is read once instead of
+three times, and through a handler, because `OSError.filename` is the workspace
+path and the workspace is named for the taxpayer; a dash reads as an answer,
+because "—" is how a taxpayer writes "none"; an id inside a code fence does not,
+because both skills tell an agent to record `- **[id]** answer` and the natural way
+to show that is a fenced block; and an answer may run onto indented lines under
+its marker. The check moved out of Step 0.5, a tax-law step it had been nested
+inside (leaving two items numbered 3), into its own Step 0.6 ahead of the
+capability gate.
+
+**What the registry does NOT cover, stated because the first version claimed it
+covered everything.** It holds taxpayer FACTS the return-pipeline skills cannot
+derive. Out by design: `tax-setup`'s interview (it IS the interview), `tax-rollover`'s
+`ask` decisions (carried per category by `apply_changes`), the planning skills, and
+any question whose absence makes the engine degrade loudly rather than stop. Still
+OWED, and the honest debt: the `prior_year_zero_liability_confirmed` /
+`prior_year_return_filed_12_months_confirmed` pair in `tax-and-credits.md`, where
+leaving both unconfirmed OVERSTATES a penalty; the mortgage average balance, where
+an unknown makes the function take the interest in full; and the Table-1 estimated-payment
+timeline.
+
+Follow-ups named rather than done: `capabilities.py` is the same mechanism with a
+receipt and a maturity this one lacks, and its `acknowledged_limitations` persist
+for ever — exactly what this module argues must never happen. One registry with a
+`level` and a `kind` axis is the real shape, and it is a multi-day change touching
+`receipt.GATE_INPUTS` and the profile template. The answers gate writes no receipt,
+so a filing package can still be assembled on answers removed after the check
+passed; that needs a content-derived digest `receipt.py` does not have.
+
+### The local-Codex round on the same branch
+
+Eight correctness findings, every one reproduced before it was fixed, and five
+tests that passed without enforcing what they were named for.
+
+- **An inner fence closed an outer one.** `_scan` toggled on any line that
+  *looked* like a fence, so ```` ```` ```` … ``` ``` ```` … marker … ```` ```` ````
+  handed the marker back as an answer — the example satisfying the gate it is an
+  example of. A fence is now tracked as CommonMark defines one: the delimiter
+  character and length are remembered, and only a run of the SAME character at
+  least as long, with nothing after it, closes it. Four spaces of indent is
+  indented CODE and no longer opens one, which had been swallowing the rest of a
+  file and losing a real answer below it.
+- **A truncated input read as a clean bill.** `_read_json` turned every failure
+  into `{}`, so a half-written `taxpayer_profile.json` reported a workspace owing
+  nothing, exit 0, with the MFS and foreign-account questions silently dropped.
+  Absence is still tolerated — a missing `result.json` is the normal first-run
+  state — but that is where the tolerance stops: a malformed, unreadable, or
+  non-object document is a could-not-run and exits 1.
+- **The tax-law cache was the newest on disk, not the profile's year.** A
+  workspace holding both years read the state regime off the wrong return, and a
+  mover's two caches disagree about exactly the question that trigger asks.
+- **A filer who MOVED to a no-income-tax state was never asked** about state
+  taxes paid outside withholding, though they can have paid the old state's
+  prior-year balance during this year. Missing it under-states the deduction and
+  so over-states the tax. `prior_year.state_residency_changes` now fires it too.
+- **Three exit codes were wrong.** An unreadable `answers.md` returned 2, which
+  tells a caller to type the answers again into a file that already has them —
+  and under `--for` a scope with nothing applicable returned 0 on a file nobody
+  could read. A misspelt `--for` came back as argparse's own 2. Both are
+  could-not-run: 1.
+- A single TAB no longer fails to count as the indent the format documents.
+
+The vacuous tests, all now enforcing what they claim: "the acknowledgement is
+written nowhere" compared FILENAMES, so appending it to `answers.md` passed;
+"every asking skill is a choice the CLI accepts" compared a constant with the
+expression that built it, so removing a choice from the parser stayed green; the
+unreadable-file test passed equally when the file was readable; "runs the check
+before it computes" was a substring, satisfied by the command moved below the
+work, and is now a POSITION; and "says what exit 1 obliges" matched `Exit 1`,
+which "Exit 1 — continue" would also have satisfied.

@@ -301,7 +301,7 @@ After comparing line-by-line, look for items in the SOFTWARE return that we DIDN
 | Income amounts higher in software | User may have entered additional income | Ask: "Software shows ${X} more in {income type}. Did you enter additional income?" |
 | Estimated payments in software not in our data | Payments we don't have recorded | Ask: "Software shows ${X} in estimated payments. Can you confirm amounts and dates?" |
 | Itemized in software, standard in ours (or vice versa) | Different deduction strategy | Flag: "Software uses {itemized/standard} but we computed {other}. Verify which is better." |
-| Different filing status | Major discrepancy | **STOP:** "Software shows {status} but we have {status}. This must be resolved." |
+| Different filing status | Major discrepancy | **STOP:** "Software shows {status} but we have {status}. This must be resolved." Record the resolution as `- **[software_filing_status_mismatch]** the answer`. |
 
 Present all discoveries to user. Any that affect the bottom line by >$100 must be resolved before proceeding.
 

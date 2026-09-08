@@ -153,7 +153,8 @@ line 15's net). The profile fields are POSITIVE magnitudes; lines 6 and 14 take
 the carryover as a NEGATIVE number, so each enters its net as a subtraction. If only the LEGACY combined `prior_year.capital_loss_carryforward`
 is non-zero and both split fields are zero, **STOP**: ask the user for the split
 from the prior return's Capital Loss Carryover Worksheet (lines 8 and 13), record
-the answer in answers.md, write the split fields, and never divide a combined
+it in answers.md as `- **[capital_loss_carryforward_split]** the answer` so the
+next run's required-answer check reads it, write the split fields, and never divide a combined
 figure by guess — short-term loss offsets ordinary income first, so a wrong split
 changes the tax. When line 16 is a net LOSS, cap the line 7 deduction at $3,000
 ($1,500 MFS) and fill `schedule_d.loss_carryforward_to_next_year` (short_term /
@@ -603,7 +604,9 @@ persona SALT usually exceeds the OBBBA cap by itself):
   (`mfs_amount` for MFS) from tax_law JSON.
 - `state_local_income_taxes` = W-2 box 17 (all states) + CA SDI (box 14) +
   state estimated payments PAID during the year + prior-year state balance
-  paid this year. Ask the user for the last two — they're not on any W-2.
+  paid this year. Ask the user for the last two — they're not on any W-2 —
+  and record both in answers.md as
+  `- **[state_taxes_paid_outside_withholding]** the answer`.
 - **FL filer ordering — compute `state_local_sales_taxes` BEFORE this call
   (Codex round-18 P1):** when the profile state is FL (`type: "none"`,
   `code: "FL"`), the line-5a income-vs-sales election needs the FL sales-tax
@@ -625,10 +628,14 @@ persona SALT usually exceeds the OBBBA cap by itself):
   balance is unknown the function takes the interest in FULL and notes the
   overstatement risk — surface that note.
 - Charitable: ask for cash vs noncash split and whether every gift ≥ $250
-  has a written acknowledgment; record the answer in answers.md. Surface
-  the carryforward figure for /tax-rollover if nonzero.
+  has a written acknowledgment; record it in answers.md as
+  `- **[charitable_gifts]** the answer`. Ask even when this filer takes the
+  STANDARD deduction — cash gifts feed the §170(p) line-13c deduction, and
+  unasked it is silently zero. Surface the carryforward figure for
+  /tax-rollover if nonzero.
 - MFS: ask whether the spouse itemizes (`mfs_spouse_itemizes` forces
-  itemizing per §63(c)(6)(A)).
+  itemizing per §63(c)(6)(A)); record it as
+  `- **[mfs_spouse_itemizes]** the answer`.
 - **TY2026+ §70111 haircut:** the OBBBA top-bracket reduction (2/37 of the
   lesser of itemized total or 37%-bracket income) is circular with the
   deduction — compute taxable income PROVISIONALLY with the un-haircut
