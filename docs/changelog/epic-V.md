@@ -1305,3 +1305,96 @@ because both verdicts were confident: a probe whose target text was LINE-WRAPPED
 matched nothing and reported the test vacuous, and a probe run under an
 interpreter without pytest exited non-zero and read as a pass. The harness now
 refuses a no-op probe and refuses a run in which pytest did not start.
+
+## V5, first slice: the gate that could not fail
+
+V5's entry ends with a line that reads like housekeeping — "the engine CLIs
+converge on one success / blocked / could-not-run exit contract... the freshness
+report and the gates disagree today". Measured, it is not housekeeping.
+
+Three gates already followed the contract: `preflight`, `capabilities` and
+`tie_out` all exit **0** clean, **2** blocked, **1** could not run. The fourth,
+`tax_law_fetcher freshness`, printed its verdict and exited **0** for FRESH,
+STALE, INCOMPLETE **and** NOT_FOUND alike. Reproduced on an empty workspace:
+
+```
+$ ... tax_law_fetcher.py freshness 2026 .
+{"status": "NOT_FOUND", ...}
+exit=0
+```
+
+A workspace with no tax-law cache at all — the state every skill's Step 0.5 calls
+a STOP — reported success to anything reading `$?`. AGENTS.md §2 opens by saying
+a stale figure "silently produces a wrong return that looks completely plausible"
+and that **there is no downstream check** for it. This is that check, and it was
+the only gate in the toolkit that could not fail.
+
+**The five skills that run it knew.** Each carried a workaround in prose — "act
+on the `status` field, **not** the exit code — `freshness` exits 0 even for
+NOT_FOUND, so an agent treating it like Steps 0.7 and 12.7 would sail past a
+missing cache into a computation with no rates". Five skills compensating for a
+CLI is the clearest sign available that the CLI was wrong, and a workaround left
+standing over a fixed defect teaches the next reader the fix did not happen. All
+five now say the exit code and the status agree, and a test pins that none of
+them still says otherwise.
+
+Nothing breaks: every programmatic caller in the repo — the eval fixture, the
+readiness suite, `loss_harvest`, `projection` — uses `check_freshness` the
+FUNCTION. The CLI's exit code was, until now, read by nobody, which is exactly
+why it could stay wrong.
+
+**Two gaps in my own tests, both found by mutation:**
+
+- **Only the blocked end was pinned.** Every assertion was about blocking, so a
+  change that exited 2 unconditionally passed the lot — and that failure blocks
+  every run of every skill rather than letting one stale cache through. The
+  clean end is pinned now, against `evals.fixture`'s cache, which exists to be a
+  complete one and whose own suite asserts it reports FRESH.
+- **A four-module "contract" check asserted nothing.** `"2" in source and
+  "blocked" in source.lower()` is satisfied by any file of that size containing a
+  digit, so three of the four gates were covered by coincidence — the same defect
+  a review caught in a different test one PR earlier. It is replaced by a
+  statement of what this class covers (the fetcher, behaviourally) and a check
+  that the other three are still pinned where their blocked states are cheap to
+  build, in their own suites.
+
+**The review then found that the first version of this fix was worse than the
+defect, and it was right.** Blocking on every non-FRESH status made the gate fire
+on CORRECT DATA: `exchange_rates` is empty for every domestic-only taxpayer, so a
+complete, current cache reported INCOMPLETE and exited 2 on every Step 0.5 of a
+wholly ordinary return. Reproduced. That is `gates-that-cry-wolf.md` verbatim — a
+STOP-gate firing on correct data teaches the agent to reason past it, and then it
+is worth nothing on the day it is right. STALE is the same shape: every figure
+correct, `null_fields` empty, and the same step's bullet ends "if no changes,
+proceed".
+
+The BLOCKED code is spent on **`NOT_FOUND` alone** now — the one status whose
+documented remedy is a stop, and the one that was exiting 0. STALE and INCOMPLETE
+exit 0 with their report, which is what their inline remedies need.
+
+Two more from the same review, both mine:
+
+- **"A non-zero exit here is the verdict" was false**, and a test pinned it.
+  `run.sh` exits 2 at three sites and the engine's venv guard at a fourth, all
+  with empty output — so a 2 could always mean "the command did not run". The
+  skills now say a 2 with an EMPTY report is the launcher, not this gate.
+- **The `could not run` arm is REACHABLE**, and one revision claimed otherwise in
+  four places at once — the source, a test docstring, test-invariants and this
+  file. `load_tax_law` reads with `read_text()`, and AGENTS.md §1 mandates 0600 on
+  that cache: a restored backup or a file owned by another uid raises
+  PermissionError straight through. It is tested now, and the `pragma: no cover`
+  is gone.
+
+The test class had matching gaps, all found by mutation: the case named for STALE
+used an empty cache and got INCOMPLETE, so STALE was never exercised; the report
+test re-tested NOT_FOUND rather than the INCOMPLETE case whose `null_fields` the
+step actually needs; and the delegation guard `"== 2" in text` was satisfied by
+unrelated comparisons like `len(ids) == 2`.
+
+**Still open in V5**, and the larger half: the `answers.md` schema with stable
+ids and a `--check-required` that lists missing answers before a run rather than
+hard-stopping mid-compute, plus the rule that a persisted answer never satisfies
+a gate wanting a fresh acknowledgement. A survey of all 55 `STOP`s across the
+skills puts the genuine missing-ANSWER stops at roughly a dozen — the rest are
+engine-absent, cache-stale or gate-blocked, which are not answers. That survey is
+the input to the registry and is the reason this slice shipped on its own.

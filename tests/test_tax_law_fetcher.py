@@ -1,11 +1,15 @@
 """Tests for tax_law_fetcher freshness logic — the sdi_wage_limit year-aware
 null exception (Codex P1 on PR #29)."""
 import json
+import os
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+
+REPO = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib.tax_law_fetcher import (  # noqa: E402
@@ -2040,3 +2044,182 @@ class TestTheCodexRoundRules:
         res = check_freshness(2026, str(tmp_path))
         assert isinstance(res["block_ages"][out["pin"]], int)
         assert not [f for f in res["null_fields"] if "_provenance" in f]
+
+
+class TestEveryGateCliUsesOneExitContract:
+    """V5. Four CLIs answer "is it safe to continue" and three of them said so
+    the same way: 0 clean, 2 blocked, 1 could not run. The freshness check —
+    which AGENTS.md §2 opens by calling the only check there is for a stale
+    figure, because "a stale figure silently produces a wrong return that looks
+    completely plausible" — printed its verdict and exited 0 for FRESH, STALE,
+    INCOMPLETE and NOT_FOUND alike.
+
+    So a workspace with NO CACHE AT ALL, the state every skill's Step 0.5 says to
+    STOP on, reported success to anything reading `$?`. The one gate with no
+    downstream check was the one that could not fail.
+
+    The JSON is still what a reader acts on — which figures, which block, how old.
+    The exit code says only whether it is safe to continue, which is what a script
+    can act on, and now every gate says it the same way.
+    """
+
+    CLEAN, BLOCKED, COULD_NOT_RUN = 0, 2, 1
+
+    def _run(self, args, cwd):
+        return subprocess.run([sys.executable, *args], capture_output=True,
+                              text=True, cwd=str(cwd))
+
+    def _fetcher(self, workspace, year=2026):
+        return self._run([str(REPO / "agents" / "lib" / "tax_law_fetcher.py"),
+                          "freshness", str(year), str(workspace)], REPO)
+
+    def test_a_fresh_cache_is_clean(self, tmp_path):
+        """The other half, and the one this class was missing: every assertion
+        here was about BLOCKING, so a change that exited 2 unconditionally passed
+        the lot — and that failure blocks every run of every skill rather than
+        letting a stale one through. A contract needs both ends pinned.
+
+        The cache comes from `evals.fixture`, which exists to build a complete
+        one and whose own suite asserts it reports FRESH — the same question, so
+        the same builder rather than a second hand-filled schema here."""
+        from evals import fixture as F
+        F.save_tax_law(F.YEAR, F.tax_law(), str(tmp_path))
+        proc = self._fetcher(tmp_path, year=F.YEAR)
+        assert json.loads(proc.stdout)["status"] == "FRESH", proc.stdout[:400]
+        assert proc.returncode == self.CLEAN
+
+    def test_a_missing_cache_is_blocked_not_clean(self, tmp_path):
+        """The case that was exiting 0, and the one every Step 0.5 calls a STOP."""
+        proc = self._fetcher(tmp_path)
+        assert proc.returncode == self.BLOCKED
+        assert json.loads(proc.stdout)["status"] == "NOT_FOUND"
+
+    def test_a_stale_but_otherwise_correct_cache_is_NOT_blocked(self, tmp_path):
+        """STALE means "older than the window", not "wrong" — every figure here
+        is right and `null_fields` is empty. Step 0.5's own bullet ends "if no
+        changes, proceed", so blocking it would contradict the step it serves,
+        and the freshness window is far shorter than a filing season.
+
+        The first version of this fix DID block it, and the test that was meant
+        to cover the case used an EMPTY cache — 56 nulls, reported INCOMPLETE —
+        against an assertion that accepted either status. It never tested STALE
+        at all."""
+        from evals import fixture as F
+        F.save_tax_law(F.YEAR, F.tax_law(), str(tmp_path))
+        cache = tmp_path / f"tax_law_{F.YEAR}.json"
+        law = json.loads(cache.read_text())
+        law["_meta"]["fetched"] = "2000-01-01T00:00:00"
+        cache.write_text(json.dumps(law))
+        proc = self._fetcher(tmp_path, year=F.YEAR)
+        report = json.loads(proc.stdout)
+        assert report["status"] == "STALE", report["status"]
+        assert report["null_fields"] == [], "not a clean stale cache; fix the setup"
+        assert proc.returncode == self.CLEAN
+
+    def test_an_incomplete_cache_is_not_blocked_and_keeps_its_null_fields(
+            self, tmp_path):
+        """INCOMPLETE fires on CORRECT DATA for the commonest taxpayer there is:
+        `exchange_rates` is empty for every domestic-only filer. Blocking on it
+        exited 2 on every Step 0.5 of a wholly ordinary return — `gates that cry
+        wolf`, which is a gate the agent learns to reason past.
+
+        And the report has to survive, because the step's remedy is to re-fetch
+        the fields `null_fields` names."""
+        from evals import fixture as F
+        law = F.tax_law()
+        law["exchange_rates"] = {}          # a domestic-only taxpayer
+        F.save_tax_law(F.YEAR, law, str(tmp_path))
+        proc = self._fetcher(tmp_path, year=F.YEAR)
+        report = json.loads(proc.stdout)
+        assert report["status"] == "INCOMPLETE"
+        assert report["null_fields"], "the report must still say WHICH figures"
+        assert proc.returncode == self.CLEAN
+
+    def test_the_report_is_still_printed_when_it_blocks(self, tmp_path):
+        """The exit code replaces nothing: it carries the one bit a script can
+        act on without parsing, and the JSON carries everything a reader acts
+        on."""
+        proc = self._fetcher(tmp_path)
+        assert proc.returncode == self.BLOCKED
+        report = json.loads(proc.stdout)
+        assert "status" in report and "recommendation" in report
+
+    def test_a_cache_this_process_cannot_read_is_could_not_run(self, tmp_path):
+        """The contract's third arm, which one revision of this claimed was
+        unreachable — in the source, in a test docstring, in test-invariants and
+        in the changelog. `load_tax_law` reads with `read_text()`, so a file this
+        process cannot open raises PermissionError straight through, and
+        AGENTS.md §1 mandates 0600 on that very file: a restored backup or one
+        owned by another uid is the ordinary way here.
+
+        "The figures are stale" and "I could not tell" are different
+        instructions, and a traceback is neither."""
+        if os.name == "nt" or os.geteuid() == 0:  # pragma: no cover
+            pytest.skip("POSIX mode bits, and root reads anything")
+        cache = tmp_path / "tax_law_2026.json"
+        cache.write_text("{}")
+        cache.chmod(0o000)
+        try:
+            proc = self._fetcher(tmp_path)
+        finally:
+            cache.chmod(0o600)
+        assert proc.returncode == self.COULD_NOT_RUN
+        assert "Traceback" not in proc.stderr
+        assert "could not check freshness" in proc.stderr
+
+    def test_a_corrupt_cache_is_blocked_and_not_a_traceback(self, tmp_path):
+        """`check_freshness` handles a corrupt cache itself — it warns, removes
+        it so the figures can be re-fetched, and reports NOT_FOUND. What this
+        pins is that the wrapper does not turn that into either a clean exit or
+        a traceback.
+
+        It does NOT cover the contract's could-not-run arm: no input reaches it,
+        which the source says beside the handler rather than leaving a reader to
+        assume this test exercises it."""
+        (tmp_path / "tax_law_2026.json").write_text("{not json")
+        proc = self._fetcher(tmp_path)
+        assert proc.returncode == self.BLOCKED
+        assert "Traceback" not in proc.stderr
+        assert json.loads(proc.stdout)["status"] == "NOT_FOUND"
+
+    def test_every_skill_that_runs_it_no_longer_says_the_exit_code_lies(self):
+        """Five skills carried a workaround in prose — "act on the status field,
+        NOT the exit code, `freshness` exits 0 even for NOT_FOUND". They were
+        compensating for a CLI that lied, which is the clearest possible sign the
+        CLI was wrong. A workaround left standing over a fixed defect teaches the
+        next reader that the fix did not happen."""
+        skills = ("tax-compute", "tax-verify", "tax-fbar", "tax-review", "tax-parse")
+        for name in skills:
+            text = (REPO / ".agents" / "skills" / name / "SKILL.md").read_text()
+            assert "freshness" in text, name
+            assert "exits 0 even" not in text, (
+                f"{name} still says the freshness command exits 0 on a bad cache")
+            assert "Exit 2 means NOT_FOUND" in text, (
+                f"{name} does not say what the blocked code means here")
+            assert "it is the launcher refusing" in text, (
+                f"{name} does not warn that `run.sh` and the engine's own venv "
+                "guard ALSO exit 2, with no output — a claim that any non-zero "
+                "exit is this gate's verdict is false, and the first version of "
+                "this change pinned that false claim in a test")
+
+    def test_this_class_covers_the_fetcher_and_says_who_covers_the_rest(self):
+        """The first spelling of this was a source grep — `"2" in source and
+        "blocked" in source.lower()` across four modules — and it asserted
+        nothing: a 2 appears in any file of that size, so three of the four gates
+        were "covered" by containing a digit. That is the same defect a review
+        caught one PR earlier in a different test, which is the argument for
+        writing down what a class does NOT cover.
+
+        What this class covers is the FETCHER, behaviourally, because it is the
+        gate that disagreed. The other three already exit 2 when blocked and
+        already have that pinned where their own blocked states are cheap to
+        build — `test_capabilities.py`, `test_preflight.py`, `test_tie_out.py`.
+        Rebuilding those workspaces here to re-assert it would be a second, and
+        weaker, owner of a question they already answer."""
+        for module, suite in (("capabilities", "test_capabilities.py"),
+                              ("preflight", "test_preflight.py"),
+                              ("tie_out", "test_tie_out.py")):
+            text = (REPO / "tests" / suite).read_text()
+            assert "returncode == 2" in text or "_main(" in text and "== 2" in text, (
+                f"{suite} no longer pins {module}'s blocked exit code, and this "
+                "class does not cover it either — one of the two has to")

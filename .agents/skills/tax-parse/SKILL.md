@@ -45,7 +45,12 @@ Foreign documents require exchange rates from `tax_law_{year}.json`. Verify data
 
 1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
 2. Run: `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py freshness {year}`
-3. Act on the result:
+3. **Exit 2 means NOT_FOUND — the STOP below.** It is the gates' blocked code,
+   spent on the one status whose remedy is a stop; STALE and INCOMPLETE exit 0
+   because their remedies are inline and are spelled out here. A 2 with an EMPTY
+   report is not this gate at all — it is the launcher refusing (no venv, wrong
+   interpreter), so read the JSON before acting on the code. Act on the status,
+   which says WHICH figures:
    - **FRESH:** Proceed. Print exchange rates if foreign currencies present (e.g., `EUR: 1.08 per USD`).
    - **STALE:** Search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL) for updated IRS yearly average exchange rates. Re-fetch if changed.
    - **INCOMPLETE:** Check if `exchange_rates` section is populated. If empty and foreign currencies are in `taxpayer_profile.json`, search the web for `"IRS yearly average exchange rate {year} {currency}"` (same live-results requirement and STOP-and-ask degrade path as above). Exchange rates are stored at `tax_law.exchange_rates.{CURRENCY}` (e.g., `{"EUR": 1.08}`).

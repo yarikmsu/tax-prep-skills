@@ -2122,8 +2122,47 @@ if __name__ == "__main__":
             print(f"No cached tax law for {year}. Run /tax-setup to fetch.")
     elif cmd == "freshness":
         workspace = sys.argv[3] if len(sys.argv) > 3 else "."
-        result = check_freshness(year, workspace)
+        # THE EXIT CODE ANSWERS ONE QUESTION: must this run STOP? It is the
+        # gates' code — 2 blocked, 1 could not run, 0 otherwise — and it is
+        # spent on NOT_FOUND alone, because NOT_FOUND is the only status whose
+        # documented remedy is a stop. Step 0.5 says so in every skill that runs
+        # this: "NOT_FOUND: STOP. Tell user to run /tax-setup first."
+        #
+        # This command used to exit 0 for ALL FOUR statuses, so a workspace with
+        # no cache — that documented STOP — reported success to anything reading
+        # `$?`. AGENTS.md §2 opens by saying a stale figure "silently produces a
+        # wrong return that looks completely plausible" and that there is no
+        # downstream check for it; this is that check, and it was the only gate
+        # that could not fail.
+        #
+        # STALE and INCOMPLETE STAY 0, and the first version of this fix got that
+        # wrong. Their remedies are inline and the same step spells them out —
+        # STALE: check the web, "if no changes, proceed"; INCOMPLETE: re-fetch
+        # the fields named in `null_fields`, then proceed. Neither is a stop.
+        # Worse, INCOMPLETE fires on CORRECT DATA: `exchange_rates` is empty for
+        # every domestic-only taxpayer, so blocking on it would have exited 2 on
+        # every Step 0.5 of a wholly ordinary return. `gates-that-cry-wolf.md` is
+        # about exactly that — a STOP-gate firing on correct data teaches the
+        # agent to reason past it, and then it is worth nothing on the day it is
+        # right.
+        #
+        # The JSON is what a reader ACTS on — which figures, how old, what to
+        # re-fetch — and is printed for every status. The exit code carries the
+        # one bit a script can act on without parsing it.
+        try:
+            result = check_freshness(year, workspace)
+        except OSError as e:
+            # REACHABLE, and a claim that it was not stood here for one revision:
+            # `load_tax_law` reads the cache with `read_text()`, so a file this
+            # process cannot read — AGENTS.md §1 mandates 0600 on it, and a
+            # restored backup or a file owned by another uid is the ordinary way
+            # there — raises PermissionError straight through. "The figures are
+            # stale" and "I could not tell" are different instructions, and a
+            # traceback is neither.
+            print(f"Error: could not check freshness: {redact(e)}", file=sys.stderr)
+            sys.exit(1)
         print(json.dumps(result, indent=2))
+        sys.exit(2 if result.get("status") == "NOT_FOUND" else 0)
     elif cmd == "state":
         state = sys.argv[3] if len(sys.argv) > 3 else "CA"
         # `year` (parsed above from argv[2], defaulting to last calendar

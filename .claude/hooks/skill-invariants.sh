@@ -1174,12 +1174,12 @@ apply_red_checks
 #   agent-definition edit           48 tests      1.2 - 2.4s         3
 #   skill .md edit                 875 tests     24.5 - 26.6s        3
 #   cold pass, all seven modules  1096 tests    136.4 - 143.5s       3
-#   (for scale) `pytest tests/`   3895 tests    248.7 - 250.5s       2
+#   (for scale) `pytest tests/`   3904 tests    248.7 - 250.5s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3897 and runs 3895 for the same skips — and that row
+# `pytest tests/` collects 3906 and runs 3904 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1348,13 +1348,13 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained fifteen
-# tests (3880 to 3895). The sitting took the counts and the seconds TOGETHER,
+# Against the counts the seconds were taken at, the suite has gained twenty-four
+# tests (3880 to 3904). The sitting took the counts and the seconds TOGETHER,
 # and the seconds above were taken on 2026-09-08, after the V6 sibling sweep moved
 # the agents module ONTO the skill-edit path — a decomposition change rather than
 # a count change, and exactly the kind of move the "re-measure END TO END" rule
 # exists for, since the skill-edit row gained forty-eight tests without anyone
-# touching a second. FOURTEEN tests have landed since, all in secure_fs, for the
+# touching a second. FOURTEEN tests have landed since in secure_fs, for the
 # two-file transaction V10's second half routed through the one writer. Fourteen
 # cases inside a 159-test module sit well within that row's stated range, which
 # is what the pairs below carry: they hold the drift so the seconds are re-taken
@@ -1504,7 +1504,7 @@ apply_red_checks
 # yet taken. One pair is non-zero this round and the rest read none: the seconds
 # were taken on 2026-09-08 and only secure_fs has moved since, so the sentence
 # below reconciles eight against eight rather than carrying a stale spread.
-# They sum to fourteen; the remaining one are modules this hook
+# They sum to fourteen; the remaining ten are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

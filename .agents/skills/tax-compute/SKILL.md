@@ -45,9 +45,12 @@ Before any computation, verify tax law data is current:
 
 1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
 2. Run: `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py freshness {year}`
-3. Act on the **`status` field**, not the exit code — `freshness` exits 0 even
-   for NOT_FOUND, so an agent treating it like Steps 0.7 and 12.7 would sail
-   past a missing cache into a computation with no rates:
+3. **Exit 2 means NOT_FOUND — the STOP below.** It is the gates' blocked code,
+   spent on the one status whose remedy is a stop; STALE and INCOMPLETE exit 0
+   because their remedies are inline and are spelled out here. A 2 with an EMPTY
+   report is not this gate at all — it is the launcher refusing (no venv, wrong
+   interpreter), so read the JSON before acting on the code. Act on the status,
+   which says WHICH figures:
    - **FRESH:** Proceed. Print the key rates being used (standard deduction, CTC amount, top bracket) so user can eyeball them.
    - **STALE:** Search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL) to check for new legislation since the fetch date (`"federal tax law changes {year} since {fetch_date}"`). If new law found, re-fetch affected rates. If no changes, proceed.
    - **INCOMPLETE:** Re-fetch the missing fields listed in `null_fields` by searching the web (same live-results requirement — with no live web access, STOP and ask the user to paste the missing figures with their source URL; never guess a rate or threshold), then update `tax_law_{year}.json`.

@@ -46,7 +46,12 @@ FBAR values depend on exchange rates from `tax_law_{year}.json`. Verify data is 
 
 1. **Validate** `{year}` is a 4-digit integer (2000–2099) before using in any command.
 2. Run: `sh agents/lib/run.sh agents/lib/tax_law_fetcher.py freshness {year}`
-3. Act on the result:
+3. **Exit 2 means NOT_FOUND — the STOP below.** It is the gates' blocked code,
+   spent on the one status whose remedy is a stop; STALE and INCOMPLETE exit 0
+   because their remedies are inline and are spelled out here. A 2 with an EMPTY
+   report is not this gate at all — it is the launcher refusing (no venv, wrong
+   interpreter), so read the JSON before acting on the code. Act on the status,
+   which says WHICH figures:
    - **FRESH:** Proceed. Print the exchange rates being used (e.g., `EUR: 1.08`).
    - **STALE:** search the web for updated IRS yearly average exchange rates (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL). Re-fetch if changed.
    - **INCOMPLETE:** Check if `exchange_rates` section is populated. If empty, fetch by searching the web for: `"IRS yearly average exchange rate {year} {currency}"`.
