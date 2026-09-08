@@ -59,7 +59,7 @@ warn() {
 # matched to what it claims to protect is what makes the claim checkable.
 for f in taxpayer_profile.json result.json answers.md parse_ledger.json \
          holdings.json projection_inputs.json crypto_transactions.json \
-         validation_receipt.json \
+         validation_receipt.json eval_run.json \
          generate_tax_pdf.py FBAR_*.md [0-9][0-9][0-9][0-9]-review.md \
          tax_calendar_*.ics; do
     if [ -L "$f" ]; then

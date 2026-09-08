@@ -1257,7 +1257,7 @@ class TestRuntimeWorkspaceIgnored:
                        # class is a list that will be short again.
                        "answers.md", "projection_inputs.json",
                        "crypto_transactions.json", "FBAR_2026.md",
-                       "tax_calendar_2026.ics",
+                       "tax_calendar_2026.ics", "eval_run.json",
                        # Agent runtime state under `.claude/`. `.archive-files`
                        # is a NUL-separated list of every path beneath archive/
                        # — a taxpayer's scanned documents, named after what they

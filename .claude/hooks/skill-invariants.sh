@@ -1155,12 +1155,12 @@ apply_red_checks
 #   agent-definition edit           38 tests      1.6 - 1.6s         3
 #   skill .md edit                 813 tests     23.3 - 24.0s        3
 #   cold pass, all seven modules  1072 tests    148.9 - 150.7s       3
-#   (for scale) `pytest tests/`   3822 tests    256.9 - 280.9s       2
+#   (for scale) `pytest tests/`   3857 tests    256.9 - 280.9s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3824 and runs 3822 for the same skips — and that row
+# `pytest tests/` collects 3859 and runs 3857 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1327,8 +1327,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained four hundred and three
-# tests (3419 to 3822). The sitting took the counts and the seconds TOGETHER,
+# Against the counts the seconds were taken at, the suite has gained four hundred and thirty-eight
+# tests (3419 to 3857). The sitting took the counts and the seconds TOGETHER,
 # and six rounds have landed since. First, five launcher tests, executing the
 # two present-but-unusable `.venv` states `run.sh` refuses — the one with no
 # activate script, which had shipped untested, and the one it cannot inspect,
@@ -1469,7 +1469,7 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. They sum to twelve; the remaining three hundred and ninety-one are modules this hook
+# yet taken. They sum to twelve; the remaining four hundred and twenty-six are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

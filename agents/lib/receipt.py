@@ -79,6 +79,27 @@ def _file_digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def tree_digest(root: Path, pattern: str = "*.py") -> str:
+    """A digest identifying one tree of files: each path, then its contents.
+
+    The PATH is hashed as well as the bytes, because a MOVED file is a different
+    tree even when every byte is accounted for — two skill trees whose reference
+    files have been renamed are not the same instructions, and a step that links
+    `references/step-5.md` in a tree where that file is now called something else
+    is one an agent cannot follow.
+
+    `pattern` goes to `rglob`, so a nested tree is covered by "*.md" and a flat
+    one by the default. The path is taken RELATIVE to `root`, which for a flat
+    glob is the bare filename — that is deliberate, and it is why `engine_digest`
+    below still produces the digest every receipt in the wild was written with.
+    """
+    h = hashlib.sha256()
+    for path in sorted(root.rglob(pattern)):
+        h.update(str(path.relative_to(root)).encode())
+        h.update(_file_digest(path).encode())
+    return h.hexdigest()
+
+
 def engine_digest() -> str:
     """A digest over `agents/lib/*.py` — the engine that produced the result.
 
@@ -92,12 +113,7 @@ def engine_digest() -> str:
     workspace, so a receipt written for a temp-directory workspace still records
     the engine that wrote it.
     """
-    lib = Path(__file__).resolve().parent
-    h = hashlib.sha256()
-    for path in sorted(lib.glob("*.py")):
-        h.update(path.name.encode())
-        h.update(_file_digest(path).encode())
-    return h.hexdigest()
+    return tree_digest(Path(__file__).resolve().parent)
 
 
 def result_schema_digest() -> str:

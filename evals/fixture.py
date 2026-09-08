@@ -261,8 +261,20 @@ def _document(path: Path, title: str, lines: "list[tuple[str, str]]") -> Path:
     return path
 
 
-def build_workspace(dest) -> Path:
-    """Write the whole workspace and return its path."""
+def build_workspace(dest, case: str = CASE) -> Path:
+    """Write the whole workspace and return its path.
+
+    `case` is REFUSED unless it is the one this fixture builds, and that guard is
+    the point of the parameter. `evals.run --case` selected a GOLDEN and not a
+    workspace, so `--case zero_income_2026` built this CA MFJ return, scored it
+    against a zero-income golden, and reported the model wrong for it. A second
+    case belongs here, beside the documents it needs; until there is one, naming
+    another is a mistake and says so.
+    """
+    if case != CASE:
+        raise ValueError(
+            f"this fixture builds {CASE!r} and not {case!r}: a case is a "
+            f"workspace as well as a golden, and there is one of each so far")
     dest = Path(dest)
     (dest / "documents").mkdir(parents=True, exist_ok=True)
     (dest / "summaries").mkdir(exist_ok=True)

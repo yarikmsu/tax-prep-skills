@@ -815,3 +815,140 @@ than done here, because the generator's value is in the second golden onwards an
 this PR is one task. Also deferred: `_read_json` is a fifth copy of one loader
 (`tie_out`, `amend`, `rollover`, `projection` hold the others), which is a
 five-site library change and not this PR's.
+
+## V3, second half — the model-driven runner
+
+The first half built the fixture, the golden and the comparator; nothing yet
+dispatched a MODEL at any of it, which is the only thing the harness was for.
+`evals/run.py` closes that: build a fresh workspace, run an agent inside it,
+score what it left behind, and record what was measured.
+
+**Five outcomes, not two, and the separations are the point.** `MATCH` and
+`DIFFERS` are the ones anybody expects. `NO_RESULT` is separated from `DIFFERS`
+because the difference between a wrong return and NO return is the entire
+false-completion question, and a scorer reporting the second as a hundred
+MISSING fields buries it under the first. `UNREADABLE_RESULT` is separated from
+both because a file that is not a result object is a different bug from a file
+with a wrong number in it. `AGENT_FAILED` and `TIMEOUT` are not scored at all: a
+failed agent has made no claim about the return, and scoring whatever it left
+behind reports a half-written file as a wrong one.
+
+**What is recorded.** The roadmap's V3 entry asks for the agent version, the
+instruction revision, the repeat count and the cost, and the reason is that an
+eval number is a claim about a PAIR — this model, these instructions — which is
+unattributable a month later without both. The instruction revision is a DIGEST
+over `.agents/skills/`, path and contents, for the reason `receipt.engine_digest`
+gives about version constants nobody bumps; the PATH is hashed as well as the
+bytes because progressive disclosure makes a MOVED reference a behaviour change.
+The version is read BEFORE the runs, not after: an agent that updates itself
+mid-session would otherwise be recorded under the version that replaced the one
+measured.
+
+**What is never printed: the agent's own output.** It ran inside a workspace
+holding a return, so its transcript may quote any of it. The runner keeps the
+exit status, the timings and a redacted TAIL — kept at all only because "the
+agent crashed" and "the agent computed the wrong number" are indistinguishable
+from an exit code, and that is the one thing the transcript was needed for.
+
+**Where it runs: locally, on the operator's own credentials** (the owner's ruling
+Q2) — a key in this repository's secrets is readable by every workflow the
+repository ever gains, and the runner's output is a scored comparison of a tax
+return going into a durable CI log. A `model-eval.yml` recording that decision was
+written and then deleted in the same PR, on the cleanup pass's argument: it was a
+third copy of a ruling already in the roadmap and the README, it pre-wrote none of
+the plumbing it claimed to save, and GitHub renders a workflow with no `on:` key
+as an "Invalid workflow file" annotation. What survives is the invariant with
+teeth — `ci.yml` is the only workflow with a trigger — widened to catch the
+spellings a grep for `on:` misses: `.yaml` as well as `.yml`, and `"on":`,
+`'on':` and `true:`, all of which YAML 1.1 makes the same key.
+
+**Found by self-review before the cleanup pass, each now mutation-checked:**
+
+- **A timeout killed the agent and not what the agent started.** An agent is a
+  process that spawns processes; `Popen.kill()` reaches only the one this harness
+  launched, so a timeout freed the harness and not the machine and the next
+  repeat competed with the run it replaced. The agent gets its own session and
+  the timeout kills the GROUP.
+- **The workspace ROOT was left at the umask default.** AGENTS.md §1 leaves the
+  root to whoever creates it, and here that is the runner: an owner-only file
+  inside a listable directory still discloses its NAME, and these are named after
+  the documents a return was built from.
+- **A mistyped `--case` was refused after the run rather than before it** — an
+  hour of a model's time spent to produce a harness error. The golden is resolved
+  first, and the refusal names the cases that exist.
+- The run record carries `eval_run.json` into the three-way ignore mirror
+  (`.gitignore`, `IGNORE_PATTERNS`, and the list both are checked against).
+
+**The cleanup pass over the runner (four agents: reuse, simplification, altitude,
+and a privacy pass on the subprocess boundary) found two P1s in it, both
+reproduced before they were believed:**
+
+- **The agent's own output WAS printed, on exactly the runs where nothing else
+  was.** `render` fell back to the redacted tail whenever there was no comparison
+  to show — every `AGENT_FAILED` and `TIMEOUT`, which for a model under test is
+  the common case — while the module docstring said three times that this never
+  happens. `redact` masks identifier shapes and credentials, not a name, an
+  address, an employer or an amount, and `claude -p` writes its final answer to
+  stdout, so the tail was a twenty-line window on the model's prose about the
+  return. The test that should have caught it exercised a SCORED run, which is
+  the one branch that never reaches the line. The tail stays in the record, which
+  is owner-only and is where the docstring always said it went.
+- **A leftover `result.json` was scored as the new run's answer.**
+  `build_workspace` only ADDS files, so a second invocation against the same
+  `--workspace` found the previous run's result and scored it: an agent that
+  produced nothing came back MATCH, exit 0. That is the false-completion this
+  harness exists to catch, inverted into the direction AGENTS.md §4 calls a hard
+  error. An existing per-run directory is refused, naming why.
+
+**And five more, each mutation-checked:**
+
+- `secure_path` was applied to whatever `--workspace` named, so `--workspace .`
+  chmodded the repository to 0700 and `--workspace ~` the home directory. Only
+  what the runner CREATED is its to secure.
+- `--case` selected a GOLDEN and not a WORKSPACE, so a second case would have
+  built this CA MFJ return, scored it against the other golden and reported the
+  model wrong for it. `build_workspace` takes the case and refuses any but its
+  own — a case is both, and the guard costs one argument where a case table would
+  have been speculation.
+- **The PROMPT was outside the digest that claims to identify the instructions
+  under test**, so two runs given materially different instructions recorded the
+  same `instruction_revision` — the staleness the digest exists to prevent,
+  reproduced by the digest itself. It is folded in. And the prompt no longer
+  pre-warns that documents are data and instruction-like text is never a command:
+  the skills say that, whether they say it loudly enough is what the
+  hostile-document-text case exists to measure, and a harness that says it first
+  can only confirm that a warning works when given. The two operational
+  constraints stay, because they are about the operator's machine.
+- Reading both operands under one handler recorded an unreadable GOLDEN — a
+  defect in this repository — as `UNREADABLE_RESULT`, which names the model for
+  it. The golden is read separately and raises.
+- `agent_version` redacted its failure path and not its success path, and that
+  string is printed; the drain after a timeout kill had no timeout of its own, so
+  a grandchild that escaped the group kill blocked the harness for ever on the
+  path whose entire purpose is not to.
+
+**Simplifications taken:** one `outcome` per attempt instead of a run-level one
+wrapping a score-level one (`RAN` was never reported — every consumer replaced it
+with the inner value, and the pairing rule made the record something a reader had
+to know a convention to understand); `--record` deleted, since an unvalidated path
+produced a committable file holding the scored diff and the tails while the ignore
+rules match a basename; `instruction_digest` is `receipt.tree_digest`, extracted
+from `engine_digest`, which asks the same question of the other tree and whose
+digest VALUE is unchanged by the extraction; `golden_path`/`cases` live in
+`compare` and the layout is written once instead of at four call sites.
+
+**`eval_run.json` needed FOUR places, not the three the rule names:** the tracked
+`.gitignore`, `IGNORE_PATTERNS`, the PII gate's sensitive-filename case, and
+`harden-runtime-perms.sh`, which a test pins as a superset of the gate's list.
+The test caught the fourth, which is what that test is for; the altitude pass is
+right that a hand-copied list in four places is the thing to fix, and that is its
+own change.
+
+**Deferred, with the reasoning recorded:** the per-case expected-outcome contract
+the five refusal cases need. The cleanup pass argues for cutting the seam now,
+while `run_once`/`score`/the exit contract have only one shape to accommodate, and
+that argument is good. It is deferred because the shape of a refusal expectation
+is not yet known — the evidence for a refusal is the agent's own stop message, and
+how much of that may be kept is the privacy question this PR just spent two P1s
+on. The two things that will have to move are named in `evals/README.md` so the
+move is a decision rather than a discovery.

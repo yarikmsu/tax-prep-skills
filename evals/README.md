@@ -17,8 +17,23 @@ This directory is where that gets scored.
 | `goldens/<case>/golden_result.json` | The known answer for that workspace. |
 | `goldens/<case>/derivation.md` | Every figure in it, with the arithmetic — checkable with a pencil. |
 | `compare.py` | Scores a computed `result.json` against a golden, with tolerance on money only. |
+| `run.py` | Dispatches an AGENT against a fresh fixture workspace and scores what it produced. |
 
 ## Running it
+
+The whole thing, with a model:
+
+```bash
+sh agents/lib/run.sh -m evals.run --agent claude --case ca_mfj_2026 \
+    --workspace ./eval-out --repeat 3
+```
+
+That builds a fresh workspace per repeat, dispatches the agent into it, scores
+`result.json` against the golden, and writes `eval-out/eval_run.json`. It exits 0
+only when every repeat matched. **It runs locally, on your own credentials** —
+see "Where the model-driven runs happen" below.
+
+Or the halves separately, when you want to drive the agent yourself:
 
 ```bash
 sh agents/lib/run.sh -m evals.fixture --dest /tmp/eval-ws     # build the workspace
@@ -27,6 +42,64 @@ sh agents/lib/run.sh -m evals.compare --result /tmp/eval-ws/result.json
 ```
 
 `compare` exits 0 on a match and 2 on any difference, so it drops into a script.
+
+## What a run records, and what it never prints
+
+`eval_run.json` carries the agent's version, a DIGEST of `.agents/skills/` (the
+instructions under test), a digest of `agents/lib/` (the engine), the repeat
+count, the per-run timings and the scored comparison. An eval number is a claim
+about a PAIR — this model, these instructions — and one recorded without both is
+unattributable a month later; the digests are digests rather than version strings
+for the reason `receipt.engine_digest` gives, which is that a constant nobody
+bumps reads fresh while describing something that has moved.
+
+The agent's own output is never printed. It ran inside a workspace holding a
+return, so its transcript may quote any of it; the runner keeps the exit status,
+the timings, and a redacted TAIL for a run that failed before producing anything —
+enough to tell "the agent crashed" from "the agent computed the wrong number",
+which is the only thing the transcript was needed for.
+
+Five outcomes, and they are not the same failure:
+
+| | |
+|---|---|
+| `MATCH` | the result is the golden, within tolerance |
+| `DIFFERS` | a return was produced and it is wrong — see the comparison |
+| `NO_RESULT` | the agent finished and wrote no `result.json` at all |
+| `UNREADABLE_RESULT` | it wrote one that is not a result object |
+| `AGENT_FAILED` / `TIMEOUT` | it never got as far as a claim about the return |
+
+`NO_RESULT` is separated from `DIFFERS` deliberately: the difference between a
+wrong return and no return is the whole false-completion question, and a scorer
+reporting the second as a hundred MISSING fields would bury it under the first.
+
+The workspace is deleted afterwards unless you pass `--keep`. It holds a return.
+
+## Where the model-driven runs happen, and what it does not enforce
+
+Locally, on demand, on the operator's own credentials — the owner's ruling (Q2,
+2026-09-07). A key in this repository's secrets would be readable by every
+workflow the repository ever gains, and the runner's output is a scored
+comparison of a tax return going into a durable CI log. There is no workflow for
+it and a test pins that `ci.yml` stays the only workflow with a trigger.
+
+Three residuals, stated rather than implied, because they are the difference
+between what the runner CONTROLS and what it asks for:
+
+- **The agent runs with your environment and your agent settings.** It needs its
+  own credentials, so stripping the environment is not an option; the consequence
+  is that it sees every variable in your shell and whatever tool allowlists your
+  agent already has. Point `--workspace` somewhere with nothing else in it.
+- **"Do not access the network" is asked, not enforced.** Nothing here sandboxes
+  the agent. If that matters for your run, sandbox it outside.
+- **The workspace path is a command-line argument**, so it is visible to other
+  users of the machine in `ps`. Do not name a workspace after a taxpayer.
+
+The prompt deliberately does NOT tell the agent that documents are data and that
+instruction-like text inside one is never a command. The skills say that;
+whether they say it loudly enough is what the hostile-document-text case exists
+to measure, and a harness that says it first can only confirm that a warning
+works when given.
 
 ## What a difference means
 
@@ -104,10 +177,34 @@ so the derivation can be checked by hand.
 
 ## What is not here yet
 
-The **model-driven runner** — the part that actually dispatches an agent against
-the fixture and scores the result — and the cases the backlog's V3 entry names: a
-missing and a corrected document, hostile document text, a stale cache, a context
-interruption, and a valid zero-income return. Each of those is its own golden.
+The cases the backlog's V3 entry names beyond the first: a missing and a corrected
+document, hostile document text, a stale cache, a context interruption, and a
+valid zero-income return.
+
+**Only the last of those is another golden.** The rest are cases whose correct
+outcome is a REFUSAL — the tie-out gate blocking a missing document, Step 0.5
+stopping on a stale cache, the parse treating instruction-like text as data — and
+scoring a refusal against a `result.json` is the wrong shape entirely: `run.py`
+reports a missing `result.json` as `NO_RESULT` and exits 2, which for a refusal
+case is the CORRECT behaviour being marked as failure.
+
+So the next piece here is an expected-outcome contract per case, not a fifth copy
+of this golden: `goldens/<case>/` declaring what the case expects, with today's
+golden comparison as one kind among several. Two things will have to move when it
+lands, and they are named here so the move is a decision rather than a discovery
+— the exit contract (`matched == repeats`) and how much of the agent's output
+survives, because a refusal's evidence is the agent's own stop message and the
+runner currently keeps twenty redacted lines of it in the record only.
+
+**A case is a WORKSPACE as well as a golden.** `fixture.build_workspace` takes the
+case and refuses any but its own, because `--case` reaching only the golden meant
+`--case zero_income_2026` would have built this CA MFJ return, scored it against
+the other golden, and reported the model wrong for it.
+
+The **golden builder** is the other open piece: `ca_mfj_2026` is filled in by
+hand, verified figure by figure against the engine in `tests/test_evals.py`, and
+that is affordable exactly once. The reasoning for building it with the second
+golden rather than now is at the end of `docs/changelog/epic-V.md`.
 
 Owner rulings that shaped this (2026-09-07, Part 5 of
 `docs/roadmap/2026-09-05-staff-agent-review.md`): the first golden is synthetic

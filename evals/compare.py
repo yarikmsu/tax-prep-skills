@@ -318,6 +318,24 @@ def render(differences: "list[Difference]", case: str) -> str:
     return "\n".join(lines)
 
 
+GOLDENS = Path(__file__).resolve().parent / "goldens"
+
+
+def golden_path(case: str) -> Path:
+    """Where a case's golden lives. One answer, because the layout was written
+    out at four call sites and renaming the file would have fixed some of
+    them."""
+    return GOLDENS / case / "golden_result.json"
+
+
+def cases() -> "list[str]":
+    """The cases that have a golden, for an error message that can name them."""
+    if not GOLDENS.is_dir():
+        return []
+    return sorted(p.name for p in GOLDENS.iterdir()
+                  if (p / "golden_result.json").is_file())
+
+
 def _load(path: Path, what: str) -> dict:
     try:
         data = json.loads(path.read_text())
@@ -356,11 +374,12 @@ def _main(argv: list) -> int:
                              "figure (money fields only)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    golden_path = Path(__file__).resolve().parent / "goldens" / args.case / "golden_result.json"
-    if not golden_path.is_file():
-        print(f"ERROR: no golden for case {args.case!r}", file=sys.stderr)
+    golden = golden_path(args.case)
+    if not golden.is_file():
+        print(f"ERROR: no golden for case {args.case!r} — the cases are "
+              f"{', '.join(cases()) or 'none'}", file=sys.stderr)
         return 1
-    differences = compare(_load(golden_path, "the golden"),
+    differences = compare(_load(golden, "the golden"),
                           _load(Path(args.result), "the result"),
                           tolerance=args.tolerance)
     if args.json:
