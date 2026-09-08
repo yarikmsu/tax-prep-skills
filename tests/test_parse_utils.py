@@ -2,7 +2,9 @@
 reparse-point guards on the two paths that read taxpayer documents."""
 import csv
 import re
+import shutil
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -177,11 +179,24 @@ def _workbook(path, rows=(("Wages", 1234),), title=None):
     return path
 
 
-def _run_cli(*args):
+def _run_cli(*args, workspace=None):
+    """Invoke the CLI the way a parse worker does — from inside a workspace.
+
+    Every CLI read is confined to a workspace, and the DEFAULT is the working
+    directory. So the workspace is expressed by RUNNING there, which is what
+    every skill invocation does and is therefore the path worth covering; an
+    explicit `--workspace` is passed only by the tests that name an escape.
+    Inferring it from the arguments instead left the default path — the one in
+    production — exercised by nothing but a grep of the module source.
+    """
+    target = next((a for a in args[1:] if a and Path(a).exists()), None)
+    cwd = workspace or (
+        str(Path(target) if Path(target).is_dir() else Path(target).parent)
+        if target else str(Path(__file__).resolve().parent.parent))
     return subprocess.run(
-        [sys.executable, str(Path("agents/lib/parse_utils.py")), *args],
-        capture_output=True, text=True,
-        cwd=str(Path(__file__).resolve().parent.parent))
+        [sys.executable, str(Path(__file__).resolve().parent.parent
+                             / "agents" / "lib" / "parse_utils.py"), *args],
+        capture_output=True, text=True, cwd=cwd)
 
 
 def test_excel_extraction_refuses_when_defusedxml_is_absent(tmp_path,
@@ -868,6 +883,166 @@ class TestEveryExtractionRouteMasks:
         with pytest.raises(ValueError, match="mask to the same name"):
             extract_excel(str(book), workspace=str(tmp_path))
 
+
+def _csv_at(path: Path, rows) -> Path:
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(rows)
+    return path
+
+
+class TestEveryCliReadIsConfinedToAWorkspace:
+    """V6. The library functions have taken a `workspace=` since they were
+    written and refuse a path — or a symlink target — outside it. The CLI passed
+    None to every one of them, so the confinement was OFF for the only caller
+    that matters, and "run only parse_utils" was permission to read the whole
+    disk one suffix at a time.
+
+    This is the half of the parse boundary that no tool grant can supply. A
+    worker restricted to one command is only as confined as that command is: an
+    allowed reader with an unrestricted path argument is an arbitrary reader.
+    """
+
+    def test_a_document_inside_the_workspace_is_read(self, tmp_path):
+        doc = tmp_path / "documents"
+        doc.mkdir()
+        _csv_at(doc / "bank.csv", [["Date", "Amount"], ["2026-01-02", "10.00"]])
+        proc = _run_cli("csv", str(doc / "bank.csv"), workspace=str(tmp_path))
+        assert proc.returncode == 0 and "2026-01-02" in proc.stdout
+
+    @pytest.mark.parametrize("command,suffix", [
+        ("csv", ".csv"), ("extract", ".pdf"), ("tables", ".pdf"),
+        ("excel", ".xlsx"), ("classify", ".pdf"),
+    ])
+    def test_a_path_outside_the_workspace_is_refused(self, tmp_path, command,
+                                                     suffix):
+        """One case per route, because the CLI passed the workspace through five
+        separate call sites and four of them being right is a hole."""
+        workspace = tmp_path / "workspace"
+        (workspace / "documents").mkdir(parents=True)
+        outside = tmp_path / "other-return"
+        outside.mkdir()
+        target = outside / f"statement{suffix}"
+        target.write_bytes(b"%PDF-1.4 not really\n")
+        proc = _run_cli(command, str(target), workspace=str(workspace))
+        assert proc.returncode == 1
+        assert "outside workspace" in proc.stderr
+        assert proc.stdout.strip() == "", "a refused read printed something"
+
+    def test_scan_is_confined_too(self, tmp_path):
+        """`scan` takes a DIRECTORY, so `_validate_file_path` never sees it —
+        and an unconfined `scan /` is a map of every tax document on the
+        machine, which is the reconnaissance step before the reads."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "other-return"
+        outside.mkdir()
+        _csv_at(outside / "bank.csv", [["a"], ["1"]])
+        proc = _run_cli("scan", str(outside), workspace=str(workspace))
+        assert proc.returncode == 1 and "outside workspace" in proc.stderr
+        assert "bank.csv" not in proc.stdout
+
+    def test_a_symlink_out_of_the_workspace_is_refused(self, tmp_path):
+        """The containment is on the RESOLVED path, so a link planted in
+        `documents/` cannot be the way out."""
+        if sys.platform.startswith("win"):  # pragma: no cover - needs a right
+            pytest.skip("symlinks")
+        workspace = tmp_path / "workspace"
+        documents = workspace / "documents"
+        documents.mkdir(parents=True)
+        outside = tmp_path / "other-return"
+        outside.mkdir()
+        _csv_at(outside / "real.csv", [["secret"], ["1"]])
+        (documents / "innocent.csv").symlink_to(outside / "real.csv")
+        proc = _run_cli("csv", str(documents / "innocent.csv"),
+                        workspace=str(workspace))
+        assert proc.returncode == 1
+        assert "outside workspace" in proc.stderr and "secret" not in proc.stdout
+
+    def test_the_refusal_names_a_redacted_path(self, tmp_path):
+        """The message names the path, and the path is redacted like every other
+        printed path here — a workspace named after a taxpayer discloses one."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "000-00-0000"
+        outside.mkdir()
+        _csv_at(outside / "bank.csv", [["a"], ["1"]])
+        proc = _run_cli("csv", str(outside / "bank.csv"), workspace=str(workspace))
+        assert proc.returncode == 1
+        assert "000-00-0000" not in proc.stderr and "REDACTED" in proc.stderr
+
+    def test_the_workspace_flag_is_positional_so_a_later_one_cannot_widen_it(
+            self, tmp_path):
+        """`csv doc.csv --workspace /` READ THE FILE. The confinement was still
+        on and applied to `/`, which is the off switch this class exists to say
+        does not exist. Accepting the flag only in first position is what makes
+        that unwritable; a trailing one is refused rather than ignored, so a
+        caller who meant it is told."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "other-return"
+        outside.mkdir()
+        _csv_at(outside / "bank.csv", [["secret"], ["1"]])
+        proc = subprocess.run(
+            [sys.executable, "agents/lib/parse_utils.py", "csv",
+             str(outside / "bank.csv"), "--workspace", "/"],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent.parent))
+        assert proc.returncode == 1
+        assert "must come first" in proc.stderr
+        assert "secret" not in proc.stdout
+
+    def test_a_second_workspace_flag_does_not_win(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "other-return"
+        outside.mkdir()
+        _csv_at(outside / "bank.csv", [["secret"], ["1"]])
+        proc = subprocess.run(
+            [sys.executable, "agents/lib/parse_utils.py",
+             "--workspace", str(workspace), "--workspace", "/",
+             "csv", str(outside / "bank.csv")],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent.parent))
+        assert proc.returncode == 1 and "secret" not in proc.stdout
+
+    def test_a_sibling_directory_sharing_a_prefix_is_still_outside(self, tmp_path):
+        """`/a/b` and `/a/bc` share a string prefix and share no directory. A
+        containment check written on the string rather than the components
+        admits the second."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        sibling = tmp_path / "wsc"
+        sibling.mkdir()
+        _csv_at(sibling / "bank.csv", [["secret"], ["1"]])
+        proc = _run_cli("csv", str(sibling / "bank.csv"), workspace=str(workspace))
+        assert proc.returncode == 1 and "secret" not in proc.stdout
+
+    def test_the_default_workspace_is_where_the_command_was_run(self):
+        """The production path: every skill invokes this from the workspace root
+        and passes a relative path, with no flag at all. That default is what
+        confines a real run, so it is what the escape below is measured against
+        — a test suite that only ever passed `--workspace` would leave it
+        covered by nothing."""
+        import subprocess as sp
+        cli = str(Path(__file__).resolve().parent.parent
+                  / "agents" / "lib" / "parse_utils.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "documents").mkdir()
+            _csv_at(root / "documents" / "in.csv", [["a"], ["1"]])
+            outside = root.parent / f"{root.name}-sibling"
+            outside.mkdir()
+            _csv_at(outside / "out.csv", [["secret"], ["1"]])
+            try:
+                inside = sp.run([sys.executable, cli, "csv", "documents/in.csv"],
+                                capture_output=True, text=True, cwd=str(root))
+                escape = sp.run([sys.executable, cli, "csv",
+                                 str(outside / "out.csv")],
+                                capture_output=True, text=True, cwd=str(root))
+            finally:
+                shutil.rmtree(outside, ignore_errors=True)
+        assert inside.returncode == 0, inside.stderr
+        assert escape.returncode == 1 and "secret" not in escape.stdout
 
 class TestTheCliNeverPrintsAnUnredactedFailure:
     """Only three exception classes were caught; an IndexError, a RuntimeError

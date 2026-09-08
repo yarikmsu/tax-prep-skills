@@ -12,6 +12,40 @@ Behaviour below was verified against vendor documentation in **August 2026**.
 Agents ship fast; if a claim here contradicts what your agent actually does,
 trust the agent and please open a PR.
 
+## Parsing an untrusted document: which hosts can enforce the boundary
+
+A source document is untrusted input, and `AGENTS.md` §1 requires the party
+parsing it to have no network access and to write nothing outside `summaries/`.
+Whether that is a BOUNDARY or a request depends on your agent.
+
+| Agent | Mode | Why |
+|---|---|---|
+| Claude Code | **ENFORCED** | a sub-agent definition's `tools:` list is an enforced allowlist — a capability left out is unavailable, not discouraged. `.claude/agents/tax-parse-worker.md` holds none that reads, writes, runs or fetches. |
+| Codex | SEQUENTIAL | no closed tool set for a sub-task |
+| Kimi Code | SEQUENTIAL | no closed tool set for a sub-task |
+| Copilot | SEQUENTIAL | no closed tool set for a sub-task |
+| Cursor | SEQUENTIAL | sub-agents exist; no enforced per-agent tool allowlist to rely on |
+
+SEQUENTIAL is a supported path, not a failure: the parse runs in the main session
+under the rules as instructions, and every summary written that way opens with a
+banner saying the boundary was NOT enforced. A toolkit that refused to parse on
+three of its four other supported agents would be the portability regression this
+file exists to record.
+
+**What is enforced on every host, including the sequential one:** the extraction
+itself. `parse_utils.py` masks every SSN/ITIN at the moment of extraction and
+refuses any path outside the workspace — the confinement defaults to the working
+directory and cannot be switched off. That matters most where the boundary is
+weakest: on a sequential host it is the only thing standing between an injected
+"read this other file" and the file being read, because the CLI simply will not.
+
+**Measured on Claude Code 2.1.263, and worth knowing before you trust a grant:**
+the `tools:` allowlist IS enforced, but `Read` is NOT confined to a directory — an
+agent holding it read `/etc/hosts` and a file above its workspace with no prompt.
+That is why the parse worker holds no `Read`. `PreToolUse` hooks fail OPEN and
+`permissions` rules are session-wide, so neither can be the boundary. The full
+probe is in `docs/ops/review-subagent-acceptance.md`.
+
 ## Two hazards that cut across every agent
 
 **1. Stale tax figures.** Tax numbers change annually, and a prior-year figure

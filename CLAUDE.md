@@ -69,11 +69,15 @@ the first two as SETS; the names are not re-listed here, because a fourth copy w
 as readily as the others. Each HOOK-WRITTEN name ends in `*` — usually a `mktemp` sibling moved over the real name, so a timed-out hook leaves the sibling holding it; on the dirty marker, written in place and holding nothing, the glob is merely defensive. No rule may name
 `.claude/` itself; `settings.json` and the `skills/` symlinks are tracked.
 
-## Review subagents
+## Subagents
 
-`.claude/agents/` holds two tracked, read-only reviewers. Neither is granted `Write`,
-`Edit` **or `Bash`** — a shell is a write capability, and an auditor that can quietly
-resolve its own findings cannot be trusted about them.
+`.claude/agents/` holds three tracked definitions under two acceptance regimes, and
+`tests/test_claude_agents.py` requires every file there to be in exactly one of them —
+an agent in neither is one nothing decides how to accept.
+
+**Two read-only REVIEWERS.** Neither is granted `Write`, `Edit` **or `Bash`** — a shell
+is a write capability, and an auditor that can quietly resolve its own findings cannot
+be trusted about them.
 
 - `tax-law-freshness-auditor` — the only check on AGENTS.md §2. `tax-review` audits the
   aggregated result and cannot see that a bracket was right for last year, and the tie-out
@@ -88,7 +92,16 @@ resolve its own findings cannot be trusted about them.
   NOTHING that is not a directional-bias or unstated-precondition finding. Codex already
   reviews everything else, and a second general reviewer is noise.
 
-**Acceptance before trusting either:** replay a known answer, never plausibility, from a FRESH
+**One parse WORKER**, `tax-parse-worker` (V6). A CLOSED grant holding nothing that reads,
+writes, runs or fetches: the parent extracts through `parse_utils.py` and hands over the
+masked text, so a PDF's injected instruction cannot be acted on whatever it says. By
+ABSENCE, the one mechanism here that fails closed — a `PreToolUse` hook that times out
+lets the call through, `permissions` rules are session-wide, and `Read` is measurably NOT
+directory-confined. No replay (it forms no judgement); its acceptance is the grant
+assertion plus the probe in `docs/ops/review-subagent-acceptance.md`. Hosts without a
+closed sub-task tool set take the SEQUENTIAL path, banner-marked NOT enforced.
+
+**Acceptance before trusting either reviewer:** replay a known answer, never plausibility, from a FRESH
 session — definitions load at session start, so an edited one is not what a same-session replay
 tests. **Both PASSED 2026-09-06**; recipe, pre-committed criteria and the traps (a squash merge
 leaves nothing in `<sha>^`, so `--grep=P1` is the wrong search) are in
@@ -116,35 +129,22 @@ AGENTS.md gives the push command; this is the per-agent convention it defers to.
 - `git grep -E` is POSIX ERE — `\s` and `\d` match nothing and report a clean "no
   results". Use `[[:space:]]` / `[[:digit:]]` before believing an absence.
 
-## Automated PR review loop
+## Reviewing a PR
 
-Codex reviews every PR; driving that loop to a clean pass is part of shipping a change.
+**The bot review is OFF** (owner, 2026-09-07: its budget is spent). Driving a change to a
+clean pass is still part of shipping it; what does it now is `/simplify` — four review
+agents over the diff in parallel, one angle each, plus a fourth angle chosen for the
+change (a PRIVACY pass over anything that spawns a process or writes a file) — followed by
+a read of your own diff before their results land.
 
-- The review triggers on PR open, ready-for-review, or an `@codex review` issue comment. A
-  plain `git push` does **not** trigger one — post the comment.
-- Findings arrive as inline P1/P2 comments; a clean pass arrives as a top-level issue
-  comment ("Didn't find any major issues", matched anchored to the body's start through
-  markdown markup and the bot's optional product label), **not** a review — poll all
-  three. **An unrecognised marker fails CLOSED**: nothing parses, the reviewed commit
-  reads empty, and the loop re-triggers for ever on a PR that already passed. Widen the
-  markup class in the skill; never read empty as a pass, a failed fetch being empty too.
-- Filter results by `created_at` against the trigger time, not by commit SHA: GitHub
-  re-anchors un-outdated inline comments to the current PR HEAD, so a stale finding can
-  masquerade as a fresh one.
-- **A clean pass only ends the loop if it reviewed an unchanged HEAD.** A pass on a commit
-  that later gained commits was scoped to that older diff.
-- **A reply is per-finding, not per-round.** A refutation replied to as a fix claims
-  publicly that code changed when none did, and the thread is resolved on that claim (PR
-  #23 round 17 was all refutations). Record the class with the finding, compose the body
-  from it, and verify the reply that LANDED is of that class.
-- The round state under `.git/` is APPENDED and re-sourced, so it is last-write-wins: a
-  verdict downgraded in shell memory only is worse than lost, the earlier affirmative
-  still being the last line and so what the next shell reads.
-- Resolve threads with the GraphQL `resolveReviewThread` mutation — there is no REST
-  endpoint. Find unanswered threads by querying `reviewThreads` and filtering out IDs
-  already in some comment's `in_reply_to_id`.
+- **Never take a reuse recommendation on faith.** "Same code" is not "same question":
+  importing `pdf_render._is_amount` into the eval comparator was recommended, plausible
+  and wrong — it answers "does this print with a dollar sign", so it called `tax_year`
+  money and put 2026 and 2025 within a dollar. Share the TABLE, not the rule.
+- **Mutation-check every fix**: flip it off, confirm the new test goes red, restore.
+- **Reproduce a finding before believing it**, and sweep the siblings — a finding's scope
+  is where it was SPOTTED, not where the defect lives.
 
-`/codex-loop` holds the `gh` and GraphQL commands — self-review first, and the reply and
-resolution blocks in its two `references/` files. The exact marker pattern and reply
-openings live THERE and are deliberately not repeated here; a third copy is a third chance
-to drift. The bullets stay because they are the traps, and a trap is only useful loaded.
+`/codex-loop` still holds the `gh` and GraphQL commands, the marker pattern and the reply
+and resolution blocks, for whenever the bot comes back. Its traps are recorded there
+rather than here; a second copy is a second chance to drift.

@@ -34,7 +34,22 @@ from agents.lib.tax_law_fetcher import (
 REPO = Path(__file__).resolve().parent.parent
 AGENTS_DIR = REPO / ".claude" / "agents"
 
-EXPECTED_AGENTS = {"tax-law-freshness-auditor", "bias-direction-reviewer"}
+# The agents whose output is a JUDGEMENT a human acts on. These are what the
+# acceptance record covers: a replay against a known answer, because there is no
+# way to check a reviewer's opinion except by giving it a defect somebody planted
+# and seeing whether it says so.
+REVIEW_AGENTS = {"tax-law-freshness-auditor", "bias-direction-reviewer"}
+
+# Agents that do WORK rather than form a judgement, and whose acceptance is a
+# different question. `tax-parse-worker` is not trusted to be right about a
+# document — the tie-out gate checks that — it is trusted not to be able to do
+# anything else, and that is checkable HERE, from its grant, rather than by
+# replaying a session. Keeping the two sets apart is what stops a worker with no
+# replay from either dragging the reviewers' standing claim down with it or
+# quietly widening what "accepted" means.
+WORKER_AGENTS = {"tax-parse-worker"}
+
+EXPECTED_AGENTS = REVIEW_AGENTS | WORKER_AGENTS
 
 # Every agent defined here reviews or audits. None of them writes.
 #
@@ -667,6 +682,19 @@ class TestAgentDefinitions:
                 "A misspelt grant is silent: the agent simply does not have the "
                 "capability its prompt assumes.")
 
+    def test_every_agent_is_covered_by_one_acceptance_regime(self):
+        """The two sets partition `.claude/agents/`, and neither may be empty.
+
+        A file in neither set is an agent nothing decides how to accept — it
+        passes every grant check below and is covered by no record and no
+        boundary assertion, which is the state each of those was written to make
+        impossible."""
+        assert REVIEW_AGENTS & WORKER_AGENTS == set()
+        assert REVIEW_AGENTS and WORKER_AGENTS
+        # The completeness half is `test_the_expected_agents_are_present`, whose
+        # `EXPECTED_AGENTS` is this union; restating it here made one edit turn
+        # two tests red and said nothing the first did not.
+
     def test_review_agents_cannot_write(self):
         """A reviewer that can edit can resolve its own findings, and a finding
         that was quietly fixed is a finding nobody reviewed. Both agents here
@@ -708,6 +736,104 @@ class TestAgentDefinitions:
             assert not excess, (
                 f"{f.name} has network access and also {excess}; a networked "
                 "agent in this workspace is held to reading one JSON file")
+
+
+class TestTheParseWorkerBoundaryIsDrawnByAbsence:
+    """V6. The parse worker's acceptance is not a replay, because it forms no
+    judgement to replay — it is trusted not to be ABLE to do anything but read
+    the text it was handed. That is checkable here, from the grant.
+
+    The measurement that shaped the grant — which host mechanisms fail closed and
+    which do not — is stated once, with its date and build, in
+    `docs/ops/review-subagent-acceptance.md`. It is not restated here: this
+    repository has been bitten enough times by one quantity kept in several
+    places that `skill-invariants.sh`'s MEASURED COSTS block exists for it, and a
+    host fact copied into a test docstring goes stale exactly as quietly.
+
+    Its conclusion is the design: one mechanism fails closed, and it is not
+    granting the capability. Everything below asserts an absence.
+    """
+
+    # A CLOSED set, deliberately, and not another forbidden list. The forbidden
+    # lists in this module exist where an agent needs real capabilities and the
+    # question is which; here the answer is "none", so the checkable form is the
+    # whole allowed set. A tool added to Claude Code cannot quietly become
+    # available to this worker — it has to be admitted on this line, by someone
+    # who has to say why a document-parsing sub-task needs it.
+    #
+    # `TodoWrite` is the grant, and it is a placeholder: a subagent whose
+    # resolved tool set is EMPTY fails to launch, so the worker holds the one
+    # tool that touches nothing outside the session — no file, no process, no
+    # socket. It is not used by the prompt and nothing depends on it.
+    WORKER_MAX = {"TodoWrite"}
+
+    def _worker(self):
+        (path,) = [f for f in _agent_files() if f.stem in WORKER_AGENTS]
+        return path
+
+    def test_the_worker_holds_nothing_that_reads_writes_runs_or_fetches(self):
+        granted = _tools(self._worker())
+        assert granted, "an empty grant fails to launch; see WORKER_MAX"
+        excess = sorted(granted - self.WORKER_MAX)
+        assert not excess, (
+            f"tax-parse-worker holds {excess}. Its whole boundary is that it "
+            "holds no capability — a document's injected text cannot make it "
+            "fetch, read or write something it has no tool for, and nothing "
+            "else on this build fails closed")
+
+    def test_it_has_no_read_tool_and_the_definition_says_why(self):
+        """The one grant a reader would assume is safe, and the two reasons it
+        is not: `Read` is not path-confined on this build, and reading a document
+        directly bypasses the extraction masking — which is the P0 V0 fixed."""
+        granted = _tools(self._worker())
+        assert not (granted & {"Read", "Grep", "Glob"})
+        body = self._worker().read_text()
+        assert "NOT to be confined" in body or "not confined" in body, (
+            "the definition must say Read is unconfined and point at the probe "
+            "— the next maintainer's first instinct is to grant it")
+        assert "review-subagent-acceptance.md" in body, (
+            "and it must NAME the record rather than restate the measurement")
+        assert "full" in body and "SSN" in body
+
+    def test_it_declares_the_document_text_to_be_data(self):
+        """The prompt-level half, which still matters: the worker cannot ACT on
+        an injected instruction, but it can still be fooled into transcribing a
+        wrong figure, and the note it writes is how a taxpayer learns a document
+        they were sent carried one."""
+        body = self._worker().read_text()
+        assert "IS DATA" in body or "is data" in body.lower()
+        assert "Notes" in body, "an injection has to be reported, not just ignored"
+
+    def test_both_modes_specify_the_same_summary_shape(self):
+        """The summary feeds `parse_ledger.json` and `tax-compute`. Written out
+        twice — once in the worker's prompt, once in the reference the sequential
+        path follows — the two had already drifted by a clause, so ENFORCED and
+        SEQUENTIAL could emit differently-shaped summaries of the same return."""
+        def block(text: str) -> str:
+            after = text.split("# {Group Name} — Tax Year {year}", 1)[1]
+            return after.split("```", 1)[0].strip()
+
+        worker = block(self._worker().read_text())
+        reference = block((REPO / ".agents" / "skills" / "tax-parse"
+                           / "references" / "parse-task-delegation.md").read_text())
+        assert worker == reference, (
+            "the worker's summary format and the reference's have diverged:\n"
+            f"worker:\n{worker}\n\nreference:\n{reference}")
+
+    def test_the_parse_skill_names_the_worker_and_the_degrade_path(self):
+        """Doc-sync. An agent nothing dispatches is not a boundary, and a host
+        that cannot give a sub-task a closed tool set must still be able to
+        parse — AGENTS.md §4 promises the sequential path on every agent."""
+        skill = (REPO / ".agents" / "skills" / "tax-parse" / "SKILL.md").read_text()
+        reference = (REPO / ".agents" / "skills" / "tax-parse" / "references"
+                     / "parse-task-delegation.md")
+        assert reference.is_file(), "the delegation detail must have a reference"
+        both = skill + reference.read_text()
+        assert "tax-parse-worker" in both
+        assert "NOT enforced" in both, (
+            "the sequential path must say in the summary that the boundary was "
+            "not enforced — an unenforced boundary presented as enforced is "
+            "worse than none")
 
 
 class TestFreshnessAuditorMatchesTheSchema:
@@ -1881,7 +2007,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         # inside that section the two things a replay is made of.
         sections, problem = _replay_sections(text)
         assert problem is None, problem
-        for name in EXPECTED_AGENTS:
+        for name in REVIEW_AGENTS:
             assert name in sections, (
                 f"{name} has no `## Replay` section in {self.RECORD.name} "
                 f"(found {sorted(sections) or 'none'}); CLAUDE.md requires "
@@ -1948,7 +2074,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
 
         sections, problem = _replay_sections(record)
         assert problem is None, problem
-        assert set(sections) == EXPECTED_AGENTS, (
+        assert set(sections) == REVIEW_AGENTS, (
             f"the live record parses to {sorted(sections)}, so every fixture "
             "below is built on something other than the document this scores")
 
@@ -2084,7 +2210,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         date = self._claim_date()
         if date is None:
             return                      # nothing advertised, nothing to back
-        unbacked = _unbacked(self.RECORD.read_text(), date, EXPECTED_AGENTS)
+        unbacked = _unbacked(self.RECORD.read_text(), date, REVIEW_AGENTS)
         assert not unbacked, (
             f"CLAUDE.md advertises both reviewers as accepted on {date}, and "
             f"{self.RECORD.name} does not back it: {unbacked}. Either re-run the "
@@ -2119,7 +2245,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         date = self._claim_date()
         if date is None:
             return                      # no verdict is being relied on
-        unpinned = _unpinned(self.RECORD.read_text(), date, EXPECTED_AGENTS)
+        unpinned = _unpinned(self.RECORD.read_text(), date, REVIEW_AGENTS)
         assert not unpinned, (
             f"a recorded verdict does not name what it was dispatched with: "
             f"{unpinned}. If a definition was edited, re-run its replay from a "
@@ -2327,9 +2453,9 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         # history legal at all. Asserted before anything is doctored, so a
         # failure here reads as the audits reaching across sections rather than
         # as a fixture problem.
-        assert not _unbacked(record, date, EXPECTED_AGENTS), (
+        assert not _unbacked(record, date, REVIEW_AGENTS), (
             "a section filed under another date was read as the claim's own")
-        assert not _unpinned(record, date, EXPECTED_AGENTS)
+        assert not _unpinned(record, date, REVIEW_AGENTS)
 
         # Every verdict forced to PASS, so the baseline is all-PASS whatever the
         # record currently says. A control that assumed the live record was green
@@ -2339,24 +2465,24 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         section = re.sub(r"^(### `[\w-]+` — )FAIL", r"\1PASS", span.group(1),
                          flags=re.M)
         baseline = spliced(section)
-        assert not _unbacked(baseline, date, EXPECTED_AGENTS)
-        assert not _unpinned(baseline, date, EXPECTED_AGENTS)
+        assert not _unbacked(baseline, date, REVIEW_AGENTS)
+        assert not _unpinned(baseline, date, REVIEW_AGENTS)
 
         name = "bias-direction-reviewer"
         regressed = section.replace(f"### `{name}` — PASS",
                                     f"### `{name}` — FAIL", 1)
         assert regressed != section, "the fixture edit landed nowhere"
         assert _unbacked(spliced(regressed), date,
-                         EXPECTED_AGENTS) == [f"{name}: FAIL"], (
+                         REVIEW_AGENTS) == [f"{name}: FAIL"], (
             "a recorded FAIL still backs the CLAUDE.md pass claim")
 
         dropped = section.replace(f"### `{name}` — PASS\n", "", 1)
         assert dropped != section, "the verdict-removal fixture edit landed nowhere"
-        assert _unbacked(spliced(dropped), date, EXPECTED_AGENTS) == [
+        assert _unbacked(spliced(dropped), date, REVIEW_AGENTS) == [
             f"{name}: no verdict recorded"], (
             "an agent with no verdict at all still backs the claim")
 
-        assert _unbacked(baseline, "1999-01-01", EXPECTED_AGENTS), (
+        assert _unbacked(baseline, "1999-01-01", REVIEW_AGENTS), (
             "a claim naming a date the record never ran was read as backed")
 
         # Two runs on one calendar day, the later one appended. Reading the
@@ -2366,7 +2492,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         doubled = (baseline + f"\n## Results — {date}\n\n"
                    f"### `{name}` — FAIL\n\nthe re-run regressed.\n")
         for audit in (_unbacked, _unpinned):
-            problems = audit(doubled, date, EXPECTED_AGENTS)
+            problems = audit(doubled, date, REVIEW_AGENTS)
             assert len(problems) == 1 and "2 `## Results" in problems[0], (
                 f"{audit.__name__} picked one of two same-dated results "
                 f"sections instead of reporting the ambiguity: {problems}")
@@ -2388,7 +2514,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
                                 f"### `{name}` — FAIL", 1)):
             assert doctored != section, "the doubled-verdict edit landed nowhere"
             for audit in (_unbacked, _unpinned):
-                problems = audit(spliced(doctored), date, EXPECTED_AGENTS)
+                problems = audit(spliced(doctored), date, REVIEW_AGENTS)
                 assert (len(problems) == 1
                         and "more than one verdict" in problems[0]), (
                     f"{audit.__name__} collapsed two verdicts for one reviewer "
@@ -2405,7 +2531,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
 
         edited = section.replace(_live_digest(name), "0" * 64, 1)
         assert edited != section, "the digest fixture edit landed nowhere"
-        assert len(_unpinned(spliced(edited), date, EXPECTED_AGENTS)) == 1, (
+        assert len(_unpinned(spliced(edited), date, REVIEW_AGENTS)) == 1, (
             "a verdict pinning the wrong definition bytes passed the audit")
 
         # Matched ACROSS the line break, never as "line, then digest line". A
@@ -2418,8 +2544,8 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         stripped = re.sub(r"\*\*Definition\.\*\*[^*]*?`[0-9a-f]{64}`\.\n",
                           "", section)
         assert stripped != section, "the pin-removal fixture edit landed nowhere"
-        assert (len(_unpinned(spliced(stripped), date, EXPECTED_AGENTS))
-                == len(EXPECTED_AGENTS)), (
+        assert (len(_unpinned(spliced(stripped), date, REVIEW_AGENTS))
+                == len(REVIEW_AGENTS)), (
             "a verdict pinning no definition at all passed the audit")
 
         # The MODEL field, on the same terms. A dispatch takes its model from the
@@ -2432,8 +2558,8 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
 
         unmodelled = re.sub(r"\*\*Model\.\*\* [^\n]*\n", "", section)
         assert unmodelled != section, "the model-removal fixture edit landed nowhere"
-        assert (len(_unpinned(spliced(unmodelled), date, EXPECTED_AGENTS))
-                == len(EXPECTED_AGENTS)), (
+        assert (len(_unpinned(spliced(unmodelled), date, REVIEW_AGENTS))
+                == len(REVIEW_AGENTS)), (
             "a verdict recording no model at all passed the audit")
 
         # ...and the exemption is by DATE and closed, never a default. The same
@@ -2453,13 +2579,13 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         assert "**Model.**" in section, "the section carries no model line to unrecord"
         assert "**Model.** Not recorded — see above." in unrecorded, (
             "the model-unrecording fixture edit landed nowhere")
-        assert (len(_unpinned(only(unrecorded, later), later, EXPECTED_AGENTS))
-                == len(EXPECTED_AGENTS)), (
+        assert (len(_unpinned(only(unrecorded, later), later, REVIEW_AGENTS))
+                == len(REVIEW_AGENTS)), (
             "`Not recorded` was accepted under a date outside "
             "MODEL_UNRECORDED_DATES, so the exemption is a default")
         named = re.sub(r"\*\*Model\.\*\* [^\n]*",
                        "**Model.** `a-model-id`.", section)
-        assert not _unpinned(only(named, later), later, EXPECTED_AGENTS), (
+        assert not _unpinned(only(named, later), later, REVIEW_AGENTS), (
             "a verdict that DOES name its model was reported anyway")
 
         # The arm that binds a `model:` pinned in a definition, which neither
@@ -2468,16 +2594,16 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         # writing it now is that pinning the field later is the real fix.
         monkeypatch.setattr(f"{__name__}._frontmatter",
                             lambda path: {"model": "pinned-model"})
-        assert _unpinned(only(section, date), date, EXPECTED_AGENTS), (
+        assert _unpinned(only(section, date), date, REVIEW_AGENTS), (
             "a definition pinning a model was satisfied by a verdict that "
             "records none, though the grandfathering cannot apply to a model "
             "the definition itself names")
-        assert _unpinned(only(named, later), later, EXPECTED_AGENTS), (
+        assert _unpinned(only(named, later), later, REVIEW_AGENTS), (
             "a verdict naming a model the definition contradicts passed — that "
             "pair describes a dispatch that cannot happen")
         agreed = re.sub(r"\*\*Model\.\*\* [^\n]*",
                         "**Model.** `pinned-model`.", section)
-        assert not _unpinned(only(agreed, later), later, EXPECTED_AGENTS), (
+        assert not _unpinned(only(agreed, later), later, REVIEW_AGENTS), (
             "a verdict naming exactly the model its definition pins was "
             "reported, so the arm rejects the agreeing case too")
 
@@ -2526,7 +2652,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
                                              pin.group(1))),
                 (section.replace(f"sha256 `{_live_digest(name)}`",
                                  f"sha256\n`{_live_digest(name)}`", 1),
-                 lambda sec: _unpinned(spliced(sec), date, EXPECTED_AGENTS))):
+                 lambda sec: _unpinned(spliced(sec), date, REVIEW_AGENTS))):
             assert wrapped != section, "the wrapped-pin fixture edit landed nowhere"
             problem = audit(wrapped)
             assert problem, (
@@ -2554,7 +2680,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
                 (section.replace(f"sha256 `{_live_digest(name)}`",
                                  f"sha256 `{_live_digest(name)}` "
                                  f"(was `{old_pin}`)", 1),
-                 lambda sec: _unpinned(spliced(sec), date, EXPECTED_AGENTS))):
+                 lambda sec: _unpinned(spliced(sec), date, REVIEW_AGENTS))):
             assert kept != section, "the kept-old-pin fixture edit landed nowhere"
             problem = audit(kept)
             assert problem, (
@@ -2628,7 +2754,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         # use — but the crash it replaces was a TypeError from `re.escape`, which
         # reads as the module being broken rather than as a claim being absent.
         for audit in (_unbacked, _unpinned):
-            problems = audit(self.RECORD.read_text(), None, EXPECTED_AGENTS)
+            problems = audit(self.RECORD.read_text(), None, REVIEW_AGENTS)
             assert problems == ["no advertised date to check the record against"], (
                 f"{audit.__name__} raised or reported oddly on an absent date: "
                 f"{problems}")

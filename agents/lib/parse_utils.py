@@ -8,6 +8,7 @@ Wraps pdfplumber with error handling and provides consistent interfaces.
 import csv
 import functools
 import json
+import os
 import sys
 import time
 import zipfile
@@ -294,6 +295,32 @@ def _require_locked_parsers() -> None:
             "sh agents/lib/run.sh -m pip install -r requirements.txt")
 
 
+def _assert_within(candidate, workspace: str | None, *,
+                   subject: str, verb: str) -> Path:
+    """`candidate` resolved, or `ValueError` if it lands outside `workspace`.
+
+    ONE containment predicate. The question — does this resolved path sit under
+    this resolved base — was answered at three sites in this file, and the third
+    copy had already drifted: it resolved and compared without the fail-closed
+    reparse pre-check the other two sit behind. A containment fix that has to
+    land three times lands twice.
+
+    The subject and verb are the caller's, because "path" and "symlink" are
+    different findings to whoever reads the refusal — a link POINTS outside,
+    which says the file was reached through one, and that distinction is what
+    the existing assertions match on. Both sides are redacted: a workspace named
+    after a taxpayer discloses one.
+    """
+    resolved = Path(candidate).resolve()
+    if workspace is None:
+        return resolved
+    if not resolved.is_relative_to(Path(workspace).resolve()):
+        raise ValueError(
+            f"{subject} '{redact(candidate)}' {verb} outside workspace "
+            f"'{redact(workspace)}'")
+    return resolved
+
+
 def _validate_file_path(
     path: str,
     expected_suffixes: set[str] | None = None,
@@ -303,6 +330,19 @@ def _validate_file_path(
 
     Checks reparse points on the original (unresolved) path before resolving,
     then verifies the resolved path stays within the workspace.
+
+    **Callers open the RETURNED path, never the string they passed in.** All five
+    used to re-open the raw argument, so the containment and suffix checks ran on
+    the resolved path while the read ran on the unresolved one — a link swapped
+    between the two was read unchecked. The race needs local write access to the
+    directory and is not reachable from a document or from the parse worker, but
+    closing it costs one assignment.
+
+    RESOLVE DOES NOT SEE A HARD LINK, and that is a deliberate residual: a hard
+    link planted in `documents/` points at another file's inode with no path to
+    resolve, so it reads as an ordinary file inside the workspace. Creating one
+    needs local write access to `documents/` AND read access to the target, which
+    is strictly more than an injected document or the worker can reach.
 
     Raises:
         FileNotFoundError: If file does not exist.
@@ -317,20 +357,8 @@ def _validate_file_path(
     # Path.is_symlink() turns every OSError into "not a link" on Python 3.14 — one
     # of the two interpreters CI runs.
     if is_reparse_point(raw):
-        target = raw.resolve()
-        if workspace is not None:
-            base = Path(workspace).resolve()
-            if not target.is_relative_to(base):
-                raise ValueError(
-                    f"Symlink '{redact(path)}' points outside workspace "
-                    f"'{redact(workspace)}'")
-    p = raw.resolve()
-    if workspace is not None:
-        base = Path(workspace).resolve()
-        if not p.is_relative_to(base):
-            raise ValueError(
-                f"Path '{redact(path)}' is outside workspace "
-                f"'{redact(workspace)}'")
+        _assert_within(raw, workspace, subject="Symlink", verb="points")
+    p = _assert_within(raw, workspace, subject="Path", verb="is")
     if not p.is_file():
         raise FileNotFoundError(f"File not found: {redact(path)}")
     if expected_suffixes and p.suffix.lower() not in expected_suffixes:
@@ -370,11 +398,11 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
 
     import pdfplumber
 
-    _validate_file_path(path, {".pdf"}, workspace=workspace)
+    checked = _validate_file_path(path, {".pdf"}, workspace=workspace)
 
     budget = _Budget(f"Reading {redact(path)}")
     result = {}
-    with pdfplumber.open(path) as pdf:
+    with pdfplumber.open(checked) as pdf:
         num_pages = len(pdf.pages)
         target_pages = pages if pages is not None else range(num_pages)
         _refuse_too_many_pages(len(target_pages), path)
@@ -413,11 +441,11 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
 
     import pdfplumber
 
-    _validate_file_path(path, {".pdf"}, workspace=workspace)
+    checked = _validate_file_path(path, {".pdf"}, workspace=workspace)
 
     budget = _Budget(f"Reading the tables in {redact(path)}")
     result = {}
-    with pdfplumber.open(path) as pdf:
+    with pdfplumber.open(checked) as pdf:
         num_pages = len(pdf.pages)
         target_pages = pages if pages is not None else range(num_pages)
         _refuse_too_many_pages(len(target_pages), path)
@@ -476,13 +504,13 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
 
     import openpyxl
 
-    _validate_file_path(path, {".xlsx"}, workspace=workspace)
+    checked = _validate_file_path(path, {".xlsx"}, workspace=workspace)
     # BEFORE `load_workbook`, which decompresses the whole archive into memory:
     # the 100 MB cap bounds the ZIP, not the XML behind it.
-    _refuse_a_zip_bomb(path)
+    _refuse_a_zip_bomb(str(checked))
 
     budget = _Budget(f"Reading {redact(path)}")
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = openpyxl.load_workbook(checked, data_only=True)
     try:
         targets = sheet_names if sheet_names is not None else wb.sheetnames
         # A sheet that is not there is a refusal naming the ones that are. It
@@ -538,10 +566,10 @@ def extract_csv(path: str, encoding: str = "utf-8-sig", workspace: str | None = 
         FileNotFoundError: If file does not exist.
         ValueError: If path escapes workspace or file is too large.
     """
-    _validate_file_path(path, {".csv"}, workspace=workspace)
+    checked = _validate_file_path(path, {".csv"}, workspace=workspace)
 
     budget = _Budget(f"Reading {redact(path)}")
-    with open(path, newline="", encoding=encoding) as f:
+    with open(checked, newline="", encoding=encoding) as f:
         rows = []
         for row in csv.reader(f):
             budget.tick()
@@ -574,9 +602,9 @@ def pdf_page_count(path: str, workspace: str | None = None) -> int:
 
     import pdfplumber
 
-    _validate_file_path(path, {".pdf"}, workspace=workspace)
+    checked = _validate_file_path(path, {".pdf"}, workspace=workspace)
 
-    with pdfplumber.open(path) as pdf:
+    with pdfplumber.open(checked) as pdf:
         return len(pdf.pages)
 
 
@@ -762,13 +790,75 @@ if __name__ == "__main__":
     # worker's only way to read the Excel/CSV group was its own file-read tool
     # or an ad-hoc interpreter call — both of which bypass `mask_ssn` and one of
     # which rule 5 of that template forbids.
-    if len(sys.argv) < 3:
-        print("Usage: python parse_utils.py "
+    #
+    # EVERY READ IS CONFINED TO A WORKSPACE, and the CLI is where that was
+    # missing. The library functions have taken a `workspace=` since they were
+    # written and refuse a path — or a symlink target — outside it; the CLI
+    # passed None to all of them, so the confinement was off for the only caller
+    # that matters. That made this command an ARBITRARY FILE READER for anything
+    # with a .pdf/.csv/.xlsx suffix: `csv ~/other-return/documents/bank.csv`
+    # printed another taxpayer's statement, and a worker allowed to run "only
+    # parse_utils" was allowed to read the whole disk one suffix at a time.
+    #
+    # The default is the CURRENT DIRECTORY, which is the workspace root every
+    # skill invokes this from (`run.sh` computes its own root but does not `cd`,
+    # so the caller's cwd survives). That makes every documented call confined
+    # without changing it. It is deliberately NOT `run.sh`'s derived root: the
+    # workspace is where the return lives and the clone is where the code lives,
+    # and Y4 is the open item to stop assuming those are the same directory.
+    #
+    # THE PRECISE CLAIM, because the loose one was written here first and was
+    # false: there is no way to run this command with no confinement at all —
+    # every route resolves against a workspace. What the flag does is CHOOSE
+    # that workspace, so a caller who passes `/` has chosen a wide one. That is
+    # a decision available to whoever composes the command line, and in ENFORCED
+    # mode the parse worker composes nothing, holding no shell. In SEQUENTIAL
+    # mode it is available to a parser that already has a shell, so this is not
+    # the layer that stops it — the prompt rules and the banner are.
+    # The flag is accepted FIRST or not at all, and a later one is a REFUSAL
+    # rather than a wider workspace. Scanning the whole argv for it meant
+    # `csv doc.csv --workspace /` read the file: the confinement was still on,
+    # applied to `/`, which is the off switch this block says it does not have.
+    # Position is what makes that unwritable — a trailing flag now errors, and a
+    # caller who meant it is told rather than silently confined to the cwd.
+    argv = sys.argv[1:]
+    workspace = os.getcwd()
+    if argv and argv[0].startswith("--workspace="):
+        workspace = argv[0].split("=", 1)[1]
+        del argv[0]
+        if not workspace:
+            print("Error: --workspace needs a directory", file=sys.stderr)
+            sys.exit(1)
+    elif argv and argv[0] == "--workspace":
+        if len(argv) < 2:
+            print("Error: --workspace needs a directory", file=sys.stderr)
+            sys.exit(1)
+        workspace = argv[1]
+        del argv[0:2]
+    if any(a == "--workspace" or a.startswith("--workspace=") for a in argv):
+        print("Error: --workspace must come first, before the command",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if len(argv) < 2:
+        print("Usage: python parse_utils.py [--workspace DIR] "
               "<scan|classify|extract|tables|csv|excel> <path> [page|sheet]")
         sys.exit(1)
 
-    cmd, path = sys.argv[1], sys.argv[2]
-    arg3 = sys.argv[3] if len(sys.argv) > 3 else None
+    cmd, path = argv[0], argv[1]
+    arg3 = argv[2] if len(argv) > 2 else None
+
+    def _confined_dir(candidate: str, base: str) -> str:
+        """`scan`'s directory, held to the same containment as every file read.
+
+        `scan_workspace` takes a DIRECTORY and lists what is parseable in it, so
+        `_validate_file_path` never sees it — and an unconfined `scan /` is a
+        map of every tax document on the machine, which is the reconnaissance
+        step before the reads this confinement exists to stop.
+        """
+        if is_reparse_point(Path(candidate)):
+            _assert_within(candidate, base, subject="Symlink", verb="points")
+        return str(_assert_within(candidate, base, subject="Path", verb="is"))
 
     def _print_json(obj):
         # `ensure_ascii=False` because the worker reads this: a Cyrillic
@@ -778,26 +868,26 @@ if __name__ == "__main__":
 
     try:
         if cmd == "scan":
-            _print_json(scan_workspace(path))
+            _print_json(scan_workspace(_confined_dir(path, workspace)))
         elif cmd == "classify":
-            text = extract_pdf_text(path, pages=[0])
+            text = extract_pdf_text(path, pages=[0], workspace=workspace)
             doc_type = classify_document(text.get(0, ""))
             print(f"Document type: {doc_type}")
         elif cmd == "extract":
             pages = [int(arg3)] if arg3 is not None else None
-            text = extract_pdf_text(path, pages=pages)
+            text = extract_pdf_text(path, pages=pages, workspace=workspace)
             for pg, content in sorted(text.items()):
                 print(f"=== Page {pg} ===")
                 print(content)
                 print()
         elif cmd == "tables":
             pages = [int(arg3)] if arg3 is not None else None
-            _print_json(extract_tables(path, pages=pages))
+            _print_json(extract_tables(path, pages=pages, workspace=workspace))
         elif cmd == "csv":
-            _print_json(extract_csv(path))
+            _print_json(extract_csv(path, workspace=workspace))
         elif cmd == "excel":
             sheets = [arg3] if arg3 is not None else None
-            _print_json(extract_excel(path, sheet_names=sheets))
+            _print_json(extract_excel(path, sheet_names=sheets, workspace=workspace))
         else:
             print(f"Error: Unknown command '{redact(cmd)}'. "
                   f"Valid commands: scan, classify, extract, tables, csv, excel",
