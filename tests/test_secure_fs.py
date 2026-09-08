@@ -9,6 +9,8 @@ not having Windows CI.
 """
 
 import os
+import errno
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,8 +19,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agents.lib.secure_fs import (
-    is_reparse_point, redact, secure_fd, secure_path, year_or_shape,
-    _MIN_PRINTABLE_YEAR, _MAX_PRINTABLE_YEAR,
+    HalfApplied, atomic_paths, is_reparse_point, redact, secure_fd,
+    secure_path, year_or_shape, _MIN_PRINTABLE_YEAR, _MAX_PRINTABLE_YEAR,
 )
 
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -1874,6 +1876,287 @@ class TestYearOrShapeOnlyPrintsAYear:
         would also stop naming the one shape that reads like a year."""
         assert year_or_shape(True) == "a bool"
         assert year_or_shape(False) == "a bool"
+
+
+class TestTheOneWriterCoversTheTwoFileTransaction:
+    """V10's second half. `apply_changes` rewrites `taxpayer_profile.json` and
+    `result.json` from one decision, and a half-applied pair is a workspace whose
+    profile says one thing and whose return says another with nothing to tell a
+    reader which. It hand-rolled that transaction because the single-file helper
+    could not express it; `atomic_paths` is the shape that can.
+    """
+
+    def _pair(self, tmp_path):
+        a, b = tmp_path / "profile.json", tmp_path / "result.json"
+        a.write_text('{"a": 1}')
+        b.write_text('{"b": 2}')
+        return a, b
+
+    def _leftovers(self, tmp_path):
+        return sorted(p.name for p in tmp_path.iterdir()
+                      if p.suffix in (".tmp", ".bak"))
+
+    def test_both_targets_are_published_on_a_clean_exit(self, tmp_path):
+        a, b = self._pair(tmp_path)
+        with atomic_paths(a, b) as (ta, tb):
+            ta.write_text('{"a": 9}')
+            tb.write_text('{"b": 9}')
+        assert a.read_text() == '{"a": 9}' and b.read_text() == '{"b": 9}'
+        assert self._leftovers(tmp_path) == []
+
+    def test_an_exception_in_the_body_publishes_neither(self, tmp_path):
+        a, b = self._pair(tmp_path)
+        with pytest.raises(RuntimeError):
+            with atomic_paths(a, b) as (ta, tb):
+                ta.write_text('{"a": 9}')
+                tb.write_text('{"b": 9}')
+                raise RuntimeError("the caller changed its mind")
+        assert a.read_text() == '{"a": 1}' and b.read_text() == '{"b": 2}'
+        assert self._leftovers(tmp_path) == []
+
+    def test_a_failed_second_rename_restores_the_first(self, tmp_path,
+                                                       monkeypatch):
+        """The case the hand-rolled version existed for, and the one no test
+        covered. Without the restore the profile holds the new value and the
+        result the old one — a pair that never existed together."""
+        a, b = self._pair(tmp_path)
+        real = os.replace
+        calls = {"n": 0}
+
+        def fail_on_the_second(src, dst, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("the second rename failed")
+            return real(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", fail_on_the_second)
+        with pytest.raises(OSError):
+            with atomic_paths(a, b) as (ta, tb):
+                ta.write_text('{"a": 9}')
+                tb.write_text('{"b": 9}')
+        assert a.read_text() == '{"a": 1}', "the first target was not restored"
+        assert b.read_text() == '{"b": 2}'
+
+    def test_the_restore_puts_back_the_exact_original_bytes(self, tmp_path,
+                                                            monkeypatch):
+        """A hardlink to the original inode, renamed back — not a re-write of
+        remembered bytes. The version this replaces restored with `write_bytes`,
+        so a crash DURING the rollback truncated the file the rollback existed
+        to protect."""
+        a, b = self._pair(tmp_path)
+        a.write_bytes(b"\x00\xff binary-ish \n" * 100)
+        original = a.read_bytes()
+        real = os.replace
+        calls = {"n": 0}
+
+        def fail_on_the_second(src, dst, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("boom")
+            return real(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", fail_on_the_second)
+        with pytest.raises(OSError):
+            with atomic_paths(a, b) as (ta, tb):
+                ta.write_bytes(b"new")
+                tb.write_text("new")
+        assert a.read_bytes() == original
+
+    def test_a_target_that_did_not_exist_is_removed_again_on_a_late_failure(
+            self, tmp_path, monkeypatch):
+        """There is no original to restore, so the restore is a delete. Leaving
+        the new file behind would be a half-applied pair wearing the shape of a
+        complete one."""
+        a = tmp_path / "new.json"
+        b = tmp_path / "result.json"
+        b.write_text('{"b": 2}')
+        real = os.replace
+        calls = {"n": 0}
+
+        def fail_on_the_second(src, dst, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("boom")
+            return real(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", fail_on_the_second)
+        with pytest.raises(OSError):
+            with atomic_paths(a, b) as (ta, tb):
+                ta.write_text("{}")
+                tb.write_text("{}")
+        assert not a.exists(), "a target with no original was left behind"
+        assert b.read_text() == '{"b": 2}'
+
+    def test_every_target_is_owner_only_at_the_moment_of_the_RENAME(
+            self, tmp_path, monkeypatch):
+        """Read at the RENAME, which is the only point where the pre-fix window
+        is observable — and the only reading that is not vacuous.
+
+        Asserting the mode AFTER the publish passed with `secure_fd` removed and
+        with the pre-rename `secure_path` removed, because `mkstemp` already
+        creates at 0600 and writing to an existing path does not change it. What
+        that spelling could not see is a writer that RECREATES the temp, which is
+        exactly what the pre-rename call exists for."""
+        if os.name == "nt":  # pragma: no cover - POSIX mode bits
+            pytest.skip("POSIX mode bits")
+        a, b = self._pair(tmp_path)
+        seen = []
+        real = os.replace
+        monkeypatch.setattr(os, "replace", lambda src, dst, *r, **k: (
+            seen.append(os.stat(src).st_mode & 0o777), real(src, dst, *r, **k))[1])
+        yielded = []
+        old = os.umask(0o022)      # without this the assertion is vacuous
+        try:
+            with atomic_paths(a, b) as (ta, tb):
+                # BEFORE the first byte. On POSIX this is `mkstemp`'s own 0600
+                # rather than `secure_fd`'s doing — removing `secure_fd` leaves
+                # this assertion green, verified — and that is stated rather than
+                # implied, because the alternative is a test that reads as
+                # covering the Windows ACL arm and does not. THAT arm is not
+                # observable from here at all: it shells out, and this suite runs
+                # on POSIX. What this pins is the property a caller depends on —
+                # the path handed over is already owner-only — whichever call
+                # provides it on the platform in hand.
+                yielded = [p.stat().st_mode & 0o777 for p in (ta, tb)]
+                # RECREATED, the reportlab-shaped hazard: a writer handed a path
+                # may replace the file, and whatever it creates carries the
+                # umask unless something tightens it before the rename.
+                ta.unlink()
+                ta.write_text("{}")
+                tb.write_text("{}")
+        finally:
+            os.umask(old)
+        assert yielded == [0o600, 0o600], (
+            f"a temp was handed to the caller at {yielded} — it must be "
+            "owner-only before it can hold anything")
+        assert seen == [0o600, 0o600], f"a temp was renamed at {seen}"
+        assert a.stat().st_mode & 0o777 == 0o600
+        assert b.stat().st_mode & 0o777 == 0o600
+
+    def test_the_temp_names_are_unique_so_two_runs_do_not_collide(self, tmp_path):
+        """The hand-rolled version used a FIXED `.tmp` suffix beside the target,
+        so two applies running at once wrote the same scratch file and one
+        published the other's bytes. V10's second half is concurrency."""
+        a, b = self._pair(tmp_path)
+        seen = set()
+        for _ in range(3):
+            with atomic_paths(a, b) as (ta, tb):
+                seen.update({ta.name, tb.name})
+                ta.write_text("{}")
+                tb.write_text("{}")
+        assert len(seen) == 6, f"temp names repeat across runs: {sorted(seen)}"
+
+    def test_a_published_temp_is_not_unlinked_afterwards(self, tmp_path,
+                                                          monkeypatch):
+        """The rename frees the temp NAME. Left on the cleanup list, the unlink
+        in `finally` is a harmless miss until the day `mkstemp` hands that name
+        out again — at which point it deletes somebody else's file."""
+        a, b = self._pair(tmp_path)
+        unlinked = []
+        real = os.unlink
+        monkeypatch.setattr(os, "unlink",
+                            lambda p, *a_, **k: (unlinked.append(str(p)),
+                                                 real(p, *a_, **k))[1])
+        with atomic_paths(a, b) as (ta, tb):
+            names = {str(ta), str(tb)}
+            ta.write_text("{}")
+            tb.write_text("{}")
+        assert not (names & set(unlinked)), (
+            f"a temp that had been renamed away was unlinked: "
+            f"{sorted(names & set(unlinked))}")
+
+    def test_a_link_failure_that_is_not_about_hardlinks_propagates(
+            self, tmp_path, monkeypatch):
+        """Only "this filesystem cannot hardlink" is a reason to copy. A blanket
+        `except OSError` would answer EEXIST — something took the name — by
+        overwriting whatever took it."""
+        a, b = self._pair(tmp_path)
+        monkeypatch.setattr(os, "link", lambda *a_, **k: (_ for _ in ()).throw(
+            FileExistsError(errno.EEXIST, "taken")))
+        with pytest.raises(OSError):
+            with atomic_paths(a, b) as (ta, tb):
+                ta.write_text("{}")
+                tb.write_text("{}")
+        assert a.read_text() == '{"a": 1}' and b.read_text() == '{"b": 2}'
+
+    def test_the_copied_backup_is_owner_only_and_never_orphaned(
+            self, tmp_path, monkeypatch):
+        """`shutil.copy2` opens at the umask default and only reaches 0600 when
+        `copystat` finishes, so a failure anywhere in it left a world-readable —
+        sometimes partial — copy of `taxpayer_profile.json` that nothing removed,
+        because it was registered for cleanup only AFTER the copy returned."""
+        if os.name == "nt":  # pragma: no cover - POSIX mode bits
+            pytest.skip("POSIX mode bits")
+        a, b = self._pair(tmp_path)
+        a.write_text('{"a": "secret"}')
+        monkeypatch.setattr(os, "link", lambda *a_, **k: (_ for _ in ()).throw(
+            OSError(errno.EOPNOTSUPP, "no hardlinks")))
+        modes = []
+        real = shutil.copyfileobj
+
+        def spy(src, dst, *r, **k):
+            modes.append(os.fstat(dst.fileno()).st_mode & 0o777)
+            return real(src, dst, *r, **k)
+
+        monkeypatch.setattr(shutil, "copyfileobj", spy)
+        old = os.umask(0o022)      # without this the assertion is vacuous
+        try:
+            with atomic_paths(a, b) as (ta, tb):
+                ta.write_text("{}")
+                tb.write_text("{}")
+        finally:
+            os.umask(old)
+        assert modes == [0o600, 0o600], f"a backup was written at {modes}"
+        assert self._leftovers(tmp_path) == []
+
+    def test_a_restore_that_itself_fails_is_reported_as_half_applied(
+            self, tmp_path, monkeypatch):
+        """The state the transaction exists to prevent, reached anyway. The one
+        thing worse than reaching it is reaching it silently — the caller was
+        told "no changes applied" over a half-applied pair."""
+        a, b = self._pair(tmp_path)
+        real = os.replace
+        calls = {"n": 0}
+
+        def flaky(src, dst, *r, **k):
+            calls["n"] += 1
+            if calls["n"] >= 2:          # the publish of b, then the restore of a
+                raise OSError(errno.EIO, "boom")
+            return real(src, dst, *r, **k)
+
+        monkeypatch.setattr(os, "replace", flaky)
+        with pytest.raises(HalfApplied) as raised:
+            with atomic_paths(a, b) as (ta, tb):
+                ta.write_text('{"a": 9}')
+                tb.write_text('{"b": 9}')
+        assert "HALF APPLIED" in str(raised.value)
+        assert raised.value.__cause__ is not None, "the publish error was lost"
+
+    def test_the_same_target_twice_is_refused(self, tmp_path):
+        """Two names for one file publish twice onto it and the second silently
+        wins — a lost write wearing the shape of a completed transaction."""
+        a, _ = self._pair(tmp_path)
+        with pytest.raises(ValueError):
+            with atomic_paths(a, a):
+                pass
+
+    def test_a_filesystem_without_hardlinks_falls_back_to_a_copy(self, tmp_path,
+                                                                 monkeypatch):
+        """The other side of the same rule: EOPNOTSUPP is a real reason, and the
+        transaction must still work where hardlinks do not exist."""
+        a, b = self._pair(tmp_path)
+        monkeypatch.setattr(os, "link", lambda *a_, **k: (_ for _ in ()).throw(
+            OSError(errno.EOPNOTSUPP, "no hardlinks here")))
+        with atomic_paths(a, b) as (ta, tb):
+            ta.write_text('{"a": 9}')
+            tb.write_text('{"b": 9}')
+        assert a.read_text() == '{"a": 9}' and b.read_text() == '{"b": 9}'
+        assert self._leftovers(tmp_path) == []
+
+    def test_no_targets_is_refused(self):
+        with pytest.raises(ValueError):
+            with atomic_paths():
+                pass
 
 
 class TestTheOneWriter:

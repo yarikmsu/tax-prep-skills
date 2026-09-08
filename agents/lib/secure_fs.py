@@ -59,12 +59,14 @@ appear to be. An ordinary failure does not stop it.
 from __future__ import annotations
 
 import contextlib
+import errno
 import math
 import os
 import re
 import stat
 import subprocess
 import sys
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -707,6 +709,184 @@ def atomic_path(target):
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+class PublishedButNotSecured(OSError):
+    """Every target was published; restricting one of them then failed.
+
+    A DISTINCT type because the two outcomes need different words. Everything
+    else `atomic_paths` raises means the targets are untouched, and the caller
+    says so; this one means the content landed and the mode did not, which a
+    caller reporting "no changes applied" would be lying about — the operator
+    re-runs the apply, or re-derives from a workspace they believe is unchanged.
+    Measured, not imagined: it was that message, over a fully published pair.
+    """
+
+
+class HalfApplied(OSError):
+    """A publish failed AND the restore of an earlier target failed with it.
+
+    The state the transaction exists to prevent, arrived at anyway, and the one
+    thing worse than reaching it is reaching it silently. The restore's own error
+    is chained; the caller must say the workspace is half-applied rather than
+    that nothing happened.
+    """
+
+
+def _secure_temp_beside(target: Path) -> Path:
+    """A fresh 0600 temp in `target`'s directory, secured before the first byte.
+
+    One home for the prologue both writers share — a file created at the umask
+    default holds its contents before anything tightens it, and on Windows has no
+    ACL until the call returns. Securing the DESCRIPTOR is what closes that, and
+    doing it in two places is how the one-writer premise comes apart.
+    """
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent),
+                               prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        secure_fd(fd, tmp)
+    finally:
+        os.close(fd)
+    return Path(tmp)
+
+
+@contextlib.contextmanager
+def atomic_paths(*targets):
+    """Secured temp paths beside each target, published TOGETHER on a clean exit.
+
+    The shape `atomic_path` cannot express: files that must land as one change or
+    not at all. `rollover.apply_changes` is the case — a half-applied pair is a
+    workspace whose profile says one thing and whose return says another, with
+    nothing to tell a reader which.
+
+    Yields one temp path per target, in order. On a clean exit each is renamed
+    onto its target, in order. **If a later rename fails, the earlier targets are
+    restored** by renaming back a hardlink taken before the first rename. The
+    hardlink is not a crash defence — see the residual — it is there because the
+    restore is then ONE RENAME rather than a re-write of remembered bytes, which
+    costs nothing for a file of any size and cannot half-succeed. The version
+    this replaces restored with `write_bytes`, which can.
+
+    THE RESIDUAL, because POSIX has no multi-file atomic rename and pretending
+    otherwise is worse than naming it: between the first rename and the last
+    there is a window in which the workspace is half-published. An EXCEPTION in
+    that window is handled — that is the restore — and a restore that ITSELF
+    fails raises `HalfApplied` rather than passing for "nothing happened". A
+    CRASH is not handled: a power cut or a SIGKILL in the window leaves the pair
+    half-applied and no handler runs. Nothing in user space closes that, and the
+    honest mitigation is not to be in the window: a caller that publishes only
+    the documents it actually changed is usually publishing ONE, and one rename
+    has no window at all.
+
+    Nor is there an `fsync` here or in `atomic_path`: the rename is ordered
+    against the writes on the filesystems this runs on, but a crash immediately
+    after a publish can still leave a short file on one that does not. That is
+    the same bound every other writer in this module has.
+    """
+    targets = [Path(t) for t in targets]
+    if not targets:
+        raise ValueError("atomic_paths needs at least one target")
+    # Two names for one file publish twice onto it and the second silently wins,
+    # which is a lost write wearing the shape of a completed transaction.
+    resolved = [os.path.realpath(t) for t in targets]
+    if len(set(resolved)) != len(resolved):
+        raise ValueError(
+            f"atomic_paths was given the same target twice: "
+            f"{redact(sorted({p for p in resolved if resolved.count(p) > 1}))}")
+
+    temps: list = [None] * len(targets)
+    backups: list = [None] * len(targets)
+    try:
+        for i, target in enumerate(targets):
+            temps[i] = _secure_temp_beside(target)
+        yield tuple(temps)
+
+        # A BACKUP per target that already exists, taken before the first rename
+        # so a failure part-way through has something atomic to restore from. Its
+        # NAME is the temp's plus a suffix — already unique, already in the right
+        # directory — rather than a second `mkstemp` whose reserve-then-unlink
+        # would open a window for something else to take the name.
+        for i, target in enumerate(targets):
+            if not target.exists():
+                continue
+            backup = Path(str(temps[i]) + ".bak")
+            try:
+                os.link(str(target), backup)
+                backups[i] = backup
+            except OSError as e:
+                # NARROW: only "this filesystem cannot hardlink". EEXIST would
+                # mean something took the name, and answering that with a copy
+                # overwrites it. EINVAL/ENOSYS are how Windows reports it on
+                # FAT/exFAT, which is a workspace on a USB stick.
+                if e.errno not in (errno.EPERM, errno.EOPNOTSUPP, errno.EXDEV,
+                                   errno.EMLINK, errno.EINVAL, errno.ENOSYS):
+                    raise
+                # Registered BEFORE the copy, and written through a secured
+                # descriptor rather than `copy2`: that opens at the umask default
+                # and only reaches 0600 when `copystat` finishes, so a failure
+                # anywhere in it used to orphan a world-readable — sometimes
+                # partial — copy of `taxpayer_profile.json` that nothing removed.
+                backups[i] = backup
+                with open(str(target), "rb") as src:
+                    fd = os.open(str(backup),
+                                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    try:
+                        secure_fd(fd, str(backup))
+                        with os.fdopen(fd, "wb") as dst:
+                            fd = None
+                            shutil.copyfileobj(src, dst)
+                    finally:
+                        if fd is not None:
+                            os.close(fd)
+
+        published = 0
+        try:
+            for i, (temp, target) in enumerate(zip(temps, targets)):
+                secure_path(temp)
+                os.replace(str(temp), str(target))
+                # DROPPED from the cleanup list as it is consumed: the rename
+                # frees the temp NAME, so the unlink below would either be a
+                # harmless miss or, once that name is re-issued, somebody else's
+                # file.
+                temps[i] = None
+                published += 1
+        except BaseException as publish_error:
+            failed = []
+            for i in range(published):
+                try:
+                    if backups[i] is None:
+                        os.unlink(str(targets[i]))
+                    else:
+                        os.replace(str(backups[i]), str(targets[i]))
+                        backups[i] = None
+                except OSError as restore_error:
+                    failed.append(f"{redact(targets[i])}: {redact(restore_error)}")
+            if failed:
+                raise HalfApplied(
+                    "publish failed and the rollback did not complete — the "
+                    "workspace is HALF APPLIED and must not be trusted: "
+                    + "; ".join(failed)) from publish_error
+            raise
+
+        # WINDOWS ONLY, and inside the guarded region on purpose. On POSIX
+        # `os.replace` carries the temp's 0600 onto the name it lands on, so the
+        # target is already owner-only and this loop only masks the call that
+        # made it so. On Windows the ACL follows the NAME, so it is load-bearing
+        # — and a failure there means content published at a mode §1 forbids,
+        # which is a distinct outcome from "nothing happened" and says so.
+        if os.name == "nt":  # pragma: no cover - POSIX CI
+            for target in targets:
+                try:
+                    secure_path(target)
+                except OSError as e:
+                    raise PublishedButNotSecured(
+                        f"published, but could not restrict {redact(target)}: "
+                        f"{redact(e)}") from e
+    finally:
+        for path in [*temps, *backups]:
+            if path is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(str(path))
 
 
 @contextlib.contextmanager

@@ -1211,3 +1211,97 @@ Three more from the same pass, each a real defect in what I had written:
 English under a grammar the suite enforces, and expressing a zero this round took
 four sentences of it. Generating that paragraph from live collection is the right
 answer and belongs in its own PR — doing it inside a security sweep buries both.
+
+## V10's second half: the last hand-rolled writer
+
+V10's first half routed five modules through `secure_fs.atomic_path` and left one
+exception, stated at the time: `rollover.apply_changes` writes
+`taxpayer_profile.json` and `result.json` as ONE transaction with a rollback, and
+a single-file helper cannot express that. `secure_fs.atomic_paths` is the shape
+that can — one secured temp per target, all published on a clean exit, and a
+failure part-way through restoring the ones already published.
+
+Routing it closed three defects the local copy had, none of which had a test:
+
+- **The scratch name was FIXED** — `taxpayer_profile.json.tmp` beside the target.
+  Two applies running at once wrote the same file and one published the other's
+  bytes. Concurrency is what V10's second half is about, and this was the live
+  instance of it. The helper uses `mkstemp`, so the names are unique per call.
+- **The rollback was not atomic.** It restored with `write_bytes`, so a crash
+  DURING the restore left a truncated profile — the exact state the rollback
+  existed to prevent. The helper takes a hardlink to each target before the first
+  publish and restores by renaming it back: same inode, no second write of a file
+  that may be tens of MB, and the original bytes land atomically.
+- **The handler could fail before cleaning up.** It read each target back to
+  decide whether to restore it, so a read that itself raised — a permissions
+  fault, the case a handler is for — escaped the handler and skipped the temp
+  cleanup and the original error alike.
+
+**The residual is named in the helper rather than implied.** POSIX has no
+multi-file atomic rename. Between the first rename and the last there is a window
+in which the workspace is half-published: an EXCEPTION there is handled, which is
+the restore above, but a CRASH is not, and nothing in user space closes it. What
+covers it in practice is that the caller re-reads both files and re-derives, so a
+half-applied pair is detected rather than trusted.
+
+The two existing `apply_changes` tests were kept and re-pointed at
+`secure_fs.os.replace` — they pin the transaction's behaviour end to end at the
+caller, which is what a user has, and patching `rollover.os` after the move would
+have patched a name the module no longer has and spied on nothing.
+
+### The review pass, and the bug it found underneath the change
+
+**`apply_changes` was republishing a file it had not edited.** Every `FIELD_MAP`
+entry targets `taxpayer_profile.json`, and the apply re-serialised `result.json`
+and published it anyway — unchanged in intent, CHANGED IN BYTES. V8's receipt
+binds the tie-out gate's verdict to that file's digest, so a rollover run after a
+compute moved the digest and blocked `--filing-package`, for a file it had not
+touched. Only the documents that actually changed are published now.
+
+That also collapses the residual the helper spends a paragraph on: the crash
+window exists between two renames, and every call the toolkit makes today
+publishes ONE file. The transaction stays for the day a `result.json` target
+lands in `FIELD_MAP`, and the atomicity test now drives both documents so it
+exercises the thing it is named for.
+
+**Two P1s, both reproduced by the reviewer before they were believed:**
+
+- **"No changes applied" was false.** The post-publish `secure_path` loop sat
+  outside the guarded region, so a failure there published both files and the
+  caller still reported that nothing had happened — an operator re-runs the
+  apply, or re-derives from a workspace they believe is untouched. That loop is
+  now Windows-only (on POSIX `os.replace` carries the temp's 0600 onto the
+  target, so it only masked the call that made it so) and raises
+  `PublishedButNotSecured`, which the caller reports as what it is. A restore
+  that itself fails raises `HalfApplied` rather than passing for "nothing
+  happened", with the publish error chained.
+- **The copy fallback orphaned a world-readable backup.** `shutil.copy2` opens at
+  the umask default and only reaches 0600 when `copystat` finishes, and the
+  backup was registered for cleanup only after the copy returned — so a failure
+  anywhere in it left a 0644, sometimes partial, copy of
+  `taxpayer_profile.json` that nothing removed. It is written through a secured
+  descriptor now and registered before the first byte.
+
+Smaller, from the same pass: the backup's name is the temp's plus a suffix rather
+than a second `mkstemp`, which deletes the reserve-then-unlink race outright; a
+consumed backup is dropped from the cleanup list as the temps already were;
+duplicate targets are refused (two names for one file publish twice and the
+second silently wins); `EINVAL`/`ENOSYS` join the hardlink fallback's errno set,
+which is how Windows reports it on FAT; and the temp prologue both writers share
+is one `_secure_temp_beside`, since "0600 before the first byte" having two homes
+is how the one-writer premise comes apart.
+
+**A test of mine was vacuous and is now honest rather than fixed.** The mode
+assertion read the mode AFTER publish, where `mkstemp`'s own default already
+satisfied it — it passed with `secure_fd` removed AND with the pre-rename
+`secure_path` removed. It reads at the RENAME now, with the temp deliberately
+recreated (the reportlab-shaped hazard), which pins the pre-rename call. It still
+cannot pin `secure_fd`: on POSIX `mkstemp` provides the 0600, and `secure_fd` is
+the Windows ACL arm, which shells out and is not observable from a POSIX suite.
+The test says so instead of implying coverage it does not have.
+
+**And the mutation harness itself was wrong twice**, which is worth recording
+because both verdicts were confident: a probe whose target text was LINE-WRAPPED
+matched nothing and reported the test vacuous, and a probe run under an
+interpreter without pytest exited non-zero and read as a pass. The harness now
+refuses a no-op probe and refuses a run in which pytest did not start.

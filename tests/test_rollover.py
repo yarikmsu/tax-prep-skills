@@ -710,14 +710,20 @@ def test_apply_changes_tmp_file_is_600_before_replace(tmp_path, monkeypatch):
         seen_modes.append(Path(src).stat().st_mode & 0o777)
         return real_replace(src, dst)
 
-    monkeypatch.setattr("agents.lib.rollover.os.replace", spy_replace)
+    # Patched where the rename now HAPPENS. `apply_changes` hand-rolled its
+    # own temp-then-rename until V10's second half; it goes through
+    # `secure_fs.atomic_paths` now, so patching `rollover.os` would patch a
+    # name the module no longer has and the spy would see nothing.
+    monkeypatch.setattr("agents.lib.secure_fs.os.replace", spy_replace)
 
     changes = {"carryforwards": [Change(
         category="carryforwards", json_path="prior_year.capital_loss_carryforward",
         target_file="taxpayer_profile.json", prior_value=1000, current_value=0,
         action_suggested="apply", reason="test")]}
     apply_changes(changes, category_decisions={"carryforwards": "apply"}, targets=targets)
-    assert seen_modes == [0o600, 0o600]
+    # ONE publish: the change targets the profile alone, and only the
+    # documents that changed are published.
+    assert seen_modes == [0o600]
 
 
 # --- CLI integration tests ---------------------------------------------------
@@ -856,15 +862,26 @@ def test_apply_changes_two_file_atomicity(tmp_path, monkeypatch):
             raise OSError("simulated second-replace failure")
         return real_replace(*args, **kwargs)
 
-    monkeypatch.setattr("agents.lib.rollover.os.replace", flaky_replace)
+    monkeypatch.setattr("agents.lib.secure_fs.os.replace", flaky_replace)
 
-    changes = {"carryforwards": [Change(
-        category="carryforwards",
-        json_path="prior_year.capital_loss_carryforward",
-        target_file="taxpayer_profile.json",
-        prior_value=1000, current_value=0,
-        action_suggested="apply", reason="test",
-    )]}
+    # BOTH documents, because only the ones that CHANGE are published now — the
+    # old apply republished result.json unchanged, which moved its digest and
+    # invalidated V8's receipt. A single-document change makes one rename and
+    # has no second one to fail, so the transaction is only exercised by a change
+    # set that touches both. `FIELD_MAP` has no result.json target today; this is
+    # the case that arrives when one lands.
+    changes = {"carryforwards": [
+        Change(category="carryforwards",
+               json_path="prior_year.capital_loss_carryforward",
+               target_file="taxpayer_profile.json",
+               prior_value=1000, current_value=0,
+               action_suggested="apply", reason="test"),
+        Change(category="carryforwards",
+               json_path="schedule_d.loss_carryforward_to_next_year",
+               target_file="result.json",
+               prior_value=2000, current_value=0,
+               action_suggested="apply", reason="test"),
+    ]}
     with pytest.raises(RolloverError):
         apply_changes(changes, category_decisions={"carryforwards": "apply"}, targets=targets)
 
@@ -873,6 +890,30 @@ def test_apply_changes_two_file_atomicity(tmp_path, monkeypatch):
     assert targets.result.read_bytes() == original_result
     # No leftover .tmp files
     assert list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_apply_changes_republishes_only_what_it_changed(tmp_path):
+    """V8's receipt binds the tie-out gate's verdict to `result.json`'s DIGEST.
+    The old apply re-serialised and republished it whether or not a change
+    touched it, so a rollover run after a compute moved that digest and blocked
+    `--filing-package` — for a file it had not edited."""
+    import shutil
+    shutil.copytree(FIXTURES / "current_2025_empty", tmp_path / "ws")
+    targets = WritePaths(result=tmp_path / "ws" / "result.json",
+                         profile=tmp_path / "ws" / "taxpayer_profile.json")
+    before = targets.result.read_bytes()
+    mtime = targets.result.stat().st_mtime_ns
+
+    changes = {"carryforwards": [Change(
+        category="carryforwards", json_path="prior_year.capital_loss_carryforward",
+        target_file="taxpayer_profile.json", prior_value=1000, current_value=0,
+        action_suggested="apply", reason="test")]}
+    apply_changes(changes, category_decisions={"carryforwards": "apply"},
+                  targets=targets)
+
+    assert targets.result.read_bytes() == before, "result.json was rewritten"
+    assert targets.result.stat().st_mtime_ns == mtime, "result.json was republished"
+    assert b"1000" in targets.profile.read_bytes(), "the profile was not written"
 
 
 def test_compute_diff_amt_credit_carryforward():

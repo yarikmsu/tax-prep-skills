@@ -8,7 +8,6 @@ Pure functions for diff/merge logic; thin I/O wrappers at edges.
 import copy
 import json
 import math
-import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date
@@ -16,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib.secure_fs import first_non_finite, redact, secure_fd, secure_path  # noqa: E402
+from agents.lib.secure_fs import (  # noqa: E402
+    HalfApplied, PublishedButNotSecured, atomic_paths, first_non_finite, redact)
 
 
 class RolloverError(Exception):
@@ -831,6 +831,7 @@ def apply_changes(
     report = ApplyReport()
     profile = _read_json(targets.profile)
     result = _read_json(targets.result)
+    dirty: set = set()
 
     any_changes = False
     for category, change_list in changes.items():
@@ -842,6 +843,7 @@ def apply_changes(
                 report.warnings.append(f"{category}: skipped {change.json_path} ({change.reason})")
                 continue
             target_doc = profile if change.target_file == "taxpayer_profile.json" else result
+            dirty.add(change.target_file)
             if change.json_path.startswith("dependents["):
                 # Dependents list: append/replace by index
                 idx = int(change.json_path[len("dependents["):-1])
@@ -857,62 +859,43 @@ def apply_changes(
     if not any_changes:
         return report
 
-    # Atomic write across two files: snapshot originals in memory before any
-    # os.replace, so we can restore the first target if the second replace fails.
-    # Without the snapshot, a mid-sequence failure leaves the workspace in a
-    # half-applied state — currently latent because every FIELD_MAP target writes
-    # to taxpayer_profile.json only, but a real bug the moment a result.json
-    # target lands in FIELD_MAP.
-    tmp_profile = targets.profile.with_suffix(targets.profile.suffix + ".tmp")
-    tmp_result = targets.result.with_suffix(targets.result.suffix + ".tmp")
-    original_profile = targets.profile.read_bytes()
-    original_result = targets.result.read_bytes()
+    # ONE WRITER, including for the two-file case. This was the last hand-rolled
+    # temp-then-rename in the engine, kept out of V10's first half because the
+    # single-file helper could not express a transaction. `secure_fs.atomic_paths`
+    # is the shape that can, and moving here fixed three things the local copy
+    # had: a FIXED scratch name, so two applies running at once wrote the same
+    # file and one published the other's bytes; a rollback via `write_bytes`,
+    # which can half-succeed; and a handler that read the target back to decide
+    # whether to restore, so a read that itself failed escaped the handler.
+    #
+    # ONLY THE DOCUMENTS THAT CHANGED ARE PUBLISHED, and that is not a
+    # micro-optimisation. Every `FIELD_MAP` entry targets the profile today, so
+    # the old code re-serialised `result.json` and republished it unchanged in
+    # intent but CHANGED IN BYTES — which moves its digest, and V8's receipt
+    # binds the tie-out gate's verdict to exactly that digest. A rollover run
+    # after a compute therefore invalidated the receipt and blocked
+    # `--filing-package`, for a file it had not edited.
+    #
+    # It also collapses the residual. `atomic_paths` cannot close the window a
+    # CRASH between two renames leaves open; publishing one file means there is
+    # no window, and one file is what every call in the toolkit makes today. The
+    # transaction stays for the day a `result.json` target lands in `FIELD_MAP`.
+    to_write = [(targets.profile, profile)] if "taxpayer_profile.json" in dirty else []
+    if "result.json" in dirty:
+        to_write.append((targets.result, result))
     try:
-        # Create at 600 up front rather than write-then-chmod: os.replace carries
-        # a file's mode over to the name it lands on, so a tmp file written at the
-        # shell's default mode would leave the real target — profile or result,
-        # both PII-bearing — briefly at that looser mode after the replace, until
-        # the chmod below runs (or, on the second replace failing, the restore
-        # path below writes the original bytes back without ever tightening it).
-        # os.open's mode is create-only and POSIX ignores it if the .tmp path
-        # already exists from a prior failed apply, so secure_fd on the open
-        # descriptor closes that gap too; scenario.py/tie_out.py hold the same
-        # line, including the Windows fallback (os.fchmod is Unix-only —
-        # secure_fd falls back there to the same PowerShell-ACL-based
-        # enforcement secure_path uses everywhere else on that platform).
-        for tmp_path, content in (
-            (tmp_profile, json.dumps(profile, indent=2)),
-            (tmp_result, json.dumps(result, indent=2)),
-        ):
-            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            # os.fdopen adopts the descriptor only on success — see
-            # scenario.py's note. This loop opens TWO per call, so a leak here
-            # compounds twice as fast as at the single-file sites.
-            try:
-                handle = os.fdopen(fd, "w")
-            except BaseException:
-                os.close(fd)
-                raise
-            with handle as f:
-                secure_fd(f.fileno(), tmp_path)
-                f.write(content)
-        os.replace(tmp_profile, targets.profile)
-        try:
-            os.replace(tmp_result, targets.result)
-        except OSError:
-            targets.profile.write_bytes(original_profile)
-            raise
-        secure_path(targets.profile)
-        secure_path(targets.result)
+        with atomic_paths(*[path for path, _ in to_write]) as temps:
+            for temp, (_, document) in zip(temps, to_write):
+                temp.write_text(json.dumps(document, indent=2))
+    except HalfApplied as e:
+        raise RolloverError(
+            f"Write failed and the rollback did not complete — the workspace is "
+            f"HALF APPLIED and must not be trusted: {redact(e)}") from e
+    except PublishedButNotSecured as e:
+        raise RolloverError(
+            f"Changes WERE applied, but a file could not be restricted to the "
+            f"owner: {redact(e)}") from e
     except OSError as e:
-        # Best-effort restore (no-op if writes already rolled back above)
-        if targets.profile.read_bytes() != original_profile:
-            targets.profile.write_bytes(original_profile)
-        if targets.result.read_bytes() != original_result:
-            targets.result.write_bytes(original_result)
-        for p in (tmp_profile, tmp_result):
-            if p.exists():
-                p.unlink()
         raise RolloverError(
             f"Atomic write failed, no changes applied: {redact(e)}") from e
 
