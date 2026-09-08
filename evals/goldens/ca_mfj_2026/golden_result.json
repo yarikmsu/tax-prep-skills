@@ -1,0 +1,268 @@
+{
+  "meta": {
+    "tax_year": 2026,
+    "prepared": null,
+    "filing_status": "MFJ",
+    "standard_deduction": 31500,
+    "exchange_rates": {},
+    "limitations": [
+      "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
+    ]
+  },
+  "taxpayers": {
+    "primary": {
+      "name": "Alex Q. Sample",
+      "ssn_last4": "XXX-XX-4321",
+      "dob": "1979-04-02",
+      "occupation": "Engineer"
+    },
+    "spouse": {
+      "name": "Robin T. Sample",
+      "ssn_last4": "XXX-XX-8765",
+      "dob": "1981-11-15",
+      "occupation": "Teacher"
+    },
+    "address": "418 Mission Street, San Jose, CA 95112"
+  },
+  "form_1040": {
+    "digital_asset_question": "No",
+    "line_1a_wages": 185000.0,
+    "line_1h_other_earned_income": 0,
+    "line_1z_total_wages": 185000.0,
+    "line_2a_tax_exempt_interest": 0,
+    "line_2b_taxable_interest": 1200.0,
+    "line_3a_qualified_dividends": 2600.0,
+    "line_3b_ordinary_dividends": 3000.0,
+    "line_4a_ira_distributions": 0,
+    "line_4b_taxable_ira": 0,
+    "line_5a_pensions": 0,
+    "line_5b_taxable_pensions": 0,
+    "line_6a_social_security": 0,
+    "line_6b_taxable_ss": 0,
+    "line_7_capital_gain": 7000.0,
+    "line_8_schedule1_other": 0,
+    "schedule_e_k1_income": 0,
+    "line_9_total_income": 196200.0,
+    "line_10_adjustments": 0,
+    "line_11_agi": 196200.0,
+    "line_12_standard_deduction": 31500,
+    "line_13a_qbi_deduction": 0,
+    "line_13b_schedule_1a_deductions": 0,
+    "line_13c_charitable_non_itemizer": 0,
+    "line_14_total_deductions": 31500,
+    "line_15_taxable_income": 164700.0,
+    "line_16_tax": 34122.0,
+    "line_19_ctc": 0,
+    "line_20_schedule3_line8": 0,
+    "line_21_total_credits": 0,
+    "line_22_tax_minus_credits": 34122.0,
+    "line_23_other_taxes": 0,
+    "line_24_total_tax": 34122.0,
+    "line_25a_w2_withholding": 28000.0,
+    "line_25b_1099_withholding": 0,
+    "line_25c_other_withholding": 0,
+    "line_25d_total_withholding": 28000.0,
+    "line_26_estimated_payments": 0,
+    "line_29_refundable_aotc": 0,
+    "line_31_schedule3_part2": 0,
+    "schedule_3_line_11_excess_ss": 0,
+    "line_33_total_payments": 28000.0,
+    "line_34_overpayment": 0,
+    "line_35a_refund": 0,
+    "line_37_amount_owed": 6122.0,
+    "line_38_estimated_tax_penalty": 0
+  },
+  "interest_detail": {
+    "items": [
+      {
+        "payer": "First Meridian Savings",
+        "amount": 1200.0
+      }
+    ],
+    "total": 1200.0,
+    "foreign_accounts_yes": false,
+    "fbar_required": false
+  },
+  "dividend_detail": {
+    "items": [
+      {
+        "payer": "Northgate Securities",
+        "ordinary": 3000.0,
+        "qualified": 2600.0
+      }
+    ],
+    "total_ordinary": 3000.0,
+    "total_qualified": 2600.0,
+    "total_cap_gain_dist": 0,
+    "total_sec_199a": 0
+  },
+  "schedule_d": {
+    "part_i_short_term": {
+      "line_1a_1099b_box_a": {
+        "proceeds": 0,
+        "cost": 0,
+        "adjustment": 0,
+        "adjustment_code": null,
+        "employer_stock": false,
+        "gain": 0,
+        "source": null
+      },
+      "line_2_1099b_box_b": {
+        "proceeds": 0,
+        "cost": 0,
+        "adjustment": 0,
+        "adjustment_code": null,
+        "employer_stock": false,
+        "gain": 0,
+        "source": null
+      },
+      "line_1c_1099b_box_c": {
+        "proceeds": 0,
+        "cost": 0,
+        "adjustment": 0,
+        "adjustment_code": null,
+        "employer_stock": false,
+        "gain": 0,
+        "source": null
+      },
+      "line_6_prior_year_carryover": 0,
+      "line_7_net_short_term": 0
+    },
+    "part_ii_long_term": {
+      "line_8a_1099b_box_d": {
+        "proceeds": 22000.0,
+        "cost": 15000.0,
+        "adjustment": 0,
+        "adjustment_code": null,
+        "employer_stock": false,
+        "gain": 7000.0,
+        "source": "1099-B Northgate Securities"
+      },
+      "line_9_1099b_box_e": {
+        "proceeds": 0,
+        "cost": 0,
+        "adjustment": 0,
+        "adjustment_code": null,
+        "employer_stock": false,
+        "gain": 0,
+        "source": null
+      },
+      "line_10_1099b_box_f": {
+        "proceeds": 0,
+        "cost": 0,
+        "adjustment": 0,
+        "adjustment_code": null,
+        "employer_stock": false,
+        "gain": 0,
+        "source": null
+      },
+      "line_11_1099b": 0,
+      "line_12_not_reported": 0,
+      "line_13_cap_gain_dist": 0,
+      "line_14_prior_year_carryover": 0,
+      "line_15_net_long_term": 7000.0
+    },
+    "line_16_combined": 7000.0,
+    "loss_carryforward_to_next_year": {
+      "short_term": 0,
+      "long_term": 0
+    }
+  },
+  "w2_summary": {
+    "employer": "Acme Widgets LLC",
+    "employer_ein": "12-3456789",
+    "employer_address": null,
+    "box_1_wages": 185000.0,
+    "box_2_fed_withheld": 28000.0,
+    "box_3_ss_wages": 184500,
+    "box_4_ss_tax": 11439.0,
+    "box_5_medicare_wages": 185000.0,
+    "box_6_medicare_tax": 2682.5,
+    "box_12_AA_roth_401k": 0,
+    "box_12_C_life_ins": 0,
+    "box_12_D_401k": 0,
+    "box_12_DD_health": 0,
+    "box_12_W_hsa": 0,
+    "box_14_casdi": 2035.0,
+    "box_16_state_wages": 185000.0,
+    "box_17_state_tax": 9500.0
+  },
+  "federal_tax_computation": {
+    "taxable_income": 164700.0,
+    "ordinary_income": 155100.0,
+    "qualified_dividends_ltcg": 9600.0,
+    "qdcg_detail": null,
+    "tax_on_ordinary": {},
+    "tax_on_ordinary_total": 32682.0,
+    "tax_on_qdiv_ltcg_at_15pct": 1440.0,
+    "total_tax_before_credits": 34122.0,
+    "child_tax_credit": 0,
+    "foreign_tax_credit": 0,
+    "total_credits": 0,
+    "tax_after_credits": 34122.0,
+    "additional_medicare_tax": 0,
+    "niit": 0,
+    "total_tax": 34122.0
+  },
+  "california_540": {
+    "ca_filing_status": "MFJ",
+    "ca_standard_deduction": 11000,
+    "federal_agi": 196200.0,
+    "schedule_ca_adjustments": {
+      "hsa_employer_addback": 0,
+      "hsa_interest_addback": 0,
+      "hsa_dividend_addback": 0,
+      "total_additions": 0,
+      "total_subtractions": 0
+    },
+    "ca_agi": 196200.0,
+    "ca_taxable_income": 185200.0,
+    "ca_tax_from_table": 7912.0,
+    "ca_exemption_credits": {
+      "personal": {
+        "count": 2,
+        "per_person": 150,
+        "total": 300
+      },
+      "dependent": {
+        "count": 0,
+        "per_dependent": 0,
+        "total": 0
+      },
+      "total": 300
+    },
+    "ca_tax_after_credits": 7612.0,
+    "ca_mental_health_surcharge": 0,
+    "schedule_p": {
+      "ca_amti": 0,
+      "ca_exemption_allowed": 0,
+      "ca_tmt": 0,
+      "ca_amt": 0,
+      "iso_bargain_element": 0,
+      "carryforward_to_next_year": 0
+    },
+    "ca_total_tax": 7612.0,
+    "ca_withholding_box17": 9500.0,
+    "ca_sdi_box14": 2035.0,
+    "ca_excess_sdi_credit": 0,
+    "ca_refund": 1888.0
+  },
+  "income_summary_by_person": {
+    "alex": {
+      "w2_wages": 185000.0,
+      "interest_us": 1200.0,
+      "dividends_us": 3000.0,
+      "capital_gains_us": 7000.0,
+      "total_income": 196200.0
+    },
+    "robin": {
+      "total_income": 0
+    }
+  },
+  "balance_due_summary": {
+    "federal_refund": -6122.0,
+    "california_refund": 1888.0,
+    "net_refund": -4234.0
+  },
+  "dependents": []
+}

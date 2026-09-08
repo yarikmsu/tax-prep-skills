@@ -568,3 +568,250 @@ question so the trade is visible rather than inherited:
   already handles Cyrillic elsewhere, so a taxpayer whose own name is Cyrillic gets a
   summary that cannot print it.
 
+## V3 (first half) — The eval fixture, the first golden, and the comparator (P1) — PR #97
+
+**Defect:** the suite proves the ENGINE computes correctly and nothing proves the
+AGENT-MEDIATED path does. `tax-compute` is Markdown instructing a model to call
+27 functions and assemble `result.json` by hand; a skipped step, a
+filing-status key read from the wrong place, or a figure transcribed wrong is
+invisible to every test in `tests/`. The 09-05 review calls this the largest
+remaining correctness risk, and V3 is the item that closes it — and it gates
+every V1 and V2 slice, one golden per slice.
+
+**Shipped, per the owner's Q1-Q3 rulings (2026-09-07):**
+- `evals/fixture.py` builds a synthetic workspace: a W-2 and three information
+  returns as real PDFs, a profile, and a FIXED invented tax law. The law is
+  invented on purpose — a golden built on real figures goes stale every filing
+  season and gets rewritten by whoever notices, which is how a golden stops
+  being a known answer — and its brackets are round so the derivation can be
+  checked with a pencil. Every federal block is filled, because a cache reading
+  INCOMPLETE would make an eval run a test of the freshness gate rather than of
+  the agent.
+- `evals/goldens/ca_mfj_2026/` — the golden and its `derivation.md`, every figure
+  with its arithmetic. The case is chosen so the QDCG worksheet's 0% band is
+  EMPTY: ordinary income sits above the breakpoint, which is exactly the shape an
+  agent gets wrong by applying the breakpoint to the preferential income instead
+  of to taxable income.
+- `evals/compare.py` scores a result against a golden in three classes, all
+  reported: MISMATCH (a figure moved), MISSING (a step that never ran — the
+  false-completion shape) and EXTRA (a section from somewhere else, the one
+  people wave through). Tolerance is $1.00, the tie-out gate's own, so the two
+  cannot drift apart on what "the same figure" means.
+- `tests/test_evals.py` re-derives every figure in the golden from the fixture's
+  inputs through the engine, so the golden cannot be hand-edited into drift; it
+  also pins that the fixture is a workspace the pipeline would accept — readable
+  through the masking extractor, owner-only, and federally complete.
+
+**Two defects the tests found in this PR's own code:** the fixture law was
+INCOMPLETE (37 federal null fields, so an agent would have correctly refused to
+compute), and the dollar tolerance reached `meta.tax_year` — 2026 against 2025 is
+one apart, and a comparator calling a return filed for the wrong year a rounding
+difference is worse than no comparator. The tolerance is now money-only, keyed
+the way `pdf_render` keys the same distinction.
+
+**Not in this PR:** the model-driven runner that dispatches an agent against the
+fixture, and the further cases V3 names — a missing and a corrected document,
+hostile document text, a stale cache, a context interruption, and a valid
+zero-income return. Each is its own golden.
+
+**Review round (Codex, local, against `main`):** three findings, all fixed, and
+two of them were the fixture failing the very gates it has to get past before
+anything is scored.
+
+- **[P1] The workspace did not pass the freshness gate.** `state.itemized_phaseout`
+  was absent, so the cache read INCOMPLETE, and it carried no retrieval stamp, so
+  filling that alone would have left it STALE. Either stops /tax-compute at Step
+  0.5. The test that was supposed to catch this checked FEDERAL nulls only; it
+  asserts the whole report is FRESH now. The same probe found a second blocker
+  Codex did not name: the capability gate BLOCKED the profile, because its flags
+  block was empty and absence is not treated as "no", so the run would have
+  stopped at Step 0.7.
+- **[P1] The golden's limitations manifest was empty.** The gate emits the
+  California state-scope note for this profile and /tax-compute copies it
+  verbatim, so an agent doing the right thing FAILED the comparison while one
+  omitting the disclosure passed — backwards, and the exact false-completion the
+  harness exists to catch. The golden carries the gate's own manifest now, and a
+  test keeps the two synchronised.
+- **[P2] A boolean scored as a number.** `False == 0` and `True == 1` in Python,
+  so a flag standing in for an amount — or an amount for a flag — came back
+  clean under a bare equality.
+
+**Second Codex round:** two more, both fixed, and the first is the worst kind of
+error a golden can carry.
+
+- **[P1] The golden encoded a shape the pipeline does not produce.** The lot sat
+  directly under `part_ii_long_term` instead of in the detail ROW keyed by its
+  1099-B box, so a correctly assembled result would have FAILED the comparison —
+  and the tie-out gate's `capital_proceeds` check, which reads exactly those
+  rows, returned None on it. `income_summary_by_person` was missing too, so
+  completing Step 12 scored as EXTRA. A golden that punishes correct behaviour is
+  worse than no golden; the shape is the template's now, and a test reads the
+  golden through `tie_out._result_total` so it stays that way.
+- **[P2] The case implied an estimated-tax penalty it did not answer.** 90% of
+  the year's tax is 30,709.80 against 28,000 withheld, so Step 9.5 finds an
+  underpayment and must ask the taxpayer or stop — and a case that stops to ask
+  is not a known answer. The profile now carries the prior year whose 110% safe
+  harbour the withholding covers, and `answers.md` records that and every other
+  question the return raises, since that file is the headless input path.
+
+**Third Codex round:** three more, all fixed, and all the same shape as the
+second — the golden and the fixture disagreeing with the pipeline's own
+contract.
+
+- **[P1] Three zero-valued lines the pipeline PERSISTS were missing.** Step 9
+  writes the excess-SS and Schedule 3 Part II lines; Step 9.5 writes a zero
+  penalty when none applies. Absent from the golden, each scored a completed
+  step as EXTRA — the harness rewarding an agent for skipping it.
+- **[P2] The state block had no SDI rate.** `compute_excess_sdi` runs for every
+  person with CA-wage W-2 income and hard-errors on a None rate, so Step 10.11
+  stopped the computation. The rate is synthetic, the wage limit explicitly null
+  (the TY2024+ shape), and the W-2 now carries CASDI in box 14.
+- **[P2] The answers did not close the intake questions.** /tax-parse Step 2.5
+  asks whether the document set is complete and whether any form is a
+  correction; a headless run stops on an unanswered one, correctly, and a case
+  that stops is not a known answer.
+
+**Fourth Codex round:** three more, all fixed.
+
+- **[P1] The golden omitted the CA itemised worksheet.** State withholding makes
+  the Schedule A computation mandatory in Step 5, and Step 10.4 then requires
+  the California one even when both elections take the standard deduction —
+  they are independent elections, so the comparison must be made before either
+  is chosen. Running that required step scored as EXTRA.
+- **[P2] The answers left the deduction inputs open.** Schedule A asks for the
+  prior-year state balance paid this year and for charitable gifts; a headless
+  run stops on an unanswered one, and a cash gift would also create a §170(p)
+  non-itemizer deduction. Both are answered as zero now, explicitly.
+- **[P2] The comparator printed identity values.** `--result` takes any file and
+  the golden being synthetic constrains nothing about what is handed to it:
+  pointed at a real return, a name or address mismatch printed the taxpayer's
+  own details to the terminal and into `--json`. The difference is reported and
+  the value is not — the PATH is what a reader acts on — and the suppression is
+  scoped, so a tax line still shows its figures.
+
+**Fifth Codex round:** two more, both fixed, and the first REVERSES what the
+fourth round asked for — which is worth recording rather than quietly settling.
+
+- **[P2] The CA worksheet is computed, not persisted.** The fourth round read
+  the result TEMPLATE and concluded the section belongs whenever the
+  computation runs; the SKILL says to write it "when itemizing", and this case
+  takes the standard deduction. The skill is the contract, so the golden carries
+  no section and the test pins the comparison instead — with an assertion that
+  fails loudly if the case ever drifts into itemising.
+- **[P2] A composite difference printed identity data.** Identity detection
+  reads the difference's PATH and cannot see inside an EXTRA whole section,
+  which carries its own payer or employer; and `income_summary_by_person` is
+  keyed by the taxpayers' first names, so the path itself carries identity.
+  Composites are counted rather than printed, and a person-keyed segment is
+  masked, in both output modes.
+
+
+**Sixth Codex round:** two more, both fixed, and both are the previous round's
+fix reaching one field further than it did.
+
+- **[P1] Identity suppression was a list of NAMES, so it covered only the fields
+  somebody thought of.** `w2_summary.employer_ein` was not on it, and an EIN is
+  an identifier `redact` structurally cannot see — two digits, a hyphen, seven
+  digits is neither an SSN spelling nor a nine-digit run — so the employer's tax
+  ID printed verbatim in both output modes. Two rules now, because one cannot
+  reach both cases: the leaf's TRAILING TOKEN decides identity, which reaches
+  `payer_tin` and `spouse_ssn` without either being listed; and every emitted
+  scalar and path goes through `redact`, which reads the VALUE and so covers an
+  identifier arriving under a key no list will ever hold — an EXTRA, printed with
+  its value, is exactly how one arrives. Over-redaction is the accepted cost: a
+  money field in the hundreds of millions prints masked, and that direction is
+  legibility while the other is disclosure.
+- **[P2] The golden was hand-written line by line, not the initialized
+  template.** Step 5 copies `result_template.json` and fills it in; it removes
+  inapplicable SECTIONS, not individual lines, and it invents none. So the golden
+  failed a run that did everything right, in both directions at once — twenty
+  template-retained lines and the profile's own `dob` and `occupation` scored as
+  EXTRA. The golden is the initialized template now, and the test pins the SHAPE
+  against that template rather than listing lines: the hand-listed version of it
+  named three lines and missed twenty. The removed sections are pinned as an
+  explicit set, so a section dropped because filling it in was awkward has to be
+  argued for there.
+
+**Seventh round (self-review, the automated reviewer having run out of budget
+mid-pass):** two more, both fixed, and the first is the sixth round's fix having
+to reach one layer deeper rather than one field further.
+
+- **[P1] An infinite `--tolerance` scored every wrong figure as a match.**
+  `float()` accepts `inf`, `Infinity` and `nan`; with any of them a return whose
+  tax was **zero** compared clean against the golden and the CLI exited 0. That
+  is the under-statement bias AGENTS.md §4 calls a hard error — a harness that
+  reports a wrong return as right is worse than no harness — and AGENTS.md §8
+  already required `math.isfinite` at every numeric parse boundary. Refused in
+  `compare` itself, so the library entry the tests call cannot be handed one, and
+  again at the argparse boundary, so the CLI answers with a message rather than a
+  traceback.
+- **[P1] Identity suppression was still a list of names, and the third list
+  missed the third field.** `schedule_d.<part>.<row>.source` holds the 1099-B the
+  lot came from, which names a brokerage, and it was on no list — after
+  `employer_ein` had been on no list the round before. **The default for TEXT is
+  now inverted**: a string is withheld unless its leaf is named as one of the
+  strings that are ANSWERS (the filing status, the codes, the limitations
+  manifest, the dates). The two directions of drift are not comparable — a new
+  template field missing from an identity list discloses, while one missing from
+  this list merely prints as "not shown" beside a path that still says which
+  field moved — and §1 is absolute where legibility is not. Numbers are
+  unaffected, because a figure is what a reader acts on and an identifier wearing
+  a number is caught by `redact`. A test sweeps `result_template.json` for every
+  text-capable leaf and pins the withheld SET, so a new one forces the decision
+  to be made out loud, and pins that no printable name has been left behind by a
+  rename.
+
+**Cleanup round (four review agents over the whole of `evals/`, in parallel):**
+the reuse, simplification, efficiency and altitude passes agreed on one thing
+from four directions, and it retired the previous round's fix.
+
+- **Identity suppression is decided by the SIDE and the TYPE, never by the field
+  name.** Three rounds had been lists of names — an identity allowlist, then a
+  trailing-token rule, then an inverted default with a list of the printable
+  strings — and the altitude pass measured the result: across the golden's 195
+  scalar leaves, the three name lists' entire residual effect over the inverted
+  default was one leaf holding `null`. The lists could not be moved by any test.
+  The distinction that always mattered is which operand a value came from:
+  `golden` is a synthetic file in this repository, past the PII gate and swept
+  for identifier shapes by a test, so it prints; `actual` is whatever `--result`
+  was pointed at, so its strings never print. Numbers print, because a figure is
+  what a reader acts on. Sixty names and four constants gone, and it covers
+  every field nobody has thought of, which is what all four rounds were reaching
+  for. The residual is stated in the module and the README: a string difference
+  shows the golden's side only.
+- **The fixture's profile was hand-built and had drifted from its own template
+  in three ways** — `taxpayers.primary` for the template's top-level `primary`,
+  `address.line1` for `address.street`, and an invented `prior_year.agi` /
+  `total_tax` pair the schema has no keys for (Step 9.5 reads that composition
+  from `answers.md`, which the fixture already writes). Worse, the hand-built
+  `flags` block had seven entries and `has_capital_gains` was not one of them,
+  while `schedule_d`'s `_include_if` keys on exactly that flag and the golden
+  carries the section: the profile described a different case than the golden
+  scored. It is the template filled in now, pinned by the mirror of the golden's
+  own shape test.
+- **The renderer's not-money table is imported, not copied** — the copy had lost
+  `tin`, `disposal` and `disposals` in one commit — but the RULE is deliberately
+  not shared, and the test that changes the tax year caught the attempt to share
+  it: `pdf_render._is_amount` answers "does this print with a dollar sign", and
+  its `_AMOUNT_ANYWAY` override calls `tax_year` money, which puts 2026 and 2025
+  within the dollar tolerance.
+- **The golden's arithmetic is pinned, not only its keys.** Twenty-three of its
+  own figures were asserted nowhere, so a hand-typed wrong one there would have
+  failed a correct agent — the same "harness measuring itself" the shape test
+  fixed, one level down. Every identity added is one any correct return
+  satisfies, and each was mutation-checked.
+- Smaller, from the same pass: the tolerance is validated once per call rather
+  than once per node, and by one predicate behind both the library and the CLI;
+  `_show`/`_emit` are one ladder; the templates are read once for the module;
+  three of the four fixture builds share one module-scoped workspace; two of the
+  three CLI tests drive `_main` in process, leaving one genuine end-to-end spawn.
+
+**Deferred, with the reasoning recorded rather than dropped:** building the
+golden from the fixture through the engine (`evals/golden.py build --case`)
+instead of maintaining it by hand. The altitude pass makes the case and it is a
+good one — the README commits to five more cases, and six hand-filled copies of a
+268-line template is where the bill lands. It is deferred to those cases rather
+than done here, because the generator's value is in the second golden onwards and
+this PR is one task. Also deferred: `_read_json` is a fifth copy of one loader
+(`tie_out`, `amend`, `rollover`, `projection` hold the others), which is a
+five-site library change and not this PR's.

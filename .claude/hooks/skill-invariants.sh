@@ -1155,12 +1155,12 @@ apply_red_checks
 #   agent-definition edit           38 tests      1.6 - 1.6s         3
 #   skill .md edit                 813 tests     23.3 - 24.0s        3
 #   cold pass, all seven modules  1072 tests    148.9 - 150.7s       3
-#   (for scale) `pytest tests/`   3769 tests    256.9 - 280.9s       2
+#   (for scale) `pytest tests/`   3822 tests    256.9 - 280.9s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3771 and runs 3769 for the same skips — and that row
+# `pytest tests/` collects 3824 and runs 3822 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1327,8 +1327,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained three hundred and fifty
-# tests (3419 to 3769). The sitting took the counts and the seconds TOGETHER,
+# Against the counts the seconds were taken at, the suite has gained four hundred and three
+# tests (3419 to 3822). The sitting took the counts and the seconds TOGETHER,
 # and six rounds have landed since. First, five launcher tests, executing the
 # two present-but-unusable `.venv` states `run.sh` refuses — the one with no
 # activate script, which had shipped untested, and the one it cannot inspect,
@@ -1431,6 +1431,29 @@ apply_red_checks
 #
 # Then its third: two more, on an empty row that cost nothing and a CSV
 # masking pass that ran outside the deadline it had just checked.
+#
+# Then V3's first half — the eval fixture, the first golden and the
+# comparator: twenty-three cases in tests/test_evals.py, a module this hook
+# does not select.
+#
+# Then that harness's own Codex round: three more cases, on a fixture that
+# could not pass the two gates it has to get past, and a boolean scoring as
+# a number.
+#
+# Then its second round: three more, on a golden that encoded a shape the
+# pipeline does not produce and a case that implied a penalty it did not
+# answer.
+#
+# Then its third round: three more, on zero-valued lines the pipeline
+# persists, a missing CA SDI rate that stopped the computation, and intake
+# questions the answers left open.
+#
+# Then its fourth round: four more, on a required CA worksheet the golden
+# omitted, deduction questions the answers left open, and identity values
+# the comparator printed.
+#
+# Then its fifth round: two more, on a worksheet the SKILL says to write
+# only when itemizing, and identity data inside a composite difference.
 # The seconds are carried,
 # which is what this paragraph is for. The scale row's
 # were read again on the V0 branch as a check, not a refresh — one plain
@@ -1446,7 +1469,7 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. They sum to twelve; the remaining three hundred and thirty-eight are modules this hook
+# yet taken. They sum to twelve; the remaining three hundred and ninety-one are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

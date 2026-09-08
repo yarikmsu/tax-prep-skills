@@ -62,8 +62,11 @@ jobs:
       # here rather than accumulating quietly.
       - name: Ruff
         run: ruff check .
+      # `evals` is checked too, and it carries no baseline: it is new code, so
+      # the gate is enforced on it from the day it lands rather than after a
+      # cleanup nobody schedules.
       - name: Mypy
-        run: mypy -p agents
+        run: mypy -p agents -p evals
 
   pii-scan:
     name: PII file scan
