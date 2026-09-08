@@ -1100,3 +1100,45 @@ cost, and the reference says both.
   summary carries it.** Recording the mode once in `parse_ledger.json` and letting
   the tie-out surface it is the better design — the mode is a property of the run,
   not of each file — and it is a ledger schema change that belongs with V2.
+
+### V6 follow-up: the worker could not be launched
+
+**Found by dispatching it.** The definition merged in #99 granted `TodoWrite`,
+chosen as the inert placeholder an empty tool set forces. The harness rejects the
+name:
+
+```
+Agent 'tax-parse-worker' would be spawned with zero tools — refusing.
+Its tools list resolved to nothing: unrecognized [TodoWrite].
+```
+
+So V6's central artifact did not exist, and **nothing in this repository could
+tell**. The definition satisfied every assertion in `test_claude_agents.py`: the
+frontmatter parsed, the name matched the file, the grant held nothing that reads,
+writes, runs or fetches — and it was a "real tool name" according to the module's
+own `KNOWN_TOOLS`, a hand-maintained list that turned out to contain a name the
+harness does not accept. A definition can pass every static property and still be
+undispatchable, which is the failure shape a static check is worst at.
+
+- `KNOWN_TOOLS` is evidence now, not documentation, and `VERIFIED_TOOLS` names
+  the subset watched to launch — `Read`, `Grep`, `Glob` from the bias reviewer's
+  dispatch, `WebSearch`/`WebFetch` from the auditor's recorded acceptance. A new
+  name is added by dispatching an agent that holds it, from a fresh session.
+- The worker's grant is `Glob`, taken as a **launch floor** rather than a need:
+  the weakest verified capability, returning path names and no content, so it is
+  neither a read of contents, nor a write, nor a request. The prompt tells the
+  worker it has no use for it. The residual is stated in both places — a listing
+  would reach the summary, which is reconnaissance with a local sink.
+- A new assertion pins that the worker may hold only a VERIFIED tool, which is
+  the check that would have caught this.
+- The delegation reference now says what to do when a dispatch fails: SEQUENTIAL
+  mode with its banner, never a general-purpose sub-task told to behave. That is
+  no longer hypothetical.
+
+**And a documentation claim that was wrong.** The investigation for #99 was told
+that an edited agent definition takes effect within seconds. It does not: the
+grant was changed on disk and the next dispatch still failed naming the OLD tool.
+CLAUDE.md's standing rule — definitions load at session start, so a same-session
+replay tests the wrong bytes — is the one that held, and it stays. This is the
+second time in two PRs that a plausible, confidently-stated second-hand claim was
+wrong in a way only a probe caught.

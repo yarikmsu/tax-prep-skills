@@ -62,12 +62,28 @@ EXPECTED_AGENTS = REVIEW_AGENTS | WORKER_AGENTS
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit", "Bash"}
 NETWORK_TOOLS = {"WebSearch", "WebFetch"}
 
-# Deliberately a closed set. A typo'd tool name grants nothing and reports
-# nothing — the agent simply lacks the capability its prompt assumes — so a new
-# tool has to be added here on purpose.
+# Tool names OBSERVED to resolve when a sub-agent is actually dispatched on this
+# host. Not a list read out of documentation, and the distinction is the whole
+# point of the comment: `TodoWrite` sat in this set as a "real tool name" and the
+# harness rejects it — `unrecognized [TodoWrite]`, tool list resolves to nothing,
+# spawn REFUSED. A definition granting it passed every assertion in this module
+# and could not be launched at all, which is the shape of failure a static check
+# is worst at and this one had.
+#
+# So the set is now evidence, and `VERIFIED_TOOLS` below is the part of it that
+# was watched to work. Adding a name means dispatching an agent that holds it and
+# seeing it launch — from a FRESH session, because a definition is read at
+# session start and an edit mid-session is not what a dispatch tests (measured:
+# the edited grant was reported under the OLD name).
 KNOWN_TOOLS = {"Read", "Write", "Edit", "NotebookEdit", "Grep", "Glob", "Bash",
-               "WebSearch", "WebFetch", "TodoWrite", "AskUserQuestion",
-               "BashOutput", "KillShell"}
+               "WebSearch", "WebFetch"}
+
+# The subset dispatched and seen to launch, with what evidence:
+#   Read, Grep, Glob      — `bias-direction-reviewer` launched and used all three
+#   WebSearch, WebFetch   — `tax-law-freshness-auditor`'s recorded acceptance runs
+# A worker may hold ONLY these. Everything else is unverified on this host, and an
+# unverified grant is how a boundary agent becomes an agent that does not exist.
+VERIFIED_TOOLS = {"Read", "Grep", "Glob", "WebSearch", "WebFetch"}
 
 
 def _agent_files():
@@ -756,16 +772,23 @@ class TestTheParseWorkerBoundaryIsDrawnByAbsence:
 
     # A CLOSED set, deliberately, and not another forbidden list. The forbidden
     # lists in this module exist where an agent needs real capabilities and the
-    # question is which; here the answer is "none", so the checkable form is the
-    # whole allowed set. A tool added to Claude Code cannot quietly become
-    # available to this worker — it has to be admitted on this line, by someone
-    # who has to say why a document-parsing sub-task needs it.
+    # question is which; here the answer is "as close to none as launches", so
+    # the checkable form is the whole allowed set. A tool added to Claude Code
+    # cannot quietly become available to this worker — it has to be admitted on
+    # this line, by someone who has to say why a parse worker needs it.
     #
-    # `TodoWrite` is the grant, and it is a placeholder: a subagent whose
-    # resolved tool set is EMPTY fails to launch, so the worker holds the one
-    # tool that touches nothing outside the session — no file, no process, no
-    # socket. It is not used by the prompt and nothing depends on it.
-    WORKER_MAX = {"TodoWrite"}
+    # `Glob` is the grant and it is a FLOOR, not a need. An empty resolved tool
+    # set is refused at launch, so the grant cannot be nothing, and `Glob` is the
+    # weakest capability VERIFIED to work here: it matches path names and returns
+    # no file content, so it is neither a read of contents, nor a write, nor a
+    # request. The prompt tells the worker it has no use for it.
+    #
+    # The residual, stated rather than implied: `Glob` can enumerate path names,
+    # and a listing would reach the summary. That is reconnaissance with a local
+    # sink — the worker cannot send it anywhere — and it is the price of the
+    # launch floor. A tool that touches nothing at all would be better, and
+    # `TodoWrite` looked like one until the harness rejected the name.
+    WORKER_MAX = {"Glob"}
 
     def _worker(self):
         (path,) = [f for f in _agent_files() if f.stem in WORKER_AGENTS]
@@ -781,12 +804,30 @@ class TestTheParseWorkerBoundaryIsDrawnByAbsence:
             "fetch, read or write something it has no tool for, and nothing "
             "else on this build fails closed")
 
-    def test_it_has_no_read_tool_and_the_definition_says_why(self):
-        """The one grant a reader would assume is safe, and the two reasons it
-        is not: `Read` is not path-confined on this build, and reading a document
-        directly bypasses the extraction masking — which is the P0 V0 fixed."""
+    def test_the_worker_grants_only_a_tool_verified_to_launch(self):
+        """The assertion this module did not have, and the one that would have
+        caught a worker nobody could dispatch.
+
+        `TodoWrite` was in `KNOWN_TOOLS` as a real tool name. The harness rejects
+        it — the tool list resolves to nothing and the spawn is REFUSED — so the
+        definition passed every check here and the agent did not exist. A name
+        this repository has not watched launch is not evidence about anything."""
+        assert _tools(self._worker()) <= VERIFIED_TOOLS, (
+            "the parse worker may hold only a tool dispatched and seen to "
+            "launch on this host; an unverified grant is how a boundary agent "
+            "becomes an agent that cannot be spawned")
+
+    def test_it_reads_no_file_and_the_definition_says_why(self):
+        """The grants a reader would assume are safe, and the two reasons they
+        are not: `Read` is not path-confined on this build, and reading a
+        document directly bypasses the extraction masking — the P0 V0 fixed.
+        `Glob` is excluded from this bar because it returns no content; the
+        launch floor forces it and the definition says so."""
         granted = _tools(self._worker())
-        assert not (granted & {"Read", "Grep", "Glob"})
+        assert not (granted & {"Read", "Grep"})
+        assert "Do not call it" in self._worker().read_text(), (
+            "the one tool it holds is a launch floor, and the prompt has to say "
+            "the worker has no use for it")
         body = self._worker().read_text()
         assert "NOT to be confined" in body or "not confined" in body, (
             "the definition must say Read is unconfined and point at the probe "

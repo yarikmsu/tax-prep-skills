@@ -17,6 +17,12 @@ Where that mechanism is a definition file, this repository ships one:
 `.claude/agents/tax-parse-worker.md` holds the worker's prompt and its grant, and
 any agent with an equivalent mechanism can be pointed at the same prompt.
 
+**If the dispatch fails, do not work around it.** A worker that will not launch
+is a boundary that is not there, and the correct response is SEQUENTIAL mode with
+its banner — not a general-purpose sub-task told to behave. The first version of
+this worker could not be spawned at all (`docs/ops/review-subagent-acceptance.md`
+records why), so this is the failure that has actually happened.
+
 **SEQUENTIAL mode** — you parse in this session, under the rules below as
 *instructions*. Use it when your agent has no such mechanism. **Codex, Kimi Code
 and Copilot have no closed tool set to give a sub-task**, so this is their path,

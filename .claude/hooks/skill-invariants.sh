@@ -1165,15 +1165,15 @@ apply_red_checks
 #   what triggers it               what runs     observed range    runs
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.06 - 0.08s         6
-#   agent-definition edit           44 tests      1.4 - 1.7s         3
+#   agent-definition edit           45 tests      1.4 - 1.7s         3
 #   skill .md edit                 813 tests     22.4 - 23.8s        3
-#   cold pass, all seven modules  1078 tests    136.6 - 139.9s       3
-#   (for scale) `pytest tests/`   3876 tests    253.7 - 261.0s       2
+#   cold pass, all seven modules  1079 tests    136.6 - 139.9s       3
+#   (for scale) `pytest tests/`   3877 tests    253.7 - 261.0s       2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3878 and runs 3876 for the same skips — and that row
+# `pytest tests/` collects 3879 and runs 3877 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1194,7 +1194,7 @@ apply_red_checks
 #   tests/test_claude_hooks.py     128 tests    121.8 - 124.4s       4
 #   tests/test_portability.py      177 tests     15.6 - 16.8s        3
 #   tests/test_capabilities.py     116 tests      1.3 - 1.4s         3
-#   tests/test_claude_agents.py     44 tests      1.6 - 1.6s         3
+#   tests/test_claude_agents.py     45 tests      1.6 - 1.6s         3
 #   tests/test_secure_fs.py        145 tests      1.8 - 1.9s         3
 #   tests/test_preflight.py        375 tests      7.3 - 7.6s         3
 #   tests/test_host_guard.py        93 tests      1.8 - 1.9s         3
@@ -1287,7 +1287,7 @@ apply_red_checks
 # invocations each paying an interpreter start pushes the same way and is worth
 # well under a second of it. What separates this from the count-column patch the
 # header forbids is the other half, which is EXACT:
-# 116 + 145 + 177 + 375 = 813 for a skill edit, plus 44 + 93 + 128 = 1078 for a
+# 116 + 145 + 177 + 375 = 813 for a skill edit, plus 45 + 93 + 128 = 1079 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1342,15 +1342,17 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained none
-# tests (3876 to 3876). The sitting took the counts and the seconds TOGETHER,
-# and this one is CURRENT: every row above was re-measured on 2026-09-07 at
-# exactly the counts stated, so there is no drift to reconcile and the pairs
-# below all read none. That is the degenerate case of this paragraph rather
-# than an exemption from it — the next round to land makes it non-zero again,
-# and what follows is the history the previous sitting accumulated, kept
-# because it is the record of what those tests were FOR. First, five launcher
-# tests, executing the
+# Against the counts the seconds were taken at, the suite has gained one
+# tests (3876 to 3877). The sitting took the counts and the seconds TOGETHER,
+# and this one is all but CURRENT: every row above was re-measured on 2026-09-07,
+# and ONE test has landed since — the assertion that the parse worker's grant is
+# a tool verified to LAUNCH, which exists because the first worker granted a name
+# the harness rejects and could not be spawned at all. A single case inside a
+# forty-five-test module sits well within that row's stated range, which is what
+# the pairs below are for: they carry the drift so the seconds do not have to be
+# re-taken for every round. What follows is the history the previous sitting
+# accumulated, kept because it is the record of what those tests were FOR.
+# First, five launcher tests, executing the
 # two present-but-unusable `.venv` states `run.sh` refuses — the one with no
 # activate script, which had shipped untested, and the one it cannot inspect,
 # which had been refused with `rm -rf`. Then the round that masked SSN/ITIN at
@@ -1482,7 +1484,7 @@ apply_red_checks
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
 # portability has gained none (177 to 177), preflight has gained none (375 to 375), the
-# agents module none (44 to 44), secure_fs has gained none (145 to 145), the hooks module
+# agents module has gained one (44 to 45), secure_fs has gained none (145 to 145), the hooks module
 # none (128 to 128), capabilities has gained none (116 to 116) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
@@ -1490,11 +1492,11 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. Every pair reads none because EVERY row above — the scale row
-# included — was re-measured on 2026-09-07 at exactly these counts: this IS the
-# sitting, so nothing has moved since it yet, and the reconciliation below is
-# the degenerate case rather than a a figure anyone had to carry forward.
-# They sum to none; the remaining none are modules this hook
+# yet taken. Every pair but one reads none because EVERY row above — the scale
+# row included — was re-measured on 2026-09-07 at these counts; the one that does
+# not is the single test that landed after it, and the reconciliation below is
+# what carries it rather than a re-measurement nobody needed.
+# They sum to one; the remaining none are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
@@ -1997,7 +1999,7 @@ apply_red_checks
 #
 # THE ROUND AFTER IT WENT UNLOGGED, and that omission is the finding this entry
 # and the two below it settle. It moved preflight twenty-one (322 to 343) and
-# the agents module has gained eight (36 to 44), so the skill row went 753 to 774, the cold
+# the agents module has gained nine (36 to 45), so the skill row went 753 to 774, the cold
 # pass 913 to 935 and the scale row 3272 to 3294 — an AGENTS-AND-PREFLIGHT round,
 # the third in this log, parting the two derived rows by one. The table was
 # refreshed for it and the ARITHMETIC sentence four paragraphs up was not, so the

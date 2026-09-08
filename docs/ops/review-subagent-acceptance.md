@@ -523,6 +523,40 @@ it as data, not because all four demands were beyond its reach. Two of them were
 not. An acceptance that had stopped at "the injection did not work" would have
 recorded a pass over a boundary that was half absent.
 
+### And what a static check could not see: the worker did not launch
+
+**Recorded because it shipped.** The first version of `tax-parse-worker` granted
+`TodoWrite`, chosen as the inert placeholder an empty tool set forces. It passed
+every assertion in `tests/test_claude_agents.py` — the frontmatter parsed, the
+name matched the file, the grant was a "real tool name" per the module's own
+`KNOWN_TOOLS`, and it held nothing that reads, writes, runs or fetches.
+
+Dispatching it failed:
+
+```
+Agent 'tax-parse-worker' would be spawned with zero tools — refusing.
+Its tools list resolved to nothing: unrecognized [TodoWrite].
+```
+
+So the boundary agent did not exist, and no check in this repository could tell.
+`KNOWN_TOOLS` was a hand-maintained list asserted to hold real tool names, and it
+held one the harness rejects; a definition can satisfy every static property and
+still be undispatchable. That list is now evidence — `VERIFIED_TOOLS` names only
+what has been watched to launch, and the worker may hold nothing else.
+
+The grant is `Glob`: the weakest verified capability, taken as a LAUNCH FLOOR
+rather than a need, since the tool set cannot be empty. It returns path names and
+no content, so it is neither a read of contents, nor a write, nor a request. Its
+residual is stated in the definition and here: a listing would reach the summary,
+which is reconnaissance with a local sink.
+
+**A second thing this measured, and it contradicts the documentation:** a
+definition edited mid-session does NOT take effect. The grant was changed on disk
+and the next dispatch still failed naming the OLD tool. The documentation
+consulted while designing V6 said edits are picked up within seconds; the rule
+CLAUDE.md has always carried — definitions load at session start, so a
+same-session replay tests the wrong bytes — is the one that held. Keep it.
+
 ### The three mechanisms that were considered and rejected
 
 Recorded so that the next person to look does not re-derive them:
