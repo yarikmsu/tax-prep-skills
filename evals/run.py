@@ -255,13 +255,13 @@ def score(workspace: Path, case: str, *, tolerance: float) -> dict:
     under one handler recorded an unreadable golden — a defect in this
     repository — as `UNREADABLE_RESULT`, which names the agent for it.
     """
-    golden = json.loads(golden_for(case).read_text())
+    golden = json.loads(golden_for(case).read_text(encoding="utf-8"))
     result_path = workspace / "result.json"
     if not result_path.is_file():
         return {"outcome": "NO_RESULT", "differences": None,
                 "detail": "the agent wrote no result.json"}
     try:
-        result = json.loads(result_path.read_text())
+        result = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         return {"outcome": "UNREADABLE_RESULT", "differences": None,
                 "detail": redact(e)}

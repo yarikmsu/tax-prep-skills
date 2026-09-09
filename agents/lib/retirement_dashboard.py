@@ -1799,7 +1799,7 @@ def render_markdown(report: DashboardReport) -> str:
 
 def _read_json(path: Path) -> dict:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise RetirementError(f"{redact(path)} is not valid JSON: {redact(e)}") from e
     except UnicodeDecodeError as e:

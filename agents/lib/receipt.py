@@ -139,7 +139,7 @@ def _tax_year(workspace: Path) -> "int | None":
     if not path.is_file():
         return None
     try:
-        meta = json.loads(path.read_text()).get("meta")
+        meta = json.loads(path.read_text(encoding="utf-8")).get("meta")
     except (OSError, ValueError):
         return None
     year = meta.get("tax_year") if isinstance(meta, dict) else None
@@ -220,7 +220,7 @@ def _read(workspace: Path) -> dict:
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise ReceiptError(
             f"{redact(path)} is not readable JSON: {redact(e)} — delete it and "

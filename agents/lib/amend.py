@@ -257,7 +257,7 @@ def _read_json(path: Path, what: str) -> dict:
     if not path.is_file():
         raise AmendError(f"{what} not found at {redact(path)}")
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
         raise AmendError(f"could not read {what}: {redact(e)}") from e
 

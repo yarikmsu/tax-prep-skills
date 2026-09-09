@@ -1,0 +1,17 @@
+# What RUNS the suite, and nothing else.
+#
+# Split from `requirements-dev.in` because a single dev lock could not be
+# installed beside the runtime one: pip-audit pulls `requests`, which pulls
+# `charset-normalizer`, and resolving the two trees together landed 3.5.1 over
+# the 3.4.9 that `requirements.txt` pins. `parse_utils` then REFUSED to parse —
+# correctly, and loudly — because a parser version the lock does not name is one
+# the suite never ran against (AGENTS.md §7). Every test that touches a document
+# went red in CI on a tooling dependency.
+#
+# Install order would have hidden it. Two locks make it impossible instead:
+# nothing here shares a dependency with the runtime tree, and a test pins that.
+#
+#   uv pip compile requirements-test.in --generate-hashes --universal \
+#       --python-version 3.12 -o requirements-test.txt
+pytest
+coverage

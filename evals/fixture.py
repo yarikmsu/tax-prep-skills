@@ -205,7 +205,7 @@ TEMPLATES = Path(__file__).resolve().parent.parent / "agents" / "templates"
 
 
 def _template(name: str) -> dict:
-    return json.loads((TEMPLATES / name).read_text())
+    return json.loads((TEMPLATES / name).read_text(encoding="utf-8"))
 
 
 def taxpayer_profile() -> dict:

@@ -1564,3 +1564,35 @@ def test_the_digest_exemption_does_not_leak_to_other_paths(tmp_path):
         _stage(repo, elsewhere, _RECORD_LINE)
         assert _run(repo).returncode == 1, (
             f"the acceptance record's token laundered a digest in {elsewhere}")
+
+
+def test_every_hashed_lock_in_the_repo_is_covered_by_the_digest_exemption():
+    """The exemption is by EXACT PATH, deliberately — a name pattern would be a
+    hiding place. The cost of that is a sibling: `requirements-dev.txt` landed
+    hashed like the runtime lock, was covered by nothing, and blocked the very
+    commit that introduced it with 101 matches that were all sha256 digits.
+
+    So the set is checked rather than remembered. Any lock this repository gains
+    must be added to `strip_artifact_digests` in the same commit that hashes it.
+    """
+    scanner = (REPO / "scripts" / "pre-commit-pii-scan.sh").read_text()
+    arm = re.search(r"strip_artifact_digests\(\) \{.*?\n\}", scanner, re.S)
+    assert arm, "strip_artifact_digests no longer has a readable body"
+
+    hashed = sorted(p for p in REPO.glob("requirements*.txt")
+                    if "--hash=sha256:" in p.read_text())
+    assert hashed, "no hashed lock found at all — has the pinning changed?"
+    for lock in hashed:
+        assert lock.name in arm.group(0), (
+            f"{lock.name} is pinned with --generate-hashes but is not in "
+            "strip_artifact_digests; committing it will block on digit runs "
+            "inside its digests, and the documented way out is --no-verify — "
+            "which is how a gate teaches people to bypass the PII scan")
+
+
+def test_the_digest_exemption_removes_only_the_digest_token():
+    """Scoped along both axes. A real SSN on a requirements line is still
+    scanned, because only the `--hash=sha256:<64 hex>` tokens are removed and
+    not the lines holding them."""
+    scanner = (REPO / "scripts" / "pre-commit-pii-scan.sh").read_text()
+    assert "s/--hash=sha256:[0-9a-f]{64}//g" in scanner

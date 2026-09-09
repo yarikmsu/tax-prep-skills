@@ -1,0 +1,18 @@
+# The LINTERS and the auditor. Installed by the lint and audit jobs, never
+# beside the runtime tree — see `requirements-test.in` for why that separation
+# is structural rather than a matter of install order.
+#
+# GENERATED LOCK: edit this file, never `requirements-dev.txt`. Regenerate with
+# the SAME flags AGENTS.md §7 gives for the runtime lock, and commit both:
+#
+#   uv pip compile requirements-dev.in --generate-hashes --universal \
+#       --python-version 3.12 -o requirements-dev.txt
+#
+# ruff and mypy are PINNED here as well as in the lock. A linter is the one
+# dependency whose new release adds FINDINGS, so an unpinned one turns an
+# unrelated pull request red on a rule nobody in this repository has ruled on.
+# pip-audit is deliberately NOT pinned that way: its new findings are real
+# advisories, and going red on one is the job.
+ruff==0.16.6
+mypy==2.3.1
+pip-audit

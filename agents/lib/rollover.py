@@ -182,7 +182,7 @@ def _read_json(path: Path) -> dict:
     if not path.exists():
         raise RolloverError(f"{redact(path)} does not exist")
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise RolloverError(f"{redact(path.name)} is malformed: {redact(e)}")
     _refuse_non_finite(data, redact(path.name))
@@ -886,7 +886,7 @@ def apply_changes(
     try:
         with atomic_paths(*[path for path, _ in to_write]) as temps:
             for temp, (_, document) in zip(temps, to_write):
-                temp.write_text(json.dumps(document, indent=2))
+                temp.write_text(json.dumps(document, indent=2), encoding="utf-8")
     except HalfApplied as e:
         raise RolloverError(
             f"Write failed and the rollback did not complete — the workspace is "

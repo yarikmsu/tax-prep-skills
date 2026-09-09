@@ -269,6 +269,12 @@ IGNORE_PATTERNS=(
     "*.swp" "*.swo" "*~" "*.bak" "*.tmp"
     ".DS_Store" "Thumbs.db" "__pycache__/" "*.pyc"
     ".vscode/*" "!.vscode/settings.json" ".idea/"
+    # Coverage data. A taxpayer workspace never produces these — they are a
+    # contributor's — but this array and the tracked .gitignore are pinned as
+    # equal SETS, because nine entries once lived in one and neither installer
+    # path. An inert entry in a workspace costs nothing; a set that is allowed
+    # to differ costs the check.
+    ".coverage" ".coverage.*" "coverage.xml" "htmlcov/"
 )
 
 GITIGNORE="$WORKSPACE_ROOT/.gitignore"

@@ -328,30 +328,16 @@ python3 -m venv .venv && sh agents/lib/run.sh -m pip install -r requirements.txt
 **A green local suite is not a green CI.** That `venv` follows whatever `python3`
 is, while the lock is compiled for 3.12 — and the interpreter alone decides some
 results: `Popen.communicate()` re-flushes a stdin the caller already closed,
-which raises on 3.12 and not on 3.13+. CI therefore runs the suite on **3.12 and
-3.14**, both reported. Reinstall from the lock rather than letting the venv drift
-off it; an installed version that is not the pinned one tests what nobody ships.
+which raises on 3.12 and not on 3.13+. CI runs **3.12 and 3.14**, both reported.
+Reinstall from the lock rather than letting the venv drift off it: an installed
+version that is not the pinned one tests what nobody ships.
 
-**`requirements.txt` is GENERATED — edit `requirements.in`.** The `.in` file
-holds the four direct dependencies; `requirements.txt` is the compiled lock,
-pinning the whole transitive tree with `--hash=sha256`. Pinning only direct
-dependencies is not pinning: pdfplumber 0.11.10 shipped no pdfplumber code at
-all, only a `pdfminer.six` bump — and `pdfminer.six` is the engine document
+**The locks are GENERATED — edit the `.in`, never the `.txt`.** Pinning only
+direct dependencies is not pinning: pdfplumber 0.11.10 shipped no pdfplumber
+code at all, only a `pdfminer.six` bump — and that is the engine document
 parsing actually runs on. Hashes make pip refuse an artifact that does not
-match, so a version republished with different contents fails the install
-instead of silently parsing a return. After editing the `.in`, regenerate with
-the SAME flags and commit both files:
-
-```bash
-uv pip compile requirements.in --generate-hashes --universal \
-    --python-version 3.12 -o requirements.txt
-```
-
-`--python-version 3.12` matches the CI runner and `--universal` keeps the
-resolution valid on contributor macOS too; changing either flag silently
-changes what the lock covers. A Dependabot PR bumps `requirements.txt` — mirror
-the new version into `requirements.in` in the same PR, or the next regeneration
-reverts the bump.
+match. Regeneration flags, the three locks and why they are separate:
+`docs/contributing/ci-and-locks.md`.
 
 Run the suite (chain the activation — some agents start a fresh shell per
 command, so an earlier `source` may not persist):
@@ -428,9 +414,11 @@ a parser version the lock does not pin.
   assertion, update its worksheet comment. Add tests for new behavior.
 - What each block of the suite pins down: `docs/contributing/test-invariants.md`.
 
-**CI (GitHub Actions)** runs pytest, a PII scan and pip-audit on every PR to
-`main`; all three must pass. Config: `.github/workflows/ci.yml`. Dependabot
-opens dependency PRs weekly.
+**CI (GitHub Actions)** runs on a PR, on the push a squash merge produces,
+weekly and on demand; pytest (3.12, 3.14, and `windows-latest` for `secure_fs`),
+ruff + mypy, the PII scan over a PER-TRIGGER range and pip-audit over all three
+locks must pass. Dependabot opens dependency PRs weekly. Why any of that, and
+the two Windows defects it found: `docs/contributing/ci-and-locks.md`.
 
 **Git workflow**
 - Always work on a feature branch. The pre-commit hook blocks direct commits to

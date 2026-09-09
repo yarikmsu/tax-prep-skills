@@ -4866,10 +4866,28 @@ class TestHookRegistration:
             f"block says it collects {stated_collects['hooks']} and holds "
             f"{skips} platform skips, which is "
             f"{stated_collects['hooks'] - skips}")
+        # The SUITE's skips are a different figure from the hooks module's, and
+        # conflating them held only while that module was the only place a test
+        # could be skipped. W6's Windows-only DACL cases are the first outside
+        # it, so the block states both and this reads the one it is asking about.
+        suite_skips_stated = re.search(
+            r"THE SUITE holds ([a-z -]+?) skips", flat)
+        assert suite_skips_stated, (
+            "the block no longer states how many tests the SUITE skips — that "
+            "figure is what makes the scale row's RUN count derivable from a "
+            "collection, and the hooks module's own count cannot stand in for "
+            "it once anything else is conditionally skipped")
+        suite_skips = _words_to_int(suite_skips_stated.group(1))
+        assert suite_skips is not None, (
+            f"the stated suite skip count {suite_skips_stated.group(1)!r} is "
+            "not a number this test can read — spell it in full words")
+        assert suite_skips >= skips, (
+            f"the block says the suite skips {suite_skips} and the hooks module "
+            f"alone skips {skips}; the module's skips are part of the suite's")
         gap = suite_collects - stated_suite
-        assert gap == skips, (
+        assert gap == suite_skips, (
             f"`pytest tests/` collects {suite_collects}; the block's scale row "
-            f"reads {stated_suite}, a gap of {gap} against the {skips} platform "
+            f"reads {stated_suite}, a gap of {gap} against the {suite_skips} "
             "skips it states — re-derive the whole block, do not patch this row")
 
         # ...and the tripwire under both, because the two assertions above are

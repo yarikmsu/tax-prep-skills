@@ -388,7 +388,7 @@ def _read_json(path: Path) -> dict:
     failed read is a could-not-run and the CLI turns it into exit 1.
     """
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
@@ -407,7 +407,7 @@ def load_answers(workspace: Path) -> AnswersFile:
     if not path.is_file():
         return AnswersFile(False, {}, 0)
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except (OSError, ValueError) as exc:
         # RAISED, but never with the exception's own message: `OSError.filename`
         # is the workspace path, and the workspace is named for the taxpayer.

@@ -362,8 +362,11 @@ _grep_out() {
 
 # Artifact digests are not PII, and the bare-nine-digit rule cannot tell them
 # apart. A sha256 is 64 hex characters, and a maximal digit run of EXACTLY nine
-# occurs inside one often enough that requirements.txt trips this rule 52 times
-# the moment the dependency tree is pinned with --generate-hashes. The
+# occurs inside one often enough that a lock pinned with --generate-hashes trips
+# this rule dozens of times: the runtime lock did from the day it was hashed, and
+# the dev lock W6 added trips it about twice as often, being a larger tree.
+# BOTH are listed below — the exemption is by exact PATH, so a sibling lock is
+# not covered by the first one's entry and blocked the commit that introduced it. The
 # documented escape is `--no-verify`, so a gate that fires on correct data
 # every time the lock is regenerated would train contributors to bypass the PII
 # scan itself — the failure this repo has already paid for elsewhere.
@@ -402,7 +405,7 @@ _grep_out() {
 strip_artifact_digests() {
   # $1 — repo-relative path, $2 — added text
   case "$1" in
-    requirements.txt|requirements.in)
+    requirements.txt|requirements.in|requirements-dev.txt|requirements-dev.in|requirements-test.txt|requirements-test.in)
       printf '%s' "$2" | sed -E 's/--hash=sha256:[0-9a-f]{64}//g'
       ;;
     docs/ops/review-subagent-acceptance.md)

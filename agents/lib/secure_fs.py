@@ -11,7 +11,7 @@ Two POSIX assumptions this codebase used to make silently break on Windows:
    secure_path()/secure_fd() replace every os.chmod(0o600/0o700) call site
    across archive.py, rollover.py, scenario.py, tie_out.py and
    tax_calendar.py with one function that shells out to PowerShell's
-   Get-Acl/Set-Acl on Windows to build a PROTECTED DACL holding a single
+   GetAccessControl/SetAccessControl on Windows to build a PROTECTED DACL holding a single
    ACE — the current user, Full Control, nothing inherited and nothing
    left over from before — rather than incrementally patching whatever
    ACL the path already had.
@@ -1082,7 +1082,7 @@ def _secure_path_windows(path: str) -> None:
         "$ErrorActionPreference = 'Stop'; "
         f"$item = Get-Item -LiteralPath {quoted_path} -Force; "
         "$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; "
-        f"$acl = Get-Acl -LiteralPath {quoted_path}; "
+        "$acl = $item.GetAccessControl(); "
         "$acl.SetAccessRuleProtection($true, $false); "
         "foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }; "
         "if ($item.PSIsContainer) { "
@@ -1093,8 +1093,8 @@ def _secure_path_windows(path: str) -> None:
         "$identity, 'FullControl', 'Allow') "
         "}; "
         "$acl.AddAccessRule($rule); "
-        f"Set-Acl -LiteralPath {quoted_path} -AclObject $acl; "
-        f"$applied = Get-Acl -LiteralPath {quoted_path}; "
+        "$item.SetAccessControl($acl); $item.Refresh(); "
+        "$applied = $item.GetAccessControl(); "
         "if (-not $applied.AreAccessRulesProtected) { "
         "throw 'DACL did not take: inherited grants from the parent still apply' "
         "}; "
@@ -1114,10 +1114,10 @@ def _secure_path_windows(path: str) -> None:
         "throw 'DACL did not take: the directory rule is not inheritable, so entries "
         "created inside it would not be owner-only' "
         "}; "
-        f"$owned = Get-Acl -LiteralPath {quoted_path}; "
+        "$owned = $item.GetAccessControl(); "
         "$owned.SetOwner($identity); "
-        f"Set-Acl -LiteralPath {quoted_path} -AclObject $owned; "
-        f"$final = Get-Acl -LiteralPath {quoted_path}; "
+        "$item.SetAccessControl($owned); $item.Refresh(); "
+        "$final = $item.GetAccessControl(); "
         "$actualOwner = $final.GetOwner("
         "[System.Security.Principal.SecurityIdentifier]); "
         "if ($null -eq $actualOwner) { "
@@ -1130,7 +1130,32 @@ def _secure_path_windows(path: str) -> None:
     )
     try:
         result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            # `-ExecutionPolicy Bypass` because a restrictive policy is one of
+            # the two things that can stop this script; the OTHER one is why the
+            # cmdlets above are gone. `Get-Acl`/`Set-Acl` live in
+            # `Microsoft.PowerShell.Security`, and on a stock windows-latest
+            # runner autoloading it fails outright —
+            # `CouldNotAutoloadMatchingModule`, "the module could not be
+            # loaded" — which took out EVERY call: on that host nothing this
+            # toolkit writes could be made owner-only, which is AGENTS.md §1 not
+            # holding on a whole supported platform. Bypassing the policy alone
+            # did NOT fix it, measured on the runner.
+            #
+            # So the ACL is read and written through `GetAccessControl()` /
+            # `SetAccessControl()` on the `FileSystemInfo` this script already
+            # holds. Those are System.IO METHODS, present in the .NET Framework
+            # that Windows PowerShell runs on, and they need no module to be
+            # discovered, autoloaded, or permitted. The security semantics are
+            # identical — the same `FileSecurity` object, the same protected
+            # DACL — the DEPENDENCY is what changes.
+            #
+            # The bypass widens nothing and stays: the policy governs SCRIPTS,
+            # and the argument here is a string this module builds itself, so
+            # bypassing it for a command the caller already fully controls
+            # grants no capability the process lacked. `-NoProfile` still keeps
+            # a user profile out of it, which is the setting that would matter.
+            ["powershell.exe", "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-Command", script],
             capture_output=True,
             text=True,
             timeout=30,
@@ -1193,7 +1218,7 @@ if __name__ == "__main__":
 
     with tempfile.TemporaryDirectory() as td:
         f = os.path.join(td, "secret.txt")
-        with open(f, "w") as fh:
+        with open(f, "w", encoding="utf-8") as fh:
             fh.write("x")
         secure_path(f)
 

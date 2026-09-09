@@ -1664,7 +1664,7 @@ def _activate_target(activate):
     location is by construction not broken by being moved.
     """
     try:
-        text = activate.read_text(errors="replace")
+        text = activate.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     for raw in _ACTIVATE_HOME.findall(text):

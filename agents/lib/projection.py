@@ -4359,7 +4359,7 @@ def _read_json(path: Path) -> dict:
     if not path.exists():
         raise ProjectionError(f"{redact(path)} does not exist")
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ProjectionError(f"{redact(path.name)} is malformed: {redact(e)}")
 

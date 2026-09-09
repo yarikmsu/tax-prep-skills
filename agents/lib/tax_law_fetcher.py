@@ -69,7 +69,7 @@ def load_tax_law(year: int, workspace: str = ".") -> dict | None:
             "Remove it and re-run /tax-setup to re-fetch tax law data."
         )
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         # Corrupt cache — remove so caller re-fetches, but warn
         print(

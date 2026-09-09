@@ -1182,14 +1182,19 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.08 - 0.11s         6
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
-#   skill .md edit                 876 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1097 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   3987 tests    228.4 - 243.4s        2
+#   skill .md edit                 882 tests     19.7 - 23.4s         3
+#   cold pass, all seven modules  1103 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   4042 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
-# `pytest tests/` collects 3989 and runs 3987 for the same skips — and that row
+# THE SUITE holds seven skips, not two: those two plus the five Windows-only
+# DACL cases W6 added, which are skipped everywhere but on the windows job.
+# One figure used to cover both, on the assumption that the hooks module was
+# the only place a test could be skipped — an assumption nothing stated and
+# the first conditional test outside that module broke.
+# `pytest tests/` collects 4049 and runs 4042 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1211,7 +1216,7 @@ apply_red_checks
 #   tests/test_portability.py      177 tests     11.1 - 13.1s        6
 #   tests/test_capabilities.py     116 tests      0.8 - 3.1s         6
 #   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
-#   tests/test_secure_fs.py        160 tests      1.4 - 2.1s         6
+#   tests/test_secure_fs.py        166 tests      1.4 - 2.1s         6
 #   tests/test_preflight.py        375 tests      5.6 - 7.2s         6
 #   tests/test_host_guard.py        93 tests      1.4 - 1.8s         6
 #
@@ -1309,7 +1314,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 116 + 160 + 177 + 375 = 876 for a skill edit, plus 93 + 128 = 1097 for a
+# 48 + 116 + 166 + 177 + 375 = 882 for a skill edit, plus 93 + 128 = 1103 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1367,14 +1372,15 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained fourteen
-# tests (3973 to 3987), and the gap was ZERO when the sitting ended: it took the
-# counts and the seconds TOGETHER and took them LAST, after every edit on the
-# branch was final. Then a review round landed fourteen more cases, all of them
-# in tests/test_answers.py — a module this hook has no arm for — which is the
-# case this whole mechanism exists for. The DECOMPOSITION did not move, so the
-# seconds stand and the drift is recorded here rather than paid for with another
-# half hour. The round the seconds were taken at was V5's required-answer
+# Against the counts the seconds were taken at, the suite has gained sixty-nine
+# tests (3973 to 4042), and the gap was ZERO when the sitting ended: it took the
+# counts and the seconds TOGETHER and took them LAST, after every edit on that
+# branch was final. Since then a review round landed fourteen cases in
+# tests/test_answers.py, and W6 added forty-seven in a new tests/test_ci_workflow.py
+# plus two in tests/test_pii_content_scan.py — none of them a module this hook has
+# an arm for, which is the case this whole mechanism exists for. The DECOMPOSITION did not move: all seven rows collect
+# exactly what they collected at the sitting, so the seconds stand and the drift
+# is recorded here rather than paid for with another half hour. The round the seconds were taken at was V5's required-answer
 # registry: sixty-eight cases in that new module, and ONE case in secure_fs,
 # which parametrises over `agents/lib/*.py` and so gains a case for every engine
 # module added. That single case is the only reason a decomposition row moved at
@@ -1514,7 +1520,7 @@ apply_red_checks
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
 # portability has gained none (177 to 177), preflight has gained none (375 to 375), the
-# agents module none (48 to 48), secure_fs has gained none (160 to 160), the hooks module
+# agents module none (48 to 48), secure_fs has gained six (160 to 166), the hooks module
 # none (128 to 128), capabilities has gained none (116 to 116) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
@@ -1523,13 +1529,14 @@ apply_red_checks
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
 # yet taken. EVERY pair reads none this round, and that is not the paragraph
-# going slack: the fourteen tests the suite has gained since the sitting all
-# landed in tests/test_answers.py, which this hook has no arm for, so no selected
-# module has moved at all. That is the ordinary case and the reason the pairs
+# going slack: the sixty-three tests the suite has gained since the sitting
+# landed in tests/test_answers.py, tests/test_ci_workflow.py and
+# tests/test_pii_content_scan.py, none of which this hook has an arm for, so no
+# selected module has moved at all. That is the ordinary case and the reason the pairs
 # exist — a round that adds tests OUTSIDE the seven costs the block a sentence,
 # not another half-hour sitting. The seconds are re-taken when the DECOMPOSITION
 # moves, and it has not.
-# They sum to zero; the remaining fourteen are modules this hook
+# They sum to six; the remaining sixty-three are modules this hook
 # does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

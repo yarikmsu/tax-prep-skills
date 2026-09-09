@@ -1757,7 +1757,7 @@ def _read_json(path: Path, what: str) -> dict:
     if not path.exists():
         raise TieOutError(f"{what} not found at {redact(path)}")
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise TieOutError(f"{what} is malformed: {redact(e)}")
 

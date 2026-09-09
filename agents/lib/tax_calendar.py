@@ -1364,7 +1364,7 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
         raise CalendarError(
             f"taxpayer_profile not found at {redact(profile_path)}")
     try:
-        profile = json.loads(profile_path.read_text())
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise CalendarError(
             f"taxpayer_profile is not valid JSON: {redact(e)}") from e

@@ -243,7 +243,7 @@ def archive_year(year, root: Path, dry_run: bool = False) -> ArchiveReport:
         raise ArchiveError("No result.json at root — nothing to archive.")
 
     try:
-        meta_year = json.loads(result_path.read_text()).get("meta", {}).get("tax_year")
+        meta_year = json.loads(result_path.read_text(encoding="utf-8")).get("meta", {}).get("tax_year")
     except json.JSONDecodeError as e:
         raise ArchiveError(f"result.json is malformed: {redact(e)}")
     if meta_year != year:

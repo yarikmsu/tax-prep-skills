@@ -89,7 +89,7 @@ class TestTheRule:
         assert _defect(tmp_path, tmp_path / ".venv") != ""
 
     def test_a_venv_that_is_a_regular_file_blocks(self, tmp_path):
-        (tmp_path / ".venv").write_text("")
+        (tmp_path / ".venv").write_text("", encoding="utf-8")
         assert _defect(tmp_path, tmp_path / "anywhere") != ""
 
     def test_a_venv_symlinked_to_a_directory_is_a_venv(self, tmp_path):
@@ -119,7 +119,7 @@ class TestTheExemption:
         plus a real `preflight.py` for the exemption to be measured AGAINST."""
         (tmp_path / ".venv").mkdir()
         preflight = tmp_path / "preflight.py"
-        preflight.write_text("")
+        preflight.write_text("", encoding="utf-8")
         return tmp_path, preflight
 
     def _verdict(self, root, preflight, main_file=None, argv=("-c", ""),
@@ -197,7 +197,7 @@ class TestTheExemption:
         root, preflight = self._blocked_state(tmp_path)
         impostor = tmp_path / "elsewhere" / "preflight.py"
         impostor.parent.mkdir()
-        impostor.write_text("")
+        impostor.write_text("", encoding="utf-8")
         assert self._verdict(root, preflight, main_file=str(impostor))
 
     def test_a_program_that_does_not_exist_is_NOT_exempt(self, tmp_path):
@@ -352,7 +352,7 @@ class TestTheExemption:
         caller's shell would otherwise choose the interpreter. An env opt-out
         here is the same hole, reached one layer up.
         """
-        source = (LIB / "__init__.py").read_text()
+        source = (LIB / "__init__.py").read_text(encoding="utf-8")
         assert "os.environ" not in source
         assert "getenv" not in source
 
@@ -361,7 +361,7 @@ class TestTheExemption:
         it would stop being. Both holes above lived in one, and a table has to
         stay complete against every future interpreter to stay safe.
         """
-        source = (LIB / "__init__.py").read_text()
+        source = (LIB / "__init__.py").read_text(encoding="utf-8")
         assert "_SPENDS_THE_NEXT_TOKEN" not in source, (
             "the option-table walk is back in the guard — it is what shipped "
             "the attached `-c` hole and the attached-value misread, and "
@@ -385,7 +385,7 @@ class TestTheMessage:
             (secret / ".venv").symlink_to(secret / "gone")
             return _defect(secret, secret / ".venv"), secret, secret / ".venv"
         if request.param == "regular-file":
-            (secret / ".venv").write_text("")
+            (secret / ".venv").write_text("", encoding="utf-8")
             return _defect(secret, secret / "x"), secret, secret / "x"
         (secret / ".venv").mkdir()
         if request.param == "another-venv":
@@ -424,8 +424,8 @@ class TestAgreementWithPreflight:
         venv = root / ".venv"
         bin_dir = venv / "bin"
         bin_dir.mkdir(parents=True)
-        (bin_dir / "activate").write_text("export VIRTUAL_ENV=%s\n" % venv)
-        (bin_dir / "python3").write_text("")
+        (bin_dir / "activate").write_text("export VIRTUAL_ENV=%s\n" % venv, encoding="utf-8")
+        (bin_dir / "python3").write_text("", encoding="utf-8")
         return venv
 
     def test_no_venv_both_clean(self, tmp_path, monkeypatch):
@@ -457,8 +457,8 @@ class TestTheWiring:
     def _tree(self, tmp_path, with_venv):
         pkg = tmp_path / "agents" / "lib"
         pkg.mkdir(parents=True)
-        (tmp_path / "agents" / "__init__.py").write_text("")
-        (pkg / "__init__.py").write_text((LIB / "__init__.py").read_text())
+        (tmp_path / "agents" / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "__init__.py").write_text((LIB / "__init__.py").read_text(encoding="utf-8"), encoding="utf-8")
         if with_venv:
             (tmp_path / ".venv").mkdir()
         return tmp_path
@@ -498,7 +498,7 @@ class TestTheWiring:
     def test_the_preflight_spelling_is_exempt_end_to_end(self, tmp_path):
         root = self._tree(tmp_path, with_venv=True)
         (root / "agents" / "lib" / "preflight.py").write_text(
-            "import agents.lib\nprint('preflight ran')\n")
+            "import agents.lib\nprint('preflight ran')\n", encoding="utf-8")
         done = self._run(root, ["agents/lib/preflight.py"])
         assert done.returncode == 0, done.stderr
         assert "preflight ran" in done.stdout
@@ -530,14 +530,14 @@ class TestTheRefusalReachesPytestAsAStatus:
     def _tree(self, tmp_path, with_venv=True):
         pkg = tmp_path / "agents" / "lib"
         pkg.mkdir(parents=True)
-        (tmp_path / "agents" / "__init__.py").write_text("")
-        (pkg / "__init__.py").write_text((LIB / "__init__.py").read_text())
+        (tmp_path / "agents" / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "__init__.py").write_text((LIB / "__init__.py").read_text(encoding="utf-8"), encoding="utf-8")
         tests = tmp_path / "tests"
         tests.mkdir()
         (tests / "conftest.py").write_text(
-            (REPO / "tests" / "conftest.py").read_text())
+            (REPO / "tests" / "conftest.py").read_text(encoding="utf-8"), encoding="utf-8")
         (tests / "test_placeholder.py").write_text(
-            "def test_the_run_reached_a_test():\n    assert True\n")
+            "def test_the_run_reached_a_test():\n    assert True\n", encoding="utf-8")
         if with_venv:
             (tmp_path / ".venv").mkdir()
         return tmp_path
@@ -602,7 +602,7 @@ class TestEveryModuleIsCovered:
         missing = sorted(
             path.name for path in sorted(LIB.glob("*.py"))
             if path.name not in self.EXEMPT
-            and not pattern.search(path.read_text()))
+            and not pattern.search(path.read_text(encoding="utf-8")))
         assert not missing, (
             f"{missing} reach the engine without importing `agents.lib`, so "
             f"`python3 agents/lib/<module>.py` runs them on a host interpreter "
@@ -630,7 +630,7 @@ class TestNoTestSpawnsABareInterpreter:
     def test_no_module_spawns_the_engine_through_path(self):
         offenders = []
         for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
-            for node in ast.walk(ast.parse(path.read_text())):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if not (isinstance(node, ast.Call)
                         and isinstance(node.func, ast.Attribute)
                         and node.func.attr == "run" and node.args):

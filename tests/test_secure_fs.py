@@ -25,6 +25,18 @@ from agents.lib.secure_fs import (
 
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 
+# POSIX MODE BITS, and only those. Each of these reads back a `0o600`/`0o700`
+# that NTFS does not have, creates a symlink Windows needs a privilege for,
+# or depends on a case-sensitive filesystem. Skipping them on Windows is not
+# a narrowing of the windows job until it passes: what secure_fs actually
+# does there — set a restrictive DACL — is asserted by
+# `TestTheWindowsAclIsActuallyRestrictive`, which runs ONLY on Windows and
+# is the reason the job is worth having.
+posix_only = pytest.mark.skipif(
+    os.name == "nt",
+    reason="asserts POSIX mode bits, a symlink, or a case-sensitive path")
+
+
 SENSITIVE_SKILL_SECURITY_CALLS = {
     "tax-setup": (
         'mkdir -p "$d" && sh agents/lib/run.sh -m agents.lib.secure_fs "$d" || exit 1',
@@ -205,7 +217,7 @@ def test_sensitive_skill_writes_use_cross_platform_security(skill_name, required
     """A documented direct write must not regress to a POSIX-only chmod that
     leaves an inherited Windows DACL readable by other local identities."""
     skill_dir = Path(REPO_ROOT, ".agents", "skills", skill_name)
-    text = "\n".join(d.read_text() for d in _skill_documents(skill_dir))
+    text = "\n".join(d.read_text(encoding="utf-8") for d in _skill_documents(skill_dir))
     launcher = "sh agents/lib/run.sh"
     for required_call in required_calls:
         if required_call.startswith("-m agents.lib.secure_fs"):
@@ -267,7 +279,7 @@ def test_a_skill_declared_free_of_sensitive_writes_makes_no_securing_call():
     for skill_name in sorted(SKILLS_THAT_WRITE_NOTHING_SENSITIVE):
         skill_dir = Path(REPO_ROOT, ".agents", "skills", skill_name)
         for doc in _skill_documents(skill_dir):
-            for lineno, line in enumerate(doc.read_text().splitlines(), 1):
+            for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
                 assert "-m agents.lib.secure_fs" not in line, (
                     f"{skill_name} is declared free of sensitive writes but "
                     f"invokes secure_fs at {doc.name}:{lineno} — move it to "
@@ -288,7 +300,7 @@ def test_tax_skills_have_no_bare_permission_commands():
     for skill_dir in sorted(skill_root.glob("tax-*")):
         for doc in _skill_documents(skill_dir):
             rel = doc.relative_to(skill_root)
-            offenders.extend(f"{rel}:{o}" for o in _bare_chmod_offenders(doc.read_text()))
+            offenders.extend(f"{rel}:{o}" for o in _bare_chmod_offenders(doc.read_text(encoding="utf-8")))
     assert not offenders, "bare POSIX-only permission command(s): " + "; ".join(offenders)
 
 
@@ -325,14 +337,16 @@ def test_bare_chmod_detector_catches_every_shipped_and_plausible_form():
         assert not _bare_chmod_offenders(line), f"detector misreads prose as a command: {line!r}"
 
 
+@posix_only
 def test_secure_path_file_posix(tmp_path):
     f = tmp_path / "secret.json"
-    f.write_text("{}")
+    f.write_text("{}", encoding="utf-8")
     os.chmod(f, 0o644)
     secure_path(f)
     assert oct(os.stat(f).st_mode & 0o777) == "0o600"
 
 
+@posix_only
 def test_secure_path_dir_posix(tmp_path):
     d = tmp_path / "scenarios"
     d.mkdir(mode=0o755)
@@ -341,6 +355,7 @@ def test_secure_path_dir_posix(tmp_path):
     assert oct(os.stat(d).st_mode & 0o777) == "0o700"
 
 
+@posix_only
 def test_secure_fd_prefers_fchmod_on_posix(tmp_path):
     f = tmp_path / "result.json"
     fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
@@ -351,6 +366,7 @@ def test_secure_fd_prefers_fchmod_on_posix(tmp_path):
     assert oct(os.stat(f).st_mode & 0o777) == "0o600"
 
 
+@posix_only
 def test_secure_fd_falls_back_to_secure_path_without_fchmod(tmp_path, monkeypatch):
     """Windows has no os.fchmod — simulate that by hiding the attribute and
     confirm secure_fd degrades to the path-based (ACL-backed) call rather
@@ -367,7 +383,7 @@ def test_secure_fd_falls_back_to_secure_path_without_fchmod(tmp_path, monkeypatc
 
 def test_is_reparse_point_true_for_symlink(tmp_path):
     target = tmp_path / "real.txt"
-    target.write_text("x")
+    target.write_text("x", encoding="utf-8")
     link = tmp_path / "link.txt"
     link.symlink_to(target)
     assert is_reparse_point(link)
@@ -375,7 +391,7 @@ def test_is_reparse_point_true_for_symlink(tmp_path):
 
 def test_is_reparse_point_false_for_plain_file(tmp_path):
     f = tmp_path / "plain.txt"
-    f.write_text("x")
+    f.write_text("x", encoding="utf-8")
     assert not is_reparse_point(f)
 
 
@@ -390,7 +406,7 @@ def test_is_reparse_point_detects_windows_junction_via_file_attributes(tmp_path,
     it carries FILE_ATTRIBUTE_REPARSE_POINT but a different reparse tag than
     a symlink. Simulated here since junctions don't exist on POSIX."""
     p = tmp_path / "junction_like"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
 
     # is_reparse_point() reads st_mode (for stat.S_ISLNK) before it reads
     # st_file_attributes, so the fake lstat result must carry a REAL st_mode —
@@ -472,7 +488,7 @@ class TestOnlyARedirectingReparseTagIsRefused:
     ])
     def test_a_redirecting_tag_is_refused(self, tag, tmp_path, monkeypatch):
         p = tmp_path / "redirects"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         _lstat_reporting(tag, monkeypatch)
         assert is_reparse_point(p), f"tag {tag:#x} redirects and must be refused"
 
@@ -484,7 +500,7 @@ class TestOnlyARedirectingReparseTagIsRefused:
     ])
     def test_a_non_redirecting_tag_is_an_ordinary_file(self, tag, tmp_path, monkeypatch):
         p = tmp_path / "W2_Acme.pdf"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         _lstat_reporting(tag, monkeypatch)
         assert not is_reparse_point(p), (
             f"tag {tag:#x} names an ordinary file the filesystem hydrates in "
@@ -496,7 +512,7 @@ class TestOnlyARedirectingReparseTagIsRefused:
         the tag at 0. The attribute said "reparse point" and the tag could not
         be read, which is an UNINSPECTED path, not a certified-benign one."""
         p = tmp_path / "unknown"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         _lstat_reporting(0, monkeypatch)
         assert is_reparse_point(p)
 
@@ -505,7 +521,7 @@ class TestOnlyARedirectingReparseTagIsRefused:
         """A stale tag member on a file with no reparse attribute means nothing.
         The attribute gates the question; the tag answers it."""
         p = tmp_path / "plain"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         _lstat_reporting(IO_REPARSE_TAG_SYMLINK, monkeypatch, attributes=0)
         assert not is_reparse_point(p)
 
@@ -515,7 +531,7 @@ class TestOnlyARedirectingReparseTagIsRefused:
         document in a OneDrive workspace must get its owner-only ACL, not a
         PathRefused that stops the whole run."""
         p = tmp_path / "W2_Acme.pdf"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         _lstat_reporting(IO_REPARSE_TAG_CLOUD, monkeypatch)
         calls = []
         monkeypatch.setattr(
@@ -529,7 +545,7 @@ class TestOnlyARedirectingReparseTagIsRefused:
     def test_secure_path_still_refuses_a_junction(self, tmp_path, monkeypatch):
         """The paired assertion that keeps the fix above narrow."""
         p = tmp_path / "archive"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         _lstat_reporting(IO_REPARSE_TAG_MOUNT_POINT, monkeypatch)
         monkeypatch.setattr(
             "agents.lib.secure_fs.subprocess.run",
@@ -539,12 +555,13 @@ class TestOnlyARedirectingReparseTagIsRefused:
             secure_path(p)
 
 
+@posix_only
 def test_is_reparse_point_ignores_reparse_attribute_on_posix(tmp_path, monkeypatch):
     """The same st_file_attributes bit must be ignored off Windows — POSIX
     os.stat_result has no such attribute at all, and os.name gates the check
     before it's ever read."""
     p = tmp_path / "plain2.txt"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     real_lstat = os.lstat
 
     def fake_lstat(path):
@@ -620,7 +637,7 @@ def test_secure_path_windows_builds_protected_dacl_with_single_identity(tmp_path
 
     monkeypatch.setattr("agents.lib.secure_fs.subprocess.run", fake_run)
     f = tmp_path / "result.json"
-    f.write_text("{}")
+    f.write_text("{}", encoding="utf-8")
     secure_path(f)
     assert len(calls) == 1
     cmd = calls[0]
@@ -635,7 +652,11 @@ def test_secure_path_windows_builds_protected_dacl_with_single_identity(tmp_path
     # survived, which is what a plain icacls /grant:r would have done.
     assert "WindowsIdentity]::GetCurrent().User" in script
     assert "AddAccessRule($rule)" in script
-    assert "Set-Acl" in script
+    # The WRITE, whatever spells it. `Set-Acl` was a cmdlet from
+    # `Microsoft.PowerShell.Security`, which a stock windows-latest runner
+    # could not autoload at all; it is `SetAccessControl` on the FileSystemInfo
+    # now, which is a System.IO method needing no module.
+    assert "SetAccessControl" in script
     # The DACL is written FIRST and by its own Set-Acl, then ownership by a
     # second one. Set-Acl persists every modified section in a single call, so
     # a combined object makes the two all-or-nothing: on a path where the
@@ -644,8 +665,11 @@ def test_secure_path_windows_builds_protected_dacl_with_single_identity(tmp_path
     # is reported as failed. Restriction-before-ownership, not the reverse:
     # taking ownership first and then failing to restrict leaves the path
     # owned and wide open.
-    assert script.index("Set-Acl") < script.index("$owned.SetOwner($identity)")
-    assert script.count("Set-Acl") >= 2, "DACL and owner are not separate Set-Acl calls"
+    assert script.index("SetAccessControl") < script.index("$owned.SetOwner($identity)")
+    assert script.count("SetAccessControl") >= 2, (
+        "the DACL and the owner are not separate writes — folded into one they\n"
+        "become all-or-nothing, and on a path owned by another identity where\n"
+        "this process holds WRITE_DAC but not WRITE_OWNER no restriction lands")
     # Verification re-reads what LANDED, and covers the DACL — not just the
     # owner. A descriptor can come back owned correctly with its access rules
     # untouched (a filter driver, a redirected or network path), and an
@@ -686,7 +710,7 @@ def test_secure_path_windows_raises_on_acl_failure(tmp_path, monkeypatch):
         lambda cmd, **kwargs: _FakeCompletedProcess(returncode=1, stderr="Access is denied."),
     )
     f = tmp_path / "result.json"
-    f.write_text("{}")
+    f.write_text("{}", encoding="utf-8")
     with pytest.raises(OSError, match="Access is denied"):
         secure_path(f)
 
@@ -699,7 +723,7 @@ def test_secure_path_windows_raises_on_subprocess_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr("agents.lib.secure_fs.subprocess.run", raising_run)
     f = tmp_path / "result.json"
-    f.write_text("{}")
+    f.write_text("{}", encoding="utf-8")
     with pytest.raises(OSError, match="PowerShell"):
         secure_path(f)
 
@@ -712,14 +736,15 @@ def test_secure_path_windows_raises_on_subprocess_timeout(tmp_path, monkeypatch)
 
     monkeypatch.setattr("agents.lib.secure_fs.subprocess.run", timing_out_run)
     f = tmp_path / "result.json"
-    f.write_text("{}")
+    f.write_text("{}", encoding="utf-8")
     with pytest.raises(OSError):
         secure_path(f)
 
 
+@posix_only
 def test_cli_secures_each_given_path(tmp_path):
     f1 = tmp_path / "a.json"
-    f1.write_text("{}")
+    f1.write_text("{}", encoding="utf-8")
     d1 = tmp_path / "sub"
     d1.mkdir()
     result = subprocess.run(
@@ -745,6 +770,7 @@ def test_cli_exits_nonzero_and_reports_failure(tmp_path):
     assert "Could not secure" in result.stderr
 
 
+@posix_only
 def test_secure_path_refuses_a_symlink(tmp_path):
     """secure_path must not act THROUGH a link. The library callers each
     refuse one before reaching here, but the skill-facing CLI has no gate of
@@ -854,13 +880,14 @@ class TestFailureMessagesRedactTheirTarget:
         assert "000-00-0000" not in result.stderr
         assert "[REDACTED]" in result.stderr
 
+    @posix_only  # there is no chmod on the nt branch; its own arm is stubbed below
     def test_secure_path_raises_a_redacted_message_on_a_chmod_failure(
             self, tmp_path, monkeypatch):
         """The guarantee is made at the module BOUNDARY: archive.py and
         tie_out.py embed this text verbatim in the errors they print, so
         redacting only at the CLI would leave every library path leaking."""
         f = tmp_path / "result_000-00-0000.json"
-        f.write_text("{}")
+        f.write_text("{}", encoding="utf-8")
 
         def denied(path, mode):
             raise PermissionError(13, "Permission denied", str(path))
@@ -872,7 +899,7 @@ class TestFailureMessagesRedactTheirTarget:
 
     def test_secure_path_raises_a_redacted_message_on_a_reparse_point(self, tmp_path):
         real = tmp_path / "real.json"
-        real.write_text("{}")
+        real.write_text("{}", encoding="utf-8")
         link = tmp_path / "answers_000-00-0000.md"
         link.symlink_to(real)
         with pytest.raises(OSError) as excinfo:
@@ -885,7 +912,7 @@ class TestFailureMessagesRedactTheirTarget:
         the DETAIL is a second copy of the thing being protected."""
         monkeypatch.setattr("agents.lib.secure_fs.os.name", "nt")
         f = tmp_path / "profile.json"
-        f.write_text("{}")
+        f.write_text("{}", encoding="utf-8")
         monkeypatch.setattr(
             "agents.lib.secure_fs.subprocess.run",
             lambda cmd, **kw: _FakeCompletedProcess(
@@ -916,7 +943,7 @@ class TestAncestorComponentsAreInspected:
         outside = tmp_path / "outside" / "2026" / "as_filed"
         outside.mkdir(parents=True)
         doc = outside / "W2.pdf"
-        doc.write_text("x")
+        doc.write_text("x", encoding="utf-8")
         doc.chmod(0o644)
         (outside.parent.parent).chmod(0o755)
         ws = tmp_path / "ws"
@@ -924,6 +951,7 @@ class TestAncestorComponentsAreInspected:
         (ws / "archive").symlink_to(tmp_path / "outside")
         return ws, doc
 
+    @posix_only
     def test_a_real_leaf_under_a_linked_ancestor_is_refused(
             self, tmp_path, monkeypatch):
         ws, doc = self._linked_workspace(tmp_path)
@@ -944,6 +972,7 @@ class TestAncestorComponentsAreInspected:
         assert "lies under" in str(excinfo.value)
         assert "archive" in str(excinfo.value)
 
+    @posix_only
     def test_a_dotdot_component_is_not_normalized_away(self, tmp_path, monkeypatch):
         """os.path.relpath()/normpath() collapse `link/../x` to `x`, dropping
         the very component being inspected — the kernel resolves a `..` only
@@ -961,6 +990,7 @@ class TestAncestorComponentsAreInspected:
             secure_path("archive/../real")
         assert oct(escaped.stat().st_mode & 0o777) == "0o755"
 
+    @posix_only
     def test_an_absolute_path_under_the_current_directory_is_walked(
             self, tmp_path, monkeypatch):
         ws, doc = self._linked_workspace(tmp_path)
@@ -969,6 +999,7 @@ class TestAncestorComponentsAreInspected:
             secure_path(str(ws / "archive" / "2026" / "as_filed" / "W2.pdf"))
         assert oct(doc.stat().st_mode & 0o777) == "0o644"
 
+    @posix_only
     def test_an_absolute_path_outside_the_current_directory_keeps_working(
             self, tmp_path, monkeypatch):
         """The documented scope, and the reason for it. macOS puts every
@@ -983,7 +1014,7 @@ class TestAncestorComponentsAreInspected:
         linked_parent.mkdir()
         (tmp_path / "via_link").symlink_to(linked_parent)
         target = linked_parent / "result.json"
-        target.write_text("{}")
+        target.write_text("{}", encoding="utf-8")
         # cwd is a sibling, so the absolute path below is not under it — the
         # `/var` case, reproduced without depending on the host's own layout.
         elsewhere_cwd = tmp_path / "cwd"
@@ -996,7 +1027,7 @@ class TestAncestorComponentsAreInspected:
         """The pre-existing guarantee, kept: the walk must not have replaced
         the leaf check with an ancestor-only one."""
         real = tmp_path / "real.json"
-        real.write_text("{}")
+        real.write_text("{}", encoding="utf-8")
         (tmp_path / "link.json").symlink_to(real)
         monkeypatch.chdir(tmp_path)
         with pytest.raises(OSError, match="is a symlink or junction"):
@@ -1007,7 +1038,7 @@ class TestAncestorComponentsAreInspected:
         """is_reparse_point() fails CLOSED, and lstat's own error text carries
         the RAW path — so the translation happens at this module's boundary."""
         f = tmp_path / "W2_000-00-0000.pdf"
-        f.write_text("x")
+        f.write_text("x", encoding="utf-8")
 
         def denied(path, *a, **kw):
             raise PermissionError(13, "Permission denied", str(path))
@@ -1043,13 +1074,14 @@ class TestAWindowsSpellingCannotSwitchTheWalkOff:
         outside = tmp_path / "outside" / "2026" / "as_filed"
         outside.mkdir(parents=True)
         doc = outside / "W2.pdf"
-        doc.write_text("x")
+        doc.write_text("x", encoding="utf-8")
         doc.chmod(0o644)
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / "archive").symlink_to(tmp_path / "outside")
         return ws, doc
 
+    @posix_only
     def test_a_differently_cased_prefix_still_walks_the_ancestors(
             self, tmp_path, monkeypatch):
         ws, doc = self._linked_workspace(tmp_path)
@@ -1063,6 +1095,7 @@ class TestAWindowsSpellingCannotSwitchTheWalkOff:
         assert oct(doc.stat().st_mode & 0o777) == "0o644", \
             "the external file was secured through the linked ancestor"
 
+    @posix_only
     def test_a_backslash_separated_tail_still_walks_the_ancestors(
             self, tmp_path, monkeypatch):
         ws, doc = self._linked_workspace(tmp_path)
@@ -1072,6 +1105,7 @@ class TestAWindowsSpellingCannotSwitchTheWalkOff:
             secure_path(str(ws) + "\\archive\\2026\\as_filed\\W2.pdf")
         assert oct(doc.stat().st_mode & 0o777) == "0o644"
 
+    @posix_only
     def test_posix_containment_stays_case_sensitive(self, tmp_path, monkeypatch):
         """The fold is Windows-only, and that is not a detail: `Archive` and
         `archive` are two different directories on POSIX, and treating them as
@@ -1129,7 +1163,7 @@ class TestNoUninspectablePathNamesItselfInATraceback:
     def test_the_raw_path_does_not_survive_the_propagation(
             self, tmp_path, monkeypatch):
         f = tmp_path / self.SSN_SHAPED_DOC
-        f.write_text("x")
+        f.write_text("x", encoding="utf-8")
         monkeypatch.setattr("agents.lib.secure_fs.os.lstat", self._denying_lstat)
         with pytest.raises(OSError) as excinfo:
             is_reparse_point(f)
@@ -1140,7 +1174,7 @@ class TestNoUninspectablePathNamesItselfInATraceback:
         """Callers distinguish a PermissionError from the rest; collapsing every
         inspection failure to a bare OSError would erase which one they have."""
         f = tmp_path / self.SSN_SHAPED_DOC
-        f.write_text("x")
+        f.write_text("x", encoding="utf-8")
         monkeypatch.setattr("agents.lib.secure_fs.os.lstat", self._denying_lstat)
         with pytest.raises(PermissionError) as excinfo:
             is_reparse_point(f)
@@ -1153,7 +1187,7 @@ class TestNoUninspectablePathNamesItselfInATraceback:
         that member for NULL rather than for None, so assigning None renders a
         literal `: None`. The rebuilt exception never had one."""
         f = tmp_path / self.SSN_SHAPED_DOC
-        f.write_text("x")
+        f.write_text("x", encoding="utf-8")
         monkeypatch.setattr("agents.lib.secure_fs.os.lstat", self._denying_lstat)
         with pytest.raises(OSError) as excinfo:
             is_reparse_point(f)
@@ -1167,7 +1201,7 @@ class TestNoUninspectablePathNamesItselfInATraceback:
             raise OSError(f"I/O error reading {path}")
 
         f = tmp_path / "W2_000-00-0000.pdf"
-        f.write_text("x")
+        f.write_text("x", encoding="utf-8")
         monkeypatch.setattr("agents.lib.secure_fs.os.lstat", raise_bare)
         with pytest.raises(OSError) as excinfo:
             is_reparse_point(f)
@@ -1186,7 +1220,7 @@ class TestNoUninspectablePathNamesItselfInATraceback:
         import agents.lib.parse_utils as pu
 
         doc = tmp_path / self.SSN_SHAPED_DOC
-        doc.write_text("x")
+        doc.write_text("x", encoding="utf-8")
         monkeypatch.setattr("agents.lib.secure_fs.os.lstat", self._denying_lstat)
         with pytest.raises(OSError) as excinfo:
             pu._validate_file_path(str(doc), workspace=str(tmp_path))
@@ -1200,7 +1234,7 @@ class TestNoUninspectablePathNamesItselfInATraceback:
         import agents.lib.tax_law_fetcher as tlf
 
         cache = tmp_path / "tax_law_2026.json"
-        cache.write_text("{}")
+        cache.write_text("{}", encoding="utf-8")
         monkeypatch.setattr("agents.lib.secure_fs.os.lstat", self._denying_lstat)
         with pytest.raises(OSError) as excinfo:
             tlf.load_tax_law(2026, str(tmp_path))
@@ -1222,6 +1256,7 @@ class TestTheCliStopsAtTheFirstRefusal:
             [sys.executable, "-m", "agents.lib.secure_fs", *targets],
             capture_output=True, text=True, cwd=str(ws), env=env)
 
+    @posix_only
     def test_the_tax_amend_call_shape_secures_nothing_through_the_link(
             self, tmp_path):
         outside = tmp_path / "outside" / "2026" / "as_filed"
@@ -1246,9 +1281,9 @@ class TestTheCliStopsAtTheFirstRefusal:
         is not to disclose the tree."""
         ws = tmp_path / "ws"
         ws.mkdir()
-        (ws / "real.json").write_text("{}")
+        (ws / "real.json").write_text("{}", encoding="utf-8")
         (ws / "link.json").symlink_to(ws / "real.json")
-        (ws / "W2_000-00-0000.pdf").write_text("x")
+        (ws / "W2_000-00-0000.pdf").write_text("x", encoding="utf-8")
 
         result = self._run(ws, "link.json", "W2_000-00-0000.pdf")
 
@@ -1257,11 +1292,12 @@ class TestTheCliStopsAtTheFirstRefusal:
         assert "W2_000-00-0000" not in result.stderr
         assert "000-00-0000" not in result.stderr
 
+    @posix_only
     def test_a_clean_run_still_secures_every_target(self, tmp_path):
         ws = tmp_path / "ws"
         ws.mkdir()
         for name in ("a.json", "b.json"):
-            (ws / name).write_text("{}")
+            (ws / name).write_text("{}", encoding="utf-8")
             (ws / name).chmod(0o644)
 
         result = self._run(ws, "a.json", "b.json")
@@ -1310,7 +1346,7 @@ class TestTheRedactorMirrorsEveryGateFamily:
         rather than a PII_PATTERNS member, and has its own tests above."""
         import re as _re
 
-        script = Path(REPO_ROOT, "scripts", "pre-commit-pii-scan.sh").read_text()
+        script = Path(REPO_ROOT, "scripts", "pre-commit-pii-scan.sh").read_text(encoding="utf-8")
         array = _re.search(r"^PII_PATTERNS=\((.*)\)$", script, _re.M)
         assert array, "PII_PATTERNS array not found — has the gate been restructured?"
         names = set(_re.findall(r"\$\{?([A-Z_]+)\}?", array.group(1)))
@@ -1459,7 +1495,7 @@ class TestNoRuntimePathReachesAMessageUnredacted:
     def _offenders(self, module_name):
         import ast
 
-        source = Path(REPO_ROOT, "agents", "lib", f"{module_name}.py").read_text()
+        source = Path(REPO_ROOT, "agents", "lib", f"{module_name}.py").read_text(encoding="utf-8")
         found = []
         for node in ast.walk(ast.parse(source)):
             is_raise = isinstance(node, ast.Raise)
@@ -1509,7 +1545,7 @@ class TestNoRuntimePathReachesAMessageUnredacted:
         (lib / "sample.py").write_text(
             'def write(path, src):\n'
             '    print(f"writing {src.name}")\n'
-            '    raise OSError(f"could not open {path}")\n')
+            '    raise OSError(f"could not open {path}")\n', encoding="utf-8")
         offenders = self._offenders_from(tmp_path, "sample")
         assert sorted(o.split(": ")[1] for o in offenders) == ["{path}", "{src.name}"]
 
@@ -1523,7 +1559,7 @@ class TestNoRuntimePathReachesAMessageUnredacted:
         (lib / "clean.py").write_text(
             'def write(path, e, p):\n'
             '    raise OSError(f"{redact(path)} failed: {redact(e)}")\n'
-            '    raise ValueError(f"bad suffix {p.suffix}: {type(e).__name__}")\n')
+            '    raise ValueError(f"bad suffix {p.suffix}: {type(e).__name__}")\n', encoding="utf-8")
         assert self._offenders_from(tmp_path, "clean") == []
 
     def _offenders_from(self, root, module_name):
@@ -1550,10 +1586,11 @@ class TestOnlyARefusalStopsTheCli(TestTheCliStopsAtTheFirstRefusal):
     secured.
     """
 
+    @posix_only
     def test_a_missing_target_does_not_stop_the_rest(self, tmp_path):
         ws = tmp_path / "ws"
         ws.mkdir()
-        (ws / "result.json").write_text("{}")
+        (ws / "result.json").write_text("{}", encoding="utf-8")
         (ws / "result.json").chmod(0o644)
 
         result = self._run(ws, "summaries/*.md", "result.json")
@@ -1563,6 +1600,7 @@ class TestOnlyARefusalStopsTheCli(TestTheCliStopsAtTheFirstRefusal):
         assert oct((ws / "result.json").stat().st_mode & 0o777) == "0o600", \
             "an unrelated error left a sibling at its default mode"
 
+    @posix_only
     def test_an_uninspectable_component_DOES_stop_the_rest(self, tmp_path):
         """The other half of the scope. A component that could not be inspected
         is refused on the same terms as one that IS a link — the tree is
@@ -1573,8 +1611,8 @@ class TestOnlyARefusalStopsTheCli(TestTheCliStopsAtTheFirstRefusal):
         ws.mkdir()
         blocked = ws / "blocked"
         blocked.mkdir()
-        (blocked / "a.json").write_text("{}")
-        (ws / "b.json").write_text("{}")
+        (blocked / "a.json").write_text("{}", encoding="utf-8")
+        (ws / "b.json").write_text("{}", encoding="utf-8")
         (ws / "b.json").chmod(0o644)
         blocked.chmod(0o000)  # not traversable: lstat on the child cannot run
         try:
@@ -1591,7 +1629,7 @@ class TestOnlyARefusalStopsTheCli(TestTheCliStopsAtTheFirstRefusal):
         from agents.lib.secure_fs import PathRefused
 
         real = tmp_path / "real.json"
-        real.write_text("{}")
+        real.write_text("{}", encoding="utf-8")
         (tmp_path / "link.json").symlink_to(real)
         monkeypatch.chdir(tmp_path)
         with pytest.raises(PathRefused):
@@ -1637,7 +1675,7 @@ class TestTheNoNetworkClaimIsTrue:
 
         offenders = []
         for source in self._python_sources():
-            for node in ast.walk(ast.parse(source.read_text())):
+            for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
                 names = []
                 if isinstance(node, ast.Import):
                     names = [a.name for a in node.names]
@@ -1657,7 +1695,7 @@ class TestTheNoNetworkClaimIsTrue:
         scripts = (sorted(Path(REPO_ROOT, "agents").rglob("*.sh"))
                    + sorted(Path(REPO_ROOT, "scripts").rglob("*.sh")))
         for source in scripts + self._python_sources():
-            for lineno, line in enumerate(source.read_text().splitlines(), 1):
+            for lineno, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
                 stripped = line.strip()
                 if stripped.startswith("#"):
                     continue
@@ -1673,9 +1711,9 @@ class TestTheNoNetworkClaimIsTrue:
 
         (tmp_path / "reaches_out.py").write_text(
             "import urllib.request\n\n\ndef fetch(url):\n"
-            "    return urllib.request.urlopen(url).read()\n")
+            "    return urllib.request.urlopen(url).read()\n", encoding="utf-8")
         found = []
-        for node in ast.walk(ast.parse((tmp_path / "reaches_out.py").read_text())):
+        for node in ast.walk(ast.parse((tmp_path / "reaches_out.py").read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name in self.NETWORK_SUBMODULES:
@@ -1687,7 +1725,7 @@ class TestTheNoNetworkClaimIsTrue:
         banned it would fire on the source-pinning check SECURITY.md relies on."""
         assert "urllib.parse" not in self.NETWORK_SUBMODULES
         assert "urllib" not in self.NETWORK_MODULES
-        fetcher = Path(REPO_ROOT, "agents", "lib", "tax_law_fetcher.py").read_text()
+        fetcher = Path(REPO_ROOT, "agents", "lib", "tax_law_fetcher.py").read_text(encoding="utf-8")
         assert "from urllib.parse import urlparse" in fetcher, (
             "the source-pinning check no longer parses URLs — re-check what "
             "SECURITY.md says the library's role in the fetch is")
@@ -1719,13 +1757,14 @@ class TestTheLauncherNamesNoPathWhenItCannotResolveItsRoot:
         lib.mkdir(parents=True)
         launcher = lib / "run.sh"
         launcher.write_text(
-            Path(REPO_ROOT, "agents", "lib", "run.sh").read_text())
+            Path(REPO_ROOT, "agents", "lib", "run.sh").read_text(encoding="utf-8"), encoding="utf-8")
         launcher.chmod(0o755)
         return lib
 
     @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
                         reason="root traverses a 000 directory, so the "
                                "failure this measures cannot be produced")
+    @posix_only
     def test_a_root_it_cannot_reach_is_reported_without_the_path(self,
                                                                  tmp_path):
         """Run it from inside the tree with the grandparent unreadable: the
@@ -1782,7 +1821,7 @@ class TestTheLauncherNamesNoPathWhenItCannotResolveItsRoot:
         completely and is silenced by the redirect rather than by anything the
         script says.
         """
-        source = Path(REPO_ROOT, "agents", "lib", "run.sh").read_text()
+        source = Path(REPO_ROOT, "agents", "lib", "run.sh").read_text(encoding="utf-8")
         echoed = [line for line in source.splitlines()
                   if "echo" in line and not line.lstrip().startswith("#")]
         assert echoed, "no diagnostics at all — this test read the wrong file"
@@ -1800,6 +1839,7 @@ class TestTheLauncherNamesNoPathWhenItCannotResolveItsRoot:
             "same failure, so dropping the path from the echo alone leaks it "
             f"anyway: {resolution[0]}")
 
+    @posix_only
     def test_the_launcher_still_runs_from_that_same_tree(self, tmp_path):
         """The counterweight: a launcher that refused every invocation would
         satisfy the assertion above perfectly, and the identifier only stays
@@ -1888,30 +1928,32 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
 
     def _pair(self, tmp_path):
         a, b = tmp_path / "profile.json", tmp_path / "result.json"
-        a.write_text('{"a": 1}')
-        b.write_text('{"b": 2}')
+        a.write_text('{"a": 1}', encoding="utf-8")
+        b.write_text('{"b": 2}', encoding="utf-8")
         return a, b
 
     def _leftovers(self, tmp_path):
         return sorted(p.name for p in tmp_path.iterdir()
                       if p.suffix in (".tmp", ".bak"))
 
+    @posix_only
     def test_both_targets_are_published_on_a_clean_exit(self, tmp_path):
         a, b = self._pair(tmp_path)
         with atomic_paths(a, b) as (ta, tb):
-            ta.write_text('{"a": 9}')
-            tb.write_text('{"b": 9}')
-        assert a.read_text() == '{"a": 9}' and b.read_text() == '{"b": 9}'
+            ta.write_text('{"a": 9}', encoding="utf-8")
+            tb.write_text('{"b": 9}', encoding="utf-8")
+        assert a.read_text(encoding="utf-8") == '{"a": 9}' and b.read_text(encoding="utf-8") == '{"b": 9}'
         assert self._leftovers(tmp_path) == []
 
+    @posix_only
     def test_an_exception_in_the_body_publishes_neither(self, tmp_path):
         a, b = self._pair(tmp_path)
         with pytest.raises(RuntimeError):
             with atomic_paths(a, b) as (ta, tb):
-                ta.write_text('{"a": 9}')
-                tb.write_text('{"b": 9}')
+                ta.write_text('{"a": 9}', encoding="utf-8")
+                tb.write_text('{"b": 9}', encoding="utf-8")
                 raise RuntimeError("the caller changed its mind")
-        assert a.read_text() == '{"a": 1}' and b.read_text() == '{"b": 2}'
+        assert a.read_text(encoding="utf-8") == '{"a": 1}' and b.read_text(encoding="utf-8") == '{"b": 2}'
         assert self._leftovers(tmp_path) == []
 
     def test_a_failed_second_rename_restores_the_first(self, tmp_path,
@@ -1932,10 +1974,10 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         monkeypatch.setattr(os, "replace", fail_on_the_second)
         with pytest.raises(OSError):
             with atomic_paths(a, b) as (ta, tb):
-                ta.write_text('{"a": 9}')
-                tb.write_text('{"b": 9}')
-        assert a.read_text() == '{"a": 1}', "the first target was not restored"
-        assert b.read_text() == '{"b": 2}'
+                ta.write_text('{"a": 9}', encoding="utf-8")
+                tb.write_text('{"b": 9}', encoding="utf-8")
+        assert a.read_text(encoding="utf-8") == '{"a": 1}', "the first target was not restored"
+        assert b.read_text(encoding="utf-8") == '{"b": 2}'
 
     def test_the_restore_puts_back_the_exact_original_bytes(self, tmp_path,
                                                             monkeypatch):
@@ -1959,7 +2001,7 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         with pytest.raises(OSError):
             with atomic_paths(a, b) as (ta, tb):
                 ta.write_bytes(b"new")
-                tb.write_text("new")
+                tb.write_text("new", encoding="utf-8")
         assert a.read_bytes() == original
 
     def test_a_target_that_did_not_exist_is_removed_again_on_a_late_failure(
@@ -1969,7 +2011,7 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         complete one."""
         a = tmp_path / "new.json"
         b = tmp_path / "result.json"
-        b.write_text('{"b": 2}')
+        b.write_text('{"b": 2}', encoding="utf-8")
         real = os.replace
         calls = {"n": 0}
 
@@ -1982,10 +2024,10 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         monkeypatch.setattr(os, "replace", fail_on_the_second)
         with pytest.raises(OSError):
             with atomic_paths(a, b) as (ta, tb):
-                ta.write_text("{}")
-                tb.write_text("{}")
+                ta.write_text("{}", encoding="utf-8")
+                tb.write_text("{}", encoding="utf-8")
         assert not a.exists(), "a target with no original was left behind"
-        assert b.read_text() == '{"b": 2}'
+        assert b.read_text(encoding="utf-8") == '{"b": 2}'
 
     def test_every_target_is_owner_only_at_the_moment_of_the_RENAME(
             self, tmp_path, monkeypatch):
@@ -2022,8 +2064,8 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
                 # may replace the file, and whatever it creates carries the
                 # umask unless something tightens it before the rename.
                 ta.unlink()
-                ta.write_text("{}")
-                tb.write_text("{}")
+                ta.write_text("{}", encoding="utf-8")
+                tb.write_text("{}", encoding="utf-8")
         finally:
             os.umask(old)
         assert yielded == [0o600, 0o600], (
@@ -2033,6 +2075,7 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         assert a.stat().st_mode & 0o777 == 0o600
         assert b.stat().st_mode & 0o777 == 0o600
 
+    @posix_only
     def test_the_temp_names_are_unique_so_two_runs_do_not_collide(self, tmp_path):
         """The hand-rolled version used a FIXED `.tmp` suffix beside the target,
         so two applies running at once wrote the same scratch file and one
@@ -2042,10 +2085,11 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         for _ in range(3):
             with atomic_paths(a, b) as (ta, tb):
                 seen.update({ta.name, tb.name})
-                ta.write_text("{}")
-                tb.write_text("{}")
+                ta.write_text("{}", encoding="utf-8")
+                tb.write_text("{}", encoding="utf-8")
         assert len(seen) == 6, f"temp names repeat across runs: {sorted(seen)}"
 
+    @posix_only
     def test_a_published_temp_is_not_unlinked_afterwards(self, tmp_path,
                                                           monkeypatch):
         """The rename frees the temp NAME. Left on the cleanup list, the unlink
@@ -2059,8 +2103,8 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
                                                  real(p, *a_, **k))[1])
         with atomic_paths(a, b) as (ta, tb):
             names = {str(ta), str(tb)}
-            ta.write_text("{}")
-            tb.write_text("{}")
+            ta.write_text("{}", encoding="utf-8")
+            tb.write_text("{}", encoding="utf-8")
         assert not (names & set(unlinked)), (
             f"a temp that had been renamed away was unlinked: "
             f"{sorted(names & set(unlinked))}")
@@ -2075,9 +2119,9 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
             FileExistsError(errno.EEXIST, "taken")))
         with pytest.raises(OSError):
             with atomic_paths(a, b) as (ta, tb):
-                ta.write_text("{}")
-                tb.write_text("{}")
-        assert a.read_text() == '{"a": 1}' and b.read_text() == '{"b": 2}'
+                ta.write_text("{}", encoding="utf-8")
+                tb.write_text("{}", encoding="utf-8")
+        assert a.read_text(encoding="utf-8") == '{"a": 1}' and b.read_text(encoding="utf-8") == '{"b": 2}'
 
     def test_the_copied_backup_is_owner_only_and_never_orphaned(
             self, tmp_path, monkeypatch):
@@ -2088,7 +2132,7 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         if os.name == "nt":  # pragma: no cover - POSIX mode bits
             pytest.skip("POSIX mode bits")
         a, b = self._pair(tmp_path)
-        a.write_text('{"a": "secret"}')
+        a.write_text('{"a": "secret"}', encoding="utf-8")
         monkeypatch.setattr(os, "link", lambda *a_, **k: (_ for _ in ()).throw(
             OSError(errno.EOPNOTSUPP, "no hardlinks")))
         modes = []
@@ -2102,13 +2146,14 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         old = os.umask(0o022)      # without this the assertion is vacuous
         try:
             with atomic_paths(a, b) as (ta, tb):
-                ta.write_text("{}")
-                tb.write_text("{}")
+                ta.write_text("{}", encoding="utf-8")
+                tb.write_text("{}", encoding="utf-8")
         finally:
             os.umask(old)
         assert modes == [0o600, 0o600], f"a backup was written at {modes}"
         assert self._leftovers(tmp_path) == []
 
+    @posix_only
     def test_a_restore_that_itself_fails_is_reported_as_half_applied(
             self, tmp_path, monkeypatch):
         """The state the transaction exists to prevent, reached anyway. The one
@@ -2127,8 +2172,8 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         monkeypatch.setattr(os, "replace", flaky)
         with pytest.raises(HalfApplied) as raised:
             with atomic_paths(a, b) as (ta, tb):
-                ta.write_text('{"a": 9}')
-                tb.write_text('{"b": 9}')
+                ta.write_text('{"a": 9}', encoding="utf-8")
+                tb.write_text('{"b": 9}', encoding="utf-8")
         assert "HALF APPLIED" in str(raised.value)
         assert raised.value.__cause__ is not None, "the publish error was lost"
 
@@ -2140,6 +2185,7 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
             with atomic_paths(a, a):
                 pass
 
+    @posix_only
     def test_a_filesystem_without_hardlinks_falls_back_to_a_copy(self, tmp_path,
                                                                  monkeypatch):
         """The other side of the same rule: EOPNOTSUPP is a real reason, and the
@@ -2148,9 +2194,9 @@ class TestTheOneWriterCoversTheTwoFileTransaction:
         monkeypatch.setattr(os, "link", lambda *a_, **k: (_ for _ in ()).throw(
             OSError(errno.EOPNOTSUPP, "no hardlinks here")))
         with atomic_paths(a, b) as (ta, tb):
-            ta.write_text('{"a": 9}')
-            tb.write_text('{"b": 9}')
-        assert a.read_text() == '{"a": 9}' and b.read_text() == '{"b": 9}'
+            ta.write_text('{"a": 9}', encoding="utf-8")
+            tb.write_text('{"b": 9}', encoding="utf-8")
+        assert a.read_text(encoding="utf-8") == '{"a": 9}' and b.read_text(encoding="utf-8") == '{"b": 9}'
         assert self._leftovers(tmp_path) == []
 
     def test_no_targets_is_refused(self):
@@ -2170,6 +2216,7 @@ class TestTheOneWriter:
         from agents.lib.secure_fs import atomic_write, write_secure
         return atomic_write, write_secure
 
+    @posix_only
     def test_the_file_is_owner_only_from_the_first_byte(self, tmp_path):
         """Created at 600 rather than written-then-chmod'd: a file created at
         the umask default holds the whole of its contents before anything
@@ -2197,22 +2244,25 @@ class TestTheOneWriter:
         assert seen["mode"] == 0o600
         assert (tmp_path / "out.txt").stat().st_mode & 0o777 == 0o600
 
+    @posix_only
     def test_a_failed_write_leaves_the_target_as_it_was(self, tmp_path):
         atomic_write, _ = self._writer()
         target = tmp_path / "out.txt"
-        target.write_text("the good copy")
+        target.write_text("the good copy", encoding="utf-8")
         with pytest.raises(RuntimeError):
             with atomic_write(target) as handle:
                 handle.write("half of something else")
                 raise RuntimeError("interrupted")
-        assert target.read_text() == "the good copy"
+        assert target.read_text(encoding="utf-8") == "the good copy"
         assert [p.name for p in tmp_path.iterdir()] == ["out.txt"]
 
+    @posix_only
     def test_bytes_and_text_both_round_trip(self, tmp_path):
         _, write_secure = self._writer()
         assert write_secure(tmp_path / "a.txt", "héllo").read_text(encoding="utf-8") == "héllo"
         assert write_secure(tmp_path / "b.bin", b"\r\n\x00").read_bytes() == b"\r\n\x00"
 
+    @posix_only
     def test_the_temp_sits_beside_the_target(self, tmp_path):
         """One filesystem, so the rename is atomic — a temp in /tmp is a COPY
         across devices, which is neither atomic nor owner-only on arrival."""
@@ -2237,3 +2287,124 @@ class TestTheOneWriter:
                 handle.write("never reached")
         assert list(tmp_path.iterdir()) == []
 
+
+
+windows_only = pytest.mark.skipif(
+    os.name != "nt", reason="reads back an NTFS DACL")
+
+
+@windows_only
+class TestTheWindowsAclIsActuallyRestrictive:
+    """The reason the windows CI job is worth running at all.
+
+    Everything else this module asserts about Windows either stubs
+    `subprocess.run` — proving the PowerShell was ASSEMBLED, never that it did
+    anything — or reads back a POSIX mode NTFS does not have. So a job that ran
+    the module and went green would have proved that PowerShell was invoked,
+    and nothing about whether the file is actually restricted. That is the shape
+    `docs` warns about elsewhere: a check that always passes and one that never
+    fires look identical from outside.
+
+    These read the DACL back with `icacls`, which is a different tool from the
+    `Set-Acl` that wrote it. `_secure_path_windows` does verify its own work,
+    and that verification is worth having — but a writer checking its own write
+    with the same API cannot see an API that lies, and this can.
+    """
+
+    @staticmethod
+    def _acl(path) -> str:
+        out = subprocess.run(["icacls", str(path)], capture_output=True,
+                             text=True, check=True)
+        return out.stdout
+
+    # The principals that make "owner-only" false. `Everyone` and
+    # `Authenticated Users` are the broad ones; `BUILTIN\\Users` is the one a
+    # default DACL grants and the one an inherited rule brings in.
+    BROAD = ("Everyone", "Authenticated Users", "\\Users:", "BUILTIN\\Users")
+
+    def test_a_secured_file_grants_no_broad_principal(self, tmp_path):
+        target = tmp_path / "result.json"
+        target.write_text("{}", encoding="utf-8")
+        secure_path(str(target))
+        acl = self._acl(target)
+        for principal in self.BROAD:
+            assert principal not in acl, f"{principal} still has access:\n{acl}"
+
+    def test_a_secured_file_carries_no_INHERITED_rule(self, tmp_path):
+        """`(I)` marks an inherited ACE. The DACL is protected, so there must be
+        none: an inherited grant from the parent is exactly the access
+        `SetAccessRuleProtection` exists to cut off, and it would not show up in
+        a check that only looked at the explicit rules."""
+        target = tmp_path / "answers.md"
+        target.write_text("nothing sensitive\n", encoding="utf-8")
+        secure_path(str(target))
+        assert "(I)" not in self._acl(target)
+
+    def test_a_secured_directory_is_INHERITABLE(self, tmp_path):
+        """`(OI)(CI)` — object and container inherit. Without them a protected
+        directory strips the inherited ACEs off what already lives inside it,
+        leaving a summaries/*.md with an EMPTY DACL, its owner locked out; and
+        anything created afterwards falls back to the creating token's default
+        DACL, which grants SYSTEM and Administrators. POSIX 0700 covers every
+        child by denying traversal, and this is what has to stand in for it."""
+        target = tmp_path / "summaries"
+        target.mkdir()
+        secure_path(str(target))
+        acl = self._acl(target)
+        assert "(OI)" in acl and "(CI)" in acl, acl
+
+    def test_a_file_created_inside_a_secured_directory_is_covered_too(self, tmp_path):
+        """The property the inheritance flags are FOR, asserted end to end
+        rather than through the flags that are supposed to produce it."""
+        directory = tmp_path / "reviews"
+        directory.mkdir()
+        secure_path(str(directory))
+        child = directory / "2026-review.md"
+        child.write_text("workpaper\n", encoding="utf-8")
+        acl = self._acl(child)
+        for principal in self.BROAD:
+            assert principal not in acl, f"{principal} reaches a child:\n{acl}"
+
+    def test_a_bare_chmod_changes_the_ACL_not_at_all(self, tmp_path):
+        """AGENTS.md §1 says `chmod` on Windows only flips the read-only DOS
+        attribute and leaves NTFS untouched. That claim is the whole reason the
+        `os.name == "nt"` branch exists, and nothing had ever checked it on the
+        platform it is about.
+
+        Stated as "chmod changes nothing, secure_path changes something" rather
+        than as "a broad principal loses access", because a per-user temp
+        directory on a runner already grants no broad principal — the first
+        spelling asserted a premise that is false on the very host the job runs
+        on, and would have been a test that could only fail."""
+        target = tmp_path / "profile.json"
+        target.write_text("{}", encoding="utf-8")
+        before = self._acl(target)
+        os.chmod(str(target), 0o600)
+        assert self._acl(target) == before, (
+            "chmod altered the DACL, which would mean AGENTS.md §1's reason for "
+            "this whole branch is wrong")
+        secure_path(str(target))
+        assert self._acl(target) != before, (
+            "secure_path left the DACL exactly as chmod found it")
+        for principal in self.BROAD:
+            assert principal not in self._acl(target)
+
+
+def test_the_execution_policy_is_bypassed_for_the_windows_acl_call():
+    """Deliberately NOT inside the Windows-only class above.
+
+    A restrictive execution policy is one of the two things that can stop the
+    ACL script, and its absence is invisible on POSIX and fatal on Windows. The
+    OTHER one is why this module no longer calls `Get-Acl`/`Set-Acl` at all: a
+    stock windows-latest runner could not autoload
+    `Microsoft.PowerShell.Security` — `CouldNotAutoloadMatchingModule` — and
+    bypassing the policy did NOT fix that, measured. A guard that only runs on
+    the platform where the bug is already obvious is a guard that lets it back
+    in everywhere else, so this one runs everywhere.
+    """
+    source = (Path(__file__).resolve().parent.parent
+              / "agents" / "lib" / "secure_fs.py").read_text(encoding="utf-8")
+    assert '"-ExecutionPolicy", "Bypass"' in source, (
+        "the PowerShell that sets the owner-only DACL is subject to the host's "
+        "execution policy again; on a stock Windows host nothing can be "
+        "restricted at all and AGENTS.md §1 does not hold there")

@@ -61,3 +61,33 @@ ignore_errors = true
 markers = [
     "slow: drives a subprocess per case (the hook and preflight modules). `-m \"not slow\"` is the engine-only run; the cost of what it skips is in skill-invariants.sh MEASURED COSTS.",
 ]
+
+[tool.coverage.run]
+# Scoped, or the report measures pytest and the standard library alongside the
+# engine and the number stops meaning anything. `scripts/` is shell and
+# `.agents/skills/` is markdown, so neither is measurable here — what CI's
+# coverage number covers is the PYTHON this repository ships.
+source = ["agents", "evals"]
+branch = true
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+# A missing-lines column is what makes the report actionable; a bare percentage
+# is a number to watch drift rather than a list of anything to do.
+show_missing = true
+# No `fail_under`. A threshold picked today becomes the target.
+#
+# READ THIS BEFORE READING THE NUMBER. It measures the pytest process ONLY.
+# There is no `parallel`/`concurrency` setting and no `COVERAGE_PROCESS_START`,
+# so nothing this suite runs in a SUBPROCESS is counted — and much of what it
+# runs is a subprocess: every `run.sh` invocation, every
+# `[sys.executable, "-m", "agents.lib.X"]` CLI drive, the whole of
+# `test_preflight`. So `preflight.py`, every `_main`, and every CLI arm read as
+# unexercised when they are among the most exercised code in the tree.
+#
+# Stated rather than fixed, deliberately: capturing subprocess coverage needs a
+# `.pth` in site-packages plus `coverage combine`, which is a fragile amount of
+# machinery for a report with no threshold on it. What this number is good for
+# is the pure-computation modules; what it is NOT good for is deciding that a
+# CLI or a gate is untested. A reader who does not know that would draw exactly
+# the wrong conclusion from the lowest rows, which is worse than no report.

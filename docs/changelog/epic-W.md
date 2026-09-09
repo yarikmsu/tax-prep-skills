@@ -67,3 +67,97 @@ contributor following the recipe had no pytest and could not run the test
 command three sections below it. `uv pip install pytest` now follows the sync,
 the way the venv recipe above it already installs pytest as its own step.
 
+
+## W6 — CI gaps, and the two Windows defects the job found
+
+CI ran on `pull_request` alone, on Ubuntu, with the test runner and the linters
+installed unpinned.
+
+**Why the widening was blocked.** `github.event.pull_request.base.sha` is EMPTY
+on every event except `pull_request`, and the PII gate's range was that
+expression inlined. Adding a push or schedule trigger would have handed the
+scanner `...HEAD`. It fails closed, so this was never a live hole — but "the
+gate blocks every push" and "the gate scans the right range" are different
+outcomes, and only the second is a working CI. Logic in a workflow expression
+can only be run on a runner, so the range moved into `scripts/ci-pii-range.sh`.
+Its two hard cases are a branch's first push (`before` is forty zeros: a valid
+sha SHAPE naming no commit, while every commit on the branch is new) and a
+force-push (`before` is well-formed and ORPHANED, so the range cannot resolve
+and the scanner blamed `fetch-depth: 0`, a setting already correct). Both scan
+from the root.
+
+**Three locks, and the split is structural.** A single dev lock could not be
+installed beside the runtime one: pip-audit pulls `requests`, which pulls
+`charset-normalizer`, and resolving the two trees together landed 3.5.1 over the
+3.4.9 `requirements.txt` pins. `parse_utils` then REFUSED to parse — correctly,
+and loudly. Every document test went red in CI on a dependency of the AUDITOR.
+Install ORDER would have hidden it; `requirements-test.txt` (pytest, coverage,
+nothing shared with the runtime tree) makes it impossible, and a test pins that
+no package is pinned at two versions across the pair a test job installs.
+
+**The PII gate's digest exemption is by exact PATH**, deliberately, so the new
+lock was covered by nothing and blocked its own commit with 101 matches that
+were all sha256 digits. Every hashed lock is listed now, and a test pins the
+SET — the documented way past that block is `--no-verify`, which is how a gate
+teaches people to bypass the PII scan.
+
+### What running on Windows actually found
+
+Both are shipped-code defects, and neither is about ACL semantics.
+
+**Every text read used the platform's encoding.** `open`, `read_text` and
+`write_text` default to `locale.getencoding()` — UTF-8 on the hosts this was
+developed on, cp1252 on Windows. `agents/lib/` reads `result.json`,
+`answers.md`, `parse_ledger.json` and the tax-law cache that way, and this
+repository's own templates carry em-dashes and section signs, so a Windows
+user's return raised `UnicodeDecodeError: 'charmap' codec can't decode byte
+0x8f` rather than parsing. The repository had paid for this family of bug once
+already, in shell: the PII gate pins `LC_ALL=C` because one Latin-1 byte under a
+UTF-8 locale hid every match on its line. Same mistake, other direction.
+
+**`secure_fs` could not restrict anything.** It set the DACL with `Get-Acl` /
+`Set-Acl`, and a stock `windows-latest` host cannot autoload
+`Microsoft.PowerShell.Security` — `CouldNotAutoloadMatchingModule`. Every call
+failed, so AGENTS.md §1's owner-only guarantee did not hold on the whole
+platform: nothing this toolkit writes could be made owner-only there.
+`-ExecutionPolicy Bypass` did NOT fix it — the problem is the DEPENDENCY, not
+the permission — and the ACL now goes through `GetAccessControl()` /
+`SetAccessControl()` on the `FileSystemInfo` the script already holds: System.IO
+methods needing no module to be discovered, autoloaded or permitted. It failed
+LOUDLY, raising rather than passing silently, so a real run would have stopped
+rather than leaving a file exposed. The platform was simply unusable, and
+nothing said so, because nothing had ever run there.
+
+### Why the job is scoped as it is
+
+Thirty tests carry an explicit `posix_only` skip — they read back a mode NTFS
+does not have, create a symlink Windows needs a privilege for, or need a
+case-sensitive path. That is NOT narrowing the job until it passes, and the
+distinction is the whole point: every Windows assertion the module previously
+held either stubbed `subprocess.run` — proving the PowerShell was ASSEMBLED,
+never that it did anything — or read back a POSIX mode. A job that ran the
+module and went green would have proved PowerShell was invoked and nothing else,
+which is the "a check that always passes and one that never fires look identical
+from outside" failure this repository already names.
+
+`TestTheWindowsAclIsActuallyRestrictive` is what makes it worth having. It reads
+the DACL back with `icacls` — a different tool from the one that wrote it — and
+asserts no broad principal, no inherited rule, an inheritable directory ACE, and
+a child created inside a secured directory covered too. Its bare-chmod case
+compares the DACL before and after rather than looking for a broad principal to
+disappear: a per-user temp directory on a runner grants none to begin with, so
+the first spelling asserted a premise false on the very host it runs on.
+
+### Not implemented, and why
+
+W6's text asks for "the model-driven evals of V3 on their own schedule".
+**Superseded by the owner's Q2 ruling**: those runs happen locally, on
+credentials already on the operator's machine, so no API key becomes a
+repository secret and a scored comparison of a tax return never lands in a
+durable CI log. A test pins that no job reads a secret or dispatches the runner.
+
+Coverage is a build ARTIFACT with no third-party upload, and no `fail_under`. It
+measures the pytest process only, so `preflight.py` and every CLI arm read as
+unexercised when they are among the most exercised code here — stated where the
+number is configured, and pinned, because a reader who does not know that draws
+the opposite conclusion from the lowest rows.

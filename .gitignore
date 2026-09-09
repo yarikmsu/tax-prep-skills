@@ -112,3 +112,12 @@ Thumbs.db
 .claude/.archive-dirs*
 .claude/.archive-files*
 .claude/.archive-index-dirty*
+
+# Coverage data and report. CI produces coverage.xml as a build ARTIFACT and
+# keeps it on the run, deliberately not on a coverage service — AGENTS.md §1
+# does not spend a new upload destination or a repository secret on a
+# convenience. Locally both are scratch.
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

@@ -338,7 +338,7 @@ def cases() -> "list[str]":
 
 def _load(path: Path, what: str) -> dict:
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise SystemExit(f"ERROR: could not read {what} at {redact(path)}: {redact(e)}")
     if not isinstance(data, dict):

@@ -1,8 +1,38 @@
 name: CI
 
+# FOUR TRIGGERS, AND EACH RUNS THE JOBS THAT MEAN SOMETHING FOR IT.
+#
+# `pull_request` is the gate. `push` to main catches what a squash merge
+# produces, which is a commit no pull request ever tested: the merged tree is
+# the branch's, but the COMMIT is new, and the PII gate scans commits. `schedule`
+# catches what changes UNDER the repository rather than in it — a new advisory
+# against a pinned dependency, an interpreter release — on a tree nobody
+# touched; it is the only trigger that can go red while the code stands still.
+# `workflow_dispatch` is for asking any of that on purpose.
+#
+# GitHub disables a scheduled workflow after 60 days with no repository
+# activity, and re-enabling it is a button nobody is prompted to press. A season
+# in which nothing is committed is exactly when a stale advisory matters most,
+# so treat a silent schedule as a finding rather than as quiet.
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, Monday morning UTC. Not midnight: GitHub's scheduler is busiest on
+    # the hour and delays a run by up to a quarter of an hour, and a run that
+    # lands whenever is a run whose absence nobody notices.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+# Cancel a superseded PR run; NEVER cancel one on main. A squash merge's
+# push-run is the only thing that scans the commit that actually landed, and a
+# second merge arriving while it runs would cancel it — leaving that commit
+# unscanned with a green tick from the run that replaced it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -35,10 +65,68 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Install test dependencies
-        run: pip install pytest
+      # The dev lock, hashed like the runtime one. `pip install pytest` stood
+      # here and pinned nothing: the test runner is as able to change a result
+      # as the library under test, and a green CI on an unpinned runner is a
+      # green nobody can reproduce.
+      # The TEST lock, not the dev one. Resolving pytest beside pip-audit pulled
+      # `requests` -> `charset-normalizer` 3.5.1 over the 3.4.9 `requirements.txt`
+      # pins, and `parse_utils` then refused to parse at all: a parser version the
+      # lock does not name is one the suite never ran against (AGENTS.md §7).
+      # Every document test went red in CI on a dependency of the AUDITOR.
+      - name: Install test tooling
+        run: pip install -r requirements-test.txt
+      # Coverage on 3.12 only — the interpreter the lock is compiled for. Two
+      # runs would produce two reports and no decision about which is the one.
       - name: Run tests
+        if: matrix.python-version != '3.12'
         run: python -m pytest tests/ -v
+      - name: Run tests with coverage
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m coverage run -m pytest tests/ -v
+          python -m coverage xml
+          python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+      # Uploaded as a GitHub ARTIFACT, deliberately not to a coverage service.
+      # This repository is private and its subject is real returns; a third-party
+      # upload is a new destination for repository content and a new credential
+      # in repository secrets, and AGENTS.md §1 does not spend either on a
+      # convenience. The number is on the job summary and the XML is here for
+      # anyone who wants to open it.
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 14
+
+  test-windows:
+    # WINDOWS BEHAVIOUR IS CLAIMED IN 27 PLACES AND WAS EXERCISED NOWHERE.
+    # `secure_fs` takes a different branch there entirely — the ACL is set with
+    # icacls because `chmod` under a POSIX-compatible shell only flips the
+    # read-only DOS attribute and leaves NTFS untouched — and one of those
+    # branches carries `# pragma: no cover - POSIX CI`, which is the gap written
+    # down. `run.sh` is the launcher every skill invokes, and its Windows venv
+    # layout (`Scripts/` rather than `bin/`) had the same standing.
+    #
+    # Scoped to those two modules rather than the whole suite: the rest assumes
+    # POSIX modes and would report a platform difference as a defect.
+    name: Tests (Windows, secure_fs and the launcher)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Install test tooling
+        run: pip install -r requirements-test.txt
+      - name: Run the cross-platform modules
+        run: python -m pytest tests/test_secure_fs.py tests/test_host_guard.py -v
 
   lint:
     name: Lint and types
@@ -50,12 +138,12 @@ jobs:
           # The interpreter .python-version names and requirements.txt is
           # compiled for. A linter run on another one reports another language.
           python-version: "3.12"
-      # PINNED, unlike the pytest and pip-audit installs above: a linter is the
-      # one dependency whose new release adds FINDINGS, so an unpinned one turns
-      # an unrelated PR red on a rule nobody in this repository has ruled on.
-      # W6 folds these into the hashed dev lock that covers pytest too.
-      - name: Install linters
-        run: pip install ruff==0.16.6 mypy==2.3.1
+      # From the hashed dev lock, which pins ruff and mypy by version in its own
+      # `.in` as well: a linter is the one dependency whose new release adds
+      # FINDINGS, so an unpinned one turns an unrelated pull request red on a
+      # rule nobody in this repository has ruled on.
+      - name: Install dev tooling
+        run: pip install -r requirements-dev.txt
       # Configured in pyproject.toml: ruff runs the pyflakes-equivalent set,
       # cleared in the commit that turned it on; mypy checks annotated code and
       # carries a named per-module baseline, so a module not on that list fails
@@ -71,19 +159,46 @@ jobs:
   pii-scan:
     name: PII file scan
     runs-on: ubuntu-latest
+    # A scheduled run introduces no commits, so this job would fetch the whole
+    # history in order to print "nothing to scan". The header above says each
+    # trigger runs the jobs that mean something for it; this `if` is what makes
+    # that sentence true rather than aspirational. The range script still has a
+    # `schedule` arm, and a test still drives it: the arm is the CONTRACT, and
+    # `workflow_dispatch` reaches it whenever somebody asks for a run by hand.
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Scan changed files and content
+      - name: Scan the commits this event introduced
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        # Calls the SAME script the pre-commit hook runs, with a commit range
-        # instead of --cached. These rules used to be hand-mirrored here, and
-        # every one had to be edited in both places or the gate diverged in
-        # silence — which is exactly how four content-scan bypasses shipped to
-        # the hook and to the copy at the same time.
-        run: bash scripts/pre-commit-pii-scan.sh "${BASE_SHA}...HEAD"
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        # The range comes from a SCRIPT, and the script has tests. The expression
+        # `github.event.pull_request.base.sha` is empty on every event but one,
+        # so the moment this workflow gained a push and a schedule trigger the
+        # inline form would have handed the scanner `...HEAD`. Exit 3 is "this
+        # event introduced no commits"; any other non-zero is "the range could
+        # not be determined", which BLOCKS rather than falling back to a range
+        # that would scan the wrong commits or none.
+        #
+        # The scanner itself is the SAME script the pre-commit hook runs. These
+        # rules used to be hand-mirrored here, and every one had to be edited in
+        # both places or the gate diverged in silence — which is exactly how four
+        # content-scan bypasses shipped to the hook and to the copy at once.
+        run: |
+          set +e
+          RANGE=$(bash scripts/ci-pii-range.sh)
+          STATUS=$?
+          set -e
+          case "$STATUS" in
+            0) echo "Scanning $RANGE"
+               bash scripts/pre-commit-pii-scan.sh "$RANGE" ;;
+            3) echo "This event introduces no commits; nothing for the PII gate to scan." ;;
+            *) echo "The PII-scan range could not be determined; refusing to report a pass."
+               exit 1 ;;
+          esac
 
   security:
     name: Dependency audit
@@ -93,7 +208,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install pip-audit
-        run: pip install pip-audit
-      - name: Audit dependencies
+      - name: Install dev tooling
+        run: pip install -r requirements-dev.txt
+      # BOTH locks. The dev lock installs the test runner and the linters, and a
+      # vulnerable one of those is a vulnerability in the thing that decides
+      # whether this repository's code is fit to run.
+      # Every lock, because each installs somewhere: the runtime tree runs a
+      # return, the test tree decides whether this code is fit to run, and the
+      # dev tree is what lints and audits it.
+      - name: Audit runtime dependencies
         run: pip-audit -r requirements.txt
+      - name: Audit the test lock
+        run: pip-audit -r requirements-test.txt
+      - name: Audit dev dependencies
+        run: pip-audit -r requirements-dev.txt

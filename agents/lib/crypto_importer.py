@@ -1233,7 +1233,7 @@ def _cli_compute(argv: 'list[str]') -> int:
         print(f"ERROR: file not found: {redact(path)}", file=sys.stderr)
         return 1
     try:
-        data = json.loads(p.read_text())
+        data = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         # main() only catches CryptoImportError; re-raise so a user-edited empty/malformed
         # normalized file produces the promised clean ERROR, not a raw traceback. (Codex P2.)
