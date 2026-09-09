@@ -33,6 +33,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
@@ -49,10 +50,25 @@ RECEIPT_NAME = "validation_receipt.json"
 RECEIPT_VERSION = 1
 
 PASS = "PASS"
-_GATES = ("capabilities", "tie_out")
+# The second verdict a gate may STAND on, and only one gate has one. A return
+# whose Form 1040 lines 1-38 this engine does not govern — a computed PFIC fund
+# reclassifies amounts out of lines 3a and 3b, so the agent keeps those lines by
+# hand — leaves `return_builder` with nothing to assert. Recording that as a
+# failure would refuse a filing package for a return that is correct and
+# complete, which is a gate firing on right answers; recording it as a PASS
+# would claim a check that never happened. It is its own outcome, accepted for
+# that gate alone, and the skill tells the agent to surface it to the user the
+# way an unverifiable tie-out category is surfaced.
+NOT_APPLICABLE = "OUT OF SCOPE"
+_GATES = ("capabilities", "tie_out", "return_builder")
 # Every gate a filing package depends on. `verify` requires all of them, so a
-# workspace where only one ran is refused with the other one named.
+# workspace where only one ran is refused with the others named.
 REQUIRED_GATES = _GATES
+
+# The EXCEPTIONS to "a gate stands on a PASS and nothing else" — one gate, one
+# extra outcome. Read through `.get(gate, (PASS,))`, so the default is the rule
+# and this table holds only what departs from it.
+_ACCEPTED: "dict[str, tuple[str, ...]]" = {"return_builder": (PASS, NOT_APPLICABLE)}
 
 
 def _sha256(data: bytes) -> str:
@@ -132,18 +148,37 @@ def result_schema_digest() -> str:
 
 
 def _tax_year(workspace: Path) -> "int | None":
-    """The year `result.json` declares, or None. The law file is named by it,
+    """The year the return is computed as, or None. The law file is named by it,
     and a workspace with no result yet (the capability gate runs first) has no
-    year to name."""
-    path = workspace / "result.json"
-    if not path.is_file():
-        return None
-    try:
-        meta = json.loads(path.read_text(encoding="utf-8")).get("meta")
-    except (OSError, ValueError):
-        return None
-    year = meta.get("tax_year") if isinstance(meta, dict) else None
-    return year if isinstance(year, int) and not isinstance(year, bool) else None
+    year to name.
+
+    `result.json` meta FIRST and the profile SECOND, which is the precedence
+    every consumer uses and — more to the point — the precedence
+    `return_builder.load` uses to pick the cache it PRICES LINE 16 FROM. Reading
+    only the meta here left a real hole: `result_template.json` ships
+    `meta.tax_year` as null, so on a workspace where only the profile carries
+    the year the cache was loaded, used, and then left out of the input map
+    entirely — a re-fetched bracket would not invalidate a gate whose verdict
+    depends on it, and AGENTS.md §2 says nothing downstream catches a stale
+    figure.
+    """
+    def _year(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def _read(name: str, key: str):
+        path = workspace / name
+        if not path.is_file():
+            return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(doc, dict):
+            return None
+        node = doc.get("meta") if key == "meta" else doc
+        return _year(node.get("tax_year")) if isinstance(node, dict) else None
+
+    return _read("result.json", "meta") or _read("taxpayer_profile.json", "root")
 
 
 def _documents(workspace: Path) -> "list[str]":
@@ -166,6 +201,39 @@ def _entry_key(relname: str) -> str:
     return _sha256(relname.encode())
 
 
+class _Reads(NamedTuple):
+    """What one gate reads: fixed workspace files, plus the two sets that can
+    only be resolved against a workspace."""
+    files: "tuple[str, ...]"
+    tax_law: bool      # the tax_law_<year>.json this return is priced from
+    documents: bool    # everything under documents/
+
+
+_RETURN_FILES = ("parse_ledger.json", "result.json", "taxpayer_profile.json")
+
+# EVERY GATE'S INPUT SET, declared here and nowhere else, because this is the
+# whole of what invalidates that gate's verdict. A table rather than the if/elif
+# ladder it replaced: keyed by name, a gate added to `_GATES` without a thought
+# about this file fell into whichever branch happened to be the `else` and got
+# an input set nobody chose for it. `test_receipt.py` asserts this covers
+# `_GATES` exactly, so the omission is a failure rather than a default.
+#
+# The SOURCE DOCUMENTS belong to the tie-out alone. Its whole question is
+# whether every file under documents/ reached the return, so one arriving
+# afterwards is exactly the drift its receipt exists to catch. The derived lines
+# are a function of the four files above and of nothing else: a document that
+# has not been parsed yet cannot have moved one, so invalidating that gate on it
+# would fire on correct work — the gates-that-cry-wolf rule. Nothing is lost,
+# because a filing package requires BOTH receipts and the tie-out's still
+# refuses. The capability gate reads the profile's flags and nothing else, and
+# it runs BEFORE result.json exists.
+_INPUTS = {
+    "capabilities": _Reads(("taxpayer_profile.json",), False, False),
+    "return_builder": _Reads(_RETURN_FILES, True, False),
+    "tie_out": _Reads(_RETURN_FILES, True, True),
+}
+
+
 def gate_inputs(workspace: Path, gate: str, *,
                 contents: "dict[str, bytes] | None" = None) -> dict:
     """{key: {name, digest}} for every file `gate` reads.
@@ -180,19 +248,20 @@ def gate_inputs(workspace: Path, gate: str, *,
     the gate did not evaluate, and a profile edited in that window produced a
     PASS receipt for flags the gate never saw.
     """
-    if gate not in _GATES:
+    # Against `_INPUTS` and not `_GATES`, which a test holds equal: one lookup
+    # rather than a membership check and then a subscript that can still raise a
+    # bare KeyError on the one case the check was supposed to have covered.
+    if gate not in _INPUTS:
         raise ReceiptError(f"unknown gate {gate!r}; expected one of {', '.join(_GATES)}")
     workspace = Path(workspace).resolve()
     contents = contents or {}
-    if gate == "capabilities":
-        # The capability gate reads the profile's flags and nothing else, and it
-        # runs BEFORE result.json exists.
-        names = ["taxpayer_profile.json"]
-    else:
-        names = ["parse_ledger.json", "result.json", "taxpayer_profile.json"]
+    reads = _INPUTS[gate]
+    names = list(reads.files)
+    if reads.tax_law:
         year = _tax_year(workspace)
         if year is not None:
             names.append(f"tax_law_{year}.json")
+    if reads.documents:
         names.extend(_documents(workspace))
     found = {}
     for name in names:
@@ -244,11 +313,11 @@ def record(workspace, gate: str, outcome: str, *,
     the map is read now, which is right for a caller that has not evaluated
     anything (the CLI's `record`).
 
-    MERGES: the two gates run at opposite ends of /tax-compute, and the second
-    must not erase the first. Each entry carries its own inputs, so the earlier
-    gate's pass stays bound to the files IT saw — a profile edited between the
-    two invalidates the capability gate and leaves the tie-out alone, which is
-    the truth of what happened.
+    MERGES: the gates run at opposite ends of /tax-compute — Step 0.7, then 12.6
+    and 12.7 — and a later one must not erase an earlier one. Each entry carries
+    its own inputs, so the earlier gate's pass stays bound to the files IT saw:
+    a profile edited in between invalidates the capability gate and leaves the
+    tie-out alone, which is the truth of what happened.
     """
     workspace = Path(workspace).resolve()
     if not workspace.is_dir():
@@ -278,6 +347,31 @@ def record(workspace, gate: str, outcome: str, *,
     return _write(workspace, data)
 
 
+def record_after_verdict(workspace, gate: str, outcome: str, exit_code: int, *,
+                         inputs: "dict | None" = None) -> int:
+    """Record `outcome`, and return the code the gate's CLI should exit with.
+
+    Every gate ends this way and each had hand-rolled it. The invariant is one
+    sentence, and it is why this is a function rather than a third copy: a
+    receipt that cannot be written must NEVER lower a verdict already printed.
+    Never below 1 — the write really did fail, so this is not a clean pass — and
+    never below the verdict's own code, so a gate that BLOCKED still exits 2
+    when its receipt could not be written. A permissions fault must not be able
+    to mask a tax-correctness fault, which is what a 2 downgraded to a 1 does:
+    /tax-compute documents exit 1 as "the input is missing", sending the agent
+    to fix a file that is fine while the block goes unread.
+
+    CALL IT AFTER the verdict is printed, never before. `inputs` is the map the
+    gate captured before it evaluated — see `record`.
+    """
+    try:
+        record(workspace, gate, outcome, inputs=inputs)
+    except (ReceiptError, RolloverError, OSError) as e:
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
+        return max(exit_code, 1)
+    return exit_code
+
+
 def _write(workspace: Path, data: dict) -> Path:
     """Temp-then-rename inside the workspace, then owner-only.
 
@@ -302,14 +396,26 @@ def _write(workspace: Path, data: dict) -> Path:
 
 
 class VerifyReport:
-    """Whether a filing package may be assembled from this workspace."""
+    """Whether a filing package may be assembled from this workspace.
 
-    def __init__(self, valid: bool, reasons: "list[str]"):
+    `reasons` are why it may NOT. `notes` are what a reader has to be told about
+    one that may: a gate standing on an accepted outcome that is not a PASS did
+    not verify what its name says it verifies, and "never silently
+    out-of-scope" (AGENTS.md §4) is not satisfied by a line printed on stderr
+    several steps earlier. They ride onto page 1 beside the limitations
+    manifest, which is where this project already puts what a return does not
+    cover.
+    """
+
+    def __init__(self, valid: bool, reasons: "list[str]",
+                 notes: "list[str] | None" = None):
         self.valid = valid
         self.reasons = reasons
+        self.notes = list(notes or ())
 
     def to_dict(self) -> dict:
-        return {"valid": self.valid, "reasons": self.reasons}
+        return {"valid": self.valid, "reasons": self.reasons,
+                "notes": self.notes}
 
 
 def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyReport:
@@ -323,13 +429,15 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
     if not data:
         return VerifyReport(False, [
             f"no {RECEIPT_NAME} in this workspace — the capability gate "
-            "(/tax-compute Step 0.7) and the tie-out gate (Step 12.7) write it, "
-            "so a workspace without one has not run them"])
+            "(/tax-compute Step 0.7), the derived-lines gate (Step 12.6) and "
+            "the tie-out gate (Step 12.7) write it, so a workspace without one "
+            "has not run them"])
     if data.get("receipt_version") != RECEIPT_VERSION:
         return VerifyReport(False, [
             f"{RECEIPT_NAME} declares version {data.get('receipt_version')!r}, "
             f"and this engine writes version {RECEIPT_VERSION} — re-run the gates"])
-    reasons = []
+    reasons: "list[str]" = []
+    notes: "list[str]" = []
     gates = data.get("gates")
     if not isinstance(gates, dict):
         gates = {}
@@ -340,9 +448,14 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
         if not isinstance(entry, dict):
             reasons.append(f"the {gate} gate has not run in this workspace")
             continue
-        if entry.get("outcome") != PASS:
-            reasons.append(
-                f"the {gate} gate recorded {entry.get('outcome')!r}, not {PASS}")
+        outcome = entry.get("outcome")
+        if outcome not in _ACCEPTED.get(gate, (PASS,)):
+            reasons.append(f"the {gate} gate recorded {outcome!r}, not {PASS}")
+        elif outcome != PASS:
+            notes.append(
+                f"the {gate} gate recorded {outcome!r}: it ran, and this return "
+                "is one it does not govern, so what it checks was checked by "
+                "nothing. Verify those figures by hand before filing.")
         if entry.get("engine") != engine:
             reasons.append(
                 f"the {gate} gate ran on a different engine than this one — "
@@ -374,7 +487,7 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
                 reasons.append(f"{gate}: {_name(key)} appeared after that gate ran")
             elif (recorded[key] or {}).get("digest") != current[key]["digest"]:
                 reasons.append(f"{gate}: {_name(key)} changed since that gate ran")
-    return VerifyReport(not reasons, reasons)
+    return VerifyReport(not reasons, reasons, notes)
 
 
 def covers_result(workspace, result_path, *, contents: "bytes | None" = None) -> str:
@@ -416,7 +529,8 @@ def covers_result(workspace, result_path, *, contents: "bytes | None" = None) ->
 
 
 _USAGE = """usage:
-  receipt.py record --workspace DIR --gate {capabilities|tie_out} --outcome PASS
+  receipt.py record --workspace DIR --gate GATE --outcome PASS
+    GATE is one of: capabilities, return_builder, tie_out
   receipt.py verify --workspace DIR [--json]
 
 `verify` exits 0 when a filing package may be assembled, 2 when the receipt is
@@ -448,12 +562,14 @@ def _main(argv: list) -> int:
             print(json.dumps(report.to_dict(), indent=2))
         elif report.valid:
             print("VALID: every gate passed on the inputs that are here now.")
+            for note in report.notes:
+                print(f"  NOTE: {note}")
         else:
             print("STALE RECEIPT — a filing package would not describe this "
                   "workspace:")
             for reason in report.reasons:
                 print(f"  - {reason}")
-            print("\nRe-run /tax-compute (its Step 0.7 and Step 12.7 gates "
+            print("\nRe-run /tax-compute (its Step 0.7, 12.6 and 12.7 gates "
                   "rewrite the receipt) before assembling the package.")
         return 0 if report.valid else 2
     except (ReceiptError, RolloverError, OSError) as e:

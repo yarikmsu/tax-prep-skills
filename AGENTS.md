@@ -202,10 +202,10 @@ are plain Markdown instructions and are written to be executable that way.
   CP2000 scenario cannot pass. Form 1040 lines 1-38 that are ARITHMETIC over
   other lines, plus the eight lines the records sum to, are DERIVED by
   `agents/lib/return_builder.py` and must never be typed; step 12.6 `--check`
-  re-asserts them. Three lines reached the return only because V1 gave them a
-  FIELD: the AMT (17), the refundable ACTC (28) and an overpayment applied
-  forward (36). Line 27, the EIC, is computed nowhere at all. Unverifiable categories WARN loudly, never
-  silently pass. `tax-review` audits the aggregated result and structurally
+  re-asserts them and is the third gate on the validation receipt. The EIC
+  (line 27) has a field and no computation anywhere — it is the one line the
+  form has that this toolkit does not produce. Unverifiable categories WARN
+  loudly, never silently pass. `tax-review` audits the aggregated result and structurally
   cannot catch intake drops; only this ledger-to-result comparison can.
 - **Never silently out-of-scope** — `tax-compute` Step 0.7 runs the capability
   gate (`agents/lib/capabilities.py`). Situations the engine cannot compute

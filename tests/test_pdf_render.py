@@ -110,6 +110,22 @@ class TestPageOne:
         assert "NOT VALIDATED — DRAFT ONLY" in page1
         assert "the tie_out gate has not run in this workspace" in page1
 
+    def test_a_gate_with_no_verdict_lands_in_the_manifest_not_the_banner(
+            self, tmp_path):
+        """A return whose Form 1040 lines 1-38 the builder does not govern is
+        validated — the draft banner would say something false about it — and
+        one thing on it was checked by nothing, which is exactly what this box
+        is for."""
+        page1 = _text(_render(tmp_path, _result(limitations=["California only"]),
+                              notes=["the return_builder gate recorded 'OUT OF "
+                                     "SCOPE': it ran, and this return is one it "
+                                     "does not govern"]),
+                      pages=[0])
+        assert "Scope & Limitations" in page1
+        assert "OUT OF SCOPE" in page1
+        assert "California only" in page1
+        assert "NOT VALIDATED" not in page1
+
     def test_a_validated_return_carries_no_draft_banner(self, tmp_path):
         assert "NOT VALIDATED" not in _text(_render(tmp_path, _result()))
 
@@ -182,8 +198,8 @@ class TestTheCli:
         (tmp_path / "parse_ledger.json").write_text("{}")
         (tmp_path / "result.json").write_text(json.dumps(_result()))
         if validated:
-            receipt.record(tmp_path, "capabilities", receipt.PASS)
-            receipt.record(tmp_path, "tie_out", receipt.PASS)
+            for gate in receipt.REQUIRED_GATES:
+                receipt.record(tmp_path, gate, receipt.PASS)
         return tmp_path
 
     def _run(self, tmp_path, *flags):

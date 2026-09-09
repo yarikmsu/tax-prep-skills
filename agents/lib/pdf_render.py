@@ -343,7 +343,8 @@ def _taxpayer_line(result: dict) -> str:
 
 
 def build_story(result: dict, styles, *,
-                draft_reasons: "list[str] | None" = None) -> list:
+                draft_reasons: "list[str] | None" = None,
+                notes: "list[str] | None" = None) -> list:
     """The flowables, in order. Separated from the write so a test can read the
     document's structure without a file, and so the null-safety rule above is
     checkable on `result_template.json` directly."""
@@ -372,6 +373,7 @@ def build_story(result: dict, styles, *,
         meta = {}
     year = meta.get("tax_year")
     draft_reasons = list(draft_reasons or ())
+    notes = list(notes or ())
     missing_glyphs: set = set()
     story = [Paragraph(_escape(f"Tax Return Summary — {year}") if year else
                        "Tax Return Summary", styles["Title"])]
@@ -420,7 +422,13 @@ def build_story(result: dict, styles, *,
     if draft_reasons:
         boxed.append(["NOT VALIDATED — DRAFT ONLY"])
         boxed.extend([[f"- {reason}"] for reason in draft_reasons])
-    limits = _limitations(result)
+    # A gate that RAN and had no verdict to give — Step 12.6 on a return whose
+    # Form 1040 lines 1-38 it does not govern — belongs in this box and not in
+    # the draft banner: the return is validated, and one thing about it was
+    # checked by nothing. Appended to the manifest for the same reason the
+    # glyph note below is: this box is what page 1 says the return does not
+    # cover, and a second box is a second place to not look.
+    limits = _limitations(result) + list(notes)
     if missing_glyphs:
         # The characters themselves are NOT listed: they are the ones this font
         # cannot draw, so printing them would print more boxes. The count and
@@ -469,7 +477,8 @@ def build_story(result: dict, styles, *,
 
 
 def render(result: dict, out_path: Path, *,
-           draft_reasons: "list[str] | None" = None) -> Path:
+           draft_reasons: "list[str] | None" = None,
+           notes: "list[str] | None" = None) -> Path:
     """Write the summary PDF, owner-only. Returns the path.
 
     Refuses a result carrying a non-finite number. `json.loads` admits the NaN
@@ -494,7 +503,8 @@ def render(result: dict, out_path: Path, *,
             f"reportlab is not installed: {redact(e)} — install the pinned tree "
             "with sh agents/lib/run.sh -m pip install -r requirements.txt") from e
     styles = getSampleStyleSheet()
-    story = build_story(result, styles, draft_reasons=list(draft_reasons or ()))
+    story = build_story(result, styles, draft_reasons=list(draft_reasons or ()),
+                        notes=list(notes or ()))
     meta = result.get("meta")
     year = meta.get("tax_year") if isinstance(meta, dict) else None
     # Built into a SECURED temp file beside the target and renamed
@@ -553,7 +563,7 @@ def _main(argv: list) -> int:
                   file=sys.stderr)
             for reason in reasons:
                 print(f"  - {reason}", file=sys.stderr)
-            print("\nRe-run /tax-compute (Step 0.7 and Step 12.7 rewrite the "
+            print("\nRe-run /tax-compute (Step 0.7, 12.6 and 12.7 rewrite the "
                   "receipt), or pass --draft for a NOT VALIDATED copy.",
                   file=sys.stderr)
             return 2
@@ -562,7 +572,8 @@ def _main(argv: list) -> int:
         out = Path(args.out).resolve() if args.out else (
             workspace / f"Tax_Return_{year}_Summary.pdf")
         out = _validate_subpath(out, workspace)
-        render(result, out, draft_reasons=reasons if args.draft else None)
+        render(result, out, draft_reasons=reasons if args.draft else None,
+               notes=checked.notes)
         print(f"wrote {redact(out)}")
         return 0
     except (PdfRenderError, RolloverError, receipt.ReceiptError, OSError,

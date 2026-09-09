@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _workspace(tmp_path, *, documents=("w2.pdf",)):
-    """A workspace with everything both gates read."""
+    """A workspace with everything the three gates read."""
     (tmp_path / "taxpayer_profile.json").write_text(json.dumps({"filing_status": "MFJ"}))
     (tmp_path / "parse_ledger.json").write_text(json.dumps({"documents": []}))
     (tmp_path / "result.json").write_text(json.dumps({"meta": {"tax_year": 2026}}))
@@ -37,8 +37,11 @@ def _workspace(tmp_path, *, documents=("w2.pdf",)):
 
 
 def _passing(tmp_path):
-    receipt.record(tmp_path, "capabilities", receipt.PASS)
-    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    """Every REQUIRED gate recorded as a pass — read from the constant, so a
+    gate added without a thought about this file makes these tests fail rather
+    than quietly certify a workspace two of three gates have seen."""
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
     return tmp_path
 
 
@@ -74,11 +77,12 @@ class TestWhatARecordHolds:
         entry = json.loads((tmp_path / receipt.RECEIPT_NAME).read_text())["gates"]["capabilities"]
         assert [v["name"] for v in entry["inputs"].values()] == ["taxpayer_profile.json"]
 
-    def test_the_second_gate_does_not_erase_the_first(self, tmp_path):
-        """The two run at opposite ends of /tax-compute."""
+    def test_a_later_gate_does_not_erase_an_earlier_one(self, tmp_path):
+        """They run at opposite ends of /tax-compute — Step 0.7, then 12.6 and
+        12.7 — and each entry keeps the inputs ITS own run saw."""
         _passing(_workspace(tmp_path))
         gates = json.loads((tmp_path / receipt.RECEIPT_NAME).read_text())["gates"]
-        assert set(gates) == {"capabilities", "tie_out"}
+        assert set(gates) == set(receipt.REQUIRED_GATES)
 
     def test_the_receipt_is_owner_only(self, tmp_path):
         """It names the taxpayer's own documents — `documents/W2_Acme.pdf` names
@@ -124,6 +128,35 @@ class TestWhatMakesAReceiptStale:
         report = verify(tmp_path)
         assert not report.valid
         assert any("'BLOCKED', not PASS" in r for r in report.reasons)
+
+    def test_the_out_of_scope_verdict_is_accepted_for_one_gate_only(self, tmp_path):
+        """`return_builder` may stand on it — a return whose lines 1-38 it does
+        not govern leaves it nothing to assert. No other gate may: the tie-out
+        and the capability gate apply to every return there is, so the same
+        string from either is a gate that did not do its job."""
+        _workspace(tmp_path)
+        for gate in receipt.REQUIRED_GATES:
+            receipt.record(tmp_path, gate, receipt.NOT_APPLICABLE)
+        stale = [r for r in verify(tmp_path).reasons if "not PASS" in r]
+        assert len(stale) == 2
+        assert not any("return_builder" in r for r in stale)
+
+    def test_an_accepted_non_pass_is_still_a_NOTE_a_reader_gets(self, tmp_path):
+        """The other half of accepting it. A gate that ran and had no verdict
+        to give did not verify what its name says it verifies, and "never
+        silently out-of-scope" is not satisfied by a line printed on stderr
+        several steps earlier — it rides onto page 1 with the manifest."""
+        _passing(_workspace(tmp_path))
+        receipt.record(tmp_path, "return_builder", receipt.NOT_APPLICABLE)
+        report = verify(tmp_path)
+        assert report.valid and report.reasons == []
+        assert len(report.notes) == 1
+        assert "return_builder" in report.notes[0]
+        assert "checked by nothing" in report.notes[0]
+
+    def test_a_workspace_where_every_gate_passed_has_no_notes(self, tmp_path):
+        """A note on a clean return would be the banner that means nothing."""
+        assert verify(_passing(_workspace(tmp_path))).notes == []
 
     def test_one_gate_alone_is_not_enough(self, tmp_path):
         _workspace(tmp_path)
@@ -187,10 +220,85 @@ class TestWhatMakesAReceiptStale:
         assert not verify(tmp_path).valid
 
 
+class TestAReceiptThatCannotBeWrittenNeverLowersAVerdict:
+    """`record_after_verdict` is where all three gates end, and this is the one
+    rule it holds: a permissions fault must not be able to mask a
+    tax-correctness fault. /tax-compute documents exit 1 as "the input is
+    missing", so a 2 downgraded to a 1 sends the agent to fix a file that is
+    fine while the block it was told to read goes unprinted."""
+
+    def _unwritable(self, tmp_path):
+        """A DIRECTORY where the receipt goes. `os.replace` onto one fails on
+        POSIX and on Windows alike, without a mode bit that means nothing on
+        one of them."""
+        _workspace(tmp_path)
+        (tmp_path / receipt.RECEIPT_NAME).mkdir()
+        return tmp_path
+
+    def test_a_failed_verdict_still_exits_two(self, tmp_path, capsys):
+        ws = self._unwritable(tmp_path)
+        assert receipt.record_after_verdict(ws, "tie_out", "FAILED", 2) == 2
+        assert "ERROR" in capsys.readouterr().err
+
+    def test_a_pass_becomes_a_one_because_the_write_really_did_fail(self, tmp_path):
+        """Not a clean pass: the gate agreed, and the record of it is not on
+        disk, so the next reader cannot tell this run happened."""
+        ws = self._unwritable(tmp_path)
+        assert receipt.record_after_verdict(ws, "tie_out", receipt.PASS, 0) == 1
+
+    def test_a_receipt_that_lands_leaves_the_verdict_alone(self, tmp_path):
+        _workspace(tmp_path)
+        assert receipt.record_after_verdict(tmp_path, "tie_out", "FAILED", 2) == 2
+        assert receipt.record_after_verdict(tmp_path, "tie_out", receipt.PASS, 0) == 0
+
+
 class TestTheInvalidationSetIsTheInputSetAndNothingWider:
     """The other half of the contract. A receipt that fires on a harmless edit
     teaches the agent to re-run gates it has no reason to re-run, which is the
     gates-that-cry-wolf failure PR #69 already paid for."""
+
+    def test_the_cache_is_bound_even_when_only_the_profile_names_the_year(
+            self, tmp_path):
+        """`result_template.json` ships `meta.tax_year` as null, and
+        `return_builder.load` falls back to the profile to pick the cache it
+        PRICES LINE 16 FROM. Reading only the meta here left that cache out of
+        the map: a re-fetched bracket would not invalidate a gate whose verdict
+        depends on it, and AGENTS.md §2 says nothing downstream catches that."""
+        _workspace(tmp_path)
+        (tmp_path / "result.json").write_text(json.dumps({"meta": {"tax_year": None}}))
+        (tmp_path / "taxpayer_profile.json").write_text(
+            json.dumps({"filing_status": "MFJ", "tax_year": 2026}))
+        names = {v["name"] for v
+                 in receipt.gate_inputs(tmp_path, "return_builder").values()}
+        assert "tax_law_2026.json" in names
+        receipt.record(tmp_path, "return_builder", receipt.PASS)
+        (tmp_path / "tax_law_2026.json").write_text(json.dumps({"tax_year": 2026,
+                                                               "refetched": True}))
+        report = verify(tmp_path, required=("return_builder",))
+        assert not report.valid
+        assert any("tax_law_2026.json changed" in r for r in report.reasons)
+
+    def test_every_gate_declares_an_input_set(self):
+        """The table is the whole of what invalidates a gate, so a gate missing
+        from it is a gate whose verdict nothing can stale. It replaced an
+        if/elif ladder keyed by name, where a new gate fell into whichever
+        branch happened to be the `else` and got a set nobody chose."""
+        assert set(receipt._INPUTS) == set(receipt.REQUIRED_GATES)
+
+    def test_only_the_tie_out_reads_the_source_documents(self, tmp_path):
+        """Each gate's input set is the files IT reads. The tie-out's question
+        is whether every document reached the return, so one arriving later is
+        its drift; the derived lines are a function of the four workspace files
+        and cannot move on an unparsed document."""
+        _workspace(tmp_path, documents=("w2.pdf", "1099int.pdf"))
+        shared = {"parse_ledger.json", "result.json", "taxpayer_profile.json",
+                  "tax_law_2026.json"}
+        def names(gate):
+            return {v["name"] for v in receipt.gate_inputs(tmp_path, gate).values()}
+
+        assert names("return_builder") == shared
+        assert names("tie_out") == shared | {"documents/w2.pdf",
+                                             "documents/1099int.pdf"}
 
     def test_appending_to_answers_md_leaves_the_receipt_valid(self, tmp_path):
         """/tax-review appends to answers.md AFTER the return is computed; no
@@ -235,7 +343,8 @@ class TestTheCli:
         _passing(_workspace(tmp_path))
         out = _run("verify", "--workspace", str(tmp_path), "--json")
         assert out.returncode == 0
-        assert json.loads(out.stdout) == {"valid": True, "reasons": []}
+        assert json.loads(out.stdout) == {"valid": True, "reasons": [],
+                                          "notes": []}
 
     def test_a_missing_workspace_is_one_error_line(self, tmp_path):
         out = _run("record", "--workspace", str(tmp_path / "nope"),
@@ -322,7 +431,8 @@ class TestOnlyTheValidatedResultIsPackaged:
         assert ssn not in written and ssn.replace("-", "") not in written
         assert "[REDACTED]" in written
         assert verify(tmp_path).reasons == [
-            "the capabilities gate has not run in this workspace"]
+            f"the {gate} gate has not run in this workspace"
+            for gate in receipt.REQUIRED_GATES if gate != "tie_out"]
 
     def test_a_second_document_symlinked_to_the_first_is_still_a_new_document(
             self, tmp_path):

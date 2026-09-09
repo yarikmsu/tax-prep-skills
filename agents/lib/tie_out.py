@@ -1892,22 +1892,24 @@ def _main(argv: list) -> int:
     exit_code = 2 if report.failed else 0
     try:
         write_report(workspace, markdown)
-        # ...and the receipt, for the same reason and under the same rule: it
-        # is written AFTER the verdict is printed, a failure here never lowers
-        # the verdict's exit code, and a FAILED gate is RECORDED as failed
-        # rather than left unwritten — /tax-generate can tell "this gate failed"
-        # from "this gate never ran", and both refuse a filing package (V8).
-        receipt.record(workspace, "tie_out",
-                       receipt.PASS if not report.failed else "FAILED",
-                       inputs=gate_inputs)
     except (TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         # Never below 1 (the write really did fail, so this is not a clean
         # pass) and never below the verdict's own code — 2 outranks it, so a
         # FAILED tie-out still exits 2 even when its report could not be
-        # written.
+        # written. The receipt is NOT written when the report could not be:
+        # that was one `try` before this was extracted, and keeping the early
+        # return preserves it exactly.
         return max(exit_code, 1)
-    return exit_code
+    # ...and the receipt, for the same reason and under the same rule, which
+    # `record_after_verdict` now holds once for all three gates: written AFTER
+    # the verdict is printed, a failure here never lowers the verdict's exit
+    # code, and a FAILED gate is RECORDED as failed rather than left unwritten —
+    # /tax-generate can tell "this gate failed" from "this gate never ran", and
+    # both refuse a filing package (V8).
+    return receipt.record_after_verdict(
+        workspace, "tie_out", receipt.PASS if not report.failed else "FAILED",
+        exit_code, inputs=gate_inputs)
 
 
 if __name__ == "__main__":

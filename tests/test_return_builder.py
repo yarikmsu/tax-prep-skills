@@ -31,6 +31,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from agents.lib import parse_records as PR  # noqa: E402
+from agents.lib import receipt as RC  # noqa: E402
 from agents.lib import return_builder as RB  # noqa: E402
 from agents.lib import tie_out as T  # noqa: E402
 
@@ -106,7 +107,7 @@ def _workspace(tmp_path, form_1040=None, *, records=(), law=None, extra=None,
 
 
 def _build(ws):
-    result, profile, ledger, tax_law = RB.load(ws)
+    result, profile, ledger, tax_law, _bytes = RB.load(ws)
     return result, RB.build(result, tax_law, ledger,
                             RB._filing_status(profile, result))
 
@@ -172,7 +173,7 @@ class TestItReproducesTheHandComputedGolden:
         ws, _ = self._fixture_workspace(tmp_path)
         _, derived = _build(ws)
         from agents.lib.tax_computations import compute_bracket_tax
-        result, _p, _l, tax_law = RB.load(ws)
+        result, _p, _l, tax_law, _b = RB.load(ws)
         brackets = tax_law["federal"]["filing_statuses"]["mfj"]["brackets"]
         straight, _ = compute_bracket_tax(derived["line_15_taxable_income"], brackets)
         assert derived["line_16_tax"] == 34122.0
@@ -785,6 +786,55 @@ class TestOutOfScopeRefuses:
         with pytest.raises(RB.OutOfScope, match="PFIC"):
             _build(ws)
 
+    def test_a_reclassified_total_with_no_funds_is_still_out_of_scope(self, tmp_path):
+        """`reclassified_from_line_3b` is a SIBLING of `funds`, not an entry in
+        it. Keyed on `funds` alone, a section §1291 has reworked reads as in
+        scope, and the builder rebuilds line 3b from the ledger — restoring the
+        ordinary/qualified treatment §1291 removed, which is the one outcome
+        this refusal exists to prevent."""
+        ws = _workspace(tmp_path, records=[{"ordinary_dividends": 4000.0}],
+                        extra={"form_8621_pfic": {
+                            "funds": [], "reclassified_from_line_3b": 8000.0}})
+        with pytest.raises(RB.OutOfScope, match="PFIC"):
+            _build(ws)
+
+    def test_a_counterfactual_is_not_evidence_that_1291_ran(self, tmp_path):
+        """`line_16_regular_tax` is what the return WOULD have been WITHOUT
+        §1291 — an audit trail the PFIC computation records, not a sign it
+        changed a line. This is the one predicate where a FALSE POSITIVE is the
+        dangerous direction, because it grants the pass: read as evidence, a
+        return with a typed refund and no PFIC at all came back NOT CHECKED."""
+        ws = _workspace(tmp_path, {"line_35a_refund": 5000.0},
+                        records=[{"ordinary_dividends": 4000.0}],
+                        extra={"form_8621_pfic": {"funds": [],
+                                                  "line_16_regular_tax": 100.0}})
+        assert RB._main(["--workspace", str(ws), "--check"]) == 2
+
+    def test_every_field_of_the_shipped_pfic_section_is_decided(self):
+        """No gap between evidence and not-evidence. A field added to the
+        section lands on one side or the other, and the side that grants a
+        waiver is the one nothing else checks."""
+        section = json.loads(
+            (REPO / "agents" / "templates" / "result_template.json").read_text(
+                encoding="utf-8"))["form_8621_pfic"]
+        keys = {k for k in section if not k.startswith("_")}
+        not_evidence = {
+            "funds",                        # handled separately: a LIST, not a number
+            "all_complete",                 # a completeness flag, not an amount
+            "total_ordinary_income_current",  # components of the add-on below
+            "total_nonexcess_ordinary",
+            "total_deferred_tax",
+            "total_interest",
+            "line_15_pfic_ordinary_income",
+            "line_9_regular_total_income",  # the counterfactual return, WITHOUT §1291
+            "line_11_regular_agi",
+            "line_15_regular_taxable_income",
+            "line_16_regular_tax",
+            "line_24_regular_total_tax",
+            "line_24_with_addon",           # line 24 restated; `line_24_addon` is the move
+        }
+        assert keys == set(RB._PFIC_EVIDENCE) | not_evidence
+
     def test_an_empty_pfic_section_does_not(self, tmp_path):
         """The template ships the section, and `_include_if` prose is not a
         gate. An all-zero section with no funds is a return with no PFIC."""
@@ -800,13 +850,17 @@ class TestOutOfScopeRefuses:
 
     def test_preferential_income_with_no_breakpoints_refuses(self, tmp_path):
         """The shared guard: a cache whose `capital_gains_rates` was never
-        fetched must not price qualified dividends at ordinary rates."""
+        fetched must not price qualified dividends at ordinary rates.
+
+        `Unpriceable`, not `OutOfScope`: an unfetched cache is a return nobody
+        can compute yet, and the check-mode pass out-of-scope now carries would
+        have let one into a filing package."""
         law = _law()
         law["federal"]["capital_gains_rates"] = {}
         ws = _workspace(tmp_path, {"line_12_standard_deduction": 0},
                         records=[{"qualified_dividends": 5000.0,
                                   "ordinary_dividends": 5000.0}], law=law)
-        with pytest.raises(RB.OutOfScope, match="tax_law|Capital gains"):
+        with pytest.raises(RB.Unpriceable, match="tax_law|Capital gains"):
             _build(ws)
 
     def test_no_preferential_income_still_builds_without_breakpoints(self, tmp_path):
@@ -823,16 +877,44 @@ class TestOutOfScopeRefuses:
         law = _law()
         law["federal"]["filing_statuses"] = {}
         ws = _workspace(tmp_path, records=[{"wages": 30000.0}], law=law)
-        with pytest.raises(RB.OutOfScope, match="brackets"):
+        with pytest.raises(RB.Unpriceable, match="brackets"):
             _build(ws)
+
+    def test_a_negative_total_in_an_UNSIGNED_category_is_a_block_not_a_waiver(
+            self, tmp_path):
+        """Only `ss_benefits` may go negative, and only that one is a line with
+        no convention to derive. Any other category summing negative is corrupt
+        data — `load_ledger` refuses it record by record — and must not share
+        the verdict that `--check` now records as a pass."""
+        with pytest.raises(RB.Blocked, match="may be negative") as caught:
+            RB.ledger_income([T.LedgerRecord(
+                doc_id="d1", file="documents/a.pdf", form_type="1099-INT",
+                payer="p", person="primary",
+                key_boxes=(("taxable_interest", -100.0),),
+                skipped=None, second_read=None)])
+        assert not isinstance(caught.value, RB.OutOfScope)
 
     def test_a_net_negative_social_security_total_refuses(self, tmp_path):
         """Repayments exceeding gross benefits: the tie-out already records
         that line 6a has no convention for it. Writing a negative gross benefit
-        would be inventing one."""
+        would be inventing one.
+
+        BLOCKED and not OUT OF SCOPE, because this refusal is about ONE LINE
+        and fires mid-build: the pass would waive the comparison of every other
+        line, and a hand-typed line 35a refund went through all three gates
+        that way."""
         ws = _workspace(tmp_path, records=[{"ss_benefits": -4000.0}])
-        with pytest.raises(RB.OutOfScope, match="NEGATIVE"):
+        with pytest.raises(RB.Blocked, match="NEGATIVE") as caught:
             _build(ws)
+        assert not isinstance(caught.value, RB.OutOfScope)
+
+    def test_a_typed_refund_is_not_waived_by_the_line_6a_refusal(self, tmp_path):
+        """The failure that made the distinction: no payments, no tax, and a
+        line 35a of $5,000 — waived by an out-of-scope pass, and a filing
+        package assembled on it."""
+        ws = _workspace(tmp_path, {"line_35a_refund": 5000.0},
+                        records=[{"ss_benefits": -4000.0}])
+        assert RB._main(["--workspace", str(ws), "--check"]) == 2
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf")])
     def test_a_non_finite_component_refuses(self, tmp_path, value):
@@ -958,6 +1040,184 @@ class TestTheCheckMode:
                         records=[{"wages": 30000.0}])
         assert RB._main(["--workspace", str(ws)]) == 0
         assert RB._main(["--workspace", str(ws), "--check"]) == 0
+
+
+class TestTheCheckIsReceipted:
+    """Step 12.6 writes its verdict into `validation_receipt.json`, so
+    `/tax-generate --filing-package` can prove the derived lines were checked
+    against the inputs that are here now (V8). Without it the check was a gate
+    an agent could skip with nothing downstream able to tell."""
+
+    def _entry(self, ws):
+        data = json.loads((ws / RC.RECEIPT_NAME).read_text(encoding="utf-8"))
+        return data["gates"].get(RB.GATE)
+
+    def test_a_passing_check_records_a_pass_bound_to_what_it_read(self, tmp_path):
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0},
+                        records=[{"wages": 30000.0}])
+        assert RB._main(["--workspace", str(ws)]) == 0
+        assert RB._main(["--workspace", str(ws), "--check"]) == 0
+        entry = self._entry(ws)
+        assert entry["outcome"] == RC.PASS
+        names = {v["name"] for v in entry["inputs"].values()}
+        assert names == {"result.json", "parse_ledger.json",
+                         "taxpayer_profile.json", "tax_law_2026.json"}
+
+    def test_a_disagreeing_check_is_recorded_rather_than_left_unwritten(self, tmp_path):
+        """"This gate disagreed" and "this gate never ran" are both refusals,
+        and only one of them is answered by running the gate."""
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0,
+                                   "line_24_total_tax": 99.0},
+                        records=[{"wages": 30000.0}])
+        assert RB._main(["--workspace", str(ws), "--check"]) == 2
+        assert self._entry(ws)["outcome"] == "FAILED"
+
+    def test_a_refused_return_is_recorded_as_blocked(self, tmp_path):
+        """A return this slice will not build is a different remedy from one
+        whose line is stale, so the receipt says which."""
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": -50000.0},
+                        records=[{"wages": 30000.0}])
+        assert RB._main(["--workspace", str(ws), "--check"]) == 2
+        assert self._entry(ws)["outcome"] == "BLOCKED"
+
+    def test_a_check_that_could_not_run_records_nothing(self, tmp_path):
+        """Exit 1 is "no verdict". A receipt here would say the gate ran and
+        disagreed, sending the agent after a line when the input is missing."""
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0},
+                        records=[{"wages": 30000.0}])
+        (ws / "tax_law_2026.json").unlink()
+        assert RB._main(["--workspace", str(ws), "--check"]) == 1
+        assert not (ws / RC.RECEIPT_NAME).exists()
+
+    def test_the_write_mode_certifies_nothing(self, tmp_path):
+        """It rewrites the very file a receipt would be bound to; a verdict
+        recorded there would be stale before the command returned."""
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0,
+                                   "line_24_total_tax": 99.0},
+                        records=[{"wages": 30000.0}])
+        assert RB._main(["--workspace", str(ws)]) == 0
+        assert not (ws / RC.RECEIPT_NAME).exists()
+
+    def test_the_receipt_holds_the_bytes_the_builder_PARSED(self, tmp_path,
+                                                            monkeypatch):
+        """Hashing the paths in a second read left a window: a `result.json`
+        replaced between the hash and the parse produced a PASS bound to bytes
+        the builder never evaluated, and the same check re-run a second later
+        exited 2 on the file the receipt said was fine.
+
+        Asserted at the CALL, because the two orders agree on every workspace
+        that holds still — which is exactly why the defect survived a suite
+        that only ever looked at the result."""
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0},
+                        records=[{"wages": 30000.0}])
+        RB._main(["--workspace", str(ws)])
+        seen: dict = {}
+        real = RC.gate_inputs
+
+        def watching(workspace, gate, *, contents=None):
+            seen["contents"] = contents
+            return real(workspace, gate, contents=contents)
+
+        monkeypatch.setattr(RB.receipt, "gate_inputs", watching)
+        assert RB._main(["--workspace", str(ws), "--check"]) == 0
+        passed = seen["contents"] or {}
+        assert set(passed) == {"result.json", "parse_ledger.json",
+                               "taxpayer_profile.json", "tax_law_2026.json"}
+        assert passed["result.json"] == (ws / "result.json").read_bytes()
+
+    def test_a_derived_line_edited_after_the_check_invalidates_it(self, tmp_path):
+        """The failure mode the receipt closes: pass Step 12.6, then edit line
+        24, then assemble a filing package on a check that never saw it."""
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0},
+                        records=[{"wages": 30000.0}])
+        RB._main(["--workspace", str(ws)])
+        assert RB._main(["--workspace", str(ws), "--check"]) == 0
+        assert RC.verify(ws, required=(RB.GATE,)).valid
+        result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+        result["form_1040"]["line_24_total_tax"] = 99.0
+        (ws / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        report = RC.verify(ws, required=(RB.GATE,))
+        assert not report.valid
+        assert any("result.json changed" in r for r in report.reasons)
+
+    def test_a_return_this_module_does_not_govern_passes_the_check(
+            self, tmp_path, capsys):
+        """A computed PFIC fund keeps lines 1-38 with the agent, so there is no
+        verdict here to fail. Refusing would put this gate between a correct
+        return and its filing package for ever, with `--draft` — NOT VALIDATED
+        stamped across a return that is fine — as the only way past."""
+        ws = _workspace(tmp_path, records=[{"ordinary_dividends": 4000.0}],
+                        extra={"form_8621_pfic": {"funds": [{"fund_id": "f1"}]}})
+        assert RB._main(["--workspace", str(ws), "--check"]) == 0
+        assert self._entry(ws)["outcome"] == RC.NOT_APPLICABLE
+        assert RC.verify(ws, required=(RB.GATE,)).valid
+        # On STDOUT: the run succeeded, and a reader that prints stderr only on
+        # a non-zero exit would otherwise see an empty stdout and read it as a
+        # clean check.
+        out = capsys.readouterr()
+        assert "NOT CHECKED" in out.out and "NOT CHECKED" not in out.err
+
+    def test_a_return_that_is_out_of_scope_AND_wrong_is_still_blocked(self, tmp_path):
+        """Scope is decided LAST, and this is why. Decided first, one field read
+        before the return had been looked at at all waived every other refusal:
+        a negative line 23 on a PFIC return came back NOT CHECKED, was recorded
+        as a pass, and reached a filing package as a refund nobody is owed."""
+        ws = _workspace(tmp_path, {"line_23_other_taxes": -4000.0},
+                        records=[{"ordinary_dividends": 4000.0}],
+                        extra={"form_8621_pfic": {"funds": [{"fund_id": "f1"}]}})
+        assert RB._main(["--workspace", str(ws), "--check"]) == 2
+        assert self._entry(ws)["outcome"] == "BLOCKED"
+
+    def test_the_same_return_still_refuses_to_be_BUILT(self, tmp_path):
+        """The point of the refusal is that this module must not WRITE those
+        lines here — §1291 moves amounts out of 3a and 3b after the broker
+        reported them, and rebuilding from the ledger restores the qualified
+        treatment it forbids."""
+        ws = _workspace(tmp_path, records=[{"ordinary_dividends": 4000.0}],
+                        extra={"form_8621_pfic": {"funds": [{"fund_id": "f1"}]}})
+        assert RB._main(["--workspace", str(ws)]) == 2
+        assert not (ws / RC.RECEIPT_NAME).exists()
+
+    def test_a_cache_that_cannot_price_the_return_outranks_the_waiver(self, tmp_path):
+        """The waiver is granted after `_context`, so a return this module does
+        not govern AND cannot price is BLOCKED. Asked earlier it came back NOT
+        CHECKED — a cache with no brackets certified, which is the one thing
+        AGENTS.md §2 says nothing downstream catches."""
+        law = _law()
+        law["federal"]["filing_statuses"] = {}
+        ws = _workspace(tmp_path, records=[{"ordinary_dividends": 4000.0}], law=law,
+                        extra={"form_8621_pfic": {"funds": [{"fund_id": "f1"}]}})
+        assert RB._main(["--workspace", str(ws), "--check"]) == 2
+        assert self._entry(ws)["outcome"] == "BLOCKED"
+
+    def test_an_unfetched_cache_is_not_an_out_of_scope_pass(self, tmp_path):
+        """The separation `Unpriceable` exists for. A cache with no capital-gains
+        breakpoints is a return nobody can compute yet (AGENTS.md §2) — folded
+        in with the returns this module declines to govern, it would have ridden
+        into a filing package under that pass."""
+        law = _law()
+        law["federal"]["capital_gains_rates"] = {}
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0},
+                        records=[{"qualified_dividends": 5000.0,
+                                  "ordinary_dividends": 5000.0}], law=law)
+        assert RB._main(["--workspace", str(ws), "--check"]) == 2
+        assert self._entry(ws)["outcome"] == "BLOCKED"
+        assert not RC.verify(ws, required=(RB.GATE,)).valid
+
+    def test_a_document_arriving_afterwards_does_not_fire_this_gate(self, tmp_path):
+        """The derived lines are a function of the four files this gate reads.
+        An unparsed document cannot have moved one, so invalidating here would
+        fire on correct work — the tie-out's own entry is what covers the
+        documents, and a filing package needs both."""
+        ws = _workspace(tmp_path, {"line_12_standard_deduction": 0},
+                        records=[{"wages": 30000.0}])
+        RB._main(["--workspace", str(ws)])
+        RB._main(["--workspace", str(ws), "--check"])
+        (ws / "documents" / "late_1099.pdf").write_bytes(b"%PDF-1.4 thursday\n")
+        assert RC.verify(ws, required=(RB.GATE,)).valid
+        RC.record(ws, "tie_out", RC.PASS)   # ...and the gate that DOES cover them
+        (ws / "documents" / "later_1099.pdf").write_bytes(b"%PDF-1.4 friday\n")
+        assert not RC.verify(ws, required=("tie_out",)).valid
 
 
 class TestTheReportAndTheOrder:
@@ -1113,6 +1373,23 @@ class TestTheSkillTellsTheAgentToRunIt:
         section = text.split("return_builder")[1]
         for code in ("Exit 0", "Exit 2", "Exit 1"):
             assert code in section, code
+
+    def test_the_skill_says_only_the_check_writes_the_receipt(self):
+        """The build mode rewrites `result.json` and certifies nothing, so an
+        agent that runs the two in the other order has a receipt bound to a
+        file that changed underneath it — and /tax-generate refuses. The order
+        is a rule the skill has to state, not one the exit codes imply."""
+        text = self._skill("tax-compute")
+        section = text.split("Step 12.6")[1].split("Step 12.7")[0]
+        assert "receipt" in section
+        assert "--filing-package" in section
+
+    def test_tax_generate_names_all_three_gates_behind_the_refusal(self):
+        """The refusal names which gate is stale; a skill that lists two of the
+        three sends the agent to re-run the wrong step."""
+        text = self._skill("tax-generate")
+        for step in ("Step 0.7", "Step 12.6", "Step 12.7"):
+            assert step in text, step
 
     def test_the_skill_does_not_ask_the_agent_to_type_a_derived_line(self):
         """The reference file's line-9 formula is the instruction this module

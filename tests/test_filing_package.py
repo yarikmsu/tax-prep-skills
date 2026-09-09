@@ -295,11 +295,47 @@ def test_a_valid_receipt_assembles_with_no_banner(tmp_path):
     (tmp_path / "taxpayer_profile.json").write_text("{}")
     (tmp_path / "parse_ledger.json").write_text("{}")
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
-    receipt.record(tmp_path, "capabilities", receipt.PASS)
-    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
     out = _package(tmp_path)
     assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("# Filing package") or "Filing package" in out.stdout
+    assert "NOT VALIDATED" not in out.stdout
+
+
+def test_a_package_needs_the_derived_lines_gate_too(tmp_path):
+    """Step 12.6 is a REQUIRED gate. Before it was receipted an agent could
+    skip it — or pass it and then edit line 24 — and nothing downstream could
+    tell; the tie-out's income checks cannot see a hand-edited derived line,
+    because six of its category sums now produce the lines they compare."""
+    from agents.lib import receipt
+    (tmp_path / "taxpayer_profile.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    receipt.record(tmp_path, "capabilities", receipt.PASS)
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    out = _package(tmp_path)
+    assert out.returncode == 2
+    assert "return_builder gate has not run" in out.stderr
+
+
+def test_a_gate_with_no_verdict_stamps_the_package_but_does_not_refuse_it(tmp_path):
+    """A return whose Form 1040 lines 1-38 the builder does not govern is
+    correct and complete, so refusing it would leave `--draft` — NOT VALIDATED
+    across a good return — as the only way to a package. It assembles, and it
+    says on page 1 that one gate verified nothing."""
+    from agents.lib import receipt
+    (tmp_path / "taxpayer_profile.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    receipt.record(tmp_path, "capabilities", receipt.PASS)
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    receipt.record(tmp_path, "return_builder", receipt.NOT_APPLICABLE)
+    out = _package(tmp_path)
+    assert out.returncode == 0, out.stderr
+    assert "NOT FULLY VERIFIED" in out.stdout
+    assert "return_builder" in out.stdout
+    # ...and NOT the draft banner: the package does describe this workspace.
     assert "NOT VALIDATED" not in out.stdout
 
 
@@ -312,8 +348,8 @@ def test_a_document_that_arrives_after_the_tie_out_refuses_the_package(tmp_path)
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
     (tmp_path / "documents").mkdir()
     (tmp_path / "documents" / "w2.pdf").write_bytes(b"%PDF-1.4 first")
-    receipt.record(tmp_path, "capabilities", receipt.PASS)
-    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
     assert _package(tmp_path).returncode == 0
     (tmp_path / "documents" / "1099int.pdf").write_bytes(b"%PDF-1.4 second")
     late = _package(tmp_path)
@@ -340,8 +376,8 @@ def test_a_valid_receipt_does_not_certify_another_result_file(tmp_path):
     (tmp_path / "parse_ledger.json").write_text("{}")
     result = json.dumps(_result(schedule_d={"line_16": 5000}))
     (tmp_path / "result.json").write_text(result)
-    receipt.record(tmp_path, "capabilities", receipt.PASS)
-    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
     other = tmp_path / "result_draft.json"
     other.write_text(result)
     out = subprocess.run(

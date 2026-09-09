@@ -42,13 +42,60 @@ the step. Those checks are tautological only conditional on the builder having
 run, and that is exactly the fact a gate cannot assume about itself. Deleting
 them would make the gate weaker on every return the builder did not touch.
 
-STEP 12.6 IS NOT RECEIPTED, and that is the honest limit of this slice.
-`receipt.REQUIRED_GATES` covers `capabilities` and `tie_out`, so
-`/tax-generate --filing-package` can prove those two ran against these inputs
-and cannot prove this check did. Folding `differences()` into `tie_out` would
-close it and its input set is already identical — but it would fail the hard
-gate on every workspace written before line 17 existed, which is a migration
-decision and not a line of code. Next slice.
+STEP 12.6 IS RECEIPTED, under this module's own gate name rather than folded
+into the tie-out. `--check` records its verdict through `receipt`, and
+`receipt.REQUIRED_GATES` holds all three names, so `/tax-generate
+--filing-package` refuses a package whose derived lines were never checked,
+were checked against other inputs, or disagreed. Folding `differences()` into
+`tie_out` was the other candidate and is the wrong shape twice over: this
+module imports `tie_out` for the ledger rules, so the dependency cannot run
+both ways, and the two gates do not read the same files — the tie-out reads the
+source documents and this one cannot, which `receipt.gate_inputs` says in one
+place. A workspace written before these lines existed is refused with the gate
+named and re-runs Step 12.6; that is the same one-command migration V8 already
+asks of the other two gates, not a new kind of demand.
+
+MAKING THE VERDICT LOAD-BEARING MOVED THE SCOPE TEST TO THE VERY END. While out
+of scope exited 2, deciding it first cost nothing. As a PASS it waived every
+refusal behind it: a PFIC return with a negative line 23, a null AMT, an
+excess-SS double count, a line 7 contradicting Schedule D, or a cache with no
+brackets at all came back NOT CHECKED and was certified — on one field read
+before the return had been looked at at all. `_check_in_scope` is now asked LAST
+in `build`, after `check` and after `_context`, so the waiver is granted only to
+a return that is otherwise sound AND that this year's cache can price.
+
+AND THE WAIVER IS ONLY EVER WHOLE-RETURN. A refusal about ONE LINE, raised in
+the middle of the build, cannot take it: `ledger_income`'s negative
+social-security total is a `Blocked`, because passing there waived the
+comparison of every other line and a hand-typed line 35a refund of $5,000 rode
+through all three gates into a filing package. That is also what the case did
+before this gate was receipted, so nothing regresses — the fix that would let an
+SSA-repayment return complete is per-LINE declination, and it is written down in
+`docs/contributing/tax-gotchas.md` rather than guessed at here.
+
+THE §1291 PREDICATE IS THE ONE PLACE A FALSE POSITIVE IS THE DANGEROUS
+DIRECTION, because it grants that waiver. `_pfic_is_in_play` reads `funds` and
+the four totals that MEAN §1291 moved a line this module derives, and nothing
+else: the section also records what the return WOULD have been without §1291
+(`line_16_regular_tax` and its siblings), and reading those as evidence let a
+return with no PFIC at all be waived. `funds` alone was the other error — the
+reclassification totals are its SIBLINGS, so a section §1291 had reworked with
+an empty fund list read as in scope.
+
+AND SPLIT ONE EXCEPTION IN TWO. `OutOfScope` was
+carrying both "this module does not govern this return's lines" (a computed PFIC
+fund) and "the cache cannot price this return" (no brackets, no capital-gains
+breakpoints). The first has no verdict to give and must not stand between a
+correct return and its filing package; the second is a return nobody can compute
+yet and must never ride into one. They are `OutOfScope` and `Unpriceable` now,
+and only the first passes the check.
+
+A PASS THAT VERIFIED NOTHING IS SAID OUT LOUD. `receipt.verify` returns it as a
+NOTE beside the reasons; `/tax-generate` puts it in the page-1 limitations box
+and heads the filing package NOT FULLY VERIFIED. Not the draft banner — the
+package does describe the workspace and every gate that had a verdict passed —
+and not silence, which is what AGENTS.md §4 forbids in those words. A line on
+stderr at Step 12.6 is not a disclosure the taxpayer ever sees.
 
 WHAT IS OUT OF SCOPE REFUSES rather than guessing (AGENTS.md §4). A PFIC fund
 reclassifies amounts OUT of lines 3a and 3b after the broker reported them, and
@@ -107,6 +154,7 @@ from typing import Callable
 _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+from agents.lib import receipt  # noqa: E402
 from agents.lib.projection import _full_status_key, capital_gains_limits  # noqa: E402
 from agents.lib.secure_fs import redact, write_secure  # noqa: E402
 from agents.lib.tax_computations import (  # noqa: E402
@@ -119,6 +167,7 @@ from agents.lib.tax_law_fetcher import load_tax_law  # noqa: E402
 from agents.lib.tie_out import (  # noqa: E402
     CATEGORY_TARGETS,
     TieOutError,
+    _SIGNED_CATEGORIES as SIGNED_CATEGORIES,
     category_sums,
     load_ledger,
 )
@@ -126,6 +175,11 @@ from agents.lib.tie_out import (  # noqa: E402
 RESULT_NAME = "result.json"
 LEDGER_NAME = "parse_ledger.json"
 PROFILE_NAME = "taxpayer_profile.json"
+
+# The name this module's verdict is recorded under in `validation_receipt.json`
+# — `receipt.REQUIRED_GATES` holds it, so /tax-generate --filing-package refuses
+# a package whose Step 12.6 never ran, ran on other inputs, or failed.
+GATE = "return_builder"
 
 # Amounts are compared and written to the cent, like every other engine output.
 CENT = 0.005
@@ -140,7 +194,26 @@ class Blocked(ReturnBuilderError):
 
 
 class OutOfScope(Blocked):
-    """...specifically because this slice does not model something it carries."""
+    """...specifically because this module does not GOVERN this return's lines.
+
+    A computed PFIC fund, or a net-negative social security total: the form's
+    lines 1-38 stay with the agent, by hand, and this module has no verdict to
+    give about them. That is not the same as a refusal, and `--check` does not
+    treat it as one — it records `receipt.NOT_APPLICABLE` and exits 0, because a
+    gate that blocked a correct return's filing package forever would be firing
+    on right answers. BUILDING is still refused: exit 2, write nothing.
+    """
+
+
+class Unpriceable(Blocked):
+    """...specifically because the tax-law cache cannot price this return.
+
+    Separated from `OutOfScope` when Step 12.6 became receipted, and the
+    separation is the whole point: a cache with no brackets or no capital-gains
+    breakpoints is a return nobody can compute yet (AGENTS.md §2), not one this
+    module declines to govern. Folded together, an unfetched cache would have
+    ridden into a filing package under the out-of-scope pass.
+    """
 
 
 # Every `form_1040` field that is a NUMBERED LINE on the form. This is the
@@ -535,13 +608,19 @@ def _schedule_d_nets(result: dict) -> "tuple[float, float]":
 
 
 def check(result: dict) -> None:
-    """Everything this module refuses, in one place and before any arithmetic.
+    """Everything wrong with the return AS RECORDED, in one place and before
+    any arithmetic.
 
     Split across the value-assemblers it was easier to write in, a reader
     looking for "what does this refuse" had to open a function whose name says
     it only gathers numbers.
+
+    What is NOT here is `_check_in_scope`, and its absence is deliberate.
+    Everything above is a defect in the return; scope is this module declining
+    to govern a correct one, `--check` records that as a PASS, and a pass must
+    never be granted ahead of a refusal it would waive. So `build` asks it LAST
+    — after these checks and after the return has been priced.
     """
-    _check_in_scope(result)
     _check_components(result.get("form_1040") or {})
     _check_the_amt(result)
     _check_the_payments(result)
@@ -644,13 +723,55 @@ def _check_line_7_against_schedule_d(result: dict, combined: float) -> None:
             "worksheet still prices it — the under-statement direction.")
 
 
+# The `form_8621_pfic` fields whose non-zero value MEANS §1291 moved a line this
+# module derives: the two reclassifications out of lines 3a and 3b, and the
+# add-on to line 24 under both the names the section records it under. Named
+# EXPLICITLY, and this is the one predicate in the module where a false positive
+# is the dangerous direction — it grants the waiver `--check` records as a pass,
+# so "count anything non-zero" reads the section's own counterfactuals
+# (`line_16_regular_tax` is what the return WOULD have been WITHOUT §1291) as
+# evidence that §1291 ran. A test pins every other key in the shipped section as
+# deliberately not evidence, so a field added there lands on one side or the
+# other rather than in the gap between.
+_PFIC_EVIDENCE = ("reclassified_from_line_3a", "reclassified_from_line_3b",
+                  "total_1291_addon", "line_24_addon")
+
+
+def _pfic_is_in_play(result: dict) -> bool:
+    """Whether §1291 has moved a line this module derives — ONE predicate.
+
+    `funds` is the per-fund detail and the reclassification totals are its
+    SIBLINGS, not entries inside it, so a section carrying
+    `reclassified_from_line_3b` with an empty `funds` list is a return §1291 has
+    reworked and a funds-only test calls in scope. The builder would then rebuild
+    line 3b from the ledger and restore the ordinary/qualified treatment §1291
+    removed — the exact outcome this refusal exists to prevent, reached through
+    the gap between two spellings of one question. The tie-out keys the same
+    question on those totals (`tie_out._result_total`), so this reads BOTH
+    rather than picking whichever one a partly-filled section happens to have.
+    """
+    section = result.get("form_8621_pfic")
+    if not isinstance(section, dict):
+        return False
+    if section.get("funds"):
+        return True
+    return any(
+        isinstance(section.get(key), (int, float))
+        and not isinstance(section.get(key), bool) and section.get(key) != 0
+        for key in _PFIC_EVIDENCE)
+
+
 def _check_in_scope(result: dict) -> None:
-    """Refuse the situations this slice cannot build correctly."""
-    pfic = result.get("form_8621_pfic")
-    funds = (pfic or {}).get("funds") if isinstance(pfic, dict) else None
-    if isinstance(funds, list) and funds:
+    """Refuse the situations this module does not GOVERN.
+
+    Called LAST from `check`, after every refusal that applies to any return —
+    see the note there. What this raises is an `OutOfScope`, which `--check`
+    records as a pass, so it must never be the reason a checkable defect went
+    unlooked-at.
+    """
+    if _pfic_is_in_play(result):
         raise OutOfScope(
-            "the return carries a computed PFIC fund. §1291 moves amounts OUT "
+            "the return carries a computed §1291 PFIC result. It moves amounts OUT "
             "of lines 3a and 3b after the broker reported them "
             "(reclassified_from_line_3a / _3b) and adds a deferred-tax charge "
             "to line 24 that is not line 22 plus line 23. This slice models "
@@ -666,18 +787,47 @@ def ledger_income(ledger, where: str = "parse_ledger.json") -> "dict[str, float]
     out = {}
     for category, field in lines.items():
         total = round(sums.get(category, 0.0), 2)
-        if total < 0:
-            # Only `ss_benefits` can legitimately go negative (repayments
-            # exceeding gross benefits), and the tie-out already records that
-            # line 6a has no stable convention for it. Refusing is the same
-            # answer said earlier: a negative gross benefit on the form is not
-            # a figure this module gets to invent.
-            raise OutOfScope(
+        if total < 0 and category in SIGNED_CATEGORIES:
+            # `ss_benefits` is the one category that can legitimately go
+            # negative (repayments exceeding gross benefits), and the tie-out
+            # already records that line 6a has no stable convention for it. A
+            # negative gross benefit on the form is not a figure this module
+            # gets to invent.
+            #
+            # BLOCKED, not OUT OF SCOPE, and the difference is the whole reason
+            # the two exist. This refusal is about ONE LINE, and it fires in the
+            # middle of the build — so granting the pass here would waive the
+            # comparison of every OTHER line on the return: a hand-typed line
+            # 35a refund of $5,000 on a return with no payments and no tax rode
+            # straight through all three gates into a filing package. The pass
+            # belongs only to a WHOLE-RETURN condition decided before anything
+            # is derived. This is also what this case did before Step 12.6 was
+            # receipted, so nothing regresses; deriving the rest of the return
+            # and declining line 6a alone is the fix that would let an
+            # SSA-repayment return complete, and it is written down in
+            # docs/contributing/tax-gotchas.md rather than guessed at here.
+            raise Blocked(
                 f"{redact(where)} sums {category} to {total:,.2f}, a NEGATIVE total for "
                 f"Form 1040 {field.split('_')[1]}. Repayments exceeding gross "
                 "benefits have no line-6a convention to derive — taxable "
                 "benefits are $0 and the repayment may be deductible (Pub 915). "
-                "Complete this line by hand and verify before filing.")
+                "Keep Form 1040 lines 1-38 by hand for this return; this gate "
+                "cannot stand aside for one line without standing aside for "
+                "all of them.")
+        if total < 0:
+            # Any OTHER category summing negative is corrupt data, not a return
+            # this module declines to govern, and the two must not share a
+            # verdict now that one of them passes: `load_ledger` refuses a
+            # negative value in an unsigned category record by record, so a
+            # negative SUM here means these records did not come through it.
+            # Unreachable on the CLI path, where `load` always does — and worth
+            # a line rather than a shared message that tells every category the
+            # social-security story.
+            raise Blocked(
+                f"{redact(where)} sums {category} to {total:,.2f}, and only "
+                f"{'/'.join(sorted(SIGNED_CATEGORIES))} may be negative. The "
+                "ledger's own validator refuses a negative in any other "
+                "category, so these records did not come through it.")
         out[field] = total
     return out
 
@@ -696,7 +846,7 @@ def _context(result: dict, tax_law: dict, filing_status: str) -> _Context:
     statuses = federal.get("filing_statuses") or {}
     brackets = (statuses.get(key) or {}).get("brackets")
     if not isinstance(brackets, list) or not brackets:
-        raise OutOfScope(
+        raise Unpriceable(
             f"tax_law federal.filing_statuses.{key}.brackets is missing or "
             "empty, so Form 1040 line 16 cannot be computed. Run /tax-setup.")
     net_st, net_lt = _schedule_d_nets(result)
@@ -724,9 +874,9 @@ def _context(result: dict, tax_law: dict, filing_status: str) -> _Context:
     try:
         worksheet = qdcg_worksheet_applies(qualified + net_ltcg, cg_zero, cg_fifteen)
     except ValueError as e:
-        # An OutOfScope so the CLI reports it as a BLOCK naming /tax-setup
+        # An Unpriceable so the CLI reports it as a BLOCK naming /tax-setup
         # rather than as a crash.
-        raise OutOfScope(str(e)) from None
+        raise Unpriceable(str(e)) from None
     return _Context(
         brackets=brackets,
         limits=pair if worksheet else None,
@@ -755,6 +905,13 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str) -> "dict[str,
         return _num(working.get(field, 0), f"form_1040.{field}")
 
     ctx = _context({**result, "form_1040": working}, tax_law, filing_status)
+    # LAST OF ALL, and after `_context`: the waiver `--check` records as a pass
+    # is granted only to a return that is otherwise sound AND that this year's
+    # cache can actually price. Asked earlier, it waived every refusal behind it
+    # — a return with no brackets in the cache came back NOT CHECKED and was
+    # certified, which is the one thing AGENTS.md §2 says nothing downstream
+    # catches.
+    _check_in_scope(result)
     for d in DERIVATIONS:
         working[d.field] = round(d.compute(g, ctx), 2)
     _check_the_refund(
@@ -790,6 +947,11 @@ def differences(result: dict, derived: "dict[str, float]") -> "list[Change]":
 
 
 def _read_json(path: Path, what: str) -> dict:
+    """The parsed document alone, for a caller with no receipt to bind."""
+    return _read_json_bytes(path, what)[0]
+
+
+def _read_json_bytes(path: Path, what: str) -> "tuple[dict, bytes]":
     """`what` and `_num`'s `where` are both PUBLIC labels, so both are
     redacted where they are interpolated even though every caller today passes
     a bare filename. The structural sweep in `tests/test_secure_fs.py` reads
@@ -801,13 +963,14 @@ def _read_json(path: Path, what: str) -> dict:
     if not path.exists():
         raise ReturnBuilderError(f"{redact(what)} not found in the workspace")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
+        raw = path.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as e:
         raise ReturnBuilderError(
             f"{redact(what)} could not be read: {redact(e)}") from None
     if not isinstance(data, dict):
         raise ReturnBuilderError(f"{redact(what)} must be a JSON object")
-    return data
+    return data, raw
 
 
 def _filing_status(profile: dict, result: dict) -> str:
@@ -841,7 +1004,15 @@ def _tax_year(result: dict, profile: dict) -> int:
 
 
 def load(workspace: Path) -> tuple:
-    """The four inputs, each validated by whoever owns its rules.
+    """The four inputs, each validated by whoever owns its rules, AND the exact
+    bytes each was parsed from.
+
+    The bytes are the fifth return value because the receipt is bound to them.
+    Hashing the paths separately — before the read, as the other gates do —
+    leaves a window: a `result.json` replaced between the hash and the parse
+    produced a PASS bound to bytes the builder never evaluated, and the same
+    check re-run a second later exited 2. Digesting what was actually parsed
+    closes it by construction rather than by narrowing the window.
 
     The cache goes through `tax_law_fetcher.load_tax_law`, not a plain JSON
     read: that is the ONE read site every consumer shares, and it refuses two
@@ -850,17 +1021,32 @@ def load(workspace: Path) -> tuple:
     ANYWHERE in it is refused rather than carried — a NaN bracket rate passes
     the "is this a non-empty list" check below and then defeats every
     comparison inside the worksheet, which is how a corrupt cache prices a
-    whole preferential stack at 0%.
+    whole preferential stack at 0%. That loader owns its own read, so the cache
+    is the one input opened twice and the only one where the window survives —
+    named here rather than left for a reader to find, and inside the receipt's
+    stated threat model: it detects staleness, not a hostile process.
     """
     workspace = Path(workspace)
-    result = _read_json(workspace / RESULT_NAME, RESULT_NAME)
-    profile = _read_json(workspace / PROFILE_NAME, PROFILE_NAME)
-    raw_ledger = _read_json(workspace / LEDGER_NAME, LEDGER_NAME)
+    contents: "dict[str, bytes]" = {}
+    result, contents[RESULT_NAME] = _read_json_bytes(
+        workspace / RESULT_NAME, RESULT_NAME)
+    profile, contents[PROFILE_NAME] = _read_json_bytes(
+        workspace / PROFILE_NAME, PROFILE_NAME)
+    raw_ledger, contents[LEDGER_NAME] = _read_json_bytes(
+        workspace / LEDGER_NAME, LEDGER_NAME)
     try:
         ledger = load_ledger(raw_ledger)
     except TieOutError as e:
         raise ReturnBuilderError(f"{LEDGER_NAME} is not valid: {redact(e)}") from None
     year = _tax_year(result, profile)
+    cache = workspace / f"tax_law_{year}.json"
+    if cache.is_file():
+        try:
+            contents[cache.name] = cache.read_bytes()
+        except OSError:
+            # The loader below reports whatever is wrong with it; an unreadable
+            # cache simply goes unhashed, which `gate_inputs` treats as absent.
+            contents.pop(cache.name, None)
     try:
         tax_law = load_tax_law(year, str(workspace))
     except ValueError as e:
@@ -869,7 +1055,7 @@ def load(workspace: Path) -> tuple:
         raise ReturnBuilderError(
             f"tax_law_{year}.json is missing or corrupt. Run /tax-setup to "
             "fetch it; Form 1040 line 16 cannot be computed without it.")
-    return result, profile, ledger, tax_law
+    return result, profile, ledger, tax_law, contents
 
 
 def write(workspace: Path, result: dict, derived: "dict[str, float]") -> bool:
@@ -912,16 +1098,38 @@ def _report(changes: "list[Change]") -> str:
     return "\n".join(rows)
 
 
+def _record_the_check(workspace: Path, inputs: "dict | None", outcome: str,
+                      exit_code: int) -> int:
+    """Record Step 12.6's verdict — AFTER it is printed and its code decided.
+
+    The order, and the rule that a receipt which cannot be written never lowers
+    a verdict, live once in `receipt.record_after_verdict`; all three gates end
+    through it. What is THIS gate's own is the mode test below. A verdict that
+    is not a PASS is still RECORDED, because `/tax-generate --filing-package`
+    has to tell "this gate disagreed" from "this gate never ran" — both refuse a
+    package, and only one of them is answered by running the gate.
+
+    `inputs is None` is the WRITE mode, which asserts nothing and so certifies
+    nothing: it rewrites the very file the receipt would be bound to.
+    """
+    if inputs is None:
+        return exit_code
+    return receipt.record_after_verdict(workspace, GATE, outcome, exit_code,
+                                        inputs=inputs)
+
+
 def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(
         prog="agents.lib.return_builder",
         description="Derive Form 1040 lines 1-38 from the parsed records, the "
-                    "profile and the tax-law cache (V1, first slice).")
+                    "profile and the tax-law cache.")
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--check", action="store_true",
                         help="report the lines that disagree and write nothing; "
-                             "exit 2 if any do")
+                             "exit 2 if any do. This mode, and only this mode, "
+                             "records Step 12.6's verdict in the validation "
+                             "receipt")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -931,8 +1139,17 @@ def _main(argv: list) -> int:
     if not workspace.is_dir():
         print(f"Error: no workspace at {redact(workspace)}", file=sys.stderr)
         return 1
+    inputs = None
     try:
-        result, profile, ledger, tax_law = load(workspace)
+        result, profile, ledger, tax_law, contents = load(workspace)
+        if args.check:
+            # The digests this verdict will be bound to, taken from THE BYTES
+            # `load` parsed rather than from a second read of the same paths.
+            # A `result.json` replaced between a hash and the parse produced a
+            # PASS bound to bytes the builder never evaluated — a gate
+            # certifying a return it never saw, which is what the receipt
+            # exists to catch (V8).
+            inputs = receipt.gate_inputs(workspace, GATE, contents=contents)
         derived = build(result, tax_law, ledger, _filing_status(profile, result))
         changes = differences(result, derived)
         if args.check:
@@ -940,10 +1157,10 @@ def _main(argv: list) -> int:
                 print(f"BLOCKED: {len(changes)} derived line(s) on Form 1040 "
                       f"disagree with the components they are computed from:\n"
                       f"{_report(changes)}", file=sys.stderr)
-                return 2
+                return _record_the_check(workspace, inputs, "FAILED", 2)
             print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "agree with their components.")
-            return 0
+            return _record_the_check(workspace, inputs, receipt.PASS, 0)
         if write(workspace, result, derived):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
@@ -952,13 +1169,36 @@ def _main(argv: list) -> int:
         else:
             print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "already agree with their components; nothing written.")
+    except OutOfScope as e:
+        # NOT a failure in CHECK mode: these lines were never this module's to
+        # assert on this return, so there is no verdict to fail. Refusing would
+        # stand between a correct, complete return and its filing package for
+        # ever, with `--draft` — which stamps NOT VALIDATED across a return that
+        # is fine — as the only way past. BUILDING is still refused: the whole
+        # point is that this module must not write these lines here.
+        if not args.check:
+            print(f"BLOCKED: {redact(e)}", file=sys.stderr)
+            return 2
+        # On STDOUT, and that is deliberate: the run SUCCEEDED, so a reader
+        # who only prints stderr on a non-zero exit would see an empty stdout
+        # and read it as "checked, fine" — the loudest possible way to lose a
+        # warning. The tie-out surfaces its unverifiable categories the same
+        # way, inside the report it prints on a pass.
+        print(f"NOT CHECKED — Form 1040 lines 1-38 are kept by hand on this "
+              f"return, and nothing here verified them: {redact(e)}")
+        return _record_the_check(workspace, inputs, receipt.NOT_APPLICABLE, 0)
     except Blocked as e:
-        # OutOfScope is a Blocked, so this one arm covers both: a return this
-        # slice does not model and a return whose own components contradict
-        # each other are the same verdict — read, and refused.
+        # A return whose own components contradict each other, and a cache that
+        # cannot price it, are the same verdict — read, and refused. The receipt
+        # records WHICH refusal it was, because the remedies differ: a blocked
+        # return needs the situation resolved, a failed one needs a component
+        # fixed.
         print(f"BLOCKED: {redact(e)}", file=sys.stderr)
-        return 2
-    except ReturnBuilderError as e:
+        return _record_the_check(workspace, inputs, "BLOCKED", 2)
+    except (ReturnBuilderError, receipt.ReceiptError) as e:
+        # Could not RUN — no verdict, so nothing is recorded. A receipt written
+        # here would say the gate ran and disagreed, sending the agent to look
+        # for a wrong line when the input is what is missing.
         print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
     except OSError as e:

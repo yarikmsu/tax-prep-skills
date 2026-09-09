@@ -1805,7 +1805,7 @@ Local `codex exec`, four `/simplify` agents (reuse, simplification, privacy, alt
 - `filing_package.assembly_order` decides Schedule 2 from line 17 now, not from `form_6251.amt` — one answer on the return rather than one on the 1040 and one in the form section.
 - The tie-out rationale in the module docstring was WRONG and is rewritten. "The gate now catches only an edit after the build" is the tempting answer; step 12.6 catches that one step earlier. The gate stays because it is the cross-agent hard gate and must hold on a workspace where this constructor never ran — those six checks are tautological only conditional on the builder having run, which is exactly what a gate cannot assume.
 
-**The limit this slice ships with, stated rather than discovered.** Step 12.6 writes no receipt, so `--filing-package` cannot prove it ran. Folding `differences()` into `tie_out` would close that and the input sets are already identical — but it would fail the hard gate on every workspace written before line 17 existed. That is a migration decision, and it is the next slice.
+**The limit this slice ships with, stated rather than discovered.** Step 12.6 writes no receipt, so `--filing-package` cannot prove it ran. Folding `differences()` into `tie_out` would close that and the input sets are already identical — but it would fail the hard gate on every workspace written before line 17 existed. That is a migration decision, and it is the next slice. **(Closed by the third slice below, which also corrects the claim about the input sets: they are not identical — the tie-out reads the source documents.)**
 
 ## V1, second slice — the payments side, and three lines with no field
 
@@ -1876,3 +1876,151 @@ infer offline (AGENTS.md §2), so no field was invented; it is written down in
 
 **Verification.** 95 tests, 25 mutation probes all red, and the `ca_mfj_2026`
 golden reproduces end to end with lines 27, 28 and 36 at zero.
+
+---
+
+## V1, third slice — Step 12.6 is receipted (PR #111)
+
+The honest limit the first slice shipped with, closed. `--check` proved the
+derived lines agreed with their components and then said so to nobody: `receipt`
+held `capabilities` and `tie_out`, so `/tax-generate --filing-package` could
+prove Step 0.7 and Step 12.7 had run against the inputs that are here now, and
+could not prove Step 12.6 had run at all. An agent could skip it, or pass it and
+then edit line 24, and the package assembled either way — and the tie-out's
+income checks structurally cannot cover that gap, because six of its category
+sums now PRODUCE the lines they are compared against.
+
+**`differences()` was NOT folded into `tie_out`,** which is what the first slice
+proposed. Two reasons, both found by trying it:
+
+- `return_builder` imports `tie_out` for `CATEGORY_TARGETS`, `load_ledger` and
+  `category_sums` — the ledger rules live there and are not worth a second copy.
+  The dependency cannot run both ways.
+- The input sets are NOT identical, which the first slice's note claimed. The
+  tie-out reads the source documents; this gate cannot. A document that has not
+  been parsed yet cannot have moved a derived line, so sharing an input set would
+  fire this gate on correct work — the gates-that-cry-wolf failure, reached
+  through an input map rather than a rule.
+
+So the check records under its own gate name, `receipt.gate_inputs` states the
+split in one place, and `REQUIRED_GATES` holds all three. Nothing is lost by the
+narrower set: a package requires both receipts, and the tie-out's still refuses
+the Thursday 1099.
+
+**Three rules carried over from the tie-out's receipt rather than re-derived.**
+The digests are captured BEFORE anything is read, so a `result.json` edited
+during the check cannot be certified by it. The verdict is printed and its exit
+code decided BEFORE the receipt is written, and a receipt that cannot be written
+never lowers a verdict — a permissions fault must not be able to mask a
+tax-correctness fault. A non-PASS verdict is RECORDED rather than left unwritten,
+and as WHICH refusal it was: `FAILED` (a line disagrees — fix the component) and
+`BLOCKED` (the return is one this module will not build) have different remedies,
+and both differ from "never ran".
+
+**The build mode records nothing**, which is the one asymmetry worth stating: it
+rewrites the very file the receipt would be bound to, so a verdict recorded there
+is stale before the command returns. The skill says the order out loud — the last
+thing done to `result.json` is followed by `--check`.
+
+**The migration this was deferred over is one command.** A workspace last
+computed before these lines existed is refused with the gate named, and Step 12.6
+answers it. That is the same demand V8 already makes for the other two gates, not
+a new kind of demand, and the earlier framing of it as a migration decision was
+the wrong read: the cost sits at `/tax-generate`, where a refusal is actionable,
+not inside the hard gate, where it would have blocked the return itself.
+
+**Verification.** 9 new tests, 3 mutation probes red then restored — the third
+found a real gap on the first pass: dropping `return_builder` from
+`REQUIRED_GATES` broke nothing, because every test recorded the gates by name
+rather than from the constant. `test_a_package_needs_the_derived_lines_gate_too`
+is what that probe bought.
+
+**Making the verdict load-bearing found a shipped cry-wolf gate.** `--check`
+exits 2 on a return the builder does not model, and slice 1 shipped that as a
+STOP: a computed PFIC fund reclassifies amounts out of lines 3a and 3b, so the
+agent keeps lines 1-38 by hand — and then could never clear Step 12.6. Making
+the gate REQUIRED would have carried that all the way to `/tax-generate`, where
+the only way past is `--draft`, which stamps NOT VALIDATED across a return that
+is correct and complete. So the check now PASSES a return it does not govern,
+loudly (`NOT CHECKED`, and the receipt records `OUT OF SCOPE` rather than a
+pass), while BUILDING one is still refused — the point of that refusal is that
+this module must not write those lines, which is untouched.
+
+That split one exception in two. `OutOfScope` was also carrying "the tax-law
+cache cannot price this return" — no brackets, no capital-gains breakpoints —
+which is not a return this module declines to govern but one nobody can compute
+yet (AGENTS.md §2). Folded together, an unfetched cache would have ridden into a
+filing package under the out-of-scope pass. `Unpriceable` is the second class,
+and only `OutOfScope` passes.
+
+**Two more findings from the review, both about the pass being new.** Making a
+verdict load-bearing changes what every earlier decision costs.
+
+- **Scope was decided FIRST in `check()`.** While out of scope exited 2 that was
+  free. As a PASS it waived every refusal below it: a PFIC return with a negative
+  line 23, a null AMT, an excess-SS double count or a line 7 contradicting
+  Schedule D came back NOT CHECKED and was recorded as a verdict — on one field
+  read before the return had been looked at at all, and none of those defects has
+  anything to do with §1291. Scope is the LAST question now, so the waiver is
+  granted only to a return that is otherwise sound.
+- **The §1291 predicate read one of the two places §1291 is recorded.**
+  `reclassified_from_line_3a/_3b` are SIBLINGS of `funds`, not entries in it, so
+  a section §1291 had reworked with an empty fund list read as in scope — and the
+  builder would have rebuilt line 3b from the ledger, restoring the treatment
+  §1291 removed, which is the one outcome that refusal exists to prevent. One
+  predicate, `_pfic_is_in_play`, reads the whole section.
+
+**And a pass that verified nothing now says so where the taxpayer looks.**
+`receipt.verify` returns it as a NOTE beside the reasons, `/tax-generate` puts it
+in the page-1 limitations box, and the filing package is headed NOT FULLY
+VERIFIED — not the draft banner, which would say something false about a return
+that is correct and complete, and not silence, which AGENTS.md §4 forbids in
+those words. Before this the fact lived in one stderr line at compute time and a
+sentence in the skill addressed to the agent.
+
+**Two more, from the reuse and altitude angles.** `receipt.record_after_verdict`
+now holds, once, the rule all three gates had hand-rolled: a receipt that cannot
+be written never lowers a verdict already printed. It had no test in any of the
+three copies and has one now. And `receipt._tax_year` reads the profile when
+`result.json` meta does not name the year — `result_template.json` ships that
+field null, and `return_builder.load` falls back to the profile to pick the cache
+it PRICES LINE 16 FROM, so the cache was being loaded, used, and left out of the
+input map: a re-fetched bracket would not have invalidated a gate whose verdict
+depends on it.
+
+**The local `codex exec` round found four more, and three were the same shape as
+the two above: a decision that was free while out of scope exited 2, and wrong
+once it became a pass.**
+
+- **A refusal about ONE LINE was taking the whole-return waiver.**
+  `ledger_income`'s negative social-security total raises in the MIDDLE of the
+  build, so passing there waived the comparison of every other line: a return
+  with no payments, no tax and a hand-typed line 35a of $5,000 went through all
+  three gates and assembled a filing package. It is a `Blocked` now — which is
+  what it did before this gate was receipted, so nothing regresses. Deriving the
+  rest of the return and declining line 6a alone is the fix that would let an
+  SSA-repayment return complete; it is written down rather than guessed at.
+- **The waiver was granted before the return was priced.** Moving the scope test
+  to the end of `check()` was not far enough: `_context` runs after `check`, so a
+  cache with no brackets still came back NOT CHECKED — the one staleness
+  AGENTS.md §2 says nothing downstream catches. `_check_in_scope` is asked last
+  in `build`, after the pricing context exists.
+- **"Any non-zero field in the section" read the section's own counterfactuals
+  as evidence.** `form_8621_pfic` records what the return WOULD have been
+  without §1291 (`line_16_regular_tax` and its siblings); a return with one of
+  those set and no PFIC at all was waived. This is the one predicate in the
+  module where a FALSE POSITIVE is the dangerous direction — it grants the pass
+  — so the evidence set is four named totals plus `funds`, with a test pinning
+  every other key in the shipped section as deliberately not evidence.
+- **The receipt hashed the paths in a second read.** `gate_inputs` ran before
+  `load`, so a `result.json` replaced in between produced a PASS bound to bytes
+  the builder never evaluated, and the same check re-run a second later exited 2
+  on the file the receipt said was fine. `load` returns the bytes it parsed and
+  the digests are taken from those. The tax-law cache is the one input still
+  opened twice, because `tax_law_fetcher.load_tax_law` owns that read — named in
+  the docstring, and inside the receipt's stated threat model.
+
+The lesson worth keeping from all six: **the moment a verdict becomes
+load-bearing, every decision that produced it has to be re-read as if it were
+new.** Nothing in the first five findings was introduced by this slice. They were
+all correct while the answer was thrown away.

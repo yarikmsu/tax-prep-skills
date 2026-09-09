@@ -354,19 +354,35 @@ def render_markdown(result: dict) -> str:
 
 
 def _draft_banner(checked) -> str:
-    """The NOT VALIDATED header a draft carries, or "" for a validated package.
+    """The header a package carries: NOT VALIDATED for a draft, NOT FULLY
+    VERIFIED for a validated one a gate had no verdict to give about, or "".
 
     On PAGE ONE, beside the limitations manifest the generated PDF already
     prints there: a reader who sees only the assembled forms cannot tell a draft
     from a return, and the one place they are certain to look is the top.
+
+    The second header is the weaker claim and is deliberately NOT the first one:
+    the package DOES describe this workspace, and every gate that had a verdict
+    passed. What it does not carry is one gate's verification — Step 12.6 on a
+    return whose Form 1040 lines 1-38 it does not govern. Stamping that
+    "NOT VALIDATED — DRAFT ONLY" would say something false about a correct
+    return, and saying nothing would ship the unverified arithmetic silently,
+    which AGENTS.md §4 forbids in those words.
     """
     if checked.valid:
-        return ""
+        if not checked.notes:
+            return ""
+        lines = ["# NOT FULLY VERIFIED", "",
+                 "This package describes the workspace and every gate that had "
+                 "a verdict passed — but one gate had none:", ""]
+        lines += [f"- {note}" for note in checked.notes]
+        lines += ["", "---", ""]
+        return "\n".join(lines)
     lines = ["# NOT VALIDATED — DRAFT ONLY", "",
              "This package was assembled with `--draft`. It does NOT describe "
              "the workspace as it stands:", ""]
     lines += [f"- {reason}" for reason in checked.reasons]
-    lines += ["", "Re-run /tax-compute — its Step 0.7 and Step 12.7 gates "
+    lines += ["", "Re-run /tax-compute — its Step 0.7, 12.6 and 12.7 gates "
                   "rewrite the validation receipt — and assemble again before "
                   "anything here is filed.", "", "---", ""]
     return "\n".join(lines)
@@ -406,13 +422,14 @@ def _main(argv: list) -> int:
         # gate ever saw, which is the same defect one level up.
         packaged = receipt.covers_result(workspace, result_path, contents=raw)
         if packaged:
-            checked = receipt.VerifyReport(False, checked.reasons + [packaged])
+            checked = receipt.VerifyReport(False, checked.reasons + [packaged],
+                                           checked.notes)
         if not checked.valid and not args.draft:
             print("REFUSED: the filing package would not describe this "
                   "workspace.", file=sys.stderr)
             for reason in checked.reasons:
                 print(f"  - {reason}", file=sys.stderr)
-            print("\nRe-run /tax-compute (Step 0.7 and Step 12.7 rewrite the "
+            print("\nRe-run /tax-compute (Step 0.7, 12.6 and 12.7 rewrite the "
                   "receipt), or pass --draft for a NOT VALIDATED copy.",
                   file=sys.stderr)
             return 2

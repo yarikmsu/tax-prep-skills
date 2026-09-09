@@ -195,9 +195,16 @@ section nobody filled in, keeps the official line numbers in its labels, names
 the toolkit (never an assistant or a vendor) in the PDF metadata, and secures the
 output owner-only.
 
+**It marks a page-1 note NOT FULLY VERIFIED** when a gate ran and had no
+verdict to give — Step 12.6 on a return whose Form 1040 lines 1-38 the builder
+does not govern. That return is validated and the package is not a draft; one
+thing on it was checked by nothing, and that sentence belongs beside the
+limitations manifest rather than in a banner that would call a correct return a
+draft. Read it to the user before they file.
+
 **It REFUSES (exit 2) when the validation receipt is stale** — when
-/tax-compute's Step 0.7 and Step 12.7 gates did not run, did not pass, or passed
-against inputs that have since changed. Re-run `/tax-compute` rather than working
+/tax-compute's Step 0.7, Step 12.6 and Step 12.7 gates did not run, did not
+pass, or passed against inputs that have since changed. Re-run `/tax-compute` rather than working
 around it. `--draft` renders anyway and stamps **NOT VALIDATED** in the page-1
 box with the reason; never file from a draft.
 
@@ -238,9 +245,10 @@ package has four parts:
    sh agents/lib/run.sh -m agents.lib.filing_package --result result.json --workspace .
    ```
    **This command REFUSES (exit 2) when the validation receipt is stale** — when
-   /tax-compute's Step 0.7 and Step 12.7 gates did not run, did not pass, or
-   passed against inputs that have since changed (a document that arrived after
-   the tie-out, an edited figure, a re-fetched cache). It names each one. Re-run
+   /tax-compute's Step 0.7, Step 12.6 and Step 12.7 gates did not run, did not
+   pass, or passed against inputs that have since changed (a document that
+   arrived after the tie-out, a derived line edited after the check, a re-fetched
+   cache). It names each one. Re-run
    `/tax-compute` rather than working around it: the gates rewrite the receipt.
    `--draft` assembles anyway and marks the package **NOT VALIDATED** at the top;
    carry that banner onto page 1 of the PDF beside the Scope & Limitations box,

@@ -203,12 +203,26 @@ income checks can no longer see on their own: six of its category sums now
 PRODUCE the lines they are compared against, so a later edit is the failure mode
 that survived deriving them.
 
-- **Exit 0:** every derived line matches. Continue.
+- **Exit 0:** every derived line matches. Continue. **Unless it printed `NOT
+  CHECKED`** — this return carries something the builder does not govern (a
+  computed PFIC fund), so lines 1-38 are yours by hand and nothing verified
+  them. That is a pass, not a failure, and the receipt records it as OUT OF
+  SCOPE — `/tax-generate` then carries it onto page 1, beside the limitations
+  manifest, and marks the filing package NOT FULLY VERIFIED. Surface it to the
+  user as well, the way you would an unverifiable tie-out category.
 - **Exit 2: STOP.** Each disagreeing line is named with both figures. Do not
   reconcile by editing the line — the components are the answer. Fix the
   component that is wrong, or re-run the builder without `--check` if the
-  component was right and the line was stale.
+  component was right and the line was stale. A cache that cannot price the
+  return arrives here too, naming /tax-setup.
 - **Exit 1:** could not run — fix the input; do not bypass.
+
+**Only `--check` writes the validation receipt**, and `/tax-generate
+--filing-package` requires it beside Step 0.7's and Step 12.7's. So the last
+thing you do to `result.json` is followed by this command: the build mode
+rewrites the file and certifies nothing, and a derived line edited afterwards
+invalidates the receipt rather than riding into the package. A workspace that
+last ran an older engine is refused with this gate named — re-run this step.
 
 ### Step 12.7: Parse-to-return tie-out (HARD GATE)
 

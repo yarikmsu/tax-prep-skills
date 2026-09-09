@@ -852,14 +852,10 @@ def _main(argv: list) -> int:
     # recorded as blocked — /tax-generate refuses a filing package on it either
     # way, and the reason it prints is the difference between a gate that failed
     # and one that never ran (V8).
-    try:
-        receipt.record(workspace, "capabilities",
-                       receipt.PASS if not report.blocking else "BLOCKED",
-                       inputs=gate_inputs)
-    except (receipt.ReceiptError, RolloverError, OSError) as e:
-        print(f"ERROR: {redact(e)}", file=sys.stderr)
-        return max(exit_code, 1)
-    return exit_code
+    return receipt.record_after_verdict(
+        workspace, "capabilities",
+        receipt.PASS if not report.blocking else "BLOCKED",
+        exit_code, inputs=gate_inputs)
 
 
 if __name__ == "__main__":
