@@ -85,20 +85,31 @@ Based on `taxpayer_profile.json` flags:
 
 ### Step 3: Compute Income (Form 1040 Lines 1-9)
 
+**`agents/lib/return_builder.py` writes the lines marked DERIVED below — do not
+type one.** Lines 1a, 2a, 2b, 3a and 3b are the parse records' own sums, and
+lines 1z and 9 are arithmetic over the rest. What this step is for is the
+COMPONENTS: deciding what is taxable, and computing the worksheets that produce
+4b, 5b, 6b, 7 and 8. Run the builder after Step 5 (see SKILL.md).
+
 ```
-Line 1a: Total wages from all W-2s
-Line 2b: Total taxable interest (all 1099-INTs + foreign interest)
-Line 3a: Qualified dividends (sum of 1099-DIV Box 1b)
-Line 3b: Ordinary dividends (sum of 1099-DIV Box 1a)
+Line 1a: DERIVED — total wages from all W-2s (the ledger's `wages` sum)
+Line 2a: DERIVED — tax-exempt interest (memo line; NOT in line 9, but the
+         taxable-SS worksheet reads it)
+Line 2b: DERIVED — total taxable interest (all 1099-INTs + foreign interest)
+Line 3a: DERIVED — qualified dividends (sum of 1099-DIV Box 1b)
+Line 3b: DERIVED — ordinary dividends (sum of 1099-DIV Box 1a)
+Line 1z: DERIVED — 1a + 1h
+Line 1h: other earned income NOT on a W-2 — yours
 Line 4a/4b: IRA distributions (if applicable)
 Line 5a/5b: Pensions (1099-R; Code G rollover = 5a only, 5b = $0)
-Line 6a/6b: Social Security benefits (6a = SSA-1099 box 5 total;
-            6b = taxable amount from compute_taxable_ss below)
+Line 6a: DERIVED — SSA-1099 box 5 total (the ledger's `ss_benefits` sum)
+Line 6b: taxable amount from compute_taxable_ss below — yours
 Line 7: Capital gain/loss from Schedule D line 16
 Line 8: Other income from Schedule 1 (Schedule C net, etc.)
-Line 9: TOTAL INCOME = 1z + 2b + 3b + 4b + 5b + 6b + 7 + 8
+Line 9: DERIVED — TOTAL INCOME = 1z + 2b + 3b + 4b + 5b + 6b + 7 + 8
         (6b — the TAXABLE benefit amount — is IN the sum; omitting it
-        understates AGI by exactly what the worksheet just computed)
+        understates AGI by exactly what the worksheet just computed, which is
+        why the sum is no longer done by hand)
 ```
 
 **Also record `schedule_e_k1_income` (L2):** write the GROSS POSITIVE
@@ -453,6 +464,8 @@ not fully. A clean backdoor (no other pre-tax traditional IRA) converts tax-free
 
 ### Step 4: Compute AGI (Form 1040 Lines 10-11)
 
+Line 11 is DERIVED (`return_builder`); line 10 is yours.
+
 ```
 Line 10: Adjustments to income from Schedule 1 Part II:
   - IRA deduction (check eligibility based on employer plan, MAGI, filing status)
@@ -509,9 +522,14 @@ Line 12: Standard deduction (from tax_law JSON = the §63(c) BASE for the
 Line 13a: QBI deduction (Form 8995)
 Line 13b: Schedule 1-A deductions (compute_schedule_1a — below)
 Line 13c: §170(p) non-itemizer charitable deduction (compute_charitable_non_itemizer — below; TY2026+, STANDARD-deduction filers only)
-Line 14: Total deductions = Line 12 + Line 13a + Line 13b + Line 13c
-Line 15: Taxable income = max(0, Line 11 - Line 14)
+Line 14: DERIVED — total deductions = Line 12 + Line 13a + Line 13b + Line 13c
+Line 15: DERIVED — taxable income = max(0, Line 11 - Line 14)
 ```
+
+Lines 12, 13a, 13b and 13c are yours; 14 and 15 are `return_builder`'s. **Run
+`sh agents/lib/run.sh -m agents.lib.return_builder --workspace .` when this step
+is done** — it settles lines 1z, 9, 11, 14, 15 and 16, which is what Step 6.5's
+AMT and the whole of Step 6 read.
 
 **Schedule 1-A (OBBBA tips / overtime / car-loan / senior) — run
 `compute_schedule_1a()` whenever any of those items exist (TY2025-2028).**

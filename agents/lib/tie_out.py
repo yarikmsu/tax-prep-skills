@@ -1081,6 +1081,25 @@ def _pfic_positive_event_ids(profile: dict, current_year) -> "tuple[set, set, se
     return positive, missing, disp_positive
 
 
+def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
+    """Total per canonical category across the ledger — the ONE reading of it.
+
+    A SKIPPED record contributes nothing: its `skipped` reason is the whole
+    record, and counting a skip's boxes would give coverage credit to amounts
+    the parse deliberately did not take. `return_builder` derives the 1040's
+    record-backed income lines from this, and `evaluate` compares the return
+    against it; one function so the return can never be built from a different
+    reading of the ledger than the gate checks it against.
+    """
+    sums: "dict[str, float]" = {}
+    for rec in ledger:
+        if rec.skipped is not None:
+            continue
+        for cat, amount in rec.key_boxes:
+            sums[cat] = sums.get(cat, 0.0) + amount
+    return sums
+
+
 def evaluate(ledger: "list[LedgerRecord]", result: dict,
              document_files: "list[str]",
              tolerance: float = DEFAULT_TOLERANCE,
@@ -1116,12 +1135,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         f"{r.file} — {r.skipped}" for r in ledger
         if r.skipped is not None and r.skipped.strip().lower().startswith("pending")))
 
-    sums: "dict[str, float]" = {}
-    for rec in ledger:
-        if rec.skipped is not None:
-            continue
-        for cat, amount in rec.key_boxes:
-            sums[cat] = sums.get(cat, 0.0) + amount
+    sums = category_sums(ledger)
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     for cat in sorted(sums):

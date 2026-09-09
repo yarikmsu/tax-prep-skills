@@ -16,9 +16,16 @@ income is final.
 
 ### Step 6: Compute Tax (Form 1040 Line 16)
 
+**Line 16 is DERIVED — `agents/lib/return_builder.py` computed it when you ran
+it at the end of Step 5.** Read it out of `result.json` and EXPLAIN it; do not
+run the worksheet by hand and do not type the line. What follows is what the
+builder does, so you can say which path it took and why, and so you can check
+the inputs it read (line 15, line 3a, and Schedule D line 15) are the ones you
+meant.
+
 **QDCG Tax Worksheet** (if qualified dividends or net capital gain > 0):
 
-Use `compute_qdcg_tax()` from `agents/lib/tax_computations.py`:
+`compute_qdcg_tax()` from `agents/lib/tax_computations.py`:
 - taxable_income: Form 1040 line 15
 - qualified_dividends: Form 1040 line 3a
 - **net_ltcg: Schedule D line 15 (NET long-term, AFTER foreign losses)**
@@ -180,7 +187,11 @@ $250-450K band):
   credits), NOT line 23. This matters downstream: the CTC Credit Limit
   Worksheet A base in Step 7 is line 18 = line 16 + Schedule 2 line 1 —
   omitting the AMT from it under-allows nonrefundable CTC and spills the
-  difference into refundable ACTC. Copy the result into the `form_6251`
+  difference into refundable ACTC. **`form_1040.line_17_schedule2_part1` and
+  `line_18_tax_plus_schedule2` are DERIVED** from `form_6251.amt`: write the
+  AMT into `form_6251` and let `return_builder` place it. Until this slice the
+  1040 had no line 17 field at all, so an AMT filer's line 22 and line 24 were
+  the regular tax alone and the AMT never reached total tax. Copy the result into the `form_6251`
   section. **CA AMT is now computed** — a CA ISO exerciser's Schedule P (540)
   runs in the Step 10 California sub-steps (`compute_ca_schedule_p`), so the CA
   side is no longer a verify-in-software note.
@@ -198,6 +209,12 @@ $250-450K band):
   leaving it unwritten forfeits the money permanently.
 
 ### Step 7: Compute Credits (Form 1040 Lines 19-21)
+
+Lines 19 and 20 are yours; **line 21 is DERIVED**, and so are lines 22 and 24.
+The Credit Limit Worksheet A base is line 18 — after Step 6.5 that is
+`form_1040.line_16_tax` + `form_6251.amt`; the second builder pass records it as
+`line_18_tax_plus_schedule2`. If the two disagree, the builder's is right and
+the credit has to be recomputed against it.
 
 **Child Tax Credit + ODC (Line 19) and refundable ACTC (Line 28):**
 Use `compute_child_tax_credit()` — check OBBBA/current year amount from tax_law JSON.
@@ -309,6 +326,10 @@ DCB Part III, nonrefundable limit).
 **Other credits:** energy/EV/etc. as applicable (manual worksheets — see the limitations manifest).
 
 ### Step 8: Compute Other Taxes (Form 1040 Line 23)
+
+Line 23 is yours. **Run
+`sh agents/lib/run.sh -m agents.lib.return_builder --workspace .` when this step
+is done** — the second pass settles lines 17, 18, 21, 22 and 24.
 
 **Self-Employment Tax:**
 Use `compute_se_tax()` — only if Schedule C shows profit > $400.

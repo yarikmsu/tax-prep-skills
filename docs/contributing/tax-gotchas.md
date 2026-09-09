@@ -5,6 +5,7 @@ one has produced a real bug or would silently mis-state a return. Relocated
 verbatim from CLAUDE.md.
 
 - QDCG worksheet: use NET LTCG from Schedule D line 15 (after losses), not gross cap gain distributions
+- **NOT EVERY long-term gain is priced at 0/15/20%.** Collectibles (§1(h)(4), 28%) and unrecaptured §1250 gain on depreciated real property (§1(h)(6), 25%) need the **Schedule D Tax Worksheet**, not the QDCG one. This toolkit models neither: `schedule_d` has no rate-specific rows, `tax_computations` has no Schedule D Tax Worksheet, and the capability gate does not flag either — so a coin sale or a rental-property sale is priced at 15% and the tax is UNDERSTATED. Surfaced by V1 (`return_builder.py`); it predates that module and applies equally to an agent running the QDCG worksheet by hand. Ask about collectibles and depreciated real property before trusting line 16, and verify in tax software
 - 1099-R Code G (direct rollover): $0 taxable but must report on 1040 line 5a
 - Additional Medicare Tax: employer withholds 0.9% on wages >$200K, but MFJ threshold is $250K — over-withholding becomes a credit (Form 8959)
 - FBAR max values (conservative, total inflows) differ from Form 8938 values (realistic simultaneous peak)

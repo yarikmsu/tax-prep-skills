@@ -1687,3 +1687,122 @@ writes, which is AGENTS.md §1's "`agents/lib/` writers call it internally". A
 skill still calling `secure_fs` on a file it no longer writes would have passed
 that test while doing nothing.
 
+
+## V1, first slice — Form 1040 lines 1-24 are derived (`agents/lib/return_builder.py`)
+
+**PR #109, 2026-09-08.** Backlog: "A `return_builder` module under `agents/lib`
+takes profile + tax law + structured parsed inputs and writes `result.json`.
+Migrate one form at a time behind V3, starting with 1040 lines 1-24." The
+roadmap's ordering put this after V3's first golden and V2's document contract,
+and both landed in the two PRs before it.
+
+**What was actually wrong.** The 1040's own arithmetic had no check anywhere.
+`tie_out` proves each document reached a line; `capabilities` proves the engine
+can model the situation; `preflight` proves the engine is there. Nothing
+recomputed line 9 from its eight terms, line 15 from 11 and 14, or line 24 from
+22 and 23 — the agent did all of it in prose, reading a Markdown reference. The
+reference file carries a written warning that line 6b "is IN the sum; omitting it
+understates AGI by exactly what the worksheet just computed", and a warning like
+that exists because a person is doing the sum.
+
+**The line drawn, which is V2's line applied to the 1040.** A COMPONENT is a
+judgement — what is taxable, whether to itemize, which lots are long-term, what
+the Credit Limit Worksheet allows. A DERIVED line is arithmetic over components.
+The module owns the second kind (1z, 9, 11, 14, 15, 16, 17, 18, 21, 22, 24) plus
+the six income lines that are a straight sum of the V2 parse records (1a, 2a, 2b,
+3a, 3b, 6a). Nothing that takes a decision moved.
+
+**The defect this surfaced.** `form_1040` had no line 17 field. The AMT is
+computed by `compute_form_6251`, recorded in `form_6251`, and routed by the skill
+to "Schedule 2 line 1 → 1040 line 17" — a line that did not exist in
+`result_template.json` or anywhere else in the repository. So an ISO exerciser's
+line 22 and line 24 were the regular tax alone: the AMT never reached total tax,
+which is the under-statement direction AGENTS.md §4 makes a hard error, on
+exactly the taxpayer Form 6251 is included for. `line_17_schedule2_part1` and
+`line_18_tax_plus_schedule2` are now fields, derived from `form_6251.amt`, and
+line 22 is 18 − 21 rather than 16 − 21.
+
+**Shipped:**
+- `agents/lib/return_builder.py`. `DERIVATIONS` is an ordered tuple of
+  `(field, form line, formula, rule)` in the FORM's order, each entry free to
+  read any line above it and none below — which is the dependency the printed
+  form already encodes. `SLICE_FIELDS` declares the boundary and
+  `DERIVED_FIELDS | COMPONENT_FIELDS` partitions it, so a field that is neither
+  is a field nobody owns.
+- The category-to-line map is READ OUT of `tie_out.CATEGORY_TARGETS`, never
+  listed again. A category qualifies only when it names exactly one `form_1040`
+  field inside the slice, which excludes `retirement_gross` (lines 4a and 5a
+  together — the IRA/pension split is not recoverable from a sum) and the two
+  withholding categories (lines 25a/25b, the next slice).
+- `tie_out.category_sums` extracted from `evaluate`, so the return cannot be
+  built from a different reading of the ledger than the gate checks it against.
+- Line 16 is the shared worksheet path: `net_capital_gains` for character,
+  `capital_gains_limits` for the breakpoints (the ONE read site X1/X2 left), and
+  `qdcg_worksheet_applies` to decide. `_Context.limits` holds the pair and is
+  present exactly when the worksheet runs — one field, because "the worksheet
+  applies" and "the breakpoints are loaded" are the same question and holding
+  them apart is how a caller comes to run half a worksheet.
+- Out of scope REFUSES (exit 2): a computed PFIC fund, whose §1291
+  reclassification moves amounts out of lines 3a and 3b after the broker reported
+  them — building those lines from the ledger would restore the qualified
+  treatment §1291 forbids. So does a net-NEGATIVE `ss_benefits` total, which the
+  tie-out already records as having no line-6a convention.
+- An unchanged return is NOT republished. V8's receipt binds each gate's verdict
+  to the digest of what it read, so rewriting an identical `result.json`
+  invalidates a pass that is still true.
+- `tax-compute` runs it twice — after Step 5 and after Step 8 — and `--check` is
+  a new Step 12.6 before the tie-out.
+
+**What deriving the income lines costs the tie-out, stated rather than left to be
+discovered.** Six of its category sums now PRODUCE the lines they are compared
+against, so for those six the comparison is an invariant of the build. What it
+still catches on them is an EDIT after the build, which is real — the agent keeps
+editing `result.json` for everything outside this slice — and is why `--check`
+runs as its own step before the gate. Every other check the gate makes is
+untouched. Same trade as V2's derived ledger.
+
+**Tests (50, `tests/test_return_builder.py`).** The acceptance test feeds the
+module the eval fixture's own documents and law with every derived line STRIPPED
+from `ca_mfj_2026`, and requires all of them back at the golden's hand-computed
+figures — including line 16's 34,122, where the worksheet beats a straight
+bracket run's 34,794 because ordinary income is already past the MFJ 0%
+breakpoint. A second test requires it to put back everything it stripped, since a
+builder deriving FEWER lines would pass the first on the ones it kept. Eleven
+mutation probes, all red.
+
+**Two probes that came back VACUOUS and what they were replaced with.** Dropping
+the `max(0.0, ...)` on the net long-term gain changed nothing on the first case
+built for it, because `compute_qdcg_tax` clamps a negative `net_ltcg` itself and
+because a preferential stack below the 0% breakpoint prices at 0% either way. The
+floor only decides whether the WORKSHEET RUNS, so the case that bites is a
+Schedule D loss LARGER than the qualified dividends, on income above the
+breakpoint: unfloored, the stack goes negative, `qdcg_worksheet_applies` reports
+False and the dividends are priced at ordinary rates. The source comment now says
+that rather than crediting the floor with the clamp.
+
+### The review round
+
+Local `codex exec`, four `/simplify` agents (reuse, simplification, privacy, altitude) and a read of the diff. Eight findings from Codex, two refuted, and the reviews changed the shape of the module.
+
+**Correctness, all fixed:**
+- **A missing component read as ZERO.** Omit line 7 while Schedule D still shows a gain and the gain left income while the QDCG worksheet, which reads Schedule D directly, still priced it and shrank the ordinary band by it. Both halves looked computed and the tax came out low. Two fixes: an ABSENT component is now a refusal (`result_template.json` ships every one of them at 0, so absent means the section was never initialised), and line 7 — the one component with an independent second source in the file — is cross-checked against Schedule D.
+- **A negative tax or deduction was accepted.** Type and finiteness do not catch −50,000. `MAY_BE_NEGATIVE` is exactly line 7 and line 8; everything else refuses. The check is on the INPUTS only: line 9 is negative for a large enough Schedule 1 loss and line 11 for a taxpayer whose business lost money, and an earlier draft that checked inside the reader every rule calls refused those correct returns at the moment the arithmetic produced the figure.
+- **Line 1z summed 1a and 1h by name.** Derived from the schema now, so the six lines between them land in the total on the day somebody adds a field for one.
+- **A present `form_6251` with a null `amt` read as a zero AMT**, and a recorded line 17 ABOVE the AMT was silently overwritten downward. Both refuse.
+- **A NaN bracket rate reached line 16.** The cache is read through `tax_law_fetcher.load_tax_law` now — the one read site every consumer shares, which refuses a non-finite number anywhere in the file and a cache reached through a symlink or an NTFS junction.
+- **The writer added a trailing newline that `rollover.apply_changes` does not**, so the two writers of `result.json` churned the digest V8's receipt binds each gate's verdict to. Matched to the incumbent, and pinned by a test.
+- **The AMT credit-ordering test could not detect the regression it names.** With a credit smaller than the regular tax, `max(0, 18 − 21)` and the wrong `max(0, 16 − 21) + 17` agree exactly. Rebuilt on a credit that exceeds it.
+
+**Two findings refuted, reproduced first:**
+- *Broker-reported qualified dividends are not necessarily qualified for the taxpayer.* True, and pre-existing: `tie_out` already REQUIRES line 3a to equal the ledger's box-1b sum, with a PFIC reclassification as the only sanctioned departure. A holding-period disqualification failed the hard gate before this module existed. Recorded as a schema gap, not changed here.
+- *Collectibles and unrecaptured §1250 gain need the Schedule D Tax Worksheet.* True and worse than reported — neither appears anywhere in the repository, so a coin sale or a depreciated rental is priced at 15% and the tax is understated. Added to `docs/contributing/tax-gotchas.md`; it predates this module and applies equally to an agent running the QDCG worksheet by hand.
+
+**Shape changes from the reviews:**
+- Every refusal moved into one `check()` at the top of `build()`. Two of them fired from inside `_context`, a function whose name says it only gathers numbers.
+- `Derivation` lost its `line` field (`form_line()` reads it out of the field name) and `DERIVED_ORDER` is sorted from those names, replacing a hand-kept order that was a third copy of the form's numbering. `formula` stopped being dead data: the refusal report now prints the RULE beside each line, because the agent is told to fix the component rather than the line.
+- Line 17 stopped being a `Derivation`. It computes nothing from the lines around it — it is INJECTED from another section, exactly as the ledger's six are — and `_Context` shrank to the four QDCG inputs.
+- `write_secure` replaced a hand-rolled `atomic_path` + `secure_path` pair. The trailing `secure_path` was a no-op that ran AFTER `os.replace`, so a failure there would have reported exit 1 over a write that had already landed.
+- `filing_package.assembly_order` decides Schedule 2 from line 17 now, not from `form_6251.amt` — one answer on the return rather than one on the 1040 and one in the form section.
+- The tie-out rationale in the module docstring was WRONG and is rewritten. "The gate now catches only an edit after the build" is the tempting answer; step 12.6 catches that one step earlier. The gate stays because it is the cross-agent hard gate and must hold on a workspace where this constructor never ran — those six checks are tautological only conditional on the builder having run, which is exactly what a gate cannot assume.
+
+**The limit this slice ships with, stated rather than discovered.** Step 12.6 writes no receipt, so `--filing-package` cannot prove it ran. Folding `differences()` into `tie_out` would close that and the input sets are already identical — but it would fail the hard gate on every workspace written before line 17 existed. That is a migration decision, and it is the next slice.

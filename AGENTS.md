@@ -199,7 +199,11 @@ are plain Markdown instructions and are written to be executable that way.
   tie-out HARD GATE (`agents/lib/tie_out.py`, exit 2 = return NOT complete):
   documents-without-records, records-without-files, and per-category
   ledger-vs-result sum mismatches all fail deterministically, so the dropped-1099
-  CP2000 scenario cannot pass. Unverifiable categories WARN loudly, never
+  CP2000 scenario cannot pass. Form 1040 lines 1-24 that are ARITHMETIC over
+  other lines, plus the six income lines the records sum to, are DERIVED by
+  `agents/lib/return_builder.py` and must never be typed; step 12.6 `--check`
+  re-asserts them. The AMT reaches total tax through line 17 only because that
+  line exists — for years it did not. Unverifiable categories WARN loudly, never
   silently pass. `tax-review` audits the aggregated result and structurally
   cannot catch intake drops; only this ledger-to-result comparison can.
 - **Never silently out-of-scope** — `tax-compute` Step 0.7 runs the capability
@@ -285,7 +289,7 @@ tests/                           # pytest suite
 
 `agents/lib/` holds the computation engine — `tax_computations.py` (all the
 parameterized tax math), `tax_law_fetcher.py` (cache schema, freshness, source
-pinning), `parse_utils.py`, `capabilities.py`, `tie_out.py`, `irs_dates.py`, `preflight.py`
+pinning), `parse_utils.py`, `capabilities.py`, `tie_out.py`, `return_builder.py`, `irs_dates.py`, `preflight.py`
 (the engine gate), `run.sh` (the launcher every skill invokes) and one module per planning skill. Every module
 exposes a `_main` CLI entry point; run with no arguments a few
 (`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer`) self-test,

@@ -136,8 +136,51 @@ Read each reference file when you reach its steps; do not read them all up front
 | 11 – 11.5 | International compliance and the optimization discovery engine | [references/international-and-optimization.md](references/international-and-optimization.md) |
 | 12, 13 | Write result files and produce the summary | [references/finalize.md](references/finalize.md) |
 
-Steps 0.5, 0.7 and 12.7 are gates and are written out in full in this file. Never
-skip one because a reference file did not mention it.
+Steps 0.5, 0.7, 12.6 and 12.7 are gates and are written out in full in this
+file. Never skip one because a reference file did not mention it.
+
+### Form 1040 lines 1-24 are DERIVED — run the builder, do not type them
+
+```
+sh agents/lib/run.sh -m agents.lib.return_builder --workspace .
+```
+
+Every 1040 line that is ARITHMETIC over other lines — 1z, 9, 11, 14, 15, 16, 17,
+18, 21, 22, 24 — plus the six income lines that are a straight sum of the parse
+records (1a, 2a, 2b, 3a, 3b, 6a) is computed by that command and written to
+`result.json`. **Do not write one of them by hand.** Everything else on lines
+1-24 is a COMPONENT you still decide: what is taxable, whether to itemize, what
+the credits allow.
+
+It is idempotent and it does not rewrite an unchanged file, so **run it whenever
+a group of components is finished** and let Step 12.6 be what proves you
+converged. The form's own dependencies make two passes the natural rhythm —
+Form 6251 reads 1040 line 15, and Schedule 8812's Credit Limit Worksheet reads
+line 18 — so run it at least:
+
+- **After Step 5**, once the deductions are set. Lines 1z, 9, 11, 14, 15 and 16
+  come back final — line 16 is the Qualified Dividends and Capital Gain Tax
+  Worksheet, so Step 6 is now reading its answer rather than running it, and
+  Step 6.5's AMT has the line 15 it needs.
+- **After Step 8**, once the credits and other taxes are in. Lines 17, 18, 21,
+  22 and 24 come back final.
+
+Between those two passes lines 21-24 hold a figure built from components that
+are still zero, and it is not marked as provisional — the template ships every
+component at 0 and nothing can tell "decided as zero" from "not decided yet".
+Do not quote a total tax to the user until the second pass has run.
+
+- **Exit 0** — built (or already agreed). It prints every line it changed, old
+  and new. If it changed one, RE-READ `result.json` before using any figure
+  below it: a changed line 16 means the CTC base, the state return and the
+  payments section were computed from a number that is no longer there.
+- **Exit 2 — STOP.** The return carries something this module does not model
+  (today: a computed PFIC fund, whose §1291 reclassification moves amounts out
+  of lines 3a and 3b), or the tax-law cache cannot price the return. Read the
+  message; do not build lines 1-24 around it.
+- **Exit 1** — the check could not run: a missing `result.json`,
+  `parse_ledger.json`, profile or cache. Same blocking condition as a missing
+  engine — fix the input, never proceed as though the lines were right.
 
 ## Gates that run regardless
 
@@ -145,6 +188,25 @@ Both gates write their verdict, and the digest of every file they read, into
 `validation_receipt.json` — `/tax-generate --filing-package` refuses to assemble
 a package whose gates never ran or ran against other inputs. Nothing here to do:
 the tools write it. Do NOT edit that file; re-run the gate instead.
+
+### Step 12.6: Form 1040 lines 1-24 still agree with their components
+
+```
+sh agents/lib/run.sh -m agents.lib.return_builder --workspace . --check
+```
+
+The same rules, asserting instead of writing. It runs BEFORE the tie-out because
+a derived line edited by hand after the build is exactly what the tie-out's
+income checks can no longer see on their own: six of its category sums now
+PRODUCE the lines they are compared against, so a later edit is the failure mode
+that survived deriving them.
+
+- **Exit 0:** every derived line matches. Continue.
+- **Exit 2: STOP.** Each disagreeing line is named with both figures. Do not
+  reconcile by editing the line — the components are the answer. Fix the
+  component that is wrong, or re-run the builder without `--check` if the
+  component was right and the line was stale.
+- **Exit 1:** could not run — fix the input; do not bypass.
 
 ### Step 12.7: Parse-to-return tie-out (HARD GATE)
 

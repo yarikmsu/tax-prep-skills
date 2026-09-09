@@ -104,6 +104,7 @@ SKILL_MODULES = (
      "REQUIRED_ANSWERS"),
     ("agents.lib.parse_records", "the per-document parse records the ledger is "
      "derived from", "build_ledger"),
+    ("agents.lib.return_builder", "the derived Form 1040 lines 1-24", "DERIVATIONS"),
     ("agents.lib.archive", "/tax-archive's year-end cutover", "archive_year"),
     ("agents.lib.crypto_importer", "/tax-parse-crypto's Form 8949 lot engine", "CryptoTransaction"),
     ("agents.lib.filing_package", "/tax-generate's filing-package assembly", "assembly_order"),

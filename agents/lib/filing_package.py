@@ -170,8 +170,13 @@ def _derived_schedules(result: dict) -> list:
                     "VIN detail to attach; add it before packaging")
         out.append(("Schedule 1-A (Additional Deductions — tips/overtime/"
                     "car-loan/senior)", "1A", "schedule_1a"))
+    # BOTH parts read off the 1040, which is where the return states them:
+    # Part I is line 17 and Part II is line 23. The AMT test used to read
+    # `form_6251.amt` directly, from the days when line 17 had no field — so
+    # "is there a Schedule 2 Part I" had one answer on the 1040 and another in
+    # `form_6251`, and `return_builder` now derives the first from the second.
     if (_field_num(f1040, "line_23_other_taxes", "line_23") != 0
-            or _field_num(result.get("form_6251") or {}, "amt", "amt") > 0):
+            or _field_num(f1040, "line_17_schedule2_part1", "line_17") != 0):
         out.append(("Schedule 2 (Additional Taxes)", "02", None))
     if (_field_num(f1040, "line_20_schedule3_line8", "line_20") != 0
             or _field_num(f1040, "line_31_schedule3_part2", "line_31") != 0
