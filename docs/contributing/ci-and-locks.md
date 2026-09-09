@@ -54,6 +54,19 @@ The shallow-checkout guard asks git (`rev-parse --is-shallow-repository`) rather
 than whether the root LOOKS like a sha, because a grafted boundary looks exactly
 like one and the check could never have fired.
 
+## Two Python versions, because the interpreter decides some results
+
+Relocated out of AGENTS.md §7 by Y5 (PR #113), which keeps the rule — a green
+local suite is not a green CI, so reinstall from the lock rather than letting the
+venv drift off it — and points here for the evidence.
+
+The local `.venv` follows whatever `python3` is, while the lock is compiled for
+3.12. That alone would only be a version-skew nuisance. What makes CI run **3.12
+and 3.14 and report both** is that the interpreter changes ANSWERS, not just
+availability: `Popen.communicate()` re-flushes a stdin the caller already closed,
+which RAISES on 3.12 and does not on 3.13+. A suite green on one is not evidence
+about the other, and neither version is the "real" one.
+
 ## Three locks, and why the split is structural
 
 | lock | holds | installed by |

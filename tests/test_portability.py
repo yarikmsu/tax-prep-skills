@@ -1959,19 +1959,89 @@ class TestInstructionFiles:
     combined instruction chain at 32 KiB and Copilot CLI truncates instruction
     files around 160 lines (bug #2111). Content past the cut is invisible with no
     error, so the security rules must come first and the file must stay small.
+
+    **A cap alone is the wrong control, and Y5 is what that cost.** The previous
+    one sat 10 bytes above the file, so a five-line addition for an unrelated
+    change had to evict three passages of live content — and which safeguard died
+    was decided by whoever was editing, at the end of a task about something else.
+    A cap can only force a choice; what makes the choice safe is the rest of this
+    class: a stated criterion for what may leave (AGENTS.md §9 — the instruction
+    files carry the ALARMS, `docs/contributing/` carries the ANSWERS), a complete
+    index so a relocated file stays reachable, and a check that every pointer
+    resolves. Relocating has to be the CHEAP move or trimming will keep winning.
     """
 
-    AGENTS_MAX_BYTES = 28 * 1024
+    CODEX_CHAIN_LIMIT = 32 * 1024
+    AGENTS_MAX_BYTES = 26 * 1024
+    CLAUDE_MAX_BYTES = 8 * 1024
+
+    def test_the_agents_cap_is_pinned_at_its_value(self):
+        """A RATCHET, and the reason it is a bare equality.
+
+        The first version of this test asserted the cap left an eighth of Codex's
+        32 KiB unspent, which reads like a principle and permits a cap of 28 KiB —
+        the exact pre-Y5 cap whose ten bytes of headroom this class exists to
+        describe. An inequality that sanctions the status quo ante is worse than
+        no test: it reads as a guard while licensing the thing it names.
+
+        So the number itself is pinned. The reserve is what CHOSE it — Codex's
+        limit covers the whole instruction CHAIN, and a nested AGENTS.md plus the
+        user's own global instructions land in the same budget, so a cap set AT
+        the limit is spent by content nobody in this repository wrote. Lowering it
+        needs no argument. RAISING it is the move this class refuses, and doing so
+        means editing this line and saying why in the commit message.
+        """
+        assert self.AGENTS_MAX_BYTES == 26 * 1024, (
+            "the AGENTS.md cap moved. It reserves "
+            f"{self.CODEX_CHAIN_LIMIT - self.AGENTS_MAX_BYTES} bytes of Codex's "
+            f"{self.CODEX_CHAIN_LIMIT}-byte chain limit for the rest of the chain; "
+            "raising it to fit new content is what AGENTS.md §9's criterion exists "
+            "to replace")
+
+    @staticmethod
+    def _section_weights(text):
+        """Bytes per `## ` section, heaviest first — the failure message's payload."""
+        weights, name = [], None
+        for line in text.splitlines(keepends=True):
+            if line.startswith("## "):
+                weights.append([line.strip(), 0])
+                name = weights[-1]
+            if name:
+                name[1] += len(line.encode())
+        return sorted(weights, key=lambda row: -row[1])
 
     def test_agents_md_exists_and_under_size_cap(self):
         agents = REPO / "AGENTS.md"
         assert agents.is_file()
+        text = agents.read_text()
         size = agents.stat().st_size
+        # The message carries the section weights because of WHEN it fires: at
+        # the end of an unrelated task, to someone who now has to choose. Naming
+        # the criterion without the candidates leaves the cheapest move —
+        # deleting whatever they are looking at — still the most available one.
+        heaviest = "\n  ".join(f"{n:>6} bytes  {name}"
+                                for name, n in self._section_weights(text)[:3])
         assert size <= self.AGENTS_MAX_BYTES, (
             f"AGENTS.md is {size} bytes, over the {self.AGENTS_MAX_BYTES} cap — "
             "Codex silently truncates the combined instruction chain at 32 KiB, so "
-            "content past the cap is invisible with no error. Move depth into "
-            "docs/contributing/ and link it instead")
+            "content past the cap is invisible with no error.\n\nDo NOT trim a rule "
+            "to fit and do NOT raise the cap. Apply §9's criterion — a line stays "
+            "only if an agent who never looks it up would otherwise do the wrong "
+            "thing — and move the ANSWERS into docs/contributing/, linked from §9 "
+            f"and from the section they left. Heaviest sections:\n  {heaviest}")
+
+    def test_claude_md_is_thin_in_bytes_as_well_as_lines(self):
+        """The line cap alone is gameable, and by the one edit most likely to try.
+
+        Every line here is wrapped prose, so a section can be re-flowed onto
+        fewer, longer lines and shed no weight at all while the line count drops.
+        Bytes are what the session actually pays for.
+        """
+        size = (REPO / "CLAUDE.md").stat().st_size
+        assert size <= self.CLAUDE_MAX_BYTES, (
+            f"CLAUDE.md is {size} bytes, over the {self.CLAUDE_MAX_BYTES} cap. It "
+            "loads on top of AGENTS.md in every session; hook and subagent depth "
+            "belongs in docs/contributing/claude-automation.md")
 
     def test_claude_md_imports_agents_md_as_first_content_line(self):
         lines = [ln.strip() for ln in (REPO / "CLAUDE.md").read_text().splitlines()]
@@ -1981,6 +2051,11 @@ class TestInstructionFiles:
             "shared project truth loads before anything Claude-specific")
 
     def test_claude_md_is_thin(self):
+        # Kept beside the byte cap rather than replaced by it. At this file's
+        # wrap the byte cap always fires first, so what this one still catches is
+        # the opposite shape: many short lines — a long bulleted list, or prose
+        # broken one clause per line — which is cheap in bytes and expensive to
+        # read, and which Copilot CLI truncates on regardless.
         n = len((REPO / "CLAUDE.md").read_text().splitlines())
         assert n <= 150, (
             f"CLAUDE.md is {n} lines — it may hold only Claude-specific content; "
@@ -2027,17 +2102,210 @@ class TestInstructionFiles:
             "these point readers at CLAUDE.md for content that moved out of it:\n  "
             + "\n  ".join(offenders))
 
-    def test_relocated_reference_docs_exist_and_are_linked(self):
+    # The five that existed before Y5 added an index rule. Kept as a FLOOR under
+    # the derived roster below: a regex that stops matching reports a clean pass,
+    # and this is what makes that visible.
+    RELOCATED_BEFORE_Y5 = ("docs/ops/review-subagent-acceptance.md",
+                           "docs/contributing/skill-catalog.md",
+                           "docs/contributing/test-invariants.md",
+                           "docs/contributing/tax-gotchas.md",
+                           "docs/contributing/agents-compat.md",
+                           "docs/contributing/state-module-playbook.md")
+
+    # The trailing boundary is load-bearing: without it `pii-gate.md.bak`
+    # matches as `pii-gate.md`, and a pointer renamed to a target that does
+    # not exist passes every check in this class.
+    POINTER = re.compile(r"docs/(?:contributing|ops)/[a-z0-9._-]+\.md(?![\w.-])")
+
+    @classmethod
+    def _names(cls, text):
+        """The doc paths `text` points at, as whole tokens.
+
+        A bare `in` test cannot do this job: `docs/contributing/pii-gate.md` is a
+        SUBSTRING of `docs/contributing/pii-gate.md.bak`, so renaming every
+        pointer to a target that does not exist passed the index check, the
+        backlink check and the pointer sweep at once — the sweep because its own
+        boundary made the broken pointer invisible, and the other two because
+        they matched the prefix.
+        """
+        return set(cls.POINTER.findall(text))
+
+    def _instruction_text(self):
+        return "\n".join((REPO / n).read_text() for n in ("AGENTS.md", "CLAUDE.md"))
+
+    def test_every_relocation_pointer_resolves(self):
+        """A pointer to a file that is not there is worse than no pointer: the
+        agent reads a rule saying the depth exists, goes looking, and concludes
+        the rule was the whole of it."""
+        found = set(self.POINTER.findall(self._instruction_text()))
+        assert found >= set(self.RELOCATED_BEFORE_Y5), (
+            "the pointer sweep no longer sees docs it has always named — the "
+            "regex stopped matching, not the pointers stopped existing:\n  "
+            + "\n  ".join(sorted(set(self.RELOCATED_BEFORE_Y5) - found)))
+        missing = sorted(rel for rel in found if not (REPO / rel).is_file())
+        assert not missing, (
+            "the instruction files point at these, and they are not there:\n  "
+            + "\n  ".join(missing))
+
+    def test_the_contributing_index_is_complete(self):
+        """The half of a relocation that is easy to lose is REACHABILITY.
+
+        Moving the text out is one edit and linking it is another, and only the
+        first one is visible in the diff you were reading. A relocated file
+        nothing indexes is not moved, it is deleted with extra steps — so §9
+        indexes `docs/contributing/` in FULL and the directory listing, not a
+        hand-kept list, is what this test iterates.
+        """
         agents_text = (REPO / "AGENTS.md").read_text()
-        for rel in ("docs/contributing/skill-catalog.md",
-                    "docs/contributing/test-invariants.md",
-                    "docs/contributing/tax-gotchas.md",
-                    "docs/contributing/agents-compat.md",
-                    "docs/contributing/state-module-playbook.md"):
-            assert (REPO / rel).is_file(), f"{rel} is referenced but missing"
-            assert rel in agents_text, (
-                f"{rel} exists but AGENTS.md never points at it — relocated depth "
-                "that nothing links to is lost, not moved")
+        _, sep, index = agents_text.partition("## 9. Where the deep documentation lives")
+        assert sep, "AGENTS.md §9 has been renamed; this test reads it by heading"
+        # Scoped to §9 on purpose. Searching the whole file would pass on a doc
+        # that some OTHER section happens to link — which is how the first
+        # version of this test read a deleted index row as present.
+        # ROWS, not the whole tail: §9 is currently last, so a partition at its
+        # heading would count an HTML comment — or a future §10 — as the index.
+        rows = "\n".join(ln for ln in index.splitlines() if ln.startswith("|"))
+        # Spelled as whole literals rather than joined from parts: the hook's
+        # watched-set test locates the paths a module reads by scanning for
+        # them, and a path joined one segment at a time reads as a bare top
+        # directory, which is not a watched root. Both of these are.
+        indexed = self._names(rows)
+        unindexed = [f"{sub}/{path.name}"
+                     for sub in ("docs/contributing", "docs/ops")
+                     for path in sorted((REPO / sub).glob("*.md"))
+                     if f"{sub}/{path.name}" not in indexed]
+        assert not unindexed, (
+            "these exist and AGENTS.md §9 never names them, so an agent that does "
+            "not already know which section they belong to cannot find them:\n  "
+            + "\n  ".join(unindexed))
+
+    # Every doc Y5 relocated INTO, and the instruction file the content left.
+    # Declared rather than derived from the provenance lines: `skill-catalog.md`
+    # also opens "Relocated ... from CLAUDE.md", from a much older move, and a
+    # backlink from CLAUDE.md would be WRONG — that content is agent-neutral and
+    # belongs to AGENTS.md, which links it. Provenance records where text came
+    # from; it does not say a live section still owes it a pointer.
+    PROVENANCE = re.compile(r"[Rr]elocated out of `(AGENTS\.md|CLAUDE\.md)`")
+
+    def test_each_relocation_is_linked_from_the_file_it_left(self):
+        """§9's index makes a file reachable from AGENTS.md. That is not the same
+        as reachable from the SECTION it left: an agent editing a hook reads the
+        Hooks section, not the documentation index.
+
+        So the backlink is required OUTSIDE §9 — passing on the index row alone
+        was the first version of this test, and removing §1's own `pii-gate.md`
+        pointer left it green.
+
+        The roster is DERIVED from the provenance lines rather than hand-kept,
+        for the reason the index test iterates the directory: a relocation nobody
+        adds to a list is exactly the one that loses its backlink. `Relocated out
+        of` is the phrase that carries it; `skill-catalog.md` opens "Relocated
+        verbatim FROM CLAUDE.md", a much older move whose content is now
+        agent-neutral and owed a backlink from AGENTS.md, which has one.
+        """
+        relocations = {}
+        for path in sorted((REPO / "docs" / "contributing").glob("*.md")):
+            found = self.PROVENANCE.search(path.read_text())
+            if found:
+                relocations[f"docs/contributing/{path.name}"] = found.group(1)
+        assert len(relocations) >= 3, (
+            "the provenance sweep found only "
+            f"{sorted(relocations)} — the phrase it reads has been reworded, and "
+            "a derived roster that stops matching reports a clean pass over "
+            "nothing")
+
+        for rel, source in relocations.items():
+            body = (REPO / source).read_text()
+            outside_index = body.partition("## 9. Where the deep documentation lives")[0]
+            assert rel in self._names(outside_index), (
+                f"{rel} holds depth cut out of {source}, and the only pointer to "
+                f"it in {source} is the §9 index row — an agent reads the section "
+                "it edits, not the documentation index")
+
+    RESTATEMENT_WORDS = 12
+
+    @staticmethod
+    def _shingles(text, n):
+        words = " ".join(re.sub(r"[`*_#|>-]", " ", text).split()).lower().split()
+        return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+    def test_a_relocation_target_does_not_restate_what_the_file_kept(self):
+        """AGENTS.md §9 asserts nothing below it is duplicated above. Assert it.
+
+        The first version of this change made that claim and broke it in nine
+        places — 18% of CLAUDE.md was verbatim in the file it had just relocated
+        into, including the whole reviewer-grant sentence. Every one of those is a
+        pair that can now disagree, in a change set whose entire argument is that
+        a second copy is how disagreement starts. The claim was prose, so nothing
+        caught it.
+
+        A run of twelve consecutive words is the threshold: shared identifiers,
+        paths and short technical phrases stay legal, a restated RULE does not.
+        The fix when this fires is to say why the rule is what it is, not to say
+        the rule again — the instruction file already did that, once.
+        """
+        offenders = []
+        for path in sorted((REPO / "docs" / "contributing").glob("*.md")):
+            rel = f"docs/contributing/{path.name}"
+            body = path.read_text()
+            found = self.PROVENANCE.search(body)
+            if not found:
+                continue
+            shared = (self._shingles(body, self.RESTATEMENT_WORDS)
+                      & self._shingles((REPO / found.group(1)).read_text(),
+                                       self.RESTATEMENT_WORDS))
+            offenders += [f"{rel} restates {found.group(1)}: ...{run}..."
+                          for run in sorted(shared)]
+        assert not offenders, (
+            f"{len(offenders)} shared runs of {self.RESTATEMENT_WORDS}+ words "
+            "between an instruction file and the doc it relocated into:\n  "
+            + "\n  ".join(offenders[:10]))
+
+    # Rules that may never leave the always-loaded files, whatever the cap says.
+    #
+    # This is the counterweight to every OTHER test in this class, and without it
+    # they are actively harmful: a byte cap makes DELETING A RULE the cheapest way
+    # to go green. `test_security_rules_are_front_loaded` does not cover it — it
+    # asks for the words "ssn", "chmod 600" and "never" somewhere in the first
+    # hundred lines, which survives deleting the full-SSN prohibition outright,
+    # because §1 says all three of those words in half a dozen other places.
+    #
+    # Deliberately SHORT. Every entry is a rule whose loss produces a wrong return
+    # or a disclosure, not merely content worth keeping; the criterion in §9 is
+    # what governs everything else, and a pin on ordinary prose would make the
+    # file unable to be edited at all.
+    LOAD_BEARING = (
+        ("AGENTS.md", "NEVER store or emit a full SSN"),
+        ("AGENTS.md", "Never run a real return on a vendor cloud VM"),
+        ("AGENTS.md", "Never paste taxpayer data into a GitHub issue"),
+        ("AGENTS.md", "Never hardcode a rate, bracket, cap, or threshold"),
+        ("AGENTS.md", "you cannot confirm the figure is current: STOP"),
+        ("AGENTS.md", "is the single PII gate"),
+        ("AGENTS.md", "OVER-states the number the user acts on is a hard error"),
+        ("AGENTS.md", "Never credit an AI assistant as an author"),
+        # §9's criterion. This class's docstring credits it as the control that
+        # makes the cap safe, and deleting it used to leave every test green.
+        ("AGENTS.md", "This file carries the ALARMS; these carry the ANSWERS"),
+        ("CLAUDE.md", "Never run `git push` yourself"),
+        ("CLAUDE.md", "**or `Bash`**"),
+    )
+
+    def test_the_cap_cannot_be_met_by_deleting_a_rule(self):
+        """Every check above rewards a SMALLER file. This one does not."""
+        # Whitespace-normalised on both sides: these files are wrapped prose, and
+        # a pin that a re-flow can break is a pin that gets deleted rather than
+        # fixed.
+        bodies = {name: " ".join((REPO / name).read_text().split())
+                  for name in {n for n, _ in self.LOAD_BEARING}}
+        missing = [f"{name}: {rule!r}" for name, rule in self.LOAD_BEARING
+                   if " ".join(rule.split()) not in bodies[name]]
+        assert not missing, (
+            "these rules are gone from the file that must state them:\n  "
+            + "\n  ".join(missing)
+            + "\n\nIf one was reworded rather than removed, update this list in "
+            "the same commit. If one was RELOCATED, put it back: these are the "
+            "rules an agent breaks without ever thinking to look them up, which "
+            "is the whole of what an instruction file is for.")
 
 
 class TestVSCodeSettings:

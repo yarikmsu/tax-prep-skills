@@ -53,40 +53,19 @@ These rules are absolute. Violating one is worse than failing the task.
   than a request; one that cannot says so in its output. Which, and why:
   `docs/contributing/parse-boundary.md`
 - **Encryption at rest** assumed: FileVault or BitLocker.
-- **`scripts/pre-commit-pii-scan.sh` is the single PII gate.** It blocks
-  sensitive file types, sensitive filenames, and every runtime workspace
-  directory named above, each matched root-anchored AND nested so a clone
-  checked out inside another one is covered too. `.claude/` is the one that
-  cannot take a directory rule, because it also holds tracked project config:
-  there the directory is the SCOPE and the basename is the RULE. The blocked
-  filenames stay in that script rather than in prose here —
-  `generate_tax_pdf.py` is the counter-intuitive member: source code the content
-  scan cannot vet, carrying the taxpayer's NAME, which has neither an SSN nor a
-  credential shape. The content scan then reads the
-  *added* lines for full SSNs in every written form (hyphen, a run of spaces,
-  tab, dot or slash — the same separator on both sides, which is what keeps a
-  money range from reading as an SSN — or nine bare digits) and high-confidence
-  credentials, reporting file and match count and never the value. The same
-  patterns run against the PATHNAME, before any exemption — a file named after
-  an SSN discloses it whatever it contains — and every path printed in a block
-  message is redacted. `tests/fixtures/` and `documents/.gitkeep` are exempt
-  from the filename and path rules ONLY; the content and pathname scans still
-  cover them. Run with no argument it scans the index (the git hook); with
-  `<base>...<head>` it scans **each commit in the range individually**, merge
-  commits included and against their first parent — a net diff hides a secret
-  that a later commit deleted, and a conflict resolution exists in neither
-  parent. `.pii-allowlist` is read from **each scanned commit** (from the index
-  in hook mode, with no working-tree fallback), so an exemption must be STAGED
-  with the synthetic value or earlier; allowlisting it afterwards does not clear
-  the commit that leaked it. Every git failure BLOCKS, and so does a `grep` that
-  cannot RUN (`|| true` cannot tell "no match" from "grep failed"). Every
-  intermediate lives in one 0700 work directory removed by a single trap: the
-  raw patch holds the unredacted value. The scan pins `LC_ALL=C` and `cd`s to
-  the repository root — under a UTF-8 locale grep silently skips any line that
-  is not valid UTF-8 (one Latin-1 byte hid every match on it), and a pathspec
-  resolved from a subdirectory matched nothing while still printing the clean
-  banner. Add rules in that one place — they were previously hand-mirrored into
+- **`scripts/pre-commit-pii-scan.sh` is the single PII gate**, and rules go in
+  that script and nowhere else — they were previously hand-mirrored into
   `.github/workflows/ci.yml`, and four bypasses shipped to both copies at once.
+  It blocks sensitive file types, sensitive filenames, every runtime workspace
+  directory named above, and full SSNs or credentials in the ADDED lines; the
+  same SSN patterns run against the PATHNAME before any exemption. It fails
+  CLOSED — a git failure or a `grep` that could not run BLOCKS. Two consequences
+  for anything you commit: `tests/fixtures/` is exempt from the filename and
+  path rules ONLY, the content scan still reading it, and `.pii-allowlist` is
+  read from **each scanned commit**, so an exemption must be STAGED with the
+  synthetic value or earlier — allowlisting afterwards does not clear the commit
+  that leaked it. What it matches and how it fails:
+  `docs/contributing/pii-gate.md`
 
 Git hooks are the host-side enforcement backstop and work the same on every
 agent. `bash agents/install.sh` installs them. They still fire on a plain
@@ -102,12 +81,10 @@ and the usual cause is a `web_search` that is not live — Codex ships
 - Skills **fetch current-year rates, brackets and thresholds at runtime** from
   authoritative sources (IRS.gov and state revenue departments), caching them in
   `tax_law_<year>.json`. Never hardcode a rate, bracket, cap, or threshold.
-- **Live web results are required.** Several agents default to cached or
-  time-shifted web results:
-  - **Codex** — the cached default above; set it live before any tax-law fetch.
-  - **Copilot CLI** `web_search` publishes no freshness contract; **VS Code
-    `#fetch`** caches pages for about five minutes.
-  - **Kimi Code** has no web search unless you wire it up.
+- **Live web results are required, and several agents do not give them by
+  default** — one ships cached, one caches for minutes, one has no web search at
+  all until you wire it up. Confirm YOURS before any tax-law fetch; which agent
+  does what: `docs/contributing/agents-compat.md`.
 - **Narrow enumerated exception:** CA's statutory-fixed
   `mental_health_surcharge` rate and threshold may remain inline with their
   R&TC §17043 citation. A new state surtax is fetched even when currently
@@ -153,10 +130,9 @@ tax-review   → EA + IRS officer perspective review
 tax-fbar     → Prepare FBAR filing document (if applicable)
 ```
 
-Planning skills (`tax-project`, `tax-withholding`, `tax-scenario`,
-`tax-roth-convert`, `tax-harvest`, `tax-retirement`, `tax-ptet`, `tax-calendar`,
-`tax-extend`, `tax-amend`, `tax-safe-harbor`) branch off this line and are
-optional. Per-skill design notes: `docs/contributing/skill-catalog.md`.
+Eleven planning skills branch off this line and are optional; they are the
+`tax-*` directories not named above. Per-skill design notes and scope limits:
+`docs/contributing/skill-catalog.md`.
 
 ### Invoking a skill
 
@@ -190,14 +166,13 @@ are plain Markdown instructions and are written to be executable that way.
 - **Modular** — each skill works independently; inapplicable sections are
   skipped rather than guessed at.
 - **Parallel where available** — document parsing splits into independent
-  sub-tasks grouped by institution/language. Every such skill also documents a
-  sequential fallback; agents without sub-task support run them in order.
+  sub-tasks grouped by institution or language, and every such skill documents
+  the sequential fallback for an agent without sub-tasks.
 - **Arithmetic chain of custody** — `tax-parse` step 6.5 emits
   `parse_ledger.json` (one record per source document, key boxes keyed by
   canonical category, skips carry reasons) and `tax-compute` Step 12.7 runs the
-  tie-out HARD GATE (`agents/lib/tie_out.py`, exit 2 = return NOT complete):
-  documents-without-records, records-without-files, and per-category
-  ledger-vs-result sum mismatches all fail deterministically, so the dropped-1099
+  tie-out HARD GATE (`agents/lib/tie_out.py`, exit 2 = return NOT complete),
+  which compares the ledger to the result deterministically, so the dropped-1099
   CP2000 scenario cannot pass. Form 1040 lines 1-38 that are ARITHMETIC over
   other lines, plus the eight lines the records sum to, are DERIVED by
   `agents/lib/return_builder.py` and must never be typed; step 12.6 `--check`
@@ -207,24 +182,17 @@ are plain Markdown instructions and are written to be executable that way.
   loudly, never silently pass. `tax-review` audits the aggregated result and structurally
   cannot catch intake drops; only this ledger-to-result comparison can.
 - **Never silently out-of-scope** — `tax-compute` Step 0.7 runs the capability
-  gate (`agents/lib/capabilities.py`). Situations the engine cannot compute
-  (rental Schedule E, Form 8962, part-year, NYC, kiddie tax, Schedule H, PFIC
-  with a taxable event) BLOCK with the named form (exit 2) unless the user
-  explicitly acknowledges the limitation in `acknowledged_limitations`, with the
-  decision recorded in `answers.md`. Unknown ids hard-error so a typo cannot
-  silently unblock nothing. Manual-worksheet items plus the state-scope note form
-  the `meta.limitations` manifest, copied verbatim into `result.json` and printed
-  on page 1 of the generated PDF. Those manual items are Forms 8863, 2441,
-  5695/8936, gambling, FEIE, and the life-event set — marriage/divorce year, §121
-  home sale with its 1099-S rule, inheritance basis step-up, pre-2019-decree
-  alimony (post-2018 decrees carry the CA nonconformity — CA still taxes and
-  deducts via Schedule CA), and Form 8839 adoption. **Form 8958 is the exception:
-  it is STATUS+STATE-driven, not flag-driven** — every MFS filer domiciled in a
-  community-property state (AZ/CA/ID/LA/NV/NM/TX/WA/WI; AK/SD/TN are elective and
-  not auto-flagged) gets the manifest line. Life-event flags read False when
-  absent, so legacy profiles still pass. Every capability rule's flag must exist
-  in `taxpayer_profile_template.json` **and** be asked by the `tax-setup`
-  interview (enforced by test) — a rule keyed on a flag nothing sets is dead code.
+  gate (`agents/lib/capabilities.py`). Situations the engine cannot compute BLOCK
+  with the named form (exit 2) unless the user explicitly acknowledges the
+  limitation in `acknowledged_limitations`, with the decision recorded in
+  `answers.md`. Unknown ids hard-error so a typo cannot silently unblock nothing.
+  Manual-worksheet items plus the state-scope note form the `meta.limitations`
+  manifest, copied verbatim into `result.json` and printed on page 1 of the
+  generated PDF. Every capability rule's flag must exist in
+  `taxpayer_profile_template.json` **and** be asked by the `tax-setup` interview
+  (enforced by test) — a rule keyed on a flag nothing sets is dead code, and Form
+  8958 is the one rule that is STATUS+STATE-driven rather than flag-driven. What
+  blocks, what is manual: `docs/contributing/skill-catalog.md`
 - **A skill without its engine must not compute** — every gate above, and every
   planning skill's whole computation, runs as a script under `agents/lib/`, a
   SIBLING of `.agents/skills/` that does not travel when a skill is copied
@@ -236,11 +204,10 @@ are plain Markdown instructions and are written to be executable that way.
   test: `codex-loop` and `state-module`, contributor tooling run from a clone that
   has the engine, and `tax-safe-harbor`, which calls none. Auditing which skills
   call the engine (two forms; a grep cannot): `docs/contributing/skill-catalog.md`.
-  **Every engine call goes through `sh agents/lib/run.sh`** — one launcher; it
-  activates the workspace venv (either layout) and execs the interpreter that
-  venv installed, and `agents/lib/__init__.py` refuses to import outside that
-  venv (exit 2) whenever one exists — preflight excepted, so it can still
-  report the defect. Why: `docs/contributing/agents-compat.md`.
+  **Every engine call goes through `sh agents/lib/run.sh`** — one launcher onto
+  the workspace venv, and `agents/lib/__init__.py` refuses to import outside it
+  (exit 2) whenever one exists, preflight excepted so it can still report the
+  defect. Why: `docs/contributing/agents-compat.md`.
 - **State regimes are typed** — `tax_law state.type` (`graduated_income` |
   `none`): a no-income-tax state is a POSITIVE declaration, never an empty
   section. See `docs/contributing/state-module-playbook.md`.
@@ -268,9 +235,9 @@ modeled. Adding a state is community-contribution territory — follow
 .claude/skills/<name>            # Relative symlinks -> ../../.agents/skills/<name>
                                  # (Claude Code project-local; Cursor reads them too).
                                  # DIRECTORY links: references/ must travel along.
-.claude/settings.json            # Claude Code PostToolUse hooks (tool-time only;
-.claude/hooks/*.sh               # the git hooks stay the cross-agent backstop)
-.claude/agents/*.md              # Claude Code read-only review subagents
+.claude/{settings.json,hooks,agents}
+                                 # Claude Code hooks and review subagents; the
+                                 # git hooks stay the cross-agent backstop
 .vscode/settings.json            # Points VS Code Copilot at .agents/skills
 agents/
 ├── templates/                   # result_template.json, answers_template.md,
@@ -278,8 +245,7 @@ agents/
 ├── lib/                         # Shared Python utilities (agent-agnostic CLIs)
 └── install.sh                   # Claude Code global install + gitignore + git hooks
 docs/
-├── contributing/                # agents-compat, state-module-playbook,
-│                                # skill-catalog, test-invariants, tax-gotchas
+├── contributing/                # One file per topic; §9 is the index
 ├── changelog/                   # Per-epic implementation history
 ├── roadmap/                     # Product backlogs
 └── superpowers/                 # Feature specs + implementation plans
@@ -287,13 +253,15 @@ scripts/                         # pre-commit-pii-scan.sh
 tests/                           # pytest suite
 ```
 
-`agents/lib/` holds the computation engine — `tax_computations.py` (all the
-parameterized tax math), `tax_law_fetcher.py` (cache schema, freshness, source
-pinning), `parse_utils.py`, `capabilities.py`, `tie_out.py`, `return_builder.py`, `irs_dates.py`, `preflight.py`
-(the engine gate), `run.sh` (the launcher every skill invokes) and one module per planning skill. Every module
-exposes a `_main` CLI entry point; run with no arguments a few
-(`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer`) self-test,
-`preflight` exits 0, 2 (blocked) or 1 (could not run), and the rest report usage. None of them import anything agent-specific.
+`agents/lib/` holds the computation engine: `tax_computations.py` for the
+parameterized tax math, `tax_law_fetcher.py` for the cache, `preflight.py` for the
+engine gate, `run.sh` for the launcher every skill invokes, and one module per gate
+and per planning skill. The roster is not listed here — it changes, and a list in
+prose goes stale silently. **Every module exposes a `_main` CLI entry point and
+imports nothing agent-specific**; four self-test when run with no arguments
+(`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer` — the claim is
+pinned by test), `preflight` exits 0, 2 (blocked) or 1 (could not run), and the
+rest report usage.
 
 ## 6. Runtime files (created per taxpayer, all gitignored)
 
@@ -309,20 +277,19 @@ never the code. One read site: `workspace.resolve_workspace`.
   non-interactive input path**: in a headless run, read required answers from
   here and hard-stop if one is missing. Never guess.
 - `parse_ledger.json` — per-document intake record for the tie-out gate
+- `validation_receipt.json` — each gate's verdict bound to its inputs. The
+  digests are not sensitive; the PATHS it names are the taxpayer's documents
 - `projection_inputs.json` (YTD wages, withholding, estimates) and
   `crypto_transactions.json` — planning inputs, as sensitive as the return
 - `documents/` — source tax documents; place files here for parsing
 - `summaries/` — per-document parsed data, markdown
 - `holdings.json` — optional brokerage lots for `tax-harvest`
 - `reviews/` — persisted `tax-review` workpapers (`{year}-review.md`, owner-only
-  via `secure_fs`, directory included). Archived into `archive/{year}/reviews/`
-  at cutover, after which `tax-rollover` surfaces the prior year's "Tax Planning
-  for Next Year" section as the new year's checklist
+  via `secure_fs`, the directory included); archived at cutover
 - `scenarios/` — derived planning artifacts; never mutated elsewhere
 - `tax_calendar_<year>.ics` — RFC 5545 calendar of the year's deadlines
-- `generate_tax_pdf.py` — LEGACY, replaced by `agents/lib/pdf_render.py`. Source
-  code and runtime data at once (the taxpayer's name is in its headers), which
-  is why the PII gate blocks it by NAME. Older workspaces have one; never run it
+- `generate_tax_pdf.py` — LEGACY, replaced by `agents/lib/pdf_render.py`, and
+  blocked by NAME in the PII gate. Older workspaces have one; never run it
 
 ## 7. Tooling and tests
 
@@ -333,17 +300,14 @@ python3 -m venv .venv && sh agents/lib/run.sh -m pip install -r requirements.txt
 ```
 
 **A green local suite is not a green CI.** That `venv` follows whatever `python3`
-is, while the lock is compiled for 3.12 — and the interpreter alone decides some
-results: `Popen.communicate()` re-flushes a stdin the caller already closed,
-which raises on 3.12 and not on 3.13+. CI runs **3.12 and 3.14**, both reported.
-Reinstall from the lock rather than letting the venv drift off it: an installed
-version that is not the pinned one tests what nobody ships.
+is, while the lock is compiled for 3.12, and the interpreter alone decides some
+results. Reinstall from the lock rather than letting the venv drift off it: an
+installed version that is not the pinned one tests what nobody ships. Which results,
+and why CI reports two Pythons: `docs/contributing/ci-and-locks.md`.
 
-**The locks are GENERATED — edit the `.in`, never the `.txt`.** Pinning only
-direct dependencies is not pinning: pdfplumber 0.11.10 shipped no pdfplumber
-code at all, only a `pdfminer.six` bump — and that is the engine document
-parsing actually runs on. Hashes make pip refuse an artifact that does not
-match. Regeneration flags, the three locks and why they are separate:
+**The locks are GENERATED — edit the `.in`, never the `.txt`**, and pinning only
+the DIRECT dependencies is not pinning. Regeneration flags, the three locks, and
+what a transitive bump once shipped past a direct pin:
 `docs/contributing/ci-and-locks.md`.
 
 Run the suite (chain the activation — some agents start a fresh shell per
@@ -380,25 +344,16 @@ a parser version the lock does not pin.
 **Reading `tax_law_<year>.json`**
 - The schema lives in `agents/lib/tax_law_fetcher.py` (`create_empty_tax_law` /
   `create_state_template`) — read it before writing accessors.
-- Key paths: `federal.filing_statuses.<single|mfj|mfs|hoh>.{brackets,standard_deduction}`,
-  `federal.capital_gains_rates.{zero_pct_limit,fifteen_pct_limit}`,
-  `federal.child_tax_credit.phase_out_start`,
-  `federal.additional_medicare_tax.threshold`, `federal.niit.threshold`,
-  `federal.irmaa.tiers.<single|mfj>` (a list of
-  `{magi_threshold, annual_surcharge_per_person}`), `federal.salt_cap`
-  (`{amount, mfs_amount}`), `state.{brackets,standard_deduction}`.
-- Gotcha: `child_tax_credit.phase_out_start` and `qbi_threshold` are keyed
-  ONLY `single`/`mfj` (map MFJ/QSS→mfj, else→single);
-  `additional_medicare_tax.threshold` and `niit.threshold` add `mfs`;
-  `filing_statuses` and `capital_gains_rates` have all four. `irmaa.tiers` ships EMPTY — `tax-setup` must
-  fetch it and `tax-roth-convert` degrades to "IRMAA not modeled" when it is.
-- Fetched **per year, and indexed**, so a carried-over value goes stale silently:
-  `salt_cap` (the OBBBA base indexes roughly 1%/yr for 2026-2029; `ptet._salt_cap`
-  prefers the cache and falls back to the unindexed statutory schedule when unset)
-  and `child_tax_credit.refundable_limit` (the indexed per-child ACTC cap that
-  `compute_child_tax_credit`'s refundable split requires).
+- **The keying is NOT uniform across blocks** — `child_tax_credit.phase_out_start`
+  and `qbi_threshold` are keyed `single`/`mfj` alone — so an accessor that assumes
+  four filing statuses reads a real number belonging to a different taxpayer.
+- Several blocks are INDEXED per year, so a carried-over value goes stale silently.
+  `irmaa.tiers` ships EMPTY — **`tax-setup` must fetch it**, and `tax-roth-convert`
+  degrades to "IRMAA not modeled" when it has not been.
 - Statutory-fixed thresholds (safe-harbor $150k/$75k; ACTC $2,500 floor + 15%
   rate; $500 ODC) are hardcoded constants, not in the cache.
+- Key paths, the per-block keying table and which values index:
+  `docs/contributing/tax-law-cache.md`
 
 **Modifying templates**
 - `result_template.json` field names reach the summary PDF through
@@ -421,11 +376,10 @@ a parser version the lock does not pin.
   assertion, update its worksheet comment. Add tests for new behavior.
 - What each block of the suite pins down: `docs/contributing/test-invariants.md`.
 
-**CI (GitHub Actions)** runs on a PR, on the push a squash merge produces,
-weekly and on demand; pytest (3.12, 3.14, and `windows-latest` for `secure_fs`),
-ruff + mypy, the PII scan over a PER-TRIGGER range and pip-audit over all three
-locks must pass. Dependabot opens dependency PRs weekly. Why any of that, and
-the two Windows defects it found: `docs/contributing/ci-and-locks.md`.
+**CI (GitHub Actions)** must pass: pytest (3.12, 3.14, and `windows-latest` for
+`secure_fs`), ruff + mypy, the PII scan over a PER-TRIGGER range, and pip-audit
+over all three locks; Dependabot opens dependency PRs weekly. Its four triggers and
+the two Windows defects the Windows job found: `docs/contributing/ci-and-locks.md`.
 
 **Git workflow**
 - Always work on a feature branch. The pre-commit hook blocks direct commits to
@@ -442,12 +396,17 @@ the two Windows defects it found: `docs/contributing/ci-and-locks.md`.
   compatibility documentation is product content and is fine.)
 - After a squash merge, sync local main with `git reset --hard origin/main`
   (confirm there are no uncommitted changes first).
-- Pull requests are auto-reviewed by a bot on open / ready-for-review / an
-  `@codex review` comment. A plain push does NOT trigger a review.
+- **Automated PR review is OFF** (owner, 2026-09-07). Driving a change to a
+  clean pass is still part of shipping it; how, is a per-agent convention.
 
 ## 9. Where the deep documentation lives
 
-Nothing below is duplicated in this file — follow the pointer when you need it.
+**This file carries the ALARMS; these carry the ANSWERS.** A line earns its
+place above only if an agent who never looks it up would otherwise do the wrong
+thing — everything else is a pointer. A file below states the MECHANISM and the
+reasoning; it does not restate a rule this file kept, and a test holds every
+relocation target to that. `docs/contributing/` and `docs/ops/` are indexed here
+in full, so a new file in either goes in this table.
 
 | Topic | File |
 |---|---|
@@ -456,6 +415,13 @@ Nothing below is duplicated in this file — follow the pointer when you need it
 | Counter-intuitive tax rules that have caused real bugs | `docs/contributing/tax-gotchas.md` |
 | What each block of the test suite guarantees | `docs/contributing/test-invariants.md` |
 | Adding support for a new state | `docs/contributing/state-module-playbook.md` |
+| What the PII gate matches and how it fails | `docs/contributing/pii-gate.md` |
+| Key paths and per-status keying of the tax-law cache | `docs/contributing/tax-law-cache.md` |
+| The delegated-parse boundary and its degrade path | `docs/contributing/parse-boundary.md` |
+| CI triggers, the three locks, and why they are separate | `docs/contributing/ci-and-locks.md` |
+| Claude Code hooks and subagents, in depth | `docs/contributing/claude-automation.md` |
+| Accepting a review subagent before trusting it | `docs/ops/review-subagent-acceptance.md` |
+| Opening a filing season | `docs/ops/season-open-runbook.md` |
 | Per-epic implementation history | `docs/changelog/` |
 | Feature specs and implementation plans | `docs/superpowers/` |
 

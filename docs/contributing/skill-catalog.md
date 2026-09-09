@@ -47,6 +47,32 @@ TESTED rather than trusted. See "The one engine-free skill" below before adding 
 second — the declaration is the obvious escape hatch, and what keeps it from
 being one is that membership is a claim about the skill's text.
 
+## The capability gate's manifest — what BLOCKS, what is MANUAL
+
+Relocated out of AGENTS.md §4 by Y5 (PR #113); `agents/lib/capabilities.py` is the
+registry, and this is the map. AGENTS.md keeps the rules — the gate blocks with the
+named form unless acknowledged, an unknown id hard-errors, and every rule's flag must
+exist in `taxpayer_profile_template.json` AND be asked by the `tax-setup` interview.
+
+**Blocking** (exit 2, clearable only by an explicit `acknowledged_limitations` entry
+with the decision recorded in `answers.md`): rental Schedule E, Form 8962, part-year
+residency, NYC, kiddie tax, Schedule H, and PFIC with a taxable event.
+
+**Manual-worksheet items** never block. They join the state-scope note in the
+`meta.limitations` manifest, which is copied VERBATIM into `result.json` and printed on
+page 1 of the generated PDF: Forms 8863, 2441, 5695/8936, gambling, FEIE, and the
+life-event set — marriage or divorce year, §121 home sale with its 1099-S rule,
+inheritance basis step-up, pre-2019-decree alimony (post-2018 decrees carry the CA
+nonconformity: CA still taxes and deducts via Schedule CA), and Form 8839 adoption.
+
+**Form 8958 is the exception, and getting it backwards drops the line entirely: it is
+STATUS+STATE-driven, not flag-driven.** Every MFS filer domiciled in a
+community-property state gets the manifest line with no flag involved —
+AZ/CA/ID/LA/NV/NM/TX/WA/WI. AK/SD/TN are ELECTIVE community-property states and are not
+auto-flagged.
+
+Life-event flags read False when absent, so a legacy profile still passes.
+
 ## Pipeline and optional branches
 
 **Optional parsing branch (off `/tax-parse`, feeds `/tax-compute`):**

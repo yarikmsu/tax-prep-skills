@@ -20,92 +20,58 @@ tooling, labelled by `CONTRIBUTOR_SKILLS`, not exempted.
 
 ## Hooks
 
-`.claude/settings.json` is tracked and registers two `PostToolUse` hooks, both under
-`.claude/hooks/`. They fire at TOOL time, which the git hooks cannot — those run at commit
-time and everything the second hook protects is gitignored, so it never reaches a commit.
-Neither replaces them; the git hooks are what cover other agents.
+`.claude/settings.json` registers two `PostToolUse` hooks under `.claude/hooks/`. They
+fire at TOOL time, which the git hooks cannot; neither replaces them, and the git hooks
+are what cover other agents. Mechanism, exit codes and the reasoning behind each rule
+below: `docs/contributing/claude-automation.md`.
 
-- `skill-invariants.sh` (`Write|Edit|Bash`, timeout 480s) — fires on CHANGE, not on state.
-  A Write/Edit is filtered by its path; a Bash payload is opaque, so it is filtered by
-  `.claude/.skill-invariants-stamp` plus one `find -newercm`, and exits 0 in milliseconds
-  when nothing watched moved, which is what stops `ls` and `git status` buying a pytest
-  run. It then runs only the CHECKS the changed paths can turn red — seven test modules, or
-  a node-id subset of one of THEM. A new source file behind an assertion ALWAYS goes in
-  `select_modules_for` (or editing it selects nothing), and in `WATCHED_ROOTS` only where
-  no entry already contains it — they are `find` ROOTS, so `agents` reaches `agents/lib`.
-  Exit 0 silent, 2 blocking with the failing tail, 1 when TERM/INT/HUP killed the pass —
-  no verdict, so it must not block. No-ops without `jq` or a `.venv`.
-- `harden-runtime-perms.sh` (`Write|Edit|NotebookEdit|Bash`, timeout 60s) — re-asserts
-  AGENTS.md §1's `chmod 600` on the runtime artifacts and its `chmod 700` on the runtime
-  directories. `Bash` is in the matcher because `result.json` is written by a script.
-  Exits 1 to surface a failed permission change without blocking the call; never the
-  blocking exit code 2. Its archive net asks `find` for wrong MODES, not
-  `-newercm "$STAMP"`: a drift a stamp-filtered scan misses once falls behind the
-  advancing stamp forever.
+- `skill-invariants.sh` (`Write|Edit|Bash`) runs only the checks the changed paths can
+  turn red. **A new source file behind an assertion ALWAYS goes in `select_modules_for`**
+  — or editing it selects nothing and the hook reports a silent green over an unchecked
+  edit — and in `WATCHED_ROOTS` only where no entry already contains it.
+- `harden-runtime-perms.sh` (`Write|Edit|NotebookEdit|Bash`) re-asserts AGENTS.md §1's
+  file and directory modes. It exits 1 to surface a failure and **never the blocking 2**.
 
 **Both stamps advance on a VERDICT, not on a run** — settle this before editing either.
-pytest 0 or 1, or a chmod that ran, moves the change boundary, red included, so a failure
-is reported ONCE and the `git diff` and `pytest` needed to diagnose it are not themselves
-gated. pytest 2-5, or a chmod that failed, HOLDS it, or an edit sitting on disk through
-the outage ends up older than the boundary and is never checked again. Red is REMEMBERED
-(stamp v2: version, then one line per red check) and unioned into the next pass AFTER the
-fast path, so a quiescent call stays free; green clears it. Advance or hold, NEVER a third state: the archive manifests' mid-publish flag is `.archive-index-dirty`'s PRESENCE, not this stamp's absence. Unlinking the stamp for that ran on EVERY opaque Bash call, and put one symbol in charge of the archive pair's consistency and of every unrelated tree's boundary at once.
+pytest 0 or 1, or a chmod that RAN, moves the change boundary — red included, so a
+failure is reported once. pytest 2-5, or a chmod that FAILED, holds it, or an edit
+sitting on disk through the outage ends up older than the boundary and is never checked
+again. Advance or hold, NEVER a third state.
 
 **Every timing lives in one place — the `MEASURED COSTS` block in `skill-invariants.sh`.**
-Three contradictory sets of one quantity is what this change shipped. Everywhere else — prose,
-comment, docstring, assertion message alike — ALLOWED is naming the block
-("skill-invariants.sh MEASURED COSTS") and quoting a RATIO from it; FORBIDDEN is restating an
-ABSOLUTE: a second, a test count, a per-test rate, a host, a date, which go stale while still
-reading as fresh. Exempt is a threshold the code COMPARES against: `SECONDS_PER_COLLECTED_TEST`
-and the registered timeout are budgets chosen above the block, not copies of it, so they stay.
-Read it for HEADROOM as much as spread: an overrun does not fail, it CANCELS the hook silently.
-Both are driven by `tests/test_claude_hooks.py`, real scripts and failing paths included: a hook
-that always passes and one that never fires look identical from outside.
+Everywhere else — prose, comment, docstring, assertion message alike — ALLOWED is naming the
+block and quoting a RATIO from it; FORBIDDEN is restating an ABSOLUTE — a second, a test
+count, a per-test rate, a host, a date — which goes stale while still reading as fresh.
+Exempt is a threshold the code COMPARES against, being a budget rather than a copy.
 
 **The `.claude/` runtime artifacts are a three-way mirror**: the tracked `.gitignore`,
-`IGNORE_PATTERNS` in `agents/install.sh` (the only cover for a workspace whose
-`.gitignore` is older or missing), and the `.claude/` case of the PII gate. A test pins
-the first two as SETS; the names are not re-listed here, because a fourth copy would drift
-as readily as the others. Each HOOK-WRITTEN name ends in `*` — usually a `mktemp` sibling moved over the real name, so a timed-out hook leaves the sibling holding it; on the dirty marker, written in place and holding nothing, the glob is merely defensive. No rule may name
+`IGNORE_PATTERNS` in `agents/install.sh`, and the `.claude/` case of the PII gate. A
+test pins the first two as SETS, and the names are not re-listed here, because a
+fourth copy would drift as readily as the others. Each HOOK-WRITTEN name ends
+in `*`, a timed-out hook leaving the `mktemp` sibling holding the name. No rule may name
 `.claude/` itself; `settings.json` and the `skills/` symlinks are tracked.
 
 ## Subagents
 
 `.claude/agents/` holds three tracked definitions under two acceptance regimes, and
 `tests/test_claude_agents.py` requires every file there to be in exactly one of them —
-an agent in neither is one nothing decides how to accept.
+an agent in neither is one nothing decides how to accept. Which agent exists for what,
+and what each grant is protecting: `docs/contributing/claude-automation.md`.
 
-**Two read-only REVIEWERS.** Neither is granted `Write`, `Edit` **or `Bash`** — a shell
-is a write capability, and an auditor that can quietly resolve its own findings cannot
-be trusted about them.
+- **Two read-only REVIEWERS**, `tax-law-freshness-auditor` and
+  `bias-direction-reviewer`. Neither is granted `Write`, `Edit` **or `Bash`** — a shell
+  is a write capability, and an auditor that can quietly resolve its own findings cannot
+  be trusted about them.
+- **One parse WORKER**, `tax-parse-worker` (V6): a CLOSED grant holding nothing that
+  reads, writes, runs or fetches, the parent handing it masked text. Enforced by
+  ABSENCE, the one mechanism here that fails closed — hooks fail OPEN, `permissions` is
+  session-wide, and `Read` is measurably NOT directory-confined.
 
-- `tax-law-freshness-auditor` — the only check on AGENTS.md §2. `tax-review` audits the
-  aggregated result and cannot see that a bracket was right for last year, and the tie-out
-  compares the ledger to the result, so correct parsing of a wrong figure ties out
-  perfectly. As the only agent with network access it is held to a closed minimal tool
-  set, a shell plus an outbound connection in a workspace holding a real return being what
-  §1 forbids; that bound is enforced by the grant, while "read `tax_law_<year>.json` and
-  nothing else" is only prompt-level. `tests/test_claude_agents.py` resolves every schema
-  path it names against `create_empty_tax_law`, so a renamed key cannot leave it reporting
-  the absence as a finding.
-- `bias-direction-reviewer` — scoped to `agents/lib/` diffs and instructed to report
-  NOTHING that is not a directional-bias or unstated-precondition finding. Codex already
-  reviews everything else, and a second general reviewer is noise.
-
-**One parse WORKER**, `tax-parse-worker` (V6). A CLOSED grant holding nothing that reads,
-writes, runs or fetches: the parent extracts through `parse_utils.py` and hands over the
-masked text, so a PDF's injected instruction cannot be acted on whatever it says. By
-ABSENCE, the one mechanism here that fails closed — a `PreToolUse` hook that times out
-lets the call through, `permissions` rules are session-wide, and `Read` is measurably NOT
-directory-confined. No replay (it forms no judgement); its acceptance is the grant
-assertion plus the probe in `docs/ops/review-subagent-acceptance.md`. Hosts without a
-closed sub-task tool set take the SEQUENTIAL path, banner-marked NOT enforced.
-
-**Acceptance before trusting either reviewer:** replay a known answer, never plausibility, from a FRESH
-session — definitions load at session start, so an edited one is not what a same-session replay
-tests. **Both PASSED 2026-09-06**; recipe, pre-committed criteria and the traps (a squash merge
-leaves nothing in `<sha>^`, so `--grep=P1` is the wrong search) are in
-`docs/ops/review-subagent-acceptance.md`. Re-run before the season-open runbook.
+**Acceptance before trusting either reviewer:** replay a known answer, never
+plausibility, from a FRESH session — definitions load at session start, so an edited one
+is not what a same-session replay tests. **Both PASSED 2026-09-06**; the recipe,
+pre-committed criteria and traps are in `docs/ops/review-subagent-acceptance.md`. Re-run
+before the season-open runbook.
 
 ## Feature workflow
 

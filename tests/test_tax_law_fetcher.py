@@ -1862,14 +1862,33 @@ class TestTheCapitalGainsBreakpointsAreStatusSpecific:
         with pytest.raises(TaxLawSetError, match="mfs"):
             _set(tmp_path, "federal.capital_gains_rates.fifteen_pct_limit.mfs", 540000)
 
-    def test_the_fetch_reference_and_agents_md_say_all_four(self):
+    def test_the_fetch_reference_and_the_cache_doc_say_all_four(self):
+        """Y5 moved the per-status keying TABLE out of AGENTS.md, so the positive
+        claim is pinned where the table now lives. The negative is asserted against
+        BOTH files: the pre-X1 text grouped `capital_gains_rates` with the two-key
+        blocks, and that grouping must not come back anywhere an accessor is
+        written from."""
         root = Path(__file__).resolve().parent.parent
         fetch = (root / ".agents" / "skills" / "tax-setup" / "references"
                  / "tax-law-fetch.md").read_text()
         assert "`mfs`, `hoh`" in fetch and "half of joint" in fetch
-        agents_md = (root / "AGENTS.md").read_text()
-        assert "`filing_statuses` and `capital_gains_rates` have all four" in agents_md
-        assert "`capital_gains_rates`, `child_tax_credit.phase_out_start`" not in agents_md
+        cache_doc = (root / "docs" / "contributing" / "tax-law-cache.md").read_text()
+        assert "`filing_statuses` and `capital_gains_rates` have all four" in cache_doc
+        for text in (cache_doc, (root / "AGENTS.md").read_text()):
+            assert "`capital_gains_rates`, `child_tax_credit.phase_out_start`" not in text
+        # The TABLE, not only the sentence under it. An accessor author reads the
+        # row; asserting the prose alone let the row be edited to state X1's
+        # exact pre-fix error — `capital_gains_rates` moved in beside the two-key
+        # blocks — with this test green and the doc contradicting itself.
+        rows = [ln for ln in cache_doc.splitlines()
+                if ln.startswith("|") and "capital_gains_rates" in ln]
+        assert len(rows) == 1, (
+            f"`capital_gains_rates` appears in {len(rows)} keying rows; it is "
+            "keyed by all four statuses and belongs in exactly one")
+        assert "all four" in rows[0], (
+            f"the keying table now says {rows[0].strip()!r} — collapsing capital "
+            "gains breakpoints to `single` is what X1 fixed, and it handed an MFS "
+            "or HoH filer another taxpayer's 0%/15% limits")
 
 
 class TestTheStatusChainIsDerivedFromTheSchema:

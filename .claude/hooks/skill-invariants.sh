@@ -296,6 +296,11 @@ select_modules_for() {
             # per-PATH, never per-directory-that-feels-related.
             RUN_AGENTS=1
             RUN_PREFLIGHT=1
+            # ...and portability since Y5, which names this file as the one
+            # `docs/ops/` pointer either instruction file carries — the floor
+            # that keeps its pointer sweep from reporting a clean pass over a
+            # regex that has stopped matching half its subject.
+            RUN_PORTABILITY=1
             ;;
         docs/contributing/parse-boundary.md)
             # The parse boundary's ONE home — which mode, its cost, the fence
@@ -319,12 +324,18 @@ select_modules_for() {
             # be documented in every file except the one a maintainer follows at
             # season open.
             RUN_AGENTS=1
+            # ...and portability, which since Y5 requires every file under
+            # `docs/ops/` to appear in AGENTS.md §9's index.
+            RUN_PORTABILITY=1
             ;;
         docs/ops)
-            # The bare directory is what a DELETE looks like, and both modules
-            # assert that a document under here EXISTS.
+            # The bare directory is what a DELETE looks like — or an ADD, which
+            # is portability's case: an unindexed new file here is the failure
+            # its index test exists for. All three modules assert about what is
+            # under this directory.
             RUN_PREFLIGHT=1
             RUN_AGENTS=1
+            RUN_PORTABILITY=1
             ;;
         .claude/hooks|.claude/hooks/*.sh|.claude/settings.json)
             RUN_HOOKS=1
@@ -705,7 +716,8 @@ select_modules_for() {
             ;;
         LICENSE|.gitignore|\
         .pii-allowlist|.vscode/settings.json|\
-        docs/contributing|docs/contributing/*.md)
+        docs/contributing|docs/contributing/*.md|\
+        docs/ops|docs/ops/*.md)
             RUN_PORTABILITY=1
             ;;
         tests/test_portability.py)
@@ -1182,19 +1194,19 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.08 - 0.11s         6
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
-#   skill .md edit                 885 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1106 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4242 tests    228.4 - 243.4s        2
+#   skill .md edit                 891 tests     19.7 - 23.4s         3
+#   cold pass, all seven modules  1112 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   4248 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
-# passes two `--deselect` flags, so portability collects 179 and runs 177; and
+# passes two `--deselect` flags, so portability collects 185 and runs 183; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
 # THE SUITE holds seven skips, not two: those two plus the five Windows-only
 # DACL cases W6 added, which are skipped everywhere but on the windows job.
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4249 and runs 4242 for the same skips — and that row
+# `pytest tests/` collects 4255 and runs 4248 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1213,7 +1225,7 @@ apply_red_checks
 # module dominates, and by how much, survives a change of machine.
 #
 #   tests/test_claude_hooks.py     128 tests    114.7 - 130.0s       4
-#   tests/test_portability.py      177 tests     11.1 - 13.1s        6
+#   tests/test_portability.py      183 tests     11.1 - 13.1s        6
 #   tests/test_capabilities.py     116 tests      0.8 - 3.1s         6
 #   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
 #   tests/test_secure_fs.py        169 tests      1.4 - 2.1s         6
@@ -1314,7 +1326,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 116 + 169 + 177 + 375 = 885 for a skill edit, plus 93 + 128 = 1106 for a
+# 48 + 116 + 169 + 183 + 375 = 891 for a skill edit, plus 93 + 128 = 1112 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1373,7 +1385,7 @@ apply_red_checks
 # the branch settles.
 #
 # Against the counts the seconds were taken at, the suite has gained two hundred
-# and sixty-nine tests (3973 to 4242), and the gap was ZERO when the sitting ended: it took the
+# and seventy-five tests (3973 to 4248), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1391,7 +1403,20 @@ apply_red_checks
 # filing-package, pdf_render and return_builder modules, none of which this hook
 # has an arm for. Y4 added `agents/lib/workspace.py`, one engine module, so the
 # parametrised row above gained the one case this paragraph predicts — plus
-# twenty-three in a new tests/test_workspace.py the hook has no arm for either. The round the seconds were taken at was V5's required-answer
+# twenty-three in a new tests/test_workspace.py the hook has no arm for either.
+# Y5 IS THE SECOND ROW, and it is the case the sentence above says buys the
+# sitting: six cases landed in tests/test_portability.py, which has an arm, so
+# that row moved on its own account rather than by parametrisation. The counts
+# below are refreshed and the seconds are not, which is the state this block
+# calls stale and legibly so — the sitting is OWED and has to be taken LAST, on
+# a settled branch, because a measurement taken mid-review is one more of the
+# four this header records as discarded. Y5's own review moved this row twice
+# after the first refresh, which is that argument arriving as evidence. The
+# reason the sitting is not being taken as part of Y5: the six cases are file
+# reads — byte counts, two regex sweeps over two files each, and a directory
+# glob — and the row's stated range is two seconds wide, so the seconds here are
+# stale in a way the counts can be trusted through. That is an argument for the
+# ORDER, not for skipping it. The round the seconds were taken at was V5's required-answer
 # registry: sixty-eight cases in that new module, and ONE case in secure_fs,
 # which parametrises over `agents/lib/*.py` and so gains a case for every engine
 # module added. That single case is the only reason a decomposition row moved at
@@ -1530,7 +1555,7 @@ apply_red_checks
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained none (177 to 177), preflight has gained none (375 to 375), the
+# portability has gained six (177 to 183), preflight has gained none (375 to 375), the
 # agents module none (48 to 48), secure_fs has gained nine (160 to 169), the hooks module
 # none (128 to 128), capabilities has gained none (116 to 116) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
@@ -1539,20 +1564,24 @@ apply_red_checks
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. SIX pairs read none and the seventh reads eight, and that is not
-# the paragraph going slack: of the two hundred
-# and sixty-nine tests the suite has gained since the sitting, NINE landed in
+# yet taken. FIVE pairs read none and two do not, and the second of those two is
+# what changed here: of the two hundred
+# and seventy-five tests the suite has gained since the sitting, NINE landed in
 # tests/test_secure_fs.py — the Windows cases plus one case each for
-# V2's and V1's new engine modules, which is the pair above reading eight — and
+# V2's and V1's new engine modules, which is that module's pair — SIX landed in
+# tests/test_portability.py, which is Y5 and is a row moving on its OWN account
+# rather than by parametrisation, and
 # the other two hundred and sixty in test_answers, test_ci_workflow,
 # test_pii_content_scan, test_evals, test_eval_run, test_parse_records,
-# test_return_builder, test_receipt, test_filing_package and test_pdf_render, none
-# of which this hook has an arm for. That is the ordinary case and the reason the pairs
+# test_return_builder, test_receipt, test_filing_package, test_pdf_render and
+# test_workspace, none
+# of which this hook has an arm for. That last group is the ordinary case and the reason the pairs
 # exist — a round that adds tests OUTSIDE the seven costs the block a sentence,
 # not another half-hour sitting. The seconds are re-taken when the DECOMPOSITION
 # moves by more than the one case a new engine module puts in secure_fs, and it
-# has not.
-# They sum to nine; the remaining two hundred and sixty are modules this
+# now HAS: the sitting is owed, and the paragraph above this table says why it is
+# owed LAST rather than now.
+# They sum to fifteen; the remaining two hundred and sixty are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
