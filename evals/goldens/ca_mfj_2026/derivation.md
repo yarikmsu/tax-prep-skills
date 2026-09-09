@@ -63,7 +63,9 @@ is 2,600 + 7,000 = **9,600**, so ordinary income is 164,700 − 9,600 = **155,10
 | 17 Schedule 2 Part I | 0 (no AMT — no ISO exercise, no preference item) |
 | 18 tax + Schedule 2 | 34,122 = 16 + 17 |
 | 24 total tax | 34,122 (no SE tax, no AMT, no additional Medicare — MFJ threshold is 250,000 and Medicare wages are 185,000) |
-| 25a / 33 payments | 28,000 |
+| 25a / 25d / 33 payments | 28,000 (the W-2's box 2; no estimates, no refundable credit) |
+| 27 EIC / 28 refundable ACTC / 36 applied forward | 0 |
+| 34 overpayment | 0 (payments are below the tax) |
 | **37 amount owed** | **6,122** = 34,122 − 28,000 |
 
 ## California 540

@@ -341,21 +341,43 @@ The over-withholding credit goes to 1040 line 25c.
 **NIIT (Form 8960):**
 If MAGI > threshold (from tax_law JSON): 3.8% on lesser of net investment income or excess MAGI.
 
-### Step 9: Compute Payments and Result (Form 1040 Lines 25-37)
+### Step 9: Compute Payments and Result (Form 1040 Lines 25-38)
+
+**`agents/lib/return_builder.py` writes the lines marked DERIVED — do not type
+one.** Run it when this step is done; that is the second pass SKILL.md asks for.
 
 ```
-Line 25a: Federal tax withheld from W-2(s) Box 2
-Line 25b: Federal tax withheld from 1099s (if any)
-Line 25c: Other withholding (Additional Medicare over-withholding from Form 8959)
-Line 25d: Total withholding = 25a + 25b + 25c
+Line 25a: DERIVED — federal tax withheld from W-2(s) Box 2 (the ledger's
+          `federal_withholding_w2` sum)
+Line 25b: DERIVED — federal tax withheld from 1099s (the ledger's
+          `federal_withholding_1099` sum)
+Line 25c: Other withholding (Additional Medicare over-withholding from Form
+          8959) — yours
+Line 25d: DERIVED — total withholding = 25a + 25b + 25c
 Line 26: Estimated tax payments (1040-ES) + prior-year overpayment applied
-Line 27: EIC (if applicable — uncommon at higher incomes)
-Lines 28-32: Other credits/payments (refundable AOTC, excess SS withholding,
-             Form 4136 fuel credit, etc.) — include any that apply, skip if $0
-Line 33: Total payments = sum of Lines 25d through 32
-Line 34: Overpayment = Line 33 - Line 24 (if positive)
-Line 35a: REFUND = Line 34 (or portion to refund)
-Line 37: Amount owed = Line 24 - Line 33 (if positive)
+Line 27: EIC — NOT COMPUTED by this toolkit. Nothing in agents/lib calculates
+         it, the capability gate does not flag it, and there is no interview
+         question for it. If the taxpayer is eligible, take the figure from the
+         EIC worksheet in the 1040 instructions or from tax software and write
+         it to `line_27_eic`; leaving it 0 understates the refund. NEVER guess.
+Line 28: `compute_child_tax_credit()`'s `refundable_actc` — write it to
+         `line_28_refundable_actc`. Step 7 computes it; this is where it lands.
+Line 29: refundable AOTC (Form 8863 line 8)
+Line 31: Schedule 3 Part II total. Excess social security withholding is INSIDE
+         it — record the audit figure in `schedule_3_line_11_excess_ss` AND
+         include it in line 31. The builder refuses an excess larger than the
+         total it belongs to.
+Line 33: DERIVED — total payments = 25d + 26 + 27 + 28 + 29 + 31
+Line 34: DERIVED — overpayment = max(0, 33 - 24)
+Line 35a: DERIVED — refund = 34 - 36
+Line 36: amount APPLIED to next year's estimated tax — yours, and it may not
+         exceed line 34. RECORDED only: `/tax-rollover` has no reader for it,
+         so carrying it into next year's line 26 is still a manual step.
+Line 37: DERIVED — amount owed = max(0, 24 + 38 - 33). The line 38 penalty IS
+         in it; the 1040's line-37 instruction says so and tax software does
+         the same, which is what lets /tax-verify compare like for like.
+Line 38: estimated-tax penalty (Step 9.5) — yours. It raises line 37 and cuts
+         line 35a; the builder does both, so do not hand-adjust either.
 ```
 
 **Excess Social Security withholding (Schedule 3 line 11 → line 31):** Run
@@ -378,7 +400,9 @@ employers; only `excess_credit` goes on Schedule 3 line 11 — **write it to
 `schedule_3_line_11_excess_ss` in result.json and include it in
 `line_31_schedule3_part2` → line 33** (persisting it keeps the refundable
 payment auditable for `/tax-generate` and `/tax-verify` instead of silently
-folding into the total). **Railroad
+folding into the total). It is INSIDE line 31, never beside it: line 33 adds
+line 31 and not the two, and `return_builder` refuses an excess larger than the
+Part II total it belongs to. **Railroad
 employees (Tier 1 RRTA, W-2 box 14):** the helper models SS tax only — when
 any employer withheld Tier 1 RRTA, compute Schedule 3 line 11 by hand per
 Topic 608 (excess tier 1 RRTA, and combined SS + tier 1 over the base, are
@@ -486,14 +510,19 @@ Act on the result:
   zeroing line 38.
 - `penalty_computed` → write the penalty to `line_38_estimated_tax_penalty`
   and copy the result into the `form_2210` section. Then:
+  Lines 37 and 35a then follow from it and are DERIVED — write line 38 and
+  re-run `return_builder`; do not adjust either by hand. What it does, so you
+  can explain it:
   - balance due: `line_37_amount_owed` = (line 24 − line 33) **+ line 38** —
     the 1040 line-37 instruction says to include the line 38 penalty in the
     line 37 entry, and tax software does the same, so `/tax-verify` compares
     like for like;
-  - overpayment (line 34 > 0): **reduce the refund** — line 35a = line 34 −
-    line 38 (a big January estimate can produce a refund at filing while
-    Q1-Q3 still accrued a penalty); if the penalty exceeds the overpayment,
-    the remainder becomes the line 37 balance due.
+  - overpayment (line 34 > 0): **the refund is reduced** — line 35a = line 34 −
+    line 38 − line 36 (a big January estimate can produce a refund at filing
+    while Q1-Q3 still accrued a penalty); if the penalty exceeds the
+    overpayment, the remainder becomes the line 37 balance due, from the same
+    three figures rather than a second branch. Line 34 itself is taken BEFORE
+    the penalty — it is the form's "amount overpaid", payments against tax.
 - penalty applies but `penalty_computed` is false (rates unfetched) → keep
   line 38 at 0, include the `form_2210` section with its notes, and tell the
   user: fetch the §6621 quarterly rates via `/tax-setup`, or file without

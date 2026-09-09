@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Form 1040 lines 1-24, DERIVED rather than transcribed (V1, first slice).
+"""Form 1040 lines 1-38, DERIVED rather than transcribed (V1).
 
 Every figure on a 1040 is one of two things, and the distinction is the whole
 design here:
@@ -15,11 +15,11 @@ design here:
   There is exactly one right answer, it does not depend on reading a document,
   and an agent that types it is doing longhand in prose.
 
-This module owns the second kind, plus the six income lines that are a straight
+This module owns the second kind, plus the eight lines that are a straight
 sum of parse records. It is the same line V2 drew through `tax-parse`: the
 ASSEMBLY moves, the judgement does not.
 
-WHY THIS IS WORTH A MODULE. The 1040's page-1 arithmetic had NO check at all.
+WHY THIS IS WORTH A MODULE. The 1040's own arithmetic had NO check at all.
 `tie_out` proves each document reached a line and `capabilities` proves the
 engine can model the situation, but nothing recomputed line 9 from lines 1z-8,
 or line 24 from 22 and 23. The skill's own reference file warns, in prose, that
@@ -27,14 +27,14 @@ line 6b "is IN the sum; omitting it understates AGI by exactly what the
 worksheet just computed" — a warning exists because the sum is done by hand.
 
 WHAT DERIVING THE INCOME LINES DOES TO THE TIE-OUT, stated rather than left to
-be discovered. Six of the gate's category checks (wages, both interest lines,
-both dividend lines, gross social security) compare a result line against the
-ledger sum that now PRODUCES it. Those six are not thereby redundant, and the
+be discovered. Eight of the gate's category checks (wages, both interest lines,
+both dividend lines, gross social security, both withholding lines) compare a result line against the
+ledger sum that now PRODUCES it. Those eight are not thereby redundant, and the
 reason is worth getting right, because "the gate now catches only an edit after
 the build" is the tempting answer and it is wrong — step 12.6 catches that, from
 the same ledger, one step earlier and with a message that names the component.
 
-`tie_out` is the SPECIFICATION of those six lines; this module is a constructor
+`tie_out` is the SPECIFICATION of those eight lines; this module is a constructor
 that satisfies it by construction. The gate stays because it is the CROSS-AGENT
 hard gate and has to hold on a workspace where this constructor never ran — an
 older workspace, a host running the skill sequentially, an agent that skipped
@@ -73,10 +73,25 @@ module that computes line 16 is where a reader will come looking for them.
     difference is at most a few dollars and is the repository's convention, not
     this module's choice.
 
-Lines 25-38 — withholding, payments, refund, amount owed — are the next slice.
-Two of the ledger categories already point at line 25a and line 25b and are
-deliberately left alone here: a half-built payments section is worse than one
-the agent still owns whole, because the agent cannot tell which half is which.
+THE PAYMENTS SIDE (second slice) had the same shape and two lines missing.
+Lines 25a and 25b are ledger sums like the income lines — box 2 of a W-2 is a
+transcription exactly as box 1 is — and 25d, 33, 34, 35a and 37 are arithmetic.
+Line 34 and line 37 are the two sides of ONE comparison, each floored at zero,
+so exactly one of them is nonzero on any return; deriving 37 as the negation of
+34 would print a negative in the box on every refund. The line 38 penalty is IN
+the settlement — added to what is owed, taken out of what is refunded — and
+only line 34, the form's "amount overpaid", is taken before it.
+
+What was missing there: `line_28_refundable_actc`, which
+`compute_child_tax_credit` COMPUTES and the skill routes to line 28, had no
+field — so the number was thrown away, line 33 omitted it, and the refund was
+short by it for exactly the families the credit exists for. And
+`line_36_applied_to_next_year` had none either, so line 35a equalled line 34 for
+every filer who applied part of a refund forward. It is RECORDED, not carried:
+`/tax-rollover` still has no reader for it, so next year's line 26 is manual.
+Both are fields now. `line_27_eic` is a third, and it is
+NOT computed anywhere in this repository — the field exists so the figure has
+somewhere to land and reaches line 33, with the gap stated on the field itself.
 """
 
 from __future__ import annotations
@@ -128,11 +143,12 @@ class OutOfScope(Blocked):
     """...specifically because this slice does not model something it carries."""
 
 
-# Every `form_1040` field that is a line on the FORM between 1 and 24. This is
-# the slice boundary, written out once: `schedule_e_k1_income` sits in the same
-# section but is not a 1040 line, and lines 25-38 are the next slice. A test
-# pins this against `result_template.json`, so a field added there lands either
-# inside the slice or provably outside it — never in the gap between.
+# Every `form_1040` field that is a NUMBERED LINE on the form. This is the
+# module's boundary, written out once: `schedule_e_k1_income`,
+# `digital_asset_question` and `schedule_3_line_11_excess_ss` sit in the same
+# section and are not 1040 lines. A test pins this against
+# `result_template.json`, so a `line_*` field added there lands either inside
+# the boundary or provably outside it — never in the gap between.
 SLICE_FIELDS = frozenset({
     "line_1a_wages", "line_1h_other_earned_income", "line_1z_total_wages",
     "line_2a_tax_exempt_interest", "line_2b_taxable_interest",
@@ -148,7 +164,25 @@ SLICE_FIELDS = frozenset({
     "line_17_schedule2_part1", "line_18_tax_plus_schedule2",
     "line_19_ctc", "line_20_schedule3_line8", "line_21_total_credits",
     "line_22_tax_minus_credits", "line_23_other_taxes", "line_24_total_tax",
+    "line_25a_w2_withholding", "line_25b_1099_withholding",
+    "line_25c_other_withholding", "line_25d_total_withholding",
+    "line_26_estimated_payments", "line_27_eic", "line_28_refundable_actc",
+    "line_29_refundable_aotc", "line_31_schedule3_part2",
+    "line_33_total_payments", "line_34_overpayment", "line_35a_refund",
+    "line_36_applied_to_next_year", "line_37_amount_owed",
+    "line_38_estimated_tax_penalty",
 })
+
+# The four refundable credits and other payments that sit between line 25d and
+# line 33. Line 32 is the form's own subtotal of 27-31 and has no field: line 33
+# sums the parts, so a subtotal would be a second place for the same number to
+# be wrong. Excess social security withholding is NOT here — it flows into
+# line 31, and adding it again would count it twice (see `_check_the_payments`).
+_LINE_33_TERMS = (
+    "line_25d_total_withholding", "line_26_estimated_payments", "line_27_eic",
+    "line_28_refundable_actc", "line_29_refundable_aotc",
+    "line_31_schedule3_part2",
+)
 
 
 def ledger_lines() -> "dict[str, str]":
@@ -284,6 +318,41 @@ DERIVATIONS = (
                                 - g("line_21_total_credits"))),
     Derivation("line_24_total_tax", "22 + 23",
                lambda g, c: g("line_22_tax_minus_credits") + g("line_23_other_taxes")),
+    Derivation("line_25d_total_withholding", "25a + 25b + 25c",
+               lambda g, c: (g("line_25a_w2_withholding")
+                             + g("line_25b_1099_withholding")
+                             + g("line_25c_other_withholding"))),
+    Derivation("line_33_total_payments", "25d + 26 + 27 + 28 + 29 + 31",
+               lambda g, c: sum(g(f) for f in _LINE_33_TERMS)),
+    # THE PENALTY IS IN THE SETTLEMENT, and only line 34 is taken before it.
+    # Line 34 is the form's "amount overpaid" — payments against tax, full
+    # stop. The 1040's line-37 instruction then says to ADD the line 38
+    # estimated-tax penalty to the amount owed, and to take it OUT of the
+    # refund when there is one; tax software does the same, which is what lets
+    # /tax-verify compare like for like. A first draft of this slice left
+    # line 38 out of both and shipped a test asserting so — $4,000 of tax
+    # against a $275 penalty came back as $4,000 owed, which is the
+    # under-statement direction on a figure the taxpayer pays.
+    Derivation("line_34_overpayment", "max(0, 33 - 24)",
+               lambda g, c: max(0.0, g("line_33_total_payments")
+                                - g("line_24_total_tax"))),
+    # Available = 33 - 24 - 38, split between the refund and what is carried
+    # forward. A penalty larger than the overpayment leaves nothing to refund
+    # and turns the remainder into a balance due, which line 37 below picks up
+    # from the same three figures.
+    Derivation("line_35a_refund", "max(0, 33 - 24 - 38 - 36)",
+               lambda g, c: max(0.0, g("line_33_total_payments")
+                                - g("line_24_total_tax")
+                                - g("line_38_estimated_tax_penalty")
+                                - g("line_36_applied_to_next_year"))),
+    # NOT `24 - 33` reused with a sign flip. Line 34 and line 37 are the two
+    # sides of one comparison and the form floors each at zero, so exactly one
+    # of them is nonzero on any return; deriving 37 as `-34` would put a
+    # negative in the box on every overpayment.
+    Derivation("line_37_amount_owed", "max(0, 24 + 38 - 33)",
+               lambda g, c: max(0.0, g("line_24_total_tax")
+                                + g("line_38_estimated_tax_penalty")
+                                - g("line_33_total_payments"))),
 )
 
 # Form 1040 line 17 — Schedule 2 Part I. Derived, but not a derivation: it is
@@ -446,7 +515,7 @@ def _check_components(lines: dict) -> None:
             raise Blocked(
                 f"form_1040.{field} is {value:,.2f}. Only a capital loss "
                 "(line 7) and a Schedule 1 net loss (line 8) may be negative "
-                "among the components of Form 1040 lines 1-24; a negative "
+                "among the components of Form 1040 lines 1-38; a negative "
                 "anywhere else reaches total tax as a refund nobody is owed.")
 
 
@@ -475,8 +544,67 @@ def check(result: dict) -> None:
     _check_in_scope(result)
     _check_components(result.get("form_1040") or {})
     _check_the_amt(result)
+    _check_the_payments(result)
     net_st, net_lt = _schedule_d_nets(result)
     _check_line_7_against_schedule_d(result, net_st + net_lt)
+
+
+def _check_the_payments(result: dict) -> None:
+    """Excess social security withholding is inside line 31, not beside it.
+
+    `schedule_3_line_11_excess_ss` is persisted at the 1040 level so
+    `/tax-generate` and `/tax-verify` can audit the refundable payment instead
+    of watching it fold into a total — but it FLOWS INTO line 31, which is what
+    line 33 adds. The pair is the second independent source this section has,
+    the way Schedule D is line 7's: a figure recorded on its own line and larger
+    than the total it is part of is either double-counted downstream or missing
+    from line 31, and both directions move a refund.
+    """
+    excess = _path_num(result, "form_1040.schedule_3_line_11_excess_ss",
+                       "schedule_3_line_11_excess_ss")
+    if excess < 0:
+        raise Blocked(
+            f"form_1040.schedule_3_line_11_excess_ss is {excess:,.2f}. It is a "
+            "credit, and a negative one reaches line 33 as a payment nobody "
+            "made.")
+    part_2 = _path_num(result, "form_1040.line_31_schedule3_part2",
+                       "line_31_schedule3_part2")
+    if excess - part_2 > CENT:
+        raise Blocked(
+            f"Schedule 3 line 11 (excess social security withholding) is "
+            f"{excess:,.2f} against a Schedule 3 Part II total of "
+            f"{part_2:,.2f} on Form 1040 line 31. Line 11 is INSIDE Part II — "
+            "line 33 adds line 31 and not the two — so an excess larger than "
+            "the total it belongs to means either that line 31 never picked it "
+            "up, which loses the credit, or that it is being counted twice.")
+
+
+def _check_the_refund(available: float, applied: float) -> None:
+    """Line 36 cannot exceed what is left after the penalty — checked AFTER
+    the build, alone.
+
+    Every other refusal is a pre-condition over components. This one is a
+    component bounded by DERIVED figures: what can be carried forward is
+    payments minus tax minus the line 38 penalty, and none of the three is
+    known until the arithmetic has run.
+
+    The bound is `available`, not line 34, and the difference is the whole
+    reason this is a refusal rather than a floor. Line 35a floors at zero, so
+    applying forward money the penalty has already consumed would silently
+    ZERO the refund and leave the penalty unpaid on a return that shows
+    nothing owed — the taxpayer's remaining liability erased by a `max()`.
+    """
+    # `max(0, available)`, because a balance-due return has a NEGATIVE
+    # available and applies nothing forward — comparing against the raw figure
+    # blocked every ordinary return that owed tax, on a line reading 0.
+    if applied - max(0.0, available) > CENT:
+        raise Blocked(
+            f"Form 1040 line 36 applies {applied:,.2f} to next year's "
+            f"estimated tax, against {max(0.0, available):,.2f} actually available "
+            "(line 33 minus line 24 minus the line 38 penalty). Line 35a "
+            "floors at zero, so the excess would not show up as a negative "
+            "refund — it would vanish, leaving the penalty unpaid on a return "
+            "that shows nothing owed. Reduce what is carried forward.")
 
 
 def _check_line_7_against_schedule_d(result: dict, combined: float) -> None:
@@ -527,7 +655,7 @@ def _check_in_scope(result: dict) -> None:
             "(reclassified_from_line_3a / _3b) and adds a deferred-tax charge "
             "to line 24 that is not line 22 plus line 23. This slice models "
             "neither, and building lines 3a/3b from the ledger would restore "
-            "the qualified treatment §1291 forbids. Keep Form 1040 lines 1-24 "
+            "the qualified treatment §1291 forbids. Keep Form 1040 lines 1-38 "
             "by hand for this return.")
 
 
@@ -608,10 +736,10 @@ def _context(result: dict, tax_law: dict, filing_status: str) -> _Context:
 
 
 def build(result: dict, tax_law: dict, ledger, filing_status: str) -> "dict[str, float]":
-    """Every derived line of Form 1040 lines 1-24, from the components.
+    """Every derived line of Form 1040 lines 1-38, from the components.
 
     Returns the field -> value map; it does not mutate `result`. The INJECTED
-    lines — the ledger's six and the AMT — land on the working copy FIRST,
+    lines — the ledger's eight and the AMT — land on the working copy FIRST,
     because line 9 sums lines the ledger produces: deriving a total from the
     figures already on the return while replacing those figures underneath it
     is how a total ends up describing an earlier version of the same return.
@@ -629,6 +757,10 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str) -> "dict[str,
     ctx = _context({**result, "form_1040": working}, tax_law, filing_status)
     for d in DERIVATIONS:
         working[d.field] = round(d.compute(g, ctx), 2)
+    _check_the_refund(
+        g("line_33_total_payments") - g("line_24_total_tax")
+        - g("line_38_estimated_tax_penalty"),
+        g("line_36_applied_to_next_year"))
     return {field: working[field] for field in DERIVED_ORDER}
 
 
@@ -784,7 +916,7 @@ def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(
         prog="agents.lib.return_builder",
-        description="Derive Form 1040 lines 1-24 from the parsed records, the "
+        description="Derive Form 1040 lines 1-38 from the parsed records, the "
                     "profile and the tax-law cache (V1, first slice).")
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--check", action="store_true",
@@ -809,16 +941,16 @@ def _main(argv: list) -> int:
                       f"disagree with the components they are computed from:\n"
                       f"{_report(changes)}", file=sys.stderr)
                 return 2
-            print(f"All {len(derived)} derived lines of Form 1040 lines 1-24 "
+            print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "agree with their components.")
             return 0
         if write(workspace, result, derived):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
-                  f"lines 1-24:\n{_report(changes)}\n"
+                  f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "
                   "highest line listed.")
         else:
-            print(f"All {len(derived)} derived lines of Form 1040 lines 1-24 "
+            print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "already agree with their components; nothing written.")
     except Blocked as e:
         # OutOfScope is a Blocked, so this one arm covers both: a return this

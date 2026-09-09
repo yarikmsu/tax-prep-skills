@@ -198,23 +198,24 @@ class TestTheSliceBoundaryIsDeclaredAndCoversTheForm:
         fields = {k for k in self._template_1040() if not k.startswith("_")}
         assert RB.SLICE_FIELDS <= fields, RB.SLICE_FIELDS - fields
 
-    def test_every_template_line_1_to_24_is_in_the_slice(self):
+    def test_every_numbered_template_line_is_inside_the_boundary(self):
         """The other direction, which is the one that catches an ADDED line.
         Parsed from the field NAME rather than listed again: `line_<n>` is the
-        form's own numbering, and a new `line_20b_...` lands in the slice
-        without anybody remembering to add it here."""
-        outside = set()
-        for field in self._template_1040():
-            if not field.startswith("line_"):
-                continue
-            number = ""
-            for ch in field[len("line_"):]:
-                if not ch.isdigit():
-                    break
-                number += ch
-            if number and int(number) <= 24 and field not in RB.SLICE_FIELDS:
-                outside.add(field)
-        assert not outside, f"1040 lines 1-24 outside the slice: {sorted(outside)}"
+        form's own numbering, and a new `line_20b_...` lands inside the
+        boundary without anybody remembering to add it here."""
+        outside = {f for f in self._template_1040()
+                   if f.startswith("line_") and f not in RB.SLICE_FIELDS}
+        assert not outside, f"1040 lines outside the boundary: {sorted(outside)}"
+
+    def test_the_1040_fields_that_are_NOT_numbered_lines_stay_outside(self):
+        """`schedule_e_k1_income` is /tax-ptet's phantom-income base and
+        `schedule_3_line_11_excess_ss` is a persisted audit trail for a figure
+        that flows into line 31 — neither is a box on the form, so neither is a
+        line this module owns or requires."""
+        for field in ("schedule_e_k1_income", "schedule_3_line_11_excess_ss",
+                      "digital_asset_question"):
+            assert field in self._template_1040()
+            assert field not in RB.SLICE_FIELDS
 
     def test_derived_and_component_partition_the_slice(self):
         assert RB.DERIVED_FIELDS | RB.COMPONENT_FIELDS == RB.SLICE_FIELDS
@@ -248,7 +249,11 @@ class TestTheSliceBoundaryIsDeclaredAndCoversTheForm:
     def test_the_ledger_lines_are_read_out_of_the_gates_own_table(self):
         """Not listed twice. The mapping from a canonical category to the line
         it lands on belongs to `tie_out`, and a second copy here is a second
-        chance for the builder to put wages somewhere the gate does not look."""
+        chance for the builder to put wages somewhere the gate does not look.
+
+        The two withholding lines joined this set when the boundary reached
+        line 38 — without an edit, because the rule is "one `form_1040` field
+        inside the boundary" and the boundary is what moved."""
         assert RB.ledger_lines() == {
             "wages": "line_1a_wages",
             "tax_exempt_interest": "line_2a_tax_exempt_interest",
@@ -256,6 +261,8 @@ class TestTheSliceBoundaryIsDeclaredAndCoversTheForm:
             "qualified_dividends": "line_3a_qualified_dividends",
             "ordinary_dividends": "line_3b_ordinary_dividends",
             "ss_benefits": "line_6a_social_security",
+            "federal_withholding_w2": "line_25a_w2_withholding",
+            "federal_withholding_1099": "line_25b_1099_withholding",
         }
 
     def test_a_category_naming_two_lines_is_not_derived(self):
@@ -267,14 +274,16 @@ class TestTheSliceBoundaryIsDeclaredAndCoversTheForm:
         assert "line_4a_ira_distributions" not in RB.DERIVED_FIELDS
         assert "line_5a_pensions" not in RB.DERIVED_FIELDS
 
-    def test_the_withholding_lines_stay_with_the_agent(self):
-        """Lines 25a and 25b are categories with a single 1040 target, so only
-        the slice boundary keeps them out. Half a payments section is worse than
-        none: the agent cannot tell which half it still owns."""
+    def test_the_withholding_lines_come_from_the_ledger_too(self):
+        """Box 2 of a W-2 is a transcription exactly as box 1 is, and it is the
+        one figure on the payments side with a parsed document behind it. The
+        first slice left both out because half a payments section is worse than
+        none — the agent cannot tell which half it still owns — and the second
+        slice is where the other half arrived."""
         assert T.CATEGORY_TARGETS["federal_withholding_w2"][1] == [
             "line_25a_w2_withholding"]
-        assert "line_25a_w2_withholding" not in RB.DERIVED_FIELDS
-        assert "line_25b_1099_withholding" not in RB.DERIVED_FIELDS
+        assert "line_25a_w2_withholding" in RB.DERIVED_FIELDS
+        assert "line_25b_1099_withholding" in RB.DERIVED_FIELDS
 
 
 class TestTheArithmeticIsTheFormsArithmetic:
@@ -586,6 +595,188 @@ class TestLine7IsCheckedAgainstScheduleD:
             _build(ws)
 
 
+class TestThePaymentsSideReachesTheRefund:
+    """V1's second slice. Lines 25-38 had the same shape as lines 1-24 — a
+    column of figures summed by hand — and two of them had no field at all."""
+
+    def _ws(self, tmp_path, lines=None, extra=None, records=None, name="ws"):
+        base = {"line_12_standard_deduction": 0}
+        base.update(lines or {})
+        return _workspace(
+            tmp_path, base, extra=extra, name=name,
+            records=records if records is not None else [
+                {"wages": 30000.0, "federal_withholding_w2": 5000.0}])
+
+    def test_the_withholding_lines_are_the_ledgers_own_sums(self, tmp_path):
+        _, derived = _build(self._ws(tmp_path, records=[
+            {"wages": 30000.0, "federal_withholding_w2": 5000.0},
+            {"federal_withholding_1099": 700.0}]))
+        assert derived["line_25a_w2_withholding"] == 5000.0
+        assert derived["line_25b_1099_withholding"] == 700.0
+
+    def test_line_25d_adds_the_other_withholding(self, tmp_path):
+        """25c is the Form 8959 additional-Medicare over-withholding, and it is
+        the agent's — but it is IN the total."""
+        _, derived = _build(self._ws(tmp_path,
+                                     {"line_25c_other_withholding": 450.0}))
+        assert derived["line_25d_total_withholding"] == 5450.0
+
+    def test_the_refundable_ACTC_reaches_line_33(self, tmp_path):
+        """The defect this slice closes. `compute_child_tax_credit` splits into
+        `nonrefundable_used` (line 19) and `refundable_actc`, and line 28 had no
+        field — so the computed figure was thrown away and the refund was short
+        by it, for exactly the families the credit exists for."""
+        _, derived = _build(self._ws(tmp_path,
+                                     {"line_28_refundable_actc": 1600.0}))
+        assert derived["line_33_total_payments"] == 6600.0
+        assert derived["line_34_overpayment"] == 2600.0
+        assert derived["line_35a_refund"] == 2600.0
+
+    def test_line_33_sums_every_term(self, tmp_path):
+        _, derived = _build(self._ws(tmp_path, {
+            "line_25c_other_withholding": 10.0,
+            "line_26_estimated_payments": 20.0, "line_27_eic": 30.0,
+            "line_28_refundable_actc": 40.0, "line_29_refundable_aotc": 50.0,
+            "line_31_schedule3_part2": 60.0}))
+        assert derived["line_33_total_payments"] == 5210.0
+
+    def test_an_overpayment_and_an_amount_owed_are_mutually_exclusive(self, tmp_path):
+        """Both are floored at zero and they are the two sides of one
+        comparison. Deriving line 37 as the negation of line 34 would print a
+        negative in the box on every refund."""
+        _, big_tax = _build(self._ws(tmp_path, records=[{"wages": 30000.0}],
+                                     name="owes"))
+        assert big_tax["line_37_amount_owed"] == 4000.0
+        assert big_tax["line_34_overpayment"] == 0.0
+        _, refund = _build(self._ws(tmp_path, {"line_26_estimated_payments": 9000.0},
+                                    records=[{"wages": 30000.0}], name="refund"))
+        assert refund["line_34_overpayment"] == 5000.0
+        assert refund["line_37_amount_owed"] == 0.0
+
+    def test_an_amount_applied_to_next_year_comes_off_the_refund(self, tmp_path):
+        _, derived = _build(self._ws(tmp_path, {
+            "line_26_estimated_payments": 9000.0,
+            "line_36_applied_to_next_year": 2000.0},
+            records=[{"wages": 30000.0}], name="applied"))
+        assert derived["line_34_overpayment"] == 5000.0
+        assert derived["line_35a_refund"] == 3000.0
+
+    def test_applying_more_than_the_overpayment_blocks(self, tmp_path):
+        """The one check that has to run AFTER the build: line 36 is a
+        component bounded by DERIVED figures, so there is nothing to compare it
+        against until the arithmetic has run."""
+        ws = self._ws(tmp_path, {"line_26_estimated_payments": 9000.0,
+                                 "line_36_applied_to_next_year": 8000.0},
+                      records=[{"wages": 30000.0}])
+        with pytest.raises(RB.Blocked, match="line 36"):
+            _build(ws)
+
+    def test_a_balance_due_return_carrying_nothing_forward_is_not_blocked(
+            self, tmp_path):
+        """The bound is floored at zero. A return that OWES tax has a negative
+        amount available and applies nothing forward, and comparing against the
+        raw figure blocked every one of them on a line reading 0 — a gate
+        firing on the most ordinary return there is."""
+        _, derived = _build(self._ws(tmp_path, {
+            "line_38_estimated_tax_penalty": 275.0},
+            records=[{"wages": 30000.0}], name="plain"))
+        assert derived["line_37_amount_owed"] == 4275.0
+
+    def test_carrying_forward_with_nothing_available_still_blocks(self, tmp_path):
+        ws = self._ws(tmp_path, {"line_36_applied_to_next_year": 100.0},
+                      records=[{"wages": 30000.0}], name="nothing")
+        with pytest.raises(RB.Blocked, match="available"):
+            _build(ws)
+
+    def test_the_penalty_narrows_what_may_be_carried_forward(self, tmp_path):
+        """The bound is what is AVAILABLE, not line 34, and line 35a floors at
+        zero — so carrying forward money the penalty has already consumed would
+        not show up as a negative refund. It would VANISH, leaving the penalty
+        unpaid on a return that shows nothing owed."""
+        ws = self._ws(tmp_path, {"line_26_estimated_payments": 6000.0,
+                                 "line_38_estimated_tax_penalty": 275.0,
+                                 "line_36_applied_to_next_year": 2000.0},
+                      records=[{"wages": 30000.0}], name="squeezed")
+        with pytest.raises(RB.Blocked, match="available"):
+            _build(ws)
+        ok = self._ws(tmp_path, {"line_26_estimated_payments": 6000.0,
+                                 "line_38_estimated_tax_penalty": 275.0,
+                                 "line_36_applied_to_next_year": 1725.0},
+                      records=[{"wages": 30000.0}], name="fits")
+        _, derived = _build(ok)
+        assert derived["line_35a_refund"] == 0.0
+        assert derived["line_37_amount_owed"] == 0.0
+
+    def test_the_estimated_tax_penalty_IS_inside_the_amount_owed(self, tmp_path):
+        """The 1040's line-37 instruction says to add the line 38 penalty to
+        the amount owed, and `references/tax-and-credits.md` step 9.5 has said
+        so all along. The first draft of this slice left it out of both
+        settlement lines and shipped a test asserting that was right: $4,000 of
+        tax against a $275 penalty came back as $4,000 owed. That is the
+        under-statement direction on a figure the taxpayer pays, certified by
+        its own test."""
+        _, derived = _build(self._ws(tmp_path,
+                                     {"line_38_estimated_tax_penalty": 275.0},
+                                     records=[{"wages": 30000.0}], name="owe"))
+        assert derived["line_37_amount_owed"] == 4275.0
+        assert derived["line_34_overpayment"] == 0.0
+
+    def test_the_penalty_comes_out_of_a_refund(self, tmp_path):
+        """Line 34 is the form's "amount overpaid" and is taken BEFORE the
+        penalty — payments against tax, full stop. The penalty then reduces
+        what is actually refunded."""
+        _, derived = _build(self._ws(tmp_path, {
+            "line_26_estimated_payments": 5000.0,
+            "line_38_estimated_tax_penalty": 275.0},
+            records=[{"wages": 30000.0}], name="refund"))
+        assert derived["line_34_overpayment"] == 1000.0
+        assert derived["line_35a_refund"] == 725.0
+        assert derived["line_37_amount_owed"] == 0.0
+
+    def test_a_penalty_larger_than_the_overpayment_becomes_a_balance_due(
+            self, tmp_path):
+        """The case the two formulas have to agree on: both are written from
+        the same three figures, so the remainder lands on line 37 without a
+        third branch deciding which side the return is on."""
+        _, derived = _build(self._ws(tmp_path, {
+            "line_26_estimated_payments": 4100.0,
+            "line_38_estimated_tax_penalty": 275.0},
+            records=[{"wages": 30000.0}], name="both"))
+        assert derived["line_34_overpayment"] == 100.0
+        assert derived["line_35a_refund"] == 0.0
+        assert derived["line_37_amount_owed"] == 175.0
+
+    def test_excess_social_security_larger_than_schedule_3_part_2_blocks(
+            self, tmp_path):
+        """`schedule_3_line_11_excess_ss` is persisted so the credit stays
+        auditable, but it FLOWS INTO line 31, which is what line 33 adds. An
+        excess larger than the total it belongs to means line 31 never picked
+        it up (the credit is lost) or it is being counted twice."""
+        ws = self._ws(tmp_path, {"line_31_schedule3_part2": 100.0},
+                      extra=None)
+        result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+        result["form_1040"]["schedule_3_line_11_excess_ss"] = 900.0
+        (ws / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        with pytest.raises(RB.Blocked, match="excess social security"):
+            _build(ws)
+
+    def test_an_excess_inside_part_2_is_fine(self, tmp_path):
+        ws = self._ws(tmp_path, {"line_31_schedule3_part2": 900.0})
+        result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+        result["form_1040"]["schedule_3_line_11_excess_ss"] = 900.0
+        (ws / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        _, derived = _build(ws)
+        assert derived["line_33_total_payments"] == 5900.0
+
+    def test_a_negative_excess_blocks(self, tmp_path):
+        ws = self._ws(tmp_path)
+        result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+        result["form_1040"]["schedule_3_line_11_excess_ss"] = -50.0
+        (ws / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        with pytest.raises(RB.Blocked, match="negative one reaches line 33"):
+            _build(ws)
+
+
 class TestOutOfScopeRefuses:
 
     def test_a_pfic_fund_blocks_the_build(self, tmp_path):
@@ -783,7 +974,10 @@ class TestTheReportAndTheOrder:
             "line_14_total_deductions", "line_15_taxable_income",
             "line_16_tax", "line_17_schedule2_part1",
             "line_18_tax_plus_schedule2", "line_21_total_credits",
-            "line_22_tax_minus_credits", "line_24_total_tax")
+            "line_22_tax_minus_credits", "line_24_total_tax",
+            "line_25a_w2_withholding", "line_25b_1099_withholding",
+            "line_25d_total_withholding", "line_33_total_payments",
+            "line_34_overpayment", "line_35a_refund", "line_37_amount_owed")
 
     def test_every_derived_line_has_a_stated_rule(self):
         assert set(RB.RULES) == set(RB.DERIVED_ORDER)

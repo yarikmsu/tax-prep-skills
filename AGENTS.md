@@ -199,11 +199,12 @@ are plain Markdown instructions and are written to be executable that way.
   tie-out HARD GATE (`agents/lib/tie_out.py`, exit 2 = return NOT complete):
   documents-without-records, records-without-files, and per-category
   ledger-vs-result sum mismatches all fail deterministically, so the dropped-1099
-  CP2000 scenario cannot pass. Form 1040 lines 1-24 that are ARITHMETIC over
-  other lines, plus the six income lines the records sum to, are DERIVED by
+  CP2000 scenario cannot pass. Form 1040 lines 1-38 that are ARITHMETIC over
+  other lines, plus the eight lines the records sum to, are DERIVED by
   `agents/lib/return_builder.py` and must never be typed; step 12.6 `--check`
-  re-asserts them. The AMT reaches total tax through line 17 only because that
-  line exists — for years it did not. Unverifiable categories WARN loudly, never
+  re-asserts them. Three lines reached the return only because V1 gave them a
+  FIELD: the AMT (17), the refundable ACTC (28) and an overpayment applied
+  forward (36). Line 27, the EIC, is computed nowhere at all. Unverifiable categories WARN loudly, never
   silently pass. `tax-review` audits the aggregated result and structurally
   cannot catch intake drops; only this ledger-to-result comparison can.
 - **Never silently out-of-scope** — `tax-compute` Step 0.7 runs the capability

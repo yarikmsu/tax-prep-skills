@@ -1806,3 +1806,73 @@ Local `codex exec`, four `/simplify` agents (reuse, simplification, privacy, alt
 - The tie-out rationale in the module docstring was WRONG and is rewritten. "The gate now catches only an edit after the build" is the tempting answer; step 12.6 catches that one step earlier. The gate stays because it is the cross-agent hard gate and must hold on a workspace where this constructor never ran — those six checks are tautological only conditional on the builder having run, which is exactly what a gate cannot assume.
 
 **The limit this slice ships with, stated rather than discovered.** Step 12.6 writes no receipt, so `--filing-package` cannot prove it ran. Folding `differences()` into `tie_out` would close that and the input sets are already identical — but it would fail the hard gate on every workspace written before line 17 existed. That is a migration decision, and it is the next slice.
+
+## V1, second slice — the payments side, and three lines with no field
+
+**PR #110, 2026-09-08.** Lines 25-38 had the same shape as lines 1-24: a column
+of figures summed by hand. Lines 25a and 25b are ledger sums like the income
+lines — box 2 of a W-2 is a transcription exactly as box 1 is — and 25d, 33, 34,
+35a and 37 are arithmetic. Line 34 and line 37 are the two sides of ONE
+comparison, each floored at zero, so exactly one is nonzero on any return;
+deriving 37 as the negation of 34 would print a negative in the box on every
+refund.
+
+**Three lines had no field at all**, which is the same defect line 17 was:
+
+- **`line_28_refundable_actc`.** `compute_child_tax_credit` COMPUTES it and the
+  skill routes it to line 28. The number was thrown away, line 33 omitted it,
+  and the refund was short by it — for exactly the families the credit exists
+  for. `amend.py` derives Form 1040-X line 15 as line 33 minus 25d minus 26, so
+  it was short there too.
+- **`line_36_applied_to_next_year`.** Line 35a is 34 minus 36, so without a
+  field the two were equal for every filer who applied part of a refund
+  forward. RECORDED, not carried: `/tax-rollover` still has no reader for it.
+  (This closes the "line_36 missing from result_template" cross-cutting item.)
+- **`line_27_eic`.** Nothing in `agents/lib` computes the Earned Income Credit,
+  the capability gate has no rule for it and `tax-setup` asks no question that
+  would raise one — so an eligible filer's line 27 stays 0 and the refund is
+  short by the largest single number on their return. The field exists so a
+  figure from the 1040 instructions' EIC worksheet can be recorded and reaches
+  line 33, with the gap stated on the field itself and in `tax-gotchas.md`.
+
+**The guards.** Excess social security withholding is INSIDE line 31, not beside
+it — line 33 adds line 31 and not the two — so an excess larger than the Part II
+total it belongs to is refused: it means either that line 31 never picked it up
+(losing the credit) or that it is counted twice. And line 36 cannot exceed what
+is actually available, which is the one check that has to run AFTER the build,
+because its bound is derived.
+
+### The review round
+
+**The finding that mattered, and the repo already knew the answer.** Local Codex
+found that line 38 was left out of BOTH settlement lines. $4,000 of tax against a
+$275 estimated-tax penalty came back as $4,000 owed rather than $4,275, and a
+$1,000 overpayment with the same penalty came back as a $1,000 refund rather than
+$725. The 1040's line-37 instruction says to add the penalty to the amount owed
+and take it out of the refund, and `references/tax-and-credits.md` step 9.5 had
+said exactly that all along — the slice was written without reading far enough
+down its own reference file. Worse, **a test asserted the wrong behaviour**, so
+the defect shipped with a certificate. Lines 37 and 35a now carry it:
+
+    line_34 = max(0, 33 - 24)                 # the form's "amount overpaid"
+    line_35a = max(0, 33 - 24 - 38 - 36)      # what is actually refunded
+    line_37 = max(0, 24 + 38 - 33)            # the penalty is in what is owed
+
+Both settlement lines are written from the same three figures, so a penalty
+larger than the overpayment becomes the balance due without a second branch
+deciding which side the return is on.
+
+Fixing it then produced a **gate crying wolf on the most ordinary return there
+is**: the line-36 bound was compared against a raw availability figure, which is
+NEGATIVE whenever the return owes tax, so every balance-due return was blocked on
+a line reading 0. Floored at zero, with both directions tested.
+
+**Refuted, or rather deferred with a reason.** Codex also flagged the refundable
+adoption credit as missing from line 33. Real — the capability gate lists Form
+8839 as a MANUAL worksheet item, so the taxpayer is told to compute a number
+there is nowhere to record. But its TY2026 line placement is not something to
+infer offline (AGENTS.md §2), so no field was invented; it is written down in
+`tax-gotchas.md` as the next candidate, alongside the EIC.
+
+**Verification.** 95 tests, 25 mutation probes all red, and the `ca_mfj_2026`
+golden reproduces end to end with lines 27, 28 and 36 at zero.

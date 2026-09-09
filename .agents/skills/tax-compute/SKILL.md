@@ -139,18 +139,19 @@ Read each reference file when you reach its steps; do not read them all up front
 Steps 0.5, 0.7, 12.6 and 12.7 are gates and are written out in full in this
 file. Never skip one because a reference file did not mention it.
 
-### Form 1040 lines 1-24 are DERIVED — run the builder, do not type them
+### Form 1040 lines 1-38 are DERIVED — run the builder, do not type them
 
 ```
 sh agents/lib/run.sh -m agents.lib.return_builder --workspace .
 ```
 
 Every 1040 line that is ARITHMETIC over other lines — 1z, 9, 11, 14, 15, 16, 17,
-18, 21, 22, 24 — plus the six income lines that are a straight sum of the parse
-records (1a, 2a, 2b, 3a, 3b, 6a) is computed by that command and written to
-`result.json`. **Do not write one of them by hand.** Everything else on lines
-1-24 is a COMPONENT you still decide: what is taxable, whether to itemize, what
-the credits allow.
+18, 21, 22, 24, 25d, 33, 34, 35a, 37 — plus the eight lines that are a straight
+sum of the parse records (1a, 2a, 2b, 3a, 3b, 6a and the two withholding lines
+25a and 25b) is computed by that command and written to `result.json`. **Do not
+write one of them by hand.** Everything else on the form is a COMPONENT you
+still decide: what is taxable, whether to itemize, what the credits allow, what
+was paid.
 
 It is idempotent and it does not rewrite an unchanged file, so **run it whenever
 a group of components is finished** and let Step 12.6 be what proves you
@@ -162,13 +163,14 @@ line 18 — so run it at least:
   come back final — line 16 is the Qualified Dividends and Capital Gain Tax
   Worksheet, so Step 6 is now reading its answer rather than running it, and
   Step 6.5's AMT has the line 15 it needs.
-- **After Step 8**, once the credits and other taxes are in. Lines 17, 18, 21,
-  22 and 24 come back final.
+- **After Step 9**, once the credits, the other taxes and the payments are in.
+  Lines 17, 18, 21, 22, 24, 25d, 33, 34, 35a and 37 come back final.
 
-Between those two passes lines 21-24 hold a figure built from components that
-are still zero, and it is not marked as provisional — the template ships every
-component at 0 and nothing can tell "decided as zero" from "not decided yet".
-Do not quote a total tax to the user until the second pass has run.
+Between those two passes lines 21-37 hold figures built from components that
+are still zero, and they are not marked as provisional — the template ships
+every component at 0 and nothing can tell "decided as zero" from "not decided
+yet". Do not quote a total tax, a refund or a balance due to the user until the
+second pass has run.
 
 - **Exit 0** — built (or already agreed). It prints every line it changed, old
   and new. If it changed one, RE-READ `result.json` before using any figure
@@ -189,7 +191,7 @@ Both gates write their verdict, and the digest of every file they read, into
 a package whose gates never ran or ran against other inputs. Nothing here to do:
 the tools write it. Do NOT edit that file; re-run the gate instead.
 
-### Step 12.6: Form 1040 lines 1-24 still agree with their components
+### Step 12.6: Form 1040 lines 1-38 still agree with their components
 
 ```
 sh agents/lib/run.sh -m agents.lib.return_builder --workspace . --check
