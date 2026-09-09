@@ -1182,9 +1182,9 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.08 - 0.11s         6
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
-#   skill .md edit                 884 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1105 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4218 tests    228.4 - 243.4s        2
+#   skill .md edit                 885 tests     19.7 - 23.4s         3
+#   cold pass, all seven modules  1106 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   4242 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 179 and runs 177; and
@@ -1194,7 +1194,7 @@ apply_red_checks
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4225 and runs 4218 for the same skips — and that row
+# `pytest tests/` collects 4249 and runs 4242 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1216,7 +1216,7 @@ apply_red_checks
 #   tests/test_portability.py      177 tests     11.1 - 13.1s        6
 #   tests/test_capabilities.py     116 tests      0.8 - 3.1s         6
 #   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
-#   tests/test_secure_fs.py        168 tests      1.4 - 2.1s         6
+#   tests/test_secure_fs.py        169 tests      1.4 - 2.1s         6
 #   tests/test_preflight.py        375 tests      5.6 - 7.2s         6
 #   tests/test_host_guard.py        93 tests      1.4 - 1.8s         6
 #
@@ -1314,7 +1314,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 116 + 168 + 177 + 375 = 884 for a skill edit, plus 93 + 128 = 1105 for a
+# 48 + 116 + 169 + 177 + 375 = 885 for a skill edit, plus 93 + 128 = 1106 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1373,7 +1373,7 @@ apply_red_checks
 # the branch settles.
 #
 # Against the counts the seconds were taken at, the suite has gained two hundred
-# and forty-five tests (3973 to 4218), and the gap was ZERO when the sitting ended: it took the
+# and sixty-nine tests (3973 to 4242), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1382,14 +1382,16 @@ apply_red_checks
 # an arm for, which is the case this whole mechanism exists for. The DECOMPOSITION has moved on
 # exactly ONE row since the sitting, and it is the row that cannot help moving:
 # secure_fs parametrises over `agents/lib/*.py`, so every new engine module adds
-# a case to it, and the Windows job's own cases landed there too. Eight tests on
-# one row, against a stated RANGE wider than eight of that row's tests can
+# a case to it, and the Windows job's own cases landed there too. NINE tests on
+# one row, against a stated RANGE wider than nine of that row's tests can
 # reach — which is the one shape a counts-only refresh survives. A SECOND row
 # moving, or that row moving far enough to leave its range, buys the half-hour
 # sitting. V1's second and third slices moved no row at all: neither added an
 # engine module, and the third's thirty-two cases landed in the receipt,
 # filing-package, pdf_render and return_builder modules, none of which this hook
-# has an arm for. The round the seconds were taken at was V5's required-answer
+# has an arm for. Y4 added `agents/lib/workspace.py`, one engine module, so the
+# parametrised row above gained the one case this paragraph predicts — plus
+# twenty-three in a new tests/test_workspace.py the hook has no arm for either. The round the seconds were taken at was V5's required-answer
 # registry: sixty-eight cases in that new module, and ONE case in secure_fs,
 # which parametrises over `agents/lib/*.py` and so gains a case for every engine
 # module added. That single case is the only reason a decomposition row moved at
@@ -1529,7 +1531,7 @@ apply_red_checks
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
 # portability has gained none (177 to 177), preflight has gained none (375 to 375), the
-# agents module none (48 to 48), secure_fs has gained eight (160 to 168), the hooks module
+# agents module none (48 to 48), secure_fs has gained nine (160 to 169), the hooks module
 # none (128 to 128), capabilities has gained none (116 to 116) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
@@ -1539,10 +1541,10 @@ apply_red_checks
 # for — the guard blocked the honest refresh in the one direction no round had
 # yet taken. SIX pairs read none and the seventh reads eight, and that is not
 # the paragraph going slack: of the two hundred
-# and forty-five tests the suite has gained since the sitting, EIGHT landed in
+# and sixty-nine tests the suite has gained since the sitting, NINE landed in
 # tests/test_secure_fs.py — the Windows cases plus one case each for
 # V2's and V1's new engine modules, which is the pair above reading eight — and
-# the other two hundred and thirty-seven in test_answers, test_ci_workflow,
+# the other two hundred and sixty in test_answers, test_ci_workflow,
 # test_pii_content_scan, test_evals, test_eval_run, test_parse_records,
 # test_return_builder, test_receipt, test_filing_package and test_pdf_render, none
 # of which this hook has an arm for. That is the ordinary case and the reason the pairs
@@ -1550,7 +1552,7 @@ apply_red_checks
 # not another half-hour sitting. The seconds are re-taken when the DECOMPOSITION
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # has not.
-# They sum to eight; the remaining two hundred and thirty-seven are modules this
+# They sum to nine; the remaining two hundred and sixty are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

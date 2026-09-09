@@ -69,8 +69,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
 3. **Compute.** Run:
    ```bash
-   sh agents/lib/run.sh -m agents.lib.scenario --result result.json --workspace . --year {year} \
-       --name {name} [--base scenarios/{other}.json] --json {KEY=AMOUNT ...}
+   sh agents/lib/run.sh -m agents.lib.scenario --result result.json --year {year} \
+ --name {name} [--base scenarios/{other}.json] --json {KEY=AMOUNT ...}
    ```
    This writes `scenarios/{name}.json` with owner-only permissions through
    `agents.lib.secure_fs` and emits the JSON report.

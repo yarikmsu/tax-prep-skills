@@ -32,6 +32,11 @@ from agents.lib.secure_fs import (  # noqa: E402
     atomic_write, first_non_finite, is_reparse_point)
 from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 
 def get_tax_law_path(year: int, workspace: str = ".") -> Path:
@@ -2058,6 +2063,22 @@ def _parse_cli_value(raw: str):
         return raw
 
 
+def _cli_workspace(index: int) -> str:
+    """The workspace for a positional-argv subcommand, or exit 1 saying why.
+
+    These three subcommands take their workspace as a bare positional and used
+    to default it to `"."`. `resolve_workspace` supplies `$TAX_WORKSPACE`
+    instead, and its refusal has to reach the user as a line rather than a
+    traceback — this block has no `try` of its own around the dispatch.
+    """
+    try:
+        return str(resolve_workspace(
+            sys.argv[index] if len(sys.argv) > index else None))
+    except WorkspaceError as e:
+        print(f"Error: {redact(e)}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _set_main(argv: list) -> int:
     import argparse
     p = argparse.ArgumentParser(
@@ -2067,7 +2088,7 @@ def _set_main(argv: list) -> int:
     p.add_argument("value", help="the figure as JSON (a number, a list, an object); a bare word is a string")
     p.add_argument("--source", required=True, help="the authoritative URL the figure was read from")
     p.add_argument("--year", required=True, type=int, help="the tax year; must equal the cache's tax_year")
-    p.add_argument("--workspace", default=".")
+    add_workspace_argument(p)
     p.add_argument("--applies-to", default=None,
                    help="the period the figure covers when it is not the tax year "
                         "(a calendar year for historical_top_rate, a quarter for underpayment_rates)")
@@ -2077,8 +2098,9 @@ def _set_main(argv: list) -> int:
         if period is not None and re.fullmatch(r"\d{4}", period):
             period = int(period)
         out = set_figure(args.year, args.dotted, _parse_cli_value(args.value),
-                         args.source, args.workspace, applies_to=period)
-    except ValueError as e:  # TaxLawSetError is one
+                         args.source, str(resolve_workspace(args.workspace)),
+                         applies_to=period)
+    except (WorkspaceError, ValueError) as e:  # TaxLawSetError is one
         print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
     print(json.dumps(out))
@@ -2110,18 +2132,18 @@ if __name__ == "__main__":
 
     if cmd == "create":
         data = create_empty_tax_law(year)
-        workspace = sys.argv[3] if len(sys.argv) > 3 else "."
+        workspace = _cli_workspace(3)
         path = save_tax_law(year, data, workspace)
         print(f"Created empty tax law template: {redact(path)}")
     elif cmd == "load":
-        workspace = sys.argv[3] if len(sys.argv) > 3 else "."
+        workspace = _cli_workspace(3)
         data = load_tax_law(year, workspace)
         if data:
             print(json.dumps(data, indent=2))
         else:
             print(f"No cached tax law for {year}. Run /tax-setup to fetch.")
     elif cmd == "freshness":
-        workspace = sys.argv[3] if len(sys.argv) > 3 else "."
+        workspace = _cli_workspace(3)
         # THE EXIT CODE ANSWERS ONE QUESTION: must this run STOP? It is the
         # gates' code — 2 blocked, 1 could not run, 0 otherwise — and it is
         # spent on NOT_FOUND alone, because NOT_FOUND is the only status whose

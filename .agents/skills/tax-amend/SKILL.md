@@ -149,8 +149,8 @@ engine from the start.)
 ### 4. Render the 1040-X three-column summary
 
 ```bash
-sh agents/lib/run.sh -m agents.lib.amend --workspace . --year {year} \
-    --paid-with-original {amount}
+sh agents/lib/run.sh -m agents.lib.amend --year {year} \
+ --paid-with-original {amount}
 ```
 `--paid-with-original` = tax actually remitted with (or after) the
 original return — the balance due the taxpayer paid, NOT withholding or

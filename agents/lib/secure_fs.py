@@ -1177,7 +1177,21 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) > 1:
-        targets = sys.argv[1:]
+        # A RELATIVE target means a file in the WORKSPACE. Every skill spells
+        # these as bare names — `secure_fs taxpayer_profile.json` — and that was
+        # the same directory the command ran from until $TAX_WORKSPACE existed
+        # (Y4). Left alone, the documented call would have chmod'ed a stale copy
+        # in the checkout, or failed, while the real profile kept whatever mode
+        # it was created with: the one file AGENTS.md §1 is most explicit about.
+        # Imported here rather than at module scope — `workspace` imports this
+        # module, so a top-level import back would be a cycle.
+        from agents.lib.workspace import WorkspaceError, resolve_workspace
+        try:
+            root = resolve_workspace()
+        except WorkspaceError as e:
+            print(f"Could not resolve the workspace: {redact(e)}", file=sys.stderr)
+            sys.exit(1)
+        targets = [t if os.path.isabs(t) else str(root / t) for t in sys.argv[1:]]
         exit_code = 0
         for i, target in enumerate(targets):
             try:

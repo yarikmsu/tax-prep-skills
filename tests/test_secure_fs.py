@@ -56,7 +56,7 @@ SENSITIVE_SKILL_SECURITY_CALLS = {
         # on a file it no longer writes would pass this test while doing nothing.
         # That the builder really does secure it is
         # `TestTheLedgerIsDerivedAndNotTranscribed::test_the_ledger_is_owner_only`.
-        "-m agents.lib.parse_records --workspace . --build-ledger",
+        "-m agents.lib.parse_records --build-ledger",
     ),
     "tax-amend": (
         "-m agents.lib.secure_fs archive archive/{year} "

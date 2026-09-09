@@ -44,7 +44,7 @@ separate return for the preceding taxable year":
 
 ```
 figure 1 for this filer = joint figure 1 x  (this spouse's hypothetical separate tax)
-                                            -------------------------------------------
+ -------------------------------------------
                                             (sum of BOTH spouses' hypothetical separate taxes)
 ```
 

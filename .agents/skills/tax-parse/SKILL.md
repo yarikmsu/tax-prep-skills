@@ -89,7 +89,7 @@ required-answer check** — it reads `answers.md` and tells you which questions 
 workspace still owes, by id, instead of stopping one at a time later:
 
 ```
-sh agents/lib/run.sh -m agents.lib.answers --workspace . --check-required --for tax-parse
+sh agents/lib/run.sh -m agents.lib.answers --check-required --for tax-parse
 ```
 
 Exit 0 means nothing is owed — skip to Step 3. Exit 2 lists what is missing; ask
@@ -310,7 +310,7 @@ summaries asks a reader to spot a moved digit.
 Then derive and validate in one step:
 
 ```
-sh agents/lib/run.sh -m agents.lib.parse_records --workspace . --build-ledger
+sh agents/lib/run.sh -m agents.lib.parse_records --build-ledger
 ```
 
 - **Exit 0** — the ledger is written and secured. **Exit 2 — STOP**: it names the

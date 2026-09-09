@@ -71,8 +71,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
 3. **Compute.** Run:
    ```bash
-   sh agents/lib/run.sh -m agents.lib.roth_ladder --result result.json --workspace . --year {year} \
-       --name {name} --max {max} --step {step} [--ira-value {balance} --ira-basis {basis}] --json
+   sh agents/lib/run.sh -m agents.lib.roth_ladder --result result.json --year {year} \
+ --name {name} --max {max} --step {step} [--ira-value {balance} --ira-basis {basis}] --json
    ```
    Add `--ira-value` (and optionally `--ira-basis`) to apply the Form 8606 pro-rata rule so
    each rung's *taxable* conversion is diluted by the after-tax basis fraction.

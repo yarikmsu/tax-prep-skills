@@ -54,6 +54,10 @@ from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    resolve_workspace,
+)
 
 SCHEMA = "tax-parse-crypto/v1"
 
@@ -1208,12 +1212,32 @@ def _flag_value(argv: 'list[str]', flag: str) -> str:
     return argv[i + 1]
 
 
+def _under_the_workspace(path_arg: str) -> str:
+    """A RELATIVE path means a file in the taxpayer's workspace.
+
+    `documents/coinbase.csv` is how the skill spells it, and that used to mean
+    the directory the command ran from — which under `$TAX_WORKSPACE` is the
+    checkout (Y4). These two commands take their path as a bare positional, so
+    the structural sweep in `tests/test_workspace.py` cannot see them; they are
+    named there instead.
+
+    NOT `resolve_under_workspace`, which also CONFINES the result. An absolute
+    path outside the workspace has always been accepted here — a CSV sitting in
+    a downloads folder is the ordinary case — and narrowing that is V6's
+    question about arbitrary file reads, not this one about which directory a
+    relative path means. Changing both at once would have hidden the second
+    behind the first.
+    """
+    raw = Path(path_arg)
+    return str(raw if raw.is_absolute() else resolve_workspace() / raw)
+
+
 def _cli_adapt(argv: 'list[str]') -> int:
     if len(argv) < 2 or "--exchange" not in argv:
         print("Usage: crypto_importer.py adapt <file.csv> --exchange "
               "<coinbase|kraken|gemini> [--assume-self-transfers]", file=sys.stderr)
         return 2
-    path = argv[0]
+    path = _under_the_workspace(argv[0])
     exchange = _flag_value(argv, "--exchange")
     assume_self = "--assume-self-transfers" in argv
     rows = _read_csv(path)
@@ -1227,7 +1251,7 @@ def _cli_compute(argv: 'list[str]') -> int:
         print("Usage: crypto_importer.py compute <transactions.json> [--year YYYY] "
               "[--per-account] [--markdown]", file=sys.stderr)
         return 2
-    path = argv[0]
+    path = _under_the_workspace(argv[0])
     p = Path(path)
     if not p.is_file():
         print(f"ERROR: file not found: {redact(path)}", file=sys.stderr)
@@ -1295,7 +1319,7 @@ def main(argv: 'list[str]') -> int:
         print(f"ERROR: unknown command {cmd!r}. Use: adapt | compute | (no args = self-test)",
               file=sys.stderr)
         return 2
-    except CryptoImportError as e:
+    except (WorkspaceError, CryptoImportError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 — the boundary, not a handler

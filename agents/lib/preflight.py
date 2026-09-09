@@ -124,6 +124,8 @@ SKILL_MODULES = (
                              "runtime write goes through", "secure_path"),
     ("agents.lib.tax_calendar", "/tax-calendar's deadline calendar", "events_1040es"),
     ("agents.lib.withholding", "/tax-withholding's W-4 true-up", "_main"),
+    ("agents.lib.workspace", "the one answer to which directory holds the "
+                             "return", "resolve_workspace"),
     ("agents.lib.yoy_diff", "/tax-review's year-over-year diff", "_main"),
 )
 
@@ -2701,8 +2703,18 @@ def _main(argv: list) -> int:
     # agent whose sub-task starts in `summaries/` is still certified against a
     # `.venv` that is not there. Closing that needs the gate command to carry a
     # real root, which is a change to twenty skills and is not made here.
+    # NOT `workspace.add_workspace_argument`, and NOT `$TAX_WORKSPACE`. This
+    # flag is the odd one out in the package: everywhere else `--workspace`
+    # names the directory holding the taxpayer's RETURN, and here it names the
+    # root to resolve `.venv` against — the CODE root, which under Y4 is the
+    # checkout while the return lives somewhere else entirely. Pointing this at
+    # $TAX_WORKSPACE would look for the engine's venv inside the taxpayer's
+    # directory, find none, and certify a run against an interpreter that is
+    # not the one the engine is installed in — the exact defect the host guard
+    # exists to catch, arriving through the gate that is supposed to catch it.
     parser.add_argument("--workspace", default=None,
-                        help="workspace root to resolve `.venv` against "
+                        help="CODE root to resolve `.venv` against — NOT the "
+                             "taxpayer workspace and not $TAX_WORKSPACE "
                              "(default: the current directory)")
     args = parser.parse_args(argv)
 

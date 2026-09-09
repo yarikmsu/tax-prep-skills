@@ -527,7 +527,7 @@ Line 15: DERIVED — taxable income = max(0, Line 11 - Line 14)
 ```
 
 Lines 12, 13a, 13b and 13c are yours; 14 and 15 are `return_builder`'s. **Run
-`sh agents/lib/run.sh -m agents.lib.return_builder --workspace .` when this step
+`sh agents/lib/run.sh -m agents.lib.return_builder` when this step
 is done** — it settles lines 1z, 9, 11, 14, 15 and 16, which is what Step 6.5's
 AMT and the whole of Step 6 read.
 

@@ -30,6 +30,11 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 
 class AmendError(Exception):
@@ -265,7 +270,7 @@ def _read_json(path: Path, what: str) -> dict:
 def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.amend")
-    parser.add_argument("--workspace", required=True)
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True)
     parser.add_argument("--paid-with-original", type=float, default=0.0)
     parser.add_argument("--json", action="store_true")
@@ -274,7 +279,7 @@ def _main(argv: list) -> int:
         year = int(args.year)
         if not (2000 <= year <= 2099):
             raise AmendError("--year must be a 4-digit year 2000-2099")
-        workspace = Path(args.workspace).resolve()
+        workspace = resolve_workspace(args.workspace).resolve()
         as_filed_dir = _validate_subpath(
             workspace / "archive" / str(year) / "as_filed", workspace)
         original = _read_json(as_filed_dir / "result.json",
@@ -298,7 +303,7 @@ def _main(argv: list) -> int:
                               "part_ii_bullets": bullets}, indent=2))
         else:
             print(render_markdown(comparison, bullets))
-    except (AmendError, RolloverError, ValueError) as e:
+    except (WorkspaceError, AmendError, RolloverError, ValueError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     return 0

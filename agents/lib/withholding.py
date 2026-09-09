@@ -71,10 +71,15 @@ from agents.lib.projection import (  # noqa: E402
 )
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
-    _validate_subpath,
     _validate_year_arg,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 class WithholdingError(Exception):
@@ -663,7 +668,7 @@ def _main(argv: list) -> int:
     parser = argparse.ArgumentParser(prog="agents.lib.withholding")
     parser.add_argument("--result", required=True, help="path to result.json")
     parser.add_argument("--inputs", required=True, help="path to projection_inputs.json")
-    parser.add_argument("--workspace", required=True, help="current workspace directory")
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True, help="current tax year")
     parser.add_argument(
         "--as-of", dest="as_of", default=None,
@@ -676,9 +681,9 @@ def _main(argv: list) -> int:
 
     try:
         year = _validate_year_arg(args.year)
-        workspace = Path(args.workspace).resolve()
-        result_path = _validate_subpath(Path(args.result).resolve(), workspace)
-        inputs_path = _validate_subpath(Path(args.inputs).resolve(), workspace)
+        workspace = resolve_workspace(args.workspace).resolve()
+        result_path = resolve_under_workspace(args.result, workspace)
+        inputs_path = resolve_under_workspace(args.inputs, workspace)
         result = _read_json(result_path)
         proj_inputs = _read_json(inputs_path)
 
@@ -698,7 +703,7 @@ def _main(argv: list) -> int:
             )
 
         prior = load_prior_baseline(workspace / "archive" / str(year - 1), year - 1)
-    except (WithholdingError, ProjectionError, RolloverError) as e:
+    except (WorkspaceError, WithholdingError, ProjectionError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

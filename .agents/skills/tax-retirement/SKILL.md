@@ -115,14 +115,13 @@ Confirm with the user (or read from profile):
 
 ```bash
 sh agents/lib/run.sh -m agents.lib.retirement_dashboard \
-  --profile taxpayer_profile.json \
-  --inputs projection_inputs.json \
-  --tax-law tax_law_{year}.json \
-  --workspace . \
-  --year {year} \
-  --marginal-fed {fed_decimal} \
-  --marginal-state {state_decimal} \
-  --magi {magi}
+ --profile taxpayer_profile.json \
+ --inputs projection_inputs.json \
+ --tax-law tax_law_{year}.json \
+ --year {year} \
+ --marginal-fed {fed_decimal} \
+ --marginal-state {state_decimal} \
+ --magi {magi}
 ```
 
 Add `--json` for machine-readable output.

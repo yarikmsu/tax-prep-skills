@@ -170,7 +170,7 @@ Before generating the PDF, verify result.json internal consistency:
      the state-scope note after `/tax-compute` Step 12). If it is empty or
      missing: **STOP — do not generate.** Re-run `/tax-compute` Step 12 (or the
      capability gate directly:
-     `sh agents/lib/run.sh agents/lib/capabilities.py --workspace . --json`)
+     `sh agents/lib/run.sh agents/lib/capabilities.py --json`)
      to populate it first. This check is deliberately EXCLUDED from
      the "proceed anyway?" prompt below: a PDF without the page-1 scope box
      presents itself as complete coverage, which is the exact failure C2 exists
@@ -184,7 +184,7 @@ The renderer is TRACKED, tested and shared — `agents/lib/pdf_render.py` (V9).
 There is nothing to write and nothing to check by hand:
 
 ```bash
-sh agents/lib/run.sh -m agents.lib.pdf_render --result result.json --workspace .
+sh agents/lib/run.sh -m agents.lib.pdf_render --result result.json
 ```
 
 It reads every value from `result.json` and takes nothing from anywhere else, so
@@ -242,7 +242,7 @@ package has four parts:
 1. **Assembly order + attachment checklist** — computed, never
    hand-enumerated:
    ```bash
-   sh agents/lib/run.sh -m agents.lib.filing_package --result result.json --workspace .
+   sh agents/lib/run.sh -m agents.lib.filing_package --result result.json
    ```
    **This command REFUSES (exit 2) when the validation receipt is stale** — when
    /tax-compute's Step 0.7, Step 12.6 and Step 12.7 gates did not run, did not

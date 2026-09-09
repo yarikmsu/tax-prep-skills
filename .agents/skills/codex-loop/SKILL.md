@@ -157,11 +157,11 @@ STATE_FILE=$(git rev-parse --git-path codex-loop-state.env) || exit 1
 . "$STATE_FILE" || exit 1
 # Issue comments — where a clean pass appears
 gh api --paginate "repos/$OWNER/$NAME/issues/$PR/comments" \
-  --jq ".[] | select(.created_at >= \"$TRIGGER\") | {user: .user.login, body: .body[0:200]}"
+ --jq ".[] | select(.created_at >= \"$TRIGGER\") | {user: .user.login, body: .body[0:200]}"
 
 # Formal reviews
 gh api --paginate "repos/$OWNER/$NAME/pulls/$PR/reviews" \
-  --jq ".[] | select(.submitted_at >= \"$TRIGGER\") | {user: .user.login, state, body: .body[0:200]}"
+ --jq ".[] | select(.submitted_at >= \"$TRIGGER\") | {user: .user.login, state, body: .body[0:200]}"
 
 # Inline findings (P1/P2). Materialize the exact root-bot batch used by every
 # later handled-ID guard; do not retype IDs from a broader endpoint.
@@ -171,8 +171,8 @@ if ! INLINE_COMMENTS=$(gh api --paginate \
   exit 1
 fi
 CURRENT_BATCH_IDS_JSON=$(printf '%s\n' "$INLINE_COMMENTS" | jq -s -c \
-  --arg trigger "$TRIGGER" --arg bot "$CODEX_BOT" \
-  --arg head "$HEAD_AT_TRIGGER" '
+ --arg trigger "$TRIGGER" --arg bot "$CODEX_BOT" \
+ --arg head "$HEAD_AT_TRIGGER" '
     [.[][] | select(.created_at >= $trigger
                     and .user.login == $bot
                     and .in_reply_to_id == null
@@ -180,7 +180,7 @@ CURRENT_BATCH_IDS_JSON=$(printf '%s\n' "$INLINE_COMMENTS" | jq -s -c \
 printf 'CURRENT_BATCH_IDS_JSON=%q\n' "$CURRENT_BATCH_IDS_JSON" \
   >> "$STATE_FILE" || exit 1
 printf '%s\n' "$INLINE_COMMENTS" | jq -s \
-  --argjson batch "$CURRENT_BATCH_IDS_JSON" '
+ --argjson batch "$CURRENT_BATCH_IDS_JSON" '
     .[][] | select(.id as $id | $batch | index($id))
     | {id, path, line, body: .body[0:300]}'
 ```
@@ -251,7 +251,7 @@ REPLY_PLAN_JSON=$(jq -n -c '[
 ]') || exit 1
 HANDLED_IDS_JSON=$(jq -c 'map(.id)' <<<"$REPLY_PLAN_JSON") || exit 1
 if ! jq -n -e --argjson handled "$HANDLED_IDS_JSON" \
-     --argjson batch "$CURRENT_BATCH_IDS_JSON" '
+ --argjson batch "$CURRENT_BATCH_IDS_JSON" '
        (($handled | unique | length) == ($handled | length))
        and (($handled | sort) == ($batch | sort))
      ' >/dev/null; then
@@ -310,7 +310,7 @@ the publication rather than trusting the command's exit alone:
 STATE_FILE=$(git rev-parse --git-path codex-loop-state.env) || exit 1
 . "$STATE_FILE" || exit 1
 if ! jq -n -e --argjson handled "$HANDLED_IDS_JSON" \
-     --argjson batch "$CURRENT_BATCH_IDS_JSON" '
+ --argjson batch "$CURRENT_BATCH_IDS_JSON" '
        (($handled | unique | length) == ($handled | length))
        and (($handled | sort) == ($batch | sort))
      ' >/dev/null; then
@@ -397,7 +397,7 @@ STATE_FILE=$(git rev-parse --git-path codex-loop-state.env) || exit 1
 # remedy for that hang is another markup form here, never a default of 1.
 REVIEWED_COMMIT=$(
   gh api --paginate "repos/$OWNER/$NAME/issues/$PR/comments" \
-    --jq "[ .[]
+ --jq "[ .[]
       | select(.created_at >= \"$TRIGGER\")
       | select(.user.login == \"$CODEX_BOT\")
       | select(.body | test(\"^[[:space:]#*_]*\"

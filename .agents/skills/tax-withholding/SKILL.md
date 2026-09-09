@@ -129,7 +129,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 3. **Compute.** Run:
    ```bash
    sh agents/lib/run.sh -m agents.lib.withholding --result result.json --inputs projection_inputs.json \
-       --workspace . --year {year} --as-of {MM-DD} --json
+ --year {year} --as-of {MM-DD} --json
    ```
    (Omit `--as-of` for the default: today's date, or 12-31 once the year has closed and
    no stored date exists. A valid stored `as_of_date` is preserved in every year as the

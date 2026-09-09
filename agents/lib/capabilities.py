@@ -36,6 +36,11 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 
 class CapabilityError(Exception):
@@ -805,7 +810,7 @@ def _report_to_dict(report: CapabilityReport) -> dict:
 def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.capabilities")
-    parser.add_argument("--workspace", required=True, help="taxpayer workspace directory")
+    add_workspace_argument(parser)
     parser.add_argument("--acknowledge", default=None,
                         help="comma-separated rule ids to acknowledge for this run "
                              "(in addition to profile acknowledged_limitations)")
@@ -813,7 +818,7 @@ def _main(argv: list) -> int:
     args = parser.parse_args(argv)
 
     try:
-        workspace = Path(args.workspace).resolve()
+        workspace = resolve_workspace(args.workspace).resolve()
         profile_path = _validate_subpath(
             (workspace / "taxpayer_profile.json").resolve(), workspace)
         if not profile_path.exists():
@@ -836,7 +841,7 @@ def _main(argv: list) -> int:
         gate_inputs = receipt.gate_inputs(
             workspace, "capabilities", contents={"taxpayer_profile.json": raw})
         report = evaluate(profile, extra_acknowledged=extra)
-    except (CapabilityError, RolloverError, receipt.ReceiptError, OSError) as e:
+    except (WorkspaceError, CapabilityError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

@@ -38,6 +38,11 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
 from agents.lib.secure_fs import atomic_write, redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 
 class ReceiptError(Exception):
@@ -366,7 +371,7 @@ def record_after_verdict(workspace, gate: str, outcome: str, exit_code: int, *,
     """
     try:
         record(workspace, gate, outcome, inputs=inputs)
-    except (ReceiptError, RolloverError, OSError) as e:
+    except (WorkspaceError, ReceiptError, RolloverError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return max(exit_code, 1)
     return exit_code
@@ -545,19 +550,20 @@ def _main(argv: list) -> int:
     parser = argparse.ArgumentParser(prog="agents.lib.receipt", usage=_USAGE)
     sub = parser.add_subparsers(dest="command", required=True)
     write = sub.add_parser("record")
-    write.add_argument("--workspace", required=True)
+    add_workspace_argument(write)
     write.add_argument("--gate", required=True, choices=list(_GATES))
     write.add_argument("--outcome", required=True)
     check = sub.add_parser("verify")
-    check.add_argument("--workspace", required=True)
+    add_workspace_argument(check)
     check.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.command == "record":
-            path = record(args.workspace, args.gate, args.outcome)
+            path = record(resolve_workspace(args.workspace), args.gate,
+                          args.outcome)
             print(f"recorded {args.gate}={args.outcome} in {redact(path)}")
             return 0
-        report = verify(args.workspace)
+        report = verify(resolve_workspace(args.workspace))
         if args.json:
             print(json.dumps(report.to_dict(), indent=2))
         elif report.valid:
@@ -572,7 +578,7 @@ def _main(argv: list) -> int:
             print("\nRe-run /tax-compute (its Step 0.7, 12.6 and 12.7 gates "
                   "rewrite the receipt) before assembling the package.")
         return 0 if report.valid else 2
-    except (ReceiptError, RolloverError, OSError) as e:
+    except (WorkspaceError, ReceiptError, RolloverError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

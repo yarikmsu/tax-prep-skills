@@ -41,6 +41,12 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_scenario,
     net_capital_gains,
 )
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace as _resolve_under,
+    resolve_workspace,
+)
 
 
 class ScenarioError(Exception):
@@ -535,21 +541,11 @@ def save_scenario(workspace: Path, name: str, data: dict) -> Path:
     return out_path
 
 
-def _resolve_under(path_arg: str, workspace: Path) -> Path:
-    """Resolve a CLI path argument, treating a relative path as relative to the
-    WORKSPACE (not the process CWD), then validate it stays inside the workspace.
-    Lets `--workspace /ws --result result.json` work from any directory."""
-    p = Path(path_arg)
-    if not p.is_absolute():
-        p = workspace / p
-    return _validate_subpath(p.resolve(), workspace)
-
-
 def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.scenario")
     parser.add_argument("--result", required=True, help="path to result.json")
-    parser.add_argument("--workspace", required=True, help="current workspace directory")
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True, help="current tax year")
     parser.add_argument("--name", default="scenario", help="scenario name (single path segment)")
     parser.add_argument("--base", default=None,
@@ -563,7 +559,7 @@ def _main(argv: list) -> int:
 
     try:
         year = _validate_year_arg(args.year)
-        workspace = Path(args.workspace).resolve()
+        workspace = resolve_workspace(args.workspace).resolve()
         result_path = _resolve_under(args.result, workspace)
         result = _read_json(result_path)
         read_tax_year(result, year)
@@ -582,7 +578,8 @@ def _main(argv: list) -> int:
         # fromisoformat raises ValueError on a malformed --today — surface it cleanly.
         today = (datetime.date.fromisoformat(args.today) if args.today
                  else datetime.date.today())
-    except (ScenarioError, RolloverError, ProjectionError, ValueError) as e:
+    except (WorkspaceError, ScenarioError, RolloverError, ProjectionError,
+            ValueError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

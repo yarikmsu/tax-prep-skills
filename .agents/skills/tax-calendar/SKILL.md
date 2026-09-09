@@ -70,9 +70,8 @@ requested year, refuse:
 Run via Bash:
 ```bash
 sh agents/lib/run.sh -m agents.lib.tax_calendar \
-  --profile taxpayer_profile.json \
-  --workspace . \
-  --year {year}
+ --profile taxpayer_profile.json \
+ --year {year}
 ```
 
 The generator:

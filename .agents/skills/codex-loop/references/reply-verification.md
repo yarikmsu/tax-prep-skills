@@ -20,7 +20,7 @@ refutation class distinguishable from the fix class on the wire.
 STATE_FILE=$(git rev-parse --git-path codex-loop-state.env) || exit 1
 . "$STATE_FILE" || exit 1
 if ! jq -n -e --argjson handled "$HANDLED_IDS_JSON" \
-     --argjson batch "$CURRENT_BATCH_IDS_JSON" '
+ --argjson batch "$CURRENT_BATCH_IDS_JSON" '
        (($handled | unique | length) == ($handled | length))
        and (($handled | sort) == ($batch | sort))
      ' >/dev/null; then
@@ -106,7 +106,7 @@ if ! REPLIES_AFTER=$(gh api --paginate \
   exit 1
 fi
 if ! printf '%s\n' "$REPLIES_AFTER" | jq -s -e \
-     --argjson bodies "$REPLY_BODIES_JSON" '
+ --argjson bodies "$REPLY_BODIES_JSON" '
        [.[][] | select(.in_reply_to_id != null)] as $replies
        | all($bodies | to_entries[];
            (.key | tonumber) as $root

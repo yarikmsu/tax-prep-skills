@@ -8,7 +8,6 @@ Wraps pdfplumber with error handling and provides consistent interfaces.
 import csv
 import functools
 import json
-import os
 import sys
 import time
 import zipfile
@@ -18,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import preflight  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
     is_reparse_point, mask_ssn, mask_table, names_an_identifier, redact)
+from agents.lib.workspace import WorkspaceError, resolve_workspace  # noqa: E402
 
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
 # Must be called before any XML parsing (including openpyxl imports).
@@ -822,7 +822,11 @@ if __name__ == "__main__":
     # Position is what makes that unwritable — a trailing flag now errors, and a
     # caller who meant it is told rather than silently confined to the cwd.
     argv = sys.argv[1:]
-    workspace = os.getcwd()
+    # `$TAX_WORKSPACE` when the flag is absent, and the current directory when
+    # neither is set — the same precedence every other CLI here follows, spelled
+    # differently only because this one parses its own argv (the command word
+    # comes first and argparse cannot express that).
+    workspace = None
     if argv and argv[0].startswith("--workspace="):
         workspace = argv[0].split("=", 1)[1]
         del argv[0]
@@ -839,6 +843,11 @@ if __name__ == "__main__":
         print("Error: --workspace must come first, before the command",
               file=sys.stderr)
         sys.exit(1)
+    try:
+        workspace = str(resolve_workspace(workspace))
+    except WorkspaceError as e:
+        print(f"Error: {redact(e)}", file=sys.stderr)
+        sys.exit(1)
 
     if len(argv) < 2:
         print("Usage: python parse_utils.py [--workspace DIR] "
@@ -846,6 +855,16 @@ if __name__ == "__main__":
         sys.exit(1)
 
     cmd, path = argv[0], argv[1]
+    # A RELATIVE path means a file in the WORKSPACE. `documents/w2.pdf` is how
+    # every skill spells it, and that used to be the same directory the command
+    # ran from — which under $TAX_WORKSPACE is the checkout (Y4). Resolving the
+    # workspace above and leaving this alone was worse than doing neither: the
+    # containment check below then refused the checkout's own `documents/` for
+    # being outside the workspace, so `scan documents/` failed rather than
+    # scanning the taxpayer's. An ABSOLUTE path is left as given and the
+    # containment below is what judges it, exactly as before.
+    if not Path(path).is_absolute():
+        path = str(Path(workspace) / path)
     arg3 = argv[2] if len(argv) > 2 else None
 
     def _confined_dir(candidate: str, base: str) -> str:

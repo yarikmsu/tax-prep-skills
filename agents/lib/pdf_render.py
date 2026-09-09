@@ -33,9 +33,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import receipt  # noqa: E402
-from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
+from agents.lib.rollover import RolloverError  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
     atomic_path, first_non_finite, redact)
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 class PdfRenderError(Exception):
@@ -535,7 +541,7 @@ def _main(argv: list) -> int:
         prog="agents.lib.pdf_render",
         description="Render the summary PDF from a validated result.json.")
     parser.add_argument("--result", required=True)
-    parser.add_argument("--workspace", required=True)
+    add_workspace_argument(parser)
     parser.add_argument("--out", default=None,
                         help="output path (default Tax_Return_<year>_Summary.pdf "
                              "in the workspace)")
@@ -544,8 +550,8 @@ def _main(argv: list) -> int:
                              "stale, stamped NOT VALIDATED on page 1")
     args = parser.parse_args(argv)
     try:
-        workspace = Path(args.workspace).resolve()
-        result_path = _validate_subpath(Path(args.result).resolve(), workspace)
+        workspace = resolve_workspace(args.workspace).resolve()
+        result_path = resolve_under_workspace(args.result, workspace)
         raw = result_path.read_bytes()
         result = json.loads(raw)
         if not isinstance(result, dict):
@@ -569,14 +575,17 @@ def _main(argv: list) -> int:
             return 2
         meta = result.get("meta")
         year = meta.get("tax_year") if isinstance(meta, dict) else None
-        out = Path(args.out).resolve() if args.out else (
-            workspace / f"Tax_Return_{year}_Summary.pdf")
-        out = _validate_subpath(out, workspace)
+        # ONE call: `resolve_under_workspace` resolves against the workspace
+        # AND confines to it, so the follow-up `_validate_subpath` the old
+        # `Path(args.out).resolve()` needed became a second check of the same
+        # thing the moment the first line changed.
+        out = resolve_under_workspace(
+            args.out or f"Tax_Return_{year}_Summary.pdf", workspace)
         render(result, out, draft_reasons=reasons if args.draft else None,
                notes=checked.notes)
         print(f"wrote {redact(out)}")
         return 0
-    except (PdfRenderError, RolloverError, receipt.ReceiptError, OSError,
+    except (WorkspaceError, PdfRenderError, RolloverError, receipt.ReceiptError, OSError,
             json.JSONDecodeError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1

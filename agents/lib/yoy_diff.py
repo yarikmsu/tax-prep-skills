@@ -18,11 +18,16 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _get_path,
     _read_json,
-    _validate_subpath,
     _validate_year_arg,
     load_prior,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 @dataclass(frozen=True)
@@ -380,7 +385,9 @@ def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.yoy_diff")
     parser.add_argument("--prior", required=True, help="archive/{prior_year} directory")
-    parser.add_argument("--current", required=True, help="current workspace directory")
+    add_workspace_argument(parser, "--current",
+                           help="the workspace holding this year's return "
+                                "(default: $TAX_WORKSPACE, else the current directory)")
     parser.add_argument("--year", required=True, help="current (new) tax year")
     parser.add_argument("--threshold", type=float, default=1000,
                         help="minimum absolute dollar change to include in line movers (default: 1000)")
@@ -396,8 +403,12 @@ def _main(argv: list) -> int:
 
     try:
         year = _validate_year_arg(args.year)
-        workspace = Path(args.current).resolve()
-        prior_dir = _validate_subpath(Path(args.prior).resolve(), workspace)
+        # `--current` IS the workspace under an older name, so it takes
+        # $TAX_WORKSPACE like every other one, and `--prior archive/2025`
+        # resolves under it rather than under whatever directory the command
+        # ran from.
+        workspace = resolve_workspace(args.workspace).resolve()
+        prior_dir = resolve_under_workspace(args.prior, workspace)
         prior = load_prior(prior_dir, year - 1)
         current = _load_current_result(workspace)
         current_year_meta = current.get("meta", {}).get("tax_year")
@@ -410,7 +421,7 @@ def _main(argv: list) -> int:
         # Prior-year tax law lives in the archive (moved there by /tax-archive);
         # used so the prior marginal bracket reflects that year's schedule.
         prior_tax_law = _load_tax_law(prior_dir, year - 1)
-    except RolloverError as e:
+    except (WorkspaceError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

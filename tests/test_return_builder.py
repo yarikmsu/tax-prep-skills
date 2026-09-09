@@ -1369,7 +1369,7 @@ class TestTheSkillTellsTheAgentToRunIt:
 
     def test_tax_compute_names_the_module_and_all_three_exit_codes(self):
         text = self._skill("tax-compute")
-        assert "-m agents.lib.return_builder --workspace ." in text
+        assert "-m agents.lib.return_builder" in text
         section = text.split("return_builder")[1]
         for code in ("Exit 0", "Exit 2", "Exit 1"):
             assert code in section, code

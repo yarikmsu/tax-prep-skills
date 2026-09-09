@@ -35,7 +35,29 @@ sibling of `.agents/skills/` that does not travel with a copied skill — which
 then still reads as a complete procedure while every script it names is absent.
 So a failure to RUN this check IS the blocking condition, never a step to skip.
 
-### 0. Refuse if prior-year files exist at root
+### 0. Which directory is the workspace
+
+```
+sh agents/lib/run.sh -m agents.lib.workspace
+```
+
+It prints the directory every command in this toolkit will read and write, and
+where that answer came from. **If it prints the repository checkout, say so to
+the user before creating anything**: a return kept inside the clone is one
+`git add -A` away from being committed, and the `.gitignore`, the installer's
+ignore list and the pre-commit PII scan are three backstops for a decision that
+`TAX_WORKSPACE` settles instead.
+
+```
+export TAX_WORKSPACE=~/tax/{year}    # any directory outside the checkout
+```
+
+Keep the SHELL in the checkout — `sh agents/lib/run.sh` is a relative path and
+the engine's venv lives there. The variable moves the data, never the code.
+Unset, everything behaves as it always did and the workspace is the current
+directory.
+
+### 0.1. Refuse if prior-year files exist at root
 
 Before doing anything else, check if there's an existing `result.json` at the workspace root. If yes, read its `meta.tax_year`:
 
@@ -69,7 +91,8 @@ attribute and leaves the underlying NTFS permissions untouched, which is exactly
 the gap that module closes.
 
 ```bash
-for d in documents summaries; do
+WS="$(sh agents/lib/run.sh -m agents.lib.workspace --path)" || exit 1
+for d in "$WS/documents" "$WS/summaries"; do
   if [ -L "$d" ]; then
     echo "$d is a symlink — refusing to secure through it. Remove or replace it with a real directory, then re-run /tax-setup." >&2
     exit 1
@@ -77,6 +100,12 @@ for d in documents summaries; do
   mkdir -p "$d" && sh agents/lib/run.sh -m agents.lib.secure_fs "$d" || exit 1
 done
 ```
+
+`$WS` is what makes this the WORKSPACE's directories rather than the checkout's:
+the shell stays in the clone, so a bare `mkdir documents` creates it beside the
+source. `secure_fs` resolves a relative name against the workspace by itself —
+the two would otherwise disagree about which `documents/` they meant, which is
+worse than either being wrong alone.
 
 A non-zero exit here is a refusal, same as Step 0's above — do not proceed past
 it until the user has replaced the offending path with a real directory. The
@@ -203,9 +232,8 @@ the flags.
 Run via Bash:
 ```bash
 sh agents/lib/run.sh -m agents.lib.tax_calendar \
-  --profile taxpayer_profile.json \
-  --workspace . \
-  --year {year}
+ --profile taxpayer_profile.json \
+ --year {year}
 ```
 
 `write_calendar` already restricts the output through `agents.lib.secure_fs`.

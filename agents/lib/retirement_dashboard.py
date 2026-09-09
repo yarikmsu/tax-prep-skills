@@ -46,11 +46,16 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
-    _validate_subpath,
     _validate_year_arg,
 )
 from agents.lib.capabilities import _USPS_STATES  # noqa: E402
 from agents.lib.secure_fs import redact, year_or_shape  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 class RetirementError(Exception):
@@ -1815,7 +1820,7 @@ def _main(argv: "list[str]") -> int:
                         help="path to projection_inputs.json")
     parser.add_argument("--tax-law", required=True,
                         help="path to tax_law_<year>.json")
-    parser.add_argument("--workspace", required=True)
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True)
     parser.add_argument("--marginal-fed", required=True, type=float,
                         help="federal marginal rate as decimal (e.g. 0.24)")
@@ -1829,21 +1834,18 @@ def _main(argv: "list[str]") -> int:
 
     try:
         year = _validate_year_arg(args.year)
-        if not args.workspace.strip():
-            raise RetirementError("--workspace must be a non-empty path")
-        workspace = Path(args.workspace).resolve()
-        if not workspace.is_dir():
-            raise RetirementError(f"workspace does not exist: {redact(workspace)}")
+        # `resolve_workspace` refuses a path that is not a usable directory,
+        # so the local existence check that stood here is gone with it — one
+        # answer to "is this a workspace", in the module that also decides
+        # WHICH directory it is.
+        workspace = resolve_workspace(args.workspace).resolve()
         try:
-            profile_path = _validate_subpath(
-                Path(args.profile).resolve(), workspace
-            )
-            inputs_path = _validate_subpath(
-                Path(args.inputs).resolve(), workspace
-            )
-            law_path = _validate_subpath(
-                Path(args.tax_law).resolve(), workspace
-            )
+            # Relative to the WORKSPACE, not the process CWD: the skills run
+            # from the checkout now and `--profile taxpayer_profile.json`
+            # means the profile in the taxpayer's directory.
+            profile_path = resolve_under_workspace(args.profile, workspace)
+            inputs_path = resolve_under_workspace(args.inputs, workspace)
+            law_path = resolve_under_workspace(args.tax_law, workspace)
         except RolloverError as e:
             raise RetirementError(str(e)) from e
 
@@ -1857,7 +1859,7 @@ def _main(argv: "list[str]") -> int:
             modified_agi=args.magi,
             tax_year=year,
         )
-    except (RetirementError, RolloverError) as e:
+    except (WorkspaceError, RetirementError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

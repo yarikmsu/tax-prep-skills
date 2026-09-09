@@ -114,7 +114,7 @@ Work down this ladder and TELL the user which rung was used:
 2. Regenerate the calendar so the new deadlines are subscribable:
    ```bash
    sh agents/lib/run.sh -m agents.lib.tax_calendar --profile taxpayer_profile.json \
-       --workspace . --year {year}
+ --year {year}
    ```
    This adds two `extension` events: **April 15 {year+1}** (4868 + payment
    due — with the FTB 3519 note for CA residents) and **October 15

@@ -48,10 +48,9 @@ Run via Bash:
 
 ```bash
 sh agents/lib/run.sh -m agents.lib.rollover diff \
-  --from archive/{prior_year} \
-  --to . \
-  --year {current_year} \
-  --json
+ --from archive/{prior_year} \
+ --year {current_year} \
+ --json
 ```
 
 Where `{current_year}` is read from `result.json` `meta.tax_year`. Parse the JSON output.
@@ -76,10 +75,9 @@ Run:
 
 ```bash
 sh agents/lib/run.sh -m agents.lib.rollover apply \
-  --from archive/{prior_year} \
-  --to . \
-  --year {current_year} \
-  --categories "{comma-separated user-selected categories}"
+ --from archive/{prior_year} \
+ --year {current_year} \
+ --categories "{comma-separated user-selected categories}"
 ```
 
 If the user selected no categories, skip this step and print *"No changes applied."*

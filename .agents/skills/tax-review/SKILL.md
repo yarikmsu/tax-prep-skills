@@ -293,8 +293,8 @@ Produce a deterministic year-over-year diff against the prior return. This step 
    - Proceed to Step 4.
 3. Else run:
    ```bash
-   sh agents/lib/run.sh agents/lib/yoy_diff.py --prior archive/{prior_year} --current . \
-       --year {year} --threshold 1000
+   sh agents/lib/run.sh agents/lib/yoy_diff.py --prior archive/{prior_year} \
+ --year {year} --threshold 1000
    ```
 4. **Exit code 0:** embed stdout verbatim as the "YoY What-Changed" block in the Step 4 report.
 5. **Exit code non-zero:** record `_YoY diff skipped: {stderr message}_` and proceed to Step 4.
@@ -314,8 +314,8 @@ read-only (`ptet.py` writes nothing).
    taxpayer for the qualifying pass-through income and whether their $10K SALT cap
    is already exhausted (usually yes). Then run:
    ```bash
-   sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year {year} \
-       --income CA=<amount> [--income NY=<amount>] [--salt-room <unused $>]
+   sh agents/lib/run.sh -m agents.lib.ptet --year {year} \
+ --income CA=<amount> [--income NY=<amount>] [--salt-room <unused $>]
    ```
 3. Embed the rendered output as the "PTET Election Opportunity" report block, and
    flag the **earliest election deadline** (NY's is due *during* the tax year and

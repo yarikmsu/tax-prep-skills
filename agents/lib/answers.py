@@ -69,6 +69,11 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from agents.lib.rollover import _amount, _get_path  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 FACT = "fact"
 ACKNOWLEDGEMENT = "acknowledgement"
@@ -391,7 +396,7 @@ def _read_json(path: Path) -> dict:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError) as exc:
+    except (WorkspaceError, OSError, ValueError) as exc:
         raise AnswersUnreadable(f"{redact(path)} could not be read") from exc
     try:
         data = json.loads(text)
@@ -408,7 +413,7 @@ def load_answers(workspace: Path) -> AnswersFile:
         return AnswersFile(False, {}, 0)
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, ValueError) as exc:
+    except (WorkspaceError, OSError, ValueError) as exc:
         # RAISED, but never with the exception's own message: `OSError.filename`
         # is the workspace path, and the workspace is named for the taxpayer.
         # An unreadable answers.md is a could-not-run — reporting it as "you owe
@@ -561,7 +566,7 @@ def _main(argv: list) -> int:
     parser = argparse.ArgumentParser(
         prog="agents.lib.answers",
         description="What a headless run still needs answered (V5).")
-    parser.add_argument("--workspace", default=".")
+    add_workspace_argument(parser)
     parser.add_argument("--check-required", action="store_true",
                         help="list the required answers this workspace owes")
     parser.add_argument("--for", dest="for_skill", default=None,
@@ -580,9 +585,12 @@ def _main(argv: list) -> int:
         # it as blocked tells a caller the workspace owes answers it does not.
         return 0 if not exc.code else 1
 
-    workspace = Path(args.workspace)
-    if not workspace.is_dir():
-        print(f"Error: no workspace at {redact(workspace)}", file=sys.stderr)
+    try:
+        # The directory refusal moved into `resolve_workspace`, whose message
+        # names $TAX_WORKSPACE and where the path came from.
+        workspace = resolve_workspace(args.workspace)
+    except WorkspaceError as e:
+        print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
     if not args.check_required:
         parser.print_usage()

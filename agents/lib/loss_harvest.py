@@ -67,7 +67,6 @@ from agents.lib.scenario import (  # noqa: E402
     ScenarioError,
     _net_capital_gains,
     _rate_kwargs,
-    _resolve_under,
     _validate_name,
     extract_baseline_inputs,
     read_tax_year,
@@ -87,6 +86,12 @@ from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.roth_ladder import (  # noqa: E402
     _net_investment_income,
     _niit_params,
+)
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace as _resolve_under,
+    resolve_workspace,
 )
 
 SCHEMA = "tax-harvest/v1"
@@ -1546,7 +1551,7 @@ def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.loss_harvest")
     parser.add_argument("--result", required=True, help="path to result.json")
-    parser.add_argument("--workspace", required=True, help="current workspace directory")
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True, help="current tax year")
     parser.add_argument("--holdings", required=True,
                         help="path to holdings.json (must live under workspace)")
@@ -1561,7 +1566,7 @@ def _main(argv: list) -> int:
 
     try:
         year = _validate_year_arg(args.year)
-        workspace = Path(args.workspace).resolve()
+        workspace = resolve_workspace(args.workspace).resolve()
         result_path = _resolve_under(args.result, workspace)
         result = _read_json(result_path)
         read_tax_year(result, year)
@@ -1576,7 +1581,8 @@ def _main(argv: list) -> int:
         name = _validate_name(args.name)
         today = (datetime.date.fromisoformat(args.today) if args.today
                  else datetime.date.today())
-    except (LossHarvestError, ScenarioError, RolloverError, ProjectionError, ValueError) as e:
+    except (WorkspaceError, LossHarvestError, ScenarioError, RolloverError,
+            ProjectionError, ValueError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

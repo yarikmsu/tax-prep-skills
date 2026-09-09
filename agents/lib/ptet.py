@@ -56,7 +56,6 @@ from agents.lib.projection import (  # noqa: E402
 )
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
-    _validate_subpath,
     _validate_year_arg,
 )
 from agents.lib.scenario import (  # noqa: E402
@@ -68,6 +67,12 @@ from agents.lib.scenario import (  # noqa: E402
 from agents.lib.tax_computations import compute_scenario  # noqa: E402
 from agents.lib.irs_dates import next_business_day_state  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 class PtetError(Exception):
@@ -851,7 +856,7 @@ def _main(argv: list) -> int:
         prog="tax-ptet",
         description="Estimate the federal SALT-cap-workaround savings of a "
                     "CA/NY/NJ pass-through-entity tax election.")
-    p.add_argument("--workspace", default=".", help="Workspace directory")
+    add_workspace_argument(p)
     p.add_argument("--year", default=None,
                    help="Tax year (defaults to result.json meta.tax_year)")
     p.add_argument("--income", action="append", default=[], metavar="STATE=AMOUNT",
@@ -877,8 +882,8 @@ def _main(argv: list) -> int:
     args = p.parse_args(argv)
 
     try:
-        workspace = Path(args.workspace).resolve()
-        result_path = _validate_subpath(workspace / "result.json", workspace)
+        workspace = resolve_workspace(args.workspace).resolve()
+        result_path = resolve_under_workspace("result.json", workspace)
         result = _read_json(result_path)
         year = args.year
         if year is None:
@@ -888,9 +893,9 @@ def _main(argv: list) -> int:
         year = _validate_year_arg(str(year))
         read_tax_year(result, year)
 
-        profile_path = _validate_subpath(workspace / "taxpayer_profile.json", workspace)
+        profile_path = resolve_under_workspace("taxpayer_profile.json", workspace)
         profile = _read_json(profile_path)
-        law_path = _validate_subpath(workspace / f"tax_law_{year}.json", workspace)
+        law_path = resolve_under_workspace(f"tax_law_{year}.json", workspace)
         tax_law = _read_json(law_path)
 
         filing_status = (result.get("meta", {}) or {}).get("filing_status") \
@@ -966,7 +971,7 @@ def _main(argv: list) -> int:
             ptet_cfg=(tax_law.get("ptet") if isinstance(tax_law, dict) else None))
         print(render_markdown(report))
         return 0
-    except (PtetError, ProjectionError, ScenarioError, RolloverError, ValueError) as e:
+    except (WorkspaceError, PtetError, ProjectionError, ScenarioError, RolloverError, ValueError) as e:
         # ProjectionError belongs here because `_read_json` is projection's,
         # and it is what a missing result.json raises — the single most
         # ordinary way to run this skill wrong (before /tax-compute has been

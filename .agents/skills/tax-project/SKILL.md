@@ -133,7 +133,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 5. **Compute.** Run:
    ```bash
    sh agents/lib/run.sh -m agents.lib.projection --inputs projection_inputs.json \
-       --workspace . --year {year} --as-of {MM-DD} --json
+ --year {year} --as-of {MM-DD} --json
    ```
    (Omit `--as-of` for the default: today's date, or 12-31 once the year has closed and
    no stored date exists. A valid stored `as_of_date` is preserved in every year as the
@@ -293,7 +293,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    election is due March 15 **of the tax year itself**, so a mid-year projection is
    exactly when to surface it. Run:
    ```bash
-   sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year {year} [--income CA=<amount> ...]
+   sh agents/lib/run.sh -m agents.lib.ptet --year {year} [--income CA=<amount> ...]
    ```
    With no `--income`, this runs in deadline-reminder mode (reads `flags.k1_states`).
    Append the earliest upcoming election deadline to the projection report. This is

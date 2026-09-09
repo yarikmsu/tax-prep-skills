@@ -171,6 +171,11 @@ from agents.lib.tie_out import (  # noqa: E402
     category_sums,
     load_ledger,
 )
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 RESULT_NAME = "result.json"
 LEDGER_NAME = "parse_ledger.json"
@@ -1124,7 +1129,7 @@ def _main(argv: list) -> int:
         prog="agents.lib.return_builder",
         description="Derive Form 1040 lines 1-38 from the parsed records, the "
                     "profile and the tax-law cache.")
-    parser.add_argument("--workspace", default=".")
+    add_workspace_argument(parser)
     parser.add_argument("--check", action="store_true",
                         help="report the lines that disagree and write nothing; "
                              "exit 2 if any do. This mode, and only this mode, "
@@ -1135,9 +1140,13 @@ def _main(argv: list) -> int:
     except SystemExit as exc:
         return 0 if not exc.code else 1
 
-    workspace = Path(args.workspace)
-    if not workspace.is_dir():
-        print(f"Error: no workspace at {redact(workspace)}", file=sys.stderr)
+    try:
+        # `resolve_workspace` owns the "is this a usable directory" refusal now,
+        # and the local copy that stood here went with it — the message it
+        # printed named neither $TAX_WORKSPACE nor where the path came from.
+        workspace = resolve_workspace(args.workspace)
+    except WorkspaceError as e:
+        print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
     inputs = None
     try:

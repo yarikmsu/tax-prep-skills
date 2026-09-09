@@ -172,8 +172,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
 3. **Compute.** Run:
    ```bash
-   sh agents/lib/run.sh -m agents.lib.loss_harvest --result result.json --workspace . \
-       --year {year} --holdings holdings.json --name {name} --json
+   sh agents/lib/run.sh -m agents.lib.loss_harvest --result result.json \
+ --year {year} --holdings holdings.json --name {name} --json
    ```
    Writes `scenarios/{name}.json` with owner-only permissions through
    `agents.lib.secure_fs` (default name `harvest`) and emits JSON.

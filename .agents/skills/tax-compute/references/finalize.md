@@ -22,7 +22,7 @@ Update `result.json` with ALL computed values:
 - balance_due_summary
 - income_summary_by_person
 - **`meta.limitations` — the C2 manifest.** Run
-  `sh agents/lib/run.sh agents/lib/capabilities.py --workspace . --json`
+  `sh agents/lib/run.sh agents/lib/capabilities.py --json`
   and copy its `limitations` array verbatim into `result.json`
   `meta.limitations`. It is
   never empty (it always carries at least the state-scope note); `/tax-generate`

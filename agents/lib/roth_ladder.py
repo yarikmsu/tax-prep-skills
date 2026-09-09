@@ -40,7 +40,6 @@ from agents.lib.rollover import (  # noqa: E402
 from agents.lib.scenario import (  # noqa: E402
     ScenarioError,
     _rate_kwargs,
-    _resolve_under,
     _validate_name,
     extract_baseline_inputs,
     read_tax_year,
@@ -53,6 +52,12 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_scenario,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace as _resolve_under,
+    resolve_workspace,
+)
 
 SCHEMA = "tax-roth-ladder/v1"
 MAX_RUNGS = 200  # bound output / compute for pathological --max/--step combinations
@@ -497,7 +502,7 @@ def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.roth_ladder")
     parser.add_argument("--result", required=True, help="path to result.json")
-    parser.add_argument("--workspace", required=True, help="current workspace directory")
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True, help="current tax year")
     parser.add_argument("--name", default="roth-ladder", help="scenario name (single path segment)")
     parser.add_argument("--max", default=100000, help="maximum conversion to sweep (default 100000)")
@@ -515,7 +520,7 @@ def _main(argv: list) -> int:
 
     try:
         year = _validate_year_arg(args.year)
-        workspace = Path(args.workspace).resolve()
+        workspace = resolve_workspace(args.workspace).resolve()
         result_path = _resolve_under(args.result, workspace)
         result = _read_json(result_path)
         read_tax_year(result, year)
@@ -528,7 +533,8 @@ def _main(argv: list) -> int:
         amounts = parse_sweep(args.max, args.step)  # validate early
         today = (datetime.date.fromisoformat(args.today) if args.today
                  else datetime.date.today())
-    except (RothLadderError, ScenarioError, RolloverError, ProjectionError, ValueError) as e:
+    except (WorkspaceError, RothLadderError, ScenarioError, RolloverError,
+            ProjectionError, ValueError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

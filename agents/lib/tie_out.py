@@ -80,6 +80,11 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_pfic_1291,
     compute_pfic_excess_distribution,
 )
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 
 class TieOutError(Exception):
@@ -1779,13 +1784,13 @@ def _read_json(path: Path, what: str) -> dict:
 def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.tie_out")
-    parser.add_argument("--workspace", required=True)
+    add_workspace_argument(parser)
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
     parser.add_argument("--json", action="store_true", help="emit JSON instead of markdown")
     args = parser.parse_args(argv)
 
     try:
-        workspace = Path(args.workspace).resolve()
+        workspace = resolve_workspace(args.workspace).resolve()
         ledger_path = _validate_subpath((workspace / "parse_ledger.json").resolve(), workspace)
         result_path = _validate_subpath((workspace / "result.json").resolve(), workspace)
         # BEFORE anything is read: the digests this gate's verdict will be
@@ -1859,7 +1864,7 @@ def _main(argv: list) -> int:
                           pfic_multiyear_disposition_ids=pfic_multiyear_disposition_ids,
                           pfic_recompute_failures=pfic_recompute_failures)
         markdown = render_markdown(report)
-    except (TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
+    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
@@ -1892,7 +1897,7 @@ def _main(argv: list) -> int:
     exit_code = 2 if report.failed else 0
     try:
         write_report(workspace, markdown)
-    except (TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
+    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         # Never below 1 (the write really did fail, so this is not a clean
         # pass) and never below the verdict's own code — 2 outranks it, so a

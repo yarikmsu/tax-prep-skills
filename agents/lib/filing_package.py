@@ -28,11 +28,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
-    _validate_subpath,
 )
 from agents.lib import receipt  # noqa: E402
 from agents.lib.yoy_diff import _section_present  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 class FilingPackageError(Exception):
@@ -392,15 +397,15 @@ def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.filing_package")
     parser.add_argument("--result", required=True)
-    parser.add_argument("--workspace", required=True)
+    add_workspace_argument(parser)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--draft", action="store_true",
                         help="assemble anyway when the validation receipt is "
                              "stale, marked NOT VALIDATED on page 1")
     args = parser.parse_args(argv)
     try:
-        workspace = Path(args.workspace).resolve()
-        result_path = _validate_subpath(Path(args.result).resolve(), workspace)
+        workspace = resolve_workspace(args.workspace).resolve()
+        result_path = resolve_under_workspace(args.result, workspace)
         # Read ONCE, and check THESE bytes below: re-reading to verify checks a
         # file that may no longer be the one being packaged.
         raw = result_path.read_bytes()
@@ -442,7 +447,7 @@ def _main(argv: list) -> int:
             }, indent=2))
         else:
             print(_draft_banner(checked) + render_markdown(result))
-    except (FilingPackageError, RolloverError, receipt.ReceiptError, OSError,
+    except (WorkspaceError, FilingPackageError, RolloverError, receipt.ReceiptError, OSError,
             json.JSONDecodeError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1

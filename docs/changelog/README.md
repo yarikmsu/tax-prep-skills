@@ -11,6 +11,7 @@ One file per epic, newest first, plus the pre-epic base engine:
 
 | File | Scope |
 |------|-------|
+| [`epic-Y.md`](epic-Y.md) | Distribution and operations (`TAX_WORKSPACE`, the workspace root outside the checkout) |
 | [`epic-W.md`](epic-W.md) | Engineering hygiene (ruff and mypy in CI, the `slow` marker, the pinned dev interpreter) |
 | [`epic-X.md`](epic-X.md) | Tax correctness, known and unfixed (capital-gains breakpoints fail closed) |
 | [`epic-V.md`](epic-V.md) | Agent reliability and determinism (SSN/ITIN masking at the extraction boundary) |

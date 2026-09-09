@@ -36,6 +36,11 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from agents.lib.secure_fs import atomic_path, redact, secure_path  # noqa: E402
 from agents.lib.tie_out import TieOutError, load_ledger  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_workspace,
+)
 
 SUFFIX = ".record.json"
 LEDGER_NAME = "parse_ledger.json"
@@ -199,7 +204,7 @@ def _main(argv: list) -> int:
     parser = argparse.ArgumentParser(
         prog="agents.lib.parse_records",
         description="Per-document parse records, and the ledger derived from them (V2).")
-    parser.add_argument("--workspace", default=".")
+    add_workspace_argument(parser)
     parser.add_argument("--build-ledger", action="store_true",
                         help="derive parse_ledger.json from summaries/*.record.json")
     parser.add_argument("--check", action="store_true",
@@ -209,9 +214,13 @@ def _main(argv: list) -> int:
     except SystemExit as exc:
         return 0 if not exc.code else 1
 
-    workspace = Path(args.workspace)
-    if not workspace.is_dir():
-        print(f"Error: no workspace at {redact(workspace)}", file=sys.stderr)
+    try:
+        # The "is this a usable directory" refusal lives in `resolve_workspace`
+        # now, with a message that names $TAX_WORKSPACE and where the path came
+        # from — neither of which the local copy that stood here could say.
+        workspace = resolve_workspace(args.workspace)
+    except WorkspaceError as e:
+        print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
     if not (args.build_ledger or args.check):
         parser.print_usage()

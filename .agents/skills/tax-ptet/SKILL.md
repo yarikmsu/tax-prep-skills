@@ -131,27 +131,27 @@ Steps:
 
 ```bash
 # Estimate CA + NY PTET savings (SALT cap assumed exhausted):
-sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
-    --income CA=200000 --income NY=100000
+sh agents/lib/run.sh -m agents.lib.ptet --year 2025 \
+ --income CA=200000 --income NY=100000
 
 # Derive SALT headroom from the cap given your other state/local taxes:
-sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
-    --income CA=200000 --other-salt 28000 --marginal-fed 0.37
+sh agents/lib/run.sh -m agents.lib.ptet --year 2025 \
+ --income CA=200000 --other-salt 28000 --marginal-fed 0.37
 
 # ...or set the unused headroom directly:
-sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
-    --income CA=200000 --salt-room 8000 --marginal-fed 0.37
+sh agents/lib/run.sh -m agents.lib.ptet --year 2025 \
+ --income CA=200000 --salt-room 8000 --marginal-fed 0.37
 
 # Override a multi-owner entity's graduated rate:
-sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
-    --income NY=3000000 --ptet-rate NY=0.0965
+sh agents/lib/run.sh -m agents.lib.ptet --year 2025 \
+ --income NY=3000000 --ptet-rate NY=0.0965
 
 # Mark QBI-eligible (§199A) K-1 income so the QBI clawback is priced in:
-sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025 \
-    --income CA=200000 --qbi-eligible CA
+sh agents/lib/run.sh -m agents.lib.ptet --year 2025 \
+ --income CA=200000 --qbi-eligible CA
 
 # Deadline-reminder mode (no income → reads flags.k1_states, lists deadlines):
-sh agents/lib/run.sh -m agents.lib.ptet --workspace . --year 2025
+sh agents/lib/run.sh -m agents.lib.ptet --year 2025
 ```
 
 ## Caveats (v1)

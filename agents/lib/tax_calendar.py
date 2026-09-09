@@ -72,6 +72,12 @@ from agents.lib.secure_fs import (  # noqa: E402
     atomic_write,
     redact, year_or_shape,
 )
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 class CalendarError(Exception):
@@ -1418,20 +1424,23 @@ def write_calendar(profile_path: Path, workspace: Path, *, tax_year: int) -> Pat
 def _main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="agents.lib.tax_calendar")
     parser.add_argument("--profile", required=True, help="path to taxpayer_profile.json")
-    parser.add_argument("--workspace", required=True, help="current workspace directory")
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True, help="tax year (YYYY)")
     args = parser.parse_args(argv)
 
     try:
         year = _validate_year_arg(args.year)
-        if not args.workspace.strip():
-            raise CalendarError("--workspace must be a non-empty path")
-        workspace = Path(args.workspace).resolve()
-        if not workspace.is_dir():
-            raise CalendarError(
-                f"workspace does not exist: {redact(workspace)}")
-        out = write_calendar(Path(args.profile), workspace, tax_year=year)
-    except (CalendarError, RolloverError) as e:
+        # `resolve_workspace` refuses a path that is not a usable directory,
+        # so the local existence check that stood here is gone with it — one
+        # answer to "is this a workspace", in the module that also decides
+        # WHICH directory it is.
+        workspace = resolve_workspace(args.workspace).resolve()
+        # Relative to the WORKSPACE, not the process CWD — the skills run from
+        # the checkout now, and `--profile taxpayer_profile.json` means the one
+        # in the taxpayer's directory.
+        out = write_calendar(resolve_under_workspace(args.profile, workspace),
+                             workspace, tax_year=year)
+    except (WorkspaceError, CalendarError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

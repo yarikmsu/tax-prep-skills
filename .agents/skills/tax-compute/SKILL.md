@@ -71,7 +71,7 @@ mid-compute one at a time. It runs before the capability gate because a
 question is cheaper to ask than a computation is to redo.
 
 ```
-sh agents/lib/run.sh -m agents.lib.answers --workspace . --check-required --for tax-compute
+sh agents/lib/run.sh -m agents.lib.answers --check-required --for tax-compute
 ```
 
 - **Exit 0** — nothing owed; continue.
@@ -99,7 +99,7 @@ Before loading any data, verify the engine can actually compute this taxpayer's
 situation — the toolkit must never produce a plausible-looking return that
 silently omits a form it cannot model:
 
-1. Run: `sh agents/lib/run.sh agents/lib/capabilities.py --workspace .`
+1. Run: `sh agents/lib/run.sh agents/lib/capabilities.py`
 2. Act on the exit code:
    - **0:** Proceed. The printed limitations manifest is reused in Step 12.
    - **2 (BLOCKED):** **STOP.** Show the user the blocked situations and the
@@ -142,7 +142,7 @@ file. Never skip one because a reference file did not mention it.
 ### Form 1040 lines 1-38 are DERIVED — run the builder, do not type them
 
 ```
-sh agents/lib/run.sh -m agents.lib.return_builder --workspace .
+sh agents/lib/run.sh -m agents.lib.return_builder
 ```
 
 Every 1040 line that is ARITHMETIC over other lines — 1z, 9, 11, 14, 15, 16, 17,
@@ -194,7 +194,7 @@ the tools write it. Do NOT edit that file; re-run the gate instead.
 ### Step 12.6: Form 1040 lines 1-38 still agree with their components
 
 ```
-sh agents/lib/run.sh -m agents.lib.return_builder --workspace . --check
+sh agents/lib/run.sh -m agents.lib.return_builder --check
 ```
 
 The same rules, asserting instead of writing. It runs BEFORE the tie-out because
@@ -228,7 +228,7 @@ last ran an older engine is refused with this gate named — re-run this step.
 
 Prove every parsed document landed on the return — the CP2000 killer:
 
-1. Run: `sh agents/lib/run.sh agents/lib/tie_out.py --workspace .`
+1. Run: `sh agents/lib/run.sh agents/lib/tie_out.py`
 2. Act on the exit code:
    - **0:** Tied out. If the report lists ⚠ unverifiable categories or ⚠
      advisory items (a possibly-taxable state refund, a personal-item 1099-K,

@@ -10,7 +10,7 @@ STATE_FILE=$(git rev-parse --git-path codex-loop-state.env) || exit 1
 . "$STATE_FILE" || exit 1
 
 if ! jq -n -e --argjson handled "$HANDLED_IDS_JSON" \
-     --argjson batch "$CURRENT_BATCH_IDS_JSON" '
+ --argjson batch "$CURRENT_BATCH_IDS_JSON" '
        ($handled | type) == "array"
        and ($batch | type) == "array"
        and (($handled | unique | length) == ($handled | length))

@@ -971,13 +971,24 @@ def _change_to_dict(c: Change) -> dict:
 
 
 def _main(argv: list[str]) -> int:
+    # IMPORTED HERE, not at module scope: `workspace` imports `_validate_subpath`
+    # from this module, so a top-level import back would be a cycle. The CLI is
+    # the only part of this file that needs it, which is what makes the local
+    # import the honest shape rather than a workaround.
+    from agents.lib.workspace import (
+        WorkspaceError,
+        add_workspace_argument,
+        resolve_under_workspace,
+        resolve_workspace,
+    )
+
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.rollover")
     sub = parser.add_subparsers(dest="cmd", required=True)
     for cmd in ("diff", "apply"):
         p = sub.add_parser(cmd)
         p.add_argument("--from", dest="src", required=True)
-        p.add_argument("--to", dest="dst", required=True)
+        add_workspace_argument(p, "--to", dest="dst")
         p.add_argument("--year", required=True)
         if cmd == "diff":
             p.add_argument("--json", action="store_true")
@@ -989,8 +1000,11 @@ def _main(argv: list[str]) -> int:
     try:
         year = _validate_year_arg(args.year)
         categories = _parse_categories(args.categories)
-        workspace = Path(args.dst).resolve()
-        src = _validate_subpath(Path(args.src).resolve(), workspace)
+        # `--to` IS the workspace under an older name, kept as an alias so the
+        # documented command still runs; `--from archive/2025` resolves under
+        # it rather than under whatever directory the command was run from.
+        workspace = resolve_workspace(args.dst).resolve()
+        src = resolve_under_workspace(args.src, workspace)
         # CLI's --year is the NEW year; archive should contain prior return (year - 1)
         prior = load_prior(src, year - 1)
         # Inside the boundary: the workspace files go through the same
@@ -998,7 +1012,7 @@ def _main(argv: list[str]) -> int:
         current = _load_current_state(workspace, year)
         diff = compute_diff(prior, current, categories=categories,
                             tax_law_new=current.tax_law)
-    except RolloverError as e:
+    except (WorkspaceError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
@@ -1028,7 +1042,7 @@ def _main(argv: list[str]) -> int:
     targets = WritePaths(result=workspace / "result.json", profile=workspace / "taxpayer_profile.json")
     try:
         report = apply_changes(diff, category_decisions=decisions, targets=targets)
-    except RolloverError as e:
+    except (WorkspaceError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     print(f"Applied {len(report.written)} changes")

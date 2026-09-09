@@ -328,7 +328,7 @@ DCB Part III, nonrefundable limit).
 ### Step 8: Compute Other Taxes (Form 1040 Line 23)
 
 Line 23 is yours. **Run
-`sh agents/lib/run.sh -m agents.lib.return_builder --workspace .` when this step
+`sh agents/lib/run.sh -m agents.lib.return_builder` when this step
 is done** — the second pass settles lines 17, 18, 21, 22 and 24.
 
 **Self-Employment Tax:**

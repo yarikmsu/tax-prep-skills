@@ -1356,7 +1356,10 @@ def test_main_rejects_workspace_that_does_not_exist(tmp_path, capsys):
     assert rc == 1
     err = capsys.readouterr().err
     assert err.startswith("ERROR:")
-    assert "workspace does not exist" in err
+    # The message is `workspace.resolve_workspace`'s now, and it says more than
+    # the local check it replaced: which path, where that path came from, and
+    # the variable that would move the return out of the checkout.
+    assert "no workspace at" in err and "TAX_WORKSPACE" in err
 
 
 def test_build_events_emits_no_fbar_when_flag_false_exact_count():

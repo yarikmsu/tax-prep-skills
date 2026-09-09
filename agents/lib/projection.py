@@ -18,7 +18,6 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
-    _validate_subpath,
     _validate_year_arg,
     load_prior,
 )
@@ -54,6 +53,12 @@ from agents.lib.irs_dates import (  # noqa: E402
 )
 from agents.lib.capabilities import _USPS_STATES  # noqa: E402
 from agents.lib.secure_fs import redact, year_or_shape  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    add_workspace_argument,
+    resolve_under_workspace,
+    resolve_workspace,
+)
 
 
 class ProjectionError(Exception):
@@ -4368,7 +4373,7 @@ def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.projection")
     parser.add_argument("--inputs", required=True, help="path to projection_inputs.json")
-    parser.add_argument("--workspace", required=True, help="current workspace directory")
+    add_workspace_argument(parser)
     parser.add_argument("--year", required=True, help="current tax year")
     parser.add_argument(
         "--as-of", dest="as_of", default=None,
@@ -4383,8 +4388,8 @@ def _main(argv: list) -> int:
         year = _validate_year_arg(args.year)
         # --workspace is trusted-by-contract (the taxpayer's own dir); --inputs is
         # constrained to live under it so a stray/relative path can't escape the workspace.
-        workspace = Path(args.workspace).resolve()
-        inputs_path = _validate_subpath(Path(args.inputs).resolve(), workspace)
+        workspace = resolve_workspace(args.workspace).resolve()
+        inputs_path = resolve_under_workspace(args.inputs, workspace)
         inputs = _read_json(inputs_path)
 
         _require_inputs_tax_year(inputs, year)
@@ -4401,7 +4406,7 @@ def _main(argv: list) -> int:
         tax_law = _read_json(tax_law_path) if tax_law_path.exists() else {}
         profile = _read_json(workspace / "taxpayer_profile.json")
         prior = load_prior_baseline(workspace / "archive" / str(year - 1), year - 1)
-    except ProjectionError as e:
+    except (WorkspaceError, ProjectionError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
     except RolloverError as e:
