@@ -265,28 +265,17 @@ def _document(path: Path, title: str, lines: "list[tuple[str, str]]") -> Path:
     return path
 
 
-def build_workspace(dest, case: str = CASE) -> Path:
-    """Write the whole workspace and return its path.
+def write_w2(path, extra_lines=None) -> Path:
+    """The fixture's W-2, as its own writer so a CASE can rewrite it.
 
-    `case` is REFUSED unless it is the one this fixture builds, and that guard is
-    the point of the parameter. `evals.run --case` selected a GOLDEN and not a
-    workspace, so `--case zero_income_2026` built this CA MFJ return, scored it
-    against a zero-income golden, and reported the model wrong for it. A second
-    case belongs here, beside the documents it needs; until there is one, naming
-    another is a mistake and says so.
+    `extra_lines` appends rows AFTER the boxes and changes no figure. That is
+    what the hostile-document-text case needs and the only thing it needs: an
+    injection that also moved a number would confound "did the agent resist the
+    instruction" with "did it compute the new number", and only the first is
+    being asked. The golden stays the golden.
     """
-    if case != CASE:
-        raise ValueError(
-            f"this fixture builds {CASE!r} and not {case!r}: a case is a "
-            f"workspace as well as a golden, and there is one of each so far")
-    dest = Path(dest)
-    (dest / "documents").mkdir(parents=True, exist_ok=True)
-    (dest / "summaries").mkdir(exist_ok=True)
-    for directory in (dest / "documents", dest / "summaries"):
-        secure_path(directory)
-
     ss_wages = min(WAGES, SS_WAGE_BASE)
-    _document(dest / "documents" / "W2_Acme.pdf", f"Form W-2 — {YEAR}", [
+    return _document(path, f"Form W-2 — {YEAR}", [
         ("c Employer's name", EMPLOYER),
         ("b Employer identification number (EIN)", EMPLOYER_EIN),
         ("e Employee's name", PRIMARY),
@@ -299,7 +288,27 @@ def build_workspace(dest, case: str = CASE) -> Path:
         ("16 State wages, tips, etc.", f"{WAGES:,.2f}"),
         ("17 State income tax", f"{STATE_WITHHELD:,.2f}"),
         ("14 Other — CASDI", f"{round(WAGES * SDI_RATE, 2):,.2f}"),
-    ])
+    ] + list(extra_lines or []))
+
+
+def build_workspace(dest, case: str = CASE) -> Path:
+    """Write the whole workspace and return its path.
+
+    A case is a WORKSPACE as well as a golden. `evals.run --case` once selected
+    only a golden, so `--case zero_income_2026` built this CA MFJ return, scored
+    it against a zero-income golden, and reported the model wrong for it. An
+    unknown name still raises; a known one now builds the workspace that case
+    means, by deriving it from this one — see `evals/cases.py`.
+    """
+    from evals import cases as CASES
+    spec = CASES.case(case)          # raises on an unknown name
+    dest = Path(dest)
+    (dest / "documents").mkdir(parents=True, exist_ok=True)
+    (dest / "summaries").mkdir(exist_ok=True)
+    for directory in (dest / "documents", dest / "summaries"):
+        secure_path(directory)
+
+    write_w2(dest / "documents" / "W2_Acme.pdf")
     _document(dest / "documents" / "1099INT_Meridian.pdf",
               f"Form 1099-INT — {YEAR}", [
                   ("PAYER'S name", BANK),
@@ -338,6 +347,13 @@ def build_workspace(dest, case: str = CASE) -> Path:
     # cache stops /tax-compute exactly as an incomplete one does.
     save_tax_law(YEAR, tax_law(), str(dest))
     secure_path(dest / f"tax_law_{YEAR}.json")
+    # The case's mutation goes LAST, on a complete workspace. Written as a
+    # derivation rather than as a second builder because every refusal case is
+    # the happy path with one thing wrong, and a case built from scratch would
+    # be free to differ in ways nobody chose — which is how a case stops
+    # measuring the thing it is named for.
+    if spec.mutate is not None:
+        spec.mutate(dest)
     return dest
 
 

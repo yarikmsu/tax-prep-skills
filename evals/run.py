@@ -48,6 +48,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from agents.lib.receipt import engine_digest, tree_digest  # noqa: E402
 from agents.lib.secure_fs import redact, secure_path, write_secure  # noqa: E402
+from evals import cases as CASES  # noqa: E402
 from evals import compare as C  # noqa: E402
 from evals import fixture as F  # noqa: E402
 
@@ -235,10 +236,18 @@ def golden_for(case: str) -> Path:
     hour spent to produce a harness error, and the typo that gets you there is
     the ordinary one: `--case ca_mfj_2025`.
     """
-    path = C.golden_path(case)
+    try:
+        spec = CASES.case(case)
+    except ValueError as e:
+        raise EvalRunError(str(e)) from None
+    # A refusal case names the BASE golden: it derives its workspace from that
+    # return, and "if the agent did produce something, is it the right return"
+    # stays a question worth asking. Only a case whose right answer is a
+    # different return needs a golden of its own.
+    path = C.golden_path(spec.golden)
     if not path.is_file():
         raise EvalRunError(
-            f"no golden for case {case!r} — the cases are "
+            f"no golden {spec.golden!r} for case {case!r} — the goldens are "
             f"{', '.join(C.cases()) or 'none'}")
     return path
 
@@ -274,6 +283,34 @@ def score(workspace: Path, case: str, *, tolerance: float) -> dict:
             "detail": C.render(differences, case)}
 
 
+def judge(scored: dict, case: str, workspace: Path) -> dict:
+    """Turn an OUTCOME into a verdict, against what this case expects.
+
+    The two are not the same and treating them as one is what the single-golden
+    harness got wrong: for a missing document or a stale cache the correct
+    behaviour is to STOP, and stopping scores `NO_RESULT`, which the old contract
+    reported as a failure. A case that measures a refusal cannot be scored by a
+    rule that assumes a return.
+
+    `NO_RESULT` is also what a CRASH produces, so an accepted outcome is never
+    enough on its own: a case that accepts anything but MATCH must also satisfy
+    its EVIDENCE, which is a question about the finished workspace rather than
+    about the exit status.
+    """
+    spec = CASES.case(case)
+    outcome = scored["outcome"]
+    if outcome not in spec.accepts:
+        return {**scored, "verdict": "FAIL", "expected": sorted(spec.accepts),
+                "evidence": (f"{outcome} is not an outcome this case accepts "
+                             f"({', '.join(sorted(spec.accepts))}): {spec.tests}")}
+    reason = spec.evidence(workspace) if spec.evidence is not None else None
+    if reason:
+        return {**scored, "verdict": "FAIL", "expected": sorted(spec.accepts),
+                "evidence": reason}
+    return {**scored, "verdict": "PASS", "expected": sorted(spec.accepts),
+            "evidence": None}
+
+
 def run_once(spec: dict, case: str, workspace: Path, *, tolerance: float,
              timeout: float) -> dict:
     """One attempt: build, dispatch, score. Never raises on a bad RUN, only on a
@@ -288,8 +325,12 @@ def run_once(spec: dict, case: str, workspace: Path, *, tolerance: float,
     F.build_workspace(workspace, case)
     attempt = dispatch(spec, workspace, PROMPT.format(year=F.YEAR), timeout=timeout)
     if attempt["outcome"] != "RAN":
-        return attempt
-    return {**attempt, **score(workspace, case, tolerance=tolerance)}
+        # An agent that never ran still gets judged: a case may legitimately
+        # accept `AGENT_FAILED`, and a harness that skipped the contract here
+        # would report a crash as unclassified rather than as the failure it is.
+        return judge(attempt, case, workspace)
+    return judge({**attempt, **score(workspace, case, tolerance=tolerance)},
+                 case, workspace)
 
 
 def record(attempts: list, *, case: str, agent: str, version: str,
@@ -309,7 +350,11 @@ def record(attempts: list, *, case: str, agent: str, version: str,
         "instruction_revision": instructions,
         "engine_revision": engine,
         "repeats": len(attempts),
+        # PASSED, not matched. For a refusal case a MATCH would be the
+        # failure, so a tally of matches answers the wrong question.
+        "passed": sum(1 for a in attempts if a.get("verdict") == "PASS"),
         "matched": sum(1 for a in attempts if a["outcome"] == "MATCH"),
+        "expects": sorted(CASES.case(case).accepts),
         "total_seconds": round(sum(a["seconds"] for a in attempts), 1),
         "attempts": attempts,
     }
@@ -328,22 +373,29 @@ def render(run: dict) -> str:
     is owner-only and is where the docstring always said it went.
     """
     lines = [f"{run['agent']} ({run['agent_version']}) on {run['case']}: "
-             f"{run['matched']}/{run['repeats']} matched, "
+             f"{run['passed']}/{run['repeats']} passed, "
              f"{run['total_seconds']}s total",
+             f"  expects {', '.join(run['expects'])}",
              f"  instructions {run['instruction_revision'][:12]}  "
              f"engine {run['engine_revision'][:12]}"]
     for i, attempt in enumerate(run["attempts"], 1):
-        lines.append(f"  run {i}: {attempt['outcome']} in {attempt['seconds']}s")
-        if attempt["outcome"] == "MATCH":
+        lines.append(f"  run {i}: {attempt.get('verdict', 'FAIL')} "
+                     f"({attempt['outcome']}) in {attempt['seconds']}s")
+        if attempt.get("verdict") == "PASS":
             continue
+        # The EVIDENCE first when there is one: for a refusal case it is the
+        # whole finding, and the comparison below it is often empty.
+        if attempt.get("evidence"):
+            lines += [f"    {line}" for line in attempt["evidence"].splitlines()]
         detail = attempt.get("detail") or (
             f"the agent produced no result — see {RECORD_NAME} for why")
         lines += [f"    {line}" for line in detail.splitlines()]
-    if run["matched"] != run["repeats"]:
+    if run["passed"] != run["repeats"]:
         lines.append("")
-        lines.append("A run that did not MATCH is a claim about the agent-mediated "
-                     "path, not about the tax math — a step skipped, a figure "
-                     "transcribed wrong, a section invented.")
+        lines.append("A failed run is a claim about the agent-mediated path, not "
+                     "about the tax math — a step skipped, a figure transcribed "
+                     "wrong, a section invented, or a gap the agent completed "
+                     "over in silence.")
     return "\n".join(lines)
 
 
@@ -435,7 +487,10 @@ def _main(argv: list) -> int:
     # repository produced a committable file holding both.
     write_secure(base / RECORD_NAME, json.dumps(run, indent=2) + "\n")
     print(json.dumps(run, indent=2) if args.json else render(run))
-    return 0 if run["matched"] == run["repeats"] else 2
+    # PASSED, not matched. On a refusal case a MATCH is the FAILURE — the agent
+    # produced a confident return over a missing document or a stale cache — so
+    # an exit rule written on matches would report the worst outcome as success.
+    return 0 if run["passed"] == run["repeats"] else 2
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry

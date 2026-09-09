@@ -415,7 +415,24 @@ class TestTheCli:
                                                      capsys):
         self._case(tmp_path, WRITES_THE_GOLDEN, monkeypatch)
         assert R._main(self._argv(tmp_path)) == 0
-        assert "1/1 matched" in capsys.readouterr().out
+        assert "1/1 passed" in capsys.readouterr().out
+
+    def test_a_MATCHING_run_on_a_REFUSAL_case_exits_TWO(self, tmp_path,
+                                                        monkeypatch, capsys):
+        """The inversion the per-case contract exists for, and the one thing a
+        happy-path test cannot see: on `missing_document` the golden-matching
+        return is the WORST outcome — a confident, complete return produced over
+        a document that was not there. An exit rule written on `matched` reports
+        it as success, and `matched` and `passed` agree on every other case, so
+        nothing but this notices.
+        """
+        self._case(tmp_path, WRITES_THE_GOLDEN, monkeypatch)
+        code = R._main(self._argv(tmp_path, out="refusal") +
+                       ["--case", "missing_document"])
+        out = capsys.readouterr().out
+        assert code == 2, out
+        assert "FAIL (MATCH)" in out
+        assert "not an outcome this case accepts" in out
 
     def test_it_exits_two_when_a_run_did_not_match(self, tmp_path, monkeypatch,
                                                    capsys):
@@ -555,8 +572,11 @@ class TestTheCli:
                         "--keep"])
         out = capsys.readouterr().out
         assert code == 2
-        assert "1/2 matched" in out
-        assert "run 1: MATCH" in out and "run 2: DIFFERS" in out
+        assert "1/2 passed" in out
+        # The VERDICT leads and the outcome is in parentheses: on a refusal
+        # case a MATCH is the failure, so a line that showed only the outcome
+        # would read identically for a pass and for the worst result there is.
+        assert "run 1: PASS (MATCH)" in out and "run 2: FAIL (DIFFERS)" in out
         # Two workspaces, each with its own result — not one scored twice.
         assert (tmp_path / "out" / "run-1" / "result.json").is_file()
         assert (tmp_path / "out" / "run-2" / "result.json").is_file()
