@@ -1637,3 +1637,53 @@ not this one — and the golden generator belongs with them rather than ahead of
 them. The interruption case needs a way to stop an agent mid-run that is honest
 about what it simulates, and a `SIGKILL` at an arbitrary point is not it.
 
+## V2 — one typed record per document, and a ledger derived from them
+
+`parse_ledger.json` is the tie-out gate's evidence that every document landed on
+a return line, and the AGENT wrote it: one hand-assembled object holding every
+document at once, produced at the end of a parse from summaries written earlier.
+A transcription step across documents, at the one place in the pipeline whose
+whole purpose is to prove no transcription was lost.
+
+`agents/lib/parse_records.py` takes that over. Each document gets
+`summaries/<doc_id>.record.json` as it is parsed, and
+`--build-ledger` derives the ledger.
+
+**The rules are the gate's rules, CALLED rather than copied.** Every field check
+— a unique `doc_id`, one record per file, skip XOR `key_boxes`, a known category
+— is `tie_out.load_ledger`, run on a one-record ledger at WRITE time. A second
+implementation of "what a record must look like" would be a second thing to keep
+true, and the copy that drifts is always the one the gate does not read. The
+test that proves the delegation is real drives a rule only `tie_out` knows: an
+unknown category is refused when the record is written, an hour before the gate
+would have seen it.
+
+**Coverage is checked while the agent still has the document open.** `tie_out`
+already fails on a document with no record — at `tax-compute` step 12.7, after
+the parse is over and the arithmetic is done. The builder makes the same check at
+build time and names the file. It also refuses a record pointing at a document
+nobody supplied (coverage credit for amounts with no source) and two records for
+one file, which a per-record pass structurally cannot see: coverage still passes
+with a duplicate while that document's amounts are counted twice.
+
+**What did NOT move, and the line matters.** The box-to-category table in
+`tax-parse` is mostly JUDGEMENT, not mapping: whether a 3921 is an AMT adjustment
+or a disqualifying disposition, whether a 5498-SA merely restates payroll
+contributions already on a W-2, which tips are qualified under the OBBBA rules.
+None of that is mechanical and none of it moved. What moved is the assembly, the
+coverage arithmetic, and the moment the answer is checked.
+
+The record keeps two fields the ledger drops. `boxes` is the labels AS READ,
+before any category judgement — which is what a second independent extraction is
+diffed against, and that is `==` where comparing two prose summaries asks a
+reader to spot a moved digit. `notes` is prose for a person. An unknown field is
+an ERROR rather than ignored: a misspelt `key_box` would otherwise produce a
+record with no amounts at all, which reads as an empty parse, and an empty parse
+nobody typed on purpose is the intake drop this chain exists to catch.
+
+`tax-parse` step 6.5 no longer calls `secure_fs` on the ledger, and its absence
+from the test that pins those calls is deliberate: the builder secures it as it
+writes, which is AGENTS.md §1's "`agents/lib/` writers call it internally". A
+skill still calling `secure_fs` on a file it no longer writes would have passed
+that test while doing nothing.
+

@@ -48,7 +48,15 @@ SENSITIVE_SKILL_SECURITY_CALLS = {
         # answers.md is in the sweep because Step 5.4 rewrites it by hand; the
         # sweep listed only what the sub-tasks and the library had produced.
         "-m agents.lib.secure_fs summaries/*.md result.json answers.md",
-        "-m agents.lib.secure_fs parse_ledger.json",
+        # parse_ledger.json is NOT in this list any more, and its absence is the
+        # point: V2 stopped the agent writing that file. `parse_records` derives
+        # it from the per-document records and secures it as it writes, which is
+        # AGENTS.md §1's "`agents/lib/` writers call it internally". The skill
+        # must therefore name the BUILDER — a skill that still called secure_fs
+        # on a file it no longer writes would pass this test while doing nothing.
+        # That the builder really does secure it is
+        # `TestTheLedgerIsDerivedAndNotTranscribed::test_the_ledger_is_owner_only`.
+        "-m agents.lib.parse_records --workspace . --build-ledger",
     ),
     "tax-amend": (
         "-m agents.lib.secure_fs archive archive/{year} "

@@ -278,29 +278,55 @@ sh agents/lib/run.sh -m agents.lib.secure_fs summaries/*.md result.json answers.
 
 ### 6.5. Emit the parse ledger (parse_ledger.json)
 
-Write `parse_ledger.json` at the workspace root — the machine-readable record
-`/tax-compute`'s tie-out gate uses to PROVE every parsed document landed on a
-return line (the prose summaries stay for humans; this file is for the
-arithmetic). One record per file in `documents/`:
+`parse_ledger.json` is the machine-readable record `/tax-compute`'s tie-out gate
+uses to PROVE every parsed document landed on a return line (the prose summaries
+stay for humans; this file is for the arithmetic). **You do not write it.** Write
+ONE record per document as you finish that document, and derive the ledger from
+them — assembling every document into one object by hand is a transcription step
+across documents, at the one place whose purpose is to prove no transcription was
+lost.
+
+Write `summaries/<doc_id>.record.json`:
 
 ```json
-{"records": [
-  {"doc_id": "w2-acme-primary",
-   "file": "documents/W2_Acme.pdf",
-   "form_type": "W-2",
-   "payer": "Acme Corp",
-   "person": "primary",
-   "key_boxes": {"wages": 100000.00, "federal_withholding_w2": 12000.00,
-                 "ss_wages": 100000.00, "medicare_wages": 100000.00,
-                 "state_withholding_ca": 6000.00},
-   "skipped": null}
-]}
+{"doc_id": "w2-acme-primary",
+ "file": "documents/W2_Acme.pdf",
+ "form_type": "W-2",
+ "payer": "Acme Corp",
+ "person": "primary",
+ "key_boxes": {"wages": 100000.00, "federal_withholding_w2": 12000.00,
+               "ss_wages": 100000.00, "medicare_wages": 100000.00,
+               "state_withholding_ca": 6000.00},
+ "skipped": null,
+ "boxes": {"1": "100,000.00", "2": "12,000.00", "17": "6,000.00"},
+ "notes": "box 3 capped at the wage base"}
 ```
+
+`boxes` is the labels AS READ, before any category judgement, and `notes` is
+prose for a person. Neither reaches the ledger; `boxes` is what a second
+independent extraction is diffed against, which is `==` where comparing two prose
+summaries asks a reader to spot a moved digit.
+
+Then derive and validate in one step:
+
+```
+sh agents/lib/run.sh -m agents.lib.parse_records --workspace . --build-ledger
+```
+
+- **Exit 0** — the ledger is written and secured. **Exit 2 — STOP**: it names the
+  document that has no record, or the record naming a document nobody supplied,
+  or the two records for one file. Every one of those fails the tie-out gate too,
+  at step 12.7, after the arithmetic — this is the same check, arriving while you
+  still have the document open. **Exit 1** — it could not run, which blocks
+  exactly as a missing engine does.
+- A record is checked against the GATE'S OWN rules when it is written, so an
+  unknown category or a skip carrying amounts is refused there rather than an
+  hour later.
 
 Rules:
 - **Every file in `documents/` gets exactly one record** — parsed with
   `key_boxes`, or `"skipped": "<reason>"` (duplicate scan, non-tax document,
-  informational-only). No file may be silently absent; the tie-out fails on it.
+  informational-only). No file may be silently absent; the builder refuses it.
 - `key_boxes` is keyed by CANONICAL CATEGORY (unknown keys hard-error):
   | Form box | Category |
   |---|---|
@@ -346,8 +372,9 @@ Rules:
   On a re-run, carry any existing `crypto-csv` records over verbatim —
   rewriting them back to "pending" would erase `/tax-parse-crypto`'s
   reconciliation trail (and re-block the gate).
-- `sh agents/lib/run.sh -m agents.lib.secure_fs parse_ledger.json` (it carries dollar
-  figures; already gitignored). Use `secure_fs`, not a bare `chmod 600` — on
+- The builder restricts `parse_ledger.json` as it writes it (it carries dollar
+  figures; already gitignored), through the cross-platform helper and never a
+  bare permission command — on
   Windows under a POSIX-compatible shell, `chmod` only flips the read-only DOS
   attribute and leaves the file readable by every other local account.
 
