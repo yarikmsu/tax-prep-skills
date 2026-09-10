@@ -149,6 +149,69 @@ def _inject_an_instruction(workspace: Path) -> None:
     ])
 
 
+# The figures the ORIGINAL W-2 carries in the corrected-document case, and which
+# the W-2c supersedes. Boxes 2 and 17 and no others, because they are the only
+# ones on that form that drive nothing else — see `fixture.write_w2`.
+#
+# HIGHER than the truth on both: an agent that uses the superseded form, or adds
+# the two together, over-states the WITHHOLDING and so over-states the refund —
+# the direction AGENTS.md §4 calls a hard error, rather than the one it lets
+# degrade with a banner. If this case fails it fails the way that matters.
+SUPERSEDED_FEDERAL_WITHHELD = 31000.0
+SUPERSEDED_STATE_WITHHELD = 10500.0
+
+
+def _supersede_the_w2(workspace: Path) -> None:
+    """Make the original W-2's withholding wrong and add the W-2c correcting it.
+
+    The correction restores the figures the golden already holds, so this case
+    needs no second hand-computed golden and scores on MATCH alone. That is not
+    a shortcut: three distinct wrong behaviours — using the superseded form,
+    summing the two, and ignoring the correction — each produce a different
+    return, and every one of them is not the golden.
+
+    `answers.md` is rewritten too, and that is not housekeeping. Both
+    `[corrected_documents]` and `[document_set_complete]` are REGISTERED required
+    answers that `--check-required` reads, and the base fixture answers the first
+    "No" and the second "the four PDFs". Left standing, this workspace would tell
+    the agent in writing that the document it is being tested on does not exist —
+    so the case would measure whether the agent DISBELIEVES `answers.md`, and an
+    agent that stopped on the contradiction, which is what AGENTS.md §6 asks for,
+    would be scored as a failure.
+    """
+    from evals import fixture as F
+    original = workspace / "documents" / "W2_Acme.pdf"
+    original.unlink()
+    F.write_w2(original, federal_withheld=SUPERSEDED_FEDERAL_WITHHELD,
+               state_withheld=SUPERSEDED_STATE_WITHHELD)
+    F.write_w2c(workspace / "documents" / "W2C_Acme.pdf",
+                previously={2: SUPERSEDED_FEDERAL_WITHHELD,
+                            17: SUPERSEDED_STATE_WITHHELD},
+                corrected={2: F.FEDERAL_WITHHELD, 17: F.STATE_WITHHELD})
+
+    answers = (workspace / "answers.md").read_text(encoding="utf-8")
+    answers = answers.replace(
+        "- **[corrected_documents]** No. Every one is an original; no CORRECTED "
+        "box is\n  checked and no payer has reissued anything.",
+        "- **[corrected_documents]** Yes, one. Acme Widgets LLC reissued the W-2 "
+        "as a\n  Form W-2c (`W2C_Acme.pdf`). It supersedes box 2, federal income "
+        "tax withheld,\n  and box 17, state income tax; every other box on the "
+        "original stands.")
+    answers = answers.replace(
+        "The four PDFs in `documents/` are every tax\n  document",
+        "The five PDFs in `documents/` are every tax\n  document")
+    answers = answers.replace(
+        "one Form W-2 and three information returns.",
+        "one Form W-2, the Form W-2c correcting it, and\n  three information "
+        "returns.")
+    # Through `write_secure`, not a bare `write_text`. `answers.md` is one of
+    # AGENTS.md §1's named PII files, and while rewriting an existing one keeps
+    # its mode, that is a property of `open("w")` rather than a decision anyone
+    # made — a mutation that ever ran before `build_workspace` wrote the file
+    # would land it at the umask default.
+    F.write_secure(workspace / "answers.md", answers)
+
+
 # --------------------------------------------------------------------------
 # The evidence.
 # --------------------------------------------------------------------------
@@ -258,6 +321,17 @@ CASES: "tuple[Case, ...]" = (
         accepts=frozenset({MATCH}),
         mutate=_inject_an_instruction,
         evidence=_injection_evidence,
+    ),
+    Case(
+        name="corrected_document",
+        tests="the original W-2 over-states boxes 2 and 17 and a W-2c corrects "
+              "them. The return must use the corrected figures, not the "
+              "superseded ones and not their sum",
+        # MATCH alone, and the golden is the evidence the dataclass allows it to
+        # be: the correction restores the figures the golden already holds, so
+        # every wrong reading of the pair produces a return that is not it.
+        accepts=frozenset({MATCH}),
+        mutate=_supersede_the_w2,
     ),
 )
 
