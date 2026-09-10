@@ -1174,8 +1174,10 @@ def _stage_bytes(repo: Path, name: str, content: bytes) -> None:
     subprocess.run(["git", "add", name], cwd=repo, check=True)
 
 
-def _run_env(repo: Path, env_extra: dict) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh"],
+def _run_env(repo: Path, env_extra: dict,
+             *args: str) -> subprocess.CompletedProcess:
+    """`args` selects the mode: none is staged mode, a range is CI's."""
+    return subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", *args],
                           cwd=repo, capture_output=True, text=True,
                           env={**os.environ, **env_extra})
 
@@ -2203,3 +2205,225 @@ def test_a_scan_reporting_fewer_commits_than_the_push_publishes_blocks(tmp_path)
     r = _push(clone, "HEAD:refs/heads/feature")
     assert r.returncode != 0, "a scan covering none of the push was read as clean"
     assert "reported inspecting 0 commit(s)" in r.stdout, r.stdout
+
+
+# --- The environment the scan runs in ---------------------------------------
+#
+# Every test above hands the scanner a repository and asks what it makes of it.
+# These hand it the same repository through a hostile ENVIRONMENT instead. Git
+# reads a dozen variables that change what a diff or a traversal means, and the
+# scan inherits whatever the caller had: a pre-commit hook inherits the
+# developer's shell, and the pre-push hook inherits it through `git push`.
+#
+# The outcome to keep out is the one this script has been bitten by twice
+# already — see the SCAN_ROOT and `--no-ext-diff` comments — where the scan
+# reports a file as checked having read nothing of it. An empty diff and a clean
+# file are indistinguishable by the time the added-lines loop has them, so the
+# defence sits where the environment is read rather than after.
+
+
+def _graft(repo: Path, child: str, parent: str) -> None:
+    """Install a legacy graft rewriting `child`'s parent, and prove it took.
+
+    The proof is the point. A graft test can go green three ways that have
+    nothing to do with the fix: git may drop graft support (the file is
+    deprecated and warns so), the runner may already export GIT_GRAFT_FILE and
+    neutralise the fixture, or the path may be wrong and the file simply
+    ignored. All three leave a test that passes while exercising nothing, so
+    this asserts the unprotected walk really is shorter than the true one
+    BEFORE any scan runs, and fails loudly rather than quietly if it is not.
+    """
+    _config(repo, "advice.graftFileDeprecated", "false")
+    info = repo / ".git" / "info"
+    info.mkdir(parents=True, exist_ok=True)
+    (info / "grafts").write_text(f"{child} {parent}\n")
+
+    def _walk(env_extra: dict) -> int:
+        r = subprocess.run(["git", "rev-list", f"{parent}..{child}"], cwd=repo,
+                           capture_output=True, text=True, check=True,
+                           env={**os.environ, **env_extra})
+        return len(r.stdout.split())
+
+    grafted = _walk({})
+    true_walk = _walk({"GIT_GRAFT_FILE": os.devnull})
+    assert grafted < true_walk, (
+        f"the graft is not in effect: the walk sees {grafted} commit(s) with it "
+        f"and {true_walk} without, so this test would pass without the fix. "
+        "Either git no longer honours .git/info/grafts, or GIT_GRAFT_FILE is "
+        "already set in the environment running these tests.")
+
+
+@pytest.mark.parametrize("var", [
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+])
+def test_a_pathspec_env_var_cannot_empty_the_content_scan(tmp_path, var):
+    """The content scan addresses each file as `:(literal)<name>`.
+
+    That prefix is pathspec MAGIC, and `GIT_LITERAL_PATHSPECS=1` turns magic
+    off globally — which does not fall back to plain matching, it makes the ten
+    characters `:(literal)` part of the filename being looked for. Every
+    per-file diff then matches nothing, and the scan printed
+
+        PII scan clean — 2 commit(s) inspected individually,
+        2 changed file(s) checked ... SSN/credential patterns in added lines
+
+    over a full SSN, which is the precise sentence that banner exists to make
+    unutterable. `git --literal-pathspecs push` exports it to the pre-push hook,
+    but no adversary is needed: it is an environment variable, and a scan whose
+    verdict depends on the shell it inherited is not a gate.
+
+    ONLY the first parameter pins the fix — deleting the `unset` leaves the
+    other three green, because an explicit `:(literal)` prefix survives all of
+    them. They are here as COMPATIBILITY cases, not coverage: each states a
+    measured fact about a variable the script clears, so a future git that made
+    one of them bite would land here rather than in a real return. Read a green
+    on those three as "still harmless", never as "the unset is load-bearing".
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "notes.md", f"SSN: {FAKE_SSN}\n")
+    r = _run_env(repo, {var: "1"})
+    assert r.returncode == 1, (
+        f"{var}=1 produced a clean pass over a full SSN: {r.stdout!r}")
+    # The specific diagnostic, not merely a refusal: "exit 1 and the filename
+    # appears" is equally satisfied by `'git diff --numstat' failed for
+    # notes.md`, which is the scan DYING rather than the scan DETECTING. The
+    # two are opposite verdicts about whether the mechanism works.
+    assert "BLOCKED CONTENT" in r.stdout, (
+        f"blocked, but not by detecting the content: {r.stdout!r}")
+    assert "notes.md" in r.stdout, "must name the file, not merely fail"
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_pathspec_env_var_cannot_empty_the_range_scan(tmp_path):
+    """The same hole through the CI and pre-push entry point.
+
+    Staged mode is the developer's hook; range mode is what CI runs and what
+    the pre-push hook invokes. They share the per-file diff, so a fix applied to
+    one path only would leave the two gates that still run on a contributor who
+    used --no-verify wide open.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "seed.md", "nothing here\n")
+    base = _commit(repo, "base")
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(repo, "leak")
+
+    r = _run_env(repo, {"GIT_LITERAL_PATHSPECS": "1"}, f"{base}...HEAD")
+    assert r.returncode == 1, (
+        f"range mode passed a full SSN under a pathspec override: {r.stdout!r}")
+    assert "BLOCKED CONTENT" in r.stdout, (
+        f"blocked, but not by detecting the content: {r.stdout!r}")
+    assert "leak.md" in r.stdout, "must name the file it detected, not merely fail"
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_replace_ref_cannot_swap_what_the_range_scan_reads(tmp_path):
+    """`git replace` rewrites what every command READS, object for object.
+
+    The pre-push hook has exported GIT_NO_REPLACE_OBJECTS since it was written,
+    because it would otherwise scan one tree while git pushed another. The
+    SCANNER had no such pin, and CI and the pre-commit hook do not inherit the
+    hook's — so the one caller that was protected was the one that already had
+    a second gate behind it.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "seed.md", "nothing here\n")
+    base = _commit(repo, "base")
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n")
+    real = _commit(repo, "the commit that carries the leak")
+
+    # A clean SIBLING of the leaking commit — same parent, innocuous tree — and
+    # then a mapping making every read of `real` return it instead. Built from
+    # `base` rather than from `real` so that the decoy's own diff against its
+    # parent is what a reader sees, which is the whole substitution.
+    branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            cwd=repo, capture_output=True, text=True,
+                            check=True).stdout.strip()
+    subprocess.run(["git", "checkout", "-q", "-b", "decoy", base],
+                   cwd=repo, check=True)
+    _stage(repo, "innocuous.md", "nothing sensitive\n")
+    decoy = _commit(repo, "the commit a reader would see instead")
+    subprocess.run(["git", "checkout", "-q", branch], cwd=repo, check=True)
+    subprocess.run(["git", "replace", "-f", real, decoy], cwd=repo, check=True)
+
+    swapped = subprocess.run(["git", "show", "--stat", real], cwd=repo,
+                             capture_output=True, text=True).stdout
+    assert "innocuous.md" in swapped, (
+        "the replace mapping did not take, so this test would pass without the "
+        f"fix: {swapped!r}")
+
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh",
+                        f"{base}...{real}"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 1, (
+        f"a replace mapping hid the leak from the scan: {r.stdout!r}")
+    assert "BLOCKED CONTENT" in r.stdout, (
+        f"blocked, but not by detecting the content: {r.stdout!r}")
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_graft_file_cannot_hide_a_commit_from_the_range_scan(tmp_path):
+    """`.git/info/grafts` rewrites ancestry, and NO_REPLACE_OBJECTS misses it.
+
+    That variable governs replace REFS only. The legacy graft file is a separate
+    mechanism read from a separate place, so a graft claiming C's parent is A
+    hides B from every traversal here while the receiver, which has no such
+    file, stores the real A-B-C. B's added lines are then published having never
+    been read. Deprecated is not absent: git still honours the file, and warns
+    rather than refuses.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "seed.md", "nothing here\n")
+    a = _commit(repo, "A")
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(repo, "B carries the leak")
+    _stage(repo, "more.md", "nothing here either\n")
+    c = _commit(repo, "C")
+    _graft(repo, c, a)
+
+    r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{a}...HEAD"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 1, (
+        f"a graft file hid the leaking commit from the scan: {r.stdout!r}")
+    assert "BLOCKED CONTENT" in r.stdout, (
+        f"blocked, but not by detecting the content: {r.stdout!r}")
+    assert "leak.md" in r.stdout, "must name the file it detected, not merely fail"
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_graft_file_cannot_hide_a_commit_from_the_push_scan(tmp_path):
+    """The hook enumerates the outgoing commits ITSELF, before any scanner runs.
+
+    So pinning grafts inside the scanner is not enough: under a graft the hook
+    never hands it the hidden commit to scan. This is the case that makes the
+    duplicated pin in agents/install.sh load-bearing rather than copy-paste.
+
+    The assertion is on the hook's OWN refusal rather than a non-zero exit,
+    because an unfixed hook also fails here — the receiving repository has no
+    graft file, so its connectivity check rejects a pack missing the commit the
+    graft hid. That rejection proves the remote looked, not that this hook did,
+    and it disappears the moment those objects reach the remote another way.
+    Run against the unfixed hook this assertion is what fails, over a push the
+    hook had already reported as `PII scan clean — 1 commit(s) inspected`.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone,
+                          capture_output=True, text=True).stdout.strip()
+    assert _push(clone, "HEAD:refs/heads/base").returncode == 0
+
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    _commit(clone, "the commit a graft will hide")
+    _stage(clone, "after.md", "nothing sensitive\n", force=True)
+    tip = _commit(clone, "the commit that claims base as its parent")
+    _graft(clone, tip, base)
+
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "the graft hid a leaking commit from the push"
+    assert "PUSH BLOCKED" in r.stdout, (
+        "the push failed, but not because this hook refused it:\n"
+        f"stdout={r.stdout}\nstderr={r.stderr}")
+    assert "leak.md" in r.stdout, "must name the file it found, not merely fail"
+    assert FAKE_SSN not in r.stdout + r.stderr

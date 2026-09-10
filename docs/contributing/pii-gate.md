@@ -180,10 +180,39 @@ Closed, deliberately, in every direction:
 - Every intermediate lives in ONE 0700 work directory removed by a single trap: the raw
   patch holds the unredacted value.
 
-Two environment defects it pins, both of which produced a clean banner over a real
-match:
+Five environment settings it pins, because each let the gate report a file or a
+commit as checked when it had not been read. They do not share one mechanism —
+the locale one is about `grep`, the pathspec one empties a diff, and the ancestry
+ones produce a walk that is short rather than empty — so what they share is only
+the OUTCOME, which is why all five are pinned where the environment is read, at
+the top of the script, rather than defended at each call site.
 
 - **`LC_ALL=C`** — under a UTF-8 locale `grep` silently skips any line that is not valid
   UTF-8, and one Latin-1 byte hid every match on its line.
 - **`cd` to the repository root** — a pathspec resolved from a subdirectory matched
   nothing, while still printing the clean banner.
+- **`GIT_LITERAL_PATHSPECS` cleared** — the content scan addresses each file as
+  `:(literal)<name>`, and that variable turns pathspec magic off globally. It does not
+  degrade to plain matching: the ten characters of the prefix become part of the
+  filename being searched for, so every per-file diff matches nothing. `git
+  --literal-pathspecs push` exports it to the pre-push hook, but nothing adversarial is
+  required — it is an environment variable, and a gate whose verdict depends on the
+  shell it inherited is not a gate. `GIT_GLOB_` and `GIT_NOGLOB_PATHSPECS` are inert
+  against an explicit prefix and `GIT_ICASE_PATHSPECS` only broadens matching, which
+  can never hide a file; all four are cleared together so the next sibling is not
+  missed.
+- **`GIT_GRAFT_FILE=/dev/null`** — `.git/info/grafts` rewrites ancestry, hiding whole
+  commits from a range walk while the receiving repository, having no such file, stores
+  the real history. `GIT_NO_REPLACE_OBJECTS` governs replace REFS and does **not** cover
+  grafts. Both the pre-push hook's own commit enumeration and the scanner's range walk
+  need it: pinning it in the scanner alone leaves the hook never handing it the hidden
+  commit, so `agents/install.sh` carries the same export deliberately.
+- **`GIT_NO_REPLACE_OBJECTS=1`** — a `git replace` mapping swaps what every command
+  reads, object for object. The pre-push hook set this from the start; the scanner did
+  not, which left the pre-commit hook and CI — the two callers with no second gate
+  behind them — reading whatever the mapping said.
+
+Known gaps, deliberately not closed here: `GIT_DIR`/`GIT_WORK_TREE` pointed at another
+repository makes staged mode exit 0 silently, because the pre-commit hook checks only
+the exit status and the scanner is quiet on staged success. Closing it needs a coverage
+line the hook can cross-check, not another variable. Tracked in the roadmap.

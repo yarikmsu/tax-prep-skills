@@ -26,6 +26,40 @@ set -euo pipefail
 # only expose more nine-digit runs, never hide one.
 export LC_ALL=C
 
+# Git reads the ENVIRONMENT for settings that change what a diff or a traversal
+# MEANS, and this script inherits whatever invoked it — the developer's shell
+# through the pre-commit hook, and `git push`'s through the pre-push one. Three
+# settings are pinned here, each because leaving it inherited let this gate
+# print its clean banner over content it had not read:
+#
+#   GIT_LITERAL_PATHSPECS turns pathspec MAGIC off globally. That does not fall
+#   back to plain matching — it makes the ten characters `:(literal)`, the
+#   prefix the content scan builds below, part of the filename being looked for,
+#   so every per-file diff matches nothing and no added line is ever read.
+#   GIT_GLOB_ and GIT_NOGLOB_PATHSPECS are inert against an explicit prefix;
+#   GIT_ICASE_PATHSPECS is NOT — it still broadens matching — but broadening can
+#   only ever match more files, never hide one. All four are cleared anyway,
+#   because "unset the one we found" is how the next one gets missed.
+#
+#   `.git/info/grafts` rewrites ancestry, hiding whole commits from the range
+#   walk while the receiving repository, having no such file, stores the real
+#   history. GIT_NO_REPLACE_OBJECTS does NOT cover it: that governs replace
+#   REFS, a separate mechanism read from a separate place. Deprecated is not
+#   absent — git still honours the file, and warns rather than refuses.
+#
+#   A `git replace` mapping swaps what every command here READS, object for
+#   object. The pre-push hook has pinned this since it was written; the scanner
+#   had not, so the pre-commit hook and CI — the two callers with nothing behind
+#   them — were the ones reading whatever the mapping said.
+#
+# Pinned HERE rather than at the call sites for the reason LC_ALL is: a gate
+# whose verdict depends on the shell it inherited is not a gate, and every git
+# command added below would otherwise have to remember.
+unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS \
+      GIT_ICASE_PATHSPECS
+export GIT_NO_REPLACE_OBJECTS=1
+export GIT_GRAFT_FILE=/dev/null
+
 # Resolved paths are relative to the REPO ROOT, but a pathspec is resolved
 # relative to the CURRENT DIRECTORY. Run from a subdirectory the two disagreed:
 # every per-file diff matched nothing, so no content was scanned and the script

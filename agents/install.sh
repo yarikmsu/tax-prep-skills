@@ -482,6 +482,12 @@ set -u
 # tree and the push would publish another. Set for this whole process, so the
 # scanner inherits it too.
 export GIT_NO_REPLACE_OBJECTS=1
+# The legacy graft file rewrites ancestry too, and the variable above does NOT
+# cover it — that governs replace REFS, which git reads from a different place.
+# It is pinned HERE as well as in the scanner because THIS is where the outgoing
+# commits are enumerated: under a graft the hidden commits are never handed to
+# the scanner at all, so its own pin never gets the chance to matter.
+export GIT_GRAFT_FILE=/dev/null
 
 REMOTE_NAME="${1:-origin}"
 # $2 is where git is ACTUALLY pushing, which is not always where $1 fetches
