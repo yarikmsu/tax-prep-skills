@@ -145,9 +145,33 @@ As the only agent with network access it is held to a closed minimal tool set �
 plus an outbound connection in a workspace holding a real return being exactly what §1
 forbids. That bound is enforced by the GRANT; "read `tax_law_<year>.json` and nothing
 else" is only prompt-level, and the difference is the whole point.
-`tests/test_claude_agents.py` resolves every schema path the definition names against
-`create_empty_tax_law`, so a renamed key cannot leave the auditor reporting its own
-inability to find a key as a finding about the cache.
+
+V7 moved that sentence out of the prompt and into the filesystem. `tax_law_export.py`
+copies the cache into a fresh directory holding nothing else and the auditor is launched
+there, so the workspace is not somewhere it declines to look — it is somewhere it is not.
+That is the V6 pattern rather than a new one: the parent extracts and hands over only what
+the sub-task needs.
+
+**The copy is FAITHFUL, and the first draft got that exactly wrong.** It filtered the
+cache against the schema — and this agent's job includes reporting keys the schema does
+not define. Its item 6 is "nothing statutory-fixed has leaked in"; its item 8 requires
+`state.type` as a positive declaration. A cache falsely calling Colorado a no-income-tax
+state reached the auditor as a clean generic block, because the filter had removed the
+thing the finding was made of. A sanitiser that resolves findings on behalf of the
+reviewer it feeds is worse than no sanitiser, and the failure is invisible: the report
+said DROPPED and the audit said clean.
+
+So nothing is removed. The export REFUSES when the cache holds anything SSN- or
+credential-shaped — in a KEY as well as a value, since `{<an SSN>: "Jane"}` puts the
+value in the key position where a value-only scan never looks — and copies verbatim
+otherwise. Identity data never reaches the copy because there is no copy. What it does
+NOT check is freshness, schema validity, or source authority: the auditor's own items 3
+and 4 do the last of those, better than a regex would.
+
+**It isolates nothing unless `TAX_WORKSPACE` is set.** Unset, the workspace is the clone,
+and the definition tells the agent four times to read `agents/lib/tax_law_fetcher.py` for
+the schema — so handing it the schema hands it the directory holding
+`taxpayer_profile.json`. Y4 is a precondition here, not a neighbour.
 
 **`bias-direction-reviewer`** is scoped to `agents/lib/` diffs and instructed to report
 NOTHING that is not a directional-bias or unstated-precondition finding. The general

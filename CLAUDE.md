@@ -61,7 +61,9 @@ and what each grant is protecting: `docs/contributing/claude-automation.md`.
 - **Two read-only REVIEWERS**, `tax-law-freshness-auditor` and
   `bias-direction-reviewer`. Neither is granted `Write`, `Edit` **or `Bash`** — a shell
   is a write capability, and an auditor that can quietly resolve its own findings cannot
-  be trusted about them.
+  be trusted about them. **Point the auditor at `tax_law_export.py`'s copy, never at the
+  workspace**, and give the bias reviewer a cwd outside it: `Read` is not
+  directory-confined, so a scope sentence in a prompt is not a boundary.
 - **One parse WORKER**, `tax-parse-worker` (V6): a CLOSED grant holding nothing that
   reads, writes, runs or fetches, the parent handing it masked text. Enforced by
   ABSENCE, the one mechanism here that fails closed — hooks fail OPEN, `permissions` is

@@ -123,6 +123,8 @@ SKILL_MODULES = (
     ("agents.lib.secure_fs", "the owner-only permission enforcement every "
                              "runtime write goes through", "secure_path"),
     ("agents.lib.tax_calendar", "/tax-calendar's deadline calendar", "events_1040es"),
+    ("agents.lib.tax_law_export", "the isolated cache copy the freshness "
+                                  "auditor is pointed at", "build_audit_copy"),
     ("agents.lib.withholding", "/tax-withholding's W-4 true-up", "_main"),
     ("agents.lib.workspace", "the one answer to which directory holds the "
                              "return", "resolve_workspace"),

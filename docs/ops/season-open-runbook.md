@@ -104,6 +104,39 @@ names the block(s) still to fetch.
 
 ## 5. Make the queued definition edits, then re-run the review-subagent acceptance
 
+**Point it at an exported copy, never at the workspace** (V7):
+
+```bash
+sh agents/lib/run.sh agents/lib/tax_law_export.py <year>
+```
+
+**This isolates nothing unless `TAX_WORKSPACE` is set** (Y4). Unset, the workspace IS the
+clone, and the auditor's definition tells it four times to read
+`agents/lib/tax_law_fetcher.py` for the schema — so handing it the schema hands it the
+directory holding `taxpayer_profile.json`. Set the variable, or the export is a tidier
+input rather than a boundary.
+
+The command prints a fresh directory holding one file, copied VERBATIM: nothing is
+filtered out, because the auditor's items 6 and 8 are findings ABOUT keys the schema does
+not define and an export that removed them would be answering for it. It refuses instead
+— exit 2, no copy — when the cache holds anything SSN- or credential-shaped, which a
+cache fetched from `.gov` sources has no business holding. Exit 1 is "could not run".
+
+Launch the auditor with that directory as its working directory and do not name the
+workspace to it. **The Agent tool has no `cwd` parameter**, so this means the PARENT
+session's working directory: `cd` there before dispatching, or run the dispatch from a
+session started in it. Delete the directory when the audit is done — the command prints
+the `rm -rf` for it, and nothing else cleans it up.
+
+**Two things this procedure does not yet have, and both belong in step 5 below.** The
+auditor's "What to check" tells it to read `agents/lib/tax_law_fetcher.py` for the schema,
+the source-host policy and the fetched-block derivation; with the cwd moved, none of those
+resolve, so those instructions need rewording in the same sitting as the other queued
+edits. And Replay B in `docs/ops/review-subagent-acceptance.md` builds its own fixture and
+hands the auditor a FILE PATH, so it bypasses the export entirely and will keep passing
+whether or not this works — the replay should hand it an exported directory, and changing
+that changes what the next replay tests, so it is queued too rather than done here.
+
 `tax-law-freshness-auditor` is the only check on the freshness contract this runbook
 exists to satisfy, so this runbook LEANS ON it and must not be the thing that first
 discovers it has regressed. It also carries the two definition edits that were
@@ -118,11 +151,24 @@ a definition loads at SESSION START.
 
 1. **The fetch and the freshness gate above are already done.** If they are not, stop:
    steps 1-4 come first, and this step is worthless before them.
-2. **Make the two queued edits** to `.claude/agents/tax-law-freshness-auditor.md`:
+2. **Make the queued edits** to `.claude/agents/tax-law-freshness-auditor.md`, and the one to the acceptance record's Replay B fixture:
    - the `_provenance` check (V4, `docs/changelog/epic-V.md`): the auditor reads
      `_sources` today and cannot see WHEN a block was retrieved, which is exactly the
      staleness it exists to catch;
-   - the item-7 keying note (X1, `docs/changelog/epic-X.md`).
+   - the item-7 keying note (X1, `docs/changelog/epic-X.md`);
+   - the scope-limits paragraph AND the four schema reads in "What to check" (V7):
+     the scope sentence says "read `tax_law_<year>.json` and nothing else in the
+     workspace", and there is no workspace any more — the auditor is pointed at an
+     exported copy holding nothing else. The four reads of
+     `agents/lib/tax_law_fetcher.py` (the schema, `_source_host_authoritative`, the
+     fetched-block derivation) do not resolve from that directory either, and with
+     `TAX_WORKSPACE` unset they resolve to the clone, which IS the workspace — the
+     boundary this epic exists to build, undone by the agent's own instructions. Reword
+     both together; a scope sentence describing a directory the agent is not in teaches
+     it to go looking for one.
+   - **Replay B's fixture** in `docs/ops/review-subagent-acceptance.md`: it hands the
+     auditor a file path and so bypasses the export. Hand it an exported directory, or
+     the procedure that scores this agent proves nothing about the isolation.
    Do NOT touch `docs/ops/review-subagent-acceptance.md` yet.
 3. **Start a FRESH session.** Not a new sub-agent, not a cleared context — a new session,
    because that is when the edited definition is loaded.
