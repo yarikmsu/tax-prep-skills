@@ -1416,7 +1416,27 @@ apply_red_checks
 # reads — byte counts, two regex sweeps over two files each, and a directory
 # glob — and the row's stated range is two seconds wide, so the seconds here are
 # stale in a way the counts can be trusted through. That is an argument for the
-# ORDER, not for skipping it. Y6 is the round that shows what the order buys: its
+# ORDER, not for skipping it.
+#
+# THE SITTING WAS ATTEMPTED ON 2026-09-10 AND ABANDONED, which is recorded so
+# the debt reads as blocked rather than neglected. The branch was settled and
+# nothing else was touching the repository — the precondition this block asks
+# for — but the HOST was not idle in the way that matters: it was under memory
+# pressure, and the sweep was killed part-way through `pytest tests/`, which
+# never produced a reading at all. The tell arrived before the kill did:
+# tests/test_claude_hooks.py returned 119.4, 111.0, 2261.2 and 134.3 seconds
+# across four runs. A nineteen-fold outlier between two ordinary neighbours is
+# the machine swapping, not the work changing.
+#
+# NOTHING FROM IT WAS WRITTEN DOWN, and that is the point of recording it. The
+# rows that completed looked plausible — portability 12.1-14.3s, preflight
+# 6.2-7.6s, the skill-edit trigger 21.1-22.1s — and taking the plausible ones
+# while discarding the outlier is exactly how a set stops being a set. These
+# figures are read as a SET or not at all; a sitting that lost one row to the
+# host lost the sitting. The previous abandonment, noted above, was for edits
+# landing mid-sweep; this one is the same failure with a different cause, and
+# the precondition should be read as an otherwise-idle MACHINE rather than
+# merely an untouched repository. Y6 is the round that shows what the order buys: its
 # twenty-five cases landed in tests/test_pii_content_scan.py, which this hook has no
 # arm for, so NO decomposition row moved and the debt did not grow — the sitting
 # Y5 bought is still the one that is owed, and it is now owed on a larger scale
