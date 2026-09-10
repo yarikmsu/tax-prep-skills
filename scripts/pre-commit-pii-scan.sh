@@ -68,6 +68,16 @@ export GIT_GRAFT_FILE=/dev/null
 # worktree root and CI runs at the workspace root, so both production callers
 # were safe; a human or agent invoking this by hand was not.
 SCAN_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+# WHICH REPOSITORY WAS ASKED, read here, before the move. `--show-toplevel` is
+# the WORK TREE, and that is a separate question from which repository owns the
+# index: `GIT_WORK_TREE` pointing at another checkout answers the first with the
+# other tree while `git commit` still writes here, so the `cd` below lands in a
+# repository that has nothing staged and this script exits 0 over a staged
+# secret. Reproduced by invoking this script directly — the form AGENTS.md
+# documents and CI uses. Not through `git commit`, which exports GIT_DIR to its
+# hooks and so keeps the index the scan reads and the index being committed the
+# same one; the checked-in hooks were never exposed to it.
+SCAN_GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
 
 # Git's empty tree, used as the parent of a root commit.
 EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
@@ -148,6 +158,24 @@ if [ "${1:-}" = "--names" ]; then
   [ -n "$NAMES_REV" ] || die "--names needs the revision to read .pii-allowlist from"
 fi
 cd "$SCAN_ROOT" || die "cannot enter the repository root '$SCAN_ROOT'"
+# A GIT_DIR the caller set may be RELATIVE, and this script has just moved.
+# `GIT_DIR=../.git` run from `scripts/` names this repository before the `cd`
+# and a directory that does not exist after it, which made the check below
+# refuse a perfectly ordinary invocation — a gate that cries wolf on a correct
+# commit is worse than the hole it closes. Re-exported ABSOLUTE, from the value
+# read before the move. Only when the caller set it: leaving an unset GIT_DIR
+# unset is what lets the check see a redirected work tree at all.
+if [ -n "${GIT_DIR:-}" ] && [ -n "$SCAN_GIT_DIR" ]; then
+  export GIT_DIR="$SCAN_GIT_DIR"
+fi
+# The SAME repository, after the move as before it. A linked worktree, a run
+# from a subdirectory and a hook's exported GIT_DIR all keep this equal —
+# checked, not assumed. What changes it is a work tree owned by a DIFFERENT
+# repository, which is the case this exists for.
+SCAN_GIT_DIR_AFTER="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
+if [ "$SCAN_GIT_DIR_AFTER" != "$SCAN_GIT_DIR" ]; then
+  die "the working tree at '$SCAN_ROOT' belongs to a different repository than the one this scan was asked about — nothing here can report on the changes you are committing"
+fi
 
 # --- Scratch space ----------------------------------------------------------
 #
@@ -167,6 +195,7 @@ LIST="$WORK/list"
 REVS="$WORK/revs"
 NUMSTAT="$WORK/numstat"
 PATCH="$WORK/patch"
+ADDED="$WORK/added"
 GREP_ERR="$WORK/greperr"
 
 # --- Scopes to scan ---------------------------------------------------------
@@ -188,10 +217,14 @@ GREP_ERR="$WORK/greperr"
 # a textconv driver rewrites the blob before diffing. Each one empties `added`
 # and the scan reports clean. A display preference must not disable a security
 # gate, so every diff here asks for machine-readable output explicitly.
-DIFF_SAFE="--no-color --no-ext-diff --no-textconv"
+# `--submodule=short` belongs to that list too: `diff.submodule=log` replaces a
+# gitlink's one-line patch with a commit SUMMARY, which carries no added line at
+# all while `--numstat` still counts one — so the cross-check below refused a
+# legitimate submodule bump.
+DIFF_SAFE="--no-color --no-ext-diff --no-textconv --submodule=short"
 
-# Sets RECORDED_FIRST_PARENT to the first parent a commit records in its OWN
-# object, or to the empty string when it records none — a true root commit.
+# Sets RECORDED_PARENTS to the parents a commit records in its OWN object, in
+# order; an empty array means it records none — a true root commit.
 #
 # This is the one question `git rev-list --parents` and `git rev-parse <sha>^`
 # cannot answer. Both report the parents THIS CLONE HAS. In a shallow clone the
@@ -213,17 +246,22 @@ DIFF_SAFE="--no-color --no-ext-diff --no-textconv"
 # neither ends the block early nor starts with "parent ". Pure bash: a `grep`
 # that cannot RUN reports "no match", and no rule here may be turned off by a
 # failure to test it.
-RECORDED_FIRST_PARENT=""
-read_recorded_first_parent() {
+#
+# ALL of them, for the walk check below, and the first is simply element zero —
+# a separate RECORDED_FIRST_PARENT was two pieces of state that had to agree.
+# The whole header is read now, where the first-parent case used to return
+# early, which costs nothing: the object has already been fetched.
+RECORDED_PARENTS=()
+read_recorded_parents() {
   # $1 — commit sha.
   local obj line
-  RECORDED_FIRST_PARENT=""
+  RECORDED_PARENTS=()
   obj=$(git cat-file commit "$1" 2>/dev/null) \
     || die "could not read the commit object for '$1' — cannot tell a root commit from a shallow boundary"
   while IFS= read -r line; do
     [ -n "$line" ] || break
     case "$line" in
-      "parent "*) RECORDED_FIRST_PARENT="${line#parent }"; return 0 ;;
+      "parent "*) RECORDED_PARENTS+=("${line#parent }") ;;
     esac
   done <<< "$obj"
   return 0
@@ -266,7 +304,7 @@ if [ -n "$DIFF_RANGE" ]; then
   # both problems: it prints exactly one line, `<sha>` followed by zero or
   # more parent shas from git's own parent-tracking, never commit-message
   # text. What it reports is the parents this CLONE HAS, which is not the same
-  # question — see read_recorded_first_parent above — so the sha-alone line is
+  # question — see read_recorded_parents above — so the sha-alone line is
   # a NECESSARY condition for a root commit and the object header decides it.
   parents_line=$(git rev-list --parents -n 1 "$merge_base" 2>/dev/null) \
     || die "cannot determine parents of merge base '$merge_base'"
@@ -276,13 +314,70 @@ if [ -n "$DIFF_RANGE" ]; then
     # and a boundary is an ordinary base — already scanned by the pull request
     # that landed it, so `A..B`'s exclusion is right for it and only a true root
     # earns the exception.
-    read_recorded_first_parent "$merge_base"
-    if [ -z "$RECORDED_FIRST_PARENT" ]; then
+    read_recorded_parents "$merge_base"
+    if [ -z "${RECORDED_PARENTS[0]-}" ]; then
       printf '%s\n' "$merge_base" >> "$REVS"
     fi
   fi
+  # The enumerated set as ONE newline-delimited string, so the walk check below
+  # tests membership with a pattern match on a fixed literal — no loop, no
+  # `grep` (which would report "not a member" for a grep that could not RUN,
+  # and the answer decides whether a commit may be absent), and nothing asked
+  # of git. It is the form the pre-push hook already uses for its own "the
+  # range covers what was enumerated" assertion, and a sha holds no newline.
+  NL=$'\n'
+  ENUMERATED="$NL"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    ENUMERATED="$ENUMERATED$line$NL"
+  done < "$REVS"
+
   while IFS= read -r sha; do
     [ -n "$sha" ] || continue
+    # THE WALK IS CLOSED, checked against the commit OBJECTS.
+    #
+    # `git rev-list A..B` enumerates what this clone's traversal reaches, and
+    # `.git/info/grafts` rewrites exactly that: a graft on B made rev-list skip
+    # its real parent entirely, so a commit carrying a full SSN was never handed
+    # to the file loop below and the scan reported clean over it — the pin at
+    # the top of this script closes that mechanism BY NAME, and this closes the
+    # next one, whatever it turns out to be.
+    #
+    # It does NOT retire `GIT_NO_REPLACE_OBJECTS`, and that is not an oversight
+    # to tidy away later: `git cat-file commit` honours a replacement mapping
+    # too, so the object read this check rests on is only authoritative because
+    # that variable is pinned above.
+    #
+    # The invariant an honest walk satisfies: every parent a commit RECORDS is
+    # either enumerated too, or already excluded by the range — if a commit is
+    # reachable from the head, so is each of its parents, and the only reason
+    # rev-list may drop one is that the base already reaches it. ALL recorded
+    # parents, not just the first: a merged-in branch whose commits went missing
+    # would still have its net changes covered by the merge's own first-parent
+    # scope, but content added in one of its commits and removed in the next is
+    # precisely what scanning commit by commit exists to see.
+    #
+    # Only the boundary arm asks git about ancestry, and only for commits the
+    # enumeration did not produce — in a normal push that is one call, for the
+    # oldest commit's parent.
+    read_recorded_parents "$sha"
+    for recorded_parent in ${RECORDED_PARENTS[@]+"${RECORDED_PARENTS[@]}"}; do
+      case "$ENUMERATED" in
+        *"$NL$recorded_parent$NL"*) continue ;;
+      esac
+      # `|| ancestry=$?` rather than reading `$?` on the next line: under
+      # `set -e` a bare command that exits 1 ends the script THERE, so the
+      # refusal below was unreachable and the block arrived as a bare exit 1
+      # with no banner — a scan that could not run, reported as a crash.
+      ancestry=0
+      git merge-base --is-ancestor "$recorded_parent" "$merge_base" 2>/dev/null \
+        || ancestry=$?
+      case $ancestry in
+        0) ;;
+        1) die "commit '$sha' records a parent that this scan neither inspects nor excludes — the commit walk skipped history the push carries, so no clean result can be reported for it" ;;
+        *) die "cannot place a parent of commit '$sha' relative to the base '$merge_base' — the parent it records is not an object this clone has, and a shallow history cannot be scanned commit by commit ($SHALLOW_REMEDY)" ;;
+      esac
+    done
     # The FIRST parent, which is the scoping this wants for a merge.
     #
     # Read from the commit object for the same reason as above: this used to be
@@ -291,12 +386,16 @@ if [ -n "$DIFF_RANGE" ]; then
     # silently widened the second case to a whole-snapshot scan. A recorded
     # parent that is absent is a history this script cannot scan commit by
     # commit, so it BLOCKS and says how to fix it rather than scanning something
-    # else and reporting that as coverage.
-    read_recorded_first_parent "$sha"
-    if [ -z "$RECORDED_FIRST_PARENT" ]; then
+    # else and reporting that as coverage. RECORDED_PARENTS still holds what the
+    # walk check above read; the object is not fetched twice.
+    #
+    # The last arm is belt-and-braces now rather than the live path: a recorded
+    # parent this clone lacks makes `merge-base --is-ancestor` exit 128 above,
+    # and that arm refuses first with the same remedy.
+    if [ -z "${RECORDED_PARENTS[0]-}" ]; then
       parent="$EMPTY_TREE"
-    elif git rev-parse -q --verify "${RECORDED_FIRST_PARENT}^{commit}" > /dev/null 2>&1; then
-      parent="$RECORDED_FIRST_PARENT"
+    elif git rev-parse -q --verify "${RECORDED_PARENTS[0]}^{commit}" > /dev/null 2>&1; then
+      parent="${RECORDED_PARENTS[0]}"
     else
       die "commit '$sha' records a parent this clone does not have — a shallow history cannot be scanned commit by commit ($SHALLOW_REMEDY)"
     fi
@@ -785,8 +884,12 @@ for scope in "${SCOPES[@]}"; do
     # --- Content scan ------------------------------------------------------
     #
     # `:(literal)` stops a filename containing glob metacharacters from being
-    # interpreted as a pathspec pattern.
-    spec=":(literal)$file"
+    # interpreted as a pathspec pattern. `top` makes it REPO-ROOT-relative,
+    # which is what these paths are: a plain pathspec resolves against the
+    # current directory, and that mismatch is the `SCAN_ROOT` defect recorded
+    # at the top of this script. The `cd` stays — other things depend on it —
+    # but the pathspecs no longer depend on it having happened.
+    spec=":(literal,top)$file"
 
     # A blob git classifies as binary produces NO added lines — only a
     # "Binary files differ" summary — so an added-lines scan reads it as clean.
@@ -794,9 +897,45 @@ for scope in "${SCOPES[@]}"; do
     # grepping would not find it either (the digits are NUL-interleaved).
     # Absence of scannable content fails CLOSED. Genuinely binary formats are
     # already rejected above, so reaching here is anomalous.
-    if ! git diff $DIFF_SAFE "$@" --numstat --diff-filter=d -- "$spec" > "$NUMSTAT" 2>/dev/null; then
+    # `-U0 --no-patch`: the SAME edit script the patch below is read from, and
+    # the row only. At git's default context the two are not one edit script —
+    # wider context lets hunks coalesce and the compaction heuristic re-describe
+    # a changed line as shared context — and over this repository's history that
+    # made `--numstat` read 313 where the `-U0` patch yielded 315. Asked at the
+    # same context they agree exactly, on all 1,445 (commit, file) pairs here,
+    # which is what lets the comparison below be an equality rather than a
+    # bound. `-U0` alone would not do: it implies `--patch`, and the row would
+    # arrive with the whole patch after it.
+    if ! git diff $DIFF_SAFE "$@" -U0 --no-patch --numstat --diff-filter=d \
+         -- "$spec" > "$NUMSTAT" 2>/dev/null; then
       die "'git diff --numstat' failed for $safe_file"
     fi
+    # EXACTLY ONE ROW — and, further down, a count that matches the patch.
+    #
+    # This is the positive assertion that every environment defect on record
+    # defeated. `SCAN_ROOT`, `--no-ext-diff` and the pathspec variables pinned
+    # at the top of this script each made git exit 0 having produced NOTHING,
+    # and an added-lines loop cannot tell an emptied diff from a clean file —
+    # it has already counted the file as scanned. Pinning each mechanism by
+    # name is an enumeration with no stopping rule; requiring the per-file diff
+    # to AGREE with the file list that produced the path covers the ones that
+    # are not on the list either.
+    #
+    # One row is what every non-deletion status yields, verified rather than
+    # assumed: a mode-only change is `0<TAB>0<TAB>path`; a rename resolves to a
+    # whole-file add, the pathspec having excluded the old name from rename
+    # detection; a typechange, a submodule pointer move and an unmerged path
+    # each yield one row. Zero rows means the restriction threw the file away.
+    #
+    # A ROW count even for a path holding a newline, because git C-quotes such a
+    # path onto one line. Arithmetic expansion around it because BSD `wc` pads
+    # its output with spaces, and because a `wc` that could not RUN yields the
+    # empty string, which becomes 0 — not 1, so the refusal below still fires.
+    numstat_rows=$(( $(wc -l < "$NUMSTAT") ))
+    if [ "$numstat_rows" -ne 1 ]; then
+      die "'git diff --numstat' produced $numstat_rows row(s) for $safe_file, expected 1 — the file list and the per-file diff disagree, so this is not the diff the file list came from"
+    fi
+
     # Read in PURE BASH. This was `[ "$(awk 'NR==1{print $1}' …)" = "-" ]`, and
     # a command substitution inside an `if` condition is exempt from `set -e`:
     # an awk that could not RUN yielded the empty string, which is not "-", so
@@ -804,16 +943,24 @@ for scope in "${SCOPES[@]}"; do
     # no `+` lines in a binary patch and reported clean. That is the same
     # "a tool that failed reads as no match" shape this script removed awk for
     # once already, arriving through the one call it kept.
-    #
-    # `read` fails on an EMPTY numstat, which is not a failure here — it means
-    # the diff produced no row for this path — so the added-count stays empty
-    # and only a literal "-" means binary.
-    binary_added=""
-    read -r binary_added _ < "$NUMSTAT" || binary_added=""
-    if [ "$binary_added" = "-" ]; then
+    # `|| die` although the row count above already makes `read` succeed: a
+    # bare `read` that returned non-zero would abort under `set -e` with no
+    # banner at all, and this script's own rule is that a refusal explains
+    # itself. The same argument keeps the non-numeric guard below.
+    numstat_added=""
+    read -r numstat_added _ < "$NUMSTAT" \
+      || die "cannot read the numstat row for $safe_file"
+    if [ "$numstat_added" = "-" ]; then
       CONTENT_BLOCKED+=("  BLOCKED BINARY (content not scannable): $safe_file")
       continue
     fi
+    # An added count that is not a number is not a count, and it is checked
+    # before `-lt` sees it below: `[` would otherwise abort with a raw "integer
+    # expression expected" instead of this script's banner.
+    case "$numstat_added" in
+      ''|*[!0-9]*)
+        die "'git diff --numstat' gave a non-numeric added count for $safe_file" ;;
+    esac
 
     # Added lines only, so editing elsewhere in a file does not re-flag content
     # that was already committed.
@@ -826,8 +973,24 @@ for scope in "${SCOPES[@]}"; do
          > "$PATCH" 2>/dev/null; then
       die "'git diff -U0' failed for $safe_file (git 2.20+ required for --output-indicator-new)"
     fi
-    added=$(sed -n 's/^>//p' "$PATCH")
-    [ -n "$added" ] || continue
+    # Through a FILE rather than a variable: an added line may be EMPTY, and
+    # `$(…)` strips trailing newlines, so one empty added line and no added
+    # lines at all become the same string. Telling those apart is the point.
+    sed -n 's/^>//p' "$PATCH" > "$ADDED"
+    added_lines=$(( $(wc -l < "$ADDED") ))
+    # AT LEAST as many added lines as --numstat counted. An emptied or
+    # truncated patch fails this; a legitimate commit cannot.
+    #
+    # This is the half that covers a patch REWRITTEN rather than emptied — an
+    # external diff driver, a textconv filter, a submodule summary. Those leave
+    # `--numstat` untouched, because it does not go through patch generation,
+    # and the row check above cannot see them: it shares this one's pathspec.
+    # The two halves cover different classes and neither subsumes the other.
+    if [ "$added_lines" -ne "$numstat_added" ]; then
+      die "the patch for $safe_file yielded $added_lines added line(s) where --numstat counted $numstat_added — the two views of one diff disagree, so neither can be reported as scanned"
+    fi
+    [ "$added_lines" -gt 0 ] || continue
+    added=$(<"$ADDED")
 
     hits=$(count_hits "$(strip_artifact_digests "$file" "$added")")
     [ "$hits" = "ERROR" ] && die "grep could not run while scanning $safe_file"
@@ -872,14 +1035,25 @@ if [ ${#CONTENT_BLOCKED[@]} -gt 0 ]; then
   exit 1
 fi
 
-# In range mode the CI log is the only record this gate ran, and a silent exit 0
-# is indistinguishable there from a scan that examined nothing — a false pass
-# that looks exactly like a real one. State the coverage. The git hook stays
-# quiet on success, where silence is the right signal.
+# A silent exit 0 is indistinguishable from a scan that examined nothing — a
+# false pass that looks exactly like a real one. State the coverage, in EVERY
+# mode.
+#
+# Staged mode used to be the exception, on the argument that a banner printed at
+# every commit is noise people stop reading. It is, and it still is not printed
+# at commit time: the pre-commit hook captures this line, matches the count
+# against its own enumeration of the index, and shows nothing on success. What
+# the silence cost was the check — the hook had `$?` and nothing else, which is
+# the shape of every fail-open on record here. The `GIT_WORK_TREE` redirection
+# that motivated it is refused outright further up, so this is the backstop
+# rather than the fix: what it covers is the mechanism nobody has named yet.
 if [ -n "$DIFF_RANGE" ]; then
   echo "PII scan clean — ${#SCOPES[@]} commit(s) inspected individually,"
   echo "${scanned_files} changed file(s) checked for sensitive file types,"
   echo "workspace paths, and SSN/credential patterns in added lines."
+else
+  echo "PII scan clean — ${scanned_files} staged file(s) checked for sensitive"
+  echo "file types, workspace paths, and SSN/credential patterns in added lines."
 fi
 
 exit 0

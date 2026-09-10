@@ -328,42 +328,47 @@ they run ahead of the orchestrator rather than waiting behind it.
   outgoing commit, fails closed, and passes a clean branch. R2 names this sharp edge
   ("commit-time gating is the only local gate that actually runs"); this closes it.
 
-- **Y7 (P1, M): Make the PII gate prove it READ what it reports as checked.** Y6's
-  third adversarial pass found the gate's verdict depended on variables it inherited
-  from the calling shell; the two reproduced holes (`GIT_LITERAL_PATHSPECS`, and
-  `.git/info/grafts` which `GIT_NO_REPLACE_OBJECTS` does not cover) are pinned by name,
-  and that is an ENUMERATION WITH NO STOPPING RULE — three of the script's documented
-  defects are now the same shape, which is itself the argument that the next one will
-  not be on the list either. Three deeper changes, in priority order:
-  1. **Cross-check the per-file patch against `--numstat`.** Every file the name list
-     produces must produce a numstat row, and the row's added count must equal the
-     number of added lines the patch yielded. Today `[ -n "$added" ] || continue`
-     treats "no added lines" and "the diff was emptied" as the same thing, having
-     already counted the file as scanned. This closes all four pathspec variables
-     without naming any, and any future mechanism that empties a diff. Validate
-     against mode-only changes, renames, missing trailing newlines and `core.autocrlf`
-     before trusting it — a gate that cries wolf on a legitimate commit is worse than
-     this one.
-  2. **Check each enumerated commit's traversal parents against its object header.**
-     The script already states the principle ("the commit OBJECT always carries the
-     true parent list") and already has `read_recorded_first_parent`, but applies it
-     only to root-vs-boundary detection, not to the range walk where a graft bites.
-     One check subsumes grafts, replace refs and `GIT_SHALLOW_FILE` — and note
-     `GIT_SHALLOW_FILE=/dev/null` is NOT a safe pin, since it would make a legitimately
-     shallow CI clone walk into missing objects.
-  3. **Give staged mode a coverage line the pre-commit hook can cross-check.**
-     REPRODUCED: `GIT_DIR`/`GIT_WORK_TREE` pointed at another repository makes staged
-     mode exit 0 with no output at all. The pre-push hook already does the positive
-     assertion — it enumerates what it expects and matches the scanner's count line
-     whole — while the pre-commit hook checks only `$?`, and the scanner is
-     deliberately silent on staged success. That asymmetry is why the redirection
-     comes back as a clean commit. `GIT_INDEX_FILE` was ALSO alleged and does NOT
-     reproduce: it fails closed with "scan could not run".
+- **Y7 (P1, M): Make the PII gate prove it READ what it reports as checked — DONE.**
+  Y6's third adversarial pass found the gate's verdict depended on variables it
+  inherited from the calling shell, and pinning each by name was an ENUMERATION WITH NO
+  STOPPING RULE — three of the script's documented defects were the same shape. Three
+  positive assertions are now the first line of defence; the pins stay behind them.
+  1. **The per-file diff must agree with the file list that produced the path.** Two
+     halves covering two classes, neither subsuming the other: `--numstat` must yield
+     exactly ONE row (the file list carries no pathspec and the per-file diff does, so
+     this is what catches an emptied restriction), and the patch must yield exactly as
+     many added lines as the row counts (this shares the pathspec, so what it catches is
+     a patch REWRITTEN rather than emptied — an external driver, textconv,
+     `diff.submodule=log`). Both taken at `-U0 --no-patch`, which is what makes it an
+     equality: at different context widths the two are not one edit script. With the
+     pathspec pin REMOVED, `GIT_LITERAL_PATHSPECS=1` now blocks on the missing row.
+  2. **Every recorded parent of a scanned commit must be inspected or excluded** — read
+     from the commit object. With the graft pin REMOVED, a grafted-away commit now
+     blocks, including one hidden behind a merge's SECOND parent. It does not retire
+     `GIT_NO_REPLACE_OBJECTS`: `git cat-file commit` honours a replacement mapping too,
+     so that pin is what makes the object read authoritative.
+  3. **The work tree must belong to the repository the scan was asked about** — the
+     absolute git directory, read before the `cd` to the root and again after it, with a
+     caller-set `GIT_DIR` re-exported absolute first. This closes the `GIT_WORK_TREE`
+     redirection, and the earlier note here overstated that hole: it reproduces against
+     a DIRECT invocation and NOT against `git commit`, which exports `GIT_DIR` to its
+     hooks. Staged mode now states its coverage and the pre-commit hook matches it
+     against its own enumeration of the index — captured, so a clean commit stays
+     silent. That is the backstop, not the fix.
 
-  Also owed from the same pass: a test binding the hook's env-pin set against the
-  scanner's, so the two hand-mirrored copies cannot drift the way the PII rules did
-  before they were made one script; and note that the Windows CI job runs only
-  `test_secure_fs.py` and `test_host_guard.py`, so none of this has Windows coverage.
+  Every assertion was validated against the cry-wolf direction before being trusted, and
+  the review found two that were real: `diff.submodule=log` (numstat counts a line the
+  patch does not carry — fixed by pinning `--submodule=short`, a display preference
+  disabling a security gate for the third time) and a relative `GIT_DIR` seen across the
+  `cd`. Clean over the repository's whole history: 127 commits, 1,472 files, and the two
+  diffs agreed on all 1,445 (commit, file) pairs.
+
+  Also discharged: the test binding the hook's env-pin set and the coverage-line format
+  against the scanner's, so the hand-mirrored copies cannot drift.
+  `GIT_SHALLOW_FILE=/dev/null` is still NOT a safe pin — it would make a legitimately
+  shallow CI clone walk into missing objects — and assertion 2 covers it without one.
+  STILL OPEN: the Windows CI job runs only `test_secure_fs.py` and `test_host_guard.py`,
+  so none of this has Windows coverage.
 
 ### EPIC Z — State coverage for the named next users — **P2 for FL and NY/NYC, P3 for NC and WA**
 

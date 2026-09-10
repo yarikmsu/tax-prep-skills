@@ -427,13 +427,72 @@ if [ -z "$REPO_ROOT" ]; then
     echo "cannot run. Refusing to commit unscanned."
     exit 1
 fi
-if [ -x "$REPO_ROOT/scripts/pre-commit-pii-scan.sh" ]; then
-    "$REPO_ROOT/scripts/pre-commit-pii-scan.sh"
-else
+SCAN="$REPO_ROOT/scripts/pre-commit-pii-scan.sh"
+if [ ! -x "$SCAN" ]; then
     echo "COMMIT BLOCKED: PII scan script not found at"
-    echo "  $REPO_ROOT/scripts/pre-commit-pii-scan.sh"
+    echo "  $SCAN"
     echo "Refusing to commit unscanned. Run 'bash agents/install.sh' to fix,"
     echo "or 'git commit --no-verify' if you have verified the diff by hand."
+    exit 1
+fi
+
+# WHAT THIS COMMIT WILL CARRY — enumerated HERE, in the hook's own environment.
+#
+# Exit 0 is not evidence, and this mode had nothing else. The pre-push hook has
+# matched the scanner's coverage line against its own count of the outgoing
+# commits since it was written; this is the same assertion for the index, and it
+# is why the scanner now states its coverage in staged mode too.
+#
+# It is a BACKSTOP, not a fix for a live bypass. The redirection that prompted
+# it — `GIT_WORK_TREE` naming another checkout, so the scanner resolves that
+# root, `cd`s into it and finds nothing staged — reproduces against a direct
+# invocation of the script and NOT against `git commit`, which exports GIT_DIR
+# to its hooks; the scanner refuses it outright now in any case. What this
+# covers is the next mechanism, which will not be on anybody's list either.
+staged=$(git diff --cached --name-only --diff-filter=d 2>/dev/null) || {
+    echo "COMMIT BLOCKED: cannot list the staged files, so nothing here can say"
+    echo "what the PII scan had to cover. Refusing to commit unscanned."
+    exit 1
+}
+expected=0
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    expected=$((expected + 1))
+done <<< "$staged"
+
+# CAPTURED, so a clean commit stays silent. That silence is the whole reason
+# this mode had no coverage line for so long; it costs nothing once the line is
+# read by something instead of printed at a person.
+out=$("$SCAN" 2>&1 < /dev/null) || {
+    printf '%s\n' "$out"
+    exit 1
+}
+
+reported=""
+while IFS= read -r line; do
+    case "$line" in
+        "PII scan clean — "*" staged file(s) checked for sensitive")
+            reported="${line#PII scan clean — }"
+            reported="${reported% staged file(s) checked for sensitive}"
+            ;;
+    esac
+done <<< "$out"
+case "${reported:-x}" in
+    ''|*[!0-9]*)
+        printf '%s\n' "$out"
+        echo "COMMIT BLOCKED: the PII scan exited 0 without reporting what it"
+        echo "checked, so nothing here knows which repository it looked at."
+        echo "It is read from the working tree at"
+        echo "  $SCAN"
+        exit 1 ;;
+esac
+# `-lt`, not inequality: both counts come from the same `--diff-filter=d`
+# enumeration of the index and agree, and the property actually wanted is that
+# the scan covered at least what this commit stages.
+if [ "$reported" -lt "$expected" ]; then
+    echo "COMMIT BLOCKED: the PII scan reported checking $reported staged file(s);"
+    echo "this commit stages $expected. Refusing to treat a partial scan as a"
+    echo "clean one."
     exit 1
 fi
 HOOK_EOF

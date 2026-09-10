@@ -484,13 +484,20 @@ def test_range_mode_reports_coverage_so_a_clean_pass_is_evidence(tmp_path):
         f"range mode must state what it covered; got {r.stdout!r}")
 
 
-def test_hook_mode_stays_silent_on_success(tmp_path):
-    """The git hook runs on every commit; a success banner there is noise."""
+def test_staged_mode_states_what_it_covered(tmp_path):
+    """A success banner at every commit is noise, which is why staged mode had
+    none — and the cost of that silence was that `$?` was the only thing the
+    pre-commit hook could check. The line is printed here and CAPTURED by the
+    hook, which matches the count against its own enumeration of the index and
+    shows nothing on success; `test_a_clean_commit_prints_nothing` is the other
+    half of that bargain."""
     repo = _make_repo(tmp_path)
     _stage(repo, "readme.md", "nothing here\n")
     r = _run(repo)
     assert r.returncode == 0
-    assert r.stdout.strip() == "", f"hook should be silent, got {r.stdout!r}"
+    # Two staged paths: readme.md and the .pii-allowlist _make_repo stages.
+    assert "PII scan clean — 2 staged file(s) checked for sensitive" in r.stdout, (
+        f"staged mode must state what it covered; got {r.stdout!r}")
 
 
 # --- Review findings (PR #67, round 2) -------------------------------------
@@ -1174,10 +1181,15 @@ def _stage_bytes(repo: Path, name: str, content: bytes) -> None:
     subprocess.run(["git", "add", name], cwd=repo, check=True)
 
 
-def _run_env(repo: Path, env_extra: dict,
-             *args: str) -> subprocess.CompletedProcess:
-    """`args` selects the mode: none is staged mode, a range is CI's."""
-    return subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", *args],
+def _run_env(repo: Path, env_extra: dict, *args: str,
+             script: str = "scripts/pre-commit-pii-scan.sh",
+             ) -> subprocess.CompletedProcess:
+    """`args` selects the mode: none is staged mode, a range is CI's.
+
+    `script` is for the mutation cases below, which run a copy of the scanner
+    with one by-name pin deleted.
+    """
+    return subprocess.run(["bash", script, *args],
                           cwd=repo, capture_output=True, text=True,
                           env={**os.environ, **env_extra})
 
@@ -1626,20 +1638,28 @@ def _install_hooks(repo: Path, home: Path) -> None:
     assert (repo / ".git" / "hooks" / "pre-push").is_file(), "no pre-push hook"
 
 
-def _pushable_clone(tmp_path: Path) -> tuple[Path, Path]:
-    """A throwaway clone with the managed hooks installed and a bare `origin`."""
-    clone = _make_repo(tmp_path / "clone", branch="work")
-    (clone / "agents").mkdir()
-    shutil.copy(REPO / "agents" / "install.sh", clone / "agents")
-    _install_hooks(clone, tmp_path / "home")
+def _hooked_repo(tmp_path: Path, name: str = "repo") -> Path:
+    """A throwaway repo with the managed git hooks installed, seeded.
 
+    Installed the way a contributor does, from this repository's own
+    `agents/install.sh`, so a change to how a hook is written lands here once.
+    """
+    repo = _make_repo(tmp_path / name, branch="work")
+    (repo / "agents").mkdir()
+    shutil.copy(REPO / "agents" / "install.sh", repo / "agents")
+    _install_hooks(repo, tmp_path / "home")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    _commit(repo, "seed")
+    return repo
+
+
+def _pushable_clone(tmp_path: Path) -> tuple[Path, Path]:
+    """`_hooked_repo` plus a bare `origin` to push at."""
+    clone = _hooked_repo(tmp_path, name="clone")
     remote = tmp_path / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
     subprocess.run(["git", "remote", "add", "origin", str(remote)],
                    cwd=clone, check=True)
-
-    subprocess.run(["git", "add", "-A"], cwd=clone, check=True)
-    _commit(clone, "seed")
     return clone, remote
 
 
@@ -2427,3 +2447,414 @@ def test_a_graft_file_cannot_hide_a_commit_from_the_push_scan(tmp_path):
         f"stdout={r.stdout}\nstderr={r.stderr}")
     assert "leak.md" in r.stdout, "must name the file it found, not merely fail"
     assert FAKE_SSN not in r.stdout + r.stderr
+
+
+# --- Y7: the gate proves it READ what it reports as checked ------------------
+#
+# Y6 pinned two environment variables BY NAME after each was found turning the
+# verdict into a no-op. Three of this script's documented defects now share that
+# shape, which is the argument that the next one will not be on the list either.
+# What follows tests the positive assertions instead: the per-file diff must
+# agree with the file list that produced the path, the commit walk must cover
+# every parent the commits RECORD, and the work tree must belong to the
+# repository the scan was asked about.
+
+
+def _unpinned_scanner(repo: Path, *drop: str) -> str:
+    """A copy of the scanner with `drop` lines deleted, at a path in `repo`.
+
+    This is the mutation check written down. Each `drop` is a by-name pin Y6
+    added; removing it and requiring the scan to block ANYWAY is what separates
+    "we listed this mechanism" from "we would catch one we had not listed".
+    """
+    text = SCAN.read_text()
+    for line in drop:
+        assert line in text, f"the pin under test is not in the scanner: {line!r}"
+        text = text.replace(line, "")
+    dest = repo / "scripts" / "unpinned-scan.sh"
+    dest.write_text(text)
+    os.chmod(dest, 0o755)
+    return "scripts/unpinned-scan.sh"
+
+
+def test_an_emptied_per_file_diff_cannot_pass_as_a_clean_file(tmp_path):
+    """WITH THE BY-NAME PIN REMOVED. `GIT_LITERAL_PATHSPECS=1` makes the ten
+    characters of `:(literal)` part of the filename searched for, so every
+    per-file diff matches nothing; the added-lines loop then sees no added lines
+    and cannot tell that from a clean file, having already counted the file as
+    scanned.
+
+    The scan must refuse because `--numstat` produced no row for a path the file
+    list produced — an assertion that names no variable and so covers the next
+    mechanism too.
+    """
+    repo = _make_repo(tmp_path)
+    script = _unpinned_scanner(
+        repo,
+        "unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS \\\n"
+        "      GIT_ICASE_PATHSPECS\n")
+    _stage(repo, "notes.md", f"Taxpayer SSN: {FAKE_SSN}\n")
+
+    r = _run_env(repo, {"GIT_LITERAL_PATHSPECS": "1"}, script=script)
+    assert r.returncode == 1, (
+        f"an emptied diff was reported as a clean file:\n{r.stdout}\n{r.stderr}")
+    assert "expected 1" in r.stdout, (
+        f"blocked, but not by the numstat cross-check:\n{r.stdout}")
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_the_numstat_cross_check_passes_every_awkward_legitimate_change(tmp_path):
+    """A gate that cries wolf on a correct commit is worse than the hole it
+    closes, and comparing two diffs of one file is exactly the kind of check
+    that does. Every shape that could plausibly make the two disagree, in one
+    commit: a mode-only change, a rename, a file losing its trailing newline, a
+    typechange from symlink to regular file, and an added line that is EMPTY —
+    which is why the added lines are counted through a file and not a `$(…)`
+    that would strip it away.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "mode.txt", "x\n")
+    _stage(repo, "ren.txt", "one\ntwo\nthree\nfour\n")
+    _stage(repo, "tail.txt", "a\nb\n")
+    (repo / "link").symlink_to("tail.txt")
+    subprocess.run(["git", "add", "link"], cwd=repo, check=True)
+    _commit(repo, "base")
+
+    os.chmod(repo / "mode.txt", 0o755)
+    subprocess.run(["git", "mv", "ren.txt", "ren2.txt"], cwd=repo, check=True)
+    (repo / "ren2.txt").write_text("one\ntwo\nthree\nfourX\n")
+    (repo / "tail.txt").write_text("a\nb\nc")          # no trailing newline
+    (repo / "link").unlink()
+    (repo / "link").write_text("no longer a symlink\n")
+    _stage(repo, "blank.txt", "first\n\nthird\n")      # an EMPTY added line
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+
+    r = _run(repo)
+    assert r.returncode == 0, (
+        f"a legitimate commit was refused:\n{r.stdout}\n{r.stderr}")
+    assert "6 staged file(s) checked" in r.stdout, (
+        f"the coverage line does not account for every staged path:\n{r.stdout}")
+
+
+def test_the_commit_walk_must_cover_every_parent_the_commits_record(tmp_path):
+    """WITH THE BY-NAME PIN REMOVED. `.git/info/grafts` rewrites what the walk
+    reaches, so a commit carrying a secret is never handed to the file loop at
+    all and the scan reports clean over history it never saw.
+
+    The walk check reads each commit's OWN object — the one authority a graft
+    cannot rewrite — and refuses when a recorded parent is neither inspected nor
+    excluded by the range. It names no mechanism, so it covers `git replace`,
+    `GIT_SHALLOW_FILE` and whatever comes next on the same terms.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "readme.md", "start\n")
+    base = _commit(repo, "base")
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    _commit(repo, "the commit the graft hides")
+    _stage(repo, "readme.md", "start\nmore\n")
+    head = _commit(repo, "head")
+    _graft(repo, head, base)
+
+    script = _unpinned_scanner(repo, "export GIT_GRAFT_FILE=/dev/null\n")
+    r = _run_env(repo, {}, f"{base}...{head}", script=script)
+    assert r.returncode == 1, (
+        f"a grafted-away commit was reported as scanned:\n{r.stdout}\n{r.stderr}")
+    assert "neither inspects nor excludes" in r.stdout, (
+        f"blocked, but not by the walk check:\n{r.stdout}")
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_rewritten_patch_cannot_pass_as_a_file_with_no_added_lines(tmp_path):
+    """WITH THE BY-NAME PIN REMOVED. The other half of the cross-check, and the
+    half the row count cannot do: an external diff driver leaves `--numstat`
+    untouched — it does not go through patch generation — while emptying the
+    patch the scan actually reads. Removing only the added-line comparison
+    leaves this case green, which is why it is a test of its own.
+    """
+    repo = _make_repo(tmp_path)
+    script = _unpinned_scanner(repo, "--no-ext-diff ")
+    driver = repo / "nulldiff.sh"
+    driver.write_text("#!/bin/sh\nexit 0\n")
+    os.chmod(driver, 0o755)
+    _stage(repo, "notes.md", f"Taxpayer SSN: {FAKE_SSN}\n")
+
+    r = _run_env(repo, {"GIT_EXTERNAL_DIFF": str(driver)}, script=script)
+    assert r.returncode == 1, (
+        f"an emptied patch was reported as a file with nothing added:"
+        f"\n{r.stdout}\n{r.stderr}")
+    assert "the two views of one diff disagree" in r.stdout, (
+        f"blocked, but not by the added-line comparison:\n{r.stdout}")
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_submodule_summary_setting_does_not_refuse_a_legitimate_commit(tmp_path):
+    """`diff.submodule=log` replaces a gitlink's one-line patch with a commit
+    SUMMARY, so `--numstat` counts an added line the patch does not carry. A
+    display preference disabling — or here, falsely firing — a security gate is
+    the third time in this script; `--submodule=short` pins it beside
+    `--no-color` and `--no-ext-diff`."""
+    repo = _make_repo(tmp_path)
+    _stage(repo, "readme.md", "start\n")
+    first = _commit(repo, "base")
+    subprocess.run(["git", "update-index", "--add", "--cacheinfo",
+                    f"160000,{first},sub"], cwd=repo, check=True)
+    second = _commit(repo, "add the gitlink")
+    subprocess.run(["git", "update-index", "--cacheinfo",
+                    f"160000,{second},sub"], cwd=repo, check=True)
+
+    r = _run_env(repo, {"GIT_CONFIG_COUNT": "1",
+                        "GIT_CONFIG_KEY_0": "diff.submodule",
+                        "GIT_CONFIG_VALUE_0": "log"})
+    assert r.returncode == 0, (
+        f"a legitimate submodule bump was refused:\n{r.stdout}\n{r.stderr}")
+
+
+def test_a_relative_git_dir_survives_the_move_to_the_repository_root(tmp_path):
+    """The scan `cd`s to the repository root, so `GIT_DIR=../.git` given from a
+    subdirectory names this repository before the move and nothing at all after
+    it. Refusing that is cry-wolf on an ordinary invocation, and a gate that
+    cries wolf gets `--no-verify`d."""
+    repo = _make_repo(tmp_path)
+    _stage(repo, "readme.md", "start\n")
+    _commit(repo, "base")
+    _stage(repo, "notes.md", "nothing sensitive\n")
+
+    r = subprocess.run(["bash", "pre-commit-pii-scan.sh"],
+                       cwd=repo / "scripts", capture_output=True, text=True,
+                       env={**os.environ, "GIT_DIR": "../.git",
+                            "GIT_WORK_TREE": ".."})
+    assert r.returncode == 0, (
+        f"a relative GIT_DIR was refused:\n{r.stdout}\n{r.stderr}")
+    assert "1 staged file(s) checked" in r.stdout
+
+
+def test_the_walk_check_reads_every_parent_not_only_the_first(tmp_path):
+    """WITH THE BY-NAME PIN REMOVED, and grafted at a MERGE. A first-parent-only
+    check passes this: the merge itself is enumerated and its first-parent scope
+    covers the merged branch's NET changes. What it cannot see is a secret added
+    in one of that branch's commits and removed in the next — which is the whole
+    reason this scan inspects commits individually rather than a net diff."""
+    repo = _make_repo(tmp_path)
+    _stage(repo, "readme.md", "start\n")
+    base = _commit(repo, "base")
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=repo, check=True)
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    _commit(repo, "the side commit the graft hides")
+    (repo / "leak.md").unlink()
+    subprocess.run(["git", "rm", "-q", "--cached", "leak.md"], cwd=repo,
+                   check=True)
+    _commit(repo, "and takes it away again")
+    subprocess.run(["git", "checkout", "-q", "-"], cwd=repo, check=True)
+    _stage(repo, "main.md", "main work\n")
+    first_parent = _commit(repo, "main")
+    subprocess.run(["git", "merge", "-q", "--no-ff", "-m", "merge", "side"],
+                   cwd=repo, check=True)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                          capture_output=True, text=True).stdout.strip()
+    # The merge keeps its FIRST parent and loses the second.
+    _graft(repo, head, first_parent)
+
+    script = _unpinned_scanner(repo, "export GIT_GRAFT_FILE=/dev/null\n")
+    r = _run_env(repo, {}, f"{base}...{head}", script=script)
+    assert r.returncode == 1, (
+        f"a branch grafted off a merge was reported as scanned:"
+        f"\n{r.stdout}\n{r.stderr}")
+    assert "neither inspects nor excludes" in r.stdout, (
+        f"blocked, but not by the walk check:\n{r.stdout}")
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_the_walk_check_passes_a_history_with_merges(tmp_path):
+    """The invariant is that every RECORDED parent is either inspected too or
+    already excluded by the range, and a merge is where that is least obvious:
+    its second parent's commits are in the range, and the merge base is not.
+    Checked on a real merge rather than reasoned about.
+    """
+    repo = _make_repo(tmp_path)
+    _stage(repo, "readme.md", "start\n")
+    base = _commit(repo, "base")
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=repo, check=True)
+    _stage(repo, "side.md", "side work\n")
+    _commit(repo, "side")
+    subprocess.run(["git", "checkout", "-q", "-"], cwd=repo, check=True)
+    _stage(repo, "main.md", "main work\n")
+    _commit(repo, "main")
+    subprocess.run(["git", "merge", "-q", "--no-ff", "-m", "merge", "side"],
+                   cwd=repo, check=True)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                          capture_output=True, text=True).stdout.strip()
+
+    r = _run_env(repo, {}, f"{base}...{head}")
+    assert r.returncode == 0, (
+        f"a merge history was refused:\n{r.stdout}\n{r.stderr}")
+    # Four: side, main, the merge — and `base` itself, which the scan
+    # re-includes because it is a ROOT commit and no earlier range can have
+    # covered it.
+    assert "4 commit(s) inspected individually" in r.stdout
+
+
+def test_a_work_tree_from_another_repository_is_refused(tmp_path):
+    """`GIT_WORK_TREE` naming another checkout answers "where is the root" with
+    that tree while the index being committed stays here. The scan resolves the
+    root itself and `cd`s into it, finds nothing staged there, and exits 0 over
+    a staged secret.
+
+    Reproduced against a direct invocation — the form AGENTS.md documents and CI
+    uses — and NOT against `git commit`, which exports GIT_DIR to its hooks. The
+    git directory is what the two questions have in common, so it is read before
+    the move and again after it.
+    """
+    repo = _make_repo(tmp_path / "repo")
+    _stage(repo, "readme.md", "start\n")
+    _commit(repo, "base")
+    other = _make_repo(tmp_path / "other")
+    _stage(other, "readme.md", "unrelated\n")
+    _commit(other, "unrelated")
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+
+    r = _run_env(repo, {"GIT_WORK_TREE": str(other)})
+    assert r.returncode == 1, (
+        f"the scan reported on a repository it was not asked about:"
+        f"\n{r.stdout}\n{r.stderr}")
+    assert "belongs to a different repository" in r.stdout, (
+        f"blocked, but not by the same-repository check:\n{r.stdout}")
+    assert "PII scan clean" not in r.stdout
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_linked_worktree_is_not_refused(tmp_path):
+    """The cry-wolf case for the check above: a linked worktree has its own root
+    AND its own git directory, and the two are consistent — which is the whole
+    reason the git directory is what gets compared."""
+    repo = _make_repo(tmp_path / "repo")
+    _stage(repo, "readme.md", "start\n")
+    _commit(repo, "base")
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "worktree", "add", "-q", "-b", "wtb", str(wt)],
+                   cwd=repo, check=True)
+    (wt / "notes.md").write_text("nothing sensitive\n")
+    subprocess.run(["git", "add", "notes.md"], cwd=wt, check=True)
+
+    r = subprocess.run(["bash", str(repo / "scripts" / "pre-commit-pii-scan.sh")],
+                       cwd=wt, capture_output=True, text=True)
+    assert r.returncode == 0, (
+        f"a linked worktree was refused:\n{r.stdout}\n{r.stderr}")
+    assert "1 staged file(s) checked" in r.stdout
+
+
+# --- Y7: the pre-commit hook checks the coverage line, as pre-push does ------
+
+
+def _hooked_commit(repo: Path, msg: str) -> subprocess.CompletedProcess:
+    """`git commit` THROUGH the hooks — no `--no-verify`, which is the point."""
+    return subprocess.run(["git", "commit", "-m", msg], cwd=repo,
+                          capture_output=True, text=True)
+
+
+def test_a_clean_commit_prints_nothing(tmp_path):
+    """The scanner states its coverage in staged mode now, and the hook reads
+    that line rather than printing it. A banner on every commit is noise people
+    learn to scroll past, and this gate cannot afford to be scrolled past."""
+    repo = _hooked_repo(tmp_path)
+    _stage(repo, "notes.md", "Nothing sensitive here.\n")
+    r = _hooked_commit(repo, "ordinary work")
+    assert r.returncode == 0, f"a clean commit was refused:\n{r.stdout}{r.stderr}"
+    assert "PII scan" not in r.stdout + r.stderr, (
+        f"the hook printed the coverage line at a person:\n{r.stdout}{r.stderr}")
+
+
+def test_a_scanner_that_reports_less_than_was_staged_blocks_the_commit(tmp_path):
+    """Exit 0 is not evidence, and staged mode used to offer nothing else. The
+    stub is a scan of the WRONG TREE written down: a well-formed clean verdict
+    that accounts for no files at all, while this commit stages two."""
+    repo = _hooked_repo(tmp_path)
+    _stub_scanner(repo, '#!/bin/bash\n'
+                        'echo "PII scan clean — 0 staged file(s) checked for sensitive"\n'
+                        'echo "file types, workspace paths, and SSN/credential patterns in added lines."\n'
+                        'exit 0\n')
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    r = _hooked_commit(repo, "leak past a scan of another tree")
+    assert r.returncode != 0, (
+        f"a scan that accounted for nothing was read as clean:\n{r.stdout}{r.stderr}")
+    assert "COMMIT BLOCKED" in r.stdout + r.stderr
+    assert "reported checking 0 staged file(s)" in r.stdout + r.stderr
+
+
+def test_a_scanner_that_exits_zero_saying_nothing_blocks_the_commit(tmp_path):
+    """The exact fail-open shape: silence and a zero exit code."""
+    repo = _hooked_repo(tmp_path)
+    _stub_scanner(repo, '#!/bin/bash\nexit 0\n')
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    r = _hooked_commit(repo, "leak past a silent success")
+    assert r.returncode != 0, (
+        f"a silent exit 0 was read as clean:\n{r.stdout}{r.stderr}")
+    assert "without reporting what it" in r.stdout + r.stderr
+
+
+def test_a_real_leak_still_blocks_the_commit_through_the_hook(tmp_path):
+    """The hook now CAPTURES the scanner's output instead of letting it through,
+    so the refusal has to be reprinted — and a gate whose message vanished would
+    be worse than one that never fired."""
+    repo = _hooked_repo(tmp_path)
+    _stage(repo, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    r = _hooked_commit(repo, "leak")
+    assert r.returncode != 0
+    assert "BLOCKED CONTENT" in r.stdout + r.stderr, (
+        f"the refusal did not survive being captured:\n{r.stdout}{r.stderr}")
+    assert "leak.md" in r.stdout + r.stderr
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_the_hook_and_the_scanner_pin_the_same_ancestry_environment(tmp_path):
+    """Two hand-mirrored copies of one rule is how the PII rules themselves came
+    to have four bypasses in two places. The ancestry pins have to be in BOTH —
+    the hook enumerates the outgoing commits before the scanner sees them, so
+    the scanner's own pin never gets the chance to matter there — which means
+    the only protection against drift is a test that reads both files.
+    """
+    exported = re.compile(r"^export (GIT_[A-Z_]+)=", re.M)
+    scanner = set(exported.findall(SCAN.read_text()))
+    installer = set(exported.findall((REPO / "agents" / "install.sh").read_text()))
+    assert scanner, "the scanner pins no git environment at all"
+    assert scanner == installer, (
+        "the scanner and the installed hooks no longer pin the same git "
+        f"environment: scanner={sorted(scanner)} installer={sorted(installer)}")
+
+
+def test_the_coverage_lines_the_hooks_parse_are_the_ones_the_scanner_prints():
+    """THREE hand-mirrored copies of one format: the scanner emits it, the
+    pre-commit hook matches the staged one, the pre-push hook matches the range
+    one. AGENTS.md §1 records what happened the last time a rule in this gate
+    lived in two files — four bypasses shipped to both copies at once — and a
+    hook that stops recognising the verdict fails OPEN, having read exit 0.
+    """
+    scanner = SCAN.read_text()
+    installer = (REPO / "agents" / "install.sh").read_text()
+    for emitted, parsed in [
+        ('echo "PII scan clean — ${scanned_files} staged file(s) checked for sensitive"',
+         '"PII scan clean — "*" staged file(s) checked for sensitive")'),
+        ('echo "PII scan clean — ${#SCOPES[@]} commit(s) inspected individually,"',
+         '"PII scan clean — "*" commit(s) inspected individually,")'),
+        ('echo "PII scan clean — ${names_seen} name(s) checked."',
+         "PII scan clean — 1 name(s) checked."),
+    ]:
+        assert emitted in scanner, (
+            f"the scanner no longer prints this coverage line: {emitted!r} — "
+            "the hooks in agents/install.sh match it as a literal")
+        assert parsed in installer, (
+            f"the installed hooks no longer match this verdict: {parsed!r} — "
+            "a hook that stops recognising the coverage line reads exit 0 as a "
+            "clean scan, which is the fail-open this format exists to close")
+
+
+def test_the_hooks_enumerate_with_the_same_diff_filter_as_the_scanner():
+    """The pre-commit hook counts what it staged so it can compare against the
+    scanner's coverage line, and the comparison is only meaningful while both
+    ask git the same question. `--diff-filter=d` is the denylist that decides
+    it: an allowlist here once dropped typechange silently."""
+    scanner = SCAN.read_text()
+    installer = (REPO / "agents" / "install.sh").read_text()
+    assert 'git diff $DIFF_SAFE "$@" --name-only -z --diff-filter=d' in scanner
+    assert 'git diff --cached --name-only --diff-filter=d' in installer, (
+        "the pre-commit hook no longer enumerates the index the way the scanner "
+        "does, so its count comparison would refuse correct commits")

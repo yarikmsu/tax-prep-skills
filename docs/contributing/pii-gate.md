@@ -180,6 +180,57 @@ Closed, deliberately, in every direction:
 - Every intermediate lives in ONE 0700 work directory removed by a single trap: the raw
   patch holds the unredacted value.
 
+### Three things it PROVES, and five settings it pins
+
+The pins came first and each closed a real hole, but pinning a mechanism by name
+is a list with no boundary — three of this script's documented defects share the
+one shape, which is the argument that the next will not be on the list either.
+So the pins are now the second line of defence, behind three assertions that
+name no mechanism:
+
+- **The per-file diff must agree with the file list that produced the path.**
+  Two halves, covering two different classes, neither subsuming the other:
+  - `--numstat` must yield exactly ONE row for the path. The file list carries
+    no pathspec and the per-file diff does, so this is the half that catches an
+    emptied restriction — every pathspec variable, and the subdirectory bug.
+    An emptied diff and a clean file are otherwise the same thing to an
+    added-lines loop that has already counted the file as scanned.
+  - The patch must yield exactly as many added lines as that row counts. This
+    half shares the pathspec, so it adds nothing against the above; what it
+    catches is a patch REWRITTEN rather than emptied — an external diff driver,
+    a textconv filter, `diff.submodule=log`. Those do not touch `--numstat`,
+    which does not go through patch generation.
+
+  Both diffs are taken at `-U0`. At different context widths they are not one
+  edit script — hunks coalesce and the compaction heuristic re-describes a
+  changed line as shared context — and over this repository's history that made
+  the default-context `--numstat` read 313 where the `-U0` patch yielded 315.
+  Asked at the same context they agree exactly, which is what lets this be an
+  equality rather than a bound. `-U0 --numstat` alone would not do: `-U<n>`
+  implies `--patch`, so `--no-patch` is what leaves the row on its own.
+- **Every parent a scanned commit RECORDS must be inspected too, or already
+  excluded by the range.** The commit object is a different authority from the
+  traversal, and this is where the script already reads it. An honest walk
+  satisfies the invariant by construction: if a commit is reachable from the
+  head, so is each of its parents, and the only reason `rev-list` may drop one
+  is that the base already reaches it. ALL recorded parents, not just the
+  first, so a merged-in branch cannot go missing. It covers grafts and
+  `GIT_SHALLOW_FILE` without naming either — but it does **not** retire
+  `GIT_NO_REPLACE_OBJECTS`, because `git cat-file commit` honours a replacement
+  mapping too, and that pin is what makes the object read authoritative.
+- **The work tree must belong to the repository the scan was asked about.** The
+  absolute git directory is read before the `cd` to the repository root and
+  again after it. A linked worktree, a run from a subdirectory and a hook's
+  exported `GIT_DIR` all keep it equal; a work tree owned by another repository
+  changes it. A `GIT_DIR` the caller set is re-exported ABSOLUTE before the
+  move first — `GIT_DIR=../.git` run from `scripts/` names this repository
+  before the `cd` and nothing at all after it, and refusing that is cry-wolf.
+
+Staged mode states its coverage for the same reason range mode always did, and
+the pre-commit hook matches that count against its own enumeration of the index
+— the assertion the pre-push hook has made against the outgoing commits since it
+was written. The hook CAPTURES the line, so a clean commit is still silent.
+
 Five environment settings it pins, because each let the gate report a file or a
 commit as checked when it had not been read. They do not share one mechanism —
 the locale one is about `grep`, the pathspec one empties a diff, and the ancestry
@@ -212,7 +263,12 @@ the top of the script, rather than defended at each call site.
   not, which left the pre-commit hook and CI — the two callers with no second gate
   behind them — reading whatever the mapping said.
 
-Known gaps, deliberately not closed here: `GIT_DIR`/`GIT_WORK_TREE` pointed at another
-repository makes staged mode exit 0 silently, because the pre-commit hook checks only
-the exit status and the scanner is quiet on staged success. Closing it needs a coverage
-line the hook can cross-check, not another variable. Tracked in the roadmap.
+`GIT_WORK_TREE` pointed at another repository used to make staged mode exit 0 silently,
+and it is the same-repository assertion above that closes it — not another variable.
+Worth recording what that hole actually was, because the first write-up overstated it:
+it reproduces against a DIRECT invocation of the script, which is the form AGENTS.md
+documents and CI uses, and NOT against `git commit`, which exports `GIT_DIR` to its
+hooks and so keeps the index being scanned and the index being committed the same one.
+
+Known gap: none of this has Windows coverage. The `windows-latest` CI job runs
+`test_secure_fs.py` and `test_host_guard.py` only.
