@@ -212,6 +212,82 @@ def _supersede_the_w2(workspace: Path) -> None:
     F.write_secure(workspace / "answers.md", answers)
 
 
+def _zero_income_evidence(workspace: Path) -> Optional[str]:
+    """MATCH is not evidence here, and that is particular to this case.
+
+    A zero return is mostly the initialized template plus the profile: measured,
+    the golden is twenty-five differences from the bare template, and thirteen of
+    those are identity fields transcribed straight out of
+    `taxpayer_profile.json`. So an agent that never opens `documents/`, never
+    writes a ledger and never runs a gate can copy the template, paste the
+    profile and three figures out of the cache, and MATCH — the false-completion
+    shape this harness exists to catch, arriving through the one case whose
+    correct answer is almost all zeros.
+
+    The ledger is what distinguishes them. `tax-parse` step 6.5 writes it, the
+    tie-out gate reads it, and an EMPTY one is a positive statement: the intake
+    was examined and held nothing. A run that produced a return without it did
+    not go through the pipeline.
+    """
+    ledger = workspace / "parse_ledger.json"
+    if not ledger.is_file():
+        return ("no parse_ledger.json — a return this close to the empty "
+                "template can be produced without going through the pipeline "
+                "at all, and the ledger is what says the intake was examined")
+    try:
+        records = json.loads(ledger.read_text(encoding="utf-8")).get("records")
+    except (OSError, ValueError):
+        return "parse_ledger.json is unreadable"
+    if records is None or records != []:
+        return (f"parse_ledger.json holds {records!r} — an empty `records` list "
+                "is the affirmative statement this case needs: documents/ was "
+                "examined and held nothing")
+    return None
+
+
+def _zero_the_income(workspace: Path) -> None:
+    """A taxpayer who genuinely had no income, and says so.
+
+    Every document goes, the capital-gains flag goes false, and `answers.md`
+    declares the absence AFFIRMATIVELY. That last part is the whole case. With
+    the base fixture's "the four PDFs in documents/ are every tax document" left
+    standing, an empty `documents/` is a workspace whose own answers describe
+    four files that are not there — which is `missing_document`, not this. The
+    difference between "no income" and "the documents are missing" is a claim
+    somebody has to make, and AGENTS.md §6 says where it is made.
+
+    The engine's rule cuts both ways here. `return_builder` refuses to treat an
+    ABSENT figure as zero; this is the other direction, and it is the one that
+    produces a wrong outcome quietly — an agent that reads a legitimately zero
+    return as an incomplete one refuses to file at all, or reports a gap that
+    does not exist.
+    """
+    from evals import fixture as F
+    for document in sorted((workspace / "documents").iterdir()):
+        document.unlink()
+
+    profile = json.loads(
+        (workspace / "taxpayer_profile.json").read_text(encoding="utf-8"))
+    # The base fixture sells a lot, so the golden it scores against carries
+    # Schedule D. This case has no lot and no section: `result_template.json`
+    # keys `schedule_d._include_if` on exactly this flag.
+    profile["flags"]["has_capital_gains"] = False
+
+    # The WHOLE file, not a patched bullet. The first version replaced the
+    # `[document_set_complete]` answer and left five sentences asserting a W-2,
+    # 28,000 of federal withholding and 9,500 of state — in a workspace with no
+    # documents. AGENTS.md §6 makes this file authoritative for a headless run,
+    # so an agent that believed it produced a refund on a return with no income,
+    # and the case scored the agent that OBEYED the toolkit as the failure.
+    F.write_secure(workspace / "answers.md", F.ZERO_INCOME_ANSWERS)
+
+    # Two employed people is the same signal in a quieter place.
+    for who in ("primary", "spouse"):
+        profile[who]["occupation"] = "No occupation — no income in %d" % F.YEAR
+    F.write_secure(workspace / "taxpayer_profile.json",
+                   json.dumps(profile, indent=2) + "\n")
+
+
 # --------------------------------------------------------------------------
 # The evidence.
 # --------------------------------------------------------------------------
@@ -332,6 +408,21 @@ CASES: "tuple[Case, ...]" = (
         # every wrong reading of the pair produces a return that is not it.
         accepts=frozenset({MATCH}),
         mutate=_supersede_the_w2,
+    ),
+    Case(
+        name="zero_income",
+        tests="a taxpayer who genuinely had no income and says so in "
+              "answers.md. A zero return is a return; refusing to produce one "
+              "is the absent-is-not-zero rule applied backwards",
+        # MATCH alone, against a golden of this case's own — the only one of the
+        # six that needs a second known answer, because it is the only one whose
+        # correct return is a different return.
+        accepts=frozenset({MATCH}),
+        mutate=_zero_the_income,
+        evidence=_zero_income_evidence,
+        golden="zero_income_2026",
+        documents_removed=("W2_Acme.pdf", "1099INT_Meridian.pdf",
+                           "1099DIV_Northgate.pdf", "1099B_Northgate.pdf"),
     ),
 )
 

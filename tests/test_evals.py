@@ -391,6 +391,333 @@ class TestTheGoldenIsStillAKnownAnswer:
             summary["federal_refund"] + summary["california_refund"], 2)
 
 
+ZERO_GOLDEN = json.loads(
+    (GOLDENS / "zero_income_2026" / "golden_result.json").read_text())
+
+# The base case's dropped set, plus the three this case also cannot reach: no
+# interest, no dividends, and a profile whose capital-gains flag is false.
+_ZERO_INAPPLICABLE = _INAPPLICABLE_SECTIONS + (
+    "interest_detail", "dividend_detail", "schedule_d", "w2_summary")
+
+
+class TestTheZeroIncomeGoldenIsAKnownAnswerToo:
+    """The second golden, on the same terms as the first: re-derived here rather
+    than trusted, because a golden nobody re-derives is a snapshot of whatever
+    produced it.
+
+    Its arithmetic is short, and that is the point — every figure is zero except
+    the two deductions and the CA exemption credit, so what this class really
+    pins is the three places where zero is a DECISION rather than an absence.
+    """
+
+    def test_it_is_the_initialized_template_for_every_section_it_keeps(self):
+        for section, node in ZERO_GOLDEN.items():
+            assert section in RESULT_TEMPLATE, f"{section} is in no template"
+            # `income_summary_by_person` is keyed by the taxpayers' own first
+            # names, so the template's placeholders are not a shape to match —
+            # the same exclusion the base golden's shape test makes.
+            if section in C._PERSON_KEYED or not isinstance(node, dict):
+                continue
+            want, got = _keys(RESULT_TEMPLATE[section]), _keys(node)
+            assert want == got, (
+                f"{section}: template-only {sorted(want - got)}, "
+                f"golden-only {sorted(got - want)}")
+
+    def test_the_sections_it_drops_are_ones_the_case_cannot_reach(self):
+        dropped = _keys(RESULT_TEMPLATE) - _keys(ZERO_GOLDEN)
+        assert dropped == set(_ZERO_INAPPLICABLE), sorted(dropped)
+
+    def test_the_capital_gains_flag_is_what_drops_schedule_d(self, tmp_path):
+        """The base case keeps Schedule D because its profile sets the flag.
+        This one drops it, and the flag is why — so the workspace has to
+        actually carry the false one, not merely lack a lot."""
+        ws = F.build_workspace(tmp_path / "zero", "zero_income")
+        profile = json.loads(
+            (ws / "taxpayer_profile.json").read_text(encoding="utf-8"))
+        assert profile["flags"]["has_capital_gains"] is False
+        assert "schedule_d" not in ZERO_GOLDEN
+
+    def test_every_line_but_the_two_deductions_is_zero(self):
+        """Named for what it selects. The first version said "income lines" and
+        chose them with a prefix filter that swept in lines 20-38 as well —
+        stronger than its name, and it excluded exactly the seven where the tax
+        gets priced (13a-c, 16, 17, 18, 19), which were then asserted by nothing
+        at all. Every numeric line but the two deductions is zero here, so the
+        honest form of this test is to say that."""
+        form = ZERO_GOLDEN["form_1040"]
+        deductions = {"line_12_standard_deduction", "line_14_total_deductions"}
+        priced = {"line_13a_qbi_deduction", "line_16_tax", "line_17_schedule2_part1",
+                  "line_18_tax_plus_schedule2", "line_19_ctc"}
+        assert priced <= set(form), sorted(priced - set(form))
+        # Every numeric leaf of every section, not just the 1040's. A withheld
+        # figure transcribed into `california_540` from the base case survived
+        # a whole mutation battery when this walked one section.
+        allowed = deductions | {"ca_standard_deduction", "per_person", "count",
+                                "total", "tax_year", "standard_deduction"}
+        def walk(node, path):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    walk(v, f"{path}.{k}")
+                return
+            if isinstance(node, bool) or not isinstance(node, (int, float)):
+                return
+            if path.rsplit(".", 1)[-1] in allowed:
+                return
+            assert node == 0, path
+        for section in ("form_1040", "federal_tax_computation", "california_540",
+                        "income_summary_by_person", "balance_due_summary"):
+            walk(ZERO_GOLDEN[section], section)
+
+    def test_the_deduction_is_the_standard_one_and_taxable_income_floors_at_zero(self):
+        """`max(0, 0 - 31,500)`, and the floor is the figure this line is about.
+        A negative taxable income would propagate a negative tax and a refund
+        nobody is owed."""
+        form = ZERO_GOLDEN["form_1040"]
+        std = F.tax_law()["federal"]["filing_statuses"]["mfj"]["standard_deduction"]
+        assert std == 31500, "the invented law moved; the derivation says 31,500"
+        assert form["line_12_standard_deduction"] == std
+        assert form["line_14_total_deductions"] == std
+        assert form["line_15_taxable_income"] == 0
+        assert ZERO_GOLDEN["meta"]["standard_deduction"] == std
+
+    def test_the_california_exemption_credit_cannot_make_a_refund(self):
+        """Two filers earn the credit whether or not there is tax to apply it
+        to — it is a property of the return, not of the income — and it is
+        NON-REFUNDABLE, so `max(0, 0 - 300)` is zero and not minus three
+        hundred. Both halves matter: dropping the credit would describe a
+        different return, and letting it through would invent a refund."""
+        ca = ZERO_GOLDEN["california_540"]
+        assert ca["ca_exemption_credits"]["personal"] == {
+            "count": 2, "per_person": 150, "total": 300}
+        assert ca["ca_exemption_credits"]["total"] == 300
+        assert ca["ca_tax_after_credits"] == 0
+        assert ca["ca_total_tax"] == 0
+        assert ca["ca_refund"] == 0
+
+    def test_the_california_standard_deduction_is_the_invented_law(self):
+        ca = ZERO_GOLDEN["california_540"]
+        # Keyed by filing status, like the federal one — reading it as a scalar
+        # is the shape mistake `tax-law-cache.md` is about.
+        assert (ca["ca_standard_deduction"]
+                == F.tax_law()["state"]["standard_deduction"]["mfj"])
+        assert ca["ca_taxable_income"] == 0
+
+    def test_nothing_is_owed_and_nothing_is_refunded(self):
+        """Zero is the answer on BOTH sides, and the sign convention makes that
+        checkable: a refund is positive here and a balance due negative, so a
+        zero return is the one value that is neither."""
+        assert ZERO_GOLDEN["balance_due_summary"] == {
+            "federal_refund": 0, "california_refund": 0, "net_refund": 0}
+        assert ZERO_GOLDEN["form_1040"]["line_37_amount_owed"] == 0
+        assert ZERO_GOLDEN["form_1040"]["line_35a_refund"] == 0
+
+    def test_the_digital_asset_question_is_still_answered(self):
+        """The 1040 asks it whatever the income is. A null there is an
+        unanswered return rather than a zero one."""
+        assert ZERO_GOLDEN["form_1040"]["digital_asset_question"] == "No"
+
+    def test_every_figure_ties_to_another_figure(self):
+        """The shape tests pin KEYS and the zero test pins VALUES; this pins the
+        identities BETWEEN them, which is what the base golden's equivalent does.
+
+        It is the test that was missing: without it, seventeen of eighteen
+        mutations of this golden — a priced line 16, a CA table tax, a
+        transcribed withholding, a moved AGI — left the whole class green.
+        """
+        form, fed = ZERO_GOLDEN["form_1040"], ZERO_GOLDEN["federal_tax_computation"]
+        ca, summary = ZERO_GOLDEN["california_540"], ZERO_GOLDEN["balance_due_summary"]
+
+        assert form["line_9_total_income"] == sum(
+            form[k] for k in ("line_1z_total_wages", "line_2b_taxable_interest",
+                              "line_3b_ordinary_dividends", "line_4b_taxable_ira",
+                              "line_5b_taxable_pensions", "line_6b_taxable_ss",
+                              "line_7_capital_gain", "line_8_schedule1_other"))
+        assert form["line_11_agi"] == form["line_9_total_income"] - form["line_10_adjustments"]
+        assert form["line_14_total_deductions"] == (
+            form["line_12_standard_deduction"] + form["line_13a_qbi_deduction"]
+            + form["line_13b_schedule_1a_deductions"]
+            + form["line_13c_charitable_non_itemizer"])
+        assert form["line_15_taxable_income"] == max(
+            0, form["line_11_agi"] - form["line_14_total_deductions"])
+        assert form["line_16_tax"] == fed["total_tax_before_credits"]
+        assert form["line_22_tax_minus_credits"] == (
+            form["line_18_tax_plus_schedule2"] - form["line_21_total_credits"])
+        assert form["line_24_total_tax"] == (
+            form["line_22_tax_minus_credits"] + form["line_23_other_taxes"])
+        assert form["line_25d_total_withholding"] == sum(
+            form[k] for k in ("line_25a_w2_withholding", "line_25b_1099_withholding",
+                              "line_25c_other_withholding"))
+        assert form["line_33_total_payments"] >= form["line_25d_total_withholding"]
+        assert fed["total_tax"] == fed["tax_after_credits"] + fed["additional_medicare_tax"] + fed["niit"]
+
+        assert ca["ca_taxable_income"] == max(
+            0, ca["ca_agi"] - ca["ca_standard_deduction"])
+        assert ca["ca_tax_after_credits"] == max(
+            0, ca["ca_tax_from_table"] - ca["ca_exemption_credits"]["total"])
+        assert ca["ca_total_tax"] == ca["ca_tax_after_credits"] + ca["ca_mental_health_surcharge"]
+        assert ca["ca_refund"] == (ca["ca_withholding_box17"]
+                                   + ca["ca_excess_sdi_credit"] - ca["ca_total_tax"])
+        assert ca["federal_agi"] == form["line_11_agi"]
+
+        people = ZERO_GOLDEN["income_summary_by_person"]
+        assert sum(p["total_income"] for p in people.values()) == form["line_9_total_income"]
+        assert summary["california_refund"] == ca["ca_refund"]
+        assert summary["net_refund"] == summary["federal_refund"] + summary["california_refund"]
+
+    def test_the_federal_tax_is_the_engine_on_a_zero_taxable_income(self):
+        """Re-derived, not asserted. The class docstring claims the golden is
+        recomputed rather than trusted, and apart from the capability gate it
+        called no engine function at all."""
+        from agents.lib import tax_computations as TC
+        law = F.tax_law()["federal"]["filing_statuses"]["mfj"]
+        tax, rows = TC.compute_bracket_tax(0, law["brackets"])
+        assert tax == 0 and rows == []
+        assert ZERO_GOLDEN["form_1040"]["line_16_tax"] == tax
+        assert ZERO_GOLDEN["federal_tax_computation"]["tax_on_ordinary_total"] == tax
+
+    def test_the_california_credit_is_the_invented_laws_exemption(self):
+        """The credit was asserted as three literals. It is the fixture's own
+        figure, and a golden that hard-codes what it claims to derive is the
+        snapshot this class exists not to be."""
+        per_person = F.tax_law()["state"]["personal_exemption"]["amount"]
+        credits = ZERO_GOLDEN["california_540"]["ca_exemption_credits"]
+        assert credits["personal"]["per_person"] == per_person
+        assert credits["personal"]["count"] == 2          # two filers, MFJ
+        assert credits["personal"]["total"] == 2 * per_person
+        assert credits["total"] == credits["personal"]["total"] + credits["dependent"]["total"]
+
+    def test_the_meta_block_describes_this_case(self):
+        """A golden whose `meta` drifts is scored against the wrong year or the
+        wrong filing status while every figure in it still ties — `meta.tax_year
+        = 2019` survived an eleven-mutation battery."""
+        meta = ZERO_GOLDEN["meta"]
+        assert meta["tax_year"] == F.YEAR
+        assert meta["filing_status"] == "MFJ"
+        assert meta["prepared"] is None
+        assert meta["exchange_rates"] == {}
+        assert ZERO_GOLDEN["california_540"]["ca_filing_status"] == "MFJ"
+        assert ZERO_GOLDEN["taxpayers"]["primary"]["name"] == F.full_name(F.PRIMARY_PARTS)
+        assert ZERO_GOLDEN["taxpayers"]["spouse"]["name"] == F.full_name(F.SPOUSE_PARTS)
+
+    def test_it_carries_the_same_limitations_manifest(self):
+        """Verbatim from the gate, on this case as on the base one. The manifest
+        reaches page 1 of the generated PDF, and a golden that dropped it would
+        pass an agent that omitted the disclosure."""
+        from agents.lib import capabilities
+        profile = F.taxpayer_profile()
+        profile["flags"]["has_capital_gains"] = False
+        report = capabilities.evaluate(profile)
+        assert report.blocking == (), [f.rule_id for f in report.blocking]
+        assert ZERO_GOLDEN["meta"]["limitations"] == list(report.limitations)
+        assert ZERO_GOLDEN["meta"]["limitations"] == GOLDEN["meta"]["limitations"]
+
+    def test_the_case_declares_the_ABSENCE_rather_than_leaving_it(self, tmp_path):
+        """The whole case is a claim somebody makes. With the base fixture's
+        "the four PDFs in documents/ are every tax document" left standing, an
+        empty directory is a workspace whose own answers describe four files
+        that are not there — which is `missing_document`, not this one."""
+        ws = F.build_workspace(tmp_path / "zero", "zero_income")
+        assert list((ws / "documents").iterdir()) == []
+        answers = (ws / "answers.md").read_text(encoding="utf-8")
+        assert "[document_set_complete]** Yes, and it is EMPTY" in answers
+        # The NEGATIVE half, and it is the half that was missing. The first
+        # version rewrote this one bullet and left five sentences asserting a
+        # W-2, 28,000 of federal withholding and 9,500 of state — so an agent
+        # that believed `answers.md`, which AGENTS.md §6 tells it to, produced a
+        # refund on a return with no income and the case failed it for obeying.
+        for assumed in ("four PDFs", "28,000", "9,500", "Form W-2 box 2",
+                        "withheld by the employer", "RECIPIENT line",
+                        "ca_mfj_2026"):
+            assert assumed not in answers, assumed
+        assert "nothing to put in it" in answers
+
+
+class TestTheZeroCaseNeedsMoreThanAMatch:
+    """MATCH is evidence for the other five cases and not for this one.
+
+    Its golden is twenty-five differences from the bare template, thirteen of
+    them identity fields copied out of the profile — so an agent that never
+    opened `documents/`, never wrote a ledger and never ran a gate can produce
+    it. That is the false-completion shape the harness exists to catch, arriving
+    through the case whose correct answer is almost all zeros.
+    """
+
+    def test_the_golden_is_close_enough_to_the_template_to_need_evidence(self):
+        """The measurement the evidence predicate is justified by. If a future
+        change made this golden substantially richer, the predicate would be
+        redundant rather than load-bearing, and this is where that shows."""
+        bare = {k: v for k, v in RESULT_TEMPLATE.items() if k in ZERO_GOLDEN}
+        assert len(C.compare(ZERO_GOLDEN, bare)) < 40, (
+            "the zero golden is now far from the empty template; re-examine "
+            "whether the evidence predicate is still the right guard")
+
+    def test_a_return_with_no_ledger_fails(self, tmp_path):
+        ws = F.build_workspace(tmp_path / "zero", "zero_income")
+        (ws / "result.json").write_text(json.dumps(ZERO_GOLDEN), encoding="utf-8")
+        reason = CASES.case("zero_income").evidence(ws)
+        assert reason and "parse_ledger.json" in reason
+
+    def test_an_empty_records_list_satisfies_it(self, tmp_path):
+        """An EMPTY ledger is a positive statement — the intake was examined and
+        held nothing — which is exactly what this case's correct run produces."""
+        ws = F.build_workspace(tmp_path / "zero", "zero_income")
+        (ws / "parse_ledger.json").write_text('{"records": []}', encoding="utf-8")
+        assert CASES.case("zero_income").evidence(ws) is None
+
+    def test_a_ledger_with_records_fails(self, tmp_path):
+        """Records in a workspace with no documents means they were invented."""
+        ws = F.build_workspace(tmp_path / "zero", "zero_income")
+        (ws / "parse_ledger.json").write_text(
+            '{"records": [{"doc_id": "w2"}]}', encoding="utf-8")
+        reason = CASES.case("zero_income").evidence(ws)
+        assert reason and "empty" in reason
+
+    def test_the_prompt_does_not_promise_documents_for_this_case(self):
+        """The harness prompt asserted "and the source documents under
+        documents/" for every case — false here, and the same defect as an
+        `answers.md` that contradicts the case: it tells the agent the thing
+        under test is not there, then scores it for believing the harness."""
+        from evals import run as R
+        assert "documents/" in R.prompt_for("ca_mfj_2026")
+        assert "documents/" not in R.prompt_for("zero_income")
+        assert "documents/" in R.prompt_for("missing_document"), (
+            "one document is gone, not all of them — that case's workspace "
+            "still holds three")
+
+    def test_the_fixture_cli_can_build_every_case(self, tmp_path):
+        """A case is a workspace as well as a golden, and the CLI the README
+        documents could reach only the base one."""
+        import subprocess
+        for case in CASES.names():
+            r = subprocess.run(
+                [sys.executable, "-m", "evals.fixture",
+                 "--dest", str(tmp_path / case), "--case", case],
+                cwd=REPO, capture_output=True, text=True)
+            assert r.returncode == 0, (case, r.stderr)
+            built = tmp_path / case
+            assert (built / "answers.md").is_file(), case
+            # The workspace has to be THAT case's. Asserting only that a file
+            # appeared passes for a CLI that ignores `--case` and builds the
+            # default every time, which is what it did.
+            documents = sorted(p.name for p in (built / "documents").iterdir())
+            expected = sorted(
+                set(("W2_Acme.pdf", "1099INT_Meridian.pdf",
+                     "1099DIV_Northgate.pdf", "1099B_Northgate.pdf"))
+                - set(CASES.case(case).documents_removed))
+            if case == "corrected_document":
+                expected = sorted(expected + ["W2C_Acme.pdf"])
+            assert documents == expected, (case, documents)
+
+    def test_an_unknown_case_names_the_ones_there_are(self, tmp_path):
+        import subprocess
+        r = subprocess.run(
+            [sys.executable, "-m", "evals.fixture",
+             "--dest", str(tmp_path / "x"), "--case", "nope"],
+            cwd=REPO, capture_output=True, text=True)
+        assert r.returncode == 1
+        assert "zero_income" in r.stderr and "Traceback" not in r.stderr
+
+
 class TestTheFixtureIsAWorkspaceThePipelineWouldAccept:
 
     def test_it_builds_every_document_and_the_two_json_inputs(self, workspace):

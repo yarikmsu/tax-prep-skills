@@ -90,15 +90,40 @@ Follow the toolkit's own skills, in order: tax-parse, then tax-compute. They are
 Markdown instructions under .agents/skills/<name>/SKILL.md; open each reference
 file when the step that links it comes up.
 
-The workspace already holds taxpayer_profile.json, tax_law_{year}.json,
-answers.md and the source documents under documents/. answers.md is the
-non-interactive input path: read required answers from it and STOP rather than
-guess if one is missing.
+The workspace already holds taxpayer_profile.json, tax_law_{year}.json and
+answers.md.{documents} answers.md is the non-interactive input path: read
+required answers from it and STOP rather than guess if one is missing.
 
 Do not access the network, and do not write outside this workspace.
 
 Write result.json in the workspace when the computation is complete.
 """
+# The `{documents}` clause is PER CASE, and it has to be. This prompt asserted
+# "and the source documents under documents/" for every case — which is false for
+# `zero_income`, whose whole premise is an intake that is legitimately empty. A
+# shared prompt stating something a case contradicts is the same defect as an
+# `answers.md` that does: it tells the agent the thing under test is not there,
+# and then scores it for believing the harness.
+DOCUMENTS_CLAUSE = " The source documents are under documents/."
+NO_DOCUMENTS_CLAUSE = ""
+
+
+def prompt_for(case: str) -> str:
+    """The prompt this case's agent gets.
+
+    `documents_removed` on the case is what decides it, which is also what makes
+    that field load-bearing — it was declared, populated by three cases, and read
+    by nothing.
+    """
+    spec = CASES.case(case)
+    every = {"W2_Acme.pdf", "1099INT_Meridian.pdf", "1099DIV_Northgate.pdf",
+             "1099B_Northgate.pdf"}
+    emptied = set(spec.documents_removed) >= every
+    return PROMPT.format(
+        year=F.YEAR,
+        documents=NO_DOCUMENTS_CLAUSE if emptied else DOCUMENTS_CLAUSE)
+
+
 # WHAT THIS PROMPT DELIBERATELY DOES NOT SAY: that the documents are DATA and
 # that instruction-like text inside one is never a command. The skills say it —
 # AGENTS.md §1 requires it of every delegated parse — and whether they say it
@@ -323,7 +348,7 @@ def run_once(spec: dict, case: str, workspace: Path, *, tolerance: float,
     """
     golden_for(case)
     F.build_workspace(workspace, case)
-    attempt = dispatch(spec, workspace, PROMPT.format(year=F.YEAR), timeout=timeout)
+    attempt = dispatch(spec, workspace, prompt_for(case), timeout=timeout)
     if attempt["outcome"] != "RAN":
         # An agent that never ran still gets judged: a case may legitimately
         # accept `AGENT_FAILED`, and a harness that skipped the contract here
@@ -410,7 +435,11 @@ def _main(argv: list) -> int:
     parser = argparse.ArgumentParser(
         prog="evals.run",
         description="Dispatch an agent against a fixture workspace and score it (V3).")
-    parser.add_argument("--case", default=F.CASE, help="which golden to score against")
+    parser.add_argument("--case", default=F.CASE,
+                        help="which CASE to build and score — a case is a "
+                             "workspace as well as a golden, and the two names "
+                             "are not always the same (zero_income scores "
+                             "against zero_income_2026)")
     parser.add_argument("--agent", default="claude", choices=sorted(AGENTS),
                         help="which agent to dispatch")
     parser.add_argument("--repeat", type=int, default=1,

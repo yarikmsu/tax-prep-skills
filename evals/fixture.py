@@ -128,6 +128,53 @@ applies to it, which is what makes it a workspace the pipeline would accept.
 """
 
 
+# A whole second file rather than string surgery on the one above, and that is
+# the lesson from doing it the other way: the `zero_income` mutation rewrote the
+# `[document_set_complete]` bullet and left FIVE other sentences asserting a W-2,
+# 28,000 of federal withholding and 9,500 of state. AGENTS.md §6 makes this file
+# the authoritative input for a headless run, so an agent that believed it put
+# 28,000 on line 25a and produced a refund on a return with no income — and the
+# case then scored the agent that OBEYED the toolkit as the failure.
+#
+# A bullet-by-bullet patch cannot be reviewed for that. A second document can be
+# read start to finish and asked one question: does anything here assume income?
+ZERO_INCOME_ANSWERS = f"""# Answers — zero_income
+
+Synthetic. Every question this return raises is answered here, so a headless run
+never has to ask one.
+
+- **Income:** NONE, for either taxpayer, of any kind. No wages, no interest, no
+  dividends, no distributions, no sales, no self-employment, no rents. {YEAR} was
+  a year without income, not a year whose documents are missing.
+- **Estimated tax payments made for {YEAR}:** none, and none were needed.
+- **Withholding:** none, federal or state. There was no employer and no payer,
+  so nothing was withheld from anything.
+- **Prior-year ({YEAR - 1}) return:** AGI {PRIOR_YEAR_AGI:,.0f}, total tax
+  {PRIOR_YEAR_TAX:,.0f}. No §6654 penalty can arise on a year with no tax: the
+  required annual payment is a percentage of a liability that is zero.
+- **Digital assets:** no. Neither spouse received, sold, exchanged or otherwise
+  disposed of a digital asset.
+- **Foreign accounts:** none, so no FBAR and no Form 8938.
+- **Itemising:** no. There is nothing to itemise and the standard deduction is
+  larger than nothing.
+- **[document_set_complete]** Yes, and it is EMPTY. `documents/` holds no files
+  because there is nothing to put in it — nothing is outstanding, expected or
+  mislaid. This is the answer that separates this return from one whose documents
+  have not arrived.
+- **[state_taxes_paid_outside_withholding]** None of either, and no withholding
+  either. Nothing is deductible on Schedule A line 5a.
+- **[charitable_gifts]** None, cash or non-cash. Nothing is deductible on
+  Schedule A line 11-12, and the §170(p) non-itemizer deduction is therefore zero
+  as well.
+- **Medical expenses, mortgage interest, property taxes, investment interest,
+  misc 2% expenses:** none. This return has no Schedule A input at all.
+- **[corrected_documents]** No. There are no documents to correct.
+
+The markers are the V5 required-answer ids — `--check-required` reads them, and a
+headless run stops on any that is missing.
+"""
+
+
 def tax_law() -> dict:
     """The fixed cache this case is computed against."""
     law = create_empty_tax_law(YEAR)
@@ -396,9 +443,19 @@ def _main(argv: list) -> int:
         description="Build the synthetic eval workspace (V3). Nothing here is a "
                     "real person, employer or account.")
     parser.add_argument("--dest", required=True)
+    # A case is a WORKSPACE and not only a golden, and this CLI could reach only
+    # the base one — so the README's own recipe for driving the halves by hand
+    # could not build any case a mutation defines. Harmless while there was one;
+    # a second golden makes it load-bearing.
+    parser.add_argument("--case", default=CASE,
+                        help="which case's workspace to build")
     args = parser.parse_args(argv)
-    dest = build_workspace(args.dest)
-    print(f"built the {CASE} workspace in {dest}")
+    try:
+        dest = build_workspace(args.dest, args.case)
+    except ValueError as e:      # an unknown case names the ones there are
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+    print(f"built the {args.case} workspace in {dest}")
     return 0
 
 

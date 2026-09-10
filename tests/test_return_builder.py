@@ -122,12 +122,12 @@ class TestItReproducesTheHandComputedGolden:
     copied, and require it to put all of them back.
     """
 
-    def _fixture_workspace(self, tmp_path):
-        sys.path.insert(0, str(REPO))
-        from evals import fixture as F
-        ws = tmp_path / "fixture"
-        F.build_workspace(ws, "ca_mfj_2026")
-        boxes = {
+    # The documents each case's ledger records. `zero_income` has none, and that
+    # is the point of running this class over it: a builder is asked to derive
+    # twenty-four lines from an EMPTY intake, which is where "absent is not
+    # zero" and "zero is not absent" are the same code path read two ways.
+    _RECORDS = {
+        "ca_mfj_2026": {
             "W2_Acme.pdf": ("w2", "W-2",
                             {"wages": 185000.0, "federal_withholding_w2": 28000.0}),
             "1099INT_Meridian.pdf": ("int", "1099-INT", {"taxable_interest": 1200.0}),
@@ -135,14 +135,24 @@ class TestItReproducesTheHandComputedGolden:
                                       {"ordinary_dividends": 3000.0,
                                        "qualified_dividends": 2600.0}),
             "1099B_Northgate.pdf": ("b", "1099-B", {"capital_proceeds": 22000.0}),
-        }
-        for name, (doc_id, form, key_boxes) in boxes.items():
+        },
+        "zero_income": {},
+    }
+    _GOLDEN_OF = {"ca_mfj_2026": "ca_mfj_2026", "zero_income": "zero_income_2026"}
+
+    def _fixture_workspace(self, tmp_path, case="ca_mfj_2026"):
+        sys.path.insert(0, str(REPO))
+        from evals import fixture as F
+        ws = tmp_path / "fixture"
+        F.build_workspace(ws, case)
+        for name, (doc_id, form, key_boxes) in self._RECORDS[case].items():
             PR.write_record(ws, {"doc_id": doc_id, "file": f"documents/{name}",
                                  "form_type": form, "payer": "synthetic",
                                  "person": "joint", "key_boxes": key_boxes})
         PR.write_ledger(ws)
-        golden = json.loads((GOLDEN_DIR / "golden_result.json").read_text(
-            encoding="utf-8"))
+        golden = json.loads(
+            (REPO / "evals" / "goldens" / self._GOLDEN_OF[case]
+             / "golden_result.json").read_text(encoding="utf-8"))
         components = json.loads(json.dumps(golden))
         for field in RB.DERIVED_FIELDS:
             components["form_1040"].pop(field, None)
@@ -150,15 +160,21 @@ class TestItReproducesTheHandComputedGolden:
                                         encoding="utf-8")
         return ws, golden
 
-    def test_every_derived_line_comes_back_at_the_golden_figure(self, tmp_path):
-        ws, golden = self._fixture_workspace(tmp_path)
+    @pytest.mark.parametrize("case", ["ca_mfj_2026", "zero_income"])
+    def test_every_derived_line_comes_back_at_the_golden_figure(self, tmp_path, case):
+        """Over BOTH goldens. This class is the only thing in the repo that
+        re-prices a golden through the builder, and it was pinned to the first
+        one — so seventeen of eighteen mutations of the second left every test
+        that reads it green."""
+        ws, golden = self._fixture_workspace(tmp_path, case)
         _, derived = _build(ws)
         assert derived == {f: golden["form_1040"][f] for f in derived}
 
-    def test_it_puts_back_every_line_it_stripped(self, tmp_path):
+    @pytest.mark.parametrize("case", ["ca_mfj_2026", "zero_income"])
+    def test_it_puts_back_every_line_it_stripped(self, tmp_path, case):
         """A builder that quietly derived FEWER lines would pass the test above
         on the ones it kept. The two together are what make it total."""
-        ws, golden = self._fixture_workspace(tmp_path)
+        ws, golden = self._fixture_workspace(tmp_path, case)
         _, derived = _build(ws)
         assert set(derived) == set(RB.DERIVED_FIELDS)
         assert RB.DERIVED_FIELDS <= set(golden["form_1040"])
@@ -179,8 +195,9 @@ class TestItReproducesTheHandComputedGolden:
         assert derived["line_16_tax"] == 34122.0
         assert round(straight, 2) == 34794.0
 
-    def test_the_cli_writes_the_stripped_return_back_to_the_golden(self, tmp_path):
-        ws, golden = self._fixture_workspace(tmp_path)
+    @pytest.mark.parametrize("case", ["ca_mfj_2026", "zero_income"])
+    def test_the_cli_writes_the_stripped_return_back_to_the_golden(self, tmp_path, case):
+        ws, golden = self._fixture_workspace(tmp_path, case)
         assert RB._main(["--workspace", str(ws)]) == 0
         written = json.loads((ws / "result.json").read_text(encoding="utf-8"))
         assert written["form_1040"] == golden["form_1040"]

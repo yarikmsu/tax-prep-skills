@@ -56,7 +56,11 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    itemized or CA standard)
 6. CA tax from FTB tables (use brackets from tax_law JSON)
 7. CA exemption credits (personal + dependent, amounts from tax_law JSON)
-8. CA tax after credits
+8. CA tax after credits — **floored at zero**. The exemption credit is
+   NON-refundable, so `max(0, tax_from_table - credits)`: a return with no CA
+   tax still earns 2 x $150 for two filers, and subtracting it without the
+   floor produces a negative tax that becomes an invented refund downstream.
+   Over-stating a refund is the direction AGENTS.md §4 calls a hard error.
 9. Mental health surcharge (1% on income > $1M)
 9.5. **CA Schedule P (540) AMT** — run `compute_ca_schedule_p()` whenever
     `has_iso_exercise` (the same trigger as federal Form 6251). The CA analogue

@@ -17,7 +17,9 @@ Parse all source tax documents in the workspace and extract structured data.
 
 ## Prerequisites
 - `taxpayer_profile.json` must exist (run `/tax-setup` first)
-- Source documents (PDFs, XLSX, CSV) must be in the `documents/` directory
+- Source documents (PDFs, XLSX, CSV) in the `documents/` directory — or an
+  `answers.md` that affirmatively says the intake is empty, which is a
+  legitimate return and not a missing one (Step 1)
 - Python packages: pdfplumber, openpyxl
 
 ## Steps
@@ -66,7 +68,20 @@ sh agents/lib/run.sh agents/lib/parse_utils.py scan documents/
 
 This returns a JSON list of all parseable files with auto-detected types.
 
-If no documents found, ask the user where their documents are located.
+If no documents found, ask the user where their documents are located — UNLESS
+`answers.md` affirmatively states the intake is empty. An empty `documents/` is
+two different situations and only the taxpayer can tell them apart: documents
+that have not arrived, and a year with no income. `[document_set_complete]` is
+where that answer lives (AGENTS.md §6), so read it before asking:
+
+- **It says the set is complete and empty** — proceed. Write `parse_ledger.json`
+  with `"records": []`, which is the affirmative statement that the intake was
+  examined and held nothing, and carry on to `/tax-compute`. A return of all
+  zeros is a return; refusing to produce one is the absent-is-not-zero rule
+  applied backwards, and it fails silently because there is no wrong number for
+  anything downstream to catch.
+- **It says anything else, or is missing** — STOP and ask. In a headless run a
+  missing answer is a hard stop, not a guess (AGENTS.md §6).
 
 ### 2. Classify and Group Documents
 
