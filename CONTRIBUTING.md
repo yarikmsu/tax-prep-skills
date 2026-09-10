@@ -142,13 +142,16 @@ The gates' `validation_receipt.json` is a runtime artifact like the rest — git
 
 - **Always work on a feature branch.** The pre-commit hook blocks direct commits to
   `main`.
-- The pre-push hook blocks pushes, so the working form is
-  `git push --no-verify -u origin <your-branch>`.
+- Push with `git push -u origin <your-branch>`. The pre-push hook scans the changed
+  files of every commit the push would publish, and the branch or tag NAME, and passes a
+  clean branch; it refuses a push straight to `main`. `--no-verify` on a push skips this
+  hook — it is the same flag that skips the commit-time scan, spelled the same way, so
+  reach for it deliberately in either place.
 - Write commit messages that explain *why*, not just what.
 - Open a pull request against `main`. CI runs pytest on 3.12 and 3.14, the PII scan, and
   `pip-audit`; all three must pass.
-- Pull requests are automatically reviewed by a bot on open, on ready-for-review, and on
-  an `@codex review` comment. A plain push does **not** trigger a review.
+- **Automated PR review is off** (2026-09-07). A maintainer reviews the diff by hand;
+  driving a change to a clean pass is still part of opening it.
 
 ## Adding a state
 

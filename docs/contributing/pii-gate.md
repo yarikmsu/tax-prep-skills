@@ -5,10 +5,129 @@ without looking anything up and points here for the rest. §1 also gives the one
 about changing this gate, and the history behind it; what follows is what the gate
 actually does.
 
-It runs as the pre-commit hook (installed by `bash agents/install.sh`) and in CI over a
+It runs at three moments, all of them the same script: as the pre-commit hook over the
+index, as the pre-push hook over the commits a push would publish, and in CI over a
 per-trigger range (`scripts/ci-pii-range.sh`). Git hooks are the host-side backstop and
 work the same on every agent: they fire on a plain `git commit` from anything that can
-commit at all.
+commit at all. Both hooks are installed by `bash agents/install.sh`.
+
+**The installed hook is a COPY, and editing the source does not move it.** The body lives
+in a heredoc in `agents/install.sh`; `.git/hooks/pre-push` is what actually runs, and it
+changes only when the installer is re-run (`bash agents/install.sh --hooks-only`). The
+tests never see this, because each one installs into a throwaway clone — so the gap is
+between the source and the clone you are pushing FROM, and it was found the ordinary way:
+by editing a block message and then reading the installed hook and finding the old one.
+Re-run the installer after touching either hook, the same way a skill needs re-installing
+after its references are split.
+
+The pre-push hook replaced a blanket refusal (Y6), and the reason is one layer up from
+what it scans. That refusal made `--no-verify` the working push form, and `--no-verify`
+is one flag covering both hooks: a workflow that types it every time has already learned
+to type it at the moment the content scan is the only thing between a full SSN and a
+commit. A gate that must be bypassed to do the ordinary thing is training.
+
+**What the trade is, stated rather than denied.** The refusal made a human look before
+anything left the machine; the hook decides automatically for the classes the scanner
+recognises, and content it does not recognise still goes. That residual is the one this
+repository already names elsewhere: a taxpayer's NAME in a section header has neither an
+SSN shape nor a credential shape. So is a COMMIT MESSAGE, and an annotated TAG message —
+the script reads changed files and pathnames, never the message, at every one of its
+three call sites. The banner says what it inspected for that reason; nothing above it
+should be read as wider.
+
+What the hook hands the script is a RANGE, so the per-commit reasoning below applies — a
+value added and later removed is still in the history being published. Recovering that
+range is where the work is, and every defect found in it had the same shape: the hook
+believed something it had not established.
+
+**The bound comes from the destination, asked.** Remote-tracking refs were it, and they
+are a local CACHE of what some remote held at the last fetch — a different question from
+what THIS push's destination has. `remote.<name>.pushurl`, an `insteadOf` rewrite, a
+remote that rewrote or deleted history since the fetch, and a push by URL with no
+tracking refs at all each make the cache say "already there" about a commit the
+destination has never seen, and the ref was then skipped entirely. `git ls-remote` against
+the hook's SECOND argument — where git is actually pushing — settles it, and the shas it
+advertises that this clone cannot traverse are dropped, which can only widen the scan. It
+is asked lazily, so a push whose refs all carry a base costs no round trip.
+
+**The oldest outgoing commit is found by TOPOLOGY.** `git rev-list` orders by committer
+date, and a parent is not guaranteed to follow its children: taking the last line picked
+a DESCENDANT, whose parent — itself outgoing — became the base and was excluded. Under
+`--topo-order --reverse` the first line is a genuine ancestor. Then the range is CHECKED
+against the enumerated set rather than reasoned about, because a base is a single commit
+and an outgoing set need not be a single chain. That self-check is belt to the ordering's
+braces, and it earns its place: with the ordering deliberately broken it is what refuses
+the push.
+
+Five cases sit at the edges of that range:
+
+- **A ref DELETION** publishes nothing, and git marks it with an all-zero LOCAL sha.
+  Scanning it would refuse the ordinary post-merge cleanup, which is how `--no-verify`
+  returns through a different door. The destination guard runs FIRST regardless: deleting
+  a branch is still a write to it, and ordering the skip above the guard once made
+  `git push origin --delete main` the one form of writing to `main` that was allowed.
+- **A ROOT commit** as the oldest outgoing member has no parent to be the base, and the
+  script handles that: given the root itself it re-includes it and diffs against the
+  empty tree. The hook adds it back when counting, since the range covers one more commit
+  than `base..head` names.
+- **A SHALLOW boundary** looks identical to that root from `git rev-list`, and is not.
+  The script's root check reads the commit OBJECT, finds the parent this clone never
+  fetched, and does NOT re-include it — so the same base silently drops the oldest
+  commit of the push. The hook reads the object too, which is why it reads one at all,
+  and refuses instead.
+- **NOTHING OUTGOING** — a tag pointing at an already-pushed commit, or a force REWIND to
+  an ancestor. It says so. A hook that prints nothing cannot be told from one that did
+  not run, and treating a rewind as an unperformed scan blocked a correct push.
+- **A TARGET THAT IS NOT A COMMIT.** `git rev-list <blob>` succeeds with EMPTY output, so
+  a tag on a blob or a tree read as "publishes no commit" and went out carrying its whole
+  content, unscanned.
+
+**Exit 0 from the script is not evidence that it ran.** It is read from the WORKING TREE
+at push time, so what executes is whatever is on disk — a half-finished local edit, or a
+rewrite the push itself would publish. Replacing it with `exit 0` published a full SSN
+with no output at all. The hook requires the affirmative coverage line instead, matched
+WHOLE and with its commit count read as a NUMBER: a substring test accepted a stub whose
+entire output was "No PII scan clean result is available". A count is a verification; a
+substring is a coincidence waiting to happen.
+
+The count is compared with `-ge`, not for equality, and that is not laziness. The script
+derives its own from `merge-base(base, head)` and the hook's comes from `base..head`;
+those agree whenever the base is an ancestor, which is every ordinary push, and a force
+push onto a history with more than one merge base makes the script enumerate MORE.
+Demanding equality would refuse a correct push, and the property actually wanted is that
+the scan covered at least what was enumerated. The same verification covers `--names`,
+which has its own way of succeeding without working: given nothing on stdin it reports
+zero names checked and exits 0.
+
+**A message before the name check must not print the name.** Everything after it may, the
+name having passed these patterns by then — but the refusal for a name check that
+reported nothing cannot, because the name is the candidate value and writing it into
+scrollback is the disclosure the check exists to prevent. That is the
+detected-but-not-redacted shape this gate has already paid for once, and the first version
+of that message had it.
+
+Two smaller ones, both about what a subprocess inherits. The scanner is run with its
+stdin CLOSED, because it would otherwise receive the remaining ref lines — anything that
+consumed them made the hook's next `read` see EOF, and every ref after the first went out
+with neither a scan nor the destination guard. And `GIT_NO_REPLACE_OBJECTS=1` is exported
+for the whole hook, because a `git replace` mapping rewrites what every command here READS
+while the pack sent to the remote carries the originals.
+
+**A REF NAME is the one published thing the content scan cannot reach**, and the argument
+is the pathname rule's exactly: a branch or tag named after an SSN discloses it whatever
+it points at, and nothing downstream masks it. So the rule stays here rather than moving
+into the hook — `--names <rev>` reads names on stdin and applies these same patterns, with
+`.pii-allowlist` read from the revision being published, on the same terms as every other
+mode. The hook hands it both ref names before it looks at any content.
+
+`PII_SCAN_CONTEXT` sets the wording and nothing else. It decides the banner's label, the
+escape hatch (an allowlist entry added on top does not clear the commit already carrying
+the value), the command that lists a redacted path — `--cached` names an index that is
+empty at push time — and the shallow-history remedy, which is a `fetch-depth` setting only
+in CI. The set is CLOSED and an unknown value is an error, for the reason
+`agents/lib/capabilities.py` gives about its own ids: lowercase `push` printed a banner
+reading "push BLOCKED" and quietly dropped the push-specific remedy. Every RULE stays in
+the script; the label is all a caller may set.
 
 ## What it blocks
 

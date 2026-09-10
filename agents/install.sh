@@ -443,22 +443,316 @@ HOOK_EOF
     cat > "$HOOKS_DIR/pre-push" << 'HOOK_EOF'
 #!/bin/bash
 # tax-prep-skills-managed-hook
-# Git pre-push hook — blocks automated pushes.
-echo ""
-echo "=========================================="
-echo "  PUSH BLOCKED"
-echo "=========================================="
-echo ""
-echo "  Push blocked by pre-push hook."
-echo "  To push after reviewing your commit:"
-echo ""
-BRANCH=$(git branch --show-current 2>/dev/null || echo "HEAD")
-echo "    git push --no-verify -u origin $BRANCH"
-echo ""
-exit 1
+# Git pre-push hook — scans every OUTGOING commit for PII, and passes a clean one.
+#
+# This hook used to refuse EVERY push unconditionally, which made
+# `git push --no-verify` the documented working form. `--no-verify` disables
+# the pre-push hook and nothing else, so the habit cost nothing here — it cost
+# something one layer up. That is the same flag that disables the pre-commit
+# PII gate, and typing it by reflex on a repository whose one absolute rule is
+# that a full SSN never leaves the machine is training, not protection. A gate
+# that has to be bypassed to do the ordinary thing gets bypassed everywhere.
+#
+# So the hook now does the work the blanket refusal only gestured at: every
+# commit this push would PUBLISH is scanned by the same script the pre-commit
+# hook and CI run, and a clean branch pushes normally.
+#
+# The destination guard is kept deliberately. The pre-commit hook blocks
+# COMMITTING to main and nothing else blocked PUSHING there, so dropping the
+# blanket refusal without replacing this would have removed a protection while
+# claiming only to remove friction.
+#
+# WHAT IS TRADED, stated rather than denied: the old hook forced a human to
+# look before anything left the machine, and this one decides automatically for
+# the classes the scanner recognises. Content it cannot recognise still goes —
+# a taxpayer's NAME in a section header has neither an SSN shape nor a
+# credential shape, and so does a COMMIT MESSAGE, which the scanner reads at
+# none of its call sites. The trade is deliberate. A gate that fires on every
+# push is one people learn to wave through, and it was being waved through with
+# the flag that also turns off the commit-time scan.
+#
+# Recovering the outgoing range has several edges — a ref deletion, a root
+# commit, a shallow boundary, a ref that publishes no commit at all, and a ref
+# whose target is not a commit. What each one is and why it is handled the way
+# it is: docs/contributing/pii-gate.md.
+set -u
+
+# A `git replace` mapping rewrites what every command here READS while the pack
+# sent to the remote carries the original objects, so the scan would inspect one
+# tree and the push would publish another. Set for this whole process, so the
+# scanner inherits it too.
+export GIT_NO_REPLACE_OBJECTS=1
+
+REMOTE_NAME="${1:-origin}"
+# $2 is where git is ACTUALLY pushing, which is not always where $1 fetches
+# from: `remote.<name>.pushurl` and an `insteadOf` rewrite both separate them.
+REMOTE_LOCATION="${2:-$REMOTE_NAME}"
+NL=$'\n'
+
+block() {
+    echo ""
+    echo "=========================================="
+    echo "  PUSH BLOCKED"
+    echo "=========================================="
+    echo ""
+    echo "  $1"
+    echo ""
+    echo "  Emergency bypass: git push --no-verify"
+    echo ""
+    exit 1
+}
+
+# Resolved at push time in the tree being pushed, for the reason the pre-commit
+# hook states: hooks live in the common git dir and are shared across worktrees,
+# so the hook's own path always names the primary checkout.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$REPO_ROOT" ] || block "Cannot resolve the repository root, so the PII scan cannot run.
+  Refusing to push unscanned."
+SCAN="$REPO_ROOT/scripts/pre-commit-pii-scan.sh"
+[ -x "$SCAN" ] || block "PII scan script not found or not executable at
+    $SCAN
+  Refusing to push unscanned. Run 'bash agents/install.sh' to fix."
+
+# WHAT THE DESTINATION ALREADY HAS — asked of the destination, not remembered.
+#
+# Remote-tracking refs were the bound here and they are a local CACHE of what
+# some remote held when it was last fetched. That is a different question from
+# "what does this push's destination have", and every way the two come apart
+# ends the same: the hook decides a commit is already there, finds nothing
+# outgoing, and skips the ref without scanning it. A `pushurl` pointing
+# somewhere else entirely, a remote that rewrote or deleted the history since
+# the last fetch, a push by URL with no tracking refs at all — all of them.
+#
+# Lazy, so a push that needs no range (every ref an update, git having supplied
+# the base) costs no round trip.
+REMOTE_HAS=""
+REMOTE_HAS_READY=0
+load_remote_has() {
+    [ "$REMOTE_HAS_READY" -eq 0 ] || return 0
+    local out line sha
+    # `< /dev/null` here is CONSISTENCY, not a fix. It was added believing that
+    # `ls-remote` over SSH would drain the ref protocol the way a bare `ssh` in
+    # a `while read` loop does; git connects its own pipes to a transport
+    # helper, so the helper never sees this stdin and no such drain was
+    # observed. The redirect stays because the scanner below genuinely needs
+    # one and a reader should not have to work out why only one call has it.
+    out=$(git ls-remote --heads --tags "$REMOTE_LOCATION" 2>/dev/null < /dev/null) \
+        || block "Cannot ask '$REMOTE_LOCATION' which commits it already has, so the
+  range this push would publish cannot be established.
+  Refusing to push unscanned."
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        sha="${line%%	*}"
+        # Only what this clone can traverse. A sha the destination has and this
+        # clone does not cannot bound anything, and leaving it out can only
+        # widen the scan.
+        git cat-file -e "${sha}^{commit}" 2>/dev/null || continue
+        REMOTE_HAS="$REMOTE_HAS$sha$NL"
+    done <<< "$out"
+    REMOTE_HAS_READY=1
+}
+
+# git's pre-push protocol, one line per ref:
+#   <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # FIRST, before the deletion skip: deleting a branch is a write to that
+    # branch, and the guard is about the destination, not the payload.
+    case "$remote_ref" in
+        refs/heads/main|refs/heads/master)
+            block "Direct push to ${remote_ref#refs/heads/}.
+  Changes go through a feature branch and a pull request; the squash merge is
+  the only thing that writes to that branch."
+            ;;
+    esac
+
+    # An all-zero LOCAL sha is a ref DELETION, which publishes no content.
+    case "$local_sha" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
+
+    # A REF NAME is published as-is and is not file content, so nothing
+    # downstream masks it — the pathname rule's argument exactly. The rule
+    # itself stays in the scanner; this hands it the name.
+    #
+    # THE REMOTE REF ONLY. The local one was passed too and it is not published,
+    # so it bought nothing — and it cost: `git push <sha>:refs/heads/x` makes
+    # the local ref the SHA, and about one 40-hex sha in eight contains a
+    # maximal run of exactly nine digits, which is the bare-SSN rule. A gate
+    # that refuses a correct push at random is the cry-wolf shape this
+    # repository has already paid for once, in the same rule, over the digest
+    # runs inside a hashed lock.
+    names_out=$(printf '%s\n' "$remote_ref" \
+                | PII_SCAN_CONTEXT=PUSH "$SCAN" --names "$local_sha" 2>&1) || {
+        printf '%s\n' "$names_out"
+        exit 1
+    }
+    printf '%s\n' "$names_out"
+    # Exit 0 is not evidence here either, and this mode has its own way of
+    # producing one: given nothing on stdin it reports zero names checked and
+    # succeeds. One name went in, so one must come back.
+    case "$NL$names_out$NL" in
+        *"${NL}PII scan clean — 1 name(s) checked.${NL}"*) ;;
+        # WITHOUT NAMING THE REF. Every message after this point may print it,
+        # because by then it has passed these very patterns — but here it has
+        # not, and the name is the candidate value. Printing it performs the
+        # disclosure the check exists to prevent, into scrollback, which is the
+        # detected-but-not-redacted shape this gate has paid for once already.
+        # The scanner's own refusal prints a redacted form; this arm is for the
+        # case where it printed nothing at all.
+        *) block "The name check reported nothing about the ref being pushed, so nothing
+  here knows it looked at it. The name is not repeated here: it has not been
+  checked, and it is the value in question." ;;
+    esac
+
+    # WHAT THE REF POINTS AT. `git rev-list <blob>` succeeds with EMPTY output,
+    # so a tag on a blob or a tree read as "publishes no commit" and went
+    # through carrying its whole content, unscanned.
+    target_type=$(git cat-file -t "${local_sha}^{}" 2>/dev/null || true)
+    [ "$target_type" = "commit" ] || block "'$local_ref' points at a ${target_type:-unreadable object}, not a commit.
+  Nothing here can scan that, and the scan is not optional."
+
+    newset=""
+    case "$remote_sha" in
+        # The destination has this ref, and git has just told us where it is.
+        *[!0]*) base="$remote_sha" ;;
+        *)
+            # A branch the destination does not have yet — the ordinary case in
+            # this repository, since every change is a new feature branch.
+            load_remote_has
+            revargs=("$local_sha")
+            for _sha in $REMOTE_HAS; do revargs+=("^$_sha"); done
+            newset=$(git rev-list "${revargs[@]}" 2>/dev/null) \
+                || block "Cannot enumerate the commits '$local_ref' would publish.
+  Refusing to push unscanned."
+            if [ -z "$newset" ]; then
+                echo "PII scan: '$local_ref' publishes no commit '$REMOTE_LOCATION' lacks."
+                continue
+            fi
+            # `--topo-order --reverse` so the first line is a genuine ANCESTOR.
+            # Default order is reverse CHRONOLOGICAL, which a skewed committer
+            # date reorders: taking the last line then picked a descendant, and
+            # its parent — an outgoing commit — became the base and was excluded.
+            oldest=""
+            while IFS= read -r _line; do
+                oldest="$_line"
+                break
+            done <<< "$(git rev-list --topo-order --reverse "${revargs[@]}" 2>/dev/null)"
+            [ -n "$oldest" ] || block "Cannot order the commits '$local_ref' would publish.
+  Refusing to push unscanned."
+            # The commit OBJECT is the authority on the parent, and it is the
+            # only thing that can be: `git rev-list --parents` and `git rev-parse
+            # <sha>^` report the parents THIS CLONE HAS, which makes a shallow
+            # boundary indistinguishable from a root. Only the HEADER block, and
+            # in pure bash, because `grep '^parent '` over the whole object
+            # false-matches a commit MESSAGE line beginning "parent " and a grep
+            # that cannot RUN reports "no match" — the answer that skips a check.
+            obj=$(git cat-file commit "$oldest" 2>/dev/null) \
+                || block "Cannot read the commit object for '$oldest'.
+  Refusing to push unscanned."
+            recorded=""
+            while IFS= read -r line; do
+                [ -n "$line" ] || break
+                case "$line" in "parent "*) recorded="${line#parent }"; break ;; esac
+            done <<< "$obj"
+            if [ -z "$recorded" ]; then
+                # A true root. The scan re-includes a root base of its own
+                # accord and diffs it against the empty tree.
+                base="$oldest"
+            elif git rev-parse -q --verify "${recorded}^{commit}" > /dev/null 2>&1; then
+                base="$recorded"
+            else
+                block "Commit '$oldest' records a parent this clone does not have.
+  A shallow history cannot be scanned commit by commit, and the range this hook
+  would build silently omits its oldest commit. Fetch the full history
+  (git fetch --unshallow) and push again."
+            fi
+            ;;
+    esac
+
+    outgoing=$(git rev-list "$base..$local_sha" 2>/dev/null) \
+        || block "Cannot enumerate '$base..$local_sha'. Refusing to push unscanned."
+    # The scan re-includes a ROOT base, so the range it covers is one larger.
+    if [ -n "$newset" ] && [ "$base" = "$oldest" ]; then
+        outgoing="$oldest${outgoing:+$NL}$outgoing"
+    fi
+    if [ -z "$outgoing" ]; then
+        # A force REWIND to an ancestor lands here: the ref moves and publishes
+        # nothing. Blocking it was cry-wolf on a correct push.
+        echo "PII scan: '$local_ref' publishes no new commit."
+        continue
+    fi
+
+    # THE RANGE MUST COVER WHAT WAS ENUMERATED. A base is a single commit and
+    # the outgoing set need not be a single chain, so this is checked rather
+    # than reasoned about — it is the one assertion that does not depend on
+    # having got the traversal order right.
+    for _sha in $newset; do
+        case "$NL$outgoing$NL" in
+            *"$NL$_sha$NL"*) ;;
+            *) block "The range '$base..$local_sha' does not cover commit $_sha, which
+  this push would publish. Refusing to scan a range that is not the push." ;;
+        esac
+    done
+
+    expected=0
+    for _sha in $outgoing; do expected=$((expected + 1)); done
+
+    # Every commit is inspected separately, so a first push to a destination
+    # holding none of them is a long wait with nothing on screen — which is how
+    # `--no-verify` gets back into somebody's muscle memory. A count the code
+    # COMPARES against is a budget, not a measurement.
+    if [ "$expected" -gt 25 ]; then
+        echo "PII scan: '$remote_ref' publishes $expected commits, each inspected"
+        echo "separately. This will take a moment."
+    fi
+
+    # `< /dev/null`: the scanner would otherwise inherit the REMAINING ref lines
+    # as its stdin, and anything that consumed them — the scanner itself, or a
+    # tool it calls — would make this loop's next `read` see EOF. The refs after
+    # the first would then be published with neither a scan nor the guard above.
+    #
+    # Exit 0 is not evidence either. The scanner is read from the WORKING TREE,
+    # so what runs is whatever is on disk: a half-finished local edit, or a
+    # rewrite this very push would publish. The verdict is its own coverage
+    # line, matched WHOLE and against the count enumerated here — a substring
+    # test passed a stub whose output was "No PII scan clean result is available".
+    out=$(PII_SCAN_CONTEXT=PUSH "$SCAN" "$base...$local_sha" 2>&1 < /dev/null) || {
+        printf '%s\n' "$out"
+        exit 1
+    }
+    printf '%s\n' "$out"
+    # The count is read as a NUMBER and compared with `-ge`, not matched as the
+    # exact figure. The scan derives its own count from `merge-base(base,head)`
+    # and this one comes from `base..head`; those agree whenever the base is an
+    # ancestor, which is every ordinary push, and a force push onto a history
+    # with more than one merge base makes the scan enumerate MORE. Demanding
+    # equality there refuses a correct push, and the property actually wanted is
+    # that the scan covered at least what was enumerated here.
+    reported=""
+    while IFS= read -r _line; do
+        case "$_line" in
+            "PII scan clean — "*" commit(s) inspected individually,")
+                reported="${_line#PII scan clean — }"
+                reported="${reported% commit(s) inspected individually,}"
+                ;;
+        esac
+    done <<< "$out"
+    case "${reported:-x}" in
+        ''|*[!0-9]*)
+            block "The PII scan exited 0 without reporting what it inspected, so nothing
+  here knows it ran. It is read from the working tree at
+    $SCAN
+  Check that file against git before pushing." ;;
+    esac
+    [ "$reported" -ge "$expected" ] || block "The PII scan reported inspecting $reported commit(s); this push publishes
+  $expected. Refusing to treat a partial scan as a clean one."
+done
+
+exit 0
 HOOK_EOF
     chmod +x "$HOOKS_DIR/pre-push"
-    echo "  Installed pre-push hook (push blocker)"
+    echo "  Installed pre-push hook (PII scan + branch guard)"
 else
     HOOKS_INSTALLED=0
     echo "  WARNING: could not locate a git hooks directory for $WORKSPACE_ROOT"

@@ -320,7 +320,7 @@ fi
 LOCAL_SHA=$(git rev-parse HEAD)
 PR_HEAD=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
 if [ "$PR_HEAD" != "$LOCAL_SHA" ]; then
-  git push --no-verify -u origin "$(git branch --show-current)"
+  git push -u origin "$(git branch --show-current)"
 fi
 PUBLISHED_SHA=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
 [ "$PUBLISHED_SHA" = "$LOCAL_SHA" ] || {
@@ -330,10 +330,10 @@ PUBLISHED_SHA=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
 printf 'PUBLISHED_SHA=%q\n' "$PUBLISHED_SHA" >> "$STATE_FILE" || exit 1
 ```
 
-The pre-push hook blocks the plain form; `--no-verify` is the working push here
-and is not the emergency bypass that `git commit --no-verify` is. Check whether
-your agent's own instruction file says to hand this command to the user rather
-than running it — in this repository, Claude Code sessions do.
+The push is plain: the pre-push hook scans the commits it would publish rather
+than refusing it, so `--no-verify` here would skip that scan. Check whether your
+agent's own instruction file says to hand this command to the user rather than
+running it — in this repository, Claude Code sessions do.
 
 ### 6. Reply, then resolve only the published threads
 

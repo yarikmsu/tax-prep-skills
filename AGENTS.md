@@ -386,10 +386,12 @@ the two Windows defects the Windows job found: `docs/contributing/ci-and-locks.m
   `main`/`master` and blocks PII and sensitive file types.
 - Emergency bypass is `git commit --no-verify` — use it deliberately, never
   routinely.
-- The pre-push hook blocks pushes; the working form is
-  `git push --no-verify -u origin <branch>`. Whether an agent should run that
-  itself or hand it to the user is a per-agent convention — check your agent's
-  own instruction file.
+- The pre-push hook SCANS the changed files of every commit a push would
+  publish and passes a clean branch, so `git push -u origin <branch>` is the
+  working form; it refuses a push to `main`/`master`. **`--no-verify` is an emergency, not a habit** — the
+  same flag turns off the commit-time PII gate. Whether an agent should run the
+  push itself or hand it to the user is a per-agent convention — check your
+  agent's own instruction file.
 - **Never credit an AI assistant as an author.** No commit message, PR title or
   body, or committed file may carry a generated-with note, a co-author trailer,
   or a session link. (Naming an agent as a *supported target* in user-facing

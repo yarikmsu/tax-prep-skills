@@ -454,7 +454,7 @@ class TestSkillLayout:
         guard = "handled IDs do not exactly match this review batch"
         assert body.count(guard) >= 4
         assert body.count('(($handled | sort) == ($batch | sort))') >= 4
-        push_at = body.index('git push --no-verify')
+        push_at = body.index('git push -u origin')
         reply_at = body.index('comments/$COMMENT_ID/replies')
         resolve_at = body.index("resolveReviewThread")
         assert body.rfind(guard, 0, push_at) >= 0
@@ -533,7 +533,7 @@ class TestSkillLayout:
         """Remote thread state must never get ahead of the PR's code state."""
         body = skill_text("codex-loop")
         commit_at = body.index('git commit -m "fix: address review findings"')
-        push_at = body.index('git push --no-verify')
+        push_at = body.index('git push -u origin')
         verify_at = body.index('[ "$PUBLISHED_SHA" = "$LOCAL_SHA" ]')
         reply_at = body.index('comments/$COMMENT_ID/replies')
         resolve_at = body.index('resolveReviewThread')

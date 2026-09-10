@@ -1196,7 +1196,7 @@ apply_red_checks
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
 #   skill .md edit                 891 tests     19.7 - 23.4s         3
 #   cold pass, all seven modules  1112 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4248 tests    228.4 - 243.4s        2
+#   (for scale) `pytest tests/`   4273 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 185 and runs 183; and
@@ -1206,7 +1206,7 @@ apply_red_checks
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4255 and runs 4248 for the same skips — and that row
+# `pytest tests/` collects 4280 and runs 4273 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1384,8 +1384,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained two hundred
-# and seventy-five tests (3973 to 4248), and the gap was ZERO when the sitting ended: it took the
+# Against the counts the seconds were taken at, the suite has gained three
+# hundred tests (3973 to 4273), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1416,7 +1416,11 @@ apply_red_checks
 # reads — byte counts, two regex sweeps over two files each, and a directory
 # glob — and the row's stated range is two seconds wide, so the seconds here are
 # stale in a way the counts can be trusted through. That is an argument for the
-# ORDER, not for skipping it. The round the seconds were taken at was V5's required-answer
+# ORDER, not for skipping it. Y6 is the round that shows what the order buys: its
+# twenty-five cases landed in tests/test_pii_content_scan.py, which this hook has no
+# arm for, so NO decomposition row moved and the debt did not grow — the sitting
+# Y5 bought is still the one that is owed, and it is now owed on a larger scale
+# row rather than on a second moving part. The round the seconds were taken at was V5's required-answer
 # registry: sixty-eight cases in that new module, and ONE case in secure_fs,
 # which parametrises over `agents/lib/*.py` and so gains a case for every engine
 # module added. That single case is the only reason a decomposition row moved at
@@ -1565,13 +1569,13 @@ apply_red_checks
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
 # yet taken. FIVE pairs read none and two do not, and the second of those two is
-# what changed here: of the two hundred
-# and seventy-five tests the suite has gained since the sitting, NINE landed in
+# what changed here: of the three hundred
+# tests the suite has gained since the sitting, NINE landed in
 # tests/test_secure_fs.py — the Windows cases plus one case each for
 # V2's and V1's new engine modules, which is that module's pair — SIX landed in
 # tests/test_portability.py, which is Y5 and is a row moving on its OWN account
 # rather than by parametrisation, and
-# the other two hundred and sixty in test_answers, test_ci_workflow,
+# the other two hundred and eighty-five in test_answers, test_ci_workflow,
 # test_pii_content_scan, test_evals, test_eval_run, test_parse_records,
 # test_return_builder, test_receipt, test_filing_package, test_pdf_render and
 # test_workspace, none
@@ -1581,7 +1585,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to fifteen; the remaining two hundred and sixty are modules this
+# They sum to fifteen; the remaining two hundred and eighty-five are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

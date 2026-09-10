@@ -35,10 +35,16 @@ FAKE_SSN = f"{_SSN_AREA}-{_SSN_GROUP}-{_SSN_SERIAL}"
 FAKE_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
 
 
-def _make_repo(tmp_path: Path) -> Path:
+def _make_repo(tmp_path: Path, branch: str | None = None) -> Path:
     tmp_path.mkdir(parents=True, exist_ok=True)
-    """A throwaway git repo carrying a copy of the scanner and the allowlist."""
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    """A throwaway git repo carrying a copy of the scanner and the allowlist.
+
+    `branch` names the initial branch. The push tests below need one that is NOT
+    `main`, because refusing a push to `main` is a behaviour under test there and
+    it has to be somewhere a test goes on purpose.
+    """
+    subprocess.run(["git", "init", "-q"] + (["-b", branch] if branch else []),
+                   cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"],
                    cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
@@ -356,12 +362,14 @@ def test_a_root_commit_is_still_detected_when_its_MESSAGE_mentions_a_parent(tmp_
     assert "leak.md" in r.stdout
 
 
-def _clone_shallow(origin: Path, dest: Path, depth: int) -> Path:
+def _clone_shallow(origin: Path, dest: Path, depth: int,
+                   branch: str | None = None) -> Path:
     """A genuinely shallow clone — `file://` forces the transport that honours
     --depth, where a plain local path hardlinks the whole object store instead.
     """
-    subprocess.run(["git", "clone", "-q", "--depth", str(depth),
-                    f"file://{origin}", str(dest)], check=True)
+    subprocess.run(["git", "clone", "-q", "--depth", str(depth)]
+                   + (["--branch", branch] if branch else [])
+                   + [f"file://{origin}", str(dest)], check=True)
     assert subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
                           cwd=dest, capture_output=True, text=True
                           ).stdout.strip() == "true", "the clone is not shallow"
@@ -1596,3 +1604,602 @@ def test_the_digest_exemption_removes_only_the_digest_token():
     not the lines holding them."""
     scanner = (REPO / "scripts" / "pre-commit-pii-scan.sh").read_text()
     assert "s/--hash=sha256:[0-9a-f]{64}//g" in scanner
+
+
+# --- Y6: the pre-push hook scans instead of refusing ------------------------
+#
+# The hook these tests drive is written by `agents/install.sh`, so they install
+# it the way a contributor does and then run REAL pushes at a real bare remote.
+# That is the only way to exercise it: git supplies the ref lines on stdin, and
+# a hook invoked by hand is a hook whose input the test invented.
+
+
+def _install_hooks(repo: Path, home: Path) -> None:
+    """Install the managed git hooks the way a contributor does."""
+    home.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(["bash", "agents/install.sh", "--hooks-only"], cwd=repo,
+                       capture_output=True, text=True,
+                       env={**os.environ, "HOME": str(home)})
+    assert r.returncode == 0, f"hook install failed:\n{r.stdout}\n{r.stderr}"
+    assert (repo / ".git" / "hooks" / "pre-push").is_file(), "no pre-push hook"
+
+
+def _pushable_clone(tmp_path: Path) -> tuple[Path, Path]:
+    """A throwaway clone with the managed hooks installed and a bare `origin`."""
+    clone = _make_repo(tmp_path / "clone", branch="work")
+    (clone / "agents").mkdir()
+    shutil.copy(REPO / "agents" / "install.sh", clone / "agents")
+    _install_hooks(clone, tmp_path / "home")
+
+    remote = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)],
+                   cwd=clone, check=True)
+
+    subprocess.run(["git", "add", "-A"], cwd=clone, check=True)
+    _commit(clone, "seed")
+    return clone, remote
+
+
+def _push(clone: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "push", "origin", *args], cwd=clone,
+                          capture_output=True, text=True)
+
+
+def test_a_clean_branch_pushes_without_no_verify(tmp_path):
+    """The whole point of Y6. `--no-verify` disables the pre-commit PII gate as
+    well as this hook, so a workflow whose documented push command carries it
+    teaches the reflex that turns the content scan off."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode == 0, (
+        f"a clean branch was refused:\nstdout={r.stdout}\nstderr={r.stderr}")
+
+
+def test_a_full_ssn_in_an_outgoing_commit_blocks_the_push(tmp_path):
+    """The protection the blanket refusal never actually provided: it refused
+    every push identically, so it could not tell a clean branch from this one.
+
+    The commit is made with --no-verify, which is exactly how such a commit
+    comes to exist — this hook is the second chance at it, and CI the third.
+
+    The banner is asserted here rather than in a case of its own, because a
+    second push through the same path buys only the string. Range mode used to
+    announce itself as CI, which sends a contributor standing at their own
+    terminal to look for a workflow run that does not exist, and the remedies it
+    named were index-shaped: `--cached` lists nothing once the commit is written.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(clone, "leak")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "a full SSN was pushed"
+    assert FAKE_SSN not in r.stdout + r.stderr, (
+        "the block message echoed the value it exists to keep off the wire")
+    assert "PUSH BLOCKED" in r.stdout, (
+        f"expected a push-shaped banner; got:\n{r.stdout}")
+    assert "CI BLOCKED" not in r.stdout
+    assert "--cached" not in r.stdout, (
+        "the block pointed at the index, which is empty at push time")
+
+
+def test_a_commit_removed_by_a_later_one_still_blocks_the_push(tmp_path):
+    """Push mode inherits range mode's per-commit scan, and this is why that
+    matters here rather than only in CI: the value is in the history being
+    published even though the tip is clean. A net `base...head` diff sees
+    nothing."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(clone, "leak")
+    (clone / "leak.md").write_text("cleaned up\n")
+    subprocess.run(["git", "add", "leak.md"], cwd=clone, check=True)
+    _commit(clone, "remove it again")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, (
+        "the tip was clean, so only a per-commit scan catches this")
+
+
+def test_only_the_commits_the_remote_lacks_are_scanned(tmp_path):
+    """The base is what the remote already has, exactly as in CI: a commit the
+    remote carries was somebody's earlier push and is not this push's business.
+
+    Without that bound, every push of a NEW branch re-scans the whole history
+    and one old blocked commit makes the repository permanently unpushable —
+    the cry-wolf shape that gets a gate switched off for good. The new-branch
+    case is the one that can over-scan, because git reports the remote sha as
+    all zeros and the range has to be recovered from the remote-tracking refs;
+    an update to an existing branch is handed its own base.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(clone, "leak")
+    forced = _push(clone, "--no-verify", "HEAD:refs/heads/work")
+    assert forced.returncode == 0, f"seeding push failed:\n{forced.stderr}"
+
+    # A NEW branch whose history contains that commit: remote sha is zeros.
+    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=clone,
+                   check=True)
+    _stage(clone, "next.md", "ordinary follow-up\n")
+    _commit(clone, "clean follow-up")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode == 0, (
+        f"a new branch was refused for a leak the remote already has:\n"
+        f"{r.stdout}\n{r.stderr}")
+
+    # ...and again as an UPDATE to that branch, where git supplies the base.
+    _stage(clone, "more.md", "more ordinary work\n")
+    _commit(clone, "second follow-up")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode == 0, (
+        f"an update to a pushed branch was refused:\n{r.stdout}\n{r.stderr}")
+
+
+def test_pushing_to_main_is_still_refused(tmp_path):
+    """The half of the old blanket refusal that was a protection rather than
+    friction. The pre-commit hook blocks COMMITTING to main; nothing else
+    blocked PUSHING there, so replacing the refusal with a scan alone would
+    have removed a control while claiming to remove only a nuisance."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    for branch in ("main", "master"):
+        r = _push(clone, f"HEAD:refs/heads/{branch}")
+        assert r.returncode != 0, f"a direct push to {branch} was allowed"
+
+
+def test_deleting_a_remote_branch_is_not_blocked(tmp_path):
+    """A deletion publishes no content, and git signals it with an all-zero
+    LOCAL sha. Treating that as a range makes the hook refuse the ordinary
+    branch cleanup after a merge — which is how `--no-verify` gets back into
+    the documented workflow through a different door."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    assert _push(clone, "HEAD:refs/heads/feature").returncode == 0
+    r = _push(clone, "--delete", "refs/heads/feature")
+    assert r.returncode == 0, f"branch deletion was refused:\n{r.stdout}{r.stderr}"
+
+
+def test_the_hook_blocks_when_the_scan_script_is_missing(tmp_path):
+    """Fails closed, like every other path in this gate. An unperformed scan
+    must never look like a clean one — and the script going missing is the
+    realistic case, since it is deleted by a bad rebase or absent in a clone
+    made before it existed."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    (clone / "scripts" / "pre-commit-pii-scan.sh").unlink()
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "pushed with no scanner present"
+    assert "PUSH BLOCKED" in r.stdout
+
+
+def test_a_shallow_history_blocks_rather_than_scanning_around_it(tmp_path):
+    """A shallow boundary and a true root commit look identical to `rev-list`:
+    neither has a parent in this clone. The difference is in the commit OBJECT,
+    and it decides whether the range the hook builds is complete.
+
+    Given the boundary as its base, the scan EXCLUDES it — its own root check
+    reads the object, finds the recorded parent this clone lacks, and does not
+    re-include it. The oldest commit of the push then goes unscanned while
+    everything reports clean. A root commit has no such gap, which is why the
+    ordinary first push above is allowed to take the same path.
+    """
+    clone, remote = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    assert _push(clone, "HEAD:refs/heads/work").returncode == 0
+
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", "work",
+                    f"file://{remote}", str(shallow)], check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"],
+                   cwd=shallow, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=shallow, check=True)
+    _install_hooks(shallow, tmp_path / "home-shallow")
+
+    # A remote nothing has been fetched from, so there is no remote-tracking
+    # ref to bound the range and the boundary itself becomes the oldest
+    # outgoing commit. Pushing a shallow checkout somewhere new is how this
+    # arises for real — a CI job opening a pull request from its own checkout.
+    elsewhere = tmp_path / "elsewhere.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(elsewhere)], check=True)
+    subprocess.run(["git", "remote", "remove", "origin"], cwd=shallow, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(elsewhere)],
+                   cwd=shallow, check=True)
+    _stage(shallow, "more.md", "more ordinary work\n")
+    _commit(shallow, "work on a shallow clone")
+
+    r = _push(shallow, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "a range that omits its oldest commit was pushed"
+    assert "records a parent this clone does not have" in r.stdout, (
+        "the refusal must come from the HOOK's own object read. The scanner's "
+        "generic merge-base failure also mentions `unshallow`, so a looser "
+        "assertion passes for a base that is merely unresolvable"
+        f":\n{r.stdout}")
+
+
+def test_a_remote_with_no_tracking_refs_is_bounded_by_nothing(tmp_path):
+    """The bound has to be what THIS remote has. `--remotes` — every remote's
+    tracking refs — was the fallback here, and it is wrong in the direction that
+    matters: it excludes what SOME remote holds, and a commit another remote
+    holds is exactly what this push publishes to a place that has never seen it.
+
+    The reproduction is the fork/upstream shape CONTRIBUTING.md invites: a value
+    reaches `origin` past the gate, a second remote is added and never fetched,
+    and the push to it inspected nothing and said nothing.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(clone, "leak")
+    assert _push(clone, "--no-verify", "HEAD:refs/heads/work").returncode == 0
+
+    elsewhere = tmp_path / "elsewhere.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(elsewhere)], check=True)
+    subprocess.run(["git", "remote", "add", "client", str(elsewhere)],
+                   cwd=clone, check=True)
+    r = subprocess.run(["git", "push", "client", "HEAD:refs/heads/feature"],
+                       cwd=clone, capture_output=True, text=True)
+    assert r.returncode != 0, (
+        "a commit origin already has was republished to a remote that has "
+        "never seen it, unscanned")
+
+
+def test_a_push_by_url_is_bounded_by_what_that_url_advertises(tmp_path):
+    """The counterweight to the test above: a remote named by URL must still be
+    bounded, not fall back to re-scanning every commit it already has. Asking
+    the destination is what makes both cases one case.
+
+    The ref has to be a NEW one. Git reports the real remote sha for a branch the
+    destination already carries, however the destination was named, so an update
+    never reaches the code that recovers the range.
+    """
+    clone, remote = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    assert _push(clone, "HEAD:refs/heads/work").returncode == 0
+
+    _stage(clone, "next.md", "more ordinary work\n")
+    _commit(clone, "follow-up")
+    r = subprocess.run(["git", "push", str(remote), "HEAD:refs/heads/other"],
+                       cwd=clone, capture_output=True, text=True)
+    assert r.returncode == 0, f"a push by URL was refused:\n{r.stdout}{r.stderr}"
+    assert "1 commit(s) inspected" in r.stdout, (
+        f"the destination was not asked, so the whole history was rescanned:"
+        f"\n{r.stdout}")
+
+
+def test_a_neutered_scanner_blocks_rather_than_passing_silently(tmp_path):
+    """Exit 0 is not evidence that the scan ran. The script is read from the
+    WORKING TREE at push time, so what executes is whatever is on disk — a
+    half-finished local edit to it, or a rewrite the push itself would publish.
+
+    Replacing it with `exit 0` published a full SSN with no output at all. The
+    hook requires the affirmative coverage line, which is the same reason range
+    mode prints one.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    (clone / "scripts" / "pre-commit-pii-scan.sh").write_text("#!/bin/bash\nexit 0\n")
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    _commit(clone, "neuter the scanner and leak")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "a scanner that inspected nothing reported clean"
+    assert "PUSH BLOCKED" in r.stdout
+
+
+def test_deleting_main_is_refused_even_though_a_deletion_publishes_nothing(tmp_path):
+    """The destination guard runs BEFORE the deletion skip. Ordered the other
+    way — a deletion publishes no content, so skip it — `git push origin
+    --delete main` became the one form of writing to that branch the hook
+    allowed, and this diff makes `--delete` the documented plain command."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    assert _push(clone, "--no-verify", "HEAD:refs/heads/main").returncode == 0
+    r = _push(clone, "--delete", "refs/heads/main")
+    assert r.returncode != 0, "the hook allowed remote main to be deleted"
+    assert "PUSH BLOCKED" in r.stdout
+
+
+def test_a_ref_that_publishes_nothing_says_so(tmp_path):
+    """A hook that prints nothing cannot be told from one that did not run. A
+    tag pointing at an already-pushed commit is the ordinary way to reach this,
+    and it used to exit silently."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    assert _push(clone, "HEAD:refs/heads/feature").returncode == 0
+    subprocess.run(["git", "tag", "-a", "-m", "release", "v1"], cwd=clone,
+                   check=True)
+    r = _push(clone, "refs/tags/v1")
+    assert r.returncode == 0, f"a tag push was refused:\n{r.stdout}{r.stderr}"
+    assert "publishes no commit" in r.stdout, (
+        f"the hook passed the ref without a word about it:\n{r.stdout!r}")
+
+
+def test_an_unknown_scan_context_is_an_error_not_a_label(tmp_path):
+    """`PII_SCAN_CONTEXT` changes wording only, and the set is closed for the
+    reason `agents/lib/capabilities.py` gives about its own ids: a typo must not
+    silently select nothing. Lowercase `push` printed a banner reading "push
+    BLOCKED" and quietly dropped the push-specific remedy, and an arbitrary
+    value could fake a clean line into somebody's scrollback."""
+    repo = _make_repo(tmp_path)
+    _stage(repo, "seed.md", "nothing here\n")
+    base = _commit(repo, "base")
+    _stage(repo, "ok.md", "still nothing\n")
+    _commit(repo, "clean")
+
+    for value in ("push", "PII scan clean"):
+        r = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh",
+                            f"{base}...HEAD"], cwd=repo,
+                           capture_output=True, text=True,
+                           env={**os.environ, "PII_SCAN_CONTEXT": value})
+        assert r.returncode == 1, f"{value!r} was accepted as a context label"
+        assert "not a label" in r.stdout, r.stdout
+
+
+def _stub_scanner(clone: Path, body: str) -> None:
+    """Replace the scanner the hook will read with `body`, committed.
+
+    Committed rather than left dirty because the point of several cases below is
+    what runs at PUSH time, and the hook reads the working tree either way — a
+    stub that is also in the history is the harsher version of the same thing.
+    """
+    (clone / "scripts" / "pre-commit-pii-scan.sh").write_text(body)
+    os.chmod(clone / "scripts" / "pre-commit-pii-scan.sh", 0o755)
+    subprocess.run(["git", "add", "-f", "scripts/pre-commit-pii-scan.sh"],
+                   cwd=clone, check=True)
+
+
+def test_a_scanner_that_denies_coverage_is_not_read_as_clean(tmp_path):
+    """The verdict was a SUBSTRING test, and a stub printing "No PII scan clean
+    result is available" contains it. The banner is matched whole now, and
+    against the commit count this push enumerated — which is a verification
+    rather than a string, and is what a scanner cannot accidentally satisfy."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stub_scanner(clone, '#!/bin/bash\necho "No PII scan clean result is available"\nexit 0\n')
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    _commit(clone, "deny coverage and leak")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "a message denying coverage was read as coverage"
+    assert "PUSH BLOCKED" in r.stdout
+
+
+def test_every_ref_of_a_multi_ref_push_is_processed(tmp_path):
+    """The scanner inherited the REMAINING ref lines as its stdin. Anything that
+    consumed them — the scanner itself, or a tool it calls — made this loop's
+    next `read` see EOF, and every ref after the first went out with neither a
+    scan nor the destination guard.
+
+    The stub eats stdin and then delegates, which is the whole mechanism: with
+    the redirect in place it eats nothing and both refs are scanned.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    shutil.copy(SCAN, clone / "scripts" / "real-scan.sh")
+    os.chmod(clone / "scripts" / "real-scan.sh", 0o755)
+    subprocess.run(["git", "add", "-f", "scripts/real-scan.sh"], cwd=clone,
+                   check=True)
+    # Eats stdin for the RANGE call only. The name check is handed its input on
+    # a pipe, so a stub that ate that too would be caught by the name check
+    # rather than by the case under test — which is what happened, and is the
+    # count verification doing its job on the wrong question.
+    _stub_scanner(clone, '#!/bin/bash\n'
+                         'if [ "${1:-}" != "--names" ]; then cat > /dev/null; fi\n'
+                         'exec "$(git rev-parse --show-toplevel)/scripts/real-scan.sh" "$@"\n')
+    _commit(clone, "a scanner that reads stdin")
+
+    r = _push(clone, "HEAD:refs/heads/one", "HEAD:refs/heads/two")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    # Counted on the RANGE banner, not on "PII scan clean" — the ref-name check
+    # prints one of those too, so the looser count reached two from a single ref
+    # and the case passed with the redirect removed.
+    assert r.stdout.count("commit(s) inspected individually") == 2, (
+        f"expected one scan per ref; the rest of the protocol was eaten:"
+        f"\n{r.stdout}")
+
+
+def test_a_tag_pointing_at_a_blob_is_refused(tmp_path):
+    """`git rev-list <blob>` succeeds with EMPTY output, so a ref whose target
+    is not a commit read as "publishes no commit" and went out carrying its
+    whole content, unscanned. The old blanket refusal covered this."""
+    clone, _ = _pushable_clone(tmp_path)
+    (clone / "payload.txt").write_text(f"SSN: {FAKE_SSN}\n")
+    blob = subprocess.run(["git", "hash-object", "-w", "payload.txt"],
+                          cwd=clone, capture_output=True, text=True,
+                          check=True).stdout.strip()
+    (clone / "payload.txt").unlink()
+    subprocess.run(["git", "tag", "payload", blob], cwd=clone, check=True)
+    r = _push(clone, "refs/tags/payload")
+    assert r.returncode != 0, "a blob was published with no scan"
+    assert "not a commit" in r.stdout, r.stdout
+
+
+def test_an_ssn_in_a_ref_name_blocks_the_push(tmp_path):
+    """A ref name is published as-is and is not file content, so nothing
+    downstream masks it — the pathname rule's argument exactly, and the reason
+    that rule runs BEFORE any exemption. The rule stays in the scanner; the hook
+    hands it the names.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    r = _push(clone, f"HEAD:refs/heads/taxpayer-{FAKE_SSN}")
+    assert r.returncode != 0, "a ref named after an SSN was published"
+    assert FAKE_SSN not in r.stdout + r.stderr, (
+        "the refusal printed the name it exists to keep off the wire")
+
+
+def test_an_allowlisted_value_in_a_ref_name_still_pushes(tmp_path):
+    """The counterweight. `000-00-0000` is allowlisted, and a name rule that
+    ignored the allowlist would be a new way for the gate to cry wolf — on the
+    synthetic values this repository's own fixtures use."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    r = _push(clone, "HEAD:refs/heads/fixture-000-00-0000")
+    assert r.returncode == 0, f"an allowlisted name was refused:\n{r.stdout}"
+
+
+def test_only_the_published_ref_name_is_checked(tmp_path):
+    """The LOCAL ref is not published, and checking it was a cry-wolf source.
+
+    `git push <sha>:refs/heads/x` makes the local ref the sha itself, and about
+    one 40-hex sha in eight holds a maximal run of exactly nine digits — the
+    bare-SSN rule. This surfaced as a test that failed one run in eight, on a
+    push carrying nothing sensitive at all: the same false-positive class the
+    hashed-lock digest exemption exists for, arriving through a new caller.
+
+    A local branch named after an SSN and pushed under a clean name publishes
+    nothing sensitive, so it passes; the counterweight is the case above, where
+    the name reaching the remote is the one that carries it.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "ordinary work")
+    subprocess.run(["git", "branch", f"local-{FAKE_SSN}"], cwd=clone, check=True)
+    r = _push(clone, f"local-{FAKE_SSN}:refs/heads/clean-name")
+    assert r.returncode == 0, (
+        f"a local-only name blocked a push that publishes nothing sensitive:"
+        f"\n{r.stdout}")
+
+
+def test_the_destination_is_asked_rather_than_the_tracking_refs(tmp_path):
+    """Remote-tracking refs are a local CACHE of what some remote held at the
+    last fetch, which is a different question from what THIS push's destination
+    has. `remote.origin.pushurl` separates the two by configuration: the range
+    was bounded by what `origin` fetched from, and the commits went somewhere
+    that had never seen them, unscanned and unannounced.
+
+    Git hands the hook the real destination as its second argument.
+    """
+    clone, remote = _pushable_clone(tmp_path)
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit(clone, "leak")
+    assert _push(clone, "--no-verify", "HEAD:refs/heads/work").returncode == 0
+
+    elsewhere = tmp_path / "elsewhere.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(elsewhere)], check=True)
+    subprocess.run(["git", "config", "remote.origin.pushurl", str(elsewhere)],
+                   cwd=clone, check=True)
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, (
+        "the push went to a destination that has never seen the commit, "
+        "bounded by what a different remote had")
+
+
+def test_a_force_rewind_that_publishes_nothing_is_not_refused(tmp_path):
+    """The counterweight to requiring a coverage line: a rewind moves the ref
+    and publishes no commit, so the scan enumerates nothing and prints no
+    banner. Reading that as an unperformed scan blocked a correct push, which is
+    the cry-wolf shape that gets a gate switched off."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "one.md", "first\n")
+    first = _commit(clone, "first")
+    _stage(clone, "two.md", "second\n")
+    _commit(clone, "second")
+    assert _push(clone, "HEAD:refs/heads/feature").returncode == 0
+
+    r = _push(clone, "--force", f"{first}:refs/heads/feature")
+    assert r.returncode == 0, (
+        f"a rewind publishing no commit was refused:\n{r.stdout}{r.stderr}")
+    assert "publishes no new commit" in r.stdout, r.stdout
+
+
+def _commit_at(repo: Path, msg: str, when: str) -> str:
+    """A commit with a chosen committer date, which is what `git rev-list`
+    orders by unless told otherwise."""
+    env = {**os.environ, "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+    subprocess.run(["git", "commit", "-q", "--no-verify", "-m", msg], cwd=repo,
+                   check=True, env=env)
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_the_oldest_outgoing_commit_is_found_by_topology_not_by_date(tmp_path):
+    """`git rev-list` orders by committer DATE by default, and a parent is not
+    guaranteed to come after its children. Taking the last line as "oldest"
+    therefore picked a DESCENDANT, whose parent — itself an outgoing commit —
+    became the base and was excluded from the range.
+
+    The graph is the smallest one that shows it: P introduces the value, two
+    children each remove it, a merge joins them, and the dates run M > B > P > A
+    so that default traversal emits A last. The tip is clean and both parents of
+    the merge are clean; only P carries the SSN, and only a range that starts
+    below P sees it.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "notes.md", "Nothing sensitive here.\n")
+    _commit(clone, "on the remote already")
+    assert _push(clone, "HEAD:refs/heads/work").returncode == 0
+
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n")
+    _commit_at(clone, "P introduces it", "2026-03-03T00:00:00Z")
+    subprocess.run(["git", "branch", "-q", "side"], cwd=clone, check=True)
+
+    (clone / "leak.md").write_text("removed\n")
+    subprocess.run(["git", "add", "leak.md"], cwd=clone, check=True)
+    _commit_at(clone, "A removes it", "2026-01-01T00:00:00Z")
+
+    subprocess.run(["git", "checkout", "-q", "side"], cwd=clone, check=True)
+    (clone / "leak.md").write_text("removed\n")
+    subprocess.run(["git", "add", "leak.md"], cwd=clone, check=True)
+    _commit_at(clone, "B removes it", "2026-04-04T00:00:00Z")
+
+    subprocess.run(["git", "merge", "-q", "--no-ff", "-m", "M", "work"],
+                   cwd=clone, check=True,
+                   env={**os.environ, "GIT_AUTHOR_DATE": "2026-05-05T00:00:00Z",
+                        "GIT_COMMITTER_DATE": "2026-05-05T00:00:00Z"})
+
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "the commit that introduced the value was not scanned"
+    assert "PII pattern in content" in r.stdout, (
+        "the range must have COVERED the introducing commit and the scan must "
+        "have found it there. A coverage refusal instead means the base was "
+        f"still wrong and only the self-check caught it:\n{r.stdout}")
+
+
+def test_a_name_check_that_reports_nothing_is_not_read_as_a_check(tmp_path):
+    """The `--names` mode has its own way of succeeding without working: given
+    nothing on stdin it reports zero names checked and exits 0. So the hook
+    verifies the count coming back, exactly as it does for the range scan —
+    "exit 0 is not evidence" applies to the mode added to close that hole."""
+    clone, _ = _pushable_clone(tmp_path)
+    shutil.copy(SCAN, clone / "scripts" / "real-scan.sh")
+    os.chmod(clone / "scripts" / "real-scan.sh", 0o755)
+    subprocess.run(["git", "add", "-f", "scripts/real-scan.sh"], cwd=clone,
+                   check=True)
+    _stub_scanner(clone, '#!/bin/bash\n'
+                         'if [ "${1:-}" = "--names" ]; then exit 0; fi\n'
+                         'exec "$(git rev-parse --show-toplevel)/scripts/real-scan.sh" "$@"\n')
+    _commit(clone, "a name check that checks nothing")
+
+    r = _push(clone, f"HEAD:refs/heads/taxpayer-{FAKE_SSN}")
+    assert r.returncode != 0, "a ref name went out with no check having happened"
+    assert "reported nothing about the ref" in r.stdout, r.stdout
+    # And the refusal must not repeat the name. Every message AFTER the check
+    # may print it, because by then it has passed these patterns; this one
+    # cannot, and the name is the candidate value — writing it into scrollback
+    # is the disclosure the check exists to prevent. The first version of this
+    # message named the ref, and this assertion is what found it.
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_a_scan_reporting_fewer_commits_than_the_push_publishes_blocks(tmp_path):
+    """What the COUNT buys over "the banner is present". A scanner that
+    inspected some of the push and reported cleanly on that is the partial-scan
+    case, and it looks exactly like a complete one from outside."""
+    clone, _ = _pushable_clone(tmp_path)
+    _stub_scanner(clone, '#!/bin/bash\n'
+                         'if [ "${1:-}" = "--names" ]; then\n'
+                         '  echo "PII scan clean — 1 name(s) checked."; exit 0\n'
+                         'fi\n'
+                         'echo "PII scan clean — 0 commit(s) inspected individually,"\n'
+                         'echo "0 changed file(s) checked."\n'
+                         'exit 0\n')
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    _commit(clone, "report a partial scan and leak")
+    r = _push(clone, "HEAD:refs/heads/feature")
+    assert r.returncode != 0, "a scan covering none of the push was read as clean"
+    assert "reported inspecting 0 commit(s)" in r.stdout, r.stdout

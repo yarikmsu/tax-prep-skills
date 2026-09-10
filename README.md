@@ -248,7 +248,7 @@ cooperating, or on being the same agent that installed them:
 CI runs the same script against the pull request, inspecting **each commit individually** rather than the net diff — so a secret added in one commit and deleted in a later one is still caught, and a commit made with `--no-verify` cannot slip through. Any git command the scan cannot run is an error, never a clean result.
 
 **Pre-push hook:**
-- Blocks every push, including your own, so nothing leaves the machine without a deliberate review. It prints the command to use when you are ready: `git push --no-verify -u origin <branch>`
+- Runs the same scanner over every changed file in every commit the push would *publish*, not just the one you last made — so a value added in one commit and removed in a later one is still caught before it leaves the machine, and a commit made with `--no-verify` gets a second look here. A clean branch pushes normally: `git push -u origin <branch>`. It also refuses a push straight to `main`.
 
 **CI (GitHub Actions):**
 - Runs pytest, PII file scan, and pip-audit on every PR to `main`
@@ -259,7 +259,7 @@ CI runs the same script against the pull request, inspecting **each commit indiv
 - Enable full-disk encryption (FileVault on macOS, BitLocker on Windows)
 - Work in a private repository
 - Delete taxpayer data files after filing season
-- Review commits before pushing — the pre-push hook reminds you
+- Review commits before pushing — the pre-push hook scans them, but only you can see what a figure means
 
 ## Contributing
 
@@ -345,7 +345,7 @@ requirements.txt      # Pinned runtime dependencies
 
 1. Create a feature branch
 2. Make changes and commit (pre-commit hooks run automatically)
-3. Push manually: `git push --no-verify -u origin <branch>` (`--no-verify` bypasses the pre-push hook, which intentionally blocks all pushes to force manual review)
+3. Push: `git push -u origin <branch>` (the pre-push hook scans the outgoing commits and passes a clean branch; `--no-verify` skips the PII scan too, so use it only in an emergency)
 4. Open a PR — CI runs pytest + PII scan + pip-audit
 5. All checks must pass before merging
 

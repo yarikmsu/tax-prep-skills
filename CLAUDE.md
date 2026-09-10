@@ -85,8 +85,7 @@ AGENTS.md gives the push command; this is the per-agent convention it defers to.
 
 - **Never run `git push` yourself.** Print the command and let the user run it; once they
   confirm, open the PR with `gh pr create`. Never commit to `main` — the user
-  squash-merges. Delete a remote branch with
-  `git push origin --no-verify --delete <branch>`, the plain form being blocked.
+  squash-merges. Delete a remote branch with `git push origin --delete <branch>`.
 - **Waiting on CI: bind the poll to the commit** — `gh run list --commit "$SHA"`. Three ways to
   exit on an unmeasured green: `gh pr checks` reads the PREVIOUS commit's runs; an empty check
   list is "nothing pending"; MCP `get_status` reads STATUSES, not CHECK RUNS: `total_count: 0`.

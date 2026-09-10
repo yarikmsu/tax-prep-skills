@@ -39,14 +39,23 @@ SCAN_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 
 DIFF_RANGE="${1:-}"
-if [ -n "$DIFF_RANGE" ]; then
-  CONTEXT="CI"
-  ESCAPE_HATCH="Remove the offending content, or add a synthetic value to .pii-allowlist."
-else
-  CONTEXT="COMMIT"
-  ESCAPE_HATCH="If this is intentional, use: git commit --no-verify"
+
+# THE THIRD MODE. `--names <rev>` reads names on stdin, one per line, and applies
+# the content rules to each. It exists because the pre-push hook publishes
+# something this script otherwise never sees: a REF NAME. The argument is the
+# pathname rule's, exactly — a branch or tag named after an SSN discloses it
+# whatever it points at — and the rule stays here rather than in the hook for
+# the reason §1 gives about this script being the single gate.
+#
+# The revision is where `.pii-allowlist` is read from, on the same terms as
+# every other mode: the snapshot being published, never the working tree.
+NAMES_REV=""
+if [ "$DIFF_RANGE" = "--names" ]; then
+  NAMES_REV="${2:-}"
+  DIFF_RANGE=""
 fi
 
+CONTEXT="CI"
 die() {
   echo ""
   echo "=========================================="
@@ -59,7 +68,51 @@ die() {
   exit 1
 }
 
+# WHO is being refused, and what to type next. Range mode has two callers — CI
+# over a per-trigger range, and the pre-push hook over the commits a push would
+# publish — and every message below was written for the first one. "CI BLOCKED"
+# sends somebody standing at their own terminal to look for a workflow run that
+# does not exist, and the remedies it names are worse than useless there: the
+# INDEX is empty at push time, and `fetch-depth` is a CI setting.
+#
+# The label is the only thing the caller may set; every RULE stays here, which
+# is the whole reason CI calls this script instead of restating it. It is a
+# CLOSED set, and an unrecognised value is an error rather than a passthrough,
+# for the reason `agents/lib/capabilities.py` gives about its own ids: a typo
+# must not silently select nothing. `push` in lowercase used to print a banner
+# reading "push BLOCKED" and quietly drop the push-specific remedy, and an
+# arbitrary string could fake a clean line into somebody's scrollback.
+case "${PII_SCAN_CONTEXT:-}" in
+  ""|CI|PUSH) ;;
+  *) die "PII_SCAN_CONTEXT is set to '${PII_SCAN_CONTEXT}', which is not a label
+  this script knows. The set is CI and PUSH, and it changes the wording only." ;;
+esac
+
+if [ -n "$DIFF_RANGE" ] || [ -n "$NAMES_REV" ]; then
+  CONTEXT="${PII_SCAN_CONTEXT:-CI}"
+  ESCAPE_HATCH="Remove the offending content, or add a synthetic value to .pii-allowlist."
+  LIST_PATHS_CMD="git diff --name-only ${DIFF_RANGE:-HEAD}"
+  SHALLOW_REMEDY="CI needs fetch-depth: 0"
+  if [ "$CONTEXT" = "PUSH" ]; then
+    # The commit is already written, so the remedy is one step further back
+    # than at commit time: the allowlist is read from EACH SCANNED COMMIT, so
+    # adding an entry now exempts nothing in the history being pushed.
+    ESCAPE_HATCH="$ESCAPE_HATCH
+  The commit already exists, so this means amending or rebasing it — an
+  allowlist entry added on top does not clear the commit that carries the value."
+    SHALLOW_REMEDY="fetch the full history with: git fetch --unshallow"
+  fi
+else
+  CONTEXT="COMMIT"
+  ESCAPE_HATCH="If this is intentional, use: git commit --no-verify"
+  LIST_PATHS_CMD="git diff --cached --name-only"
+  SHALLOW_REMEDY="fetch the full history with: git fetch --unshallow"
+fi
+
 [ -n "$SCAN_ROOT" ] || die "not inside a git working tree — nothing to scan against"
+if [ "${1:-}" = "--names" ]; then
+  [ -n "$NAMES_REV" ] || die "--names needs the revision to read .pii-allowlist from"
+fi
 cd "$SCAN_ROOT" || die "cannot enter the repository root '$SCAN_ROOT'"
 
 # --- Scratch space ----------------------------------------------------------
@@ -148,7 +201,7 @@ if [ -n "$DIFF_RANGE" ]; then
   head="${DIFF_RANGE##*...}"
   [ -n "$head" ] || head="HEAD"
   merge_base=$(git merge-base "$base" "$head" 2>/dev/null) \
-    || die "cannot find a merge base for '$base' and '$head' — was the base commit fetched? (CI needs fetch-depth: 0)"
+    || die "cannot find a merge base for '$base' and '$head' — was the base commit fetched? ($SHALLOW_REMEDY)"
   # Materialized to a file rather than piped from a process substitution: a
   # failure inside `< <(...)` is not the WHILE loop's status, so the trailing
   # `|| die` never fired. A failing rev-list left SCOPES empty and the script
@@ -211,7 +264,7 @@ if [ -n "$DIFF_RANGE" ]; then
     elif git rev-parse -q --verify "${RECORDED_FIRST_PARENT}^{commit}" > /dev/null 2>&1; then
       parent="$RECORDED_FIRST_PARENT"
     else
-      die "commit '$sha' records a parent this clone does not have — a shallow history cannot be scanned commit by commit (CI needs fetch-depth: 0)"
+      die "commit '$sha' records a parent this clone does not have — a shallow history cannot be scanned commit by commit ($SHALLOW_REMEDY)"
     fi
     # "<allowlist revision>|<git diff arguments>"
     SCOPES+=("$sha|$parent $sha")
@@ -484,6 +537,42 @@ redact() {
   printf '%s' "$text" | sed -E 's/[0-9]{9}/[REDACTED]/g'
 }
 
+# --- Names mode -------------------------------------------------------------
+#
+# Runs here, after the rules are defined and before any diff is taken, because
+# there is no diff to take: the input is a list of names on stdin.
+if [ -n "$NAMES_REV" ]; then
+  load_allowlist "$NAMES_REV"
+  NAME_BLOCKED=()
+  names_seen=0
+  while IFS= read -r _name; do
+    [ -n "$_name" ] || continue
+    names_seen=$((names_seen + 1))
+    hits=$(count_hits "$_name")
+    if [ "$hits" = "ERROR" ]; then
+      die "a grep could not run while checking the names — refusing to call them clean"
+    fi
+    if [ "$hits" != "0" ]; then
+      NAME_BLOCKED+=("  BLOCKED NAME ($hits match(es)): $(redact "$_name")")
+    fi
+  done
+  if [ ${#NAME_BLOCKED[@]} -gt 0 ]; then
+    echo ""
+    echo "=========================================="
+    echo "  $CONTEXT BLOCKED — PII pattern in a name"
+    echo "=========================================="
+    echo ""
+    printf '%s\n' "${NAME_BLOCKED[@]}" | sort -u
+    echo ""
+    echo "A branch or tag name is published as-is and is not file content, so"
+    echo "nothing downstream can mask it. Rename it before pushing."
+    echo "$ESCAPE_HATCH"
+    exit 1
+  fi
+  echo "PII scan clean — ${names_seen} name(s) checked."
+  exit 0
+fi
+
 BLOCKED_EXTENSIONS="pdf|xlsx|xls|csv|doc|docx|png|jpg|jpeg|gif|bmp|tiff|heic|zip|tar|gz"
 
 BLOCKED=()
@@ -674,7 +763,20 @@ for scope in "${SCOPES[@]}"; do
     if ! git diff $DIFF_SAFE "$@" --numstat --diff-filter=d -- "$spec" > "$NUMSTAT" 2>/dev/null; then
       die "'git diff --numstat' failed for $safe_file"
     fi
-    if [ "$(awk 'NR==1{print $1}' "$NUMSTAT")" = "-" ]; then
+    # Read in PURE BASH. This was `[ "$(awk 'NR==1{print $1}' …)" = "-" ]`, and
+    # a command substitution inside an `if` condition is exempt from `set -e`:
+    # an awk that could not RUN yielded the empty string, which is not "-", so
+    # the file was declared scannable and the added-lines scan below then found
+    # no `+` lines in a binary patch and reported clean. That is the same
+    # "a tool that failed reads as no match" shape this script removed awk for
+    # once already, arriving through the one call it kept.
+    #
+    # `read` fails on an EMPTY numstat, which is not a failure here — it means
+    # the diff produced no row for this path — so the added-count stays empty
+    # and only a literal "-" means binary.
+    binary_added=""
+    read -r binary_added _ < "$NUMSTAT" || binary_added=""
+    if [ "$binary_added" = "-" ]; then
       CONTENT_BLOCKED+=("  BLOCKED BINARY (content not scannable): $safe_file")
       continue
     fi
@@ -713,7 +815,7 @@ if [ ${#BLOCKED[@]} -gt 0 ]; then
   echo ""
   echo "These files should never be committed."
   echo "A name shown as [REDACTED] held an SSN-shaped or credential-shaped run;"
-  echo "list the real paths with: git diff --cached --name-only"
+  echo "list the real paths with: $LIST_PATHS_CMD"
   echo "$ESCAPE_HATCH"
   exit 1
 fi
@@ -730,7 +832,7 @@ if [ ${#CONTENT_BLOCKED[@]} -gt 0 ]; then
   echo "scanned because git treats it as binary."
   echo "Store only the last four digits, as XXX-XX-1234."
   echo "A name shown as [REDACTED] held an SSN-shaped or credential-shaped run;"
-  echo "list the real paths with: git diff --cached --name-only"
+  echo "list the real paths with: $LIST_PATHS_CMD"
   echo "If the value is synthetic, add it to .pii-allowlist."
   echo "$ESCAPE_HATCH"
   exit 1
