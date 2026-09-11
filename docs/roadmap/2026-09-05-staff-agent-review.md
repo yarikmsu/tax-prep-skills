@@ -412,6 +412,16 @@ IT-2105 events, the NY withholding layer and the credits is not the CA experienc
 Story detail lives in `2026-state-support-ny-fl-wa.md`; the numbers there are its
 epic.story ids. Every story here follows `docs/contributing/state-module-playbook.md`.
 
+- **Z1-Z3 — SPEC WRITTEN 2026-09-10**, `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`,
+  from the playbook's step-0 questionnaire. Live-verified: NY starts from federal AGI;
+  IT-196 itemizing is INDEPENDENT of the federal election and runs on PRE-TCJA federal
+  rules; §615 imposes two high-AGI reductions plus a separate charitable limitation; and
+  **§601(d-1)'s tax-table-benefit recapture means plain bracket math UNDERSTATES NY tax**
+  above a threshold — the playbook's canonical trap, so the recapture ships WITH the rate
+  schedules rather than after them. Yonkers is in scope and has no flag today. Eight
+  OPEN rows remain, each naming the source to consult rather than guessing; eight slices
+  proposed. No indexed figure appears in the spec — §2 applies to a design document too.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension
