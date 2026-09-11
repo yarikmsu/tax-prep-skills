@@ -40,10 +40,10 @@ is why, and it applies to a design document exactly as it applies to code.
 |---|---|---|
 | 1 | Starting point | **Federal AGI**, recomputed. IT-201 carries federal AGI forward and applies NY modifications; the "recomputed" wording matters because NY does not conform to every federal change. Same shape as CA Form 540, so `compute_state_tax`'s CA scaffolding is the right analogue. **OPEN: the exact IT-201 line and what "recomputed" excludes** — IT-201 instructions (tax.ny.gov current-year forms). |
 | 2 | Additions / subtractions | **Form IT-225** carries NY additions and subtractions as a coded list, which is a different shape from CA's Schedule CA and needs its own accessor. Known members: **414(h) retirement contributions and IRC §125 cafeteria-plan amounts for NYS and NYC public employees** are ADD-BACKS and appear in W-2 box 14 — this is the parse-side item in the Z-epic table. **OPEN: HSA conformity, IRA/deferral conformity, alimony, out-of-state muni interest, the pension-and-annuity exclusion, and the Social Security subtraction** — IT-225 instructions and Tax Law §§612-613. |
-| 3 | Credits | NY has **no personal exemption for the taxpayer or spouse**; it has dependent exemptions, a household credit, an Empire State child credit, an EITC piggyback, a college-tuition credit and a real-property-tax credit. All are FETCHED, none are structural. **OPEN: the credit ORDERING and which are refundable** — that ordering is what a hand-computed test has to pin. IT-201 instructions. |
+| 3 | Credits | **CONFIRMED: no exemption for the taxpayer or spouse.** Tax Law §616 grants one for each exemption allowed under **IRC §151(c)** — the DEPENDENT subsection; §151(b), the taxpayer and spouse, is not referenced. The per-dependent amount is stated in §616 and not indexed, but is FETCHED anyway as a confirmation, because a statutory figure may still be amended. Beyond that NY has dependent exemptions, a household credit, an Empire State child credit, an EITC piggyback, a college-tuition credit and a real-property-tax credit. All are FETCHED, none are structural. **OPEN: the credit ORDERING and which are refundable** — that ordering is what a hand-computed test has to pin. IT-201 instructions. |
 | 4 | Local income taxes | **NYC and Yonkers.** IT-201 lines 47-58 carry city tax, Yonkers resident surcharge, Yonkers nonresident earnings tax and MCTMT. The precedent this repository set for NYC was to GATE rather than half-model; the owner ruling reverses that for this epic. Residency at the city level is the STATE's test applied to the city — see the Z7 guardrails — so city days are a subset of state days and the reverse cannot happen. |
 | 5 | Surtaxes | **None in CA's shape** (no separate mental-health-style surtax). The equivalent trap is row 13. |
-| 6 | Estimated payments | **Form IT-2105.** One voucher covers NYS + NYC + Yonkers + MCTMT together, which is a real difference from CA's separate 540-ES. **OPEN: equal quarters or weighted, and whether NY has a high-income safe-harbor override like R&TC §19136.3** — IT-2105 instructions and Tax Law §685(c). This decides whether `tax_calendar.py` needs a weighted-event branch. |
+| 6 | Estimated payments | **Form IT-2105, EQUAL QUARTERS** — April, June, September and the following January (tax.ny.gov estimated-tax due dates), so NOT California's 30/40/0/30 and `tax_calendar.py` needs no weighted branch. One voucher covers NYS + NYC + Yonkers + MCTMT together, which CA's separate 540-ES does not. Safe harbour mirrors federal §6654 in SHAPE — 90% of the current year or 100% of the prior, rising to 110% above a NYAGI threshold with MFS at its own (tax.ny.gov interest-and-penalties). The percentages and thresholds are FETCHED, deliberately not shared with the federal constants: they are New York's and may diverge. |
 | 7 | SDI / PFL-style items | NY has both a statutory disability benefits deduction and a **Paid Family Leave** employee contribution, both wage-capped and both indexed. **OPEN: the cap mechanics and their year-awareness** — the CA scar here is that the SDI cap DISAPPEARED in TY2024, so this has to be year-aware from the first line of code. NYS Paid Family Leave site and the DBL statute. |
 | 8 | Withholding-form analogue | **Form IT-2104** is the DE 4 analogue, with a separate IT-2104.1 for nonresidents. Feeds the `/tax-withholding` true-up — see the registration table, where withholding has NO generic state path. |
 | 9 | Extension | **Form IT-370.** **OPEN: automatic on payment like CA's FTB 3519, or form-based** — IT-370 instructions. `/tax-extend` models only CA today and says so. |
@@ -74,8 +74,56 @@ constant that may sit inline WITH its citation, per AGENTS.md §2's narrow rule)
   explicitly in the block rather than inheriting an assumption. See
   `docs/contributing/tax-law-cache.md` before writing the accessor.
 
-**OPEN:** the exact key paths. They are written against
-`create_state_template` at implementation time, not guessed here.
+**SLICE 1 IS SHIPPED.** The block exists in `create_state_template("NY")` as a
+SKELETON — every indexed figure null, every regime with a key to live in — and
+`/tax-setup`'s fetch bullets name each key with the search that populates it.
+
+**Its first draft had the wrong shape, and the correction is the substance of
+this section.** A review against the statute and the current IT-201 instructions
+found the skeleton could not hold two regimes, both in the UNDER-statement
+direction:
+
+- **The recapture is MULTI-TIER, and its citation is a RANGE.** §601 carries (d)
+  through (d-7), each opening "Notwithstanding the provisions of subsection (d),
+  (d-1) …" with its own taxable-year window — **(d-5) governs 2026**, and the
+  first draft cited (d-1), which had been superseded four times. Above the entry
+  threshold the taxpayer's NY TAXABLE INCOME selects a tier with its own
+  recapture base and incremental benefit, and those amounts MOVE YEAR TO YEAR:
+  they are fetched, not structural, or the compute function hardcodes tax law.
+  A shape holding only the entry threshold reproduces the first worksheet and
+  **under-states every return above the first tier**. There is also a top regime
+  that is not a recapture at all — above a very high NYAGI the whole taxable
+  income is taxed at one rate with no schedule — and it needs its own key.
+- **The MCTMT splits by GEOGRAPHY, not by income tier.** Two zones with
+  different rates, so an unlabelled rate list read positionally mis-assigns
+  them. The threshold is **per zone**, computed individually even on a joint
+  return, and it is a **CLIFF**: once a zone's earnings exceed it the whole zone
+  amount is taxed, not the excess. It also changes for tax year 2026 — the year
+  this module targets — so a fetch landing on an older page taxes a filer who
+  owes nothing.
+
+Six further corrections, each one a figure with nowhere to live or a mechanism
+that could be applied twice: §615 has **four** mutually exclusive bands, not
+two, and the second reduction has its own band; the charitable tiers need year
+windows, or a lapsed tier reads as unfetched; every NY credit had nowhere to
+land; the NYC school tax credit is **two** credits, one of them a bracket
+schedule; the Yonkers nonresident earnings tax allows an **exclusion** first,
+and omitting it OVER-states the tax; and the estimated-tax safe harbour needs
+New York's own de-minimis figure and the farmer-and-fisherman share, or a
+compute reaches for the federal ones.
+
+**Brackets are keyed by SCHEDULE, not by status**, for a reason worth keeping:
+`qss ≡ mfj` and `mfs ≡ single` are statutory identities under §601(a) and (c),
+and five per-status lists would let a fetch populate `mfj` and leave `qss`
+empty — an empty schedule being a silent ZERO tax rather than an error.
+
+One correction runs the other way, and it is worth recording because the first
+draft got the emphasis backwards: **QSS's standard deduction EQUALS MFJ's**, and
+MFS's equals single's. Those are pairings to get right, not differences to hunt
+for, and **MFS is the one most often guessed wrong** because it looks married.
+The genuinely anomalous key is `single_dependent` — a single filer who can be
+claimed as a dependent on another federal return — and nothing in the intake
+asks that yet (IT-201 item C), so the key is ahead of its question on purpose.
 
 ## 4. Result section
 
@@ -168,6 +216,10 @@ Each emits a LOUD note that lands on `meta.limitations` — never silence:
   resolves.
 - **Anything `withholding.py` cannot do**, if row 6/8 lands on "no NY true-up
   block in this slice".
+- **Sales or use tax on IT-201 line 59.** It is reported on the income tax
+  return and changes the amount owed, and it has no key. Named here rather than
+  left to be noticed.
+- **Estates and trusts**, which §601(c) also covers. An IT-201 never is one.
 
 ## 9. Sequencing
 

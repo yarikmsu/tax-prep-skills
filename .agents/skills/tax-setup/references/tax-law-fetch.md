@@ -153,7 +153,107 @@ a figure from a prior year.
   only these indexed figures are fetched. Unfetched HARD-ERRORS at compute for a
   CA ISO exerciser (never a guessed exemption that would zero the CA AMT). Leave
   all-null for a non-ISO CA return.
-- For NY: Search `"New York {year} income tax brackets"`
+- **For NY — the generic one-search fallback is NOT enough.** It fetches
+  brackets and a standard deduction, which leaves the regimes that actually
+  decide a New York return unset, and the block then reads as fetched. Design
+  spec and sources:
+  `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`.
+  - Search `"New York State {year} tax rate schedules site:tax.ny.gov"` →
+    populate `state.brackets`, keyed by **SCHEDULE** (`a`/`b`/`c`), not by
+    filing status: Tax Law §601(a) covers married-filing-jointly AND the
+    surviving spouse, §601(b) the head of household, §601(c) the single filer
+    AND married-filing-separately. `state.bracket_schedule_by_status` already
+    holds the mapping — do not re-derive it, and do not split the schedules
+    per status: an empty schedule is a silent ZERO tax, not an error.
+  - Search `"New York {year} standard deduction site:tax.ny.gov"` →
+    `state.standard_deduction`, which has **SIX** keys. `qss` equals `mfj` and
+    `mfs` equals `single` today — those are the pairings, not differences to
+    hunt for, and **MFS is the one most often guessed wrong** because it looks
+    married. The key with no analogue is `single_dependent`: a single filer who
+    CAN be claimed as a dependent on another federal return (IT-201 item C).
+  - Search `"New York {year} tax computation worksheet IT-201 recapture base
+    incremental benefit"` → `state.tax_table_benefit_recapture`. **This is the
+    one that decides whether the return is right.** Fetch ALL of it:
+    `entry_threshold` (one figure for every status), `phase_in_band`, the
+    per-schedule `tiers` — each `{taxable_income_over,
+    taxable_income_not_over, recapture_base, incremental_benefit,
+    nyagi_excess_over}` — and `full_recapture` for the top regime, where the
+    whole taxable income is taxed at one rate with no schedule. The base and
+    benefit amounts MOVE YEAR TO YEAR; they are not structural. Fetching only
+    the entry threshold reproduces the first worksheet and **UNDER-states every
+    return above the first tier**, which is the direction the bias rule calls a
+    hard error. The governing statute is a RANGE — §601(d) through (d-7), each
+    with its own year window — so cite the one whose window contains `{year}`.
+  - Search `"New York {year} tax table taxable income less than"` →
+    `state.tax_table_max_taxable_income`. Below it NY uses a rounded TABLE and
+    above it the rate schedule, and `/tax-verify` compares against software
+    that uses the table.
+  - Search `"New York IT-196 itemized deduction limitation {year}"` →
+    `state.itemized_reduction`, which holds **FOUR** mutually exclusive
+    mechanisms by NYAGI band: a first reduction (per-status threshold, band,
+    rate), a SECOND with its own threshold AND its own band, a flat plateau
+    above those, and `charitable_only_threshold` marking where §615(f) stops
+    entirely. Then `state.charitable_limit.tiers` for §615(g), each tier
+    carrying `first_year`/`last_year` — a lapsed tier must be expressible as
+    lapsed, or it reads as unfetched. Applying a reduction AND the charitable
+    limit double-limits.
+  - Search `"New York IT-201 dependent exemption amount {year}"` →
+    `state.dependent_exemption.amount`. §616 states it and does not index it,
+    so this is a CONFIRMATION; it is fetched anyway because a statutory figure
+    may still be amended. **Watch for a source that returns 0**: post-TCJA IRC
+    §151(d)(5) zeroes the FEDERAL exemption amount while §616 keys off the
+    §151(c) ENTITLEMENT, which is why New York still allows one. NY grants no
+    exemption for the taxpayer or spouse, which is why
+    `personal_exemption.amount` ships as a declared 0 rather than a null.
+  - Search for each NY credit on IT-201 → `state.credits`: the household
+    credit table, the Empire State child credit, the child-and-dependent-care
+    table, the EIC share of the federal credit, the real-property-tax credit,
+    and the college-tuition credit's expense cap and maximum.
+  - Search `"New York pension and annuity income exclusion {year}"` and
+    `"New York 529 college savings deduction {year}"` → `state.subtractions`.
+    The pension exclusion is **PER SPOUSE** with an age gate and no transfer of
+    an unused part between spouses — a household figure cannot express it — and
+    it sits on the IT-201 FACE, not on IT-225.
+  - **If the taxpayer is a New York City resident** (`nyc_resident`, or NY in
+    the `residency` counts): search
+    `"New York City {year} resident income tax rate schedule site:tax.ny.gov"`
+    → `state.nyc_tax.brackets` (same three schedules) and set `applies`. The
+    school tax credit is **TWO** credits: a fixed amount by status under an
+    income ceiling, and a rate reduction that is its own bracket schedule.
+    Also fetch the NYC household credit and EIC share.
+  - **If the taxpayer is a Yonkers resident or earns there**: search
+    `"Yonkers resident income tax surcharge {year}"` and `"Yonkers nonresident
+    earnings tax {year} exclusion"` → `state.yonkers_tax`. The resident
+    surcharge is a rate on the STATE TAX, not on income. The nonresident
+    earnings tax allows an EXCLUSION first, prorated by month for a part-year
+    filer — omitting it OVER-states the tax — and is capped at what the
+    resident surcharge would have been.
+  - Leave `applies` NULL on either city block when not fetched: null and "no
+    city tax" are different answers, exactly as `type` distinguishes them for
+    the state.
+  - **If the taxpayer has self-employment income in the MCTD**: search
+    `"metropolitan commuter transportation mobility tax {year} self-employed
+    zone rate threshold site:tax.ny.gov"` → `state.mctmt`. Two ZONES with
+    different rates — geography, not income tiers — and the counties are
+    already in the template. The threshold is **PER ZONE**, computed
+    individually even on a joint return, and it is a **CLIFF**: once a zone's
+    earnings exceed it the WHOLE zone amount is taxed, not the excess. **It
+    changes for tax year 2026**, so confirm the page is current for `{year}`
+    or a filer who owes nothing gets taxed.
+  - Search `"New York estimated tax {year} 90% 100% 110% site:tax.ny.gov"` →
+    `state.estimated_tax_safe_harbor`. The thresholds are keyed to **NEW YORK**
+    AGI, not federal. Fetch `farmer_fisherman_share` (one January installment
+    at a lower share) and `de_minimis` too — the de-minimis figure is NOT the
+    federal one, and without it a compute reaches for the federal amount and
+    wrongly clears a New York filer who owes. NY's installments are **equal
+    quarters** — April, June, September, the following January — which is NOT
+    California's 30/40/0/30, and one IT-2105 voucher covers NYS, NYC, Yonkers
+    and MCTMT together. That schedule is structural and already in the template.
+  - Search `"New York Paid Family Leave {year} employee contribution rate wage
+    cap"` → `state.paid_family_leave`, and the disability-benefits employee
+    rate → `state.disability_benefits`. **Both are year-aware on purpose**:
+    the CA scar is that the SDI wage ceiling DISAPPEARED in TY2024, and a cap
+    read as a constant mis-computed every later return.
 - **No-income-tax states (template `type: "none"` — FL):** do NOT search for
   income brackets; there are none, and an empty bracket list would keep the
   cache permanently INCOMPLETE. Record the pre-built FL template and fetch

@@ -2242,3 +2242,259 @@ class TestEveryGateCliUsesOneExitContract:
             assert "returncode == 2" in text or "_main(" in text and "== 2" in text, (
                 f"{suite} no longer pins {module}'s blocked exit code, and this "
                 "class does not cover it either — one of the two has to")
+
+
+# --- Z1 slice 1: the NY fetched block ---------------------------------------
+#
+# The block is a SKELETON — every indexed figure null until /tax-setup fetches
+# it. What these pin is the SHAPE, because the shape is where a state module
+# goes wrong before it computes anything: a status mapped to another status's
+# schedule, a regime with no key to put it in, and a "fetched" cache that is
+# missing the rules that decide the return.
+#
+# Every case below exists because a review of the FIRST version of this block
+# found the shape inadequate against the statute, in the UNDER-statement
+# direction. They are written as the corrections, not as decoration.
+#
+# Design spec and sources:
+# docs/superpowers/specs/2026-09-10-ny-state-module-design.md
+
+
+class TestTheNewYorkBlock:
+
+    STATUSES = ("single", "mfj", "mfs", "hoh", "qss")
+    SCHEDULES = ("a", "b", "c")
+
+    def test_the_brackets_are_keyed_by_schedule_not_by_status(self):
+        """§601 has THREE schedules and the status pairings are statutory
+        identities — (a) covers MFJ and the surviving spouse, (c) covers single
+        and MFS. Five per-status lists would let a fetch populate `mfj` and
+        leave `qss` empty, and an empty schedule is a silent ZERO tax rather
+        than an error. One list per schedule cannot be half-fetched that way."""
+        block = create_state_template("NY")
+        assert set(block["brackets"]) == set(self.SCHEDULES), (
+            "NY's brackets are keyed by something other than the three §601 "
+            "schedules; a per-status keying can go half-fetched")
+        assert all(v == [] for v in block["brackets"].values())
+        mapping = block["bracket_schedule_by_status"]
+        assert set(mapping) == set(self.STATUSES)
+        assert mapping["qss"] == mapping["mfj"] == "a", (
+            "QSS uses the married-joint schedule under §601(a) — splitting "
+            "them invites an empty QSS schedule and a zero-tax return")
+        assert mapping["mfs"] == mapping["single"] == "c", (
+            "MFS uses the SINGLE schedule under §601(c). This is the pairing "
+            "an agent is most likely to guess wrong, because MFS looks married")
+
+    def test_the_standard_deduction_keeps_the_dependent_split(self):
+        """The real trap in New York's table, and it is not the one it looks
+        like. QSS's amount EQUALS MFJ's and MFS's equals single's — those are
+        pairings to get right, not differences to hunt for. What has no
+        analogue anywhere else in this cache is a SINGLE filer who can be
+        claimed as a dependent on another return: a different, much smaller
+        amount, on a fact nothing in the intake asks yet."""
+        deduction = create_state_template("NY")["standard_deduction"]
+        assert set(deduction) == set(self.STATUSES) | {"single_dependent"}
+        assert all(v is None for v in deduction.values())
+
+    def test_the_recapture_can_hold_every_tier(self):
+        """The correction that mattered most. Above the entry threshold the
+        taxpayer's NY TAXABLE INCOME selects a tier, each with its own
+        recapture base and incremental benefit, and both move year to year. A
+        shape holding only the entry threshold reproduces the first worksheet
+        and nothing else — which UNDER-states every return above the first
+        tier, in the direction the bias rule calls a hard error."""
+        block = create_state_template("NY")["tax_table_benefit_recapture"]
+        assert block["entry_threshold"] is None
+        assert not isinstance(block["entry_threshold"], dict), (
+            "the entry threshold is ONE figure for every filing status; a "
+            "per-status dict here invites four copies of one number")
+        assert set(block["tiers"]) == set(self.SCHEDULES), (
+            "the recapture tiers are not keyed by §601 schedule, so the "
+            "per-schedule base and benefit amounts have nowhere to live")
+        assert block["full_recapture"] == {"nyagi_over": None, "rate": None}, (
+            "the top regime is not a recapture at all — above a very high "
+            "NYAGI the whole taxable income is taxed at one rate with no "
+            "schedule, and without its own key the compute falls back to the "
+            "tiers and under-states it")
+
+    def test_the_citation_is_a_range_not_one_subsection(self):
+        """§601 carries (d) through (d-7), each opening "Notwithstanding the
+        provisions of subsection (d), (d-1) …" with its own taxable-year
+        window: (d-5) governs 2026, (d-6) governs 2027 onward. Naming one
+        subsection in a year-parameterised toolkit dates the comment the
+        moment the window rolls — and the first draft named (d-1), which had
+        been superseded four times."""
+        source = (REPO / "agents" / "lib" / "tax_law_fetcher.py").read_text()
+        block = source[source.index('"NY": {'):source.index('"FL": {')]
+        assert "(d-1)" in block and "(d-7)" in block, (
+            "the recapture comment no longer states the SUBSECTION RANGE, so a "
+            "reader takes whichever one it names as current")
+        assert "(d-5)" in block, (
+            "the comment no longer says which subsection governs which year — "
+            "the whole point of naming a range")
+
+    def test_the_itemized_reduction_keeps_four_mechanisms_apart(self):
+        """§615(f) reduces TWICE, a flat plateau sits above those, and §615(g)
+        REPLACES all of it with a charitable-only limit at very high NYAGI.
+        They are mutually exclusive by band: a compute that applies the
+        reduction and then the charitable limit double-limits."""
+        block = create_state_template("NY")["itemized_reduction"]
+        assert set(block["first_threshold"]) == set(self.STATUSES)
+        assert block["second_threshold"] is None, (
+            "the second reduction lost its own threshold — it applies above a "
+            "single figure for every status and is not the first one again")
+        assert "second_band" in block, (
+            "the second worksheet divides by its OWN band. Reusing the first "
+            "is an undeclared coupling: right today, silently wrong if either "
+            "figure moves")
+        assert "flat_threshold" in block and "flat_rate" in block, (
+            "the flat plateau between the second reduction and the charitable "
+            "regime has no key, so it is only recoverable as an arithmetic "
+            "coincidence of two others")
+        assert "charitable_only_threshold" in block, (
+            "nothing says where §615(f) STOPS and §615(g) takes over, so the "
+            "two can be applied together")
+
+    def test_a_lapsed_charitable_tier_can_be_expressed_as_lapsed(self):
+        """Omitting a lapsed tier reads as "not fetched" — the same confusion
+        `applies: None` exists to prevent for the city layer."""
+        block = create_state_template("NY")
+        source = (REPO / "agents" / "lib" / "tax_law_fetcher.py").read_text()
+        assert block["charitable_limit"]["tiers"] == []
+        assert "first_year" in source and "last_year" in source, (
+            "the charitable tiers carry no YEAR WINDOW, so a tier that has "
+            "expired cannot be distinguished from one nobody fetched")
+
+    def test_new_york_does_not_conform_to_federal(self):
+        """This key read True until the module existed, and that is what makes
+        a bracket estimate look like a return: NY applies its own IT-225
+        modifications, and IT-196 itemizing runs on federal rules AS THEY STOOD
+        BEFORE THE TCJA."""
+        assert create_state_template("NY")["conforms_to_federal"] is False
+
+    def test_the_absent_personal_exemption_is_declared_not_missing(self):
+        """Tax Law §616 grants an exemption for each one allowed under IRC
+        §151(c) — the DEPENDENT subsection. §151(b), the taxpayer and spouse,
+        is not referenced. A declared zero says that was researched; an absent
+        key says nobody looked, and the two must not read the same."""
+        block = create_state_template("NY")
+        assert block["personal_exemption"]["amount"] == 0
+        assert block["dependent_exemption"]["amount"] is None, (
+            "the dependent exemption was seeded from the statute — §616 states "
+            "it and does not index it, but a statutory figure may still be "
+            "amended, so it is CONFIRMED by fetch like every other one")
+
+    def test_every_credit_has_somewhere_to_land(self):
+        """`personal_exemption: 0` exists so an absent key cannot read as "not
+        researched". The same argument applies to the credits, and the first
+        draft gave them nowhere at all — six credits on the face of IT-201."""
+        credits = create_state_template("NY")["credits"]
+        for name in ("household", "empire_state_child",
+                     "child_and_dependent_care", "earned_income_share",
+                     "real_property_tax", "college_tuition"):
+            assert name in credits, f"no key for the {name} credit"
+
+    def test_the_pension_exclusion_is_per_spouse_with_an_age_gate(self):
+        """A household-level figure cannot express it: each spouse has their
+        own exclusion, neither can claim the unused part of the other's, and
+        there is an age gate. It sits on the IT-201 FACE, not on IT-225, which
+        is why deferring modifications to IT-225 does not cover it."""
+        block = create_state_template("NY")["subtractions"]
+        assert set(block["pension_annuity_exclusion"]) == {"amount",
+                                                           "minimum_age"}
+
+    def test_the_city_layer_distinguishes_absent_from_unfetched(self):
+        """`applies: None` is the same distinction `type` draws for the state:
+        "no city tax" and "not fetched" are different answers, and a False here
+        would let an unfetched cache compute a New York City return as zero."""
+        block = create_state_template("NY")
+        assert block["nyc_tax"]["applies"] is None
+        assert block["yonkers_tax"]["applies"] is None, (
+            "Yonkers has the same parity with the state residency test that "
+            "the City has — a module that models one and not the other ships "
+            "a silent gap for a real population")
+
+    def test_the_school_tax_credit_is_two_credits(self):
+        """A fixed amount by filing status under an income ceiling, AND a rate
+        reduction that is its own per-schedule bracket table. A scalar holds
+        neither, and the first draft had a scalar."""
+        block = create_state_template("NY")["nyc_tax"]["school_tax_credit"]
+        assert set(block["fixed_amount"]) == set(self.STATUSES)
+        assert set(block["rate_reduction"]) == set(self.SCHEDULES), (
+            "the rate reduction is a bracket schedule, not a number")
+
+    def test_yonkers_holds_the_exclusion_that_keeps_it_honest(self):
+        """The nonresident earnings tax allows an EXCLUSION first. Omitting it
+        OVER-states the tax and bills a filer below the no-file floor for a tax
+        they do not owe — the cry-wolf direction, and the one that teaches a
+        taxpayer to reason past the next gate."""
+        block = create_state_template("NY")["yonkers_tax"]
+        assert block["nonresident_exclusion"] == {"table": []}
+        assert "resident_surcharge_rate" in block
+        assert "nonresident_earnings_rate" in block
+
+    def test_the_mctmt_rates_are_labelled_by_zone(self):
+        """Split by GEOGRAPHY, not by income tier. An unlabelled rate list read
+        positionally mis-assigns the two zones, which nearly doubles or halves
+        the tax. The threshold is PER ZONE and it is a CLIFF — once a zone's
+        earnings exceed it the WHOLE zone amount is taxed, not the excess — so
+        a key named like an exemption invites subtracting it."""
+        block = create_state_template("NY")["mctmt"]
+        assert set(block) == {"zone_1", "zone_2",
+                              "net_earnings_threshold_per_zone"}
+        assert "New York" in block["zone_1"]["counties"]
+        assert "Westchester" in block["zone_2"]["counties"]
+        assert block["zone_1"]["rate"] is None
+        assert block["zone_2"]["rate"] is None
+
+    def test_the_safe_harbour_is_new_yorks_and_says_so(self):
+        """Equal quarters — April, June, September, the following January —
+        against CA's 30/40/0/30 with no September installment. The thresholds
+        are keyed to NEW YORK AGI, and the de-minimis figure is NOT the federal
+        one: without a key a compute reaches for the federal amount and
+        wrongly clears a New York filer who owes."""
+        block = create_state_template("NY")
+        assert block["estimated_payment_schedule"] == "equal_quarters"
+        harbor = block["estimated_tax_safe_harbor"]
+        assert "high_income_nyagi_threshold" in harbor, (
+            "the threshold no longer names NYAGI, and a consumer holding "
+            "FEDERAL AGI misapplies it for anyone with IT-225 modifications")
+        assert "high_income_nyagi_threshold_mfs" in harbor, (
+            "MFS has its own threshold and it is not the general one")
+        assert "farmer_fisherman_share" in harbor, (
+            "a farmer or fisherman makes ONE January installment at a lower "
+            "share; without a key they are told to make four at the standard "
+            "one")
+        assert "de_minimis" in harbor
+
+    def test_the_payroll_items_are_year_aware_by_shape(self):
+        """The CA scar: the SDI wage ceiling DISAPPEARED in TY2024, and a cap
+        read as a constant mis-computed every later return. Both NY items
+        carry their cap as a fetched field for the same reason."""
+        block = create_state_template("NY")
+        assert set(block["paid_family_leave"]) == {"rate", "wage_cap"}
+        assert set(block["disability_benefits"]) == {"employee_rate",
+                                                     "weekly_cap"}
+
+    def test_an_unfetched_ny_block_is_not_fresh(self):
+        """The whole point of a skeleton: it must not pass as law. Every null
+        and every empty container has to reach the freshness walker, or a cache
+        that has been `create_state_template`'d and never fetched would compute
+        a return. The empty-LIST regimes are named explicitly because a walker
+        that flags nulls and not empty containers would pass them."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as workspace:
+            data = create_empty_tax_law(2026)
+            data["state"] = create_state_template("NY", 2026)
+            save_tax_law(2026, data, workspace)
+            report = check_freshness(2026, workspace)
+            assert report["status"] == "INCOMPLETE", (
+                f"an entirely unfetched NY block reported {report['status']}")
+            flagged = " ".join(report.get("null_fields", []))
+            for expected in ("brackets", "tax_table_benefit_recapture",
+                             "itemized_reduction", "standard_deduction",
+                             "charitable_limit", "mctmt", "credits",
+                             "nyc_tax", "yonkers_tax"):
+                assert expected in flagged, (
+                    f"{expected} is unfetched and the freshness walker did not "
+                    f"name it:\n{flagged}")

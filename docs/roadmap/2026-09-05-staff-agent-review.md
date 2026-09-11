@@ -422,6 +422,15 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   OPEN rows remain, each naming the source to consult rather than guessing; eight slices
   proposed. No indexed figure appears in the spec — §2 applies to a design document too.
 
+  **SLICE 1 SHIPPED**: the `state.NY` block is a real skeleton — brackets keyed PER
+  STATUS (§601(a)/(b)/(c) are three schedules), a key for the §601(d-1) recapture and
+  three separate keys for §615's two reductions and its charitable limit, NYC and
+  Yonkers with `applies` NULL so "no city tax" and "not fetched" stay different
+  answers, and both payroll caps fetched because the CA scar is a wage ceiling that
+  DISAPPEARED mid-decade. `conforms_to_federal` read True and is now False. A third
+  keying trap surfaced: NY's standard deduction has SIX rows, splitting a single filer
+  on whether they can be claimed as a dependent. Twelve mutations, twelve reds.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension

@@ -460,14 +460,249 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "no_city_income_tax": True,
         },
         "NY": {
+            # Design spec, with the sources and what is still OPEN:
+            # docs/superpowers/specs/2026-09-10-ny-state-module-design.md
             "code": "NY",
             "name": "New York",
             "authority": "Department of Taxation and Finance",
             "type": "graduated_income",
-            "conforms_to_federal": True,
-            "standard_deduction": {"single": None, "mfj": None},
-            "brackets": [],
-            "nyc_tax": {"applies": None, "brackets": []},
+            # NOT a federal piggyback, and this key read True until the module
+            # existed. NY starts from federal AGI and then applies its own
+            # IT-225 modifications, and IT-196 itemizing runs on federal rules
+            # AS THEY STOOD BEFORE THE TCJA — IT-196's own line 44 adjustment
+            # references the 2% miscellaneous floor. A True here is what makes
+            # a bracket estimate look like a return.
+            "conforms_to_federal": False,
+            # SIX rows in New York's table. The trap is NOT the one it looks
+            # like: `qss` is a separate ROW whose amount equals `mfj`'s today,
+            # and `mfs` equals `single`'s — those are the pairings to get
+            # right, and MFS is the one an agent is most likely to guess
+            # belongs with MFJ. What has no analogue anywhere else in this
+            # cache is `single_dependent`: a single filer who CAN be claimed
+            # as a dependent on another federal return gets a different,
+            # much smaller amount. Nothing in the intake asks that yet — IT-201
+            # item C — so the key is ahead of its question on purpose.
+            "standard_deduction": {
+                "single": None,
+                "single_dependent": None,
+                "mfj": None,
+                "mfs": None,
+                "hoh": None,
+                "qss": None,
+            },
+            # Keyed by SCHEDULE, not by status, because §601 has three and the
+            # status pairings are STATUTORY IDENTITIES rather than
+            # coincidences: §601(a) covers married-filing-jointly AND the
+            # surviving spouse, §601(b) the head of household, §601(c) the
+            # single filer AND married-filing-separately (and estates and
+            # trusts, which an IT-201 never is). Five per-status lists would
+            # let a fetch populate `mfj` and leave `qss` empty — and an empty
+            # schedule is a silent ZERO tax, not an error. One list per
+            # schedule cannot be half-fetched that way.
+            "bracket_schedule_by_status": {
+                "single": "c", "mfs": "c", "mfj": "a", "qss": "a", "hoh": "b",
+            },
+            "brackets": {
+                "a": [],  # [{"rate": 0.04, "min": 0, "max": ...}, ...]
+                "b": [],
+                "c": [],
+            },
+            # THE TRAP, and the shape is where the first draft of this block
+            # got it wrong. A supplemental tax recaptures the benefit of the
+            # graduated schedules above a NYAGI threshold; plain bracket math
+            # UNDER-states tax there, and under-stating what a taxpayer owes is
+            # the direction the bias rule calls a hard error.
+            #
+            # The citation is a RANGE, not one subsection. §601 carries (d)
+            # through (d-7) and each later one opens "Notwithstanding the
+            # provisions of subsection (d), (d-1) …" with its own taxable-year
+            # window — (d-5) governs 2026, (d-6) governs 2027 through 2032.
+            # Naming a single subsection in a year-parameterised toolkit dates
+            # the comment the moment the window rolls.
+            #
+            # And it is MULTI-TIER. Above the entry threshold the taxpayer's
+            # NY TAXABLE INCOME selects a tier, each with its own recapture
+            # base and incremental benefit, and both of those figures move year
+            # to year — they are FETCHED, not structural, or the compute
+            # function would be hardcoding tax law. A shape holding only the
+            # entry threshold can reproduce the first worksheet and nothing
+            # else, which under-states every return above the first tier.
+            "tax_table_benefit_recapture": {
+                # One figure for every status, unmoved since the regime began.
+                "entry_threshold": None,
+                "phase_in_band": None,
+                # Per SCHEDULE, matching `brackets`. Each entry:
+                # {"taxable_income_over", "taxable_income_not_over",
+                #  "recapture_base", "incremental_benefit", "nyagi_excess_over"}
+                "tiers": {"a": [], "b": [], "c": []},
+                # The top regime is not a recapture at all: above a very high
+                # NYAGI the whole taxable income is taxed at one rate with no
+                # schedule. A third mechanism, and it needs its own key or the
+                # compute silently falls back to the tiers.
+                "full_recapture": {"nyagi_over": None, "rate": None},
+            },
+            # NY's tax TABLE and its rate SCHEDULE give different answers — the
+            # table is bracket-midpoint rounded — and which one applies turns
+            # on NY taxable income. `/tax-verify` compares line by line against
+            # software that uses the table, so a schedule-only computation
+            # differs by a few dollars for an ordinary filer and reads as a
+            # defect in whichever side is checked second.
+            "tax_table_max_taxable_income": None,
+            # §615(f) reduces the NY itemized deduction TWICE, §615(g) replaces
+            # both with a CHARITABLE-only limit at very high NYAGI, and between
+            # them sits a flat plateau. FOUR mechanisms, not two, and they are
+            # mutually exclusive by band — a compute that applies the reduction
+            # and then the charitable limit double-limits, which over-states
+            # the deduction's loss and over-states tax.
+            "itemized_reduction": {
+                "first_threshold": {"single": None, "mfj": None, "mfs": None,
+                                    "hoh": None, "qss": None},
+                "first_band": None,
+                "first_rate": None,
+                # Its own band: the second worksheet divides by its own figure,
+                # independently of the first. Equal today, and an undeclared
+                # coupling if either moves.
+                "second_threshold": None,
+                "second_band": None,
+                "second_rate": None,
+                # Above this, a flat share of the deduction with no phase-in.
+                "flat_threshold": None,
+                "flat_rate": None,
+                # Where §615(f) STOPS and §615(g) takes over entirely.
+                "charitable_only_threshold": None,
+            },
+            # §615(g). Each tier carries its own YEAR WINDOW: a tier that has
+            # lapsed must be expressible as lapsed, because omitting it reads
+            # as "not fetched" — the same confusion `applies: None` exists to
+            # prevent for the city layer.
+            # [{"nyagi_over", "share", "first_year", "last_year"}]
+            "charitable_limit": {"tiers": []},
+            # NY has NO exemption for the taxpayer or spouse. §616 grants one
+            # for each exemption allowed under IRC §151(c) — the DEPENDENT
+            # subsection; §151(b), the taxpayer and spouse, is not referenced.
+            # A POSITIVE declaration rather than an absent key, on the
+            # `type: "none"` precedent: absence reads as "not researched".
+            "personal_exemption": {"amount": 0},
+            # §616 states the per-dependent amount and does not index it, but
+            # it is FETCHED anyway — a statutory figure may still be amended,
+            # and only AGENTS.md §2's enumerated CA exception may sit inline.
+            # Watch the fetch: post-TCJA IRC §151(d)(5) zeroes the FEDERAL
+            # exemption amount, while §616 keys off the §151(c) ENTITLEMENT,
+            # which is why New York still allows one. A source that conflates
+            # the two returns 0, and nothing else here would catch it.
+            "dependent_exemption": {"amount": None},
+            # Every NY credit needs somewhere to land or it lands nowhere.
+            # `personal_exemption: 0` exists so an absent key cannot read as
+            # "not researched"; the same argument applies to these.
+            "credits": {
+                "household": {"table": []},
+                "empire_state_child": None,
+                "child_and_dependent_care": {"table": []},
+                "earned_income_share": None,
+                "real_property_tax": None,
+                "college_tuition": {"expense_cap": None, "max_credit": None},
+            },
+            # Subtractions that sit on the IT-201 FACE rather than on IT-225,
+            # and two of them carry figures. The pension-and-annuity exclusion
+            # is PER SPOUSE with an age gate and no transfer of an unused part
+            # between spouses, which a single household-level figure cannot
+            # express.
+            "subtractions": {
+                "pension_annuity_exclusion": {"amount": None,
+                                              "minimum_age": None},
+                "college_savings_deduction": {"single": None, "mfj": None},
+            },
+            # The city layer — Z2. `applies` stays None until fetched so that
+            # "no city tax" and "not fetched" cannot be confused, which is the
+            # same distinction `type` draws for the state.
+            "nyc_tax": {
+                "applies": None,
+                "brackets": {"a": [], "b": [], "c": []},
+                # TWO school tax credits, not one: a fixed amount by filing
+                # status under an income ceiling, and a RATE REDUCTION that is
+                # its own per-schedule bracket table. A scalar holds neither.
+                "school_tax_credit": {
+                    "fixed_amount": {"single": None, "mfj": None, "mfs": None,
+                                     "hoh": None, "qss": None},
+                    "income_ceiling": None,
+                    "rate_reduction": {"a": [], "b": [], "c": []},
+                },
+                "household_credit": {"table": []},
+                "earned_income_share": None,
+            },
+            "yonkers_tax": {
+                # THREE regimes, not one: a resident surcharge, a nonresident
+                # earnings tax, and a part-year case with its own IT-201 line.
+                # A joint return can even have one resident spouse and one
+                # nonresident spouse.
+                "applies": None,
+                # A rate on the NY STATE TAX, not on income — and the base is
+                # net of credits and of the STAR reconciliation amount.
+                "resident_surcharge_rate": None,
+                # A rate on WAGES and self-employment earnings allocated to
+                # Yonkers, against which an EXCLUSION is allowed first,
+                # prorated by month for a part-year filer. Omitting the
+                # exclusion OVER-states the tax and bills a filer below the
+                # no-file floor for a tax they do not owe. Structural and not
+                # fetched: the nonresident tax is also CAPPED at what the
+                # resident surcharge would have been.
+                "nonresident_earnings_rate": None,
+                "nonresident_exclusion": {"table": []},
+            },
+            # Metropolitan commuter transportation mobility tax, for a
+            # self-employed filer. Split by GEOGRAPHY, not by income tier —
+            # two zones with different rates — so an unlabelled rate list read
+            # positionally mis-assigns them, which nearly doubles or halves the
+            # tax. The counties are structural; the rates and the threshold are
+            # not.
+            #
+            # The threshold is PER ZONE, computed individually even on a joint
+            # return, and it is a CLIFF: once a zone's earnings exceed it the
+            # WHOLE zone amount is taxed, not the excess. It also TRIPLES for
+            # tax year 2026, so a fetch that lands on a pre-2026 page taxes a
+            # filer who owes nothing.
+            "mctmt": {
+                "zone_1": {
+                    "rate": None,
+                    "counties": ["New York", "Bronx", "Kings", "Queens",
+                                 "Richmond"],
+                },
+                "zone_2": {
+                    "rate": None,
+                    "counties": ["Rockland", "Nassau", "Suffolk", "Orange",
+                                 "Putnam", "Dutchess", "Westchester"],
+                },
+                "net_earnings_threshold_per_zone": None,
+            },
+            # §685(c): 90% of the current year, or 100% of the prior year —
+            # 110% above a NEW YORK AGI threshold, MFS at its own. Same SHAPE
+            # as federal §6654 and deliberately NOT sharing its constants:
+            # these are New York's, they are keyed to NYAGI rather than federal
+            # AGI, and they may diverge. The de-minimis figure is NOT the
+            # federal one, and without a key here a compute reaches for the
+            # federal amount and wrongly clears a New York filer.
+            "estimated_tax_safe_harbor": {
+                "current_year_share": None,
+                "prior_year_share": None,
+                "prior_year_share_high_income": None,
+                "high_income_nyagi_threshold": None,
+                "high_income_nyagi_threshold_mfs": None,
+                "farmer_fisherman_share": None,
+                "de_minimis": None,
+            },
+            # EQUAL QUARTERS — April, June, September and the following
+            # January — which is NOT California's 30/40/0/30, and one IT-2105
+            # voucher covers NYS, NYC, Yonkers and MCTMT together. Structural,
+            # so it is stated here rather than fetched. A farmer or fisherman
+            # is the exception: ONE January installment at a lower share, which
+            # is why that share has a key above.
+            "estimated_payment_schedule": "equal_quarters",
+            # Employee-side payroll items, both wage-capped and both indexed.
+            # Year-aware from the first line, because the CA scar here is that
+            # the SDI wage ceiling DISAPPEARED in TY2024 and a cap read as a
+            # constant silently mis-computed every later return.
+            "paid_family_leave": {"rate": None, "wage_cap": None},
+            "disability_benefits": {"employee_rate": None, "weekly_cap": None},
         },
         "FL": {
             "code": "FL",
