@@ -5486,3 +5486,91 @@ class TestTheNewYorkExtensionAndConformityGaps:
         assert "year-windowed" in doc
         assert "TWO ZONES" in doc
         assert "0 on purpose" in doc
+
+
+class TestTheBacklogSaysWhatIsOpen:
+    """The 09-05 backlog is the artifact every PR is cut from, and its Part 4
+    list is what a reader works down.
+
+    Its status lived in ONE run-on paragraph, and the Part 4 entries carried no
+    markers at all. V11 was recorded as shipped in the paragraph, was never
+    marked DONE in the list, and was very nearly re-implemented from the list a
+    month later — the whole of `parse_utils`'s budget machinery already
+    existed. The two halves are now a TABLE and a set of `— DONE` markers, and
+    this holds them together in BOTH directions: a table row with no marker is
+    the defect that happened, and a marker with no row is a claim nothing
+    records the PR for.
+    """
+
+    # Spelled as a REPO chain on purpose: `test_the_watched_set_still_covers_
+    # what_the_modules_read` locates a module's reads by that spelling, and a
+    # path it cannot see leaves this module looking covered while the hook arm
+    # behind it is unverified. Reproduced — the first version used
+    # `Path(__file__).parents[1]` and the arm's deletion stayed green.
+    BACKLOG = REPO / "docs" / "roadmap" / "2026-09-05-staff-agent-review.md"
+    ROW = re.compile(r"^\| ([VWXYZ]\d+) \| (#[^|]+) \|", re.M)
+    ENTRY = re.compile(r"^- \*\*([VWXYZ]\d+)\b(.*)$", re.M)
+
+    def _text(self):
+        return self.BACKLOG.read_text(encoding="utf-8")
+
+    def _table(self):
+        text = self._text()
+        shipped = text.index("### Shipped")
+        end = text.index("### Not started")
+        return {m.group(1): m.group(2).strip()
+                for m in self.ROW.finditer(text[shipped:end])}
+
+    def _entries(self):
+        """The Part 4 item entries, keyed by id. The `- **W1 — DONE**, and
+        **W5 — DONE**` summary line names two ids and is not an entry for
+        either, so entries are keyed LAST-wins: the real ones come after it."""
+        out = {}
+        for m in self.ENTRY.finditer(self._text()):
+            out[m.group(1)] = m.group(0)
+        return out
+
+    def test_the_table_is_not_empty(self):
+        table = self._table()
+        assert len(table) >= 20, (
+            f"the shipped table parses as {sorted(table)} — this test can no "
+            "longer read it, so both directions below are vacuous")
+        assert "V11" in table and "Z1" in table
+
+    def test_every_shipped_item_is_marked_done_in_part_four(self):
+        entries = self._entries()
+        missing = []
+        for item in sorted(self._table()):
+            entry = entries.get(item)
+            assert entry, f"{item} is in the shipped table but has no Part 4 entry"
+            if "DONE" not in entry:
+                missing.append(item)
+        assert not missing, (
+            f"{missing} are recorded as shipped in the status table and read as "
+            "OPEN WORK in the Part 4 list. That is how V11 came to be nearly "
+            "re-implemented a month after it merged.")
+
+    def test_every_done_marker_has_a_row_recording_its_prs(self):
+        """The other direction. A marker with no row is a claim with no PR "
+        behind it, and the table is where a reader goes to find the change."""
+        table = self._table()
+        orphans = [item for item, entry in self._entries().items()
+                   if "DONE" in entry and item not in table]
+        assert not orphans, (
+            f"{orphans} are marked DONE in Part 4 but have no row in the "
+            "shipped table, so nothing records which PR did the work")
+
+    def test_every_row_names_at_least_one_pull_request(self):
+        for item, prs in sorted(self._table().items()):
+            assert re.search(r"#\d+", prs), f"{item}'s row names no PR: {prs!r}"
+
+    def test_the_not_started_list_and_the_table_do_not_overlap(self):
+        text = self._text()
+        start = text.index("### Not started")
+        section = text[start:text.index("> This backlog sits beside")]
+        listed = set(re.findall(r"\*\*([VWXYZ]\d+)\*\*", section))
+        assert listed, "the not-started list parses as empty"
+        both = sorted(listed & set(self._table()))
+        assert not both, (
+            f"{both} are in BOTH the shipped table and the not-started list — "
+            "a reader cannot tell which is true")

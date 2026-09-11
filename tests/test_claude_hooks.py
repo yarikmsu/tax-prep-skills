@@ -1073,7 +1073,7 @@ class TestSkillInvariantsHook:
 
     @pytest.mark.parametrize("relative", [
         "agents/templates/answers_template.md",
-        "docs/roadmap/2026-tax-planning-features.md",
+        "docs/changelog/epic-V.md",
     ])
     def test_an_unwatched_source_edit_stays_silent(self, tmp_path, relative):
         """The counterweight to the parametrization above: the watched set is a
@@ -1093,12 +1093,15 @@ class TestSkillInvariantsHook:
         Dependabot bump that drops or renames a pin turns that module red.
 
         The paths kept here are ones no watched module reads: a template no
-        invariant test loads, and a roadmap document outside
-        `docs/contributing`. `result_template.json` was the template here until
-        `test_portability.py` began building a prior-year return out of it, and
-        it moved to the watched side in the same edit — the two lists are one
-        claim seen from both directions, so a path leaves this one by joining
-        that one, never by being quietly dropped.
+        invariant test loads, and a per-epic changelog. `result_template.json`
+        was the template here until `test_portability.py` began building a
+        prior-year return out of it, and it moved to the watched side in the
+        same edit; `docs/roadmap/` was the second path here until
+        `TestTheBacklogSaysWhatIsOpen` began reading the 09-05 backlog, and it
+        moved for the same reason. The two lists are one claim seen from both
+        directions, so a path leaves this one by JOINING that one, never by
+        being quietly dropped — and this docstring records each departure
+        because the alternative is a shrinking control nobody notices.
 
         The positive control at the end is what makes the silence mean
         anything: a hook that exits 0 for every payload — deleted, renamed,

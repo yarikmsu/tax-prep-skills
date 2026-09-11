@@ -1,13 +1,74 @@
 # Staff Agent-Developer Review + Backlog — 2026-09-05
 
-> **Status 2026-09-07 — ADOPTED; one task per PR, in the Part 4 order (Y1 postponed
-> until the owner asks).** Shipped and MERGED: V0 (PR #85), X2 (PR #86), V4 (PR #87; the
-> auditor's `_provenance` check waits for the Y2 replay), X3 (PR #88), X1 (PR #89; the
-> auditor's own keying note joins the Y2 replay) — steps 1-3 complete — and W1/W4/W5 as
-> the step-9 hygiene PR, V8 (PR #91), V9 (PR #92) and V10's first half — one writer for every runtime artifact (PR #93; its resumable/concurrency half is not started), V11 (PR #95), the six rulings (PR #96) and V3 BOTH halves — the eval fixture, golden and comparator (PR #97) and the model-driven runner (PR #98; the five remaining cases need a per-case expected-outcome contract first, since a refusal is their correct outcome) — and V6, the enforced parse-worker boundary (PR #99; `tax-verify` and `tax-parse-crypto` are the named next slice), then V1's three slices — Form 1040 lines 1-24, lines 25-38, and the derived-lines gate receipted onto the validation receipt (PRs #109, #110, #111) — Y4 (PR #112), Y5 (PR #113), Y6 (PR #114), V7 (PR #115) and V3's `corrected_document` (PR #116) and `zero_income` (PR #117) cases. ONE V3 case remains: `context_interruption` needs a way to interrupt an agent that is honest about what it simulates — a planted `summaries/` was tried in #116 and withdrawn, because `tax-parse` scans `documents/` and no skill has a resume instruction, so a compliant agent simply re-parses and the plant plays no part. Each was reviewed locally (code review, cleanup, bias
-> direction) and then by `codex review --base <its base branch>`; the findings and their
-> fixes are recorded in `docs/changelog/epic-V.md` and `epic-X.md`. **Step 4 is blocked
-> on the owner rulings in Part 5**, which is why step 9 was taken ahead of it.
+> **Status 2026-09-11 — ADOPTED; one task per PR, in the Part 4 order** (Y1 postponed
+> until the owner asks). Every item below is reviewed locally — code review, cleanup,
+> bias direction — and then by `codex review --base <its base branch>` where the budget
+> allowed; the findings and their fixes are in `docs/changelog/epic-V.md` and
+> `epic-X.md`. **Step 4 is blocked on the owner rulings in Part 5**, which is why step 9
+> was taken ahead of it.
+
+### Shipped
+
+This table is the STATUS, and every Part 4 entry it names carries `— DONE` to match. It
+replaces a single run-on paragraph that had grown past reading: V11 was recorded as
+shipped there, was never marked DONE below, and was very nearly re-implemented from the
+Part 4 list a month later. A test holds the two halves together in both directions.
+
+| Item | PRs | What is NOT done |
+|---|---|---|
+| V0 | #85 | — |
+| V1 | #109, #110, #111 | — |
+| V2 | #108 | — |
+| V3 | #97, #98, #107, #116, #117 | ONE case: `context_interruption` |
+| V4 | #87 | the auditor's `_provenance` check waits for the Y2 replay |
+| V5 | #103, #104 | — |
+| V6 | #99, #100, #101, #106 | — |
+| V7 | #115 | needs `TAX_WORKSPACE` set, or it isolates nothing |
+| V8 | #91 | — |
+| V9 | #92 | — |
+| V10 | #93, #102 | the resumable / concurrency half is not started |
+| V11 | #95 | — |
+| W1 | #90 | — |
+| W4 | #90, #118 | the MEASURED COSTS *seconds* sitting is OWED — it needs an otherwise-idle machine, and three attempts were killed for host memory |
+| W5 | #90 | — |
+| W6 | #105 | — |
+| X1 | #89 | the auditor's own keying note joins the Y2 replay |
+| X2 | #86 | — |
+| X3 | #88 | — |
+| Y4 | #112 | — |
+| Y5 | #113 | — |
+| Y6 | #114, #119 | — |
+| Y7 | #120 | — |
+| Z1 | #123 (spec), #124-#137 | IT-196 lines 1-45, IT-201 lines 44/45, each refundable credit's AMOUNT, line 59's sales/use tax, part-year city lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
+| Z2 | #130 | — |
+| Z3 | #131 | — |
+| Z7 | #121 | domicile as a GATE is deliberately not modeled |
+
+**`context_interruption` (V3) needs a way to interrupt an agent that is honest about
+what it simulates.** A planted `summaries/` was tried in #116 and withdrawn: `tax-parse`
+scans `documents/`, no skill has a resume instruction, so a compliant agent simply
+re-parses and the plant plays no part.
+
+**Two deferrals are owed to the Y2 fresh-session replay**, and both are blocked for the
+same reason: `.claude/agents/tax-law-freshness-auditor.md` is digest-pinned to a PASSED
+acceptance in `docs/ops/review-subagent-acceptance.md`, definitions load at session
+start, and so a same-session replay tests the old one. Editing it without a replay
+silently withdraws an acceptance this repository still advertises. Z1's own New York
+keying gotchas went to `docs/contributing/tax-law-cache.md` for that reason.
+
+### Not started
+
+Nothing here has shipped in any part. An item that shipped in PART is in the table
+above with the remainder named in its third column — `V10`'s resumable half and `V3`'s
+last case are the two, and they are deliberately NOT repeated here, because an id in
+both lists leaves a reader unable to say which is true. **Bold** in this section means
+the item is in this list; the backticks above are references to the table.
+
+**W2**, **W3**, **W7**, **W8**, **W9**, **X4**, **X5**,
+**X6** (= T3), **X7** (= U1), **Y1** (postponed until the owner asks), **Y2** (gated on
+TY2026 figures publishing), **Y3** (an owner ruling is open), **Z4**, **Z5**, **Z6**,
+**Z8**.
+
 > This backlog sits beside
 > `2026-08-12-product-owner-review.md`, which remains the active product backlog (Epics
 > R-U). Items here that duplicate one there (Y1 = R6, Y2 = T1, X6 = T3, X7 = U1) defer
@@ -136,7 +197,7 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
 > As the operator, I want the numbers on the return produced by code I can test, with
 > the agent asking questions and explaining, not doing arithmetic and transcription.
 
-- **V0 (P0, S-M): Mask SSN/ITIN at the extraction boundary.** A new SSN/ITIN-only
+- **V0 — DONE (#85) (P0, S-M): Mask SSN/ITIN at the extraction boundary.** A new SSN/ITIN-only
   masker — not `secure_fs.redact`, which substitutes `[REDACTED]` and masks any run of
   nine or more digits, so it would erase routing and account numbers and the last four
   digits alike — applied to every string `extract_pdf_text`, `extract_tables` and the
@@ -151,15 +212,15 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   redaction sweep stays as the belt-and-suspenders layer it already is. Ship with the
   E2 wording fix: rule 4 of the worker template reads "outside `documents/` (read) and
   `summaries/` (write)".
-- **V1 (P1, L): Deterministic return orchestrator.** A `return_builder` module under
+- **V1 — DONE (#109, #110, #111) (P1, L): Deterministic return orchestrator.** A `return_builder` module under
   `agents/lib` takes profile + tax law + structured parsed inputs and writes
   `result.json`. The skill shrinks to: run it, explain, ask the interview questions,
   re-run. Migrate one form at a time behind V3, starting with 1040 lines 1-24.
-- **V2 (P1, M): Structured parse output.** Parse workers emit one typed JSON per
+- **V2 — DONE (#108) (P1, M): Structured parse output.** Parse workers emit one typed JSON per
   document (form type, boxes, payer); a script derives `parse_ledger.json` and the
   result inputs from those files. Markdown summaries stay for humans. Second-read runs
   on the JSON.
-- **V3 (P1, M): Agent-level eval harness.** Synthetic fixture workspaces (W-2 and 1099
+- **V3 — DONE (#97, #98, #107, #116, #117) (P1, M): Agent-level eval harness.** Synthetic fixture workspaces (W-2 and 1099
   PDFs generated with reportlab), parse + compute run headless via the agents' batch
   modes, `result.json` diffed against a golden with tolerances. Nightly or on release
   tags, not per PR. **Gates V1 and V2 per slice, not as a whole:** each migrated form
@@ -169,7 +230,7 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   corrected document, hostile document text, a stale cache, a context interruption
   and a valid zero-income return; record agent version, instruction revision, repeat
   count and cost. Any observed privacy or false-completion failure blocks release.
-- **V4 (P1, S): Tax-law ingest CLI.** `tax_law_fetcher.py set <dotted.path> <value>
+- **V4 — DONE (#87) (P1, S): Tax-law ingest CLI.** `tax_law_fetcher.py set <dotted.path> <value>
   --source <url> --year <y>` with schema validation, year assertion and sanity ranges
   (brackets monotonic, deduction positive, MFJ ≥ single). The agent stops writing the
   cache JSON by hand. **Retrieval time is per block, not per file (E7):** `_sources`
@@ -181,13 +242,13 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   object value would mark every existing cache INCOMPLETE — and make freshness the
   minimum over blocks with `_meta.fetched` as the legacy fallback. An allowlisted
   host certifies the source, never the figure's meaning.
-- **V5 (P2, S): Headless answers contract.** A schema for `answers.md` (or an
+- **V5 — DONE (#103, #104) (P2, S): Headless answers contract.** A schema for `answers.md` (or an
   `answers.json`) plus a `--check-required` script that lists missing required answers
   by stable id before a run starts, instead of a hard stop mid-compute. Persisted
   answers never satisfy a gate that requires a fresh explicit acknowledgement, and the
   engine CLIs converge on one success / blocked / could-not-run exit contract with
   tested JSON output — the freshness report and the gates disagree today.
-- **V6 (P1, M): Enforced parse-worker boundary.** A `tax-parse-worker` subagent under
+- **V6 — DONE (#99, #100, #101, #106) (P1, M): Enforced parse-worker boundary.** A `tax-parse-worker` subagent under
   `.claude/agents/` with no WebFetch/WebSearch and a closed tool set, plus the
   equivalent for the sequential path. Acceptance is adversarial: a document whose text
   instructs an outbound request or an unrelated read/write produces neither, through
@@ -199,12 +260,12 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   sub-task, and a season-open toolkit that refuses to parse on them is a portability
   regression `docs/contributing/agents-compat.md` must record. Today the "no network"
   rule for parse sub-tasks is prompt-level only.
-- **V7 (P2, S): Isolate the freshness auditor.** Run it against a schema-validated
+- **V7 — DONE (#115) (P2, S): Isolate the freshness auditor.** Run it against a schema-validated
   copy of `tax_law_<year>.json` in a temp directory, so the only network-capable agent
   never has the workspace in reach. Acceptance: a sentinel taxpayer file in the
   workspace is unreadable to it, and a free-text cache field cannot carry identity
   data into the copy. Its "read nothing else" scope is prompt-level only.
-- **V8 (P1, M): Validation receipt bound to current inputs.** Tie-out and the
+- **V8 — DONE (#91) (P1, M): Validation receipt bound to current inputs.** Tie-out and the
   capability gate write a receipt naming the document, input, law and result hashes
   plus engine and schema versions and each gate's outcome; `tax-generate` re-validates
   it and refuses a filing package whose inputs changed or whose tie-out failed. A
@@ -213,21 +274,21 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   hostile process. A receipt that fires on a harmless edit teaches the agent to
   reason past it, so the invalidation set is the input set and nothing wider (the
   gates-that-cry-wolf lesson from the CA cache fix, PR #69).
-- **V9 (P2, M): Maintained PDF renderer.** Replace the per-workspace generated
+- **V9 — DONE (#92) (P2, M): Maintained PDF renderer.** Replace the per-workspace generated
   `generate_tax_pdf.py` with a tracked renderer and a shared field map that consumes
   validated `result.json`, never embeds the taxpayer's name in source, keeps the
   page-1 limitations manifest and rejects an incompatible schema version. Synthetic
   PDFs for zero-tax, refund, balance-due and long-manifest cases get layout and
   field-presence checks. Retires the "check the generator by hand" rule in AGENTS.md
   §8 and the PII gate's by-name block for that file.
-- **V10 (P2, M): Atomic writes and resumable state.** Extract one temp-then-replace
+- **V10 — DONE (#93, #102) (P2, M): Atomic writes and resumable state.** Extract one temp-then-replace
   writer into `secure_fs` from the three hand-rolled copies (`tax_law_fetcher`,
   `rollover`, `tax_calendar`) and route every runtime writer through it —
   `scenario.py:524` and `tie_out.py:1745` write in place today, and the second is
   the hard gate's own report, the artifact V8 binds generation to. A restart after
   interruption resumes from validated inputs without duplicating income or mixing
   artifact generations; concurrent runs serialize or refuse.
-- **V11 (P2, M): Parser resource budgets.** Time, memory, decompression and output
+- **V11 — DONE (#95) (P2, M): Parser resource budgets.** Time, memory, decompression and output
   caps on every adapter — the 100 MB source-file cap bounds neither a decompressed
   workbook nor extracted output. Synthetic compressed-workbook and excessive-page
   cases terminate with a controlled error and no partial record is accepted.
@@ -236,7 +297,7 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
 
 - **W1 — DONE**, and **W5 — DONE**: `pyproject.toml` configures ruff and mypy and CI
   runs both; `.python-version` pins 3.12. W4 is what remains of that group.
-- **W1 (P2, S): `pyproject.toml` with ruff and mypy** (gradual, untyped defs off), both
+- **W1 — DONE (#90) (P2, S): `pyproject.toml` with ruff and mypy** (gradual, untyped defs off), both
   in CI. Baseline the existing findings and enforce on changed modules and new
   contracts first; clear the current pyflakes baseline (12 at `9f3bdb7`) in the same
   PR.
@@ -249,15 +310,15 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   `secure_fs`. Contracts first, extracted incrementally, exit codes and output
   preserved; a wholesale rewrite is not the acceptance criterion, and the bootstrap
   (a hook that must run before the venv exists) needs a stated answer.
-- **W4 (P2, S): Suite speed.** A `slow` marker on the hook and preflight modules
+- **W4 — DONE (#90, #118) (P2, S): Suite speed.** A `slow` marker on the hook and preflight modules
   first, then trial pytest-xdist only after checking the shared subprocess, git and
   stamp-file resources the hook tests touch. The suite is I/O-bound at 38% CPU, which
   suggests xdist could roughly halve wall time; demonstrate it on the same host rather
   than promise it. An engine-only run should finish well under a minute.
-- **W5 (P2, S): Pin the dev interpreter.** `.python-version` (3.12) and a `uv sync`
+- **W5 — DONE (#90) (P2, S): Pin the dev interpreter.** `.python-version` (3.12) and a `uv sync`
   recipe. The local venv is 3.14 while the lock targets 3.12, which AGENTS.md §7
   itself warns about.
-- **W6 (P2, S): CI gaps.** A scheduled weekly run, a push-to-main run, coverage upload,
+- **W6 — DONE (#105) (P2, S): CI gaps.** A scheduled weekly run, a push-to-main run, coverage upload,
   and a `windows-latest` job for `secure_fs` and `run.sh` — Windows behavior is claimed
   in 27 places and exercised nowhere. Each trigger gets its own PII-scan range (the
   `pull_request` base/head variables are empty on push and schedule), a pinned dev-tool
@@ -277,19 +338,19 @@ Carried from the memory of prior reviews and re-confirmed by the second review
 (Part 2c E5, E6). They are small, they are directional, and they touch CA filers, so
 they run ahead of the orchestrator rather than waiting behind it.
 
-- **X1 (P1, M):** MFS and HOH capital-gains brackets collapse to single in the schema
+- **X1 — DONE (#89) (P1, M):** MFS and HOH capital-gains brackets collapse to single in the schema
   and in compute, projection and scenario. A real directional error, not a gap. Verify
   the required distinctions against the year's instructions, fetch every
   status-specific value, and replace the divergent `_binary_status_key` mappings with
   one shared accessor tested per status, old caches included.
-- **X2 (P1, S):** One shared accessor for the status-keyed capital-gains limits that
+- **X2 — DONE (#86) (P1, S):** One shared accessor for the status-keyed capital-gains limits that
   raises when preferential income exists and a limit is `None`, used by
   `compute_scenario` AND by `projection.py`'s own worksheet branch, which never calls
   `compute_scenario`. Today only `loss_harvest.py` guards; `scenario.py`,
   `roth_ladder.py` and `projection.py` fall through to ordinary rates and over-state
   the tax. An ordinary-income-only case stays usable. X1 and X2 share the root cause
   (four divergent read sites), so X1 lands on the same accessor.
-- **X3 (P1, S):** Capital-loss carryforward rolls the combined net only; split short
+- **X3 — DONE (#88) (P1, S):** Capital-loss carryforward rolls the combined net only; split short
   and long term through profile, compute and the next rollover. Apply AGENTS.md §8's
   `math.isfinite` rule at `rollover._read_json` (a bare `json.loads` today) so NaN,
   ±Infinity and booleans never reach any transform — `_transform_capital_loss`'s
@@ -318,14 +379,14 @@ they run ahead of the orchestrator rather than waiting behind it.
   entry points. `tax-engine preflight` replaces `sh agents/lib/run.sh
   agents/lib/preflight.py`, and most of preflight's 2,700 lines exist to compensate for
   not being a package.
-- **Y4 (P2, S): Workspace outside the clone.** A `TAX_WORKSPACE` root every skill and
+- **Y4 — DONE (#112) (P2, S): Workspace outside the clone.** A `TAX_WORKSPACE` root every skill and
   CLI honors, so the dev checkout and the live return stop sharing a directory. The
   08-12 review accepted that risk as permanent (R2's standing controls); a
   one-variable fix retires the risk instead of policing it.
-- **Y5 (P2, S): Instruction-file budget.** AGENTS.md + CLAUDE.md is 39 KB loaded into
+- **Y5 — DONE (#113) (P2, S): Instruction-file budget.** AGENTS.md + CLAUDE.md is 39 KB loaded into
   every Claude Code session before any skill. Move the hook and Codex-loop internals to
   `docs/contributing/` and keep the two files to rules only.
-- **Y6 (P3, S): Pre-push hook runs the PII scan and passes**, instead of blocking, so
+- **Y6 — DONE (#114, #119) (P3, S): Pre-push hook runs the PII scan and passes**, instead of blocking, so
   the documented push command no longer needs `--no-verify`. A normal push scans every
   outgoing commit, fails closed, and passes a clean branch. R2 names this sharp edge
   ("commit-time gating is the only local gate that actually runs"); this closes it.
@@ -651,18 +712,18 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   `irs_dates.next_business_day_state`, and `tax_calendar.py` uses the same helper.
   Reproduced before believing it, which is the rule applied to my own notes.
 
-- **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
+- **Z1 — DONE (#123, #124-#137) (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension
   exclusion, Social Security subtraction), decoupled IT-196 itemizing, W-2 box 14
   extraction. Plus the registrations the playbook lists: a `new_york_it201` result
   section, a `state_withholding_ny` ledger category in `tie_out.CATEGORY_TARGETS`, PDF
   page, `STATE_SECTION_KEYS`, `STATE_MOVER_FIELDS`.
-- **Z2 (P2, M): NYC resident tax and Yonkers** — Epic 3.5. Retires the `nyc_resident`
+- **Z2 — DONE (#130) (P2, M): NYC resident tax and Yonkers** — Epic 3.5. Retires the `nyc_resident`
   UNSUPPORTED rule; until Z1 lands it cannot ship, because the city tax is computed on
   NY taxable income. Z1+Z2 turn the BLOCK into a return; Z3 turns the return into the
   CA experience.
-- **Z3 (P2, M): NY credits tier 1, estimates and PTET reconciliation** — Epic 3.6-3.9,
+- **Z3 — DONE (#131) (P2, M): NY credits tier 1, estimates and PTET reconciliation** — Epic 3.6-3.9,
   3.11: Empire State child credit, NY EITC, IT-2105 events in the calendar, the NY
   layer in `/tax-withholding`, IT-653 credit, NYC PTET in `/tax-ptet`, planning-skill
   NY marginal rates.
