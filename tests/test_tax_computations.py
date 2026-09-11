@@ -23,6 +23,7 @@ from agents.lib.tax_computations import (
     compute_ny_itemized,
     compute_ny_household_credit,
     compute_ny_state_tax_total,
+    compute_ny_settlement,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -5694,3 +5695,118 @@ def test_ny_state_tax_total_is_plain_arithmetic_when_nothing_is_capped():
     assert out["line_46_total_state_tax"] == 4600
     assert out["credits_lost"] == 0.0
     assert out["notes"] == []
+
+
+# --- Z1 slice 6: payments, refundable credits, and the settlement -----------
+#
+# Form IT-201 (2025) p.4, lines 63 through 82, and IT-201-I (2025) p.23.
+
+
+def _settle(tax=5000.0, **kw):
+    return compute_ny_settlement(tax, **kw)
+
+
+def test_ny_every_remaining_credit_is_a_payment_not_a_credit():
+    """The open question from slice 5, answered by the form itself: the block
+    is headed "Payments and refundable credits" and line 76 adds lines 63
+    THROUGH 75. They can produce a refund with no tax to offset, so capping one
+    at the tax would silently discard what should have been paid out."""
+    out = _settle(0, refundable_credits={"empire_state_child": 330,
+                                         "earned_income": 200})
+    assert out["total_payments"] == 530
+    assert out["refund"] == 530, (
+        "a refundable credit with no tax to offset was capped away")
+
+
+def test_ny_settlement_refuses_a_nonrefundable_credit():
+    """The capped path is one function away. Handing the household or resident
+    credit to this one would REFUND a credit the form only lets reduce the tax,
+    so the names are a closed set."""
+    for smuggled in ("household", "resident", "household_credit"):
+        with pytest.raises(ValueError, match="not New York refundable"):
+            _settle(refundable_credits={smuggled: 75})
+
+
+def test_ny_settlement_names_the_two_credits_that_get_missed():
+    """Between the credits everybody names sit the noncustodial parent EIC
+    (line 66) and the New York City EIC (line 70). A closed set that omitted
+    them would refuse a correct return."""
+    out = _settle(0, refundable_credits={"noncustodial_parent_eic": 100,
+                                         "nyc_earned_income": 50})
+    assert out["total_payments"] == 150
+
+
+def test_ny_amount_owed_includes_the_penalty():
+    """Line 80 is "the amount of tax you owe PLUS any estimated tax penalty you
+    owe and any other" penalties. Reporting it beside the amount owed and
+    letting a caller add it double-counts; reporting it nowhere loses it. This
+    repository has paid for that exact shape on federal Form 1040 line 38."""
+    out = _settle(5000, state_withholding=4000, estimated_tax_penalty=120,
+                  other_penalties=30)
+    assert out["amount_owed"] == 5000 - 4000 + 120 + 30
+    assert out["lines"]["line_81_estimated_tax_penalty"] == 120
+    assert any("INCLUDES" in n for n in out["notes"])
+
+
+def test_ny_penalty_reduces_an_overpayment_rather_than_being_billed():
+    """"…or reduce the overpayment on line 77." It comes out of the refund
+    before anything is applied forward."""
+    out = _settle(5000, state_withholding=6000, estimated_tax_penalty=120)
+    assert out["lines"]["line_77_overpaid"] == 880
+    assert out["amount_owed"] == 0.0
+    assert any("reduce the overpayment" in n for n in out["notes"])
+
+
+def test_ny_a_penalty_larger_than_the_overpayment_becomes_an_amount_owed():
+    """The overpayment absorbs what it can and the rest is billed. Clamping at
+    zero would forgive the remainder."""
+    out = _settle(5000, state_withholding=5100, estimated_tax_penalty=400)
+    assert out["lines"]["line_77_overpaid"] == 0.0
+    assert out["amount_owed"] == 300
+
+
+def test_ny_amount_applied_forward_cannot_exceed_the_overpayment():
+    """Line 78 is line 77 less line 79, so a larger figure manufactures a
+    refund out of nothing."""
+    with pytest.raises(ValueError, match="manufactures a refund"):
+        _settle(5000, state_withholding=5500, applied_to_next_year=900)
+
+
+def test_ny_applied_forward_comes_out_of_the_refund():
+    out = _settle(5000, state_withholding=6000, applied_to_next_year=400)
+    assert out["lines"]["line_77_overpaid"] == 1000
+    assert out["applied_forward"] == 400
+    assert out["refund"] == 600
+
+
+def test_ny_college_tuition_credit_and_deduction_are_mutually_exclusive():
+    """IT-196 line 48: "you may be eligible to claim either the college tuition
+    itemized deduction or the college tuition credit. However, you cannot claim
+    both." Taking both under-states the tax twice over, and the two live in
+    different functions, so neither would see the other without being told."""
+    with pytest.raises(ValueError, match="cannot claim both"):
+        _settle(refundable_credits={"college_tuition": 400},
+                college_tuition_deduction_claimed=True)
+    # Either alone is fine.
+    assert _settle(0, refundable_credits={"college_tuition": 400},
+                   )["refund"] == 400
+    assert _settle(0, college_tuition_deduction_claimed=True)["refund"] == 0.0
+
+
+def test_ny_settlement_reports_every_line_for_the_verify_tie_out():
+    out = _settle(5000, refundable_credits={"empire_state_child": 100},
+                  state_withholding=1000, city_withholding=200,
+                  yonkers_withholding=50, estimated_payments=500)
+    for key in ("line_63_empire_state_child", "line_72_state_withholding",
+                "line_73_city_withholding", "line_74_yonkers_withholding",
+                "line_75_estimated_payments", "line_76_total_payments",
+                "line_80_amount_owed"):
+        assert key in out["lines"], key
+    assert out["lines"]["line_76_total_payments"] == 1850
+    assert out["amount_owed"] == 3150
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1, True, "100"])
+def test_ny_settlement_refuses_a_malformed_figure(bad):
+    with pytest.raises(ValueError):
+        _settle(5000, state_withholding=bad)

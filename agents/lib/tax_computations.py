@@ -3296,6 +3296,139 @@ def compute_ny_state_tax_total(
     }
 
 
+# IT-201's "Payments and refundable credits" block, in form order. EVERY New
+# York credit other than the household and resident credits is here, which is
+# the answer to a question the spec carried open: they are not credits against
+# the tax at all, they are PAYMENTS. Two of them are easy to miss because they
+# sit between the ones people name — the noncustodial parent EIC and the New
+# York City EIC.
+_NY_REFUNDABLE_CREDIT_LINES = (
+    ("empire_state_child", 63),
+    ("child_and_dependent_care", 64),
+    ("earned_income", 65),
+    ("noncustodial_parent_eic", 66),
+    ("real_property_tax", 67),
+    ("college_tuition", 68),
+    ("nyc_school_tax_fixed", 69),
+    ("nyc_earned_income", 70),
+    ("other_refundable", 71),
+)
+
+
+def compute_ny_settlement(
+    total_tax: float,
+    refundable_credits: "dict | None" = None,
+    state_withholding: float = 0.0,
+    city_withholding: float = 0.0,
+    yonkers_withholding: float = 0.0,
+    estimated_payments: float = 0.0,
+    applied_to_next_year: float = 0.0,
+    estimated_tax_penalty: float = 0.0,
+    other_penalties: float = 0.0,
+    college_tuition_deduction_claimed: bool = False,
+) -> dict:
+    """IT-201 lines 63 through 82 — payments, refund, and the amount owed.
+
+    **Every remaining New York credit is REFUNDABLE**, and that is not a detail
+    of presentation: they are added to the PAYMENTS, so they can produce a
+    refund with no tax to offset. Treating one as nonrefundable would cap it at
+    the tax and silently discard the part that should have been paid out — and
+    the capped path is one function away, in `compute_ny_state_tax_total`. The
+    names here are a closed set for exactly that reason: handing the household
+    or resident credit to this function refuses rather than refunding it.
+
+    **The penalty is INSIDE the amount owed.** Line 80 is "the amount of tax you
+    owe PLUS any estimated tax penalty you owe and any other" penalties, and
+    against an overpayment it reduces line 77 instead. Reporting it beside the
+    amount owed and letting a caller add it double-counts it; reporting it
+    nowhere loses it. This repository has paid for that exact shape once
+    already, on federal Form 1040 line 38, where a review found the penalty
+    missing from BOTH settlement lines.
+
+    Line 79's amount applied forward comes out of the overpayment and cannot
+    exceed it — the form computes line 78 as line 77 minus line 79, and a
+    larger figure would manufacture a refund out of nothing.
+    """
+    tax = _ny_amount(total_tax, "total_tax")
+    credits = refundable_credits or {}
+    known = {name for name, _ in _NY_REFUNDABLE_CREDIT_LINES}
+    unknown = sorted(set(credits) - known)
+    if unknown:
+        raise ValueError(
+            f"{unknown} are not New York refundable credits. Every credit on "
+            "this block is a PAYMENT; a nonrefundable one belongs in "
+            "compute_ny_state_tax_total, where it is capped at the tax. "
+            f"Known here: {sorted(known)}")
+    if college_tuition_deduction_claimed and credits.get("college_tuition"):
+        raise ValueError(
+            "both the college tuition CREDIT (line 68) and the college tuition "
+            "itemized DEDUCTION (IT-196 line 48) are claimed. The form allows "
+            "one or the other — \"you cannot claim both\" — and taking both "
+            "under-states the tax twice over.")
+
+    lines: "dict[str, float]" = {}
+    total_payments = 0.0
+    for name, line_no in _NY_REFUNDABLE_CREDIT_LINES:
+        amount = _ny_amount(credits.get(name, 0) or 0,
+                            f"refundable_credits.{name}")
+        lines[f"line_{line_no}_{name}"] = round(amount, 2)
+        total_payments += amount
+    for name, line_no, value in (
+            ("state_withholding", 72, state_withholding),
+            ("city_withholding", 73, city_withholding),
+            ("yonkers_withholding", 74, yonkers_withholding),
+            ("estimated_payments", 75, estimated_payments)):
+        amount = _ny_amount(value, name)
+        lines[f"line_{line_no}_{name}"] = round(amount, 2)
+        total_payments += amount
+    lines["line_76_total_payments"] = round(total_payments, 2)
+
+    penalty = _ny_amount(estimated_tax_penalty, "estimated_tax_penalty")
+    other = _ny_amount(other_penalties, "other_penalties")
+    applied = _ny_amount(applied_to_next_year, "applied_to_next_year")
+    notes: "list[str]" = []
+
+    overpaid = round(max(total_payments - tax, 0.0), 2)
+    if overpaid:
+        # "…or reduce the overpayment on line 77". The penalty comes out of the
+        # refund before anything is applied forward, and what it cannot absorb
+        # becomes an amount owed.
+        absorbed = min(overpaid, penalty + other)
+        overpaid = round(overpaid - absorbed, 2)
+        owed = round(penalty + other - absorbed, 2)
+        if absorbed:
+            notes.append(
+                f"The estimated tax penalty and other penalties of "
+                f"{penalty + other:,.2f} reduce the overpayment rather than "
+                "being billed separately.")
+    else:
+        owed = round(tax - total_payments + penalty + other, 2)
+        if penalty or other:
+            notes.append(
+                "The amount owed INCLUDES the estimated tax penalty and any "
+                "other penalties; they are not a separate bill.")
+
+    if applied > overpaid:
+        raise ValueError(
+            f"{applied:,.2f} is applied to next year's estimated tax but the "
+            f"overpayment is only {overpaid:,.2f}. Line 78 is line 77 less "
+            "line 79, so a larger figure manufactures a refund out of nothing.")
+    lines["line_77_overpaid"] = overpaid
+    lines["line_79_applied_forward"] = round(applied, 2)
+    lines["line_78_refund"] = round(overpaid - applied, 2)
+    lines["line_80_amount_owed"] = owed
+    lines["line_81_estimated_tax_penalty"] = round(penalty, 2)
+    lines["line_82_other_penalties"] = round(other, 2)
+    return {
+        "total_payments": round(total_payments, 2),
+        "refund": lines["line_78_refund"],
+        "applied_forward": lines["line_79_applied_forward"],
+        "amount_owed": owed,
+        "lines": lines,
+        "notes": notes,
+    }
+
+
 def compute_ny_itemized(
     itemized_before_adjustment: float,
     charitable_contributions: float,

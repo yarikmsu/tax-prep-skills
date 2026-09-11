@@ -255,12 +255,30 @@ OVER-states the number the taxpayer acts on is a hard error here:
    and the surviving spouse together. MFS pairs with SINGLE for the rate
    schedule and gets roughly half the credit here.
 
-   **STILL OPEN**: the other five — the Empire State child credit, the
-   child-and-dependent-care credit, the EIC piggyback, the real-property-tax
-   credit and the college-tuition credit — and which of them are REFUNDABLE.
-   They are payments further down the form rather than credits against line 39,
-   and treating one as nonrefundable would silently discard the part that
-   should have been refunded.
+   **The refundability question is CLOSED (slice 6), and the answer is all of
+   them.** IT-201's block is headed "Payments and refundable credits" and line
+   76 adds lines 63 THROUGH 75, so every New York credit other than the
+   household and resident credits is a PAYMENT: it can produce a refund with no
+   tax to offset. `compute_ny_settlement` covers lines 63-82, and its credit
+   names are a CLOSED SET — handing it a nonrefundable credit refuses rather
+   than refunding one the form only lets reduce the tax.
+
+   Two credits sit between the ones everybody names and are easy to omit: the
+   noncustodial parent EIC (line 66) and the New York City EIC (line 70).
+
+   **The penalty is INSIDE the amount owed.** Line 80 is "the amount of tax you
+   owe PLUS any estimated tax penalty you owe and any other" penalties, and
+   against an overpayment it reduces line 77 instead. Reporting it beside the
+   amount owed double-counts it and reporting it nowhere loses it — the exact
+   shape a review already caught on federal Form 1040 line 38.
+
+   The college tuition CREDIT and the college tuition itemized DEDUCTION are
+   mutually exclusive, and they live in different functions, so neither would
+   see the other without being told.
+
+   **STILL OPEN**: the AMOUNT of each of those credits — IT-213, IT-216,
+   IT-215, IT-214 and IT-272 each carry their own worksheet, and slice 6 takes
+   the figures as inputs rather than computing them.
 
 ## 6. Registrations (playbook step 5)
 
@@ -322,6 +340,10 @@ Each emits a LOUD note that lands on `meta.limitations` — never silence:
   return and changes the amount owed, and it has no key. Named here rather than
   left to be noticed.
 - **Estates and trusts**, which §601(c) also covers. An IT-201 never is one.
+- **The AMOUNT of each refundable credit.** IT-213, IT-216, IT-215, IT-214 and
+  IT-272 each have their own worksheet; `compute_ny_settlement` takes the
+  figures and settles the return around them. Where each one LANDS is settled;
+  what each one IS, is not.
 - **IT-196 lines 1 through 45** — the New York itemized deduction BEFORE the
   §615 adjustment, computed on pre-TCJA federal rules. Slice 4 takes it as an
   input; building it from source figures the way `compute_ca_itemized` does is

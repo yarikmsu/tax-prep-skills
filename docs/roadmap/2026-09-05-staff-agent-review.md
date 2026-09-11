@@ -474,6 +474,17 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   pairs with single for the schedule and gets half the credit here. Ten mutations, ten
   reds. The other five credits, and which are REFUNDABLE, remain open.
 
+  **SLICE 6 SHIPPED**: `compute_ny_settlement` (lines 63-82), and the refundability
+  question is closed — **every remaining NY credit is a PAYMENT**, not a credit against
+  the tax, so it can produce a refund with no tax to offset. The credit names are a
+  CLOSED SET so a nonrefundable one cannot be smuggled in and refunded. Two credits that
+  get missed are named: the noncustodial parent EIC and the NYC EIC. **The penalty is
+  INSIDE the amount owed** and reduces an overpayment instead of being billed — the same
+  shape a review caught on federal 1040 line 38. The college tuition CREDIT and
+  DEDUCTION are mutually exclusive across two functions, so neither sees the other
+  without being told. Ten mutations, ten reds. Open: the AMOUNT of each credit
+  (IT-213/216/215/214/272 each have their own worksheet).
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension
