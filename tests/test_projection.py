@@ -14,6 +14,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from skill_text import skill_text  # noqa: E402
+from ny_fixtures import ny_state_cache  # noqa: E402
 from agents.lib import projection as P  # noqa: E402
 from agents.lib import tax_computations as TC  # noqa: E402
 from agents.lib import irs_dates as I  # noqa: E402
@@ -6128,3 +6129,96 @@ def test_state_standard_deduction_falls_to_single_where_the_template_has_no_hoh_
     hoh = P.project_state_tax(_proj(), prior, law, filing_status="HoH")
     single = P.project_state_tax(_proj(), prior, law, filing_status="Single")
     assert hoh.taxable_income == single.taxable_income
+
+
+class TestAStateWhoseBracketsAreKeyedByRateSchedule:
+    """New York's `state.brackets` is a dict of §601 rate schedules, and a
+    non-empty dict is TRUTHY — so `state_cfg.get("brackets") or []` waved it
+    into compute_bracket_tax, which iterates a list of dicts and got the
+    schedule keys as strings instead."""
+
+    def _law(self, **state_over):
+        law = _tax_law_2026()
+        law["state"] = ny_state_cache(**state_over)
+        return law
+
+    def test_the_old_gate_crashed_and_the_accessor_does_not(self):
+        """The regression, end to end through the public function."""
+        law = self._law()
+        assert bool(law["state"]["brackets"] or [])   # the gate that passed it
+        with pytest.raises(AttributeError):
+            TC.compute_bracket_tax(50000.0, law["state"]["brackets"])
+        st = P.project_state_tax(_proj(), None, law, "MFJ", resident_state="NY")
+        assert st is not None and st.code == "NY"
+
+    def test_the_schedule_is_chosen_by_filing_status(self):
+        """Schedule (a) for married-joint, (c) for single — the same income
+        must not read the same rates, or three filing statuses share one
+        schedule by accident rather than by statute. End to end through
+        `project_state_tax`; the mapping itself belongs to `compute_ny_tax`,
+        which reads the cache's own `bracket_schedule_by_status` rather than
+        taking a pre-resolved list from here.
+
+        Wages 100,000 less the fixture deduction: MFJ 90,000 on schedule (a),
+        single 95,000 on (c). IT-201-I (2025) p.33:
+          (a) 1,202 + 5.5% x (90,000 - 27,900)  = 4,617.50
+          (c) 4,271 + 6.0% x (95,000 - 80,650)  = 5,132.00
+        NYAGI is under the 107,650 entry threshold in both, so no recapture.
+        """
+        law = self._law()
+        mfj = P.project_state_tax(_proj(), None, law, "MFJ", resident_state="NY")
+        single = P.project_state_tax(_proj(), None, law, "Single",
+                                     resident_state="NY")
+        assert (mfj.taxable_income, mfj.tax) == (90000, 4617.50)
+        assert (single.taxable_income, single.tax) == (95000, 5132.00)
+
+    def test_the_benefit_recapture_is_in_the_projected_tax(self):
+        """A projection that priced New York on the schedule alone would tell
+        a taxpayer above the entry threshold to pay less than they owe — the
+        under-statement direction AGENTS.md §4 calls a hard error, and the
+        reason the recapture shipped in the same slice as the schedules.
+
+        Wages 200,000 less the 10,000 fixture deduction is 190,000 of taxable
+        income against 200,000 of NYAGI. Worksheet 2 (IT-201-I p.34), tier
+        161,550-323,200:
+          schedule (a): 8,553 + 6% x (190,000 - 161,550)      = 10,260.00
+          recapture:    333 + 807 x (200,000 - 161,550)/50,000 =   953.58
+                                                                 ---------
+                                                                 11,213.58
+
+        The schedule figure is the PUBLISHED cumulative base plus the top
+        band, which is 25 cents away from summing the bands — New York rounds
+        each base, so `compute_bracket_tax` and the printed schedule do not
+        agree to the cent. That is why the comparison below is against plain
+        bracket math as a FLOOR and not as a component.
+        """
+        law = self._law()
+        st = P.project_state_tax(_proj(wages=200000), None, law, "MFJ",
+                                 resident_state="NY")
+        assert st.tax == 11213.58
+        schedule_only, _ = TC.compute_bracket_tax(
+            190000, law["state"]["brackets"]["a"])
+        assert st.tax > schedule_only + 900
+
+    def test_an_unfetched_recapture_refuses_and_names_the_remedy(self):
+        """Every other answer here under-states the tax, so the projection
+        stops rather than publishing one."""
+        law = self._law(tax_table_benefit_recapture={"phase_in_band": 50000})
+        with pytest.raises(P.ProjectionError, match="tax-setup"):
+            P.project_state_tax(_proj(), None, law, "MFJ", resident_state="NY")
+
+    def test_an_unfetched_schedule_is_the_not_modeled_signal(self):
+        """A skeleton cache — every schedule present, none populated — is what
+        `create_state_template("NY")` ships before a fetch. It degrades to no
+        state projection, the way an absent block always has."""
+        law = self._law(brackets={"a": [], "b": [], "c": []})
+        assert P.project_state_tax(_proj(), None, law, "MFJ",
+                                   resident_state="NY") is None
+
+    def test_a_flat_list_state_is_untouched(self):
+        """California regression pin: the accessor must not change the shape
+        every other state still uses."""
+        st = P.project_state_tax(_proj(state_withholding=4000),
+                                 _Prior({"california_540": {"ca_total_tax": 5000}}),
+                                 _tax_law_2026(), filing_status="MFJ")
+        assert (st.taxable_income, st.tax) == (89000, 3650)

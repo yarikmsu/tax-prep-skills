@@ -75,6 +75,67 @@ def _coerce_numeric(value, default=None):
     return default
 
 
+def state_brackets_for_status(state_cfg: dict,
+                              filing_status: "str | None") -> "list[dict]":
+    """The flat list of bands that `state.brackets` means for one filing status.
+
+    TWO CACHE SHAPES, and a consumer that knows only the first computes
+    nonsense for the second. California's `state.brackets` is a LIST of bands
+    — one schedule, the filing status already applied when it was fetched.
+    New York's is a DICT keyed by RATE SCHEDULE, because three statuses share
+    one schedule and no status can be read off the bands themselves;
+    `state.bracket_schedule_by_status` carries the mapping and is fetched
+    beside it.
+
+    A non-empty dict is TRUTHY, so every `state.get("brackets") or []` gate in
+    this repository waved a New York cache through to code that iterates a
+    list of dicts. What arrives there is the schedule KEYS, as strings:
+    `AttributeError: 'str' object has no attribute 'keys'`, raised from inside
+    bracket math, naming neither the cache nor a remedy. Reproduced against
+    `create_state_template("NY")` before this was written.
+
+    This is the ONE reader of `state.brackets` outside the state engine — a
+    test sweeps the source for others, the way `capital_gains_limits` is
+    swept, because a second reader is a second chance to know only one shape.
+
+    Returns `[]` for a cache that carries no bands for this status, which is
+    the existing "state not modeled" signal every caller already handles. A
+    cache whose SHAPE cannot be read raises instead: that is corruption, and
+    degrading it to "no state tax" would publish a zero liability.
+    """
+    brackets = (state_cfg or {}).get("brackets")
+    if not brackets:
+        return []
+    if isinstance(brackets, list):
+        return brackets
+    if not isinstance(brackets, dict):
+        raise ValueError(
+            "state.brackets must be a list of bands or a dict keyed by rate "
+            f"schedule, got {type(brackets).__name__} — the cache is corrupted "
+            "or was hand-edited; re-run /tax-setup.")
+    by_status = (state_cfg or {}).get("bracket_schedule_by_status") or {}
+    if not by_status:
+        raise ValueError(
+            "state.brackets is keyed by rate SCHEDULE but "
+            "state.bracket_schedule_by_status is not fetched, so nothing here "
+            "knows which schedule this filing status reads. Picking one would "
+            "put a married couple on a single filer's rates; re-run "
+            "/tax-setup.")
+    schedule = by_status.get(filing_status)
+    if schedule is None:
+        raise ValueError(
+            f"no state rate schedule for filing status {filing_status!r} — "
+            f"known: {sorted(by_status)}")
+    bands = brackets.get(schedule)
+    if not bands:
+        return []
+    if not isinstance(bands, list):
+        raise ValueError(
+            f"state.brackets[{schedule!r}] must be a list of bands, got "
+            f"{type(bands).__name__}")
+    return bands
+
+
 def compute_bracket_tax(taxable_income: float, brackets: list[dict]) -> tuple[float, list[dict]]:
     """Compute tax using progressive brackets.
 

@@ -5,6 +5,7 @@ Expected values are hand-computed from IRS worksheets and publications.
 Tolerance: $0.01 (exact match after rounding to 2 decimal places).
 """
 
+import ast
 import json
 import pytest
 import sys
@@ -29,6 +30,7 @@ from agents.lib.tax_computations import (
     compute_city_and_yonkers_total,
     compute_ny_ptet_owner,
     compute_ny_required_annual_payment,
+    state_brackets_for_status,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -4660,103 +4662,14 @@ def test_the_fbar_skill_states_the_form_8938_figures_the_engine_holds():
 # of the graduated schedule, and under-stating what a taxpayer owes is the
 # direction AGENTS.md §4 calls a hard error.
 
-# IT-201-I (2025) p.33, "Married filing jointly and qualifying surviving
-# spouse". Written as bands so the test reads against the published table.
-_NY_2025_SCHEDULE_A = [
-    {"rate": 0.04, "min": 0, "max": 17150, "base": 0},
-    {"rate": 0.045, "min": 17150, "max": 23600, "base": 686},
-    {"rate": 0.0525, "min": 23600, "max": 27900, "base": 976},
-    {"rate": 0.055, "min": 27900, "max": 161550, "base": 1202},
-    {"rate": 0.06, "min": 161550, "max": 323200, "base": 8553},
-    {"rate": 0.0685, "min": 323200, "max": 2155350, "base": 18252},
-    {"rate": 0.0965, "min": 2155350, "max": 5000000, "base": 143754},
-    {"rate": 0.103, "min": 5000000, "max": 25000000, "base": 418263},
-    {"rate": 0.109, "min": 25000000, "max": None, "base": 2478263},]
-# IT-201-I (2025) p.33, "Single and married filing separately".
-_NY_2025_SCHEDULE_C = [
-    {"rate": 0.04, "min": 0, "max": 8500, "base": 0},
-    {"rate": 0.045, "min": 8500, "max": 11700, "base": 340},
-    {"rate": 0.0525, "min": 11700, "max": 13900, "base": 484},
-    {"rate": 0.055, "min": 13900, "max": 80650, "base": 600},
-    {"rate": 0.06, "min": 80650, "max": 215400, "base": 4271},
-    {"rate": 0.0685, "min": 215400, "max": 1077550, "base": 12356},
-    {"rate": 0.0965, "min": 1077550, "max": 5000000, "base": 71413},
-    {"rate": 0.103, "min": 5000000, "max": 25000000, "base": 449929},
-    {"rate": 0.109, "min": 25000000, "max": None, "base": 2509929},]
-_NY_SCHEDULE_BY_STATUS = {"single": "c", "mfs": "c", "mfj": "a", "qss": "a",
-                          "hoh": "b"}
-# IT-201-I (2025) pp.34-38, tax computation worksheets 1-16.
-_NY_2025_RECAPTURE = {
-    "entry_threshold": 107650,
-    "phase_in_band": 50000,
-    "entry_tier": {
-        # WS1: "Multiply line 2 by 5.5%", taxable income $161,550 or less.
-        "a": {"flat_rate": 0.055, "taxable_income_not_over": 161550},
-        # WS12: 6%, $269,300 or less.
-        "b": {"flat_rate": 0.06, "taxable_income_not_over": 269300},
-        # WS7: 6%, $215,400 or less.
-        "c": {"flat_rate": 0.06, "taxable_income_not_over": 215400},
-    },
-    "tiers": {
-        "a": [  # WS2-5
-            {"taxable_income_over": 161550, "taxable_income_not_over": 323200,
-             "recapture_base": 333, "incremental_benefit": 807,
-             "nyagi_excess_over": 161550},
-            {"taxable_income_over": 323200, "taxable_income_not_over": 2155350,
-             "recapture_base": 1140, "incremental_benefit": 2747,
-             "nyagi_excess_over": 323200},
-            {"taxable_income_over": 2155350,
-             "taxable_income_not_over": 5000000,
-             "recapture_base": 3887, "incremental_benefit": 60350,
-             "nyagi_excess_over": 2155350},
-            {"taxable_income_over": 5000000, "taxable_income_not_over": None,
-             "recapture_base": 64237, "incremental_benefit": 32500,
-             "nyagi_excess_over": 5000000},
-        ],
-        "b": [  # WS13-15
-            {"taxable_income_over": 269300, "taxable_income_not_over": 1616450,
-             "recapture_base": 787, "incremental_benefit": 2289,
-             "nyagi_excess_over": 269300},
-            {"taxable_income_over": 1616450,
-             "taxable_income_not_over": 5000000,
-             "recapture_base": 3076, "incremental_benefit": 45261,
-             "nyagi_excess_over": 1616450},
-            {"taxable_income_over": 5000000, "taxable_income_not_over": None,
-             "recapture_base": 48337, "incremental_benefit": 32500,
-             "nyagi_excess_over": 5000000},
-        ],
-        "c": [  # WS8-10
-            {"taxable_income_over": 215400, "taxable_income_not_over": 1077550,
-             "recapture_base": 568, "incremental_benefit": 1831,
-             "nyagi_excess_over": 215400},
-            {"taxable_income_over": 1077550,
-             "taxable_income_not_over": 5000000,
-             "recapture_base": 2399, "incremental_benefit": 30172,
-             "nyagi_excess_over": 1077550},
-            {"taxable_income_over": 5000000, "taxable_income_not_over": None,
-             "recapture_base": 32571, "incremental_benefit": 32500,
-             "nyagi_excess_over": 5000000},
-        ],
-    },
-    # WS6/WS11/WS16: above this NYAGI the whole taxable income is taxed at one
-    # rate, with no schedule at all.
-    "full_recapture": {"nyagi_over": 25000000, "rate": 0.109},
-}
-_NY_BRACKETS = {"a": _NY_2025_SCHEDULE_A, "c": _NY_2025_SCHEDULE_C, "b": []}
-# IT-201-I (2025) p.32: the TABLE is used when NYAGI is at or below the entry
-# threshold AND taxable income is under $65,000; the rate schedule takes over
-# above it. The rows are $50 wide over most of the range and NARROWER at the
-# very bottom — $0-13, $13-25, $25-50 — which is why the widths are fetched as
-# segments rather than assumed to be one figure.
-_NY_2025_TAX_TABLE = {
-    "max_taxable_income": 65000,
-    "row_segments": [
-        {"over": 0, "not_over": 13, "row_width": 13},
-        {"over": 13, "not_over": 25, "row_width": 12},
-        {"over": 25, "not_over": 50, "row_width": 25},
-        {"over": 50, "not_over": 65000, "row_width": 50},
-    ],
-}
+from tests.ny_fixtures import (  # noqa: E402
+    _NY_2025_RECAPTURE,
+    _NY_2025_SCHEDULE_A,
+    _NY_2025_SCHEDULE_C,
+    _NY_2025_TAX_TABLE,
+    _NY_BRACKETS,
+    _NY_SCHEDULE_BY_STATUS,
+)
 
 
 def _ny(taxable_income, nyagi, status="mfj", **over):
@@ -6132,3 +6045,164 @@ def test_ny_safe_harbor_refuses_unfetched_shares():
         partial = {k: v for k, v in _NY_2025_SAFE_HARBOR.items() if k != key}
         with pytest.raises(ValueError, match="missing"):
             compute_ny_required_annual_payment(20000, safe_harbor=partial)
+
+
+# --- state.brackets has two shapes ------------------------------------------
+
+
+_FLAT_STATE_BRACKETS = [
+    {"rate": 0.01, "min": 0, "max": 20000},
+    {"rate": 0.05, "min": 20000, "max": None},
+]
+
+
+def test_state_brackets_flat_list_passes_straight_through():
+    """California's shape: one schedule, the filing status already applied
+    when the cache was fetched. The status is not even read."""
+    cfg = {"code": "CA", "brackets": _FLAT_STATE_BRACKETS}
+    assert state_brackets_for_status(cfg, "mfj") is _FLAT_STATE_BRACKETS
+    assert state_brackets_for_status(cfg, "single") is _FLAT_STATE_BRACKETS
+
+
+def test_state_brackets_per_schedule_dict_resolves_through_the_status_map():
+    """New York's shape. Schedule (a) covers married-joint and the surviving
+    spouse, (c) the single filer and married-separate — statutory identities
+    that cannot be read off the bands, which is why the mapping is fetched
+    beside them."""
+    cfg = {"code": "NY", "brackets": _NY_BRACKETS,
+           "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS}
+    assert state_brackets_for_status(cfg, "mfj") is _NY_2025_SCHEDULE_A
+    assert state_brackets_for_status(cfg, "qss") is _NY_2025_SCHEDULE_A
+    assert state_brackets_for_status(cfg, "single") is _NY_2025_SCHEDULE_C
+    assert state_brackets_for_status(cfg, "mfs") is _NY_2025_SCHEDULE_C
+
+
+def test_state_brackets_a_truthy_dict_no_longer_reaches_the_bracket_loop():
+    """THE REGRESSION. A non-empty dict is truthy, so every
+    `state.get("brackets") or []` gate in this repository passed New York's
+    cache straight into compute_bracket_tax, where the schedule KEYS arrive as
+    strings: `AttributeError: 'str' object has no attribute 'keys'`, raised
+    from inside bracket math, naming neither the cache nor a remedy."""
+    per_schedule = {"a": _NY_2025_SCHEDULE_A, "b": [], "c": _NY_2025_SCHEDULE_C}
+    assert bool(per_schedule or [])          # the gate that let it through
+    with pytest.raises(AttributeError):
+        compute_bracket_tax(100000.0, per_schedule)   # what used to happen
+    resolved = state_brackets_for_status(
+        {"brackets": per_schedule,
+         "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS}, "mfj")
+    assert compute_bracket_tax(100000.0, resolved)[0] > 0
+
+
+def test_state_brackets_absent_or_empty_is_the_not_modeled_signal():
+    """`[]` is what every caller already reads as "state not modeled" — an
+    unfetched cache must keep degrading, not start raising."""
+    assert state_brackets_for_status({}, "mfj") == []
+    assert state_brackets_for_status({"brackets": []}, "mfj") == []
+    assert state_brackets_for_status({"brackets": {}}, "mfj") == []
+    assert state_brackets_for_status(None, "mfj") == []
+    # A schedule that exists but was never populated is the same signal: the
+    # skeleton create_state_template("NY") ships is exactly this.
+    assert state_brackets_for_status(
+        {"brackets": {"a": [], "b": [], "c": []},
+         "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS}, "mfj") == []
+
+
+def test_state_brackets_per_schedule_without_its_map_refuses():
+    """Picking a schedule would put a married couple on a single filer's
+    rates, which under-states their tax."""
+    with pytest.raises(ValueError, match="bracket_schedule_by_status"):
+        state_brackets_for_status({"brackets": _NY_BRACKETS}, "mfj")
+
+
+def test_state_brackets_unknown_status_refuses_and_names_the_known_ones():
+    with pytest.raises(ValueError, match="hoh"):
+        state_brackets_for_status(
+            {"brackets": _NY_BRACKETS,
+             "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS},
+            "married_filing_jointly")
+
+
+def test_state_brackets_unreadable_shape_raises_rather_than_degrading():
+    """Corruption is not "no state tax" — degrading it would publish a zero
+    liability for a taxpayer who has one."""
+    with pytest.raises(ValueError, match="corrupted"):
+        state_brackets_for_status({"brackets": "0.04, 0.045"}, "mfj")
+    with pytest.raises(ValueError, match="list of bands"):
+        state_brackets_for_status(
+            {"brackets": {"a": {"rate": 0.04}},
+             "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS}, "mfj")
+
+
+class TestOneReaderOfStateBrackets:
+    """`state.brackets` has two shapes, so it gets ONE reader that knows both.
+
+    The sweep is STRUCTURAL rather than a list of approved files. What made
+    the New York cache crash was not reading `state.brackets` — two modules
+    legitimately ask whether the block carries any at all, inside an `if`, and
+    never look further. What broke was BINDING that read to a name, because a
+    bound name is one that something later iterates. So: a boolean question is
+    fine anywhere; taking the value is `state_brackets_for_status`'s job.
+    """
+
+    LIB = Path(__file__).resolve().parents[1] / "agents" / "lib"
+
+    @staticmethod
+    def _is_state_brackets_read(node, source: str) -> bool:
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "brackets"):
+            return False
+        receiver = ast.get_source_segment(source, node.func.value) or ""
+        return "state" in receiver
+
+    def _bindings(self, path):
+        """Every name bound to a raw `state...get("brackets")` read."""
+        source = path.read_text()
+        tree = ast.parse(source)
+        found = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = node.value
+            # `x = state.get("brackets") or []` binds the read just as much.
+            if isinstance(value, ast.BoolOp):
+                candidates = list(value.values)
+            else:
+                candidates = [value]
+            for candidate in candidates:
+                if candidate is not None and self._is_state_brackets_read(
+                        candidate, source):
+                    found.append(node.lineno)
+        return found
+
+    def test_only_the_accessor_binds_a_raw_state_brackets_read(self):
+        offenders = {}
+        for path in sorted(self.LIB.glob("*.py")):
+            if path.name in ("tax_computations.py", "tax_law_fetcher.py"):
+                continue
+            lines = self._bindings(path)
+            if lines:
+                offenders[path.name] = lines
+        assert not offenders, (
+            f"{offenders} take the VALUE of state.brackets directly. It is a "
+            "flat list for California and a dict keyed by rate schedule for "
+            "New York, and a dict is truthy — the read that used to sit in "
+            "projection.project_state_tax handed the schedule KEYS to "
+            "compute_bracket_tax and raised AttributeError from inside the "
+            "bracket loop. Call tax_computations.state_brackets_for_status "
+            "instead; asking `if state.get(\'brackets\')` for a boolean is "
+            "still fine.")
+
+    def test_the_sweep_is_not_vacuous(self):
+        """It must still be able to SEE a read — otherwise a renamed accessor
+        or a changed spelling turns this green by finding nothing at all."""
+        source = (self.LIB / "projection.py").read_text()
+        tree = ast.parse(source)
+        reads = [n for n in ast.walk(tree)
+                 if self._is_state_brackets_read(n, source)]
+        assert reads, (
+            "projection.py no longer reads state.brackets in any form the "
+            "sweep recognises; the sweep above is now vacuous")

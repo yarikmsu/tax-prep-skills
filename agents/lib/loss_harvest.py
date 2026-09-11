@@ -53,6 +53,7 @@ from agents.lib.projection import (  # noqa: E402
     ProjectionError,
     _cache_state_code_present_but_invalid,
     _capital_loss_limit,
+    _full_status_key,
     _money,
     _none_type_allowed,
     _normalize_state_code,
@@ -77,6 +78,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     _coerce_numeric,
     compute_niit,
     compute_scenario,
+    state_brackets_for_status,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
 # Reuse the NIIT helpers from /tax-roth-convert so the two anchored-skills agree
@@ -636,9 +638,22 @@ def _state_marginal_rate(tax_law: dict, filing_status: 'str | None',
     # safe under-statement direction) rather than mismodeled.
     if _regime_code == "TN":
         return False, None
-    brackets = state.get("brackets") or []
+    # `state.brackets` has two shapes and this reads whichever it is handed:
+    # New York keys it by §601 rate SCHEDULE, and a dict is truthy, so the old
+    # `or []` gate passed it straight into _ordinary_marginal_rate, where the
+    # schedule keys arrive as strings and `b.get` raises AttributeError. See
+    # state_brackets_for_status — this is `filing_status`'s FIRST use in this
+    # function, which is why the parameter was here unread.
+    brackets = state_brackets_for_status(
+        state, _full_status_key(filing_status, "state harvest rate"))
     if not brackets:
         return False, None
+    # The SCHEDULE's marginal rate, which for a state carrying a benefit
+    # recapture is the LOWER of the two answers: inside the phase-in band, and
+    # above the top of it, a harvested loss saves more than the schedule says.
+    # Under-stating a harvest BENEFIT is the degrade direction (AGENTS.md §4),
+    # unlike under-stating a liability, so it stands with the caveat rather
+    # than blocking a plan.
     return True, _ordinary_marginal_rate(brackets, agi_proxy)
 
 
@@ -911,7 +926,24 @@ class HarvestReport:
     # absent/None flags read False (this module never blocks a harvest
     # over an unanswered screening question).
     nonresident_income_warning: "str | None" = None
+    # Set when the state's own cache declares a BENEFIT RECAPTURE — the
+    # supplemental tax that claws back the graduated schedule above an income
+    # threshold (New York Tax Law §601(d-x) is the one modeled here). Inside
+    # the phase-in band and above the top of it, a dollar of harvested loss
+    # saves MORE than the schedule's marginal rate, so `state_mtr` is a FLOOR
+    # for those taxpayers, not the answer. Said out loud rather than silently
+    # improved: under-stating a harvest BENEFIT is the degrade direction, and
+    # deriving the true marginal rate needs the recapture worksheet, not a
+    # bracket lookup.
+    state_rate_floor_note: "str | None" = None
 
+
+_STATE_RATE_FLOOR_NOTE = (
+    "This state's tax includes a benefit recapture above an income "
+    "threshold, so the state rate above is the SCHEDULE's — a floor. A "
+    "taxpayer inside or above the recapture band saves more per harvested "
+    "dollar than these figures show."
+)
 
 _NONRESIDENT_INCOME_WARNING = (
     "Another state's nonresident liability is not modeled — the source "
@@ -1050,6 +1082,11 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     else:
         state_modeled, state_mtr = _state_marginal_rate(tax_law, filing_status,
                                                         base_out["taxable_income"])
+    state_rate_floor_note = (
+        _STATE_RATE_FLOOR_NOTE
+        if state_modeled and (tax_law.get("state") or {}).get(
+            "tax_table_benefit_recapture")
+        else None)
     state_rate_for_ranking = state_mtr or 0.0
 
     # Fill est_value_per_dollar — ST losses rank above LT losses because they can
@@ -1189,6 +1226,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         niit_relief=niit_relief, niit_modeled=niit_modeled,
         state_modeled=state_modeled, state_mtr=state_mtr,
         state_savings=state_savings,
+        state_rate_floor_note=state_rate_floor_note,
         total_savings=round(fed_savings + state_savings, 2),
         fed_ordinary_mtr=ord_mtr, fed_ltcg_mtr=ltcg_mtr,
         state_no_income_tax=no_income_tax,
@@ -1234,6 +1272,7 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "niit_relief": r.niit_relief, "niit_modeled": r.niit_modeled,
         "state_modeled": r.state_modeled, "state_mtr": r.state_mtr,
         "state_savings": r.state_savings, "total_savings": r.total_savings,
+        "state_rate_floor_note": r.state_rate_floor_note,
         "fed_ordinary_mtr": r.fed_ordinary_mtr, "fed_ltcg_mtr": r.fed_ltcg_mtr,
         "state_no_income_tax": r.state_no_income_tax,
         "state_cache_mismatch": r.state_cache_mismatch,
@@ -1260,6 +1299,8 @@ def render_markdown(r: HarvestReport) -> str:
     if r.nonresident_income_warning:
         lines += [f"> **⚠ Nonresident income exposure:** "
                   f"{r.nonresident_income_warning}", ""]
+    if r.state_rate_floor_note:
+        lines += [f"> **State rate is a floor:** {r.state_rate_floor_note}", ""]
     if r.state_cache_mismatch:
         # A known cache-vs-resident mismatch always wins over any stale claim
         # the cache makes (mirrors /tax-project's precedence rule) — never

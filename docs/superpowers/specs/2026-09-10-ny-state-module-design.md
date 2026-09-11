@@ -420,8 +420,27 @@ each behind its own tests:
 5. **Credits, in statutory order.**
 6. **NYC, Yonkers, MCTMT** — Z2.
 7. **IT-653 owner-side PTET, IT-2105, IT-370, the true-up** — Z3.
-8. **Registrations, `/tax-verify` line map, the depth note** — LAST, which is
+8. **The generic state-bracket consumers** — SHIPPED (slice 9), and it was
+   not on this list because the shape problem was not seen until the
+   registrations were started. `state.brackets` is a LIST for California and a
+   DICT keyed by §601 rate schedule for New York, a non-empty dict is truthy,
+   and every `or []` gate in the repository passed one straight into code that
+   iterates bands. `/tax-project` and `/tax-harvest` both raised
+   `AttributeError` for any New York cache.
+   `tax_computations.state_brackets_for_status` is the one reader of both
+   shapes; a structural sweep keeps it the one, forbidding a BINDING of the
+   raw read outside it while leaving a boolean `if` alone. The projection now
+   routes a cache declaring a benefit recapture through `compute_ny_tax` —
+   plain bracket math there under-states the tax — and the harvest labels its
+   state rate a FLOOR for the same reason in the other direction.
+
+9. **Registrations, `/tax-verify` line map, the depth note** — LAST, which is
    when `capabilities._state_note` tells the truth.
+
+   **The result SECTION comes first inside this slice**, and §4's OPEN row is
+   why: the compute functions shipped without one, so `new_york_it201` exists
+   in no template and nothing writes it. Registering the key anywhere before
+   that is the scaffold-that-reads-as-coverage §4 warns about.
 
 The first thing to resolve before slice 1 is the OPEN rows above. They are
 questions with named sources, not guesses waiting to be made.

@@ -40,6 +40,8 @@ from agents.lib.tax_computations import (  # noqa: E402
     qdcg_worksheet_applies,
     compute_se_tax,
     net_capital_gains,
+    state_brackets_for_status,
+    compute_ny_tax,
     _SCH1A_EFFECTIVE_FROM,
     _SCH1A_EFFECTIVE_THROUGH,
 )
@@ -4530,7 +4532,17 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
     if _regime_code is not None and _none_type_allowed(
             _regime_code, tax_law.get("tax_year")):
         return None
-    brackets = state_cfg.get("brackets") or []
+    # `state.brackets` has TWO shapes. California's is a flat list of bands;
+    # New York's is a dict keyed by §601 rate SCHEDULE, and a non-empty dict
+    # is truthy, so the old `or []` gate handed the schedule KEYS to
+    # compute_bracket_tax and raised `AttributeError: 'str' object has no
+    # attribute 'keys'` from inside the bracket loop. One reader resolves
+    # both: tax_computations.state_brackets_for_status.
+    # The status is canonicalised HERE, not inside the accessor: `qss` reads
+    # schedule (a) with `mfj` by statute and the collapse is already this
+    # module's, so the engine does not grow a second copy of it.
+    brackets = state_brackets_for_status(
+        state_cfg, _full_status_key(filing_status, "state projection"))
     if not brackets:
         return None
     resident = _normalize_state_code(resident_state)
@@ -4634,7 +4646,38 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
                  + proj.taxable_interest + proj.other_income
                  + proj.self_employment_net - se_deduction)
     state_ti = max(0.0, state_agi - std)
-    tax, _ = compute_bracket_tax(state_ti, brackets)
+    # A state whose cache declares a BENEFIT RECAPTURE does not get plain
+    # bracket math. Above the recapture's entry threshold the graduated
+    # schedule's benefit is clawed back, so `compute_bracket_tax` alone
+    # UNDER-states the liability by the whole of that benefit — the direction
+    # AGENTS.md §4 calls a hard error, and the reason the recapture shipped in
+    # the same slice as the schedules rather than after them. Keyed on the
+    # BLOCK's presence, not on a state name: a cache that declares a recapture
+    # is a cache whose bracket math is incomplete, whoever it belongs to, and
+    # compute_ny_tax refuses loudly on a block it cannot read rather than
+    # quietly computing the schedule.
+    recapture = state_cfg.get("tax_table_benefit_recapture")
+    if recapture:
+        try:
+            # `state_agi` stands in for New York AGI. It is the same proxy the
+            # deduction and the brackets above already use, and the whole
+            # projection is an estimate over projected income — but the
+            # recapture thresholds are NYAGI's, so a projection built from a
+            # profile with large IT-225 modifications will sit on the wrong
+            # side of a threshold. That is the estimate's limit, not a silent
+            # substitution: /tax-compute computes line 33 for real.
+            ny = compute_ny_tax(
+                state_ti, state_agi,
+                _full_status_key(filing_status, "state projection"),
+                state_cfg.get("brackets") or {},
+                state_cfg.get("bracket_schedule_by_status") or {},
+                recapture, state_cfg.get("tax_table"))
+        except ValueError as exc:
+            raise ProjectionError(
+                f"state tax with a benefit recapture: {exc}") from exc
+        tax = float(ny["tax_exact"])
+    else:
+        tax, _ = compute_bracket_tax(state_ti, brackets)
     # CA mental-health services tax: 1% of taxable income over $1M is part
     # of Form 540 total tax — omitting it understates the safe-harbor
     # target for exactly the high earners the §19136.3 rule forces onto

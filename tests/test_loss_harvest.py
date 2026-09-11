@@ -10,6 +10,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import loss_harvest as lh
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ny_fixtures import ny_state_cache  # noqa: E402
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "harvest"
 REPO = Path(__file__).resolve().parent.parent
@@ -1883,3 +1885,56 @@ def test_harvest_nonresident_flag_absent_keeps_complete_claim():
     md = lh.render_markdown(r)
     assert "correct and complete" in md
     assert "Nonresident income exposure" not in md
+
+
+class TestAStateWhoseBracketsAreKeyedByRateSchedule:
+    """The harvest twin of projection's fix. `state.brackets` is a flat list
+    for California and a dict of §601 rate schedules for New York, and a
+    non-empty dict is truthy — so `_ordinary_marginal_rate` used to be handed
+    the schedule KEYS and raise `AttributeError: 'str' object has no attribute
+    'get'` from inside the rate loop."""
+
+    def _law(self, **state_over):
+        return {"tax_year": 2026, "state": ny_state_cache(**state_over)}
+
+    def test_the_rate_comes_back_instead_of_an_exception(self):
+        """190,000 of taxable income sits in schedule (a)'s 161,550-323,200
+        band, IT-201-I (2025) p.33: 6%."""
+        modeled, rate = lh._state_marginal_rate(self._law(), "MFJ", 190000)
+        assert (modeled, rate) == (True, 0.06)
+
+    def test_the_schedule_follows_the_filing_status(self):
+        """The same income, two statuses, two schedules. At 100,000 a single
+        filer is in (c)'s 80,650-215,400 band at 6%; a married couple is still
+        in (a)'s 27,900-161,550 band at 5.5%. This function took a
+        `filing_status` it never read until now, which is exactly how one
+        schedule could have stood in for three."""
+        law = self._law()
+        assert lh._state_marginal_rate(law, "MFJ", 100000)[1] == 0.055
+        assert lh._state_marginal_rate(law, "Single", 100000)[1] == 0.06
+
+    def test_an_unfetched_schedule_stays_not_modeled(self):
+        law = self._law(brackets={"a": [], "b": [], "c": []})
+        assert lh._state_marginal_rate(law, "MFJ", 100000) == (False, None)
+
+    def test_a_recapture_state_says_its_rate_is_only_a_floor(self):
+        """Inside the phase-in band and above the top of it, a harvested
+        dollar saves MORE than the schedule's marginal rate. Under-stating a
+        BENEFIT is the degrade direction, so the figure stands — but it is
+        labelled, because a planner who reads it as the answer leaves real
+        savings on the table."""
+        law = json.loads((FIX / "tax_law_2026.json").read_text())
+        law["state"] = ny_state_cache()
+        profile = {**_load("taxpayer_profile.json"),
+                   "address": {"state": "NY"}}
+        r = _build(tax_law=law, profile=profile)
+        assert r.state_modeled
+        assert r.state_rate_floor_note and "floor" in r.state_rate_floor_note
+        assert "State rate is a floor" in lh.render_markdown(r)
+
+    def test_a_state_with_no_recapture_carries_no_such_note(self):
+        """California's cache has no recapture block, and a note that fires
+        on every state is one nobody reads."""
+        r = _build()
+        assert r.state_rate_floor_note is None
+        assert "State rate is a floor" not in lh.render_markdown(r)

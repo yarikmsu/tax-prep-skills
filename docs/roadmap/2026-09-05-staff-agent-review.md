@@ -504,6 +504,26 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   quarters, with the higher prior-year share keyed to NEW YORK AGI; a prior-year tax
   without its NYAGI refuses. Eleven mutations, eleven reds.
 
+  **SLICE 9 SHIPPED — a shipped crash, found on the way into the registrations**:
+  `state.brackets` has TWO shapes. California's is a flat list of bands; New York's is
+  a dict keyed by §601 rate SCHEDULE, because three filing statuses share one schedule
+  and none can be read off the bands. A non-empty dict is TRUTHY, so every
+  `state.get("brackets") or []` gate waved a New York cache into code that iterates a
+  list of dicts: `AttributeError: 'str' object has no attribute 'keys'`, from inside
+  bracket math, naming neither the cache nor a remedy. Both `/tax-project` and
+  `/tax-harvest` would have failed that way for every New York taxpayer.
+  `tax_computations.state_brackets_for_status` is now the one reader that knows both
+  shapes, and a STRUCTURAL sweep keeps it the one: asking `if state.get("brackets")`
+  for a boolean stays fine anywhere, BINDING the value to a name is the accessor's job,
+  because a bound name is one something later iterates. Two consequences beyond the
+  crash: `/tax-project` routes a cache that declares a benefit recapture through
+  `compute_ny_tax` rather than plain bracket math, which under-states New York tax by
+  the whole benefit of the graduated schedule above the entry threshold; and
+  `/tax-harvest` says out loud that its state rate is a FLOOR there, since a harvested
+  dollar inside the recapture band saves more than the schedule's marginal rate.
+  `_state_marginal_rate` took a `filing_status` it had never read — this is its first
+  use. Seven mutations, seven reds.
+
   **A note carried here since slice 1 was STALE and is corrected rather than re-fixed**:
   the NY PTET Mar 15/16 next-business-day defect from PR #22's deferred list is already
   fixed — `_election_deadline` returns March 16, 2026 via
