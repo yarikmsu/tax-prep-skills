@@ -20,6 +20,7 @@ from agents.lib.tax_computations import (
     compute_bracket_tax,
     compute_ny_tax,
     compute_ny_agi,
+    compute_ny_itemized,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -5319,3 +5320,214 @@ def test_ny_an_absent_or_null_line_is_zero():
     default is a CAP, and both of those refuse instead."""
     assert _agi(100000)["nyagi"] == 100000
     assert _agi(100000, {"state_local_bond_interest": None})["nyagi"] == 100000
+
+
+# --- Z1 slice 4: the §615 adjustment and the itemized election --------------
+#
+# Form IT-196-I (2025) pp.20-21, lines 46 through 49. The four regimes are
+# mutually exclusive by New York AGI, and the top two do not reduce the
+# deduction at all — they REPLACE it with a share of the charitable
+# contributions.
+
+_NY_2025_ITEMIZED_REDUCTION = {
+    # IT-196-I Worksheet 3 line 2: "Filing status 1 or 3 enter $100,000 or
+    # filing status 4 enter $150,000, or filing status 2 or 5 enter $200,000".
+    "first_threshold": {"single": 100000, "mfs": 100000, "hoh": 150000,
+                        "mfj": 200000, "qss": 200000},
+    "first_band": 50000,
+    "first_rate": 0.25,
+    "second_threshold": 475000,
+    "second_band": 50000,
+    "second_rate": 0.25,
+    "flat_threshold": 525000,
+    "flat_rate": 0.50,
+    "charitable_only_threshold": 1000000,
+}
+# IT-196-I line 47: "more than $1,000,000, but not more than $10,000,000,
+# enter 50% of line 19 … more than $10,000,000, enter 25% of line 19".
+_NY_2025_CHARITABLE_LIMIT = {"tiers": [
+    {"nyagi_over": 1000000, "share": 0.50},
+    {"nyagi_over": 10000000, "share": 0.25},
+]}
+
+
+def _item(line_45=40000.0, charitable=10000.0, nyagi=90000.0, status="single",
+          reduction=None, limit=None, **kw):
+    return compute_ny_itemized(
+        line_45, charitable, nyagi, status,
+        _NY_2025_ITEMIZED_REDUCTION if reduction is None else reduction,
+        _NY_2025_CHARITABLE_LIMIT if limit is None else limit, **kw)
+
+
+def test_ny_itemized_is_unreduced_at_or_below_the_first_threshold():
+    """IT-196-I line 46: "$100,000 or less, leave line 46 blank"."""
+    out = _item(nyagi=100000)
+    assert out["line_46_adjustment"] == 0.0
+    assert out["line_47_after_adjustment"] == 40000
+    assert out["regime"] == "unreduced"
+
+
+def test_ny_itemized_first_reduction_phases_a_quarter_in():
+    """Worksheet 3, single, NYAGI $125,000, line 45 $40,000:
+       line 3 = 125,000 - 100,000                    = 25,000
+       line 4 = lesser of line 3 or 50,000           = 25,000
+       line 5 = 25,000 / 50,000                      =    0.5
+       line 6 = 25% of line 45                       = 10,000
+       line 7 = line 5 x line 6                      =  5,000
+    """
+    out = _item(nyagi=125000)
+    assert out["line_46_adjustment"] == 5000
+    assert out["line_47_after_adjustment"] == 35000
+    assert out["regime"] == "first_reduction"
+
+
+def test_ny_itemized_first_threshold_is_per_status():
+    """Worksheet 3 line 2 has three figures. A head-of-household filer at
+    $125,000 is over the $100,000 gate that sends them to the worksheet, and
+    then UNDER their own $150,000 threshold — "if line 2 is more than line 1,
+    leave line 46 blank". Using single's figure would reduce their deduction
+    by a quarter of the phase-in for no reason."""
+    assert _item(nyagi=125000, status="hoh")["line_46_adjustment"] == 0.0
+    assert _item(nyagi=125000, status="mfj")["line_46_adjustment"] == 0.0
+    assert _item(nyagi=225000, status="mfj")["line_46_adjustment"] == 5000
+
+
+def test_ny_itemized_second_reduction_adds_a_whole_quarter_first():
+    """Worksheet 4, NYAGI $480,000, line 45 $40,000:
+       line 1 = 480,000 - 475,000 (capped at 50,000) =  5,000
+       line 2 = 5,000 / 50,000                       =    0.1
+       line 3 = 25% of line 45                       = 10,000
+       line 4 = line 2 x line 3                      =  1,000
+       line 5 = line 3 + line 4                      = 11,000
+    The whole first quarter is taken before the second phases in — a second
+    phase-in alone would give 1,000 and over-state the deduction by 10,000.
+    """
+    out = _item(nyagi=480000)
+    assert out["line_46_adjustment"] == 11000
+    assert out["regime"] == "second_reduction"
+
+
+def test_ny_itemized_flat_band_takes_half():
+    """IT-196-I line 46: "more than $525,000 but not more than $1,000,000,
+    enter 50% (.50) of line 45"."""
+    out = _item(nyagi=600000)
+    assert out["line_46_adjustment"] == 20000
+    assert out["line_47_after_adjustment"] == 20000
+    assert out["regime"] == "flat"
+
+
+def test_ny_itemized_becomes_a_share_of_charity_at_the_top():
+    """IT-196-I line 47: "more than $1,000,000, but not more than $10,000,000,
+    enter 50% of line 19 … more than $10,000,000, enter 25% of line 19". Not a
+    reduction — a REPLACEMENT. Every other itemized amount is disregarded, and
+    line 46 is left blank."""
+    out = _item(nyagi=2000000)
+    assert out["line_46_adjustment"] == 0.0
+    assert out["line_47_after_adjustment"] == 5000    # 50% of 10,000
+    assert out["regime"] == "charitable_only"
+    assert _item(nyagi=20000000)["line_47_after_adjustment"] == 2500
+
+
+def test_ny_itemized_refuses_charity_it_was_never_given():
+    """In the top regime the charitable total IS the deduction. A caller that
+    passes zero because it was not tracking the split would silently zero the
+    deduction for a taxpayer who has one."""
+    with pytest.raises(ValueError, match="silently zero"):
+        _item(charitable=0, nyagi=2000000)
+
+
+def test_ny_itemized_refuses_an_unfetched_band():
+    """The middle bands take a QUARTER and then a HALF of the whole deduction,
+    so a default is not a rounding error — skipping the reduction UNDER-states
+    the tax."""
+    for key in ("first_band", "first_rate", "second_threshold", "second_band",
+                "second_rate", "flat_threshold", "flat_rate",
+                "charitable_only_threshold"):
+        partial = {k: v for k, v in _NY_2025_ITEMIZED_REDUCTION.items()
+                   if k != key}
+        with pytest.raises(ValueError, match="missing"):
+            _item(nyagi=125000, reduction=partial)
+    with pytest.raises(ValueError, match="charitable_limit.tiers"):
+        _item(nyagi=125000, limit={})
+
+
+def test_ny_itemized_refuses_a_boundary_that_moved_on_one_side_only():
+    """`charitable_only_threshold` and the lowest charitable tier describe ONE
+    boundary — where the reduction stops and the replacement begins. A
+    half-fetch that moves one leaves a band where both apply, or neither."""
+    moved = {**_NY_2025_CHARITABLE_LIMIT,
+             "tiers": [{"nyagi_over": 1500000, "share": 0.50}]}
+    with pytest.raises(ValueError, match="same boundary"):
+        _item(nyagi=125000, limit=moved)
+
+
+def test_ny_itemized_adds_the_college_tuition_deduction_after_the_adjustment():
+    """Line 48 sits AFTER line 47, so it is not reduced by §615. Folding it
+    into line 45 would take a quarter or a half of it."""
+    out = _item(nyagi=125000, college_tuition_deduction=1000)
+    assert out["line_47_after_adjustment"] == 35000
+    assert out["line_49_total"] == 36000
+
+
+def test_ny_itemized_election_takes_the_larger():
+    """Line 49: "For greater tax savings, enter the LARGER of the amounts"."""
+    assert _item(standard_deduction=8000)["use_itemized"] is True
+    assert _item(standard_deduction=50000)["use_itemized"] is False
+    assert _item(standard_deduction=50000)["deduction"] == 50000
+
+
+def test_ny_itemized_mfs_cannot_itemize_alone():
+    """"If you are married and filing separate returns, BOTH of you must take
+    the standard deduction unless BOTH of you elect to itemize." One spouse's
+    choice is not their own to make, and taking the larger figure regardless
+    would produce a return New York rejects."""
+    alone = _item(status="mfs", standard_deduction=8000)
+    assert alone["use_itemized"] is False
+    assert alone["deduction"] == 8000
+    assert any("BOTH spouses" in n for n in alone["notes"])
+    together = _item(status="mfs", standard_deduction=8000,
+                     mfs_spouse_itemizes=True)
+    assert together["use_itemized"] is True
+
+
+def test_ny_itemized_refuses_a_malformed_figure():
+    for bad in (float("nan"), float("inf"), -1, True, "40000"):
+        with pytest.raises(ValueError):
+            _item(line_45=bad)
+
+
+def test_ny_itemized_first_fraction_is_capped_and_rounded_to_four_places():
+    """Worksheet 3 line 4 says "the LESSER of line 3 or $50,000" and line 5
+    "round to the fourth decimal place". Every other case here sits inside the
+    band and lands on a fraction exact at two places, so an uncapped or
+    coarsely-rounded version survived them.
+
+    Uncapped, a single filer at $300,000 would have a fraction of 4.0 and lose
+    the WHOLE deduction instead of a quarter of it.
+    """
+    capped = _item(nyagi=300000)
+    assert capped["line_46_adjustment"] == 10000   # 25% of 40,000, fraction 1.0
+    assert capped["line_47_after_adjustment"] == 30000
+
+    # 13,337 into the band: 0.26674, which the worksheet rounds to 0.2667 and
+    # two places would make 0.27.
+    out = _item(nyagi=113337)
+    assert out["line_46_adjustment"] == round(40000 * 0.25 * 0.2667, 2)
+
+
+def test_ny_itemized_second_fraction_caps_if_the_band_and_its_range_diverge():
+    """Worksheet 4 line 1 says the excess "cannot exceed $50,000". Today that
+    cap cannot bind, because the second band's WIDTH and the distance to the
+    flat threshold are both $50,000 — so the guard is unreachable and a
+    mutation removing it survives every ordinary case.
+
+    They are two separately fetched figures, though, and a year that moved one
+    without the other would send the second reduction past a whole quarter of
+    the deduction with nothing to stop it. Constructed here rather than left to
+    a future reader to discover.
+    """
+    diverged = {**_NY_2025_ITEMIZED_REDUCTION, "flat_threshold": 600000}
+    out = _item(nyagi=580000, reduction=diverged)
+    # A full quarter, then a second full quarter — not 2.1 quarters.
+    assert out["line_46_adjustment"] == 20000
+    assert out["regime"] == "second_reduction"

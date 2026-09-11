@@ -454,6 +454,16 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   seventeen reds — two of which only went red after clearing `__pycache__`, the
   same-length mutate-and-restore trap the memory records.
 
+  **SLICE 4 SHIPPED**: `compute_ny_itemized` — IT-196 lines 46-49. FOUR regimes by
+  NYAGI, and the top two REPLACE the deduction with a share of the charitable
+  contributions rather than reducing it. The second reduction takes the whole first
+  quarter and then phases a second in on top. The first threshold is per status while
+  the gate into the worksheet is not. Fifteen mutations, fifteen reds — three of them
+  only after writing cases that reach a cap no ordinary figure reaches, including one
+  that can only bind if two separately fetched figures diverge. Line 45 itself is NOT
+  in this slice and is named as a non-goal: pre-TCJA federal rules, so the 2%
+  miscellaneous floor is live again and a federal Schedule A total is no substitute.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension

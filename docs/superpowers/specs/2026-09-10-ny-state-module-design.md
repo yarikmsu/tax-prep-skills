@@ -176,10 +176,29 @@ OVER-states the number the taxpayer acts on is a hard error here:
    And the 529 cap is keyed married-joint against EVERYBODY ELSE, the same
    two-key shape the federal child-credit phase-out uses; reading it with four
    status keys finds three absent and claims an uncapped deduction.
-2. `compute_ny_itemized` — IT-196 on pre-TCJA federal rules, then §615's two
-   reductions, then the separate charitable limitation. **Degrade: refuse**,
-   because a partially-applied limitation over-states the deduction and
-   under-states tax.
+2. `compute_ny_itemized` — **SHIPPED (slice 4)**, IT-196 lines 46 through 49:
+   the §615 adjustment and the standard-versus-itemized election. FOUR regimes
+   by NYAGI, mutually exclusive, and the top two do not reduce the deduction at
+   all — above the charitable-only threshold it BECOMES a share of the
+   charitable contributions and every other itemized amount is disregarded.
+   The second reduction takes the WHOLE first quarter and then phases a second
+   in on top; reading it as one phase-in over-states the deduction by a
+   quarter. The first threshold is PER STATUS while the gate into the
+   worksheet is not, so a head-of-household filer between the two gets no
+   adjustment at all.
+
+   Cross-checks that cost nothing and catch a half-fetch: the charitable-only
+   threshold and the lowest charitable tier describe ONE boundary and must
+   agree, or a band opens where both regimes apply or neither; and the
+   charitable total is REQUIRED in the top regime, because a caller that was
+   not tracking the split would silently zero the deduction.
+
+   **NOT in this slice: IT-196 line 45 itself.** Building it from source
+   figures is its own piece of work — New York computes it on federal rules AS
+   THEY STOOD BEFORE THE TCJA, so the 2% miscellaneous floor is live again, the
+   mortgage limit is the pre-TCJA one, and state and local INCOME taxes are
+   adjusted back out. The function takes line 45 as an input and will not
+   pretend a federal Schedule A total is that figure.
 3. `compute_ny_taxable_income` — NYAGI less the greater of the standard
    deduction or IT-196, less dependent exemptions.
 4. `compute_ny_tax` — **SHIPPED (slice 2).** Not one method but three,
@@ -278,6 +297,10 @@ Each emits a LOUD note that lands on `meta.limitations` — never silence:
   return and changes the amount owed, and it has no key. Named here rather than
   left to be noticed.
 - **Estates and trusts**, which §601(c) also covers. An IT-201 never is one.
+- **IT-196 lines 1 through 45** — the New York itemized deduction BEFORE the
+  §615 adjustment, computed on pre-TCJA federal rules. Slice 4 takes it as an
+  input; building it from source figures the way `compute_ca_itemized` does is
+  the next piece, and the federal Schedule A total is NOT a substitute.
 - **IT-201 line 44** (the separate tax on a lump-sum distribution, Form IT-230)
   and **line 45** (net other New York State taxes, IT-201-ATT). `compute_ny_tax`
   returns LINE 39, not the state total on line 46, and its inputs cannot

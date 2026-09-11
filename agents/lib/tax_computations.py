@@ -3134,6 +3134,181 @@ def compute_ny_tax(
         "taxable_income_not_over must be null. Re-run /tax-setup.")
 
 
+def compute_ny_itemized(
+    itemized_before_adjustment: float,
+    charitable_contributions: float,
+    nyagi: float,
+    filing_status: str,
+    reduction: "dict | None" = None,
+    charitable_limit: "dict | None" = None,
+    college_tuition_deduction: float = 0.0,
+    standard_deduction: "float | None" = None,
+    mfs_spouse_itemizes: bool = False,
+) -> dict:
+    """Form IT-196 lines 46 through 49 — the §615 adjustment and the election.
+
+    This is the part of New York's itemized deduction with NO federal analogue.
+    Four regimes by NYAGI, mutually exclusive, and the top two do not reduce the
+    deduction at all — they REPLACE it with a share of the charitable
+    contributions:
+
+    - at or below the first threshold, no adjustment;
+    - up to the second threshold, a quarter of the deduction phased in over a
+      band above a PER-STATUS threshold;
+    - up to the flat threshold, that whole quarter PLUS another quarter phased
+      in over its own band above the second threshold;
+    - up to the charitable-only threshold, a flat half;
+    - above it, the deduction BECOMES a share of the charitable contributions,
+      and the adjustment line is left blank.
+
+    Applying a reduction AND the charitable regime double-limits, which
+    over-states the tax; skipping the reduction under-states it. Neither is a
+    rounding error — the middle bands take a quarter and then a half of the
+    whole deduction — so an unfetched figure REFUSES rather than defaulting.
+
+    `itemized_before_adjustment` is IT-196 line 45 and is the CALLER's: building
+    it from source figures is a separate piece of work, because New York
+    computes it on federal rules AS THEY STOOD BEFORE THE TCJA — the 2%
+    miscellaneous floor is live again, the mortgage limit is the pre-TCJA one,
+    and state and local INCOME taxes are adjusted back out. What this function
+    will not do is pretend a federal Schedule A total is that figure.
+
+    `charitable_contributions` is line 19, and it is load-bearing only in the
+    top two regimes — where it is the ENTIRE deduction. A caller that passes
+    zero there because it was not tracking the split silently zeroes the
+    deduction for a taxpayer above the threshold, so it is required, not
+    defaulted, when the return reaches that band.
+
+    Returns:
+        {"line_46_adjustment", "line_47_after_adjustment", "line_48_college",
+         "line_49_total", "deduction", "use_itemized", "regime", "notes"}
+    """
+    reduction = reduction or {}
+    charitable_limit = charitable_limit or {}
+    notes: "list[str]" = []
+
+    line_45 = _ny_amount(itemized_before_adjustment,
+                         "itemized_before_adjustment")
+    charitable = _ny_amount(charitable_contributions,
+                            "charitable_contributions")
+    college = _ny_amount(college_tuition_deduction,
+                         "college_tuition_deduction")
+    agi = _ny_amount(nyagi, "nyagi", allow_negative=True)
+
+    thresholds = reduction.get("first_threshold") or {}
+    first_threshold = thresholds.get(filing_status)
+    band = reduction.get("first_band")
+    rate = reduction.get("first_rate")
+    second_threshold = reduction.get("second_threshold")
+    second_band = reduction.get("second_band")
+    second_rate = reduction.get("second_rate")
+    flat_threshold = reduction.get("flat_threshold")
+    flat_rate = reduction.get("flat_rate")
+    charitable_only = reduction.get("charitable_only_threshold")
+
+    missing = [name for name, value in (
+        ("first_threshold[%s]" % filing_status, first_threshold),
+        ("first_band", band), ("first_rate", rate),
+        ("second_threshold", second_threshold),
+        ("second_band", second_band), ("second_rate", second_rate),
+        ("flat_threshold", flat_threshold), ("flat_rate", flat_rate),
+        ("charitable_only_threshold", charitable_only),
+    ) if value is None]
+    if missing:
+        raise ValueError(
+            "state.itemized_reduction is missing " + ", ".join(missing) +
+            ". The middle bands take a QUARTER and then a HALF of the whole "
+            "deduction, so a default here is not a rounding error — skipping "
+            "the reduction under-states the tax. Re-run /tax-setup.")
+
+    tiers = sorted(charitable_limit.get("tiers") or [],
+                   key=lambda t: t["nyagi_over"])
+    if not tiers:
+        raise ValueError(
+            "state.charitable_limit.tiers is not fetched. Above the "
+            "charitable-only threshold the deduction BECOMES a share of the "
+            "charitable contributions, and there is no structural default for "
+            "that share.")
+    # The two figures describe ONE boundary — where §615(f)'s reduction stops
+    # and §615(g)'s replacement begins. A half-fetch that moves one and not the
+    # other opens a band where both apply, or neither.
+    if tiers[0]["nyagi_over"] != charitable_only:
+        raise ValueError(
+            f"charitable_only_threshold is {charitable_only:,} but the lowest "
+            f"charitable tier starts at {tiers[0]['nyagi_over']:,}. They are "
+            "the same boundary; a gap between them leaves a band where the "
+            "reduction and the replacement both apply, or neither does.")
+
+    if agi > charitable_only:
+        share = tiers[0]["share"]
+        for tier in tiers:
+            if agi > tier["nyagi_over"]:
+                share = tier["share"]
+        if not charitable and line_45:
+            raise ValueError(
+                "New York AGI is above the charitable-only threshold, where "
+                "the itemized deduction BECOMES a share of the charitable "
+                "contributions — but charitable_contributions is zero against "
+                "a non-zero line 45. A caller that was not tracking the split "
+                "would silently zero the deduction.")
+        line_47 = round(charitable * share, 2)
+        line_46 = 0.0
+        regime = "charitable_only"
+        notes.append(
+            f"New York AGI is above the charitable-only threshold: the "
+            f"itemized deduction is {share:.0%} of the charitable "
+            "contributions, and every other itemized amount is disregarded.")
+    elif agi > flat_threshold:
+        line_46 = round(line_45 * flat_rate, 2)
+        line_47 = round(line_45 - line_46, 2)
+        regime = "flat"
+    elif agi > second_threshold:
+        first_part = line_45 * rate
+        fraction = round(min(agi - second_threshold, second_band)
+                         / second_band, 4)
+        line_46 = round(first_part + line_45 * second_rate * fraction, 2)
+        line_47 = round(line_45 - line_46, 2)
+        regime = "second_reduction"
+    elif agi > first_threshold:
+        fraction = round(min(agi - first_threshold, band) / band, 4)
+        line_46 = round(line_45 * rate * fraction, 2)
+        line_47 = round(line_45 - line_46, 2)
+        regime = "first_reduction"
+    else:
+        line_46 = 0.0
+        line_47 = line_45
+        regime = "unreduced"
+
+    line_49 = round(line_47 + college, 2)
+    use_itemized = None
+    deduction = line_49
+    if standard_deduction is not None:
+        standard = _ny_amount(standard_deduction, "standard_deduction")
+        use_itemized = line_49 > standard
+        # "If you are married and filing separate returns, BOTH of you must
+        # take the standard deduction unless BOTH of you elect to itemize."
+        # One spouse's choice is not their own to make.
+        if filing_status == "mfs" and not mfs_spouse_itemizes:
+            if use_itemized:
+                notes.append(
+                    "Married filing separately: the New York itemized "
+                    "deduction is larger, but BOTH spouses must elect it or "
+                    "NEITHER may. The standard deduction is taken here because "
+                    "the spouse is not itemizing.")
+            use_itemized = False
+        deduction = line_49 if use_itemized else standard
+    return {
+        "line_46_adjustment": line_46,
+        "line_47_after_adjustment": line_47,
+        "line_48_college": round(college, 2),
+        "line_49_total": line_49,
+        "deduction": round(deduction, 2),
+        "use_itemized": use_itemized,
+        "regime": regime,
+        "notes": notes,
+    }
+
+
 def compute_ca_itemized(
     federal_agi: float,
     ca_agi: float,
