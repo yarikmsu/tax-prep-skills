@@ -460,6 +460,95 @@ def test_state_withholding_ties_to_ca_540():
     assert not report.failed
 
 
+class TestNewYorkWithholding:
+    """TWO categories, not one. New York City withholding is IT-201 line 73
+    and the state's is line 72 — two lines and two refunds — so a city amount
+    dropped into the state category would still tie while leaving the city
+    withholding unclaimed on a return that owes city tax."""
+
+    def _ny(self, state=0.0, city=0.0):
+        return {"new_york_it201": {"refundable_credits_and_payments": {
+            "line_72_state_withholding": state,
+            "line_73_city_withholding": city}}}
+
+    WAGES = 180000.0
+    FED_WH = 31000.0
+
+    def _base(self):
+        return _result(wages=self.WAGES, w2_wh=self.FED_WH)
+
+    def _recs(self, **boxes):
+        return _ledger(_record(key_boxes={"wages": self.WAGES,
+                                          "federal_withholding_w2": self.FED_WH,
+                                          **boxes}))
+
+    def test_both_lines_tie(self):
+        report = T.evaluate(
+            self._recs(state_withholding_ny=11200.0,
+                       city_withholding_nyc=6400.0),
+            {**self._base(), **self._ny(state=11200.0, city=6400.0)},
+            ["documents/W2_Acme.pdf"])
+        assert not report.failed
+
+    def test_city_withholding_folded_into_the_state_line_FAILS(self):
+        """The defect two categories exist to catch: one figure of 17,600 on
+        line 72 ties against nothing, and line 73's 6,400 is lost."""
+        report = T.evaluate(
+            self._recs(state_withholding_ny=11200.0,
+                       city_withholding_nyc=6400.0),
+            {**self._base(), **self._ny(state=17600.0, city=0.0)},
+            ["documents/W2_Acme.pdf"])
+        assert report.failed
+        failed = {c.category for c in report.sum_checks if not c.ok}
+        assert failed == {"state_withholding_ny", "city_withholding_nyc"}
+
+    def test_a_dropped_city_amount_fails_rather_than_warning(self):
+        """The section is present, so the comparison is against a real $0 —
+        never demoted to an unverifiable warning."""
+        report = T.evaluate(
+            self._recs(city_withholding_nyc=6400.0),
+            {**self._base(), **self._ny()}, ["documents/W2_Acme.pdf"])
+        assert report.failed
+        check = next(c for c in report.sum_checks
+                     if c.category == "city_withholding_nyc")
+        assert check.result_total == 0.0 and not check.ok
+
+    def test_the_categories_are_per_state_like_californias(self):
+        """A category spanning states cannot fail when one state's amount
+        lands in another state's section — the whole failure this watches
+        for. `state_withholding_ca` is the precedent and the shape matches."""
+        assert "state_withholding_ny" in T.CATEGORY_TARGETS
+        assert "city_withholding_nyc" in T.CATEGORY_TARGETS
+        assert "state_withholding" not in T.CATEGORY_TARGETS
+        assert T.CATEGORY_TARGETS["state_withholding_ny"][0] == "new_york_it201"
+        assert T.CATEGORY_TARGETS["city_withholding_nyc"][0] == "new_york_it201"
+
+    def test_both_halves_shipped_or_the_gate_is_vacuous(self):
+        """A registered-but-never-emitted category is dead protection: the
+        ledger never carries it, every sum check passes on an empty set, and
+        the gate reports clean. Both halves or neither."""
+        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text()
+        for category in ("state_withholding_ny", "city_withholding_nyc"):
+            assert category in parse_md, category
+        assert "Yonkers" in parse_md, (
+            "Yonkers withholding is IT-201 line 74 and has no category; the "
+            "parse table must SAY so rather than leaving a reader to assume "
+            "a zero")
+
+    def test_every_target_path_is_a_real_template_field(self):
+        """A path that resolves to nothing compares against $0 for ever — a
+        check that can only fail, or only pass, for the wrong reason."""
+        template = json.loads(
+            (REPO / "agents/templates/result_template.json").read_text())
+        for category in ("state_withholding_ny", "city_withholding_nyc"):
+            section_name, fields = T.CATEGORY_TARGETS[category]
+            node = template[section_name]
+            for field in fields:
+                for seg in field.split("."):
+                    assert seg in node, f"{category}: {field}"
+                    node = node[seg]
+
+
 # --------------------------------------------------------------------------
 # Check D — unverifiable categories warn loudly, never silently pass
 # --------------------------------------------------------------------------

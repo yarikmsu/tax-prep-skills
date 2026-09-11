@@ -544,6 +544,28 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   of them needed a purpose-written case — a renamed template field, and a truthiness test
   that accepted `True`, `NaN` and a string as a computed deduction.
 
+  **SLICE 11 SHIPPED — the two registrations that had to be restructured first**:
+  `yoy_diff.STATE_MOVER_FIELDS` is keyed per SECTION rather than being a flat CA-only
+  list gated on `california_540`, which is correct for one modeled state and silently
+  wrong for two — appending New York's paths would have gated NEW YORK's movers on
+  CALIFORNIA's sections. New York carries a FOURTH row California has no counterpart
+  for, line 58's city/Yonkers/MCTMT total: a City resident's year-over-year move is
+  invisible in the state figures and is often the larger one. The state total is **line
+  46, not line 39** — line 39 is the tax before the credits and before line 45's other
+  New York State taxes. A taxpayer who moved between two modeled states gets no state
+  movers at all, which is right: a delta between two different states' tax is not a
+  movement in anything.
+
+  `tie_out` gains `state_withholding_ny` AND `city_withholding_nyc` — **both halves**,
+  each with its row in `/tax-parse`'s step-6.5 table and a test that keeps them paired,
+  because a registered-but-never-emitted category is dead protection that makes the gate
+  pass vacuously. TWO categories rather than one because they are two LINES and two
+  refunds: folding the city amount into line 72 still ties, and leaves the city
+  withholding unclaimed on a return that owes city tax. Per STATE like
+  `state_withholding_ca`, never a generic `state_withholding`. **Yonkers withholding
+  (line 74) has no category**, and the parse table SAYS so rather than leaving a reader
+  to assume a zero. Four mutations, four reds.
+
   **A note carried here since slice 1 was STALE and is corrected rather than re-fixed**:
   the NY PTET Mar 15/16 next-business-day defect from PR #22's deferred list is already
   fixed — `_election_deadline` returns March 16, 2026 via

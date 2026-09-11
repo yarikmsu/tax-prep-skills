@@ -387,9 +387,10 @@ class TestFloridaOptionalSection:
         from agents.lib.yoy_diff import OPTIONAL_SECTIONS, STATE_MOVER_FIELDS
         assert "florida_state" in OPTIONAL_SECTIONS
         assert "california_540" in OPTIONAL_SECTIONS  # regression pin
-        # FL contributes NO movers — the flat CA-only mover list is untouched
-        # (per-section restructure is the NY module's job).
-        assert all("florida" not in path for _, path in STATE_MOVER_FIELDS)
+        # FL contributes NO movers — there is no Florida income tax to move.
+        # The list is keyed per SECTION now (the NY module's restructure), so
+        # the absence is a missing KEY rather than an absent path.
+        assert "florida_state" not in STATE_MOVER_FIELDS
 
     def test_florida_state_informational_section_reads_present(self):
         # A typical non-itemizing FL filer: the statement string is the only
@@ -456,3 +457,89 @@ class TestFloridaOptionalSection:
         assert _section_present(doc, "california_540") is False
         doc2 = {"california_540": {"ca_total_tax": 9000}}
         assert _section_present(doc2, "california_540") is True
+
+
+class TestStateMoversAreKeyedPerSection:
+    """The list was flat and CA-only, gated on `california_540` being present
+    in both years. That is correct for one modeled state and silently wrong for
+    two: appending New York's paths would have gated NEW YORK's movers on
+    CALIFORNIA's sections."""
+
+    def _ca(self, taxable, tax, refund):
+        return {"california_540": {"ca_taxable_income": taxable,
+                                   "ca_total_tax": tax, "ca_refund": refund}}
+
+    def _ny(self, taxable, tax, city, refund):
+        return {"new_york_it201": {
+            "line_37_taxable_income": taxable,
+            "line_46_total_state_tax": tax,
+            "line_58_total_city_and_yonkers": city,
+            "line_78_refund": refund}}
+
+    def test_new_york_movers_do_not_depend_on_a_california_section(self):
+        from agents.lib.yoy_diff import _state_fields_present
+        rows = _state_fields_present(self._ny(100, 5, 2, 1),
+                                     self._ny(200, 9, 4, 2))
+        paths = [p for _, p in rows]
+        assert paths == ["new_york_it201.line_37_taxable_income",
+                         "new_york_it201.line_46_total_state_tax",
+                         "new_york_it201.line_58_total_city_and_yonkers",
+                         "new_york_it201.line_78_refund"]
+        assert not [p for p in paths if "california" in p]
+
+    def test_california_movers_do_not_depend_on_a_new_york_section(self):
+        from agents.lib.yoy_diff import _state_fields_present
+        rows = _state_fields_present(self._ca(100, 5, 1), self._ca(200, 9, 2))
+        assert [p for _, p in rows] == ["california_540.ca_taxable_income",
+                                        "california_540.ca_total_tax",
+                                        "california_540.ca_refund"]
+
+    def test_a_section_present_in_only_one_year_contributes_nothing(self):
+        """A mover is a MOVEMENT. One year's figures against an absent section
+        is the whole figure read as a delta, which is not what happened."""
+        from agents.lib.yoy_diff import _state_fields_present
+        assert _state_fields_present({}, self._ny(200, 9, 4, 2)) == []
+        assert _state_fields_present(self._ny(100, 5, 2, 1), {}) == []
+
+    def test_a_mover_between_two_modeled_states_reports_neither(self):
+        """CA one year, NY the next: a delta between two different states' tax
+        is not a movement in anything, and printing one would invent a
+        $9-to-$5 "State total tax" fall out of a move."""
+        from agents.lib.yoy_diff import _state_fields_present
+        assert _state_fields_present(self._ca(100, 5, 1),
+                                     self._ny(200, 9, 4, 2)) == []
+
+    def test_the_city_row_has_no_california_counterpart_and_that_is_the_point(self):
+        """A New York City resident's year-over-year move is invisible in the
+        state figures, and it is often the larger one."""
+        from agents.lib.yoy_diff import STATE_MOVER_FIELDS
+        ny = dict((label, path) for label, path in
+                  STATE_MOVER_FIELDS["new_york_it201"])
+        assert ny["City / Yonkers / MCTMT"] == (
+            "new_york_it201.line_58_total_city_and_yonkers")
+        assert len(STATE_MOVER_FIELDS["california_540"]) == 3
+
+    def test_the_state_total_is_line_46_not_line_39(self):
+        """Line 39 is the tax BEFORE the credits and before line 45's other
+        New York State taxes. Reporting it as the state total under-states
+        every return that has either."""
+        from agents.lib.yoy_diff import STATE_MOVER_FIELDS
+        paths = [p for _, p in STATE_MOVER_FIELDS["new_york_it201"]]
+        assert "new_york_it201.line_46_total_state_tax" in paths
+        assert not [p for p in paths if "line_39" in p]
+
+    def test_every_registered_path_is_a_real_template_field(self):
+        """A path that resolves to nothing reads as a $0 figure in both years
+        and therefore never moves — a row that can only ever be silent."""
+        import json
+        from pathlib import Path
+        from agents.lib.yoy_diff import STATE_MOVER_FIELDS
+        repo = Path(__file__).resolve().parents[1]
+        template = json.loads(
+            (repo / "agents/templates/result_template.json").read_text())
+        for section, fields in STATE_MOVER_FIELDS.items():
+            assert section in template, section
+            for _, path in fields:
+                head, _, field = path.partition(".")
+                assert head == section, path
+                assert field in template[section], path

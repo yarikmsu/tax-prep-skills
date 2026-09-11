@@ -205,6 +205,22 @@ CATEGORY_TARGETS = {
     # 1099-SA box 1 / (5498-SA + W-2 box 12-W) → Form 8889.
     "hsa_distributions": ("form_8889_hsa", ["line_14a_distributions"]),
     "hsa_contributions": ("form_8889_hsa", ["line_2_contributions", "line_9_employer_contributions"]),
+    # W-2 box 17 for a New York employer → IT-201 line 72, and box 19 for a
+    # New York City locality → line 73. TWO categories, not one, because they
+    # are two lines on the form and two separate refunds: a city amount
+    # dropped into the state line still ties, and still leaves the city
+    # withholding unclaimed on a return that owes city tax.
+    #
+    # `state_withholding_ca` is the precedent and the shape is deliberately
+    # the same — per STATE, never a generic `state_withholding`. A category
+    # that spans states cannot fail when one state's amount lands in another's
+    # section, which is the whole failure this is watching for.
+    "state_withholding_ny": ("new_york_it201",
+                             ["refundable_credits_and_payments."
+                              "line_72_state_withholding"]),
+    "city_withholding_nyc": ("new_york_it201",
+                             ["refundable_credits_and_payments."
+                              "line_73_city_withholding"]),
 }
 
 # Categories where the return may legitimately report MORE than the ledger

@@ -103,7 +103,7 @@ OPTIONAL_SECTIONS: list[str] = [
     "schedule_c", "schedule_d", "form_8889_hsa", "form_1116_ftc",
     "form_8938_fatca", "fbar_fincen_114", "form_1099r_401k_rollover",
     "form_8959_additional_medicare", "form_8995_qbi", "ira_contribution",
-    "california_540", "florida_state",
+    "california_540", "florida_state", "new_york_it201",
 ]
 
 # Sections whose real "content" is a fixed affirmative STATEMENT rather than
@@ -122,11 +122,40 @@ INFORMATIONAL_SECTIONS: dict[str, str] = {
     "florida_state": "no_income_tax_statement",
 }
 
-STATE_MOVER_FIELDS: list[tuple[str, str]] = [
-    ("State taxable income", "california_540.ca_taxable_income"),
-    ("State total tax", "california_540.ca_total_tax"),
-    ("State refund", "california_540.ca_refund"),
-]
+# Movers PER STATE SECTION, not one flat list.
+#
+# It was a flat CA-only list gated on `california_540` being present in BOTH
+# years, which is correct for one modeled state and silently wrong for two:
+# appending New York's paths to it would have gated NEW YORK's movers on
+# CALIFORNIA's sections, so a New Yorker with no CA history got none of them
+# and a taxpayer who moved CA -> NY got a full set of CA movers read off an
+# absent section. The gate belongs to the SECTION whose fields it guards.
+#
+# A label says "State ..." rather than naming the state, because the label is
+# what a reader sees beside the figure and the SECTION is what decides whether
+# the row appears at all — the two years being compared are the same
+# taxpayer's, so both sections have to be present for the delta to mean
+# anything, and that is what `_state_fields_present` requires.
+STATE_MOVER_FIELDS: dict[str, list[tuple[str, str]]] = {
+    "california_540": [
+        ("State taxable income", "california_540.ca_taxable_income"),
+        ("State total tax", "california_540.ca_total_tax"),
+        ("State refund", "california_540.ca_refund"),
+    ],
+    # New York's three counterparts. Line 37 is taxable income, line 46 the
+    # STATE total — not line 39, which is the tax before the credits and
+    # before line 45's other New York State taxes — and line 78 the refund.
+    # Line 58's city, Yonkers and MCTMT total is a FOURTH row with no
+    # California counterpart: a New York City resident's year-over-year move
+    # is invisible in the state figures, and it is often the larger one.
+    "new_york_it201": [
+        ("State taxable income", "new_york_it201.line_37_taxable_income"),
+        ("State total tax", "new_york_it201.line_46_total_state_tax"),
+        ("City / Yonkers / MCTMT",
+         "new_york_it201.line_58_total_city_and_yonkers"),
+        ("State refund", "new_york_it201.line_78_refund"),
+    ],
+}
 
 
 def _num(d: dict, dotted: str) -> float:
@@ -204,13 +233,23 @@ def compute_headlines(prior: dict, current: dict, tax_law: dict,
 
 
 def _state_fields_present(prior: dict, current: dict) -> list:
-    """Return STATE_MOVER_FIELDS only when both years carry substantive CA state data.
-    Gating on real content (via _section_present) rather than mere key presence avoids
-    artificial deltas when one year keeps a zeroed/scaffold california_540 template
-    block and the other has real values."""
-    if _section_present(prior, "california_540") and _section_present(current, "california_540"):
-        return STATE_MOVER_FIELDS
-    return []
+    """The mover rows for every state section BOTH years carry substantively.
+
+    Gating on real content (via `_section_present`) rather than mere key
+    presence avoids artificial deltas when one year keeps a zeroed template
+    scaffold and the other has real values.
+
+    Per SECTION, because the gate belongs to the fields it guards: a flat list
+    would have New York's rows appear or vanish on whether a CALIFORNIA section
+    was present. A taxpayer who moved between two modeled states has neither
+    section in both years and gets no state movers at all — which is right, a
+    delta between two different states' tax is not a movement in anything.
+    """
+    rows: "list[tuple[str, str]]" = []
+    for section, fields in STATE_MOVER_FIELDS.items():
+        if _section_present(prior, section) and _section_present(current, section):
+            rows.extend(fields)
+    return rows
 
 
 def compute_line_movers(prior: dict, current: dict, threshold: float) -> list:
