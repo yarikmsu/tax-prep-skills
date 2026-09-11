@@ -6222,3 +6222,99 @@ class TestAStateWhoseBracketsAreKeyedByRateSchedule:
                                  _Prior({"california_540": {"ca_total_tax": 5000}}),
                                  _tax_law_2026(), filing_status="MFJ")
         assert (st.taxable_income, st.tax) == (89000, 3650)
+
+
+class TestTheNewYorkSection:
+    """`new_york_it201` is the third state section, and it is registered only
+    now — the spec's own rule, because a key registered before anything
+    computes into it is a scaffold that reads as coverage."""
+
+    def test_registered_in_both_directions(self):
+        assert "new_york_it201" in P.STATE_SECTION_KEYS
+        assert P._STATE_SECTION_CODES["new_york_it201"] == "NY"
+        # regression pins: the two that were there first
+        assert "california_540" in P.STATE_SECTION_KEYS
+        assert "florida_state" in P.STATE_SECTION_KEYS
+
+    def test_a_prior_section_identifies_new_york_specifically(self):
+        """`_detect_prior_state_code` exists because collapsing every modeled
+        state into one "some state section exists" signal let an unrelated
+        prior section vouch for a completely different current-year cache."""
+        prior = {"new_york_it201": {"line_46_total_state_tax": 4000}}
+        assert P._detect_prior_state_code(prior) == "NY"
+        assert P._detect_prior_state(prior) == "new_york_it201"
+
+    def test_parsed_withholding_does_not_vouch_for_template_zeros(self):
+        """W-2 box 17 lands in line 72 before Form IT-201 is computed at all,
+        so line 72 proves nothing about lines 33, 39 or 46. The California
+        twin of this check was a review finding on PR #35."""
+        scaffold = {"new_york_it201": {
+            "_include_if": "state is NY",
+            "line_33_nyagi": 0, "line_34_deduction": 0,
+            "line_39_ny_tax": 0, "line_46_total_state_tax": 0,
+            "refundable_credits_and_payments": {
+                "line_72_state_withholding": 6200,
+                "line_73_city_withholding": 1800}}}
+        assert P._ny_section_computed(scaffold) is False
+
+    def test_a_computed_zero_tax_return_is_still_evidence(self):
+        """New York's standard deduction has a floor for every filing status,
+        including the filer who can be claimed as a dependent, so a genuinely
+        computed return carries a non-zero line 34 even at zero income."""
+        computed = {"new_york_it201": {
+            "line_33_nyagi": 0, "line_39_ny_tax": 0,
+            "line_46_total_state_tax": 0, "line_34_deduction": 16050}}
+        assert P._ny_section_computed(computed) is True
+
+    def test_a_negative_new_york_agi_is_evidence_too(self):
+        """Line 33 has NO floor — a Schedule C loss, a K-1 loss or an NOL
+        carryforward reaches it routinely — and a negative number is non-zero,
+        so a loss year must not read as an uncomputed section."""
+        loss_year = {"new_york_it201": {"line_33_nyagi": -18000}}
+        assert P._ny_section_computed(loss_year) is True
+
+    def test_the_shared_helper_did_not_change_californias_answer(self):
+        """`_ca_section_computed` is now a thin call on `_section_computed`;
+        the behaviour it guards is the same one PR #35 landed."""
+        scaffold_with_wh = {"california_540": {
+            "ca_total_tax": 0, "ca_agi": 0, "ca_standard_deduction": 0,
+            "ca_withholding_box17": 4500}}
+        assert P._ca_section_computed(scaffold_with_wh) is False
+        assert P._ca_section_computed(
+            {"california_540": {"ca_standard_deduction": 11080}}) is True
+
+    def test_only_a_finite_non_zero_NUMBER_counts_as_evidence(self):
+        """`if v:` would pass every one of these. `json.loads` accepts NaN and
+        Infinity, both of which are numbers and neither of which is an amount;
+        a bool is an int in Python and a scaffold string is truthy. Each would
+        vouch for a section nothing computed."""
+        for value in (True, float("nan"), "16,050", [16050], {"amount": 16050}):
+            assert P._ny_section_computed(
+                {"new_york_it201": {"line_34_deduction": value}}) is False, value
+        # Infinity IS non-zero and finite-looking to a truth test; it is not a
+        # deduction, and the same guard catches it.
+        assert P._ny_section_computed(
+            {"new_york_it201": {"line_34_deduction": float("inf")}}) is False
+        assert P._ny_section_computed(
+            {"new_york_it201": {"line_34_deduction": 16050}}) is True
+
+    def test_a_non_dict_section_is_not_evidence(self):
+        for junk in (None, [], "computed", 4000):
+            assert P._section_computed({"new_york_it201": junk},
+                                       "new_york_it201",
+                                       P._NY_COMPUTED_EVIDENCE_FIELDS) is False
+
+    def test_the_evidence_fields_are_all_real_template_fields(self):
+        """A field name that does not exist in the template can never be
+        non-zero, so the whole check would quietly answer False forever."""
+        template = json.loads(
+            (REPO / "agents/templates/result_template.json").read_text())
+        section = template["new_york_it201"]
+        for field in P._NY_COMPUTED_EVIDENCE_FIELDS:
+            assert field in section, field
+
+    def test_no_evidence_field_can_be_filled_by_a_parser(self):
+        """The rule that picks these: an output of the COMPUTATION, never a
+        figure that can arrive from parsing a W-2."""
+        assert not [f for f in P._NY_COMPUTED_EVIDENCE_FIELDS
+                    if "withholding" in f or "payment" in f]

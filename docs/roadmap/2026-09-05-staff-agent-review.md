@@ -524,6 +524,26 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   `_state_marginal_rate` took a `filing_status` it had never read — this is its first
   use. Seven mutations, seven reds.
 
+  **SLICE 10 SHIPPED — the result section, eight slices later than the spec said**:
+  `new_york_it201`, with an `nyc` sub-block, plus `/tax-compute`'s New York branch
+  (`references/state-return-ny.md`), `projection.STATE_SECTION_KEYS` and the
+  computed-evidence pair. The spec said the section ships WITH the compute functions
+  "because a section key registered before anything computes into it is a scaffold that
+  reads as coverage" — the functions shipped first and the section came last, which is
+  exactly the drift that rule was written to prevent. The assertion that keeps the names
+  honest is that **every line key the engine emits has somewhere in the template to go**,
+  collected by RUNNING the functions rather than reading the source, because three of the
+  four line tables are expanded into f-strings at call time. It found eight mismatches on
+  its first run and one real defect: `compute_mctmt` and `compute_city_and_yonkers_total`
+  spelled line 54e two different ways, so a reader tying out that line had to know which
+  function produced the dict. Line 59 ships **null, not 0** — sales and use tax is
+  reported ON the income tax return and changes the amount owed, and a 0 default asserts
+  an answer nobody gave. `_ca_section_computed` and `_ny_section_computed` are now thin
+  calls on one `_section_computed` that takes the field list as an argument, because only
+  the caller knows which of its fields a PARSER can fill. Five mutations, five reds; two
+  of them needed a purpose-written case — a renamed template field, and a truthiness test
+  that accepted `True`, `NaN` and a string as a computed deduction.
+
   **A note carried here since slice 1 was STALE and is corrected rather than re-fixed**:
   the NY PTET Mar 15/16 next-business-day defect from PR #22's deferred list is already
   fixed — `_election_deadline` returns March 16, 2026 via

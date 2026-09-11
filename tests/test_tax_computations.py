@@ -6206,3 +6206,107 @@ class TestOneReaderOfStateBrackets:
         assert reads, (
             "projection.py no longer reads state.brackets in any form the "
             "sweep recognises; the sweep above is now vacuous")
+
+
+class TestTheNewYorkResultSection:
+    """`new_york_it201` is where the IT-201 lands, and the field names carry
+    the FORM's line numbers because that is what `/tax-verify` ties against.
+
+    The assertion that matters is not that the section exists — it is that
+    every line key the ENGINE emits has somewhere in the template to go. A
+    renamed line otherwise shows up on a return rather than in a test, which
+    is the lesson `pdf_render` already taught this repository once.
+    """
+
+    REPO = Path(__file__).resolve().parents[1]
+
+    def _section(self):
+        template = json.loads(
+            (self.REPO / "agents/templates/result_template.json").read_text())
+        return template["new_york_it201"]
+
+    @staticmethod
+    def _keys_at_any_depth(block) -> set:
+        found = set()
+        if isinstance(block, dict):
+            for k, v in block.items():
+                found.add(k)
+                found |= TestTheNewYorkResultSection._keys_at_any_depth(v)
+        elif isinstance(block, list):
+            for v in block:
+                found |= TestTheNewYorkResultSection._keys_at_any_depth(v)
+        return found
+
+    def _engine_line_keys(self) -> set:
+        """Collected by RUNNING the functions, not by reading the source: three
+        of the four tables are expanded into f-strings at call time, so a
+        static sweep would silently miss whichever ones moved."""
+        keys = set()
+        keys |= set(compute_ny_agi(0.0)["lines"])
+        keys |= set(compute_ny_settlement(0.0)["lines"])
+        keys |= set(compute_mctmt(0.0, 0.0, {
+            "net_earnings_threshold_per_zone": 50000,
+            "zone_1": {"rate": 0.0011}, "zone_2": {"rate": 0.0034}})["lines"])
+        keys |= {k for k in compute_city_and_yonkers_total()
+                 if k.startswith("line_")}
+        keys |= {k for k in compute_ny_state_tax_total(0.0)
+                 if k.startswith("line_")}
+        keys |= {k for k in compute_ny_itemized(
+                     0.0, 0.0, 0.0, "mfj",
+                     reduction=_NY_2025_ITEMIZED_REDUCTION,
+                     charitable_limit=_NY_2025_CHARITABLE_LIMIT,
+                     standard_deduction=1)
+                 if k.startswith("line_")}
+        return keys
+
+    def test_every_line_the_engine_emits_has_a_field(self):
+        missing = sorted(self._engine_line_keys()
+                         - self._keys_at_any_depth(self._section()))
+        assert not missing, (
+            f"{missing} are IT-201 lines the engine computes with nowhere in "
+            "result_template.json's new_york_it201 section to be written. A "
+            "renamed or added line shows up on a return instead of here.")
+
+    def test_the_collection_is_not_vacuous(self):
+        """A helper that quietly stopped finding lines would make the check
+        above pass by comparing two empty sets."""
+        keys = self._engine_line_keys()
+        assert len(keys) > 30, keys
+        assert "line_33_nyagi" in keys and "line_80_amount_owed" in keys
+
+    def test_sales_or_use_tax_ships_null_not_zero(self):
+        """Line 59 is reported ON the income tax return and changes the amount
+        owed, and nothing computes it. A 0 default would assert an answer
+        nobody gave — the same reason `florida_state` ships its statement
+        null."""
+        section = self._section()
+        assert section["line_59_sales_or_use_tax"] is None
+        assert "null on purpose" in section["_note_line_59"]
+
+    def test_the_section_is_not_a_second_california(self):
+        """The playbook forbids overloading `california_540`, and `yoy_diff`'s
+        mover list is keyed per section for exactly that reason."""
+        section = self._section()
+        assert not [k for k in self._keys_at_any_depth(section)
+                    if k.startswith("ca_")]
+
+    def test_the_compute_skill_has_a_new_york_branch_that_is_reachable(self):
+        """A section nothing writes is a scaffold that reads as coverage."""
+        body = (self.REPO / ".agents/skills/tax-compute/SKILL.md").read_text()
+        assert "references/state-return-ny.md" in body
+        ny = skill_text("tax-compute")
+        assert "new_york_it201" in ny
+        # The generic file must hand New York over rather than estimating it.
+        generic = (self.REPO / ".agents/skills/tax-compute/references"
+                   / "state-return.md").read_text()
+        assert "state-return-ny.md" in generic
+
+    def test_the_named_non_goals_reach_the_limitations_manifest(self):
+        """Each gap is NAMED — silence is the failure mode this module was
+        told to avoid."""
+        ny = (self.REPO / ".agents/skills/tax-compute/references"
+              / "state-return-ny.md").read_text()
+        for gap in ("IT-203", "IT-360.1", "IT-196 lines 1 through 45",
+                    "IT-230", "IT-213", "line 59"):
+            assert gap in ny, gap
+        assert "meta.limitations" in ny

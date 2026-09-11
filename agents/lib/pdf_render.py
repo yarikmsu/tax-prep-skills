@@ -132,7 +132,12 @@ def _title(key: str) -> str:
         if word.isdigit() or (word[:1].isdigit() and word[-1:].isalpha()):
             words.append(word)
         elif word in ("hsa", "qbi", "ftc", "fatca", "fbar", "pfic", "ira",
-                      "agi", "amt", "fx", "ca", "us"):
+                      "agi", "amt", "fx", "ca", "us",
+                      # New York's forms and acronyms: `new_york_it201` reads
+                      # "New York It201" through the generic capitalisation,
+                      # and a form number is not a word.
+                      "ny", "nyc", "nyagi", "mctmt", "ptet",
+                      "it196", "it201", "it225"):
             words.append(word.upper())
         else:
             words.append(word.capitalize())

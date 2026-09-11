@@ -2074,22 +2074,50 @@ _CA_COMPUTED_EVIDENCE_FIELDS = (
     "ca_standard_deduction", "ca_tax_from_table",
 )
 
+# New York's twin, and the same rule picks the fields: an output of the
+# COMPUTATION, never a figure that can arrive from parsing. Box 17 withholding
+# lands in line 72 before Form IT-201 is computed at all, so line 72 proves
+# nothing. A genuinely computed New York return always carries a non-zero line
+# 34 — the standard deduction has a floor for every filing status, including
+# the filer who can be claimed as a dependent — even at zero income, and line
+# 33 may be NEGATIVE, which is non-zero and therefore evidence too.
+_NY_COMPUTED_EVIDENCE_FIELDS = (
+    "line_46_total_state_tax", "line_33_nyagi", "line_37_taxable_income",
+    "line_34_deduction", "line_39_ny_tax",
+)
 
-def _ca_section_computed(result: dict) -> bool:
-    """True when result's california_540 section shows COMPUTED evidence —
-    a non-zero finite number in one of the compute-output fields — not mere
-    non-emptiness. yoy_diff._section_present is too weak here: a section
-    holding only parsed W-2 Box 17 withholding reads "present" while
-    ca_total_tax/ca_agi are still template zeros (Codex P2 on PR #35)."""
-    ca = (result or {}).get("california_540")
-    if not isinstance(ca, dict):
+
+def _section_computed(result: dict, section: str,
+                      fields: "tuple[str, ...]") -> bool:
+    """True when `section` shows COMPUTED evidence — a non-zero finite number
+    in one of its compute-output fields — not mere non-emptiness.
+
+    `yoy_diff._section_present` is too weak for this: a section holding only
+    parsed W-2 withholding reads "present" while the computed totals are still
+    template zeros (Codex P2 on PR #35). Which fields count is the caller's,
+    because only the caller knows which of its fields a PARSER can fill.
+    """
+    block = (result or {}).get(section)
+    if not isinstance(block, dict):
         return False
-    for key in _CA_COMPUTED_EVIDENCE_FIELDS:
-        v = ca.get(key)
+    for key in fields:
+        v = block.get(key)
         if (isinstance(v, (int, float)) and not isinstance(v, bool)
                 and math.isfinite(v) and v != 0):
             return True
     return False
+
+
+def _ca_section_computed(result: dict) -> bool:
+    """True when result's california_540 section shows COMPUTED evidence."""
+    return _section_computed(result, "california_540",
+                             _CA_COMPUTED_EVIDENCE_FIELDS)
+
+
+def _ny_section_computed(result: dict) -> bool:
+    """True when result's new_york_it201 section shows COMPUTED evidence."""
+    return _section_computed(result, "new_york_it201",
+                             _NY_COMPUTED_EVIDENCE_FIELDS)
 
 
 def _prior_ca_tax_agi(prior):
@@ -4433,13 +4461,14 @@ def _main(argv: list) -> int:
 
 
 # State result sections known to the toolkit; extend as more states are added.
-STATE_SECTION_KEYS = ["california_540", "florida_state"]
+STATE_SECTION_KEYS = ["california_540", "florida_state", "new_york_it201"]
 
 # Which state CODE each section key represents — keep in sync with
 # STATE_SECTION_KEYS above. Used by _detect_prior_state_code to tell WHICH
 # state a prior section is evidence for, since the two sections are not
 # interchangeable (Codex round-15 P2).
-_STATE_SECTION_CODES: dict = {"california_540": "CA", "florida_state": "FL"}
+_STATE_SECTION_CODES: dict = {"california_540": "CA", "florida_state": "FL",
+                              "new_york_it201": "NY"}
 
 
 def _detect_prior_state(prior_result: dict) -> str | None:

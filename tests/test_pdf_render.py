@@ -151,6 +151,26 @@ class TestWhatIsOnThePageCameFromTheResult:
         text = _text(_render(tmp_path, _result()))
         assert "Line 1a — wages" in text and "Line 11 — agi" in text
 
+    def test_a_new_york_return_prints_its_form_numbers_as_form_numbers(
+            self, tmp_path):
+        """The section titles are DERIVED from the keys — the alternative is a
+        second table of names to keep in step, and the one that goes stale is
+        the one nobody sees go stale. That makes an unknown acronym print as a
+        word: `new_york_it201` read "New York It201", and "Nyagi" and "Mctmt"
+        are worse, because a reader cannot tell them from a typo."""
+        ny = json.loads(json.dumps(TEMPLATE["new_york_it201"]))
+        ny["line_33_nyagi"] = 184000.0
+        ny["line_46_total_state_tax"] = 11213.58
+        ny["mctmt"]["line_54e_total_mctmt"] = 340.0
+        text = _text(_render(tmp_path, _result(new_york_it201=ny)))
+        assert "New York IT201" in text and "It201" not in text
+        # The FIELD labels keep the rest lower-case — "Line 11 — agi" is the
+        # shipped convention and the test above this one pins it — so the
+        # acronym rule is the section TITLE's, not every word on the page.
+        assert "Line 33 — nyagi $184,000.00" in text
+        assert "Line 46 — total state tax $11,213.58" in text
+        assert "Line 54e — total mctmt $340.00" in text
+
     @pytest.mark.parametrize("case,probe", [
         ({"federal_refund": 2400.0, "net_refund": 2400.0}, "$2,400.00"),
         ({"federal_refund": -1800.0, "net_refund": -1800.0}, "($1,800.00)"),

@@ -69,6 +69,9 @@ _INAPPLICABLE_SECTIONS = (
     "form_1099r_401k_rollover", "form_8959_additional_medicare",
     "form_8995_qbi", "florida_state", "form_8863", "form_8606",
     "ira_contribution",
+    # ...and the two other state sections. The case is a California resident,
+    # so an IT-201 no more exists for it than a Florida section does.
+    "new_york_it201",
 )
 
 

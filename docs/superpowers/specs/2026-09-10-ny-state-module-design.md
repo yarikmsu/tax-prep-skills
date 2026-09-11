@@ -132,11 +132,30 @@ overload `california_540` — the playbook forbids it and `yoy_diff`'s
 `STATE_MOVER_FIELDS` is currently a flat CA-only list that would gate NY movers
 on CA sections.
 
-**OPEN:** the field list, the ALWAYS-non-zero computed-evidence field, and the
-`_NY_COMPUTED_EVIDENCE_FIELDS` / `_ny_section_computed()` pair mirroring CA's in
-`projection.py`. These are written with the compute functions, in the same slice,
-because a section key registered before anything computes into it is a scaffold
-that reads as coverage.
+**SHIPPED (slice 10)**, and NOT in the same slice as the compute functions the
+way this section said it would be — the functions shipped first and the section
+came eight slices later, which is the drift the rule was written to prevent.
+
+The field names carry the FORM's line numbers, and the assertion that keeps
+them honest is not that the section exists: **every line key the engine emits
+must have somewhere in the template to go**, collected by RUNNING the functions
+rather than reading the source, because three of the four line tables are
+expanded into f-strings at call time. That check found eight mismatches on its
+first run and one real defect — `compute_mctmt` and
+`compute_city_and_yonkers_total` spelled line 54e two different ways.
+
+The computed-evidence field is **line 34**, the deduction: New York's standard
+deduction has a floor for every filing status, including the filer who can be
+claimed as a dependent, so a genuinely computed return carries a non-zero one
+even at zero income. Line 33 counts too, NEGATIVE included — a loss year must
+not read as an uncomputed section. `_ca_section_computed` and
+`_ny_section_computed` are now both thin calls on one `_section_computed`,
+which takes the field list as an argument because only the caller knows which
+of its fields a PARSER can fill.
+
+**Line 59 ships `null`, not 0.** Sales and use tax is reported ON the income
+tax return and changes the amount owed, and nothing computes it; a 0 default
+would assert an answer nobody gave.
 
 ## 5. Compute functions
 
@@ -437,10 +456,14 @@ each behind its own tests:
 9. **Registrations, `/tax-verify` line map, the depth note** — LAST, which is
    when `capabilities._state_note` tells the truth.
 
-   **The result SECTION comes first inside this slice**, and §4's OPEN row is
-   why: the compute functions shipped without one, so `new_york_it201` exists
-   in no template and nothing writes it. Registering the key anywhere before
-   that is the scaffold-that-reads-as-coverage §4 warns about.
+   **The result SECTION came first inside this slice** — SHIPPED (slice 10),
+   with `/tax-compute`'s New York branch
+   (`references/state-return-ny.md`), `projection.STATE_SECTION_KEYS` and the
+   computed-evidence pair. §4 records what it settled. What remains here is
+   `yoy_diff`, `tie_out` paired with `/tax-parse`, `withholding`,
+   `tax_calendar`, `/tax-extend`, `retirement_dashboard`, the freshness
+   auditor, the `/tax-verify` line map, the deletion of the `nyc_resident`
+   UNSUPPORTED rule, and the depth note LAST.
 
 The first thing to resolve before slice 1 is the OPEN rows above. They are
 questions with named sources, not guesses waiting to be made.

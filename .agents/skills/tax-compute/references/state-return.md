@@ -1,7 +1,16 @@
 # tax-compute Step 10 — state return
 
-California Form 540 in depth; every other state is a bracket estimate.
-A `type: "none"` state is a positive declaration, not an empty section.
+California Form 540 in depth; New York has its own file; every other state is
+a bracket estimate. A `type: "none"` state is a positive declaration, not an
+empty section.
+
+**NEW YORK IS NOT HERE.** When `tax_law.state.code == "NY"`, run the
+cache-vs-taxpayer cross-check below and then read
+[state-return-ny.md](state-return-ny.md) instead of any branch in this file.
+New York's `state.brackets` is keyed by §601 rate SCHEDULE rather than being a
+flat list, so the generic path below does not even read it correctly — and
+plain bracket math there UNDER-states the tax by the whole benefit of the
+graduated schedule above the §601(d-x) recapture threshold.
 
 ## Contents
 
@@ -314,6 +323,8 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    return, not from {state}.
 
 **Other states:** Follow state-specific rules from `tax_law_{year}.json`.
+**EXCEPTION — NY:** never reaches this branch; see the pointer at the top of
+this file.
 **EXCEPTION — pre-2021 TN (Hall tax):** do NOT bracket-estimate a TN return
 for a tax year before 2021. The Hall income tax applied ONLY to interest
 and dividends — a generic bracket estimate over AGI would fabricate tax on

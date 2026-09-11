@@ -3650,7 +3650,10 @@ def compute_city_and_yonkers_total(
         "line_49_after_household_credit": line_49,
         "line_52_city_tax_before_credits": line_52,
         "line_54_after_city_credits": line_54,
-        "line_54e_mctmt": round(mobility, 2),
+        # The SAME spelling `compute_mctmt` uses for its own total. Two names
+        # for one line means a reader tying out line 54e has to know which
+        # function produced the dict in front of them.
+        "line_54e_total_mctmt": round(mobility, 2),
         "line_55_yonkers_resident_surcharge": round(yonkers_res, 2),
         "line_56_yonkers_nonresident_earnings_tax": round(yonkers_non, 2),
         "line_58_total_city_and_yonkers": total,
