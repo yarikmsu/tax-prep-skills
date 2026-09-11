@@ -4,15 +4,25 @@ C1: unsupported situations block /tax-compute unless explicitly acknowledged.
 C2: triggered items + state scope become the meta.limitations manifest.
 """
 import json
+import re
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import capabilities as C  # noqa: E402
-from tests.skill_text import skill_text  # noqa: E402
+from agents.lib.capabilities import (  # noqa: E402
+    _NY_ABODE_MONTHS_BEFORE_2022, _NY_ABODE_MONTHS_FROM_2022,
+)
+from agents.lib.tax_law_fetcher import (  # noqa: E402
+    _source_host_authoritative,
+)
+from tests.skill_text import (  # noqa: E402
+    SKILLS_DIR, skill_names, skill_text,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -59,6 +69,7 @@ def test_iso_exercise_is_manual_not_blocking():
     ("has_marketplace_insurance", "marketplace_insurance"),
     ("moved_states_this_year", "part_year_residency"),
     ("nyc_resident", "nyc_resident"),
+    ("statutory_resident_of_another_state", "statutory_residency_second_state"),
     ("has_nonresident_source_income", "nonresident_source_income"),
     ("has_household_employees", "household_employees"),
     ("has_dependent_unearned_income", "kiddie_tax"),
@@ -890,3 +901,325 @@ class TestTaxSetupNoIncomeTaxAllowlistDoc:
         setup_md = self._setup_md()
         assert "_NO_INCOME_TAX_STATES" in setup_md
         assert "_tn_hall_repealed" in setup_md or "_TN_HALL_REPEAL_YEAR" in setup_md
+
+
+# --- Residency guardrails (Z7): the figure registry -------------------------
+#
+# AGENTS.md §2 forbids a hardcoded rate, bracket, cap or threshold. A day count
+# and an abode period ARE thresholds, and the skills have to state them — a
+# taxpayer cannot answer "am I a statutory resident of New York?" without being
+# told what the test is. They ride the same narrow §2 exception as
+# `tax-safe-harbor`'s §6654 restatement, on the same terms: a closed set, every
+# member sourced and dated where it is stated once.
+#
+# ONE POSITIVE ASSERTION, not a list of exemptions. The first version of this
+# registry had two scopes and an eleven-entry `NOT_A_THRESHOLD` mask, and it was
+# the enumeration-with-no-stopping-rule the PII gate had just been rebuilt to
+# escape: four of the eleven masks were dead on arrival, the sentence scope only
+# fired on three literal doctrine phrases, and the ten-month figure could be
+# reintroduced in three of the five files that state it with every test green.
+#
+# What replaces it is the shape `test_portability.py`'s safe-harbor lint already
+# uses — trigger on a POSITIVE marker rather than exempt everything that is not
+# one. There, a `$` beside a limit word. Here, a number with a UNIT (days or
+# months) within a short span of a residency NOUN. Every legitimate figure in
+# these files carries both; a wash-sale window, a §121 holding period and an
+# extension deadline carry the unit and never the noun, so they fall out for
+# free instead of needing an exemption apiece. It covers everything that can
+# state a figure — every skill, the engine's rule text, and the profile template
+# — rather than two hand-picked files.
+GUARDRAILS = REPO / "docs" / "contributing" / "residency-guardrails.md"
+
+# The closed set: the literal spellings a residency figure may take.
+RESIDENCY_FIGURES = {
+    # Not "183 days": the statute says "more than 183" and the Department says
+    # "184 or more", and they are the same rule — but registering both would let
+    # an off-by-one edit of the skills' own sentence pass as a spelling change.
+    # The doc's table carries the statutory phrasing; the skills state one.
+    "184 days": "NY statutory residency, day prong",
+    "10 months": "abode period, tax year 2022 onward (Audit Division policy)",
+    "11 months": "abode period, before tax year 2022",
+}
+
+# A residency NOUN near a number-with-unit is what makes it a residency figure.
+# A residency-TEST noun, not merely `residen`: `/tax-compute` states §6654's
+# prior-year precondition as "the prior year covered a full 12 months AND the
+# taxpayer was a US citizen/resident all year", and a bare `residen` made that
+# a residency figure. A check that cries wolf on correct prose gets deleted
+# rather than fixed, so the trigger names the doctrine.
+_RESIDENCY_NOUN = (r"statutory|abode|domicile|physically in|New York|NYC|"
+                   r"Yonkers|residency test|days present")
+_NUMBER_WITH_UNIT = r"(?:\d+|ten|eleven|twelve)\+?\s*(?:or more\s+)?(?:days?|months?)"
+_FIGURE_NEAR_NOUN = re.compile(
+    rf"(?:{_RESIDENCY_NOUN})[^.\n]{{0,80}}?({_NUMBER_WITH_UNIT})"
+    rf"|({_NUMBER_WITH_UNIT})[^.\n]{{0,80}}?(?:{_RESIDENCY_NOUN})", re.I)
+
+
+def _residency_figures_in(text: str) -> "list[str]":
+    """Every number-with-unit standing near a residency noun.
+
+    Whitespace is flattened FIRST. The span between the noun and the figure is
+    bounded by `[^.\n]`, and markdown wraps a sentence across lines — a
+    mutation proved it: changing the abode period to nine months in the
+    interview went green purely because the wrap fell between `abode` and the
+    figure. Sentences still bound the span; line breaks no longer do.
+    """
+    flat = re.sub(r"\s+", " ", text)
+    return [(a or b).strip() for a, b in _FIGURE_NEAR_NOUN.findall(flat)]
+
+
+def _normalised(figure: str) -> str:
+    """`184+ NY days` and `184 or more days` are the same figure as `184 days`.
+
+    Spelling variation is not what this registry is for; a DIFFERENT NUMBER is.
+    Without this the set would have to carry every phrasing, which is the
+    enumeration again, one level down.
+    """
+    word = {"ten": "10", "eleven": "11", "twelve": "12"}
+    figure = re.sub(r"\s+", " ", figure.lower()).replace("+", "")
+    figure = figure.replace(" or more", "").replace("day", "days").rstrip("s")
+    figure = figure.replace("dayss", "days").replace("monthss", "months")
+    number, _, unit = figure.partition(" ")
+    unit = "days" if unit.startswith("day") else "months"
+    return f"{word.get(number, number)} {unit}"
+
+
+_ALLOWED_FIGURES = {_normalised(f) for f in RESIDENCY_FIGURES}
+
+# Everywhere a residency figure could be stated. Not a curated subset: the
+# two copies that regressed silently under the first registry were the engine's
+# rule text and the profile template, neither of which was a skill file.
+def _residency_scanned() -> "dict[str, str]":
+    out = {f"skill:{name}": skill_text(name) for name in skill_names()}
+    out["agents/lib/capabilities.py"] = (
+        REPO / "agents" / "lib" / "capabilities.py").read_text()
+    out["agents/templates/taxpayer_profile_template.json"] = (
+        REPO / "agents" / "templates" / "taxpayer_profile_template.json"
+    ).read_text()
+    return out
+
+
+@pytest.mark.parametrize("source", sorted(_residency_scanned()))
+def test_no_unregistered_residency_figure(source):
+    """The half that catches an ADDITION, and the half that caught nothing in
+    the first version: the ten-month figure could come back in `tax-review`'s
+    own SKILL.md, in the engine's rule text, or in the template comment, with
+    every test green. All three are scanned now."""
+    for figure in _residency_figures_in(_residency_scanned()[source]):
+        assert _normalised(figure) in _ALLOWED_FIGURES, (
+            f"{source} states {figure!r} beside a residency word and it is not "
+            "in RESIDENCY_FIGURES. Add it to the closed set AND to the table in "
+            "docs/contributing/residency-guardrails.md with its source, or fix "
+            "the sentence")
+
+
+def test_every_registered_figure_is_sourced_and_dated():
+    """A figure with no source is one nobody can re-verify at season open, and
+    §2's whole contract is that a stale number never passes as fresh. The date
+    is PARSED, not shape-matched: `2000-99-99` is not a date."""
+    doc = GUARDRAILS.read_text()
+    # Any table row carrying a link, NOT rows from a named domain: filtering by
+    # `tax.ny.gov` would stop seeing a figure sourced from another state's
+    # department and report it as missing from a table it is in.
+    rows = [ln for ln in doc.splitlines()
+            if ln.startswith("|") and "](http" in ln]
+    assert rows, "the guardrails doc no longer carries a sourced figure table"
+    for figure, what in RESIDENCY_FIGURES.items():
+        number = figure.split()[0]
+        matching = [r for r in rows if number in r]
+        assert matching, (
+            f"{figure!r} ({what}) is in the closed set and the guardrails doc's "
+            "table does not carry it — nothing states where it came from")
+    for row in rows:
+        url = re.search(r"\]\((https?://[^)\s]+)", row)
+        assert url, f"a figure row names no source URL:\n  {row}"
+        assert _source_host_authoritative(url.group(1)), (
+            "a residency figure is sourced from a host AGENTS.md §2 does not "
+            f"treat as authoritative:\n  {row}")
+        stamp = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", row)
+        assert stamp, (
+            f"a figure row has no date it was read:\n  {row}")
+        date.fromisoformat(stamp.group(1))
+
+
+def test_the_abode_period_is_the_audit_division_figure():
+    """The regression this registry exists for, and it went the OTHER way from
+    the first write-up. `more than 10 months` was CORRECT: the Department's
+    Nonresident Audit Guidelines moved Audit Division policy from eleven months
+    to ten beginning with tax year 2022, while its published bulletin still
+    says eleven. Stating eleven tells a taxpayer with a 10.5-month abode and 190
+    New York days that New York does not have them — it does, and the flag then
+    stays False so the gate never fires either. Both figures are stated, with
+    the year that separates them."""
+    text = skill_text("tax-review") + skill_text("tax-setup")
+    assert "10 months" in text and "11 months" in text, (
+        "the skills no longer state BOTH abode periods — the ten-month figure "
+        "is the operative one and the eleven-month figure is what an amended "
+        "return for a pre-2022 year needs")
+    assert "2022" in text, (
+        "the skills state the abode period with no year gating it, which makes "
+        "one of the two figures silently wrong for every return")
+    assert _NY_ABODE_MONTHS_FROM_2022 == 10 and _NY_ABODE_MONTHS_BEFORE_2022 == 11
+
+
+def test_the_review_reaches_residency_on_every_return():
+    """It lived inside the `type: "none"` branch, so a taxpayer leaving New York
+    for any income-tax state reached none of it. Residency is a question about
+    the state being LEFT; the destination's regime does not decide whether it
+    gets asked."""
+    body = (SKILLS_DIR / "tax-review" / "SKILL.md").read_text()
+    # To the next SAME-LEVEL numbered step, or end of file. Stopping at the next
+    # `###` of any depth let a `### 3.8.1. When to skip` subheading re-impose
+    # the regime condition below the part this reads.
+    step = re.search(r"^### 3\.8\..*?(?=^### \d+\. |\Z)", body, re.M | re.S)
+    assert step, "tax-review lost its step 3.8 residency guardrails"
+    region = step.group(0) + (SKILLS_DIR / "tax-review" / "references"
+                              / "residency-review.md").read_text()
+    assert "references/residency-review.md" in step.group(0), (
+        "step 3.8 no longer links the residency reference")
+    assert "EVERY return" in step.group(0), (
+        "step 3.8 no longer says it is unconditional — the heading is where a "
+        "skimming agent decides whether the step applies to the return in hand")
+    assert not re.search(r'state\.type|type: "none"', region), (
+        "the residency step has acquired a regime condition, which is the "
+        "defect it was written to undo")
+
+
+def test_the_interview_asks_for_the_counts_the_gate_reads():
+    """A count nothing collects is a gate that never fires. The DOTTED key, not
+    its last segment: `residency.days_present_by_state_v2` would satisfy a
+    suffix match while orphaning the field the engine reads."""
+    setup = skill_text("tax-setup")
+    for key in ("residency.domicile_state",
+                "residency.days_present_by_state",
+                "residency.abode_months_by_state",
+                "residency.telecommutes_for_out_of_state_employer"):
+        assert key in setup, (
+            f"the /tax-setup interview never names {key}, so the taxpayer is "
+            "asked to conclude they are a statutory resident with nothing "
+            "recorded behind the conclusion")
+    review = skill_text("tax-review")
+    for key in ("residency.days_present_by_state",
+                "residency.abode_months_by_state"):
+        assert key in review, (
+            f"/tax-review never cross-checks {key} against the flag, so a "
+            "taxpayer whose counts meet a test with the flag left False is not "
+            "a finding anywhere — the dangerous direction")
+
+
+def test_the_nyc_question_reaches_a_taxpayer_addressed_elsewhere():
+    """It was asked only `If state is NY`, which structurally cannot reach the
+    taxpayer this whole epic is about: a Florida address and a Manhattan
+    apartment."""
+    setup = skill_text("tax-setup")
+    assert "If state is NY: are you a New York City resident" not in setup, (
+        "the NYC question is address-gated again")
+    assert re.search(r"If NY appears anywhere.*?nyc_resident", setup, re.S), (
+        "the NYC question no longer keys on NY appearing in the residency "
+        "counts, so an out-of-state statutory resident is never asked it")
+
+
+# --- the residency counts are validated at the parse boundary ---------------
+
+
+def _profile_with(residency, **extra):
+    profile = {"tax_year": 2026, "filing_status": "single",
+               "address": {"state": "CA"},
+               "flags": {f: False for f in C._REQUIRED_GATE_FLAGS}}
+    profile.update(extra)
+    if residency is not None:
+        profile["residency"] = residency
+    return profile
+
+
+@pytest.mark.parametrize("bad", [
+    {"days_present_by_state": {"NewYork": 200}},      # not a USPS code
+    {"days_present_by_state": {"NY": "a lot"}},       # type-valid, not a number
+    {"days_present_by_state": {"NY": float("nan")}},  # every comparison is False
+    {"days_present_by_state": {"NY": 400}},           # out of domain
+    {"days_present_by_state": {"NY": -1}},
+    {"abode_months_by_state": {"NY": 13}},
+    {"abode_months_by_state": {"NY": True}},          # bool is an int subclass
+    {"domicile_state": "Nu York"},
+    {"days_present_by_state": [("NY", 200)]},
+])
+def test_a_malformed_residency_count_hard_errors(bad):
+    """AGENTS.md §8: validate the VALUE at the parse boundary, not just the
+    type. A misspelled key is the dangerous one — it makes the counts for the
+    state that matters look ABSENT, so the reviewer finds nothing meeting a
+    test and a flag-False return sails through."""
+    with pytest.raises(C.CapabilityError):
+        C.evaluate(_profile_with(bad))
+
+
+def test_an_absent_residency_block_does_not_read_as_a_negative_answer():
+    """It cannot BLOCK on absence — a profile with no second state is the
+    ordinary case and blocking it is cry-wolf — so what has to hold is that
+    nothing concludes from the silence either."""
+    assert C.evaluate(_profile_with(None)).blocking == ()
+    assert C.evaluate(_profile_with({})).blocking == ()
+
+
+def test_the_counts_decide_new_yorks_test_not_the_taxpayers_arithmetic():
+    """Collecting numbers buys nothing if the threshold is then applied in
+    somebody's head. The flag is left FALSE in every case here."""
+    meets = {"days_present_by_state": {"NY": 200},
+             "abode_months_by_state": {"NY": 11}}
+    report = C.evaluate(_profile_with(meets))
+    assert any(f.rule_id == "statutory_residency_second_state"
+               for f in report.blocking), (
+        "counts that meet New York's test with the flag False produced no "
+        "block — the return computes one resident state and is silently wrong "
+        "by the whole of New York's")
+
+    # BOTH prongs. Days in hotels is not statutory residency, and an empty
+    # apartment is not either.
+    for half in ({"days_present_by_state": {"NY": 200}},
+                 {"abode_months_by_state": {"NY": 12}},
+                 {"days_present_by_state": {"NY": 183},
+                  "abode_months_by_state": {"NY": 12}},
+                 {"days_present_by_state": {"NY": 200},
+                  "abode_months_by_state": {"NY": 10}}):
+        assert C.evaluate(_profile_with(half)).blocking == (), (
+            f"{half} is not New York's test and it blocked anyway — a gate "
+            "that fires on correct data teaches the taxpayer to reason past "
+            "the next one")
+
+
+def test_the_pre_2022_abode_period_is_the_longer_one():
+    """An amended return for an earlier year is a real thing, and Audit policy
+    was eleven months before tax year 2022."""
+    counts = {"days_present_by_state": {"NY": 200},
+              "abode_months_by_state": {"NY": 10.5}}
+    assert C.evaluate(_profile_with(counts, tax_year=2026)).blocking, (
+        "10.5 months in 2026 is more than the ten-month Audit policy and did "
+        "not block")
+    assert C.evaluate(_profile_with(counts, tax_year=2021)).blocking == (), (
+        "10.5 months in 2021 is less than the eleven-month policy that applied "
+        "then, and it blocked anyway")
+
+
+def test_a_new_york_filer_is_not_blocked_by_their_own_state():
+    """The rule is about a SECOND resident state. A New York filer is already
+    computing a New York return."""
+    counts = {"days_present_by_state": {"NY": 300},
+              "abode_months_by_state": {"NY": 12}}
+    profile = _profile_with(counts)
+    profile["address"] = {"state": "NY"}
+    assert C.evaluate(profile).blocking == ()
+
+
+def test_the_statutory_residency_rule_is_distinct_from_its_neighbours():
+    """All four can fire at once, and each catches a case the others cannot:
+    `part_year_residency` a mid-year MOVE, `nonresident_source_income` income
+    SOURCED elsewhere, `nyc_resident` the city."""
+    by_id = {r.rule_id: r for r in C.RULES}
+    new = by_id["statutory_residency_second_state"]
+    assert new.level == C.UNSUPPORTED, (
+        "two resident states taxing the same income is not a MANUAL worksheet "
+        "item — it changes the return")
+    for other in ("part_year_residency", "nonresident_source_income",
+                  "nyc_resident"):
+        assert by_id[other].flag != new.flag, (
+            f"{other} and the statutory-residency rule share a flag, so one of "
+            "them can never fire on its own")

@@ -93,7 +93,10 @@ and the usual cause is a `web_search` that is not live — Codex ships
   cache. Statutory and unindexed as above, but AMENDED: it refuses a covered
   year outside 2003-2026 (2010 for CA). Every figure it may state belongs to the
   closed `allowed` set in `tests/test_portability.py`, each pinned to an engine
-  constant by test.
+  constant by test. **Riding this same exception, on the same terms:** the
+  residency day and abode counts, closed set and sources in
+  `docs/contributing/residency-guardrails.md`. One of them is AUDIT POLICY, not
+  statute, and has already moved once — re-read it at season open.
 - **If live web access is unavailable, cached-only, or you cannot confirm the
   figure is current: STOP.** Ask the user to paste the current figures along with
   the source URL. Never infer a figure from a prior year and never let a
@@ -420,6 +423,7 @@ in full, so a new file in either goes in this table.
 | What the PII gate matches and how it fails | `docs/contributing/pii-gate.md` |
 | Key paths and per-status keying of the tax-law cache | `docs/contributing/tax-law-cache.md` |
 | The delegated-parse boundary and its degrade path | `docs/contributing/parse-boundary.md` |
+| Why residency is asserted, not inferred from the address | `docs/contributing/residency-guardrails.md` |
 | CI triggers, the three locks, and why they are separate | `docs/contributing/ci-and-locks.md` |
 | Claude Code hooks and subagents, in depth | `docs/contributing/claude-automation.md` |
 | Accepting a review subagent before trusting it | `docs/ops/review-subagent-acceptance.md` |

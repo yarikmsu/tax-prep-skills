@@ -234,6 +234,8 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
 
 ### EPIC W — Engineering hygiene and maintainability — **P2**
 
+- **W1 — DONE**, and **W5 — DONE**: `pyproject.toml` configures ruff and mypy and CI
+  runs both; `.python-version` pins 3.12. W4 is what remains of that group.
 - **W1 (P2, S): `pyproject.toml` with ruff and mypy** (gradual, untyped defs off), both
   in CI. Baseline the existing findings and enforce on changed modules and new
   contracts first; clear the current pyflakes baseline (12 at `9f3bdb7`) in the same
@@ -439,10 +441,60 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   wage-only statement: a WA filer with no LT gain above the deduction owes nothing and
   should be told so, which today only FL gets.
 - **Z6 (P3, S): WA harvest and crypto synergy, WFTC reminder** — Epic 2.4, 2.5, 2.7.
-- **Z7 (P2, S): Residency and multistate guardrails** — Epic 4.1-4.3: residency as a
-  user-asserted input with the NY statutory-resident tests in skill text, the NY→FL
-  mover checklist in `/tax-review`, nonresident-nexus interview questions. Content-heavy,
-  code-light, and it serves the CA/FL/NY user set before any of Z1-Z5 lands.
+- **Z7 (P2, S): Residency and multistate guardrails — DONE.** Residency is now an
+  ASSERTED input: `taxpayer_profile.json` carries a `residency` block with
+  `domicile_state` and per-state COUNTS for days present and abode months, validated at
+  the parse boundary the way `address.state` already was — a misspelled key used to make
+  the counts for the state that matters look ABSENT, which is the dangerous direction.
+  The `/tax-setup` interview asks for the numbers and states the test, and
+  **the engine applies New York's threshold to the counts** rather than leaving the
+  taxpayer to do the arithmetic: collecting numbers instead of a boolean buys nothing if
+  the line is then drawn in somebody's head. `statutory_residency_second_state` BLOCKS —
+  two resident states tax the same income and the credit between them is not modeled —
+  and it is distinct from `part_year_residency` (a mid-year MOVE) and
+  `nonresident_source_income` (income SOURCED elsewhere). The mover checklist moved to
+  `/tax-review` step 3.8, on the MAIN path: it was inside the `type: "none"` branch, so
+  a taxpayer leaving New York for any income-tax state reached none of it.
+
+  **The review caught this PR trying to ship a tax regression, and the correction is
+  the point of the entry.** The first draft "fixed" the shipped `>10 months` abode
+  period to eleven, citing tax.ny.gov's bulletin, and wrote a test pinning eleven. The
+  Department's own Nonresident Audit Guidelines (Dec 2021, pp. 49 and 51) say Audit
+  Division policy moved to **more than 10 months beginning with tax year 2022**, while
+  the website still says eleven. The original author was right and correctly cited; the
+  "fix" would have told a taxpayer with a 10½-month abode and 190 New York days that
+  New York does not have them, left the flag False so the new gate never fired either,
+  and pinned the error with a test. Both figures are now stated, year-gated, with the
+  guidelines as the authority.
+
+  Five other corrections from the same pass, each one a gate that would have fired on
+  CORRECT data or missed a real one: the day-count and abode exclusions (transit,
+  medical confinement, active-duty service, an undergraduate's term-time residence) are
+  stated, because every omission only moves the count DOWN; the other state has to
+  actually TAX INCOME, or a Florida snowbird gets blocked over a tax that does not
+  exist; BOTH prongs are required; New York's numbers are labelled New York's, with
+  Massachusetts (no abode-duration prong at all), Connecticut (the entire year) and
+  California (no mechanical test whatsoever) named so nobody transplants them; and the
+  convenience-of-the-employer rule is a five-state MINORITY, not the general rule —
+  stating it as general would have fed `nonresident_source_income`, which blocks, for
+  the ordinary remote worker. The NYC question was also address-gated (`If state is
+  NY`), which structurally could not reach the taxpayer this epic is about.
+
+  Every residency figure now lives in one sourced, dated table
+  (`docs/contributing/residency-guardrails.md`) under a registry that is ONE positive
+  assertion — a number with a unit standing near a residency noun — over every skill,
+  the engine's rule text and the profile template. The first version was two scopes and
+  an eleven-entry exemption mask, i.e. the enumeration-with-no-stopping-rule Y7 had just
+  removed from the PII gate: four of its eleven masks were dead on arrival and the
+  ten-month figure could be reintroduced in three of the five files that state it with
+  every test green. Twelve mutations, twelve reds, no false positives.
+
+  NOT in scope, and still open: residency by DOMICILE is a review finding and not a
+  gate — a mover whose change of domicile fails New York's burden passes clean;
+  Yonkers has the same parity as NYC in New York's own definitions and has no flag;
+  city-level counts have no field; and Z8's part-year/nonresident returns are what an
+  acknowledged block hands to a preparer today.
+
 - **Z8 (P3, L): IT-203 part-year and nonresident** — relaxes the single-state
   assumption in `address.state`. Explicitly deferred in the NY roadmap; stays deferred.
   Until then `moved_states_this_year` keeps BLOCKING, which is the correct bias.

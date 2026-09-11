@@ -339,6 +339,22 @@ untouched state's freshness behaviour does not move), which makes "absent"
 a real third case rather than an oversight — enumerate it, or an agent
 reviewing an NJ or MA return matches neither branch and has no stated exit.
 
+### 3.8. Residency and multistate guardrails (EVERY return)
+
+Follow [references/residency-review.md](references/residency-review.md) in full
+and return here. **Not conditional on the state's regime**: residency is a
+question about the state being LEFT, and this checklist began life inside step
+3.7's no-income-tax branch, where a taxpayer leaving New York for any income-tax
+state reached none of it.
+
+It covers whether residency was ASSERTED or read off the mailing address, the
+mechanical test a change of domicile does not save a taxpayer from, what does
+not count toward it, the mover checklist for the state being left, and the
+convenience-of-the-employer rule, which is an ALLOCATION question that looks
+like a residency one. The figures live in that file and in
+`docs/contributing/residency-guardrails.md` and are deliberately not repeated
+here. Each of its failures is itself a review FINDING.
+
 ### 4. Generate Review Report
 
 Format the review using the templates in

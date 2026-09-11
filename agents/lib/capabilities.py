@@ -25,6 +25,7 @@ ptet's rate-override validation).
 """
 
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,6 +105,20 @@ RULES: "tuple[Rule, ...]" = (
     Rule("nyc_resident", "nyc_resident", UNSUPPORTED,
          "New York City residency", "NYC resident tax (Form IT-201)",
          "NYC's resident income tax (~3.1-3.9%) is not computed."),
+    Rule("statutory_residency_second_state",
+         "statutory_resident_of_another_state", UNSUPPORTED,
+         "Resident of a second state under its mechanical residency test",
+         "That state's RESIDENT return",
+         "A state can tax a full-year resident on ALL of their income whatever "
+         "their domicile is, on a mechanical day-and-abode test, so a mover "
+         "who recorded a Florida Declaration of Domicile and kept the "
+         "Manhattan apartment can be a resident of BOTH. Two resident returns "
+         "and the credit between them are not modeled. Neither neighbouring "
+         "rule catches this: `part_year_residency` fires on a mid-year MOVE, "
+         "and `nonresident_source_income` on income SOURCED elsewhere, which "
+         "statutory residency does not need. The thresholds are stated once, "
+         "with their sources, in docs/contributing/residency-guardrails.md; "
+         "the counts behind the answer belong in `residency` and `answers.md`."),
     Rule("nonresident_source_income", "has_nonresident_source_income",
          UNSUPPORTED,
          "Out-of-state source income (W-2, K-1, or rental) while resident "
@@ -372,6 +387,7 @@ _REQUIRED_GATE_FLAGS = (
     "has_iso_exercise",
     "moved_states_this_year",
     "nyc_resident",
+    "statutory_resident_of_another_state",
     "has_household_employees",
     "has_dependent_unearned_income",
     "has_unreported_or_allocated_tips",
@@ -513,6 +529,109 @@ def _profile_state(profile: dict) -> "str | None":
             "confident estimate note for a nonexistent state)."
         )
     return code
+
+
+# --- Residency -------------------------------------------------------------
+#
+# New York's statutory-residency test, and the ONLY state whose test this engine
+# applies. The figures are sourced and dated in
+# docs/contributing/residency-guardrails.md and pinned by test; two of the three
+# are law and the third is NOT — "substantially all of the taxable year" is
+# 20 NYCRR 105.20(a)(2), and the number of months it means is Audit Division
+# POLICY, which moved from eleven to ten beginning with tax year 2022 while the
+# Department's published bulletin still says eleven. Audit policy is what an
+# auditor applies, so ten is what this uses, and the pre-2022 figure is kept
+# because an amended return for an earlier year is a real thing.
+#
+# Applied HERE rather than left to the review prose, which is the point of
+# collecting counts instead of a "were you there a lot?" boolean: a threshold
+# the taxpayer has to apply in their head is one the profile cannot check.
+_NY_STATUTORY_DAYS = 184
+_NY_ABODE_MONTHS_FROM_2022 = 10
+_NY_ABODE_MONTHS_BEFORE_2022 = 11
+_NY_TEN_MONTH_RULE_YEAR = 2022
+
+_STATUTORY_RESIDENCY_FLAG = "statutory_resident_of_another_state"
+
+_MAX_DAYS_IN_A_YEAR = 366
+_MAX_MONTHS_IN_A_YEAR = 12
+
+
+def _residency_counts(profile: dict, key: str, ceiling: int) -> "dict[str, float]":
+    """One `residency` count map, validated at the parse boundary.
+
+    Every failure mode here is the same one AGENTS.md §8 names: a value that is
+    type-valid and out of domain reads as a confident answer. A misspelled key
+    makes the counts for the state that matters look ABSENT, which is the
+    dangerous direction — the reviewer finds nothing meeting a test and a
+    flag-False return sails through, silently wrong by a whole resident tax.
+    NaN is rejected explicitly: `json.loads` accepts it, it passes
+    `isinstance(x, (int, float))`, and every comparison with it is False.
+    """
+    residency = profile.get("residency")
+    if residency is None:
+        return {}
+    if not isinstance(residency, dict):
+        raise CapabilityError("residency must be an object")
+    raw = residency.get(key)
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise CapabilityError(f"residency.{key} must be an object keyed by state")
+    out: "dict[str, float]" = {}
+    for state, value in raw.items():
+        if not isinstance(state, str) or state.strip().upper() not in _USPS_STATES:
+            raise CapabilityError(
+                f"residency.{key} key {state!r} is not a USPS state code — a "
+                "misspelled key hides the counts for the state that matters"
+            )
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CapabilityError(
+                f"residency.{key}[{state!r}] must be a number, got {value!r}"
+            )
+        if not math.isfinite(value) or not 0 <= value <= ceiling:
+            raise CapabilityError(
+                f"residency.{key}[{state!r}] must be between 0 and {ceiling}, "
+                f"got {value!r}"
+            )
+        out[state.strip().upper()] = float(value)
+    return out
+
+
+def _residency_domicile(profile: dict) -> "str | None":
+    residency = profile.get("residency")
+    if not isinstance(residency, dict):
+        return None
+    state = residency.get("domicile_state")
+    if state is None:
+        return None
+    if not isinstance(state, str) or state.strip().upper() not in _USPS_STATES:
+        raise CapabilityError(
+            f"residency.domicile_state must be a USPS state code, got {state!r}"
+        )
+    return state.strip().upper()
+
+
+def _ny_statutory_resident(profile: dict) -> bool:
+    """Does the profile's own counts meet New York's test, for a NON-NY filer?
+
+    BOTH prongs, because either alone is not the test: days in hotels is not
+    statutory residency and an empty apartment is not either. Scoped to a filer
+    whose address is elsewhere, since a New York filer is already computing a
+    New York return and this rule is about a SECOND resident state.
+    """
+    if _profile_state(profile) == "NY":
+        return False
+    days = _residency_counts(profile, "days_present_by_state",
+                             _MAX_DAYS_IN_A_YEAR).get("NY", 0.0)
+    months = _residency_counts(profile, "abode_months_by_state",
+                               _MAX_MONTHS_IN_A_YEAR).get("NY", 0.0)
+    year = profile.get("tax_year")
+    threshold = _NY_ABODE_MONTHS_BEFORE_2022
+    if isinstance(year, int) and not isinstance(year, bool) \
+            and year >= _NY_TEN_MONTH_RULE_YEAR:
+        threshold = _NY_ABODE_MONTHS_FROM_2022
+    return days >= _NY_STATUTORY_DAYS and months > threshold
 
 
 def _state_note(profile: dict) -> str:
@@ -662,9 +781,24 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         else:
             manual.append(finding)
 
+    # The recorded COUNTS decide New York's test, not the taxpayer's answer to
+    # it. Collecting numbers instead of a boolean buys nothing if the threshold
+    # is then applied in somebody's head — and the dangerous direction is a
+    # taxpayer who answered the counts honestly, got the arithmetic wrong, and
+    # left the flag False: the return then computes one resident state and is
+    # silently wrong by the whole of New York's. This is the ONLY state whose
+    # test is mechanical enough to apply; every other one is a hand-off, which
+    # is why the flag stays as the taxpayer's own assertion beside it.
+    # Validated for its own sake as well as for the test below: a
+    # `domicile_state` nobody reads is still a field a later reader will trust,
+    # and "Nu York" has to fail where it is written, not where it is used.
+    _residency_domicile(profile)
+    ny_derived = _ny_statutory_resident(profile)
+
     for rule in RULES:
         if not _flag_value(flags, rule.flag):
-            continue
+            if not (ny_derived and rule.flag == _STATUTORY_RESIDENCY_FLAG):
+                continue
         _place(Finding(rule.rule_id, rule.level, rule.situation, rule.form,
                        rule.note, rule.rule_id in acknowledged_ids))
 

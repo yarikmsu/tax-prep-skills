@@ -17,6 +17,17 @@ from pathlib import Path
 SKILLS_DIR = Path(__file__).resolve().parent.parent / ".agents" / "skills"
 
 
+def skill_names() -> "list[str]":
+    """Every skill directory, by name.
+
+    Here rather than in each module that wants it: the same predicate had been
+    written out three times, and this file's own comment already records what
+    duplicating a roster across test_portability and test_preflight once cost.
+    """
+    return sorted(d.name for d in SKILLS_DIR.iterdir()
+                  if (d / "SKILL.md").is_file())
+
+
 def skill_text(name: str) -> str:
     """`SKILL.md` and every `references/*.md` for `name`, concatenated."""
     skill_dir = SKILLS_DIR / name

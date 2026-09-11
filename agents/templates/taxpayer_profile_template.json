@@ -26,6 +26,13 @@
     "state": null,
     "zip": null
   },
+  "residency": {
+    "domicile_state": null,
+    "days_present_by_state": {},
+    "abode_months_by_state": {},
+    "telecommutes_for_out_of_state_employer": false,
+    "_comment": "ASSERTED residency, which address.state is not: that is a mailing address, and a taxpayer can be a full-year resident of TWO states at once. domicile_state is the one place intended as the permanent home (there is exactly one, and it need not equal address.state). days_present_by_state and abode_months_by_state are per-state COUNTS for the tax year, keyed by 2-letter code, and they are counts rather than flags on purpose: a statutory test with a discontinuity has no honest boolean answer near the line. A month counts when a home was maintained there and available year-round, owned or not. telecommutes_for_out_of_state_employer changes the NONRESIDENT allocation, not the residency test — a remote day can still be a work day in the employer's state. Absent or empty means the questions were not asked, which is NOT the same as a negative answer; flags.statutory_resident_of_another_state carries the taxpayer's own conclusion and is what the capability gate reads. docs/contributing/residency-guardrails.md"
+  },
   "dependents": [
     {
       "_template_placeholder": true,
@@ -96,6 +103,8 @@
     "_comment_filed_extension": "Set by /tax-extend (not the interview). Drives the Apr-15 pay-by + Oct-15 extended-deadline events in tax_calendar_{year}.ics.",
     "moved_states_this_year": false,
     "nyc_resident": false,
+    "statutory_resident_of_another_state": false,
+    "_comment_statutory_residency": "Set when the taxpayer meets ANOTHER state's mechanical residency test while resident here — it can apply whatever their domicile is, and two resident states tax the same income with a credit this toolkit does not model, so it BLOCKS. DISTINCT from moved_states_this_year (a mid-year MOVE) and has_nonresident_source_income (income SOURCED elsewhere). For New York the capability gate derives it from residency.days_present_by_state and residency.abode_months_by_state rather than trusting this flag alone. The thresholds, their sources and the dates they were read: docs/contributing/residency-guardrails.md",
     "has_nonresident_source_income": false,
     "has_household_employees": false,
     "has_dependent_unearned_income": false,

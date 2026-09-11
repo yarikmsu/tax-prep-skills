@@ -73,15 +73,10 @@ exists, so verify ABSENCE was handled affirmatively in full detail:
    recorded affirmative-none answer = same finding (never asked, not
    cleared); a registered-dealer note that still says DR-15MO = a
    wrong-form finding.
-4. **Mover check (NY→FL corridor):** if the prior year shows an income-tax
-   state (esp. NY), surface the domicile checklist: FL Declaration of
-   Domicile (F.S. 222.17, recorded with the clerk of the circuit court),
-   DR-501 homestead by Mar 1 (**claiming FL homestead while retaining NY
-   STAR is disqualifying and audit bait**), driver license, voter + vehicle
-   registration. NY's tests: statutory residency = 184+ NY days (any part
-   of a day counts) + permanent place of abode substantially all year
-   (>10 months per current Nonresident Audit Guidelines). Recommend
-   contemporaneous day-count records for the move year.
+4. **Mover check: covered by step 3.8, on the MAIN path, for every return.**
+   The checklist and the figures live in `references/residency-review.md`. Do
+   not restate them here — this file is the no-income-tax branch, and residency
+   is a question about the state being LEFT.
 
 **If `state.code` is any OTHER type-none state** (AK/NV/SD/TX/WY, or TN when
 `tax_year >= 2021`) — no dedicated result.json section exists for these yet

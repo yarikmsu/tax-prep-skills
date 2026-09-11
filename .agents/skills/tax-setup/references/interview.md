@@ -135,8 +135,60 @@ interview never captures is invisible to every downstream check.
 - Did you move states during THIS tax year? → sets `moved_states_this_year`
   (part-year returns are NOT modeled — the `/tax-compute` capability gate will
   block; tell the user now, not at compute time)
-- If state is NY: are you a New York City resident? → sets `nyc_resident`
-  (NYC resident tax is NOT computed — same gate)
+- If NY appears anywhere — the address, `residency.domicile_state`, or either
+  count above: are you a New York City resident? → sets `nyc_resident`
+  (NYC resident tax is NOT computed — same gate). **Not "if state is NY"**: the
+  taxpayer this matters most to has a Florida address and a Manhattan apartment,
+  and an address-gated question never reaches them.
+- **Ask EVERY taxpayer, whatever their address:** "What state do you consider
+  your permanent home — the one you intend to return to?" → sets
+  `residency.domicile_state`. There is exactly ONE, and it need not be the
+  mailing address. Then, for any OTHER state they spent real time in this year,
+  ask BOTH counts and record them in `residency.days_present_by_state` and
+  `residency.abode_months_by_state`, keyed by 2-letter state code:
+  - "About how many days were you physically in <state> this year?"
+  - "How many months did you keep a home there that was available to you
+    year-round — owned or rented, yours to use, not a hotel?"
+
+  **Ask for the NUMBERS, never "were you there a lot?"** A statutory test has a
+  line in it and no honest boolean answer near that line; the numbers are what
+  the taxpayer can actually answer, they go in `answers.md`, and the engine
+  applies the threshold so nobody has to do it in their head.
+- **Then state the test — it is NEW YORK's, and only New York's** → sets
+  `flags.statutory_resident_of_another_state`. **New York taxes you as a
+  resident on ALL of your income, wherever it arose, if you spent 184 days or
+  more in the state AND kept a permanent place of abode there for substantially
+  all of the taxable year — more than 10 months from tax year 2022 (more than 11
+  months before it). Any part of a calendar day counts as a day, and you do not
+  have to have been at the home for the day to count. This applies WHATEVER your
+  domicile is**, which is how somebody who moved to Florida and kept the
+  Manhattan apartment stays a New York resident. Both prongs are required: days
+  in hotels is not it, and an empty apartment is not it. Tell them what does NOT
+  count — travel through the state, days confined to a medical institution,
+  active service in the armed forces — and that an undergraduate's term-time
+  residence is not a permanent place of abode. The New York CITY and Yonkers
+  tests are the same tests applied at that level, so ask the NYC question below
+  whenever NY appears in these counts, not only when the address is NY.
+  **Do NOT transplant these numbers to another state** — Massachusetts has no
+  abode-duration prong at all, Connecticut requires the whole year, and
+  California has no mechanical test whatsoever. For any state other than New
+  York, record the counts and hand it off; do not conclude.
+  Only set the flag when that other state actually TAXES INCOME — screen against
+  `capabilities._NO_INCOME_TAX_STATES`, or a snowbird with a Florida condo gets
+  blocked over a tax that does not exist. Two resident states tax the same income
+  and the credit between them is NOT modeled here, so this BLOCKS at
+  `/tax-compute` — tell the user now, not at compute time. Figures and sources:
+  `docs/contributing/residency-guardrails.md`.
+- If they work remotely for an employer whose office is in another state → sets
+  `residency.telecommutes_for_out_of_state_employer`. This changes the
+  NONRESIDENT allocation, not the residency test. **Wages are sourced where the
+  work is physically performed**; only Connecticut, Delaware, Nebraska, New York
+  and Pennsylvania (plus New Jersey's reciprocal version) apply a
+  convenience-of-the-employer rule, and New York's needs the employee's PRIMARY
+  OFFICE to be in New York before a home day counts as a New York work day.
+  Feed that into the source-income question below only when the employer's state
+  is one of those; treating every out-of-state employer as source income would
+  block the ordinary remote worker on correct data.
 - Do you have ANY income SOURCED to a state other than your resident state
   (even if your resident state has no income tax)? **Ask broadly — do not
   stop at W-2/K-1/rental** (Codex round-15 P1): those three are EXAMPLES,
