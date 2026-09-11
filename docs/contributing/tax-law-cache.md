@@ -36,6 +36,36 @@ For the two-key blocks, map MFJ/QSS → `mfj` and everything else → `single`.
 in the under-stating direction and banners itself, which is why an unfetched cache is a
 loud gap rather than a silent wrong number.
 
+## New York's block is keyed by RATE SCHEDULE, not by filing status
+
+`state.brackets` for New York is a DICT of §601 rate schedules — `a`, `b`, `c` — and
+not a flat list of bands the way California's is. Three filing statuses share one
+schedule and no status can be read off the bands themselves, so
+`state.bracket_schedule_by_status` carries the mapping and is fetched beside them.
+
+**A non-empty dict is TRUTHY**, so every `state.get("brackets") or []` gate passed a
+New York cache straight through to code that iterates a list of dicts, where the
+schedule KEYS arrive as strings. The one reader that knows both shapes is
+`tax_computations.state_brackets_for_status`; a structural sweep forbids binding the
+raw read anywhere else, while a boolean `if` stays fine.
+
+Four more New York keys read wrong if they are audited as though they were California's:
+
+- `tax_table_benefit_recapture` is **year-windowed** — §601's (d) subsections are each
+  scoped to a range of years — and carries a per-schedule `entry_tier` and `tiers`, so
+  a source that does not name the year window proves nothing about the figure.
+- `tax_table` is a SEPARATE published method from the rate schedule, selected on BOTH
+  NYAGI and taxable income, and its row widths are NOT constant at the bottom.
+- `mctmt` has TWO ZONES carrying DIFFERENT rates, with a per-zone CLIFF threshold.
+  Neither zone's rate stands in for the other's.
+- `estimated_tax_safe_harbor` holds New York's OWN shares and thresholds, keyed to
+  **New York** AGI. Verifying them against §6654 verifies the wrong statute.
+
+`personal_exemption.amount` is **0 on purpose** — §616 grants an exemption for each one
+allowed under IRC §151(c), the DEPENDENT subsection, and does not reference §151(b) —
+so it is an affirmative declaration, not an unfetched field, and reporting it as one
+fires on correct data.
+
 ## Indexed per year, so a carried-over value goes stale silently
 
 - `salt_cap` — the OBBBA base indexes roughly 1%/yr for 2026-2029. `ptet._salt_cap`

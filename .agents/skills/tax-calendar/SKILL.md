@@ -85,6 +85,14 @@ The generator:
   out the September gap so the federal Q3 reminder isn't mistaken for a CA
   deadline, and notes the R&TC §19136.3 high-income rule (CA AGI ≥ $1M /
   $500K MFS → 90%-of-current-year only) and mandatory e-pay (R&TC §19011.5)
+- Emits 4 **NY IT-2105** events when `address.state` is `NY` — four **EQUAL**
+  quarters (Apr 15, Jun 15, **Sep 15**, Jan 15 of the next year), the federal
+  dates and emphatically not California's 30/40/0/30. Each description says
+  that **one voucher covers the New York State tax, the New York City resident
+  tax, the Yonkers surcharge and the MCTMT together** — a City resident who
+  pays the State amount alone on these dates has under-paid — and sends the
+  reader to `/tax-withholding` for the §685(c) shares, which are fetched and
+  keyed to **New York** AGI rather than federal
 - Emits 2 **extension** events when `flags.filed_extension` is true (set by
   `/tax-extend`, never by the interview): April 15 of `{year}+1` (Form 4868 +
   payment due — the extension extends FILING, not PAYMENT; CA residents get
@@ -189,9 +197,10 @@ Print:
   landing on a weekend or a DC legal holiday rolls to the next business day
   (§7503), and the event date IS the rolled one, with the statutory date named
   in the description. California rolls on the same holiday set (R&TC §18410),
-  so its 540-ES and PTET dates match FTB's published ones; NY and NJ PTET dates
-  roll past weekends only and carry a "confirm with the state tax authority"
-  line for that reason. Do not repeat a statutory date back to the user over a
+  so its 540-ES and PTET dates match FTB's published ones; NY and NJ dates —
+  IT-2105 and PTET alike — roll past weekends only and carry a "confirm with
+  the state tax authority" line for that reason, so a New York date may sit a
+  day or two before the one the state observes. Do not repeat a statutory date back to the user over a
   rolled one, and do not "correct" the file — the two dates that deliberately
   do NOT roll are the Dec 31 RMD reminder and the FL county property deadlines,
   each for the reason given where it is emitted
@@ -202,7 +211,8 @@ Print:
 - **PTET coverage is CA / NY / NJ only.** Other states (e.g. CT, IL, MA, NC,
   OR) have varying or no PTET regimes; the v1 backlog scope targets the three
   highest-leverage states for SALT-cap workarounds
-- **State estimated-tax deadlines are CA-only.** CA 540-ES events carry the
-  30/40/0/30 weighting for CA residents (`address.state`); other states'
+- **State estimated-tax deadlines are CA and NY only.** CA 540-ES events carry
+  the 30/40/0/30 weighting and NY IT-2105 events four equal quarters, each for
+  residents of that state (`address.state`); other states'
   estimated-payment windows mostly match the federal Q1–Q4 schedule but are
-  not emitted — add manual reminders for a non-CA resident state
+  not emitted — add manual reminders for any other resident state

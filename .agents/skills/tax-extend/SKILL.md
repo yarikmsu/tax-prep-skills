@@ -1,13 +1,14 @@
 ---
 name: tax-extend
-description: File-an-extension flow — Form 4868 with the extension payment computed from the best available estimate, CA FTB 3519 payment guidance, and calendar deadline events. Use when the filing deadline is near and the return is not ready, or the user mentions an extension, Form 4868, or FTB 3519.
+description: File-an-extension flow — Form 4868 with the extension payment computed from the best available estimate, CA FTB 3519 and NY IT-370 payment guidance, and calendar deadline events. Use when the filing deadline is near and the return is not ready, or the user mentions an extension, Form 4868, FTB 3519, or IT-370.
 license: Apache-2.0
 ---
 
 # /tax-extend — Extension (Form 4868 + state)
 
 Prepare the April extension decision: how much to pay with Form 4868, how the
-resident state handles extensions (CA: automatic, payment-only via FTB 3519),
+resident state handles extensions (CA: automatic, payment-only via FTB 3519;
+NY: Form IT-370 REQUIRED — the federal 4868 does not extend it),
 and the calendar events for the new deadlines.
 
 **The one fact that drives everything: an extension extends the time to FILE,
@@ -55,6 +56,10 @@ Work down this ladder and TELL the user which rung was used:
      line 33 total payments), floored at $0.
    - CA payment (if `california_540` computed) = `ca_total_tax` −
      (`ca_withholding_box17` + CA estimates paid), floored at $0.
+   - NY payment (if `new_york_it201` computed) = `line_80_amount_owed`, which
+     is already line 60's total taxes less line 76's total payments. **Line 60,
+     not line 46** — the New York balance a taxpayer must pay to hold the
+     extension includes the City tax, the Yonkers surcharge and the MCTMT.
 2. **Projection** — no computed return: run `/tax-project` (or
    `sh agents/lib/run.sh -m agents.lib.projection ... --json`)
    and use `federal.balance` / `state.balance` (positive = owed). Label the figures
@@ -103,9 +108,41 @@ Work down this ladder and TELL the user which rung was used:
   preferred; mandatory e-pay may apply once payments exceed $20,000 or
   total tax exceeds $80,000 — R&TC §19011.5). The extended CA filing
   deadline is October 15.
+- **NY: the federal Form 4868 does NOT extend the New York return, and this
+  is the trap.** Form IT-370-I says it in as many words: *"Do not submit a copy
+  of the federal extension form. We will not accept it in place of Form IT-370
+  and your due date will not be extended."* A taxpayer who extends federally
+  and assumes New York follows has filed LATE — 5% of the tax due per month or
+  part of a month, up to 25%. Tell them this explicitly; do not let the CA rule
+  above be carried across.
+
+  **Payment is a CONDITION of the New York extension, not merely a way to
+  avoid interest.** *"To obtain an extension of time to file, you must make
+  full payment of the properly estimated tax balances due."* Federal Form 4868
+  is valid with no payment at all; IT-370 is not. An IT-370 filed after the
+  deadline is worse than useless: *"the application will not be accepted, and
+  we will not extend your due date."*
+
+  So: file **Form IT-370** on or before April 15 WITH the payment. Six months,
+  to October 15. **One IT-370 covers the State return, and filing it also
+  extends Form Y-203** (the Yonkers nonresident earnings tax return)
+  automatically.
+
+  Late PAYMENT is a separate penalty — ½ of 1% per month up to 25%, plus
+  interest — and New York PRESUMES reasonable cause for it when all three hold:
+  the extension requirements were complied with; the balance due on the return,
+  less any sales or use tax, is no more than **10% of the total New York State,
+  New York City and Yonkers tax and MCTMT shown on the return**; and that
+  balance was paid when the return was filed. The 10% test is measured against
+  the SAME four taxes line 60 adds up, which is why the estimate above uses
+  line 80 rather than a state-only figure.
+
+  Out of the country on April 15: an automatic two-month extension to June 15
+  applies to both returns, and IT-370 filed by June 15 buys four more months to
+  October 15.
 - **Other states:** rules vary (some piggyback on the federal 4868, some
   need their own form, a few have no extension) — check the state DOR and
-  say explicitly that only CA is modeled in depth.
+  say explicitly that only CA and NY are modeled in depth.
 
 ### 5. Record + calendar
 
@@ -126,7 +163,8 @@ Work down this ladder and TELL the user which rung was used:
    ```markdown
    ## Extension — TY{year}, recorded {today}
    Federal 4868: filed via {method}. Payment made: {yes/no}.
-   State ({code}): {automatic — FTB 3519 payment made: yes/no | not modeled}.
+   State ({code}): {CA: automatic — FTB 3519 payment made: yes/no |
+   NY: Form IT-370 filed on {date}, payment made: yes/no | not modeled}.
    Estimate source: {computed result.json | projection | user estimate}.
    ```
 4. Re-restrict both files you just wrote. An editor that REPLACES a file

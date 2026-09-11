@@ -588,6 +588,36 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   the reader to find out. Six mutations, six reds; one needed a purpose-written case,
   because the two rollover rules agree on every date the first test happened to print.
 
+  **SLICE 13 SHIPPED — the calendar, the extension, and two gaps named rather than
+  guessed**: four **IT-2105** events for a New York resident, FOUR EQUAL quarters
+  **including September** — the sibling California events say there is none, and a reader
+  who has seen that rule must not carry it across — each description saying that ONE
+  VOUCHER covers the State tax, the City tax, the Yonkers surcharge and the MCTMT
+  together.
+
+  **`/tax-extend`'s row 9 answer is the OPPOSITE of California's, and it is a trap.**
+  Form IT-370-I, read directly: *"Do not submit a copy of the federal extension form. We
+  will not accept it in place of Form IT-370 and your due date will not be extended."* A
+  taxpayer who extends federally and assumes New York follows has filed LATE — 5% of the
+  tax due per month, up to 25%. Payment is a **condition** of the extension rather than
+  merely a way to avoid interest (*"you must make full payment of the properly estimated
+  tax balances due"*), where federal Form 4868 is valid with no payment at all; and an
+  IT-370 filed after the deadline *"will not be accepted"* at all. The estimate is IT-201
+  **line 80**, because the 10% reasonable-cause presumption is measured against the same
+  four taxes line 60 adds up. One IT-370 also extends Form Y-203.
+
+  **Two registrations are NAMED rather than shipped, and the reasons are different.**
+  `retirement_dashboard`: New York is in none of the three non-conforming sets, and the
+  module now says that is NOT a conformity finding — absence from them makes the dashboard
+  CLAIM state savings, the over-stating-a-BENEFIT direction, so it is not the safe default
+  an absent figure usually is. The sources are named. `tax-law-freshness-auditor`: its
+  definition is **digest-pinned to a passed acceptance**, and a definition edit needs a
+  replay from a FRESH session, which a same-session replay cannot be. So the New York
+  keying gotchas went to `docs/contributing/tax-law-cache.md`, which the auditor is
+  already told to work from; the definition edit folds into Y2. Four mutations, four reds;
+  one needed a purpose-written case, because TY2026's dates do not separate New York's
+  rollover rule from the federal one at all.
+
   **A note carried here since slice 1 was STALE and is corrected rather than re-fixed**:
   the NY PTET Mar 15/16 next-business-day defect from PR #22's deferred list is already
   fixed — `_election_deadline` returns March 16, 2026 via

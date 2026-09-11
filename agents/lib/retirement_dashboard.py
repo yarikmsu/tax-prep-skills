@@ -102,6 +102,25 @@ _RETIREMENT_DEFERRAL_NONCONFORMING_STATES = {"PA"}
 # simplified federal-piggyback estimate.
 _IRA_DEDUCTION_NONCONFORMING_STATES = {"PA", "NJ", "MA"}
 
+# NEW YORK IS IN NONE OF THE THREE SETS, AND THAT IS NOT A CONFORMITY FINDING.
+# Absence from these sets makes the dashboard CLAIM state savings, which is the
+# over-stating-a-BENEFIT direction AGENTS.md §4 calls a hard error — so it is
+# not a safe default the way an absent figure usually is. New York's treatment
+# of HSA contributions, 401(k)/403(b) elective deferrals and the Traditional
+# IRA deduction has NOT been researched here; the sources to read are Form
+# IT-225-I's addition codes and the IT-201 instructions for lines 20-24. The
+# Z-epic spec carries this as an open row rather than a guess.
+#
+# One New York item IS established, from the state module's own fetched block,
+# and it is not one of these rows: PUBLIC-EMPLOYEE 414(h) retirement
+# contributions and IRC §125 cafeteria-plan amounts for NYS and NYC public
+# employees are ADDED BACK on IT-201 (line 21 and an IT-225 code). For those
+# taxpayers a contribution that is pre-tax federally does NOT reduce New York
+# tax. The 414(h) pension pick-up is not a row this dashboard models at all —
+# it is neither an elective deferral nor an IRA — so nothing here over-states
+# it today; it is recorded so the next person adding a New York row knows the
+# add-back exists before they price one.
+
 # MFS IRA phase-out window per IRS Pub 590-A. Statutory constant —
 # unchanged since 1997 (Roth IRA introduction), not inflation-indexed.
 # Applied to:

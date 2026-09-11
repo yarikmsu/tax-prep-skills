@@ -5418,3 +5418,71 @@ class TestTheProvableSafeCeilingScalesWithTheDeadline:
             "the branch restates the deadline walk instead of pointing at the "
             "one place that owns it — a second copy drifts, and this one would "
             "drift against the arithmetic the whole skill is checked on")
+
+
+class TestTheNewYorkExtensionAndConformityGaps:
+    """Slice 13's documentation half: what /tax-extend must tell a New York
+    taxpayer, and what `retirement_dashboard` has NOT researched."""
+
+    REPO = Path(__file__).resolve().parents[1]
+
+    def test_tax_extend_says_the_federal_4868_does_not_extend_new_york(self):
+        """Form IT-370-I: "Do not submit a copy of the federal extension form.
+        We will not accept it in place of Form IT-370 and your due date will
+        not be extended." A taxpayer who carries California's automatic rule
+        across has filed LATE at 5% per month."""
+        body = skill_text("tax-extend")
+        assert "does NOT extend the New York return" in body
+        assert "Form IT-370" in body
+        assert "5%" in body
+
+    def test_tax_extend_says_payment_is_a_condition_of_the_extension(self):
+        """Federal Form 4868 is valid with no payment at all; IT-370 is not —
+        "you must make full payment of the properly estimated tax balances
+        due"."""
+        body = skill_text("tax-extend")
+        assert "CONDITION of the New York extension" in body
+        assert "full payment of the properly estimated" in body
+
+    def test_tax_extend_uses_line_80_not_a_state_only_figure(self):
+        body = skill_text("tax-extend")
+        assert "line_80_amount_owed" in body
+        assert "Line 60, not line 46" in body or "line 60" in body
+
+    def test_tax_extend_names_the_ten_percent_reasonable_cause_test(self):
+        """The presumption is measured against the SAME four taxes line 60
+        adds up, which is why the estimate uses line 80."""
+        body = skill_text("tax-extend")
+        assert "10%" in body and "MCTMT" in body
+
+    def test_the_retirement_conformity_gap_is_named_rather_than_silent(self):
+        """Absence from the three non-conforming sets makes the dashboard
+        CLAIM state savings — the over-stating-a-BENEFIT direction — so it is
+        not the safe default an absent figure usually is."""
+        source = (self.REPO / "agents" / "lib"
+                  / "retirement_dashboard.py").read_text()
+        assert "NEW YORK IS IN NONE OF THE THREE SETS" in source
+        assert "has NOT been researched here" in source
+        assert "IT-225-I" in source
+
+    def test_new_york_is_still_absent_from_every_conformity_set(self):
+        """The note records a gap; it must not have quietly become a claim."""
+        from agents.lib import retirement_dashboard as rd
+        for name in ("_HSA_NON_CONFORMING_STATES",
+                     "_RETIREMENT_DEFERRAL_NONCONFORMING_STATES",
+                     "_IRA_DEDUCTION_NONCONFORMING_STATES"):
+            assert "NY" not in getattr(rd, name), name
+
+    def test_the_cache_doc_carries_new_yorks_keying_gotchas(self):
+        """The freshness auditor is told to work from the schema, and
+        `docs/contributing/tax-law-cache.md` is where AGENTS.md §9 sends a
+        reader for the per-block keying. Its DEFINITION is digest-pinned to a
+        passed acceptance and cannot be edited without a fresh-session replay,
+        so the gotchas go where it already looks."""
+        doc = (self.REPO / "docs" / "contributing"
+               / "tax-law-cache.md").read_text()
+        assert "keyed by RATE SCHEDULE" in doc
+        assert "state_brackets_for_status" in doc
+        assert "year-windowed" in doc
+        assert "TWO ZONES" in doc
+        assert "0 on purpose" in doc

@@ -3,7 +3,9 @@
 
 Generates an RFC 5545 iCalendar (.ics) file with year-specific tax deadlines:
 1040-ES quarterly estimated-tax payments, CA 540-ES installments for CA
-residents (30%/40%/0%/30% weighting — NO September payment; E7), extension
+residents (30%/40%/0%/30% weighting — NO September payment; E7), NY IT-2105
+installments for NY residents (four EQUAL quarters, one voucher covering the
+State tax, the City tax, the Yonkers surcharge and the MCTMT), extension
 deadlines when `flags.filed_extension` is set by /tax-extend (Form 4868
 April pay-by + October extended filing, F2), FBAR (with
 auto-extension), required minimum distributions for taxpayers flagged
@@ -11,7 +13,8 @@ auto-extension), required minimum distributions for taxpayers flagged
 SECURE 2.0; the user asserts it rather than the calendar deriving it from
 age), and state PTET windows for CA/NY/NJ K-1 recipients (driven by
 `flags.k1_states`, which lists each K-1 entity's state, NOT the taxpayer's
-resident state — the 540-ES events, by contrast, follow `address.state`).
+resident state — the 540-ES and IT-2105 events, by contrast, follow
+`address.state`).
 
 Read-only with respect to result.json / taxpayer_profile.json — this module only
 WRITES a derived `tax_calendar_{year}.ics` sibling. It mirrors the
@@ -23,7 +26,7 @@ Caveats:
   (1040-ES, extension, FBAR) roll past weekends AND DC legal holidays (incl.
   DC Emancipation Day) via irs_dates.next_business_day; the `.ics` DTSTART is
   the observed date and the description notes the statutory-vs-observed shift.
-  STATE deadlines (CA 540-ES, CA/NY/NJ PTET) roll under THAT state's own
+  STATE deadlines (CA 540-ES, NY IT-2105, CA/NY/NJ PTET) roll under THAT state's own
   holiday set via irs_dates.next_business_day_state. California's INCLUDES the
   federal set — R&TC §18410 folds it in by reference and FTB applies it by name
   in the 540-ES instructions — so a CA date rolls past DC Emancipation Day and
@@ -464,6 +467,70 @@ _CA_ES_DUE = [
 ]
 
 
+# NY IT-2105 installments (Tax Law §685(c); Form IT-2105): FOUR EQUAL
+# quarters — April 15, June 15, September 15, and January 15 of the following
+# year. The same dates as the federal 1040-ES and NOT California's 30/40/0/30,
+# which has no September instalment at all. The shares are statutory-structural
+# like the federal quarters above; the SAFE HARBOUR percentages are fetched and
+# live in the tax-law cache, so none appears here.
+_NY_ES_DUE = [
+    ("Q1", (4, 15), 0),
+    ("Q2", (6, 15), 0),
+    ("Q3", (9, 15), 0),
+    ("Q4", (1, 15), 1),
+]
+
+
+def events_ny_es(tax_year: int) -> list[CalendarEvent]:
+    """IT-2105 reminders, emitted for New York residents (address.state).
+
+    ONE VOUCHER COVERS FOUR TAXES — the New York State tax, the New York City
+    resident tax, the Yonkers surcharge and the MCTMT — which is the fact a
+    reminder has to carry: a City resident who pays the State amount alone on
+    these dates has under-paid, and nothing on the voucher would tell them so.
+
+    Four EQUAL quarters. The September instalment is stated explicitly because
+    the sibling California events say there is none, and a reader who has seen
+    that rule should not carry it across.
+
+    The dates roll WEEKENDS ONLY, because New York is not in
+    `irs_dates`'s conforming set — General Construction Law §§24 and 25-a have
+    not been read against the Department's published due dates here — so a date
+    may be a day or two earlier than the one New York observes. That is the
+    safe direction for a payment; `_observed_note` says so on the event.
+    """
+    _validate_tax_year(tax_year)
+    out: list[CalendarEvent] = []
+    for label, (m, d), year_offset in _NY_ES_DUE:
+        statutory = datetime.date(tax_year + year_offset, m, d)
+        date = _state_due(tax_year + year_offset, m, d, "NY")
+        out.append(CalendarEvent(
+            uid=f"ny2105-{label.lower()}-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"NY IT-2105 {label} estimated tax due — 25% (TY{tax_year})",
+            date=date,
+            description=(
+                f"New York estimated tax installment for tax year "
+                f"{tax_year}: 25% of the required annual payment. Four EQUAL "
+                f"quarters — April, June, SEPTEMBER and the following "
+                f"January — unlike California's 30%/40%/0%/30%. ONE VOUCHER "
+                f"COVERS the New York State tax, the New York City resident "
+                f"tax, the Yonkers surcharge and the metropolitan commuter "
+                f"transportation mobility tax together: paying the State "
+                f"amount alone under-pays a City resident. The safe harbour "
+                f"is a share of the current year or of the prior year, and "
+                f"the higher prior-year share is keyed to NEW YORK adjusted "
+                f"gross income, not federal (Tax Law §685(c)) — the "
+                f"percentages and thresholds are fetched, so run "
+                f"/tax-withholding for this year's figures rather than "
+                f"assuming the federal ones."
+                + _observed_note(statutory, date, state="NY")
+            ),
+            category="state_estimated_tax",
+            quarter_label=label,
+        ))
+    return out
+
+
 def events_ca_es(tax_year: int) -> list[CalendarEvent]:
     """CA 540-ES reminders, emitted for California residents (address.state).
 
@@ -511,10 +578,21 @@ def events_extension(tax_year: int, *, state: "str | None" = None) -> list[Calen
     with a valid extension. For CA residents the April description carries
     the FTB 3519 nuance: CA's extension is AUTOMATIC (no form), but any CA
     balance due must be PAID by April 15 via FTB 3519 / Web Pay.
+
+    For NY residents it carries the opposite nuance, and it is the one worth
+    carrying: the federal Form 4868 does NOT extend a New York return.
+    Form IT-370-I says so in as many words — "Do not submit a copy of the
+    federal extension form. We will not accept it in place of Form IT-370 and
+    your due date will not be extended" — so a taxpayer who extends federally
+    and assumes New York follows has filed LATE, at 5% of the tax due per month
+    up to 25%. Payment is a CONDITION of that extension rather than merely a
+    way to avoid interest: "you must make full payment of the properly
+    estimated tax balances due."
     """
     _validate_tax_year(tax_year)
     filing_year = tax_year + 1
     ca = (state == "CA")
+    ny = (state == "NY")
     apr_desc = (
         f"Form 4868 for tax year {tax_year} must be filed AND the estimated "
         f"balance due PAID by this date — the extension extends the time to "
@@ -529,9 +607,26 @@ def events_extension(tax_year: int, *, state: "str | None" = None) -> list[Calen
             "any CA balance due must be paid TODAY via FTB Form 3519 (Web "
             "Pay; mandatory e-pay may apply per R&TC §19011.5)."
         )
+    if ny:
+        apr_desc += (
+            " New York: the federal Form 4868 does NOT extend the New York "
+            "return — the Department will not accept a copy of it and the due "
+            "date is not extended. File Form IT-370 TODAY, WITH the payment: "
+            "full payment of the properly estimated balance is a CONDITION of "
+            "the extension, and an IT-370 filed after today is not accepted at "
+            "all. The balance is IT-201 line 80, which covers the State tax, "
+            "the New York City tax, the Yonkers surcharge and the MCTMT "
+            "together. Filing IT-370 also extends Form Y-203."
+        )
+    if ca:
+        extended_state_form = " and CA Form 540"
+    elif ny:
+        extended_state_form = " and NY Form IT-201"
+    else:
+        extended_state_form = ""
     oct_desc = (
         f"Extended filing deadline for the tax year {tax_year} return "
-        f"(federal Form 1040{' and CA Form 540' if ca else ''}). No further "
+        f"(federal Form 1040{extended_state_form}). No further "
         f"extension is available — file by today; with a valid extension "
         f"the late-FILING penalty (5%/month, up to 25%, offset by any "
         f"concurrent 0.5% late-payment penalty per §6651(c)(1)) BEGINS "
@@ -1160,6 +1255,8 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
     resident_state = _strict_state_str(address, "state")
     if resident_state == "CA":
         events.extend(events_ca_es(tax_year))
+    elif resident_state == "NY":
+        events.extend(events_ny_es(tax_year))
 
     # /tax-extend sets flags.filed_extension when the taxpayer extends —
     # the regenerated calendar then carries the April pay-by date and the

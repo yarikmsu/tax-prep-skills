@@ -2127,3 +2127,115 @@ def test_the_profile_year_mismatch_never_echoes_a_malformed_year():
 
     with pytest.raises(cal.CalendarError, match="TY2025"):
         cal.build_events(dict(_profile(), tax_year=2025), 2026)
+
+
+class TestTheNewYorkEstimatedTaxEvents:
+    """IT-2105: four EQUAL quarters for New York residents."""
+
+    def _events(self, year=2026):
+        return cal.events_ny_es(year)
+
+    def test_four_events_including_september(self):
+        """California's sibling events emit THREE and say there is no
+        September payment. A reader who has seen that rule must not carry it
+        across: New York has one, and skipping it under-pays."""
+        labels = [e.quarter_label for e in self._events()]
+        assert labels == ["Q1", "Q2", "Q3", "Q4"]
+        assert len(cal.events_ca_es(2026)) == 3
+
+    def test_the_dates_are_the_federal_statutory_ones(self):
+        dates = {e.quarter_label: e.date.isoformat() for e in self._events()}
+        assert dates == {"Q1": "2026-04-15", "Q2": "2026-06-15",
+                         "Q3": "2026-09-15", "Q4": "2027-01-15"}
+
+    def test_the_dates_roll_under_new_yorks_own_rule_not_the_federal_one(self):
+        """April 15 2022 was a FRIDAY — no weekend to roll — but the federal
+        deadline moved to April 18 for DC's Emancipation Day. New York is not
+        in `irs_dates`'s conforming set, because General Construction Law
+        §§24 and 25-a have not been read here, so the state helper leaves it
+        on the 15th and the description says the rule is a degrade.
+
+        A date published EARLIER than the statute allows can never make a
+        payment late, which is why the degrade is the safe direction. TY2026's
+        dates do not separate the two rules at all, which is how a first
+        version of this test passed against the FEDERAL helper."""
+        ny = {e.quarter_label: e.date.isoformat() for e in self._events(2022)}
+        fed = {e.quarter_label: e.date.isoformat()
+               for e in cal.events_1040es(2022)}
+        assert ny["Q1"] == "2022-04-15"
+        assert fed["Q1"] == "2022-04-18"
+
+    def test_every_description_says_one_voucher_covers_four_taxes(self):
+        """A City resident who pays the State amount alone on these dates has
+        under-paid, and nothing on the voucher would tell them so."""
+        for e in self._events():
+            assert "ONE VOUCHER COVERS" in e.description
+            assert "New York City" in e.description
+            assert "Yonkers" in e.description
+            assert "mobility tax" in e.description
+
+    def test_the_safe_harbour_is_keyed_to_new_york_agi(self):
+        for e in self._events():
+            assert "NEW YORK adjusted" in e.description
+            assert "§685(c)" in e.description
+
+    def test_the_events_are_emitted_for_a_new_york_resident_only(self):
+        profile = {"address": {"state": "NY"}, "flags": {}}
+        cats = [e.category for e in cal.build_events(profile, 2026)]
+        assert cats.count("state_estimated_tax") == 4
+        profile["address"]["state"] = "TX"
+        assert not [e for e in cal.build_events(profile, 2026)
+                    if e.category == "state_estimated_tax"]
+
+    def test_a_california_resident_still_gets_californias_three(self):
+        profile = {"address": {"state": "CA"}, "flags": {}}
+        events = [e for e in cal.build_events(profile, 2026)
+                  if e.category == "state_estimated_tax"]
+        assert len(events) == 3
+        assert all("540-ES" in e.summary for e in events)
+
+    def test_the_uids_do_not_collide_with_californias(self):
+        ny = {e.uid for e in self._events()}
+        ca = {e.uid for e in cal.events_ca_es(2026)}
+        assert not (ny & ca)
+
+
+class TestTheNewYorkExtensionNote:
+    """The federal Form 4868 does NOT extend a New York return, and that is
+    the opposite of California's rule sitting right beside it."""
+
+    def _april(self, state):
+        return cal.events_extension(2026, state=state)[0]
+
+    def test_it_says_the_federal_form_is_not_accepted(self):
+        desc = self._april("NY").description
+        assert "does NOT extend the New York return" in desc
+        assert "Form IT-370" in desc
+
+    def test_payment_is_a_condition_not_merely_interest_avoidance(self):
+        """Federal Form 4868 is valid with no payment at all; IT-370 is not."""
+        desc = self._april("NY").description
+        assert "CONDITION of" in desc
+        assert "not accepted at all" in desc
+
+    def test_the_balance_is_line_80_not_a_state_only_figure(self):
+        desc = self._april("NY").description
+        assert "line 80" in desc
+        assert "MCTMT" in desc
+
+    def test_filing_it370_also_extends_y203(self):
+        assert "Y-203" in self._april("NY").description
+
+    def test_the_october_event_names_the_new_york_return(self):
+        oct_event = cal.events_extension(2026, state="NY")[1]
+        assert "NY Form IT-201" in oct_event.description
+
+    def test_california_is_untouched(self):
+        desc = self._april("CA").description
+        assert "AUTOMATIC" in desc and "FTB Form 3519" in desc
+        assert "IT-370" not in desc
+        assert "CA Form 540" in cal.events_extension(2026, state="CA")[1].description
+
+    def test_a_third_state_gets_neither(self):
+        desc = self._april("TX").description
+        assert "IT-370" not in desc and "FTB" not in desc
