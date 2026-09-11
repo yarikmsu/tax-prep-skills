@@ -485,6 +485,16 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   without being told. Ten mutations, ten reds. Open: the AMOUNT of each credit
   (IT-213/216/215/214/272 each have their own worksheet).
 
+  **SLICE 7 SHIPPED — this is Z2**: NYC, Yonkers and the MCTMT (lines 47-58). NYC
+  taxable income is the STATE's except for a Charitable Gifts Trust add-back, and a
+  joint return with only ONE city resident REFUSES rather than taxing the household as
+  residents. Two city credit caps, and **line 58 adds the MCTMT and both Yonkers taxes
+  AFTER both** — the line-45 pattern a second time. The MCTMT threshold is a CLIFF
+  applied PER ZONE: the instructions' own example exempts $40,000 in one zone and taxes
+  the whole $70,000 in the other. The NYC household credit REUSES the state function —
+  tables 4/5/6 to 1/2/3, verified against the instructions rather than assumed. Ten
+  mutations, ten reds; one survived until a case used the second of the two caps.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension

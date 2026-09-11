@@ -257,7 +257,12 @@ a figure from a prior year.
     → `state.nyc_tax.brackets` (same three schedules) and set `applies`. The
     school tax credit is **TWO** credits: a fixed amount by status under an
     income ceiling, and a rate reduction that is its own bracket schedule.
-    Also fetch the NYC household credit and EIC share.
+    Also fetch the NYC household credit — tables 4, 5 and 6, with the SAME
+    three-way status grouping and the SAME federal-AGI keying as the state's
+    tables 1-3 — and the NYC EIC share. And record
+    `state.mctmt.net_earnings_threshold_per_zone`: it is a CLIFF, not an
+    exemption, so once a zone's earnings exceed it the WHOLE zone amount is
+    taxed.
   - **If the taxpayer is a Yonkers resident or earns there**: search
     `"Yonkers resident income tax surcharge {year}"` and `"Yonkers nonresident
     earnings tax {year} exclusion"` → `state.yonkers_tax`. The resident

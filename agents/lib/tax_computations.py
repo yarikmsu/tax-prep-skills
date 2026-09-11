@@ -3429,6 +3429,174 @@ def compute_ny_settlement(
     }
 
 
+def compute_nyc_taxable_income(
+    state_taxable_income: float,
+    charitable_gifts_trust_deducted: float = 0.0,
+    nyc_resident_spouses: "int | None" = None,
+    filing_status: str = "single",
+) -> dict:
+    """IT-201 line 47 — New York City taxable income.
+
+    It is the STATE's taxable income in the ordinary case, and the instructions
+    say so outright: "If No, enter the line 38 amount on line 47." The
+    worksheet exists for one narrow situation — a contribution to the New York
+    Charitable Gifts Trust Fund that was ALSO claimed as an IT-196 itemized
+    deduction — and it adds that contribution back, because the City does not
+    allow it.
+
+    Modelling the worksheet as the general case would be harmless arithmetic
+    with a zero add-back; the reason it is written this way round is the
+    opposite risk, that a caller who has the contribution never learns it
+    matters.
+
+    **A joint return with only ONE New York City resident does not use this
+    line at all.** "If you are married and filing a joint New York State
+    return and only one of you was a resident of New York City for all of
+    2025, do not enter an amount here" — that return goes to line 51 instead,
+    on a different computation this function cannot do. It refuses rather than
+    taxing the whole household as residents.
+    """
+    taxable = _ny_amount(state_taxable_income, "state_taxable_income")
+    addback = _ny_amount(charitable_gifts_trust_deducted,
+                         "charitable_gifts_trust_deducted")
+    if filing_status == "mfj" and nyc_resident_spouses == 1:
+        raise ValueError(
+            "a joint return with only ONE New York City resident does not "
+            "enter a line 47 amount — it is computed on line 51 instead. "
+            "Taxing the whole household as residents would over-state the "
+            "city tax by the non-resident spouse's whole share.")
+    notes: "list[str]" = []
+    if addback:
+        notes.append(
+            "New York Charitable Gifts Trust Fund contributions claimed as an "
+            "IT-196 itemized deduction are added back for the city.")
+    return {"nyc_taxable_income": round(taxable + addback, 2),
+            "addback": round(addback, 2), "notes": notes}
+
+
+def compute_mctmt(
+    zone_1_net_earnings: float = 0.0,
+    zone_2_net_earnings: float = 0.0,
+    mctmt: "dict | None" = None,
+) -> dict:
+    """IT-201 lines 54a-54e — the metropolitan commuter transportation
+    mobility tax on self-employment earnings.
+
+    Split by GEOGRAPHY, not by income, and the threshold is a CLIFF applied
+    PER ZONE. Once a zone's earnings exceed it the WHOLE zone amount is taxed,
+    not the excess — the worked example in the instructions takes a filer with
+    $40,000 in one zone and $70,000 in the other and taxes the entire $70,000
+    while exempting the $40,000 completely. Subtracting the threshold, which is
+    what the name of an ordinary exemption would suggest, under-states the tax
+    by the threshold itself.
+
+    The threshold is computed separately for each zone even on a joint return,
+    so the two are never added together before the test.
+    """
+    mctmt = mctmt or {}
+    threshold = mctmt.get("net_earnings_threshold_per_zone")
+    if threshold is None:
+        raise ValueError(
+            "state.mctmt.net_earnings_threshold_per_zone is not fetched. It "
+            "is a CLIFF and it changed for tax year 2026, so neither a "
+            "default nor a stale figure is safe: one taxes a filer who owes "
+            "nothing, the other exempts one who owes.")
+    threshold = _ny_amount(threshold, "MCTMT threshold")
+    lines: "dict[str, float]" = {}
+    total = 0.0
+    notes: "list[str]" = []
+    for zone, earnings, line_no in (("zone_1", zone_1_net_earnings, "54c"),
+                                    ("zone_2", zone_2_net_earnings, "54d")):
+        amount = _ny_amount(earnings, f"{zone}_net_earnings")
+        rate = (mctmt.get(zone) or {}).get("rate")
+        lines[f"line_{'54a' if zone == 'zone_1' else '54b'}_{zone}_earnings"] \
+            = round(amount, 2)
+        if amount <= threshold:
+            lines[f"line_{line_no}_{zone}_tax"] = 0.0
+            continue
+        if rate is None:
+            raise ValueError(
+                f"state.mctmt.{zone}.rate is not fetched and this return has "
+                f"{amount:,.2f} of net earnings there. The two zones carry "
+                "DIFFERENT rates, so neither the other zone's nor a default "
+                "may stand in.")
+        tax = round(amount * _ny_amount(rate, f"{zone} rate"), 2)
+        lines[f"line_{line_no}_{zone}_tax"] = tax
+        total += tax
+        notes.append(
+            f"{zone.replace('_', ' ')}: earnings of {amount:,.2f} exceed the "
+            f"threshold, so the WHOLE amount is taxed, not the excess.")
+    lines["line_54e_total_mctmt"] = round(total, 2)
+    return {"mctmt": round(total, 2), "lines": lines, "notes": notes}
+
+
+def compute_city_and_yonkers_total(
+    nyc_resident_tax: float = 0.0,
+    nyc_household_credit: float = 0.0,
+    other_nyc_taxes: float = 0.0,
+    nyc_nonrefundable_credits: float = 0.0,
+    mctmt: float = 0.0,
+    yonkers_resident_surcharge: float = 0.0,
+    yonkers_nonresident_earnings_tax: float = 0.0,
+) -> dict:
+    """IT-201 lines 47a through 58 — the city block's own two credit caps.
+
+    The same shape as the state side, twice over, and with the same trap at the
+    end. The household credit is capped at the city tax (line 49: "if line 48
+    is more than line 47a, enter 0"), then the other city taxes are added, then
+    the city's nonrefundable credits are capped against THAT total (line 54).
+
+    And line 58 adds lines 54 and **54e through 57** — so the MCTMT, the
+    Yonkers resident surcharge and the Yonkers nonresident earnings tax all
+    come AFTER both caps. No New York City credit offsets any of them. This is
+    the second appearance of the pattern line 45 sets on the state side, and it
+    is the same mistake to net everything first: it would let a city credit
+    absorb a tax the form never lets it reach.
+
+    Part-year city and Yonkers lines (50 and 57) are not here. This module is
+    full-year residents, and a part-year figure belongs to IT-360.1.
+    """
+    city_tax = _ny_amount(nyc_resident_tax, "nyc_resident_tax")
+    household = _ny_amount(nyc_household_credit, "nyc_household_credit")
+    other_city = _ny_amount(other_nyc_taxes, "other_nyc_taxes")
+    city_credits = _ny_amount(nyc_nonrefundable_credits,
+                              "nyc_nonrefundable_credits")
+    mobility = _ny_amount(mctmt, "mctmt")
+    yonkers_res = _ny_amount(yonkers_resident_surcharge,
+                             "yonkers_resident_surcharge")
+    yonkers_non = _ny_amount(yonkers_nonresident_earnings_tax,
+                             "yonkers_nonresident_earnings_tax")
+
+    notes: "list[str]" = []
+    line_49 = round(max(city_tax - household, 0.0), 2)
+    line_52 = round(line_49 + other_city, 2)
+    line_54 = round(max(line_52 - city_credits, 0.0), 2)
+    if household > city_tax:
+        notes.append(
+            f"The New York City household credit of {household:,.2f} exceeds "
+            f"the city tax of {city_tax:,.2f}; the excess is lost.")
+    if city_credits > line_52:
+        notes.append(
+            f"New York City nonrefundable credits of {city_credits:,.2f} "
+            f"exceed the city tax of {line_52:,.2f}; the excess is lost.")
+    after = mobility + yonkers_res + yonkers_non
+    if after and (household > city_tax or city_credits > line_52):
+        notes.append(
+            "The MCTMT and the Yonkers taxes are added AFTER both city credit "
+            "caps, so the lost credit above does not offset them either.")
+    total = round(line_54 + after, 2)
+    return {
+        "line_49_after_household_credit": line_49,
+        "line_52_city_tax_before_credits": line_52,
+        "line_54_after_city_credits": line_54,
+        "line_54e_mctmt": round(mobility, 2),
+        "line_55_yonkers_resident_surcharge": round(yonkers_res, 2),
+        "line_56_yonkers_nonresident_earnings_tax": round(yonkers_non, 2),
+        "line_58_total_city_and_yonkers": total,
+        "notes": notes,
+    }
+
+
 def compute_ny_itemized(
     itemized_before_adjustment: float,
     charitable_contributions: float,

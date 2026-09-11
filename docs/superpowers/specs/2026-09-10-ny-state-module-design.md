@@ -233,8 +233,34 @@ OVER-states the number the taxpayer acts on is a hard error here:
    refused it. Line 33 has no floor — a Schedule C loss, a K-1 loss or an NOL
    carryforward makes it negative routinely — while line 38 is floored, so the
    tax is simply zero. Refusing blocked the whole return.
-5. `compute_nyc_tax` and `compute_yonkers_surcharge` — the city layer.
-6. `compute_mctmt` — self-employment in the MCTD, or a named limitation.
+5. **SHIPPED (slice 7)** — the city layer: `compute_nyc_taxable_income`,
+   `compute_mctmt` and `compute_city_and_yonkers_total`, IT-201 lines 47-58.
+
+   New York City taxable income is the STATE's in the ordinary case — "if No,
+   enter the line 38 amount on line 47" — and the worksheet exists for one
+   narrow situation: a New York Charitable Gifts Trust Fund contribution also
+   claimed as an IT-196 deduction, which the City adds back. **A joint return
+   with only ONE city resident does not use the line at all** and is computed
+   on line 51; taxing the whole household as residents would over-state the
+   city tax by the non-resident spouse's entire share, so it refuses.
+
+   The city block has TWO credit caps — the household credit against the city
+   tax, then the city's nonrefundable credits against that total — and line 58
+   adds lines 54 and **54e through 57**, so the MCTMT and both Yonkers taxes
+   come after both. No city credit offsets any of them. That is the pattern
+   line 45 sets on the state side, appearing a second time.
+
+   The MCTMT threshold is a **CLIFF applied PER ZONE**: the instructions' own
+   worked example exempts $40,000 in one zone entirely and taxes the WHOLE
+   $70,000 in the other. Subtracting the threshold — what an ordinary
+   exemption would suggest — under-states the tax by the threshold itself, and
+   adding the zones together before the test would tax both.
+
+   The New York City household credit reuses `compute_ny_household_credit`:
+   tables 4, 5 and 6 to the state's 1, 2 and 3, with the same three-way status
+   grouping, the same federal-AGI keying, the same item-C bar and the same
+   over-7 increment — verified against the instructions, not assumed from the
+   shape.
 7. NY credits — **the ORDERING is settled (slice 5), and the row-3 OPEN is
    closed for it.** `compute_ny_state_tax_total` covers lines 39-46. The
    nonrefundable credits are SUMMED and then capped at the tax — line 44 is
@@ -329,6 +355,8 @@ Each emits a LOUD note that lands on `meta.limitations` — never silence:
   blocks today and continues to.
 - **Residency by DOMICILE as a gate.** Z7 left it a review finding on purpose:
   domicile is a judgement, and a gate on one fires on every move ever made.
+- **Part-year city and Yonkers lines (50 and 57).** They belong to IT-360.1,
+  and this module is full-year residents.
 - **City-level day counts.** `residency.days_present_by_state` is keyed by
   STATE; there is no field for city days, so the City residency answer stays the
   taxpayer's assertion via `flags.nyc_resident`.

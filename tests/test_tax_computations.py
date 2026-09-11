@@ -24,6 +24,9 @@ from agents.lib.tax_computations import (
     compute_ny_household_credit,
     compute_ny_state_tax_total,
     compute_ny_settlement,
+    compute_nyc_taxable_income,
+    compute_mctmt,
+    compute_city_and_yonkers_total,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -5810,3 +5813,171 @@ def test_ny_settlement_reports_every_line_for_the_verify_tie_out():
 def test_ny_settlement_refuses_a_malformed_figure(bad):
     with pytest.raises(ValueError):
         _settle(5000, state_withholding=bad)
+
+
+# --- Z1 slice 7: New York City, Yonkers and the MCTMT (Z2) ------------------
+#
+# Form IT-201 (2025) p.3 lines 47-58, and IT-201-I (2025) pp.13 and 17.
+
+_NY_2025_MCTMT = {
+    "zone_1": {"rate": 0.0060,
+               "counties": ["New York", "Bronx", "Kings", "Queens",
+                            "Richmond"]},
+    "zone_2": {"rate": 0.0034,
+               "counties": ["Rockland", "Nassau", "Suffolk", "Orange",
+                            "Putnam", "Dutchess", "Westchester"]},
+    "net_earnings_threshold_per_zone": 50000,
+}
+
+
+def test_nyc_taxable_income_is_the_states_in_the_ordinary_case():
+    """"If No, enter the line 38 amount on line 47." The worksheet exists for
+    one narrow case and is not the general rule."""
+    out = compute_nyc_taxable_income(85000)
+    assert out["nyc_taxable_income"] == 85000
+    assert out["addback"] == 0.0
+    assert out["notes"] == []
+
+
+def test_nyc_adds_back_a_charitable_gifts_trust_deduction():
+    """The City does not allow it. A caller who has the contribution and never
+    learns it matters under-states the city tax by the whole of it."""
+    out = compute_nyc_taxable_income(85000, charitable_gifts_trust_deducted=2000)
+    assert out["nyc_taxable_income"] == 87000
+    assert any("added back" in n for n in out["notes"])
+
+
+def test_nyc_refuses_a_joint_return_with_one_city_resident():
+    """"If you are married and filing a joint New York State return and only
+    one of you was a resident of New York City for all of 2025, do not enter an
+    amount here" — that return is computed on line 51 instead. Taxing the whole
+    household as residents would over-state the city tax by the non-resident
+    spouse's whole share."""
+    with pytest.raises(ValueError, match="line 51"):
+        compute_nyc_taxable_income(85000, nyc_resident_spouses=1,
+                                   filing_status="mfj")
+    # Both residents, or a non-joint return, computes normally.
+    assert compute_nyc_taxable_income(85000, nyc_resident_spouses=2,
+                                      filing_status="mfj"
+                                      )["nyc_taxable_income"] == 85000
+
+
+def test_mctmt_threshold_is_a_cliff_applied_per_zone():
+    """The instructions' own worked example: $40,000 in one zone and $70,000
+    in the other. "The amount allocated to Zone 1, $40,000, is exempt … since
+    it is less than the threshold. However, the amount allocated to Zone 2,
+    $70,000, exceeds the threshold" — and the WHOLE $70,000 is taxed.
+
+    Subtracting the threshold, which is what an ordinary exemption would
+    suggest, under-states the tax by the threshold itself. Adding the zones
+    together before the test would tax both.
+    """
+    out = compute_mctmt(40000, 70000, _NY_2025_MCTMT)
+    assert out["lines"]["line_54c_zone_1_tax"] == 0.0
+    assert out["lines"]["line_54d_zone_2_tax"] == round(70000 * 0.0034, 2)
+    assert out["mctmt"] == 238.0
+
+
+def test_mctmt_zones_carry_different_rates():
+    """Split by GEOGRAPHY, not by income. The same earnings in the other zone
+    cost nearly twice as much, so a positionally-read rate list mis-assigns
+    them."""
+    z1 = compute_mctmt(zone_1_net_earnings=70000, mctmt=_NY_2025_MCTMT)
+    z2 = compute_mctmt(zone_2_net_earnings=70000, mctmt=_NY_2025_MCTMT)
+    assert z1["mctmt"] == round(70000 * 0.0060, 2)
+    assert z2["mctmt"] == round(70000 * 0.0034, 2)
+    assert z1["mctmt"] > z2["mctmt"]
+
+
+def test_mctmt_refuses_an_unfetched_threshold_or_rate():
+    """The threshold is a cliff AND it changed for tax year 2026, so a stale
+    figure taxes a filer who owes nothing or exempts one who owes."""
+    with pytest.raises(ValueError, match="threshold_per_zone"):
+        compute_mctmt(70000, 0, {"zone_1": {"rate": 0.006}})
+    with pytest.raises(ValueError, match="zone_1.rate"):
+        compute_mctmt(70000, 0, {"net_earnings_threshold_per_zone": 50000})
+
+
+def test_mctmt_needs_no_rate_for_a_zone_below_the_threshold():
+    """A filer with earnings in one zone only should not be blocked for want of
+    the other zone's rate — the cliff decides before the rate is needed."""
+    out = compute_mctmt(10000, 70000,
+                        {"zone_2": {"rate": 0.0034},
+                         "net_earnings_threshold_per_zone": 50000})
+    assert out["mctmt"] == round(70000 * 0.0034, 2)
+
+
+def test_city_credits_are_capped_twice_and_the_excess_is_lost():
+    """Line 49: "if line 48 is more than line 47a, enter 0", and line 54 does
+    the same against the city's nonrefundable credits."""
+    out = compute_city_and_yonkers_total(3000, nyc_household_credit=3500)
+    assert out["line_49_after_household_credit"] == 0.0
+    out2 = compute_city_and_yonkers_total(3000, other_nyc_taxes=200,
+                                          nyc_nonrefundable_credits=5000)
+    assert out2["line_52_city_tax_before_credits"] == 3200
+    assert out2["line_54_after_city_credits"] == 0.0
+
+
+def test_mctmt_and_yonkers_come_after_both_city_credit_caps():
+    """Line 58 adds lines 54 and 54e THROUGH 57, so no New York City credit
+    offsets the MCTMT or either Yonkers tax. The second appearance of the
+    pattern line 45 sets on the state side, and the same mistake to net
+    everything first."""
+    out = compute_city_and_yonkers_total(
+        3000, nyc_household_credit=3500, mctmt=238,
+        yonkers_resident_surcharge=100,
+        yonkers_nonresident_earnings_tax=50)
+    assert out["line_54_after_city_credits"] == 0.0
+    assert out["line_58_total_city_and_yonkers"] == 388, (
+        "a city credit absorbed the MCTMT or a Yonkers tax, which line 58 "
+        "does not allow")
+    assert any("added AFTER" in n for n in out["notes"])
+
+
+def test_city_block_is_plain_arithmetic_when_nothing_is_capped():
+    out = compute_city_and_yonkers_total(
+        3000, nyc_household_credit=75, other_nyc_taxes=200,
+        nyc_nonrefundable_credits=100, mctmt=238,
+        yonkers_resident_surcharge=500)
+    assert out["line_49_after_household_credit"] == 2925
+    assert out["line_52_city_tax_before_credits"] == 3125
+    assert out["line_54_after_city_credits"] == 3025
+    assert out["line_58_total_city_and_yonkers"] == 3763
+    assert out["notes"] == []
+
+
+def test_the_nyc_household_credit_reuses_the_state_function():
+    """Tables 4, 5 and 6 to the state's 1, 2 and 3: the same three-way status
+    grouping, the same federal-AGI keying, the same item-C bar and the same
+    over-7 increment. Verified against the instructions rather than assumed
+    from the shape — a reuse taken on faith is how this repository once put
+    2026 and 2025 within a dollar of each other."""
+    nyc_table = {"single": [{"agi_over": None, "agi_not_over": 10000,
+                             "amount": 15}],
+                 "mfj_hoh_qss": [{"agi_over": None, "agi_not_over": 10000,
+                                  "by_exemptions": [30, 60, 90],
+                                  "each_additional": 30}],
+                 "mfs": []}
+    assert compute_ny_household_credit(5000, "single", 1, nyc_table
+                                       )["credit"] == 15
+    assert compute_ny_household_credit(5000, "mfj", 5, nyc_table
+                                       )["credit"] == 90 + 2 * 30
+    assert compute_ny_household_credit(
+        5000, "single", 1, nyc_table,
+        can_be_claimed_as_dependent=True)["credit"] == 0.0
+
+
+def test_the_city_nonrefundable_cap_also_holds_against_the_later_taxes():
+    """The previous case exercised the HOUSEHOLD credit's cap; this one is the
+    line-53 credits, and a mutation that netted the MCTMT before line 54
+    survived the first because it had no line-53 credit to absorb with.
+
+    City tax $3,000 against $5,000 of nonrefundable credits leaves line 54 at
+    zero, and the MCTMT is still owed in full.
+    """
+    out = compute_city_and_yonkers_total(
+        3000, nyc_nonrefundable_credits=5000, mctmt=238)
+    assert out["line_54_after_city_credits"] == 0.0
+    assert out["line_58_total_city_and_yonkers"] == 238, (
+        "the excess city credit absorbed the MCTMT, which line 58 does not "
+        "allow")

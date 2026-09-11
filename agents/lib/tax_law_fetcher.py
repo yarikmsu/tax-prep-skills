@@ -701,7 +701,14 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                     "income_ceiling": None,
                     "rate_reduction": {"a": [], "b": [], "c": []},
                 },
-                "household_credit": {"table": []},
+                # The SAME three-way grouping and the SAME federal-AGI keying
+                # as the state household credit above — tables 4, 5 and 6 to
+                # its 1, 2 and 3 — so `compute_ny_household_credit` serves
+                # both. Verified against the instructions rather than assumed
+                # from the shape: same status groups, same item-C bar, same
+                # "for each individual over 7" increment.
+                "household_credit": {"table": {"single": [],
+                                               "mfj_hoh_qss": [], "mfs": []}},
                 "earned_income_share": None,
             },
             "yonkers_tax": {
