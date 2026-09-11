@@ -143,10 +143,39 @@ that reads as coverage.
 In dependency order. Each states its bias direction, because a degrade that
 OVER-states the number the taxpayer acts on is a hard error here:
 
-1. `compute_ny_agi` — federal AGI plus IT-225 modifications. **Degrade: a
-   modification we cannot classify is NOT silently dropped** — dropping an
-   ADDITION under-states tax, dropping a SUBTRACTION over-states it, and the
-   two directions cannot share a fallback. It refuses and names the code.
+1. `compute_ny_agi` — **SHIPPED (slice 3)**, lines 19 through 33, with
+   `compute_ny_modifications` and `compute_ny_pension_exclusion` beside it.
+
+   **The direction is cross-checked, not inferred.** Form IT-225 puts additions
+   on Schedule A and subtractions on Schedule B, and the codes carry that —
+   `A-`/`EA-` against `S-`/`ES-`, where the `E` forms arrive through a
+   partnership, S corporation or estate. The caller states which side it is
+   handing over and the prefix checks the claim, because a subtraction filed as
+   an addition OVER-states the tax and an addition filed as a subtraction
+   UNDER-states it. A NEGATIVE amount refuses rather than flipping sides: that
+   is the same confusion arriving by a signed figure.
+
+   New York DISALLOWS several codes on a resident return rather than adjusting
+   them, and the set changes as codes are retired, so it is FETCHED. Unfetched,
+   the totals are still computed and a LOUD note says the eligibility was not
+   checked — an absent cross-check may not become a silent pass, but neither
+   may it block a correct return.
+
+   **The pension and annuity exclusion is PER TAXPAYER and does not pool.**
+   "Neither of you can claim any unused part of your spouse's exclusion", so a
+   household-level cap would let one spouse's headroom shelter the other's
+   income. Entitlement is the caller's assertion and is REFUSED if unstated —
+   the age gate, the part-year rule for someone who turns 59½ during the year,
+   and a beneficiary's claim on a decedent's entitlement are judgements about
+   facts the engine is not given, and granting it unearned under-states the
+   tax. A government pension routed here refuses too: those are fully excluded
+   on their own line, and capping one would silently limit a full exclusion.
+
+   **NYAGI may be NEGATIVE** — line 33 has no floor — while each modification
+   is floored, because New York enters both directions as positive figures.
+   And the 529 cap is keyed married-joint against EVERYBODY ELSE, the same
+   two-key shape the federal child-credit phase-out uses; reading it with four
+   status keys finds three absent and claims an uncapped deduction.
 2. `compute_ny_itemized` — IT-196 on pre-TCJA federal rules, then §615's two
    reductions, then the separate charitable limitation. **Degrade: refuse**,
    because a partially-applied limitation over-states the deduction and

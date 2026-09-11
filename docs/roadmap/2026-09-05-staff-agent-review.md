@@ -442,6 +442,18 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   it. Every expected value hand-computed from IT-201-I (2025) pp.32-38; twenty-two
   mutations across the two rounds, twenty-two reds.
 
+  **SLICE 3 SHIPPED**: `compute_ny_agi` (lines 19-33) with the IT-225 modifications and
+  the pension exclusion. The modification DIRECTION is cross-checked against the code
+  prefix rather than inferred, and a negative amount refuses rather than flipping sides
+  — a subtraction filed as an addition over-states the tax and an addition filed as a
+  subtraction under-states it. The codes NY disallows on a resident return are fetched;
+  unfetched, the totals still compute and say loudly that eligibility was not checked.
+  The pension exclusion is PER TAXPAYER and does not pool, refuses to assume
+  entitlement, and refuses a government pension (fully excluded on its own line —
+  capping one would silently limit it). NYAGI may be NEGATIVE. Seventeen mutations,
+  seventeen reds — two of which only went red after clearing `__pycache__`, the
+  same-length mutate-and-restore trap the memory records.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension

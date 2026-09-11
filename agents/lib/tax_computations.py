@@ -2504,6 +2504,335 @@ def _ny_schedule_tax(taxable_income: float, table: list,
         "must have a null max. Re-run /tax-setup.")
 
 
+def _ny_amount(value, label: str, allow_negative: bool = False) -> float:
+    """One figure off the New York return, validated where it enters.
+
+    `json.loads` accepts NaN and Infinity, both pass `isinstance(x, (int,
+    float))`, and every comparison with NaN is False — so an unchecked NaN
+    walks past a cap, past a floor, and into a total that then reads as a
+    number. Booleans are rejected for the same reason they are elsewhere here:
+    `True` is an int, and `True` dollars is not an amount anybody meant.
+    """
+    if value is None or isinstance(value, bool) or \
+            not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number, got {value!r}")
+    if not math.isfinite(value):
+        raise ValueError(f"{label} must be finite, got {value!r}")
+    if value < 0 and not allow_negative:
+        raise ValueError(
+            f"{label} cannot be negative, got {value!r}. New York's additions "
+            "and subtractions are both entered as POSITIVE amounts — the "
+            "SCHEDULE carries the direction, so a negative here means the "
+            "figure is on the wrong one.")
+    return float(value)
+
+
+_NY_MODIFICATION_PREFIXES = {"addition": ("A-", "EA-"),
+                             "subtraction": ("S-", "ES-")}
+
+
+def compute_ny_modifications(entries: "list[dict] | None", direction: str,
+                             invalid_codes: "list[str] | None" = None) -> dict:
+    """Total one side of Form IT-225, checking each code against its schedule.
+
+    Form IT-225 puts ADDITIONS on Schedule A and SUBTRACTIONS on Schedule B,
+    and the codes carry that: `A-`/`EA-` against `S-`/`ES-`, where the `E`
+    forms are modifications flowed through from a partnership, S corporation or
+    estate. The caller states which side it is handing over; the prefix is then
+    a CROSS-CHECK on that claim rather than an inference from it.
+
+    That check is the point. A subtraction filed as an addition over-states the
+    tax; an addition filed as a subtraction under-states it. Netting the two
+    sides — or reading a direction off a signed amount — makes both mistakes
+    invisible, which is why a negative amount refuses instead of flipping sides.
+
+    `invalid_codes` is the list of codes the form being filed may not carry
+    (an IT-201 resident return excludes several). When it is fetched, a code on
+    it REFUSES. When it is not, the total is still computed and a LOUD note
+    says the validity was not checked — absence of a cross-check may not
+    silently become a pass, but neither may it block a correct return.
+    """
+    if direction not in _NY_MODIFICATION_PREFIXES:
+        raise ValueError(
+            f"direction must be 'addition' or 'subtraction', got {direction!r}")
+    prefixes = _NY_MODIFICATION_PREFIXES[direction]
+    notes: "list[str]" = []
+    if not invalid_codes:
+        notes.append(
+            f"IT-225 {direction} codes were NOT checked against the list this "
+            "form may not carry — state.it225.codes_not_valid_on_it201 is "
+            "unfetched. The amounts are totalled; their eligibility is not "
+            "established.")
+    total = 0.0
+    seen: "set[str]" = set()
+    detail = []
+    for i, entry in enumerate(entries or []):
+        if not isinstance(entry, dict):
+            raise ValueError(f"IT-225 {direction} {i} must be an object")
+        code = entry.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError(f"IT-225 {direction} {i} has no code")
+        code = code.strip().upper()
+        if not code.startswith(prefixes):
+            raise ValueError(
+                f"IT-225 code {code!r} was handed over as a {direction} but "
+                f"its prefix is not one of {prefixes}. Schedule A carries "
+                "additions and Schedule B subtractions; a modification on the "
+                "wrong one moves the tax in the wrong direction.")
+        if code in seen:
+            raise ValueError(
+                f"IT-225 code {code!r} appears twice in the {direction}s. The "
+                "same NUMBER may legitimately appear as both an individual "
+                "(Part 1) and a pass-through (Part 2) modification, but those "
+                "carry different prefixes — a repeated code is a double count.")
+        seen.add(code)
+        if invalid_codes and code in {c.strip().upper() for c in invalid_codes}:
+            raise ValueError(
+                f"IT-225 code {code!r} is not valid on the form being filed. "
+                "New York disallows the modification rather than adjusting it, "
+                "so this is a return that would be corrected, not rounded.")
+        amount = _ny_amount(entry.get("amount"), f"IT-225 {code} amount")
+        total += amount
+        detail.append({"code": code, "amount": amount})
+    return {"total": round(total, 2), "entries": detail, "notes": notes}
+
+
+def compute_ny_pension_exclusion(entries: "list[dict] | None",
+                                 cap: "float | None",
+                                 minimum_age: "int | None" = None) -> dict:
+    """IT-201 line 29 — the pension and annuity income exclusion.
+
+    PER TAXPAYER, and that is the whole difficulty. "You and your spouse can
+    each subtract up to $20,000 of your OWN pension and annuity income.
+    However, neither of you can claim any unused part of your spouse's
+    exclusion" — so a household-level cap would let one spouse's unused
+    allowance shelter the other's income, which is exactly what the form
+    forbids. Each entry is capped on its own and the caps are summed after.
+
+    `entitled` is the caller's, not this function's: the age gate is "59½
+    before the start of the tax year", a taxpayer who turned 59½ DURING it
+    counts only what they received afterwards, and a BENEFICIARY qualifies on
+    the decedent's entitlement regardless of their own age. Those are judgements
+    about facts this function is not given. What it will not do is guess one:
+    an entry with no `entitled` answer is refused, because granting the
+    exclusion unearned under-states the tax.
+
+    Government pensions do NOT belong here. They are fully excluded on their
+    own line, and routing one through this cap would silently limit a full
+    exclusion to the cap — an over-statement of tax that looks like arithmetic.
+    """
+    notes: "list[str]" = []
+    if not entries:
+        notes.append(
+            "Pension and annuity income exclusion NOT claimed (IT-201 line 29). "
+            "If either taxpayer had qualifying non-government pension or "
+            "annuity income and was 59½, this OVER-STATES the tax.")
+        return {"total": 0.0, "per_taxpayer": [], "notes": notes}
+    if cap is None:
+        raise ValueError(
+            "state.subtractions.pension_annuity_exclusion.amount is not "
+            "fetched, and the exclusion is capped. Claiming it uncapped "
+            "under-states the tax; re-run /tax-setup.")
+    cap = _ny_amount(cap, "pension exclusion cap")
+    per_taxpayer = []
+    seen: "set[str]" = set()
+    total = 0.0
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ValueError(f"pension exclusion entry {i} must be an object")
+        who = entry.get("taxpayer")
+        if who not in ("primary", "spouse"):
+            raise ValueError(
+                f"pension exclusion entry {i} names taxpayer {who!r}; the cap "
+                "is PER TAXPAYER, so each entry must say whose it is")
+        if who in seen:
+            raise ValueError(
+                f"two pension exclusion entries for {who!r}. Combine that "
+                "taxpayer's qualifying income into one entry — separate "
+                "entries would each get the full cap.")
+        seen.add(who)
+        if entry.get("entitled") is not True:
+            raise ValueError(
+                f"pension exclusion entry for {who!r} does not state "
+                "`entitled: true`. The age gate, the part-year rule for "
+                "someone who turned 59½ during the year, and a beneficiary's "
+                "claim on a decedent's entitlement are judgements about facts "
+                "this function is not given — and granting the exclusion "
+                "unearned under-states the tax.")
+        if entry.get("government_pension"):
+            raise ValueError(
+                f"the pension exclusion entry for {who!r} is marked a "
+                "GOVERNMENT pension. Those are fully excluded on their own "
+                "line; capping one here would silently limit a full exclusion.")
+        amount = _ny_amount(entry.get("qualifying_amount"),
+                            f"pension exclusion qualifying_amount for {who!r}")
+        allowed = min(amount, cap)
+        if allowed < amount:
+            notes.append(
+                f"{who}: qualifying pension and annuity income {amount:,.2f} "
+                f"exceeds the exclusion cap; {allowed:,.2f} is excluded and "
+                "the remainder stays taxable. The cap applies regardless of "
+                "the number of sources.")
+        per_taxpayer.append({"taxpayer": who, "qualifying": amount,
+                             "excluded": round(allowed, 2)})
+        total += allowed
+    if minimum_age is not None:
+        notes.append(
+            f"Exclusion allowed on the caller's assertion that each taxpayer "
+            f"met the age test (59-and-a-half in the fetched block: "
+            f"{minimum_age}).")
+    return {"total": round(total, 2), "per_taxpayer": per_taxpayer,
+            "notes": notes}
+
+
+# IT-201's named addition and subtraction lines, in form order. The NAMES are
+# the contract with the caller and the ORDER is what `/tax-verify` ties against,
+# so they live in one place rather than being spelled again at each use.
+_NY_ADDITION_LINES = (
+    ("state_local_bond_interest", 20),
+    ("public_employee_414h", 21),
+    ("college_savings_withdrawals", 22),
+)
+_NY_SUBTRACTION_LINES = (
+    ("taxable_refunds", 25),
+    ("government_pensions", 26),
+    ("taxable_social_security", 27),
+    ("us_government_bond_interest", 28),
+)
+
+
+def compute_ny_agi(
+    federal_agi: float,
+    additions: "dict | None" = None,
+    subtractions: "dict | None" = None,
+    filing_status: str = "single",
+    limits: "dict | None" = None,
+    it225_invalid_codes: "list[str] | None" = None,
+) -> dict:
+    """IT-201 lines 19 through 33 — New York adjusted gross income.
+
+    New York starts from federal AGI and then applies its OWN modifications, so
+    NYAGI is not federal AGI and the two are not interchangeable anywhere
+    downstream: every New York threshold — the recapture's entry, the itemized
+    reductions, the estimated-tax safe harbour — is measured against THIS
+    figure. Handing the federal one to any of them mis-measures a taxpayer with
+    modifications, and the larger their modifications the further off it is.
+
+    Two kinds of modification, and they are kept apart on purpose:
+
+    - The NAMED lines, which have their own place on the form — bond interest
+      each way, the public-employee 414(h) add-back, the 529 lines, taxable
+      refunds, government pensions at a FULL exclusion, taxable social
+      security, and the capped pension-and-annuity exclusion.
+    - Everything else, on Form IT-225 under a code, totalled by
+      `compute_ny_modifications`, which checks each code against the schedule
+      it was handed over as.
+
+    NYAGI MAY BE NEGATIVE and that is an ordinary return — line 33 has no
+    floor, and a Schedule C loss, a K-1 loss or an NOL carryforward reaches it
+    routinely. Only the individual modification amounts are floored, because
+    New York enters both directions as positive figures and lets the SCHEDULE
+    carry the sign.
+
+    Args:
+        federal_agi: IT-201 line 19, the recomputed federal AGI.
+        additions: the named lines above plus `it225`, a list of
+            `{"code", "amount"}`.
+        subtractions: the named lines above plus `pension_annuity` (a list of
+            per-taxpayer entries for `compute_ny_pension_exclusion`),
+            `college_savings_contributions`, and `it225`.
+        filing_status: selects the 529 deduction cap, which New York keys as
+            married-joint against everybody else.
+        limits: `state.subtractions` from the fetched block.
+        it225_invalid_codes: codes this form may not carry.
+
+    Returns:
+        {"nyagi", "total_additions", "total_subtractions", "lines", "notes"}
+
+    Raises:
+        ValueError: on a malformed figure, a modification on the wrong
+            schedule, or a capped subtraction whose cap was never fetched —
+            claiming one uncapped under-states the tax.
+    """
+    additions = additions or {}
+    subtractions = subtractions or {}
+    limits = limits or {}
+    notes: "list[str]" = []
+    lines: "dict[str, float]" = {}
+
+    agi = _ny_amount(federal_agi, "federal_agi", allow_negative=True)
+    lines["line_19_federal_agi"] = round(agi, 2)
+
+    total_additions = 0.0
+    for name, line_no in _NY_ADDITION_LINES:
+        amount = _ny_amount(additions.get(name, 0) or 0, f"additions.{name}")
+        lines[f"line_{line_no}_{name}"] = round(amount, 2)
+        total_additions += amount
+    it225_add = compute_ny_modifications(additions.get("it225"), "addition",
+                                         it225_invalid_codes)
+    notes.extend(it225_add["notes"])
+    lines["line_23_other_additions"] = it225_add["total"]
+    total_additions += it225_add["total"]
+    lines["line_24_total_additions"] = round(agi + total_additions, 2)
+
+    total_subtractions = 0.0
+    for name, line_no in _NY_SUBTRACTION_LINES:
+        amount = _ny_amount(subtractions.get(name, 0) or 0,
+                            f"subtractions.{name}")
+        lines[f"line_{line_no}_{name}"] = round(amount, 2)
+        total_subtractions += amount
+
+    pension_limits = (limits.get("pension_annuity_exclusion") or {})
+    pension = compute_ny_pension_exclusion(
+        subtractions.get("pension_annuity"),
+        pension_limits.get("amount"),
+        pension_limits.get("minimum_age"))
+    notes.extend(pension["notes"])
+    lines["line_29_pension_annuity_exclusion"] = pension["total"]
+    total_subtractions += pension["total"]
+
+    college = _ny_amount(subtractions.get("college_savings_contributions", 0)
+                         or 0, "subtractions.college_savings_contributions")
+    if college:
+        # New York keys this cap as married-joint against EVERYBODY ELSE — the
+        # same two-key shape the federal child-credit phase-out uses, and the
+        # reason `docs/contributing/tax-law-cache.md` warns that the keying is
+        # not uniform. Reading it with four status keys finds three of them
+        # absent and would claim an uncapped deduction.
+        caps = (limits.get("college_savings_deduction") or {})
+        cap = caps.get("mfj") if filing_status == "mfj" else caps.get("single")
+        if cap is None:
+            raise ValueError(
+                "state.subtractions.college_savings_deduction is not fetched "
+                f"for {filing_status!r}, and the deduction is capped. Claiming "
+                "it uncapped under-states the tax; re-run /tax-setup.")
+        cap = _ny_amount(cap, "college savings cap")
+        if college > cap:
+            notes.append(
+                f"529 contributions {college:,.2f} exceed the deduction cap; "
+                f"{cap:,.2f} is subtracted.")
+            college = cap
+    lines["line_30_college_savings"] = round(college, 2)
+    total_subtractions += college
+
+    it225_sub = compute_ny_modifications(subtractions.get("it225"),
+                                         "subtraction", it225_invalid_codes)
+    notes.extend(it225_sub["notes"])
+    lines["line_31_other_subtractions"] = it225_sub["total"]
+    total_subtractions += it225_sub["total"]
+    lines["line_32_total_subtractions"] = round(total_subtractions, 2)
+
+    nyagi = round(agi + total_additions - total_subtractions, 2)
+    lines["line_33_nyagi"] = nyagi
+    return {
+        "nyagi": nyagi,
+        "total_additions": round(total_additions, 2),
+        "total_subtractions": round(total_subtractions, 2),
+        "lines": lines,
+        "notes": notes,
+    }
+
+
 def _ny_round_half_up(value: float) -> int:
     """New York's own rounding: "Drop amounts that are less than 50 cents" and
     "increase amounts from 50 to 99 cents to the next dollar" (IT-201-I,

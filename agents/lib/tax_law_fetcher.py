@@ -642,6 +642,17 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "real_property_tax": None,
                 "college_tuition": {"expense_cap": None, "max_credit": None},
             },
+            # Form IT-225 carries every modification that has no line of its
+            # own, under a CODE whose prefix is its schedule: A-/EA- for
+            # additions, S-/ES- for subtractions, where the E forms come
+            # through a partnership, S corporation or estate. New York
+            # DISALLOWS several of them on a resident return rather than
+            # adjusting them, and the set changes as codes are retired and
+            # added — so it is fetched, not written here. Unfetched, the totals
+            # are still computed and a loud note says the eligibility was not
+            # checked: an absent cross-check may not become a silent pass, but
+            # neither may it block a correct return.
+            "it225": {"codes_not_valid_on_it201": []},
             # Subtractions that sit on the IT-201 FACE rather than on IT-225,
             # and two of them carry figures. The pension-and-annuity exclusion
             # is PER SPOUSE with an age gate and no transfer of an unused part
@@ -650,6 +661,12 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "subtractions": {
                 "pension_annuity_exclusion": {"amount": None,
                                               "minimum_age": None},
+                # Keyed married-joint against EVERYBODY ELSE, which is New
+                # York's own grouping and the same two-key shape the federal
+                # child-credit phase-out uses. `single` therefore covers
+                # single, head-of-household, married-filing-separately and the
+                # surviving spouse — reading this with four status keys finds
+                # three absent and claims an uncapped deduction.
                 "college_savings_deduction": {"single": None, "mfj": None},
             },
             # The city layer — Z2. `applies` stays None until fetched so that

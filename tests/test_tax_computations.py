@@ -19,6 +19,7 @@ from agents.lib.tax_computations import (
     _coerce_numeric,
     compute_bracket_tax,
     compute_ny_tax,
+    compute_ny_agi,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -5104,3 +5105,217 @@ def test_ny_does_not_round_the_recapture_before_the_total():
         round(18252 + 0.0685 * 1, 2) + 1140 + 2747 * 0.0078, 4)
     assert out["tax"] == 19413, (
         "rounding the recapture to cents first would make this 19,414")
+
+
+# --- Z1 slice 3: New York AGI and the IT-225 modifications ------------------
+#
+# Line references and rules are Form IT-201-I (2025) pp.7-10 and Form IT-225-I
+# (2025) pp.1-2. The figures a taxpayer's return would carry are the CALLER's;
+# the two the engine holds — the exclusion cap and the 529 cap — come from the
+# fetched block, which is why the tests hand them in.
+
+_NY_2025_SUBTRACTION_LIMITS = {
+    "pension_annuity_exclusion": {"amount": 20000, "minimum_age": 59.5},
+    # "$5,000 ($10,000 for married taxpayers filing a joint return)"
+    "college_savings_deduction": {"single": 5000, "mfj": 10000},
+}
+# IT-225-I (2025) p.1-2: "Form IT-201 filers do not enter A-103, A-104, or
+# A-113 … EA-113 … S-103, S-104, S-106, S-107, or S-125 … ES-106, ES-107, or
+# ES-125".
+_NY_IT201_INVALID_CODES = ["A-103", "A-104", "A-113", "EA-113",
+                           "S-103", "S-104", "S-106", "S-107", "S-125",
+                           "ES-106", "ES-107", "ES-125"]
+
+
+def _agi(federal=100000.0, additions=None, subtractions=None,
+         status="single", limits=None, invalid=None):
+    return compute_ny_agi(
+        federal, additions or {}, subtractions or {}, status,
+        _NY_2025_SUBTRACTION_LIMITS if limits is None else limits,
+        _NY_IT201_INVALID_CODES if invalid is None else invalid)
+
+
+def test_ny_agi_is_federal_agi_plus_and_minus_new_yorks_own():
+    """NYAGI is not federal AGI, and the two are not interchangeable: every New
+    York threshold downstream — the recapture's entry, the itemized reductions,
+    the safe harbour — is measured against THIS figure."""
+    out = _agi(100000,
+               {"state_local_bond_interest": 1500,
+                "public_employee_414h": 3000},
+               {"taxable_social_security": 5000,
+                "us_government_bond_interest": 800})
+    assert out["total_additions"] == 4500
+    assert out["total_subtractions"] == 5800
+    assert out["nyagi"] == 98700
+    assert out["lines"]["line_24_total_additions"] == 104500
+    assert out["lines"]["line_33_nyagi"] == 98700
+
+
+def test_ny_agi_may_be_negative():
+    """Line 33 has NO floor — a Schedule C loss, a K-1 loss or an NOL
+    carryforward reaches it routinely — while each modification is floored,
+    because New York enters both directions as positive figures."""
+    assert _agi(-40000)["nyagi"] == -40000
+
+
+def test_ny_modifications_refuse_the_wrong_schedule():
+    """Schedule A carries additions and Schedule B subtractions, and the code
+    prefix says which. A subtraction filed as an addition OVER-states the tax;
+    an addition filed as a subtraction UNDER-states it. The caller states the
+    direction and the prefix cross-checks the claim."""
+    with pytest.raises(ValueError, match="prefix is not one of"):
+        _agi(additions={"it225": [{"code": "S-201", "amount": 100}]})
+    with pytest.raises(ValueError, match="prefix is not one of"):
+        _agi(subtractions={"it225": [{"code": "A-201", "amount": 100}]})
+
+
+def test_ny_modifications_accept_the_pass_through_prefixes():
+    """`EA-`/`ES-` are the same modifications arriving through a partnership,
+    S corporation or estate — Part 2 of each schedule. Rejecting them would
+    refuse an ordinary K-1 return."""
+    out = _agi(additions={"it225": [{"code": "EA-201", "amount": 250}]},
+               subtractions={"it225": [{"code": "ES-201", "amount": 100}]})
+    assert out["total_additions"] == 250
+    assert out["total_subtractions"] == 100
+
+
+def test_ny_modifications_refuse_a_negative_amount():
+    """A negative addition is a subtraction wearing the wrong prefix. Flipping
+    it silently is the direction confusion the schedules exist to prevent."""
+    with pytest.raises(ValueError, match="SCHEDULE carries the direction"):
+        _agi(additions={"it225": [{"code": "A-201", "amount": -100}]})
+
+
+def test_ny_modifications_refuse_a_repeated_code():
+    """The same NUMBER may legitimately appear as both an individual (Part 1)
+    and a pass-through (Part 2) modification — but those carry DIFFERENT
+    prefixes, so a repeated full code is a double count."""
+    with pytest.raises(ValueError, match="appears twice"):
+        _agi(additions={"it225": [{"code": "A-201", "amount": 100},
+                                  {"code": "A-201", "amount": 100}]})
+    # The legitimate pair still passes.
+    assert _agi(additions={"it225": [{"code": "A-201", "amount": 100},
+                                     {"code": "EA-201", "amount": 100}]}
+                )["total_additions"] == 200
+
+
+def test_ny_modifications_refuse_a_code_this_form_may_not_carry():
+    """New York DISALLOWS the modification rather than adjusting it, so this is
+    a return that would be corrected, not rounded."""
+    with pytest.raises(ValueError, match="not valid on the form"):
+        _agi(subtractions={"it225": [{"code": "S-125", "amount": 500}]})
+
+
+def test_ny_modifications_say_loudly_when_they_could_not_be_checked():
+    """An absent cross-check may not become a silent pass — but it may not
+    block a correct return either, so it totals and says so."""
+    out = _agi(additions={"it225": [{"code": "A-201", "amount": 100}]},
+               invalid=[])
+    assert out["total_additions"] == 100
+    assert any("NOT checked" in n for n in out["notes"])
+
+
+def test_ny_pension_exclusion_is_per_taxpayer_and_does_not_pool():
+    """"You and your spouse can each subtract up to $20,000 of your OWN pension
+    and annuity income. However, neither of you can claim any unused part of
+    your spouse's exclusion." A household-level cap would let one spouse's
+    unused allowance shelter the other's income."""
+    out = _agi(subtractions={"pension_annuity": [
+        {"taxpayer": "primary", "qualifying_amount": 45000, "entitled": True},
+        {"taxpayer": "spouse", "qualifying_amount": 3000, "entitled": True},
+    ]}, status="mfj")
+    # 20,000 capped + 3,000 uncapped — NOT 40,000 - 3,000 of shared headroom.
+    assert out["lines"]["line_29_pension_annuity_exclusion"] == 23000
+
+
+def test_ny_pension_exclusion_refuses_to_guess_entitlement():
+    """The age gate is "59½ before the start of the year", a taxpayer who
+    turned 59½ DURING it counts only what came after, and a beneficiary
+    qualifies on the decedent's entitlement regardless of their own age. Those
+    are judgements about facts this function is not given, and granting the
+    exclusion unearned UNDER-states the tax."""
+    with pytest.raises(ValueError, match="entitled"):
+        _agi(subtractions={"pension_annuity": [
+            {"taxpayer": "primary", "qualifying_amount": 10000}]})
+
+
+def test_ny_pension_exclusion_refuses_a_government_pension():
+    """Those are fully excluded on their own line. Capping one here would
+    silently limit a full exclusion — an over-statement of tax that looks like
+    arithmetic."""
+    with pytest.raises(ValueError, match="GOVERNMENT pension"):
+        _agi(subtractions={"pension_annuity": [
+            {"taxpayer": "primary", "qualifying_amount": 50000,
+             "entitled": True, "government_pension": True}]})
+
+
+def test_ny_pension_exclusion_refuses_two_entries_for_one_taxpayer():
+    """Separate entries would each get the full cap, which is the pooling the
+    form forbids arriving by a different route."""
+    with pytest.raises(ValueError, match="two pension exclusion entries"):
+        _agi(subtractions={"pension_annuity": [
+            {"taxpayer": "primary", "qualifying_amount": 15000,
+             "entitled": True},
+            {"taxpayer": "primary", "qualifying_amount": 15000,
+             "entitled": True}]})
+
+
+def test_ny_an_unclaimed_pension_exclusion_is_loud():
+    """Not claiming it OVER-states the tax, which the bias rule says degrades
+    with a banner rather than hard-erroring — but a silent zero would leave
+    nobody able to tell "no pension income" from "nobody asked"."""
+    out = _agi()
+    assert out["lines"]["line_29_pension_annuity_exclusion"] == 0.0
+    assert any("OVER-STATES" in n for n in out["notes"])
+
+
+def test_ny_529_cap_is_married_joint_against_everybody_else():
+    """New York's own grouping, and the same two-key shape the federal
+    child-credit phase-out uses — which is why the cache doc warns the keying
+    is not uniform. Reading it with four status keys finds three absent."""
+    assert _agi(subtractions={"college_savings_contributions": 9000},
+                status="mfj")["lines"]["line_30_college_savings"] == 9000
+    for status in ("single", "hoh", "mfs", "qss"):
+        out = _agi(subtractions={"college_savings_contributions": 9000},
+                   status=status)
+        assert out["lines"]["line_30_college_savings"] == 5000, status
+        assert any("exceed the deduction cap" in n for n in out["notes"])
+
+
+def test_ny_refuses_a_capped_subtraction_whose_cap_is_unfetched():
+    """Claiming a capped deduction uncapped UNDER-states the tax, so both caps
+    refuse rather than defaulting."""
+    with pytest.raises(ValueError, match="college_savings_deduction"):
+        _agi(subtractions={"college_savings_contributions": 9000},
+             limits={"pension_annuity_exclusion": {"amount": 20000}})
+    with pytest.raises(ValueError, match="pension_annuity_exclusion"):
+        _agi(subtractions={"pension_annuity": [
+            {"taxpayer": "primary", "qualifying_amount": 10000,
+             "entitled": True}]}, limits={})
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), True, "1000"])
+def test_ny_agi_refuses_a_malformed_modification(bad):
+    """NaN passes isinstance and defeats every comparison, so an unchecked one
+    walks past the cap and into a total that then reads as a number."""
+    with pytest.raises(ValueError):
+        _agi(additions={"state_local_bond_interest": bad})
+
+
+def test_ny_agi_reports_every_line_for_the_verify_tie_out():
+    """`/tax-verify` ties line by line against a software-prepared IT-201, so
+    the intermediate lines are part of the contract, not debug output."""
+    out = _agi(subtractions={"government_pensions": 12000})
+    for key in ("line_19_federal_agi", "line_24_total_additions",
+                "line_26_government_pensions", "line_32_total_subtractions",
+                "line_33_nyagi"):
+        assert key in out["lines"], key
+
+
+def test_ny_an_absent_or_null_line_is_zero():
+    """Most returns carry none of these lines, so absent means zero — and a
+    present null means the same, which is the rule `_flag_value` already sets
+    for the capability flags ("Absent/None -> False"). The figure that must NOT
+    default is a CAP, and both of those refuse instead."""
+    assert _agi(100000)["nyagi"] == 100000
+    assert _agi(100000, {"state_local_bond_interest": None})["nyagi"] == 100000

@@ -226,11 +226,20 @@ a figure from a prior year.
     credit table, the Empire State child credit, the child-and-dependent-care
     table, the EIC share of the federal credit, the real-property-tax credit,
     and the college-tuition credit's expense cap and maximum.
+  - Search `"New York IT-225 instructions {year} filers do not enter"` →
+    `state.it225.codes_not_valid_on_it201`. Record EVERY code an IT-201 filer
+    may not carry, additions and subtractions and their pass-through `EA-`/`ES-`
+    forms. New York DISALLOWS those modifications rather than adjusting them,
+    so one on a return is a correction, not a rounding. Unfetched, the engine
+    still totals the modifications and says loudly that it did not check them.
   - Search `"New York pension and annuity income exclusion {year}"` and
     `"New York 529 college savings deduction {year}"` → `state.subtractions`.
     The pension exclusion is **PER SPOUSE** with an age gate and no transfer of
     an unused part between spouses — a household figure cannot express it — and
-    it sits on the IT-201 FACE, not on IT-225.
+    it sits on the IT-201 FACE, not on IT-225. The 529 deduction is keyed
+    **married-joint against everybody else**, so `single` covers single,
+    head-of-household, married-filing-separately and the surviving spouse;
+    reading it with four status keys finds three absent.
   - **If the taxpayer is a New York City resident** (`nyc_resident`, or NY in
     the `residency` counts): search
     `"New York City {year} resident income tax rate schedule site:tax.ny.gov"`
