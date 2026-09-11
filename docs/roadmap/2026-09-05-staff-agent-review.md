@@ -464,6 +464,16 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   in this slice and is named as a non-goal: pre-TCJA federal rules, so the 2%
   miscellaneous floor is live again and a federal Schedule A total is no substitute.
 
+  **SLICE 5 SHIPPED**: the household credit and the credit ORDERING (lines 39-46),
+  which closes the spec's open row on ordering. Nonrefundable credits are summed then
+  capped at the tax and the excess is LOST — so no ordering among them matters — but
+  **line 45 is added AFTER the cap**, so a credit cannot offset it and netting first
+  would under-state the return by the whole of line 45. The household credit is keyed on
+  FEDERAL AGI (the only threshold here that is), is BARRED for a dependent of another
+  taxpayer, and groups the statuses three ways that are not the §601 grouping — MFS
+  pairs with single for the schedule and gets half the credit here. Ten mutations, ten
+  reds. The other five credits, and which are REFUNDABLE, remain open.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension

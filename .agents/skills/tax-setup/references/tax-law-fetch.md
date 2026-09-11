@@ -222,10 +222,21 @@ a figure from a prior year.
     §151(c) ENTITLEMENT, which is why New York still allows one. NY grants no
     exemption for the taxpayer or spouse, which is why
     `personal_exemption.amount` ships as a declared 0 rather than a null.
-  - Search for each NY credit on IT-201 → `state.credits`: the household
-    credit table, the Empire State child credit, the child-and-dependent-care
-    table, the EIC share of the federal credit, the real-property-tax credit,
-    and the college-tuition credit's expense cap and maximum.
+  - Search `"New York State household credit table {year} site:tax.ny.gov"` →
+    `state.credits.household.table`, which has **THREE** sub-tables and the
+    grouping is NOT the one the rate schedules use: `single` alone, `mfs`
+    alone, and `mfj_hoh_qss` together. MFS pairs with single for §601 and gets
+    roughly HALF the credit here. It is keyed on **FEDERAL** adjusted gross
+    income — IT-201 line 19, not line 33 — unlike every other threshold in this
+    block. Record each band's `agi_over`/`agi_not_over` (a null `agi_over` is
+    the lowest band, whose floor "could be 0 or a negative amount"), single's
+    flat `amount`, and for the other two the full `by_exemptions` column list
+    PLUS `each_additional`, the per-head increment ADDED to the last column for
+    a larger household.
+  - Search for each remaining NY credit on IT-201 → `state.credits`: the
+    Empire State child credit, the child-and-dependent-care table, the EIC
+    share of the federal credit, the real-property-tax credit, and the
+    college-tuition credit's expense cap and maximum.
   - Search `"New York IT-225 instructions {year} filers do not enter"` →
     `state.it225.codes_not_valid_on_it201`. Record EVERY code an IT-201 filer
     may not carry, additions and subtractions and their pass-through `EA-`/`ES-`

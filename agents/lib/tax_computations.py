@@ -3134,6 +3134,168 @@ def compute_ny_tax(
         "taxable_income_not_over must be null. Re-run /tax-setup.")
 
 
+# IT-201-I household credit tables 1, 2 and 3. New York groups the statuses
+# THREE ways here and it is not the grouping it uses anywhere else on the
+# return: single alone, married-filing-separately alone, and everybody else
+# together. Reading it with the §601 schedules would put MFS with single, which
+# is right for the rate schedule and wrong by half for this credit.
+_NY_HOUSEHOLD_CREDIT_TABLE = {
+    "single": "single",
+    "mfj": "mfj_hoh_qss", "hoh": "mfj_hoh_qss", "qss": "mfj_hoh_qss",
+    "mfs": "mfs",
+}
+
+
+def compute_ny_household_credit(
+    federal_agi: float,
+    filing_status: str,
+    exemptions: int,
+    table: "dict | None" = None,
+    can_be_claimed_as_dependent: bool = False,
+) -> dict:
+    """IT-201 line 40 — the New York State household credit.
+
+    Three things about it are unlike everything else in this module:
+
+    - It is keyed on FEDERAL adjusted gross income, not New York's. Every other
+      threshold here reads line 33; this one reads line 19, and handing it
+      NYAGI mis-selects the band for any taxpayer with modifications.
+    - A taxpayer who CAN BE CLAIMED AS A DEPENDENT on someone else's federal
+      return does not qualify at all — item C on the front of the form, the
+      same fact the standard deduction splits on. It is a bar, not a
+      reduction.
+    - The statuses are grouped THREE ways, and it is not the grouping the rate
+      schedules use: single alone, married-filing-separately alone, and
+      married-joint with head-of-household and the surviving spouse together.
+      Married-filing-separately pairs with SINGLE for the rate schedule and
+      gets roughly half the credit here.
+
+    `exemptions` is the count on the form's own terms: the dependents listed at
+    item H, PLUS one for the taxpayer, plus one more for a spouse on a joint
+    return. Past the last column the table gives a per-head increment to add,
+    which is why the count is passed rather than clamped by the caller.
+    """
+    agi = _ny_amount(federal_agi, "federal_agi", allow_negative=True)
+    if isinstance(exemptions, bool) or not isinstance(exemptions, int) \
+            or exemptions < 1:
+        raise ValueError(
+            f"exemptions must be a whole number of at least 1 (the taxpayer "
+            f"themselves), got {exemptions!r}")
+    if can_be_claimed_as_dependent:
+        return {"credit": 0.0, "band": None, "notes": [
+            "No household credit: the taxpayer can be claimed as a dependent "
+            "on another federal return (IT-201 item C). This is a BAR, not a "
+            "reduced amount."]}
+    key = _NY_HOUSEHOLD_CREDIT_TABLE.get(filing_status)
+    if key is None:
+        raise ValueError(
+            f"no household credit table for filing status {filing_status!r}")
+    bands = (table or {}).get(key)
+    if not bands:
+        raise ValueError(
+            f"state.credits.household.table[{key!r}] is not fetched. The "
+            "household credit is a TABLE, not a formula — there is nothing to "
+            "compute it from, and omitting it over-states the tax.")
+    for band in bands:
+        lower = band.get("agi_over")
+        upper = band.get("agi_not_over")
+        # The lowest band has NO lower bound: the instructions note the figure
+        # there "could be 0 or a negative amount", so a taxpayer with a loss
+        # still lands in it.
+        if (lower is None or agi > lower) and (upper is None or agi <= upper):
+            if "amount" in band:
+                credit = _ny_amount(band["amount"], "household credit amount")
+            else:
+                by_count = band.get("by_exemptions") or []
+                if not by_count:
+                    raise ValueError(
+                        "a household credit band carries neither a flat "
+                        "`amount` nor a `by_exemptions` column list")
+                if exemptions <= len(by_count):
+                    credit = _ny_amount(by_count[exemptions - 1],
+                                        "household credit amount")
+                else:
+                    # "For each individual over 7, ADD the amount in this
+                    # column to the column 7 amount" — an increment on top of
+                    # the last column, not a replacement for it.
+                    each = band.get("each_additional")
+                    if each is None:
+                        raise ValueError(
+                            f"{exemptions} exemptions is past the last fetched "
+                            "column and the band has no `each_additional`; the "
+                            "table continues rather than stopping, so "
+                            "truncating here under-states the credit")
+                    credit = (_ny_amount(by_count[-1], "household credit") +
+                              _ny_amount(each, "household credit increment")
+                              * (exemptions - len(by_count)))
+            return {"credit": round(credit, 2),
+                    "band": {"over": lower, "not_over": upper}, "notes": []}
+    # The table runs out at an income above which no credit is allowed, and the
+    # form simply has no row. Zero is the right answer and it is stated, not
+    # fallen into.
+    return {"credit": 0.0, "band": None, "notes": [
+        "No household credit: federal adjusted gross income is above the last "
+        "band of the table."]}
+
+
+def compute_ny_state_tax_total(
+    tax_before_credits: float,
+    household_credit: float = 0.0,
+    resident_credit: float = 0.0,
+    other_nonrefundable_credits: float = 0.0,
+    net_other_state_taxes: float = 0.0,
+) -> dict:
+    """IT-201 lines 39 through 46 — where the nonrefundable credits land.
+
+    Two rules, and the second is the one an implementation gets wrong:
+
+    - The nonrefundable credits are SUMMED and then capped at the tax: line 44
+      is "Subtract line 43 from line 39 (if line 43 is more than line 39, enter
+      0)". The excess is simply lost, and no ordering among them changes the
+      total — which is why this takes three figures rather than a sequence.
+    - Line 45, the net other New York State taxes, is added AFTER that cap. A
+      nonrefundable credit therefore CANNOT offset it. Netting everything
+      first and then applying the credits would let a credit absorb a tax the
+      form never lets it reach, and under-state the return.
+
+    Refundable credits are not here at all: they are payments further down the
+    form, and treating one as nonrefundable would silently discard the part
+    that should have been refunded.
+    """
+    tax = _ny_amount(tax_before_credits, "tax_before_credits")
+    household = _ny_amount(household_credit, "household_credit")
+    resident = _ny_amount(resident_credit, "resident_credit")
+    other = _ny_amount(other_nonrefundable_credits,
+                       "other_nonrefundable_credits")
+    net_other = _ny_amount(net_other_state_taxes, "net_other_state_taxes")
+
+    total_credits = round(household + resident + other, 2)
+    notes: "list[str]" = []
+    after_credits = round(max(tax - total_credits, 0.0), 2)
+    if total_credits > tax:
+        notes.append(
+            f"Nonrefundable credits of {total_credits:,.2f} exceed the tax of "
+            f"{tax:,.2f}; {total_credits - tax:,.2f} is lost. They cannot "
+            "reduce the tax below zero and they do not carry forward.")
+    # Only when the credits were CAPPED. On an ordinary return the credits
+    # applied in full and nothing about line 45 is surprising; saying it every
+    # time would put a line in `meta.limitations` that means nothing, which is
+    # how a reader learns to skim them.
+    if net_other and total_credits > tax:
+        notes.append(
+            "The net other New York State taxes are added AFTER the credits "
+            "are applied, so the lost credit above does not offset them "
+            "either.")
+    return {
+        "line_43_total_nonrefundable": total_credits,
+        "line_44_after_credits": after_credits,
+        "line_45_net_other_taxes": round(net_other, 2),
+        "line_46_total_state_tax": round(after_credits + net_other, 2),
+        "credits_lost": round(max(total_credits - tax, 0.0), 2),
+        "notes": notes,
+    }
+
+
 def compute_ny_itemized(
     itemized_before_adjustment: float,
     charitable_contributions: float,

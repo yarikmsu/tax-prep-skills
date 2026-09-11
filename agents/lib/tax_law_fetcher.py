@@ -635,7 +635,24 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             # `personal_exemption: 0` exists so an absent key cannot read as
             # "not researched"; the same argument applies to these.
             "credits": {
-                "household": {"table": []},
+                # THREE tables, and the grouping is not the one the rate
+                # schedules use: single alone, married-filing-separately
+                # alone, and married-joint with head-of-household and the
+                # surviving spouse together. MFS pairs with SINGLE for the
+                # §601 schedule and gets roughly half the credit here, so a
+                # shared key would halve or double it.
+                #
+                # Keyed on FEDERAL adjusted gross income, unlike every other
+                # threshold in this block. Each band is
+                # {"agi_over", "agi_not_over", …} where a null `agi_over` is
+                # the lowest band — the instructions note the figure there
+                # "could be 0 or a negative amount". Single's bands carry a
+                # flat `amount`; the other two carry `by_exemptions`, one
+                # figure per column, plus `each_additional` for a household
+                # larger than the last column, which is ADDED to that column
+                # rather than replacing it.
+                "household": {"table": {"single": [], "mfj_hoh_qss": [],
+                                        "mfs": []}},
                 "empire_state_child": None,
                 "child_and_dependent_care": {"table": []},
                 "earned_income_share": None,

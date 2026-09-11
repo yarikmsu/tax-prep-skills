@@ -235,7 +235,32 @@ OVER-states the number the taxpayer acts on is a hard error here:
    tax is simply zero. Refusing blocked the whole return.
 5. `compute_nyc_tax` and `compute_yonkers_surcharge` — the city layer.
 6. `compute_mctmt` — self-employment in the MCTD, or a named limitation.
-7. NY credits, in the statutory ordering (**OPEN**, row 3).
+7. NY credits — **the ORDERING is settled (slice 5), and the row-3 OPEN is
+   closed for it.** `compute_ny_state_tax_total` covers lines 39-46. The
+   nonrefundable credits are SUMMED and then capped at the tax — line 44 is
+   "Subtract line 43 from line 39 (if line 43 is more than line 39, enter 0)" —
+   so no ordering AMONG them changes the total, and the excess is simply lost
+   with no carry-forward. What does matter is that **line 45, the net other
+   New York State taxes, is added AFTER that cap**: a nonrefundable credit
+   cannot offset it, and netting everything first would let a credit absorb a
+   tax the form never lets it reach.
+
+   `compute_ny_household_credit` (line 40) is the first of them, and it is
+   unlike everything else in the module three ways: keyed on **FEDERAL** AGI
+   rather than line 33; **barred entirely** for a taxpayer who can be claimed
+   as a dependent on another federal return (item C, the same fact the
+   standard deduction splits on and nothing in the intake asks yet); and the
+   statuses grouped THREE ways that are not the §601 grouping — single alone,
+   married-filing-separately alone, and married-joint with head-of-household
+   and the surviving spouse together. MFS pairs with SINGLE for the rate
+   schedule and gets roughly half the credit here.
+
+   **STILL OPEN**: the other five — the Empire State child credit, the
+   child-and-dependent-care credit, the EIC piggyback, the real-property-tax
+   credit and the college-tuition credit — and which of them are REFUNDABLE.
+   They are payments further down the form rather than credits against line 39,
+   and treating one as nonrefundable would silently discard the part that
+   should have been refunded.
 
 ## 6. Registrations (playbook step 5)
 

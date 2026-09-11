@@ -21,6 +21,8 @@ from agents.lib.tax_computations import (
     compute_ny_tax,
     compute_ny_agi,
     compute_ny_itemized,
+    compute_ny_household_credit,
+    compute_ny_state_tax_total,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -5531,3 +5533,164 @@ def test_ny_itemized_second_fraction_caps_if_the_band_and_its_range_diverge():
     # A full quarter, then a second full quarter — not 2.1 quarters.
     assert out["line_46_adjustment"] == 20000
     assert out["regime"] == "second_reduction"
+
+
+# --- Z1 slice 5: the household credit and where the credits land ------------
+#
+# Form IT-201-I (2025) pp.12-13 (household credit tables 1-3 and their notes)
+# and Form IT-201 (2025) p.3 lines 39-46.
+
+# Table 1 (single) and table 2 (MFJ/HOH/QSS) as published, first bands only —
+# the arithmetic under test is the band selection and the over-7 increment,
+# not the whole table.
+_NY_2025_HOUSEHOLD_TABLE = {
+    "single": [
+        {"agi_over": None, "agi_not_over": 5000, "amount": 75},
+        {"agi_over": 5000, "agi_not_over": 6000, "amount": 60},
+        {"agi_over": 6000, "agi_not_over": 7000, "amount": 50},
+    ],
+    "mfj_hoh_qss": [
+        {"agi_over": None, "agi_not_over": 5000,
+         "by_exemptions": [90, 105, 120, 135, 150, 165, 180],
+         "each_additional": 15},
+        {"agi_over": 5000, "agi_not_over": 6000,
+         "by_exemptions": [75, 90, 105, 120, 135, 150, 165],
+         "each_additional": 15},
+    ],
+    "mfs": [
+        {"agi_over": None, "agi_not_over": 5000,
+         "by_exemptions": [45, 53, 60, 68, 75, 83, 90],
+         "each_additional": 8},
+    ],
+}
+
+
+def _hh(agi=4000.0, status="single", exemptions=1, **kw):
+    return compute_ny_household_credit(
+        agi, status, exemptions, _NY_2025_HOUSEHOLD_TABLE, **kw)
+
+
+def test_ny_household_credit_is_keyed_on_federal_agi():
+    """Every other threshold in this module reads IT-201 line 33. This one
+    reads line 19 — "If your FEDERAL adjusted gross income is over" — so
+    handing it NYAGI mis-selects the band for any taxpayer with modifications,
+    and the bands here are $1,000 wide."""
+    assert _hh(4000)["credit"] == 75
+    assert _hh(5500)["credit"] == 60
+    assert _hh(6500)["credit"] == 50
+
+
+def test_ny_household_credit_lowest_band_has_no_floor():
+    """The instructions note the figure at the bottom of the table "could be 0
+    or a negative amount", so a taxpayer with a loss still lands in it. A band
+    list read as starting at zero would find no row and return nothing."""
+    assert _hh(-20000)["credit"] == 75
+    assert _hh(0)["credit"] == 75
+
+
+def test_ny_household_credit_is_barred_for_a_dependent_of_another():
+    """Item C on the front of the form: "If you marked the Yes box at item C
+    you do not qualify for this credit." A BAR, not a reduced amount — and the
+    same fact the standard deduction splits on, which nothing in the intake
+    asks yet."""
+    out = _hh(4000, can_be_claimed_as_dependent=True)
+    assert out["credit"] == 0.0
+    assert any("BAR" in n for n in out["notes"])
+
+
+def test_ny_household_credit_groups_the_statuses_its_own_way():
+    """THREE tables, and not the §601 grouping. Married-filing-separately pairs
+    with SINGLE for the rate schedule and gets its own, roughly halved, table
+    here — while head-of-household and the surviving spouse join married-joint.
+    Reusing the schedule mapping would halve or double the credit."""
+    assert _hh(4000, "mfj", 2)["credit"] == 105
+    assert _hh(4000, "hoh", 2)["credit"] == 105
+    assert _hh(4000, "qss", 2)["credit"] == 105
+    assert _hh(4000, "mfs", 2)["credit"] == 53
+    assert _hh(4000, "single", 1)["credit"] == 75
+
+
+def test_ny_household_credit_adds_the_increment_past_the_last_column():
+    """Note 3: "For each individual over 7, ADD the amount in this column to
+    the column 7 amount." Added, not substituted — a household of nine gets the
+    column-7 figure plus two increments, and clamping at column 7 would
+    under-state the credit."""
+    assert _hh(4000, "mfj", 7)["credit"] == 180
+    assert _hh(4000, "mfj", 9)["credit"] == 180 + 2 * 15
+    assert _hh(4000, "mfs", 10)["credit"] == 90 + 3 * 8
+
+
+def test_ny_household_credit_refuses_to_truncate_a_table_that_continues():
+    """A band whose columns run out and that carries no increment is a
+    half-transcribed table. Returning the last column would under-state the
+    credit for every larger household, silently."""
+    truncated = {"single": [{"agi_over": None, "agi_not_over": 5000,
+                             "by_exemptions": [90]}]}
+    with pytest.raises(ValueError, match="each_additional"):
+        compute_ny_household_credit(4000, "single", 3, truncated)
+
+
+def test_ny_household_credit_above_the_table_is_stated_not_fallen_into():
+    """The table simply stops at an income above which no credit is allowed.
+    Zero is the right answer; saying so is what distinguishes it from a band
+    list that was never fetched."""
+    out = _hh(500000)
+    assert out["credit"] == 0.0
+    assert any("above the last band" in n for n in out["notes"])
+
+
+def test_ny_household_credit_refuses_an_unfetched_table():
+    """It is a TABLE, not a formula — there is nothing to compute it from, and
+    omitting it OVER-states the tax."""
+    with pytest.raises(ValueError, match="not fetched"):
+        compute_ny_household_credit(4000, "single", 1, {})
+
+
+def test_ny_household_credit_refuses_an_impossible_exemption_count():
+    """The count includes the taxpayer themselves, so it is never below one."""
+    for bad in (0, -1, True, 2.5):
+        with pytest.raises(ValueError, match="whole number"):
+            _hh(4000, "mfj", bad)
+
+
+def test_ny_nonrefundable_credits_are_capped_at_the_tax_and_lost():
+    """IT-201 line 44 verbatim: "Subtract line 43 from line 39 (if line 43 is
+    more than line 39, enter 0)." The excess does not carry forward, and no
+    ordering among them changes the total — which is why the total is computed
+    from three figures rather than a sequence."""
+    out = compute_ny_state_tax_total(1000, household_credit=150,
+                                     other_nonrefundable_credits=2000)
+    assert out["line_43_total_nonrefundable"] == 2150
+    assert out["line_44_after_credits"] == 0.0
+    assert out["credits_lost"] == 1150
+    assert any("do not carry forward" in n for n in out["notes"])
+
+
+def test_ny_other_state_taxes_are_added_after_the_credit_cap():
+    """Line 45 comes AFTER line 44, so a nonrefundable credit cannot offset it.
+    Netting everything first and then applying the credits would let a credit
+    absorb a tax the form never lets it reach — and under-state the return by
+    the whole of line 45."""
+    out = compute_ny_state_tax_total(1000, household_credit=1200,
+                                     net_other_state_taxes=300)
+    assert out["line_44_after_credits"] == 0.0
+    assert out["line_46_total_state_tax"] == 300, (
+        "the credit absorbed the other state taxes, which the form does not "
+        "allow")
+    assert any("added AFTER" in n for n in out["notes"]), (
+        "a capped credit and a line 45 is exactly when a reader wonders why "
+        "the credit did not absorb it")
+    # And the note stays quiet on the ordinary return, where nothing about
+    # line 45 is surprising — see the plain-arithmetic case below.
+
+
+def test_ny_state_tax_total_is_plain_arithmetic_when_nothing_is_capped():
+    out = compute_ny_state_tax_total(5000, household_credit=75,
+                                     resident_credit=400,
+                                     other_nonrefundable_credits=25,
+                                     net_other_state_taxes=100)
+    assert out["line_43_total_nonrefundable"] == 500
+    assert out["line_44_after_credits"] == 4500
+    assert out["line_46_total_state_tax"] == 4600
+    assert out["credits_lost"] == 0.0
+    assert out["notes"] == []
