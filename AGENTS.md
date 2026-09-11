@@ -219,10 +219,12 @@ are plain Markdown instructions and are written to be executable that way.
   one that UNDER-states it degrades with a loud banner. Never guess a value that
   changes a return.
 
-**State support is California-first** (2026-07-12 product decision): CA Form 540
-is computed in depth, Florida is modeled as a `type: "none"` regime, other states
-are bracket-estimate only, and NYC / part-year / nonresident returns are not
-modeled. Adding a state is community-contribution territory — follow
+**Two states are computed in depth**: CA Form 540, and NY Form IT-201 for a
+FULL-YEAR RESIDENT — including New York City, Yonkers and the MCTMT (lines
+47-58), so a City taxpayer sees no capability gate. Florida is modeled as a
+`type: "none"` regime, other states are bracket-estimate only, and part-year /
+nonresident returns are not modeled for either. Adding a state is
+community-contribution territory — follow
 `docs/contributing/state-module-playbook.md` and the spec template at
 `docs/superpowers/specs/TEMPLATE-state-module.md`.
 

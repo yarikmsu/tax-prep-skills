@@ -164,7 +164,9 @@ Skip the whole block only when the taxpayer is neither a City nor a Yonkers
 resident and has no Yonkers earnings and no MCTD self-employment — and say so
 in `notes`, rather than leaving the section silent.
 
-**New York City** — gated on `flags.nyc_resident`. City residency is the
+**New York City** — gated on `flags.nyc_resident`, which is the CITY-TAX
+SWITCH rather than a block: the rule that used to stop the return on it was
+deleted when this branch started computing the city tax. City residency is the
 STATE's test applied to the city, so city days are a subset of state days and
 the reverse cannot happen; there is no `days_present_by_city` field, so this
 stays the taxpayer's assertion.
@@ -184,6 +186,14 @@ with `mctmt = state.mctmt`. **TWO ZONES, which are GEOGRAPHY and not income**,
 carrying DIFFERENT rates, and the threshold is a per-zone **CLIFF**: over it,
 the WHOLE amount is taxed, not the excess. Neither zone's rate may stand in for
 the other's, and an unfetched rate for a zone with earnings refuses.
+
+**Yonkers** — TWO DIFFERENT TAXES with two different populations, and a
+taxpayer can owe either without the other, so they have two flags:
+`flags.yonkers_resident` drives line 55's resident income tax surcharge, and
+`flags.yonkers_nonresident_earnings` drives line 56's nonresident earnings tax
+for someone who earns in Yonkers while living elsewhere. Both are
+required-present in the capability gate for the same reason `nyc_resident` is:
+absence reads as False and drops a real liability.
 
 Then `compute_city_and_yonkers_total(...)`. **Line 58 adds the MCTMT and both
 Yonkers taxes AFTER the two city credit caps** — the line-45 pattern a second

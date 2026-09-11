@@ -99,7 +99,7 @@ and the CA fixture is the eval harness's first case. Verified against `capabilit
 | **CA** | Form 540 in depth: Schedule CA, `compute_ca_itemized`, Schedule P AMT, MHST, exemption credits, excess SDI, 540-ES safe harbor and vouchers. Its own result section, ledger category (`state_withholding_ca`), PDF page and YoY mover fields. | **Supported.** |
 | **FL** | `type: "none"` regime (PR #65): affirmative no-income-tax statement, Schedule A sales-tax election automated from the FL table, DR-405 and homestead flags, FL calendar events. | **Supported.** |
 | **NY (state)** | The template is a stub (`brackets`, two standard-deduction keys, an empty `nyc_tax`). Step 10 falls to the generic "bracket-based ESTIMATE" path: no tax-benefit recapture, no IT-225 modifications, no IT-196 itemizing, no credits, no IT-2105 estimates. `tie_out` has no NY withholding category, so a W-2 box 17 for NY has nowhere to land. | **Estimate only.** Wrong for any high earner (recapture) and for every PTET owner (no add-back / IT-653). |
-| **NYC** | `nyc_resident` is an UNSUPPORTED capability rule: the gate **BLOCKS** the return (exit 2) until the user acknowledges the limitation in writing. Nothing computes the resident tax. | **Blocked.** A NYC user cannot get a computed return from the toolkit today. |
+| **NYC** | ~~`nyc_resident` is an UNSUPPORTED capability rule~~ — **RESOLVED (Z1 slice 14).** The rule is deleted and the flag is the city-tax switch; IT-201 lines 47-58 compute the city tax, both Yonkers taxes and the MCTMT. | **Computed.** A NYC user gets a return with no gate, no acknowledgement and no manual note about the city. |
 | **NC** | No template, no rule: the generic fallback (`note: "State template not pre-built"`, empty brackets, no `type`) and the same ESTIMATE note. NC is a flat-rate D-400 whose rate steps down on a statutory year schedule, with its own standard deduction and child deduction off federal AGI plus Schedule S additions/subtractions. | **Estimate only**, but the cheapest state to model: one bracket, one deduction table, a short modification list. |
 | **WA (Seattle)** | Deliberately NOT in `_NO_INCOME_TAX_STATES` because of the RCW 82.87 capital-gains excise, so a wage-only WA filer gets the ESTIMATE note instead of the affirmative "no return" statement FL gets. If a fetch ever populates `state.brackets`, projection and harvest would tax ORDINARY income — phantom liability. The excise itself is not computed. | **Not modeled.** Understates for a large-LTCG seller (over-statement is impossible; that is the safe direction) and cannot reassure a wage-only filer. |
 
@@ -386,7 +386,7 @@ surface where CA is wired in has an NY/NYC twin:
 
 | Surface | CA today | NYC at done |
 |---|---|---|
-| Capability gate | no rule | `nyc_resident` rule DELETED, flag re-purposed as the city-tax switch |
+| Capability gate | no rule | `nyc_resident` rule DELETED, flag re-purposed as the city-tax switch — **SHIPPED, slice 14** |
 | `/tax-setup` interview | CA questions | NY residency + NYC/Yonkers residency + 414(h)/IRC-125 prompts |
 | `tax_law_<year>.json` | `state.CA` block | `state.NY` block with year-gated tables, recapture, NYC and Yonkers brackets, pinned to tax.ny.gov |
 | `/tax-parse` + ledger | `state_withholding_ca` | `state_withholding_ny`, `city_withholding_nyc` (W-2 box 19/20), box 14 414(h)/IRC-125 |
@@ -617,6 +617,33 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   already told to work from; the definition edit folds into Y2. Four mutations, four reds;
   one needed a purpose-written case, because TY2026's dates do not separate New York's
   rollover rule from the federal one at all.
+
+  **SLICE 14 SHIPPED — Z1 IS DONE, and the depth note was written last of all**:
+  the `nyc_resident` UNSUPPORTED rule is **DELETED**. A New York City taxpayer no longer
+  sees the capability gate, which is the owner's own definition of done — and a rule that
+  blocks a return the engine can now produce is a gate crying wolf. The flag STAYS
+  required-present, and that matters MORE than it did, not less: a missing answer once
+  blocked the return loudly and would now silently omit the city tax from a return that
+  owes it, which is the under-stating direction.
+
+  Yonkers got **two** flags, not one. The resident surcharge (line 55) and the
+  nonresident earnings tax (line 56) are two different taxes with two different
+  populations — a taxpayer can owe either without the other — so one question cannot
+  stand for both, and both are required-present for the same reason.
+
+  `/tax-verify` gained an **IT-201 line map** with three refusals beside it: a line-46
+  match is NOT a New York tie-out (lines 47-58 are a separate stack and for a City
+  resident often the larger half — a return can agree on line 46 to the cent and be
+  thousands wrong on line 60); line 39 is not the state tax; and a null line 59 is
+  UNVERIFIED, never agreement with a software zero. Every mapped path is pinned against
+  the template by test.
+
+  **The depth note comes last because it is the sentence a reader uses to decide how far
+  to trust the return.** Every clause names something that computes. What it does NOT
+  claim is as load-bearing: each refundable credit's AMOUNT, IT-196 lines 1-45 and IT-201
+  lines 44/45 are INPUTS, line 59 is ASKED rather than assumed zero, and IT-203 is not
+  modeled. A test asserts every form the note calls an input is named as one in the
+  compute reference too. Five mutations, five reds.
 
   **A note carried here since slice 1 was STALE and is corrected rather than re-fixed**:
   the NY PTET Mar 15/16 next-business-day defect from PR #22's deferred list is already

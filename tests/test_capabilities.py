@@ -68,7 +68,6 @@ def test_iso_exercise_is_manual_not_blocking():
     ("has_rental_income", "rental_income"),
     ("has_marketplace_insurance", "marketplace_insurance"),
     ("moved_states_this_year", "part_year_residency"),
-    ("nyc_resident", "nyc_resident"),
     ("statutory_resident_of_another_state", "statutory_residency_second_state"),
     ("has_nonresident_source_income", "nonresident_source_income"),
     ("has_household_employees", "household_employees"),
@@ -383,12 +382,14 @@ def test_state_ca_noted_in_depth():
 
 
 def test_state_other_noted_estimate_only():
-    # NY (not TX): TX is now in _NO_INCOME_TAX_STATES and gets the
-    # affirmative no-tax note (see TestNoIncomeTaxStateNote) — this test
-    # needs a state that still falls through to the bracket-based estimate.
-    r = C.evaluate(_profile(state="NY"))
+    # CO: not a no-income-tax state, not one of the two modeled in depth.
+    # This test used NY until the IT-201 module shipped, at which point NY
+    # started returning its own depth note — the state that "falls through"
+    # is a moving target and the comment naming one is the whole reason this
+    # keeps having to be re-pointed.
+    r = C.evaluate(_profile(state="CO"))
     assert "ESTIMATE only" in r.state_note
-    assert "(NY)" in r.state_note
+    assert "(CO)" in r.state_note
 
 
 def test_state_missing_noted():
@@ -1210,16 +1211,149 @@ def test_a_new_york_filer_is_not_blocked_by_their_own_state():
 
 
 def test_the_statutory_residency_rule_is_distinct_from_its_neighbours():
-    """All four can fire at once, and each catches a case the others cannot:
-    `part_year_residency` a mid-year MOVE, `nonresident_source_income` income
-    SOURCED elsewhere, `nyc_resident` the city."""
+    """Each catches a case the others cannot: `part_year_residency` a mid-year
+    MOVE, `nonresident_source_income` income SOURCED elsewhere.
+
+    `nyc_resident` was the third and is no longer a RULE at all — the New York
+    module computes the city tax, so the flag became the city-tax switch. It
+    is still checked below, from the required-gate list rather than the
+    registry, because a flag that DRIVES a computation has to be answered for
+    the same reason one that blocked did."""
     by_id = {r.rule_id: r for r in C.RULES}
     new = by_id["statutory_residency_second_state"]
     assert new.level == C.UNSUPPORTED, (
         "two resident states taxing the same income is not a MANUAL worksheet "
         "item — it changes the return")
-    for other in ("part_year_residency", "nonresident_source_income",
-                  "nyc_resident"):
+    for other in ("part_year_residency", "nonresident_source_income"):
         assert by_id[other].flag != new.flag, (
             f"{other} and the statutory-residency rule share a flag, so one of "
             "them can never fire on its own")
+    assert "nyc_resident" not in by_id, (
+        "the NYC rule is back in the registry — it was deleted when the IT-201 "
+        "module started computing the city tax, and a rule that blocks a "
+        "return the engine can now produce is a gate crying wolf")
+    assert "nyc_resident" in C._REQUIRED_GATE_FLAGS
+    assert new.flag != "nyc_resident"
+
+
+class TestTheNewYorkModuleIsDone:
+    """The last Z1 slice: the block becomes a switch, and the depth note is
+    allowed to say what it now says."""
+
+    REPO = Path(__file__).resolve().parents[1]
+
+    # --- the rule is gone, the flag is load-bearing -----------------------
+
+    def test_the_nyc_rule_no_longer_blocks_a_return(self):
+        """Owner ruling: a New York City taxpayer must never see the
+        capability gate. A rule that blocks a return the engine can now
+        produce is a gate crying wolf."""
+        r = C.evaluate(_profile({"nyc_resident": True}))
+        assert r.blocking == ()
+        assert "nyc_resident" not in [rule.rule_id for rule in C.RULES]
+
+    def test_the_flag_is_still_required_present(self):
+        """It matters MORE than it did, not less: it used to block loudly and
+        would now silently omit the city tax from a return that owes it."""
+        assert "nyc_resident" in C._REQUIRED_GATE_FLAGS
+        p = _profile()
+        p["flags"].pop("nyc_resident")
+        blocker = next(f for f in C.evaluate(p).blocking
+                       if f.rule_id == "unanswered_gate_questions")
+        assert "nyc_resident" in blocker.note
+
+    def test_yonkers_is_two_flags_because_it_is_two_taxes(self):
+        """The resident surcharge and the nonresident earnings tax have
+        different populations — a taxpayer can owe either without the other —
+        so one flag cannot stand for both."""
+        for flag in ("yonkers_resident", "yonkers_nonresident_earnings"):
+            assert flag in C._REQUIRED_GATE_FLAGS, flag
+        template = json.loads(
+            (self.REPO / "agents/templates/taxpayer_profile_template.json")
+            .read_text())
+        for flag in ("yonkers_resident", "yonkers_nonresident_earnings"):
+            assert flag in template["flags"], flag
+
+    def test_neither_yonkers_flag_blocks(self):
+        for flag in ("yonkers_resident", "yonkers_nonresident_earnings"):
+            assert C.evaluate(_profile({flag: True})).blocking == (), flag
+
+    def test_every_required_gate_flag_is_asked_by_the_interview(self):
+        """The registry test covers rule flags; these three have no rule, so
+        nothing covered them — a required flag the interview never asks is a
+        gate nobody can clear."""
+        setup = skill_text("tax-setup")
+        for flag in C._REQUIRED_GATE_FLAGS:
+            assert flag in setup, (
+                f"flags.{flag} must be answered explicitly, and the "
+                ".agents/skills/tax-setup/ tree never mentions it")
+
+    def test_the_interview_asks_both_yonkers_questions_separately(self):
+        setup = skill_text("tax-setup")
+        assert "Did you live in Yonkers?" in setup
+        assert "yonkers_nonresident_earnings" in setup
+        assert "two DIFFERENT taxes" in setup
+
+    # --- the depth note ---------------------------------------------------
+
+    def test_new_york_gets_a_depth_note_not_a_bracket_estimate(self):
+        note = C.evaluate(_profile(state="NY")).state_note
+        assert "computed in depth" in note
+        assert "ESTIMATE only" not in note
+
+    def test_the_note_names_what_is_computed(self):
+        note = C.evaluate(_profile(state="NY")).state_note
+        for claim in ("IT-201", "recapture", "IT-225", "IT-196", "§615",
+                      "household credit", "47-58", "MCTMT", "Yonkers"):
+            assert claim in note, claim
+
+    def test_the_note_names_what_is_NOT_computed(self):
+        """As load-bearing as what it claims: a reader deciding how far to
+        trust the return needs the inputs named, and the two they are most
+        likely to assume away are the credits and the part-year return."""
+        note = C.evaluate(_profile(state="NY")).state_note
+        assert "IT-213" in note and "not computed" in note
+        assert "IT-203" in note and "not modeled" in note
+        assert "ASKED" in note and "zero" in note
+
+    def test_every_form_the_note_names_as_an_input_really_is_one(self):
+        """A depth note is only worth having if its list of inputs matches the
+        skill's. The compute reference is where the non-goals are enumerated
+        for the agent that writes the return."""
+        note = C.evaluate(_profile(state="NY")).state_note
+        ny_ref = (self.REPO / ".agents/skills/tax-compute/references"
+                  / "state-return-ny.md").read_text()
+        for form in ("IT-213", "IT-216", "IT-215", "IT-214", "IT-272",
+                     "IT-203"):
+            assert form in note and form in ny_ref, form
+
+    def test_the_fallback_note_names_both_deep_states(self):
+        note = C.evaluate(_profile(state="CO")).state_note
+        assert "CA and NY" in note
+
+    def test_california_is_untouched(self):
+        note = C.evaluate(_profile(state="CA")).state_note
+        assert "Form 540 computed in depth" in note
+
+    # --- the /tax-verify line map ----------------------------------------
+
+    def test_tax_verify_carries_an_it201_line_map(self):
+        body = skill_text("tax-verify")
+        for line in ("line_33_nyagi", "line_46_total_state_tax",
+                     "line_54e_total_mctmt",
+                     "line_58_total_city_and_yonkers",
+                     "line_60_total_taxes", "line_80_amount_owed"):
+            assert line in body, line
+
+    def test_the_line_map_refuses_line_46_as_a_tie_out(self):
+        """Lines 47-58 are a SEPARATE stack, and for a City resident they are
+        often the larger half. A return can agree on line 46 to the cent and
+        be thousands of dollars wrong on line 60."""
+        body = skill_text("tax-verify")
+        assert "Do not accept a line 46 match as a New York tie-out" in body
+        assert "Line 39 is not the state tax" in body
+
+    def test_the_line_map_says_line_59_null_is_not_agreement(self):
+        body = skill_text("tax-verify")
+        assert "never read the null as agreement" in body
+

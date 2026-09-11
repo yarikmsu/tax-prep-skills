@@ -263,6 +263,59 @@ Investigate only if software shows MORE, or the difference is large. A line 38
 mismatch also propagates into line 37/35a (the penalty folds into the payment
 or reduces the refund).
 
+**New York — Form IT-201 (full-year resident).** The state bullet below is a
+generic "AGI, tax, credits, refund" check and is not enough for a return whose
+city lines a taxpayer can pass over without noticing. Tie EVERY line here,
+including 47-58:
+
+| Line | Description | result.json field |
+|------|-------------|-------------------|
+| 19 | Federal AGI (recomputed) | new_york_it201.line_19_federal_agi |
+| 24 | Total additions | new_york_it201.additions.line_24_total_additions |
+| 32 | Total subtractions | new_york_it201.subtractions.line_32_total_subtractions |
+| 33 | New York AGI | new_york_it201.line_33_nyagi |
+| 34 | Standard or itemized deduction | new_york_it201.line_34_deduction |
+| 36 | Dependent exemptions | new_york_it201.line_36_dependent_exemptions |
+| 38 | Taxable income | new_york_it201.line_38_taxable_income |
+| 39 | New York State tax | new_york_it201.line_39_ny_tax |
+| 40 | Household credit | new_york_it201.line_40_household_credit |
+| 43 | Total nonrefundable credits | new_york_it201.line_43_total_nonrefundable |
+| 44 | Tax after credits | new_york_it201.line_44_after_credits |
+| 45 | Net other NYS taxes (IT-201-ATT) | new_york_it201.line_45_net_other_taxes |
+| 46 | **Total New York State tax** | new_york_it201.line_46_total_state_tax |
+| 52 | NYC tax before credits | new_york_it201.nyc.line_52_city_tax_before_credits |
+| 54 | NYC tax after credits | new_york_it201.nyc.line_54_after_city_credits |
+| 54e | MCTMT | new_york_it201.mctmt.line_54e_total_mctmt |
+| 55 | Yonkers resident surcharge | new_york_it201.yonkers.line_55_yonkers_resident_surcharge |
+| 56 | Yonkers nonresident earnings tax | new_york_it201.yonkers.line_56_yonkers_nonresident_earnings_tax |
+| 58 | **Total city / Yonkers / MCTMT** | new_york_it201.line_58_total_city_and_yonkers |
+| 59 | Sales or use tax | new_york_it201.line_59_sales_or_use_tax |
+| 60 | Total taxes | new_york_it201.line_60_total_taxes |
+| 72 | NYS withholding (W-2 box 17) | new_york_it201.refundable_credits_and_payments.line_72_state_withholding |
+| 73 | NYC withholding (W-2 box 19) | new_york_it201.refundable_credits_and_payments.line_73_city_withholding |
+| 76 | Total payments | new_york_it201.line_76_total_payments |
+| 78 | Refund | new_york_it201.line_78_refund |
+| 80 | Amount owed | new_york_it201.line_80_amount_owed |
+
+**Do not accept a line 46 match as a New York tie-out.** Lines 47-58 are a
+SEPARATE stack — the city tax, both Yonkers taxes and the MCTMT — and for a New
+York City resident they are often the larger half of the bill. A return can
+agree on line 46 to the cent and be thousands of dollars wrong on line 60.
+
+**Line 39 is not the state tax.** Lines 44 and 45 come after it, and this
+engine takes line 45's components as INPUTS, so a difference there is a missing
+input rather than a computation error — find out which before recording it.
+
+**Line 59 ships null, not 0.** If `/tax-compute` recorded no answer, the
+software's figure cannot be checked against anything. Report it as UNVERIFIED
+with the taxpayer's answer still owed; never read the null as agreement with a
+software zero.
+
+**Each refundable credit's AMOUNT (lines 63-71) is an INPUT** taken from its own
+worksheet (IT-213, IT-216, IT-215, IT-214, IT-272), so a difference is a
+worksheet the engine never ran. Route it to OVERRIDDEN (unverified), not to the
+discrepancy count.
+
 **Also verify supplemental forms:**
 - Schedule B: interest/dividend totals
 - Schedule C: gross income, expenses, net profit/loss
@@ -271,7 +324,9 @@ or reduces the refund).
 - Form 8889: HSA contributions, distributions
 - Form 8959: Additional Medicare Tax
 - Form 8995: QBI deduction
-- State return: AGI, adjustments, tax, credits, refund
+- State return: AGI, adjustments, tax, credits, refund (for New York use the
+  IT-201 line map above instead — a generic four-figure check cannot see lines
+  47-58)
 
 ### 3. Check for Missing Forms
 

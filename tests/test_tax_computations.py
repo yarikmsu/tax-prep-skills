@@ -6295,6 +6295,22 @@ class TestTheNewYorkResultSection:
                    / "state-return.md").read_text()
         assert "state-return-ny.md" in generic
 
+    def test_every_field_the_verify_line_map_names_exists_here(self):
+        """`/tax-verify`'s IT-201 map is a second list of these paths, and a
+        path that resolves to nothing compares against $0 for ever — a row
+        that can only agree, or only disagree, for the wrong reason."""
+        import re as _re
+        body = skill_text("tax-verify")
+        template = json.loads(
+            (self.REPO / "agents/templates/result_template.json").read_text())
+        paths = _re.findall(r"new_york_it201(?:\.[a-z0-9_]+)+", body)
+        assert len(paths) >= 20, f"only {len(paths)} mapped rows found"
+        for path in set(paths):
+            node = template
+            for seg in path.split("."):
+                assert isinstance(node, dict) and seg in node, path
+                node = node[seg]
+
     def test_the_named_non_goals_reach_the_limitations_manifest(self):
         """Each gap is NAMED — silence is the failure mode this module was
         told to avoid."""

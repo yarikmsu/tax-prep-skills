@@ -102,9 +102,6 @@ RULES: "tuple[Rule, ...]" = (
          "Moved states during the tax year", "Part-year state returns",
          "Part-year/nonresident income allocation and the other-state tax "
          "credit are not modeled."),
-    Rule("nyc_resident", "nyc_resident", UNSUPPORTED,
-         "New York City residency", "NYC resident tax (Form IT-201)",
-         "NYC's resident income tax (~3.1-3.9%) is not computed."),
     Rule("statutory_residency_second_state",
          "statutory_resident_of_another_state", UNSUPPORTED,
          "Resident of a second state under its mechanical residency test",
@@ -383,10 +380,27 @@ _RULES_BY_ID = {r.rule_id: r for r in RULES}
 # questions` blocker, which is deliberately NOT in the rule registry so it
 # cannot be acknowledged away — the remedy is answering the yes/no questions,
 # not accepting a gap.
+# `nyc_resident` STAYS HERE WITH NO RULE BEHIND IT, and that is the point.
+# It was an UNSUPPORTED rule until the New York module computed the city tax;
+# the rule is gone and the flag is now the CITY-TAX SWITCH. Its absence
+# therefore matters MORE than it did, not less: a missing answer used to block
+# loudly, and would now silently omit New York City's resident tax from a
+# return that owes it — under-stating the tax, which is the direction
+# AGENTS.md §4 calls a hard error. A flag that DRIVES a computation belongs in
+# this list on exactly the same reasoning that put a flag which blocked one
+# here.
+#
+# `yonkers_resident` and `yonkers_nonresident_earnings` join it for the same
+# reason and the same module: the Yonkers surcharge and the Yonkers
+# nonresident earnings tax are two DIFFERENT taxes with two different
+# populations — you can owe either without the other — so one flag cannot
+# stand for both, and absence-as-False drops a real liability either way.
 _REQUIRED_GATE_FLAGS = (
     "has_iso_exercise",
     "moved_states_this_year",
     "nyc_resident",
+    "yonkers_resident",
+    "yonkers_nonresident_earnings",
     "statutory_resident_of_another_state",
     "has_household_employees",
     "has_dependent_unearned_income",
@@ -640,6 +654,31 @@ def _state_note(profile: dict) -> str:
         return "State: none configured — no state return computed."
     if code == "CA":
         return "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
+    if code == "NY":
+        # THE DEPTH NOTE IS WRITTEN LAST, and the spec says so for a reason:
+        # it is the sentence a taxpayer and a reviewer read to decide how far
+        # to trust the return, so it may only be written once the depth it
+        # claims exists. Every clause below names something that computes.
+        #
+        # What it does NOT claim is as load-bearing as what it does. IT-196
+        # lines 1-45 are an INPUT, line 44's lump-sum tax and line 45's other
+        # taxes are inputs, each refundable credit's AMOUNT is an input, line
+        # 59's sales-or-use tax is asked rather than computed, and IT-203 is
+        # not modeled at all. Those are on `meta.limitations` where the return
+        # itself can carry them; this note names the two a reader is most
+        # likely to assume away — the credits and the part-year return.
+        return (
+            "State (NY): Form IT-201 computed in depth for a FULL-YEAR "
+            "RESIDENT — the §601 rate schedules with the tax-benefit "
+            "recapture, the IT-225 modifications and New York AGI, the IT-196 "
+            "itemized deduction with both §615 reductions, the household "
+            "credit, and lines 47-58 for New York City, Yonkers and the "
+            "MCTMT. The AMOUNT of each refundable credit (IT-213, IT-216, "
+            "IT-215, IT-214, IT-272) is taken as an input from its own "
+            "worksheet, not computed; so are IT-196 lines 1-45 and IT-201 "
+            "lines 44 and 45. Line 59's sales or use tax is ASKED, never "
+            "assumed to be zero. Part-year and nonresident returns (IT-203) "
+            "are not modeled.")
     no_tax = code in _NO_INCOME_TAX_STATES and (
         code != "TN" or _tn_hall_repealed(profile)
     )
@@ -751,7 +790,8 @@ def _state_note(profile: dict) -> str:
                 "manually.")
     return (f"State ({code}): bracket-based ESTIMATE only — state-specific "
             "additions/subtractions, credits, and local taxes are not modeled. "
-            "CA is the only deeply-supported state; contributions welcome.")
+            "CA and NY are the deeply-supported states; contributions "
+            "welcome.")
 
 
 def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> CapabilityReport:

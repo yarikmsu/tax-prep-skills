@@ -136,10 +136,28 @@ interview never captures is invisible to every downstream check.
   (part-year returns are NOT modeled — the `/tax-compute` capability gate will
   block; tell the user now, not at compute time)
 - If NY appears anywhere — the address, `residency.domicile_state`, or either
-  count above: are you a New York City resident? → sets `nyc_resident`
-  (NYC resident tax is NOT computed — same gate). **Not "if state is NY"**: the
-  taxpayer this matters most to has a Florida address and a Manhattan apartment,
-  and an address-gated question never reaches them.
+  count above: are you a New York City resident? → sets `nyc_resident`.
+  **Not "if state is NY"**: the taxpayer this matters most to has a Florida
+  address and a Manhattan apartment, and an address-gated question never
+  reaches them.
+
+  This flag used to BLOCK the return and is now the **city-tax switch** — the
+  New York City resident tax is computed on it (IT-201 lines 47-54). That
+  makes an unanswered one worse, not better: a missing answer once stopped the
+  return loudly and would now omit the city tax from a return that owes it, so
+  it must still be answered explicitly, true or false.
+- Under the same "if NY appears anywhere" condition, ask BOTH Yonkers
+  questions. They are two DIFFERENT taxes with two different populations, and
+  a taxpayer can owe either without the other, so one question cannot stand
+  for both:
+  - "Did you live in Yonkers?" → sets `yonkers_resident` (the resident income
+    tax surcharge, IT-201 line 55)
+  - "Did you EARN wages or self-employment income in Yonkers while living
+    somewhere else?" → sets `yonkers_nonresident_earnings` (the nonresident
+    earnings tax, line 56)
+
+  Both are required-present for the same reason `nyc_resident` is: absence
+  reads as False and drops a real liability.
 - **Ask EVERY taxpayer, whatever their address:** "What state do you consider
   your permanent home — the one you intend to return to?" → sets
   `residency.domicile_state`. There is exactly ONE, and it need not be the

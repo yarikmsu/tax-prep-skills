@@ -103,6 +103,8 @@
     "_comment_filed_extension": "Set by /tax-extend (not the interview). Drives the Apr-15 pay-by + Oct-15 extended-deadline events in tax_calendar_{year}.ics.",
     "moved_states_this_year": false,
     "nyc_resident": false,
+    "yonkers_resident": false,
+    "yonkers_nonresident_earnings": false,
     "statutory_resident_of_another_state": false,
     "_comment_statutory_residency": "Set when the taxpayer meets ANOTHER state's mechanical residency test while resident here — it can apply whatever their domicile is, and two resident states tax the same income with a credit this toolkit does not model, so it BLOCKS. DISTINCT from moved_states_this_year (a mid-year MOVE) and has_nonresident_source_income (income SOURCED elsewhere). For New York the capability gate derives it from residency.days_present_by_state and residency.abode_months_by_state rather than trusting this flag alone. The thresholds, their sources and the dates they were read: docs/contributing/residency-guardrails.md",
     "has_nonresident_source_income": false,
