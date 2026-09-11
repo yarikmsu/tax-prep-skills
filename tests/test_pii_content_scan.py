@@ -2595,12 +2595,26 @@ def test_a_submodule_summary_setting_does_not_refuse_a_legitimate_commit(tmp_pat
     `--no-color` and `--no-ext-diff`."""
     repo = _make_repo(tmp_path)
     _stage(repo, "readme.md", "start\n")
-    first = _commit(repo, "base")
+    _commit(repo, "base")
+    # FIXED shas, not this fixture's own commits. A gitlink's added line is
+    # "Subproject commit <40 hex>", and about one sha in eight carries a
+    # maximal run of exactly nine digits — which is the bare-SSN rule, so the
+    # first version of this test failed on CI roughly that often while passing
+    # locally. Git does not need the objects to exist to diff a gitlink, so the
+    # pointers are literals chosen to hold no such run: the scan under test is
+    # the numstat-versus-patch agreement, not the content rule.
+    before = "aaaabbbbccccddddeeeeffff0000111122223333"
+    after = "ffff0000111122223333aaaabbbbccccddddeeee"
+    for digits in (before, after):
+        runs = re.findall(r"\d+", digits)
+        assert not [r for r in runs if len(r) == 9], (
+            f"the fixture sha {digits} carries a nine-digit run, which is the "
+            "bare-SSN rule — pick another literal")
     subprocess.run(["git", "update-index", "--add", "--cacheinfo",
-                    f"160000,{first},sub"], cwd=repo, check=True)
-    second = _commit(repo, "add the gitlink")
+                    f"160000,{before},sub"], cwd=repo, check=True)
+    _commit(repo, "add the gitlink")
     subprocess.run(["git", "update-index", "--cacheinfo",
-                    f"160000,{second},sub"], cwd=repo, check=True)
+                    f"160000,{after},sub"], cwd=repo, check=True)
 
     r = _run_env(repo, {"GIT_CONFIG_COUNT": "1",
                         "GIT_CONFIG_KEY_0": "diff.submodule",
