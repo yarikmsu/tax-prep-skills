@@ -47,7 +47,7 @@ is why, and it applies to a design document exactly as it applies to code.
 | 7 | SDI / PFL-style items | NY has both a statutory disability benefits deduction and a **Paid Family Leave** employee contribution, both wage-capped and both indexed. **OPEN: the cap mechanics and their year-awareness** — the CA scar here is that the SDI cap DISAPPEARED in TY2024, so this has to be year-aware from the first line of code. NYS Paid Family Leave site and the DBL statute. |
 | 8 | Withholding-form analogue | **Form IT-2104** is the DE 4 analogue, with a separate IT-2104.1 for nonresidents. Feeds the `/tax-withholding` true-up — see the registration table, where withholding has NO generic state path. |
 | 9 | Extension | **Form IT-370.** **OPEN: automatic on payment like CA's FTB 3519, or form-based** — IT-370 instructions. `/tax-extend` models only CA today and says so. |
-| 10 | PTET | **NY has an elective PTET**, and the entity side is already modeled — `ptet.py` carries NY. The OWNER side is not: **Form IT-653** (the PTET credit) and the IT-225 add-back are new. A known live defect from PR #22 sits here: NY PTET's TY2026 deadline is really Mar 16, not Mar 15, because both `ptet.py` and `tax_calendar.py` emit statutory dates only. |
+| 10 | PTET | **NY has an elective PTET**, and the entity side is already modeled — `ptet.py` carries NY. The OWNER side is **SHIPPED (slice 8)**: `compute_ny_ptet_owner` pairs the IT-653 credit with its REQUIRED IT-225 add-back. **The Mar 15/16 defect carried here from PR #22's deferred list is already FIXED** — `ptet._election_deadline` returns March 16, 2026 because `irs_dates.next_business_day_state` observes that March 15 is a Sunday, and `tax_calendar.py` uses the same helper. Verified rather than re-fixed; the note was stale. |
 | 11 | Community property | **NY is NOT a community-property state** — confirm membership of `capabilities._COMMUNITY_PROPERTY_STATES` is absent, which is the correct outcome, not an omission. |
 | 12 | Itemized deductions | **Form IT-196**, and it is INDEPENDENT of the federal election: "the Tax Law allows you to itemize your deductions for New York State income tax purposes whether or not you itemized your deductions on your federal income tax return" (tax.ny.gov). It is computed on **federal rules AS THEY EXISTED BEFORE the TCJA** — so the 2% miscellaneous floor and the pre-2018 treatment of items the federal return no longer allows are live here. §615 then imposes **two separate high-AGI reductions** and a **separate charitable-contribution limitation** at very high NYAGI. This is the single largest piece of new computation in the module and it has no CA analogue. |
 | 13 | Straight bracket math? | **NO — and this is the canonical trap the playbook names.** Tax Law **§601(d-1)** imposes a supplemental tax that recaptures the benefit of the graduated rate schedules above a NYAGI threshold, phasing in over a band. Plain bracket math UNDERSTATES tax there, which violates the bias-direction rule before a line is written. **The recapture is the FIRST thing implemented and the first thing tested**, not an enhancement — §601(a)/(b)/(c) carry the resident schedules for MFJ-and-surviving-spouse, head-of-household, and single-and-MFS respectively, and (d-1) sits on top of all three. |
@@ -261,6 +261,29 @@ OVER-states the number the taxpayer acts on is a hard error here:
    grouping, the same federal-AGI keying, the same item-C bar and the same
    over-7 increment — verified against the instructions, not assumed from the
    shape.
+6b. **SHIPPED (slice 8)** — `compute_ny_ptet_owner` and
+   `compute_ny_required_annual_payment`.
+
+   The PTET credit and its add-back are an exact PAIR. IT-225 code A-219 is
+   "the amount of the credit claimed on Form IT-653, LINE 1" and A-222 is the
+   amount on LINE 2 — not the entity's tax, not a share of it. They live on
+   different forms, so a caller assembling IT-225 by hand has no reason to
+   connect them, and **claiming the credit without the addition under-states
+   New York tax by the whole of the credit**. There are TWO of each and they do
+   not combine; adding both credits back under one code is the mistake a single
+   "PTET addback" invites. The credit itself is REFUNDABLE — "the excess is
+   treated as an overpayment, to be credited or refunded" — so it belongs with
+   the payments.
+
+   The required annual payment is the LESSER of the current-year and prior-year
+   floors, in EQUAL QUARTERS, with the higher prior-year share keyed to NEW
+   YORK adjusted gross income and MFS at its own threshold. A prior-year tax
+   without its NYAGI refuses: assuming the lower share under-states the
+   requirement for exactly the taxpayers it aims at. With no prior year at all
+   the current-year share is the only floor, and that is SAID rather than
+   assumed — a first-year filer genuinely has none, and a taxpayer who simply
+   has not supplied one is in a different position.
+
 7. NY credits — **the ORDERING is settled (slice 5), and the row-3 OPEN is
    closed for it.** `compute_ny_state_tax_total` covers lines 39-46. The
    nonrefundable credits are SUMMED and then capped at the tax — line 44 is

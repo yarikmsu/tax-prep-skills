@@ -3597,6 +3597,182 @@ def compute_city_and_yonkers_total(
     }
 
 
+# The two PTET credits an owner may claim on Form IT-653 and the IT-225
+# addition code each one REQUIRES. They are pairs, and the pairing is an exact
+# EQUALITY rather than a related adjustment: A-219 is "the amount of the credit
+# claimed on Form IT-653, LINE 1" and A-222 is the amount on LINE 2.
+_NY_PTET_CREDIT_ADDBACKS = (
+    ("nys", "A-219", 1),
+    ("nyc", "A-222", 2),
+)
+
+
+def compute_ny_ptet_owner(
+    nys_ptet_credit: float = 0.0,
+    nyc_ptet_credit: float = 0.0,
+    it225_additions: "list[dict] | None" = None,
+) -> dict:
+    """Form IT-653 — the OWNER side of the pass-through entity tax.
+
+    The entity side is already modelled elsewhere; this is what the partner or
+    shareholder does on their own return, and it is two things that must happen
+    together:
+
+    - The credit is claimed on IT-653 and is REFUNDABLE — "if the amount of the
+      PTET credit allowable for any taxable year exceeds the tax due for the
+      year, the excess is treated as an overpayment, to be credited or refunded"
+      — so it belongs with the payments, not with the capped credits.
+    - An IT-225 ADDITION of exactly the same amount is required, because the
+      entity deducted the tax federally and New York does not allow the owner
+      the benefit twice.
+
+    **Claiming the credit without the addition under-states New York tax by the
+    whole of the credit**, and nothing else on the return would notice: the two
+    live on different forms, and a caller assembling IT-225 by hand has no
+    reason to connect them. So the addbacks are DERIVED here from the credits
+    and checked against whatever the caller already assembled.
+
+    There are TWO of each, and they do not combine. The State credit on IT-653
+    line 1 pairs with A-219 and the City credit on line 2 with A-222; adding
+    the two credits back under one code is a different return from the one the
+    form describes, and it is the mistake a single "PTET addback" invites.
+    """
+    claimed = {"nys": _ny_amount(nys_ptet_credit, "nys_ptet_credit"),
+               "nyc": _ny_amount(nyc_ptet_credit, "nyc_ptet_credit")}
+    existing = {}
+    for entry in it225_additions or []:
+        if isinstance(entry, dict) and isinstance(entry.get("code"), str):
+            existing[entry["code"].strip().upper()] = entry.get("amount")
+
+    required = []
+    notes: "list[str]" = []
+    for which, code, line_no in _NY_PTET_CREDIT_ADDBACKS:
+        amount = claimed[which]
+        if not amount:
+            # A code present with no credit behind it adds tax the taxpayer
+            # does not owe, which is the other direction and just as wrong.
+            if existing.get(code):
+                raise ValueError(
+                    f"IT-225 code {code} adds back a PTET deduction, but no "
+                    f"{which.upper()} PTET credit is claimed on IT-653 line "
+                    f"{line_no}. The addback exists only to offset the credit.")
+            continue
+        required.append({"code": code, "amount": round(amount, 2)})
+        if code in existing:
+            stated = existing[code]
+            if stated is None or abs(_ny_amount(
+                    stated, f"IT-225 {code} amount") - amount) > 0.005:
+                raise ValueError(
+                    f"IT-225 code {code} is {stated!r} but the {which.upper()} "
+                    f"PTET credit claimed on IT-653 line {line_no} is "
+                    f"{amount:,.2f}. The addback is that amount EXACTLY — not "
+                    "the entity's tax, not a share of it.")
+        else:
+            notes.append(
+                f"IT-225 addition {code} of {amount:,.2f} is REQUIRED against "
+                f"the {which.upper()} PTET credit on IT-653 line {line_no}. "
+                "Claiming the credit without it under-states the tax by the "
+                "whole of the credit.")
+    return {
+        "refundable_credit": round(claimed["nys"] + claimed["nyc"], 2),
+        "required_it225_additions": required,
+        "notes": notes,
+    }
+
+
+def compute_ny_required_annual_payment(
+    current_year_tax: float,
+    prior_year_tax: "float | None" = None,
+    prior_year_nyagi: "float | None" = None,
+    filing_status: str = "single",
+    safe_harbor: "dict | None" = None,
+) -> dict:
+    """Form IT-2105 — the required annual payment, and what each instalment is.
+
+    New York's §685(c) safe harbour has the same SHAPE as federal §6654 and
+    deliberately none of its constants: the thresholds are keyed to NEW YORK
+    adjusted gross income, not federal, so a taxpayer with IT-225 modifications
+    is measured against the wrong figure if the federal one is handed in.
+
+    The instalments are EQUAL QUARTERS — April, June, September and the
+    following January — which is not California's 30/40/0/30, and one voucher
+    covers the State, the City, Yonkers and the MCTMT together. A schedule
+    borrowed from the California branch would tell a New York filer to skip
+    September.
+
+    Without a prior year the current-year share is the only available floor,
+    and that is stated rather than silently assumed: a first-year filer has no
+    prior-year safe harbour, and a taxpayer who simply has not supplied one is
+    in a different position that the caller has to resolve.
+    """
+    safe_harbor = safe_harbor or {}
+    current_share = safe_harbor.get("current_year_share")
+    prior_share = safe_harbor.get("prior_year_share")
+    high_share = safe_harbor.get("prior_year_share_high_income")
+    threshold = safe_harbor.get("high_income_nyagi_threshold")
+    threshold_mfs = safe_harbor.get("high_income_nyagi_threshold_mfs")
+    missing = [n for n, v in (("current_year_share", current_share),
+                              ("prior_year_share", prior_share),
+                              ("prior_year_share_high_income", high_share),
+                              ("high_income_nyagi_threshold", threshold),
+                              ("high_income_nyagi_threshold_mfs",
+                               threshold_mfs)) if v is None]
+    if missing:
+        raise ValueError(
+            "state.estimated_tax_safe_harbor is missing " + ", ".join(missing) +
+            ". Falling back to the FEDERAL figures would measure a New York "
+            "safe harbour against the wrong thresholds — they are keyed to NY "
+            "adjusted gross income and may diverge.")
+
+    tax = _ny_amount(current_year_tax, "current_year_tax")
+    notes: "list[str]" = []
+    current_floor = round(tax * _ny_amount(current_share, "current_year_share"),
+                          2)
+    options = {"current_year": current_floor}
+
+    if prior_year_tax is None:
+        notes.append(
+            "No prior-year tax supplied, so the only floor available is the "
+            "current-year share. A first-year New York filer genuinely has no "
+            "prior-year safe harbour; a taxpayer who simply has not supplied "
+            "one may have a lower requirement.")
+    else:
+        prior = _ny_amount(prior_year_tax, "prior_year_tax")
+        share = _ny_amount(prior_share, "prior_year_share")
+        applicable = (threshold_mfs if filing_status == "mfs" else threshold)
+        if prior_year_nyagi is None:
+            raise ValueError(
+                "a prior-year tax was supplied without the prior-year NEW YORK "
+                "adjusted gross income, and the higher share applies above a "
+                "NYAGI threshold. Assuming the lower one under-states the "
+                "required payment for exactly the taxpayers it is aimed at.")
+        nyagi = _ny_amount(prior_year_nyagi, "prior_year_nyagi",
+                           allow_negative=True)
+        if nyagi > _ny_amount(applicable, "high income threshold"):
+            share = _ny_amount(high_share, "prior_year_share_high_income")
+            notes.append(
+                "Prior-year New York AGI is above the threshold, so the higher "
+                "prior-year share applies.")
+        options["prior_year"] = round(prior * share, 2)
+
+    required = round(min(options.values()), 2)
+    # "Each required installment is 25% of the required annual payment" — but a
+    # quarter of an odd number of cents does not divide, and four figures that
+    # do not sum to the total are a small lie in a schedule somebody pays from.
+    # The LAST instalment absorbs the remainder, which is also where a taxpayer
+    # would notice it least and where the form's own true-up sits.
+    instalment = round(required / 4, 2)
+    instalments = [instalment] * 3
+    instalments.append(round(required - instalment * 3, 2))
+    return {
+        "required_annual_payment": required,
+        "options": options,
+        "instalments": instalments,
+        "schedule": "equal_quarters",
+        "notes": notes,
+    }
+
+
 def compute_ny_itemized(
     itemized_before_adjustment: float,
     charitable_contributions: float,

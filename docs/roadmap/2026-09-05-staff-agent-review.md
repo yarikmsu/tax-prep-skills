@@ -495,6 +495,21 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   tables 4/5/6 to 1/2/3, verified against the instructions rather than assumed. Ten
   mutations, ten reds; one survived until a case used the second of the two caps.
 
+  **SLICE 8 SHIPPED — this is Z3's owner side**: `compute_ny_ptet_owner` and
+  `compute_ny_required_annual_payment`. The PTET credit and its IT-225 add-back are an
+  exact PAIR — A-219 is "the amount of the credit claimed on IT-653 LINE 1" and A-222
+  the amount on LINE 2, so claiming the credit without the addition under-states NY tax
+  by the whole of the credit, and adding both back under one code is a different return.
+  The credit is REFUNDABLE. The required annual payment is the LESSER floor in equal
+  quarters, with the higher prior-year share keyed to NEW YORK AGI; a prior-year tax
+  without its NYAGI refuses. Eleven mutations, eleven reds.
+
+  **A note carried here since slice 1 was STALE and is corrected rather than re-fixed**:
+  the NY PTET Mar 15/16 next-business-day defect from PR #22's deferred list is already
+  fixed — `_election_deadline` returns March 16, 2026 via
+  `irs_dates.next_business_day_state`, and `tax_calendar.py` uses the same helper.
+  Reproduced before believing it, which is the rule applied to my own notes.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension

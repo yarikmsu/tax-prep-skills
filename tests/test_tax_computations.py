@@ -27,6 +27,8 @@ from agents.lib.tax_computations import (
     compute_nyc_taxable_income,
     compute_mctmt,
     compute_city_and_yonkers_total,
+    compute_ny_ptet_owner,
+    compute_ny_required_annual_payment,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -5981,3 +5983,152 @@ def test_the_city_nonrefundable_cap_also_holds_against_the_later_taxes():
     assert out["line_58_total_city_and_yonkers"] == 238, (
         "the excess city credit absorbed the MCTMT, which line 58 does not "
         "allow")
+
+
+# --- Z1 slice 8: the PTET owner side and the required annual payment (Z3) ---
+#
+# Form IT-653 and IT-225-I (2025) p.13 codes A-219 and A-222; Tax Law §685(c)
+# and Form IT-2105.
+
+_NY_2025_SAFE_HARBOR = {
+    "current_year_share": 0.90,
+    "prior_year_share": 1.00,
+    "prior_year_share_high_income": 1.10,
+    "high_income_nyagi_threshold": 150000,
+    "high_income_nyagi_threshold_mfs": 75000,
+}
+
+
+def test_ny_ptet_credit_requires_an_addback_of_exactly_the_same_amount():
+    """IT-225-I A-219: "enter the amount of the credit claimed on Form IT-653,
+    LINE 1" — not the entity's tax, not a share of it. The two live on
+    different forms, so a caller assembling IT-225 by hand has no reason to
+    connect them, and claiming the credit without the addition under-states
+    New York tax by the whole of the credit."""
+    out = compute_ny_ptet_owner(10000)
+    assert out["required_it225_additions"] == [{"code": "A-219",
+                                                "amount": 10000.0}]
+    assert any("REQUIRED" in n for n in out["notes"])
+
+
+def test_ny_ptet_state_and_city_credits_do_not_combine():
+    """TWO credits and TWO codes: IT-653 line 1 pairs with A-219 and line 2
+    with A-222. Adding both back under one code is a different return from the
+    one the form describes, and it is the mistake a single "PTET addback"
+    invites."""
+    out = compute_ny_ptet_owner(10000, 2000)
+    assert out["required_it225_additions"] == [
+        {"code": "A-219", "amount": 10000.0},
+        {"code": "A-222", "amount": 2000.0}]
+    assert out["refundable_credit"] == 12000
+
+
+def test_ny_ptet_addback_must_match_the_credit_exactly():
+    """The entity's own tax and the owner's share of it are both plausible
+    figures to reach for, and both are wrong."""
+    with pytest.raises(ValueError, match="EXACTLY"):
+        compute_ny_ptet_owner(10000, it225_additions=[
+            {"code": "A-219", "amount": 9000}])
+    # The matching amount passes and is not re-listed as a note.
+    ok = compute_ny_ptet_owner(10000, it225_additions=[
+        {"code": "A-219", "amount": 10000}])
+    assert ok["notes"] == []
+
+
+def test_ny_ptet_addback_without_a_credit_is_refused():
+    """The other direction: an addback with no credit behind it adds tax the
+    taxpayer does not owe."""
+    with pytest.raises(ValueError, match="no NYS PTET credit"):
+        compute_ny_ptet_owner(0, it225_additions=[
+            {"code": "A-219", "amount": 5000}])
+
+
+def test_ny_ptet_credit_is_refundable():
+    """"If the amount of the PTET credit allowable for any taxable year
+    exceeds the tax due for the year, the excess is treated as an overpayment,
+    to be credited or refunded" — so it belongs with the payments, and the
+    settlement's closed set already has a place for it."""
+    credit = compute_ny_ptet_owner(10000)["refundable_credit"]
+    out = compute_ny_settlement(3000, refundable_credits={
+        "other_refundable": credit})
+    assert out["refund"] == 7000, (
+        "the PTET credit was capped at the tax instead of being refunded")
+
+
+def test_ny_required_annual_payment_takes_the_lesser_floor():
+    """90% of the current year against 100% of the prior — the taxpayer needs
+    only the smaller."""
+    out = compute_ny_required_annual_payment(20000, 15000, 100000,
+                                             safe_harbor=_NY_2025_SAFE_HARBOR)
+    assert out["options"] == {"current_year": 18000.0, "prior_year": 15000.0}
+    assert out["required_annual_payment"] == 15000
+
+
+def test_ny_safe_harbor_high_share_is_keyed_to_new_york_agi():
+    """§685(c) raises the prior-year share above a NEW YORK AGI threshold, not
+    a federal one. A taxpayer with IT-225 modifications is measured against the
+    wrong figure if the federal AGI is handed in."""
+    out = compute_ny_required_annual_payment(20000, 15000, 200000,
+                                             safe_harbor=_NY_2025_SAFE_HARBOR)
+    assert out["options"]["prior_year"] == 16500
+    assert any("above the threshold" in n for n in out["notes"])
+
+
+def test_ny_safe_harbor_mfs_has_its_own_threshold():
+    """Half the general figure, and applying the general one to half a couple
+    under-states the required payment for exactly the taxpayers it aims at."""
+    out = compute_ny_required_annual_payment(20000, 15000, 100000, "mfs",
+                                             _NY_2025_SAFE_HARBOR)
+    assert out["options"]["prior_year"] == 16500
+
+
+def test_ny_safe_harbor_refuses_a_prior_year_without_its_nyagi():
+    """The higher share applies above a threshold, so assuming the lower one
+    under-states the required payment for exactly the taxpayers it is aimed
+    at."""
+    with pytest.raises(ValueError, match="without the prior-year"):
+        compute_ny_required_annual_payment(20000, 15000,
+                                           safe_harbor=_NY_2025_SAFE_HARBOR)
+
+
+def test_ny_no_prior_year_says_so_rather_than_assuming():
+    """A first-year New York filer genuinely has no prior-year safe harbour; a
+    taxpayer who simply has not supplied one is in a different position, and
+    the caller has to resolve which."""
+    out = compute_ny_required_annual_payment(20000,
+                                             safe_harbor=_NY_2025_SAFE_HARBOR)
+    assert out["required_annual_payment"] == 18000
+    assert any("no prior-year safe harbour" in n.lower()
+               or "No prior-year tax supplied" in n for n in out["notes"])
+
+
+def test_ny_instalments_are_equal_quarters():
+    """April, June, September and the following January — NOT California's
+    30/40/0/30, which would tell a New York filer to skip September. One
+    IT-2105 voucher covers the State, the City, Yonkers and the MCTMT."""
+    out = compute_ny_required_annual_payment(20000, 20000, 100000,
+                                             safe_harbor=_NY_2025_SAFE_HARBOR)
+    assert out["schedule"] == "equal_quarters"
+    # 90% of 20,000 is the lesser floor, so 18,000 in four.
+    assert out["instalments"] == [4500.0] * 4
+    assert sum(out["instalments"]) == out["required_annual_payment"]
+
+
+def test_ny_instalments_sum_to_the_required_payment_when_it_does_not_divide():
+    """"Each required installment is 25% of the required annual payment" — but
+    a quarter of an odd number of cents does not divide, and four figures that
+    do not sum to the total are a small lie in a schedule somebody pays from.
+    The last one absorbs the remainder."""
+    harbor = {**_NY_2025_SAFE_HARBOR, "current_year_share": 1.0}
+    out = compute_ny_required_annual_payment(10000.01, safe_harbor=harbor)
+    assert sum(out["instalments"]) == out["required_annual_payment"] == 10000.01
+    assert out["instalments"][-1] != out["instalments"][0]
+
+
+def test_ny_safe_harbor_refuses_unfetched_shares():
+    """Falling back to the federal figures would measure a New York safe
+    harbour against thresholds that are not New York's."""
+    for key in _NY_2025_SAFE_HARBOR:
+        partial = {k: v for k, v in _NY_2025_SAFE_HARBOR.items() if k != key}
+        with pytest.raises(ValueError, match="missing"):
+            compute_ny_required_annual_payment(20000, safe_harbor=partial)
