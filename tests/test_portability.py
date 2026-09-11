@@ -11,6 +11,7 @@ import inspect
 import json
 import os
 import re
+import textwrap
 import sys
 import types
 from pathlib import Path
@@ -4216,6 +4217,13 @@ class TestTheSkillsReadWhatTheEngineEmits:
         "penalty_target", "zero_target", "vouchers_penalty", "vouchers_zero",
         "ytd_withholding", "projected_full_year_withholding", "estimates_paid",
         "projected_paid", "zero_shortfall", "de4_penalty", "de4_zero",
+        # ...and the New York block's own rows. `ny.notes` and
+        # `ny_cache_missing` are deliberately NOT here: the first is what the
+        # engine SAID rather than assumed and the second is a missing input
+        # that must not read as a finding, so both are disclosures and both
+        # need a bullet.
+        "ny", "nyagi", "required_annual_payment", "options", "shortfall",
+        "covered", "it2104_penalty", "it2104_zero",
     })
 
     def _payload_keys(self, name):
@@ -4253,8 +4261,28 @@ class TestTheSkillsReadWhatTheEngineEmits:
                 tokens |= set(re.findall(r"`([A-Za-z0-9_.]+)`", line))
         return tokens
 
-    @staticmethod
-    def _spellings(key):
+    def _top_level_payload_keys(self, name):
+        """The keys of the payload's OUTERMOST dict, by AST.
+
+        `_payload_keys` regexes the whole function, so it cannot tell a
+        top-level field from one nested inside a state block. This can, and
+        that distinction is what keeps the rule below from re-opening the hole
+        it was written to close.
+        """
+        import ast
+        import importlib
+        import inspect as _inspect
+        mod = importlib.import_module(
+            f"agents.lib.{self.PAYLOAD_BUILDER[name]}")
+        tree = ast.parse(textwrap.dedent(_inspect.getsource(mod._report_to_dict)))
+        fn = tree.body[0]
+        for node in fn.body:
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+                return {k.value for k in node.value.keys
+                        if isinstance(k, ast.Constant)}
+        raise AssertionError(f"{name}'s payload builder has no return dict")
+
+    def _spellings(self, name, key):
         """The forms a skill may legitimately use for `key`.
 
         /tax-project reads `ca_voucher_dates_note` off the report and
@@ -4262,8 +4290,20 @@ class TestTheSkillsReadWhatTheEngineEmits:
         two spellings of one field, and a check keyed on either alone fails
         one skill for no reason a reader could act on. Both are accepted;
         neither is accepted for the FEDERAL half of the pair.
+
+        A key that exists ONLY inside a state block — `ny.notes` is the first —
+        is read at its dotted path and nowhere else, so the dotted path is the
+        only honest bullet header for it. The gate on "only": accepting a
+        dotted spelling for a key that ALSO sits at the top level would let the
+        state bullet satisfy the federal field's check, which is exactly the
+        collapse the pairing rule above exists to prevent.
         """
-        return {key, "ca." + key[3:]} if key.startswith("ca_") else {key}
+        forms = {key}
+        if key.startswith("ca_"):
+            forms.add("ca." + key[3:])
+        if key not in self._top_level_payload_keys(name):
+            forms |= {f"{block}.{key}" for block in ("ca", "ny")}
+        return forms
 
     def test_both_skills_name_every_harbor_disclosure_field(self):
         for name in self.CONSUMERS:
@@ -4368,7 +4408,7 @@ class TestTheSkillsReadWhatTheEngineEmits:
         for name in self.CONSUMERS:
             tokens = self._bullet_tokens(name)
             for f in self._disclosure_fields(name):
-                assert self._spellings(f) & tokens, (
+                assert self._spellings(name, f) & tokens, (
                     f"/{name} has no payload bullet for `{f}`, so an agent "
                     f"summarizing the payload has no instruction to surface "
                     f"it. A mention inside another bullet's prose is not "

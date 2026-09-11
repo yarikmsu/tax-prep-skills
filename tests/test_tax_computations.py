@@ -4664,6 +4664,7 @@ def test_the_fbar_skill_states_the_form_8938_figures_the_engine_holds():
 
 from tests.ny_fixtures import (  # noqa: E402
     _NY_2025_RECAPTURE,
+    _NY_2025_SAFE_HARBOR,
     _NY_2025_SCHEDULE_A,
     _NY_2025_SCHEDULE_C,
     _NY_2025_TAX_TABLE,
@@ -5903,13 +5904,6 @@ def test_the_city_nonrefundable_cap_also_holds_against_the_later_taxes():
 # Form IT-653 and IT-225-I (2025) p.13 codes A-219 and A-222; Tax Law §685(c)
 # and Form IT-2105.
 
-_NY_2025_SAFE_HARBOR = {
-    "current_year_share": 0.90,
-    "prior_year_share": 1.00,
-    "prior_year_share_high_income": 1.10,
-    "high_income_nyagi_threshold": 150000,
-    "high_income_nyagi_threshold_mfs": 75000,
-}
 
 
 def test_ny_ptet_credit_requires_an_addback_of_exactly_the_same_amount():

@@ -6318,3 +6318,51 @@ class TestTheNewYorkSection:
         figure that can arrive from parsing a W-2."""
         assert not [f for f in P._NY_COMPUTED_EVIDENCE_FIELDS
                     if "withholding" in f or "payment" in f]
+
+
+class TestTheNewYorkVoucherSchedule:
+    """IT-2105: four EQUAL quarters on the federal statutory dates, observed
+    under New York's own rule."""
+
+    def test_it_is_not_californias_split(self):
+        """30/40/0/30 with no September instalment would tell a New York
+        filer to skip a payment they owe."""
+        as_of = datetime.date(2026, 1, 2)
+        ny = P.compute_ny_estimated_vouchers(40000.0, as_of)
+        assert [v.quarter for v in ny] == [1, 2, 3, 4]
+        assert [v.amount for v in ny] == [10000.0] * 4
+        ca = P.compute_ca_estimated_vouchers(40000.0, as_of)
+        assert [v.amount for v in ca] != [v.amount for v in ny]
+
+    def test_new_york_rolls_weekends_only_and_the_federal_rule_rolls_further(self):
+        """April 15 2022 was a FRIDAY — no weekend to roll — but the federal
+        deadline moved to April 18 for DC's Emancipation Day. New York is not
+        in the conforming set, because General Construction Law §§24 and 25-a
+        have not been read here, so the state helper leaves it on the 15th.
+
+        A date published EARLIER than the statute allows can never make a
+        payment late, which is why the degrade is the safe direction — and
+        why `_NY_CALENDAR` says so on the schedule rather than leaving the
+        reader to find out."""
+        as_of = datetime.date(2022, 1, 2)
+        ny = {v.quarter: v.due_date
+              for v in P.compute_ny_estimated_vouchers(4000.0, as_of)}
+        fed = {v.quarter: v.due_date
+               for v in P.compute_estimated_vouchers(4000.0, as_of)}
+        assert ny[1] == "2022-04-15"
+        assert fed[1] == "2022-04-18"
+        assert ny[1] != fed[1]
+
+    def test_a_weekend_still_rolls(self):
+        """The degrade is weekends-ONLY, not no-rollover: June 15 2025 was a
+        Sunday and a payment date on a Sunday is not a payment date."""
+        as_of = datetime.date(2025, 1, 2)
+        ny = {v.quarter: v.due_date
+              for v in P.compute_ny_estimated_vouchers(4000.0, as_of)}
+        assert ny[2] == "2025-06-16"
+
+    def test_the_calendar_names_the_form_and_the_rollover_caveat(self):
+        assert P._NY_CALENDAR.form == "IT-2105"
+        assert P._NY_CALENDAR.observed_due is P._ny_observed_due
+        assert "WEEKENDS ONLY" in P._NY_CALENDAR.due_date_caveat
+        assert "§§24 and 25-a" in P._NY_CALENDAR.due_date_caveat

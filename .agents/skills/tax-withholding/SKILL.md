@@ -16,14 +16,30 @@ Distinct from `/tax-project`: this trues up against the real computed number
 (result.json line 24), not an annualized estimate. Run it after `/tax-compute` has
 produced a current-year result.json.
 
-**State coverage: CA only.** When result.json carries a computed `california_540`
+**State coverage: CA and NY.** When result.json carries a computed `california_540`
 section, the report adds a **California true-up** block: the actual Form 540 tax vs
 YTD CA withholding projected at the current pace, the FTB 5805 safe harbor (90% of
 current / 100%–110% of prior CA tax — EXCEPT current-year CA AGI ≥ $1M / $500K MFS
 forces 90%-of-current only per R&TC §19136.3), a DE 4 per-paycheck
 extra-withholding figure, and a 540-ES voucher schedule under CA's **30/40/0/30**
-installment weighting (no September payment — R&TC §19136.1). Non-CA returns get
-the federal report plus a "CA only" caveat.
+installment weighting (no September payment — R&TC §19136.1).
+
+A computed `new_york_it201` section adds a **New York true-up**, and its target is
+**IT-201 line 60, not line 46**: one Form IT-2105 voucher carries the State tax, the
+New York City resident tax, the Yonkers surcharge and the MCTMT together, so building
+the requirement on the state total alone would under-state a City resident's by the
+whole of their city tax. The Tax Law §685(c) safe harbor has the same SHAPE as the
+federal one and none of its constants — the shares and thresholds are FETCHED from
+`tax_law_{year}.json` and keyed to **New York** AGI, not federal — and the instalments
+are four **EQUAL** quarters, emphatically not California's split. The IT-2104
+adjustment is the New York analogue of W-4 4(c).
+
+**`ytd.state_withholding` means ALL New York withholding** on an NY return — W-2 box
+17, box 19 for a New York City locality, and any Yonkers amount together — because one
+voucher is measured against all of them. Entering the state figure alone over-states
+the shortfall.
+
+Returns with neither section get the federal report plus a caveat naming both.
 
 ## Prerequisites
 - `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
@@ -148,7 +164,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
    **`as_of_date` must be null, not empty, to mean "absent".** In an OPEN year every PRESENT value is validated and a malformed one is refused outright — the run produces no report at all, because substituting today's date would silently relabel the YTD figures beside it. A workspace created from an older template may carry `"as_of_date": ""` (or `0`), which used to fall through to today's date and now blocks: edit it to `null`, to the MM-DD the YTD figures are current to, or pass `--as-of MM-DD` for this run.
 
-   **Read these nine things out of the payload before you summarize anything.** The
+   **Read these eleven things out of the payload before you summarize anything.** The
    markdown in the next step carries them in prose, but the audit line below is written
    from HERE, and `safe_harbor.covered` alone is not the verdict:
 
@@ -230,6 +246,21 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      `ca.safe_harbor.prior_based`. Unlike the /tax-project field of the same name it drives
      no warning of its own here — this report annualizes no income, so there is no
      `recurring_from_prior` to have silently defaulted to $0.
+   - **`ny_cache_missing`** — true means result.json carries a COMPUTED Form IT-201
+     but no tax-law cache reached this run, so `ny` is null and NO New York true-up
+     was computed. Report it as a missing input, never as a finding: the Tax Law
+     §685(c) shares and thresholds are FETCHED — they are New York's own and may
+     diverge from the federal ones — so there is no requirement to publish without
+     them. An omitted New York block reads as "no New York estimated tax is due",
+     which is the wrong direction for a payment. The remedy is re-running with the
+     year's `tax_law_{year}.json`, not another figure.
+   - **`ny.notes`** — what `compute_ny_required_annual_payment` SAID rather than
+     assumed. The one that matters most is the no-prior-year note: with no prior
+     return the current-year share is the only floor, and a first-year New York filer
+     genuinely has none while a taxpayer who simply has not supplied one may have a
+     LOWER requirement. Surface each verbatim; do not fold them into the status cell.
+     The other is the high-income note, which fires when prior-year NEW YORK AGI —
+     not federal — is over the threshold and the higher prior-year share applies.
    - **`stale_as_of_note`** — non-null means `projection_inputs.json` held a MALFORMED
      `as_of_date` inside a closed year, so it was dropped and 12-31 used instead. The
      figures beside it were entered against some other date and nothing reconciles the

@@ -566,6 +566,28 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   (line 74) has no category**, and the parse table SAYS so rather than leaving a reader
   to assume a zero. Four mutations, four reds.
 
+  **SLICE 12 SHIPPED — the New York withholding true-up**: `/tax-withholding` was federal
+  plus California and nothing else, so a New York taxpayer got the federal report and a
+  caveat. The target is **IT-201 line 60, not line 46** — one Form IT-2105 voucher carries
+  the State tax, the New York City resident tax, the Yonkers surcharge and the MCTMT
+  together, so a requirement built on the state total alone under-states a City resident's
+  by the whole of their city tax, and a City resident is the population this module exists
+  for. The §685(c) shares and thresholds are FETCHED and keyed to **New York** AGI, not
+  federal, so the module reads `tax_law_{year}.json` for the first time; an ABSENT cache
+  sets `ny_cache_missing` and the report SAYS the cache was missing, because a report that
+  simply omits the block reads as "no New York estimated tax is due". Four EQUAL quarters,
+  never California's 30/40/0/30 — which would tell a New York filer to skip September. A
+  prior-year tax without its NYAGI drops the PAIR rather than assuming the lower share:
+  the engine refuses it, and dropping both leaves the current-year share, which
+  over-states. `ytd.state_withholding` means ALL New York withholding — boxes 17 and 19
+  plus Yonkers — because that is what the one voucher is measured against, and the skill
+  says so where the figure is entered. **Left OPEN and named**: New York stays on
+  `next_business_day_state`'s weekends-only degrade, so a printed IT-2105 date can be a
+  day or two before the one New York observes — safe for a payment, wrong for a
+  missed-deadline warning; the calendar note says so on the schedule rather than leaving
+  the reader to find out. Six mutations, six reds; one needed a purpose-written case,
+  because the two rollover rules agree on every date the first test happened to print.
+
   **A note carried here since slice 1 was STALE and is corrected rather than re-fixed**:
   the NY PTET Mar 15/16 next-business-day defect from PR #22's deferred list is already
   fixed — `_election_deadline` returns March 16, 2026 via

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import projection as proj
 from agents.lib import withholding as wh
 from tests.skill_text import skill_text
+from tests.ny_fixtures import ny_state_cache
 
 
 def test_read_liability_happy_path():
@@ -671,7 +672,7 @@ def test_build_report_ca_none_without_section():
     assert r.ca is None
     md = wh.render_markdown(r)
     assert "California true-up" not in md
-    assert "covered for CA returns only" in md
+    assert "covered for CA and NY returns" in md
 
 
 def test_build_report_ca_high_income_90_only():
@@ -744,7 +745,7 @@ def test_read_ca_inputs_scaffold_section_skipped():
     r = wh.build_report(result, _ca_proj_inputs(), None, 2026,
                         datetime.date(2026, 6, 30))
     assert r.ca is None
-    assert "covered for CA returns only" in wh.render_markdown(r)
+    assert "covered for CA and NY returns" in wh.render_markdown(r)
 
 
 def test_read_ca_inputs_zero_tax_computed_return_still_counts():
@@ -1301,3 +1302,215 @@ def test_every_zero_liability_flag_is_validated_without_a_ca_section():
             wh.build_report(result, proj_inputs, None, 2026,
                             datetime.date(2026, 6, 30))
         assert flag in str(exc.value)
+
+
+class TestTheNewYorkTrueUp:
+    """One Form IT-2105 voucher carries the State tax, the New York City
+    resident tax, the Yonkers surcharge and the MCTMT together."""
+
+    AS_OF = datetime.date(2026, 6, 30)
+
+    def _result(self, tax=20000.0, nyagi=250000.0, deduction=16050.0,
+                **over):
+        section = {"line_33_nyagi": nyagi, "line_34_deduction": deduction,
+                   "line_46_total_state_tax": tax - 4000.0,
+                   "line_58_total_city_and_yonkers": 4000.0,
+                   "line_60_total_taxes": tax}
+        section.update(over)
+        return {"meta": {"tax_year": 2026, "filing_status": "MFJ"},
+                "form_1040": {"line_24_total_tax": 60000.0},
+                "new_york_it201": section}
+
+    def _inputs(self, state_wh=6000.0, state_est=0.0):
+        return {"pay_frequency": "biweekly",
+                "ytd": {"federal_withholding": 25000, "state_withholding": state_wh},
+                "estimated_payments_made": {"federal": 0, "state": state_est}}
+
+    def _law(self):
+        return {"tax_year": 2026, "state": ny_state_cache()}
+
+    class _Prior:
+        def __init__(self, result):
+            self.result = result
+
+    def _build(self, result=None, inputs=None, prior=None, law="default"):
+        return wh.build_report(
+            result if result is not None else self._result(),
+            inputs if inputs is not None else self._inputs(),
+            prior, 2026, self.AS_OF,
+            today=datetime.date(2026, 6, 30),
+            tax_law=self._law() if law == "default" else law)
+
+    # --- what the requirement is measured against -------------------------
+
+    def test_the_target_is_line_60_not_line_46(self):
+        """A true-up built on the state total alone would under-state a City
+        resident's requirement by the whole of their city tax — and a City
+        resident is the population this module exists for."""
+        r = self._build()
+        assert r.ny is not None
+        assert r.ny.liability == 20000.0            # line 60
+        assert r.ny.liability != 16000.0            # line 46
+
+    def test_with_no_prior_year_the_current_share_is_the_only_floor(self):
+        """90% of 20,000, and the engine SAYS that is the only floor rather
+        than letting an absent prior year read as a met one."""
+        r = self._build()
+        assert r.ny.options == {"current_year": 18000.0}
+        assert r.ny.required_annual_payment == 18000.0
+        assert any("no prior-year safe harbour" in n.lower() or
+                   "first-year" in n.lower() for n in r.ny.notes)
+
+    def test_a_computed_prior_year_supplies_the_lesser_floor(self):
+        """Prior NY tax 10,000 with prior NYAGI under the threshold: 100% of
+        10,000 beats 90% of 20,000, so the requirement is 10,000."""
+        prior = self._Prior({"new_york_it201": {
+            "line_33_nyagi": 120000.0, "line_34_deduction": 16050.0,
+            "line_60_total_taxes": 10000.0}})
+        r = self._build(prior=prior)
+        assert r.ny.options == {"current_year": 18000.0, "prior_year": 10000.0}
+        assert r.ny.required_annual_payment == 10000.0
+
+    def test_the_higher_share_is_keyed_to_NEW_YORK_agi(self):
+        """Prior NYAGI 200,000 is over the threshold, so 110% of the prior
+        tax applies. Handing the FEDERAL AGI in would measure a New York safe
+        harbour against the wrong figure."""
+        prior = self._Prior({"new_york_it201": {
+            "line_33_nyagi": 200000.0, "line_34_deduction": 16050.0,
+            "line_60_total_taxes": 10000.0}})
+        r = self._build(prior=prior)
+        assert r.ny.options["prior_year"] == 11000.0
+        assert any("higher prior-year share" in n for n in r.ny.notes)
+
+    def test_a_scaffold_prior_section_supplies_no_floor(self):
+        """An all-zero template must not become a $0 prior-year tax — that
+        would make ANY current shortfall "covered"."""
+        prior = self._Prior({"new_york_it201": {
+            "line_33_nyagi": 0, "line_34_deduction": 0,
+            "line_60_total_taxes": 0,
+            "refundable_credits_and_payments": {
+                "line_72_state_withholding": 9000.0}}})
+        r = self._build(prior=prior)
+        assert "prior_year" not in r.ny.options
+
+    def test_a_prior_tax_without_its_nyagi_drops_the_pair(self):
+        """`compute_ny_required_annual_payment` REFUSES the pair, and it is
+        right to — assuming the lower share under-states the requirement for
+        exactly the taxpayers the higher one is aimed at. Dropping BOTH leaves
+        the current-year share, which over-states: the degrade direction."""
+        prior = self._Prior({"new_york_it201": {
+            "line_34_deduction": 16050.0, "line_60_total_taxes": 10000.0}})
+        r = self._build(prior=prior)
+        assert "prior_year" not in r.ny.options
+        assert r.ny.required_annual_payment == 18000.0
+
+    # --- the schedule -----------------------------------------------------
+
+    def test_the_instalments_are_four_equal_quarters_not_californias_split(self):
+        """30/40/0/30 with no September instalment would tell a New York
+        filer to skip a payment they owe."""
+        r = self._build(inputs=self._inputs(state_wh=0.0))
+        quarters = [v.quarter for v in r.ny.vouchers_penalty]
+        assert quarters == [3, 4]          # Q1 and Q2 already closed at 06-30
+        amounts = [v.amount for v in r.ny.vouchers_penalty]
+        assert amounts[0] == amounts[1]
+        assert round(sum(amounts), 2) == r.ny.shortfall
+
+    def test_the_dates_roll_under_new_yorks_own_rule(self):
+        """September 15 2026 is a Tuesday and January 15 2027 a Friday, so
+        neither rolls — what this pins is that the dates come from the STATE
+        helper, which for New York rolls weekends only because General
+        Construction Law §§24 and 25-a have not been read here."""
+        r = self._build()
+        due = {v.quarter: v.due_date for v in r.ny.vouchers_penalty}
+        assert due == {3: "2026-09-15", 4: "2027-01-15"}
+
+    def test_the_shortfall_nets_projected_withholding_and_estimates(self):
+        """YTD 6,000 at 06-30 annualizes to about 12,000; 18,000 required."""
+        r = self._build()
+        assert r.ny.projected_paid == r.ny.projected_full_year_withholding
+        assert r.ny.shortfall == round(
+            18000.0 - r.ny.projected_paid, 2)
+        assert not r.ny.covered
+
+    def test_a_covered_year_reports_covered_and_zero_vouchers(self):
+        r = self._build(inputs=self._inputs(state_wh=20000.0))
+        assert r.ny.covered and r.ny.shortfall == 0.0
+        assert all(v.amount == 0.0 for v in r.ny.vouchers_penalty)
+
+    # --- when there is no New York block ----------------------------------
+
+    def test_a_non_new_york_return_gets_no_block(self):
+        r = self._build(result={"meta": {"tax_year": 2026,
+                                         "filing_status": "MFJ"},
+                                "form_1040": {"line_24_total_tax": 60000.0}})
+        assert r.ny is None and r.ny_cache_missing is False
+
+    def test_a_scaffold_section_is_not_a_computed_return(self):
+        result = self._result(tax=0.0, nyagi=0.0, deduction=0.0)
+        result["new_york_it201"]["line_46_total_state_tax"] = 0.0
+        result["new_york_it201"]["line_58_total_city_and_yonkers"] = 0.0
+        assert wh.read_ny_inputs(result) is None
+
+    def test_a_missing_cache_is_said_out_loud_not_left_silent(self):
+        """A report that simply omits the block reads as "no New York
+        estimated tax is due", which is the wrong direction for a payment."""
+        r = self._build(law=None)
+        assert r.ny is None and r.ny_cache_missing is True
+        md = wh.render_markdown(r)
+        assert "No New York true-up was computed" in md
+        assert "NOT a finding that no New York estimated tax is due" in md
+
+    def test_a_missing_line_60_hard_errors_rather_than_degrading(self):
+        result = self._result()
+        del result["new_york_it201"]["line_60_total_taxes"]
+        with pytest.raises(wh.WithholdingError, match="line_60_total_taxes"):
+            wh.read_ny_inputs(result)
+
+    def test_a_missing_nyagi_hard_errors(self):
+        """The §685(c) threshold is keyed to NYAGI; assuming it is below one
+        under-states the requirement for exactly the taxpayers the higher
+        share is aimed at."""
+        result = self._result()
+        del result["new_york_it201"]["line_33_nyagi"]
+        with pytest.raises(wh.WithholdingError, match="line_33_nyagi"):
+            wh.read_ny_inputs(result)
+
+    def test_a_negative_nyagi_is_an_ordinary_return(self):
+        """Line 33 has no floor — a Schedule C loss reaches it routinely."""
+        tax, nyagi = wh.read_ny_inputs(self._result(nyagi=-4000.0))
+        assert nyagi == -4000.0 and tax == 20000.0
+
+    # --- what the report says ---------------------------------------------
+
+    def test_the_markdown_names_the_four_taxes_the_one_voucher_covers(self):
+        md = wh.render_markdown(self._build())
+        assert "## New York true-up (Form IT-201)" in md
+        assert "line 60" in md and "MCTMT" in md
+        assert "IT-2105 installment schedule (four EQUAL quarters)" in md
+        assert "IT-2104 per-paycheck extra NY withholding" in md
+
+    def test_the_caveat_says_what_the_withholding_figure_means(self):
+        """`ytd.state_withholding` is ALL New York withholding — boxes 17 and
+        19 together, plus Yonkers — because one voucher is measured against
+        all of them. Entering the state figure alone over-states the
+        shortfall."""
+        md = wh.render_markdown(self._build())
+        assert "ALL " in md and "box 19" in md
+
+    def test_the_payload_carries_the_block(self):
+        payload = wh._report_to_dict(self._build())
+        assert payload["ny"]["liability"] == 20000.0
+        assert payload["ny"]["required_annual_payment"] == 18000.0
+        assert payload["ny_cache_missing"] is False
+        assert payload["ny"]["notes"]
+
+    def test_california_is_untouched(self):
+        """Regression pin: the CA block still builds, and a return carrying
+        both sections gets both."""
+        result = self._result()
+        result["california_540"] = {"ca_total_tax": 9000.0, "ca_agi": 240000.0,
+                                    "ca_standard_deduction": 11080.0}
+        r = self._build(result=result)
+        assert r.ca is not None and r.ny is not None
+        assert r.ca.liability == 9000.0 and r.ny.liability == 20000.0

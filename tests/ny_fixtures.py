@@ -112,6 +112,18 @@ _NY_2025_TAX_TABLE = {
 }
 
 
+# Tax Law §685(c). The SHAPE is statutory; the shares and thresholds are
+# fetched, deliberately not shared with the federal constants — they are New
+# York's own and may diverge.
+_NY_2025_SAFE_HARBOR = {
+    "current_year_share": 0.90,
+    "prior_year_share": 1.00,
+    "prior_year_share_high_income": 1.10,
+    "high_income_nyagi_threshold": 150000,
+    "high_income_nyagi_threshold_mfs": 75000,
+}
+
+
 def ny_state_cache(**over):
     """A `tax_law["state"]` block shaped the way a fetched New York one is.
 
@@ -134,6 +146,7 @@ def ny_state_cache(**over):
         "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS,
         "tax_table_benefit_recapture": _NY_2025_RECAPTURE,
         "tax_table": _NY_2025_TAX_TABLE,
+        "estimated_tax_safe_harbor": _NY_2025_SAFE_HARBOR,
     }
     cache.update(over)
     return cache

@@ -1753,8 +1753,16 @@ def _early_estimate_vouchers(shortfall: float, estimates_paid: float,
 
 
 def compute_estimated_vouchers(shortfall: float, as_of: datetime.date,
-                               estimates_paid: float = 0.0) -> list:
+                               estimates_paid: float = 0.0,
+                               observed=None) -> list:
     """1040-ES voucher schedule for the deadlines still open at `as_of`.
+
+    `observed` turns a statutory date into the date it is actually OBSERVED,
+    and defaults to the FEDERAL rule. New York's IT-2105 is the same four
+    equal quarters on the same statutory dates and a DIFFERENT rollover rule,
+    so it passes its own — see `compute_ny_estimated_vouchers`. California's
+    schedule is not a variant of this one at all (30/40/0/30, no September)
+    and has its own function.
 
     Takes the SHORTFALL already derived, not the requirement it came from.
     This is called for two different targets — the penalty one and the
@@ -1787,19 +1795,20 @@ def compute_estimated_vouchers(shortfall: float, as_of: datetime.date,
     every deadline is still open). `/tax-safe-harbor` step 4 states the
     cumulative test that corrects it.
     """
+    observe = observed or _observed_due
     open_q = []
     for q, (m, d) in ES_DUE_DATES:
         if q == 4:
-            observed = _observed_due(datetime.date(as_of.year + 1, m, d))
-            open_q.append((4, observed.isoformat()))
+            due = observe(datetime.date(as_of.year + 1, m, d))
+            open_q.append((4, due.isoformat()))
             continue
-        observed = _observed_due(datetime.date(as_of.year, m, d))
+        due = observe(datetime.date(as_of.year, m, d))
         # The row stores the date on which payment is actually due, not a bare
         # statutory date that has already passed during its §7503 rollover
         # window. TY2023 Q1 therefore reads April 18 everywhere — object, JSON
         # and Markdown — while remaining open through that day.
-        if observed >= as_of:
-            open_q.append((q, observed.isoformat()))
+        if due >= as_of:
+            open_q.append((q, due.isoformat()))
     # Q4 is appended unconditionally above, so open_q is never empty — the
     # CA twin below says the same of its own loop and carries no fallback.
     #
@@ -3563,6 +3572,41 @@ def _observed_due(statutory: datetime.date) -> datetime.date:
     return next_business_day(statutory)
 
 
+def _ny_observed_due(statutory: datetime.date) -> datetime.date:
+    """A NEW YORK IT-2105 deadline as observed.
+
+    `irs_dates.next_business_day_state` rolls weekends only for New York,
+    because NY is not in the conforming set — nobody has read General
+    Construction Law §§24 and 25-a against the Department's own published due
+    dates here, and the set is for states whose law HAS been read. That is the
+    safe direction for a payment date: one published earlier than the statute
+    allows can never make a payment late, while one published later can.
+
+    It is therefore possible for a printed IT-2105 date to sit a day or two
+    before the date New York actually observes. `_NY_CALENDAR` says so on the
+    schedule rather than leaving the reader to discover it.
+    """
+    return next_business_day_state(statutory, "NY")
+
+
+def compute_ny_estimated_vouchers(shortfall: float, as_of: datetime.date,
+                                  estimates_paid: float = 0.0) -> list:
+    """IT-2105 voucher schedule — FOUR EQUAL QUARTERS, New York's own dates.
+
+    The same statutory dates as the federal 1040-ES and the same even split,
+    so this is the federal function with New York's rollover rule rather than
+    a third copy of the splitting logic. It is emphatically NOT the California
+    schedule: 30/40/0/30 with no September instalment would tell a New York
+    filer to skip a payment they owe.
+
+    ONE VOUCHER COVERS THE STATE, THE CITY, YONKERS AND THE MCTMT together,
+    which is why the liability this is split from is IT-201 line 60 and not
+    line 46.
+    """
+    return compute_estimated_vouchers(shortfall, as_of, estimates_paid,
+                                      observed=_ny_observed_due)
+
+
 def _state_observed_due(statutory: datetime.date) -> datetime.date:
     """A CALIFORNIA 540-ES deadline as observed (see `irs_dates`).
 
@@ -3633,6 +3677,21 @@ _CA_CALENDAR = _VoucherCalendar(
         "no FTB deadline source. Confirm the Form 540 date with the FTB "
         "before relying on it in any year either deadline was postponed."))
 
+
+_NY_CALENDAR = _VoucherCalendar(
+    form="IT-2105", accrual="Tax Law §685(c)",
+    bill="on the Department's bill, or on Form IT-2105.9 filed with the return",
+    step="step 4",
+    observed_due=_ny_observed_due,
+    due_date_caveat=(
+        " The balance-due date named above is the FEDERAL one, shown on the "
+        "assumption that New York conforms for this year — this engine has no "
+        "Department deadline source. The instalment dates beside it roll "
+        "WEEKENDS ONLY, because New York's own holiday rule (General "
+        "Construction Law §§24 and 25-a) has not been read here: a date shown "
+        "may be a day or two before the one New York observes, which is the "
+        "safe direction for a payment and the wrong one for a missed-deadline "
+        "warning. Confirm both with the Department before relying on them."))
 
 def accrual_period_closed(year: int, today: "datetime.date | None") -> bool:
     """Has §6654(b)(2)'s accrual period for `year` closed as of `today`?

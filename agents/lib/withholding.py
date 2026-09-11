@@ -30,6 +30,7 @@ from agents.lib.projection import (  # noqa: E402
     SafeHarbor,
     _CA_CALENDAR,
     _CA_CATCHUP,
+    _NY_CALENDAR,
     _FEDERAL_CALENDAR,
     _FEDERAL_CATCHUP,
     _CA_ES_HEADING,
@@ -45,6 +46,7 @@ from agents.lib.projection import (  # noqa: E402
     _w4_lever_note,
     _ca_notes,
     _ca_section_computed,
+    _ny_section_computed,
     _ca_status,
     _federal_status,
     _money,
@@ -52,13 +54,16 @@ from agents.lib.projection import (  # noqa: E402
     _num,
     _prior_baseline_lines,
     _prior_ca_tax_agi,
+    _prior_numeric,
     _prior_tax_agi,
     _read_json,
     _require_inputs_tax_year,
+    _validate_tax_law_year,
     _voucher_catchup_note,
     compute_ca_estimated_vouchers,
     compute_ca_safe_harbor,
     compute_estimated_vouchers,
+    compute_ny_estimated_vouchers,
     compute_safe_harbor,
     compute_w4_4c,
     resolve_as_of,
@@ -68,6 +73,9 @@ from agents.lib.projection import (  # noqa: E402
     paychecks_remaining,
     parse_as_of,
     validate_pay_frequency,
+)
+from agents.lib.tax_computations import (  # noqa: E402
+    compute_ny_required_annual_payment,
 )
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
@@ -139,6 +147,50 @@ class CaTrueUp:
 
 
 @dataclass(frozen=True)
+class NyTrueUp:
+    """NY (Form IT-201) true-up block — present only when result.json carries a
+    computed `new_york_it201` section AND the tax-law cache is New York's.
+
+    ONE VOUCHER COVERS FOUR TAXES. Form IT-2105 carries the State tax, the New
+    York City resident tax, the Yonkers surcharge and the MCTMT together, so
+    the liability here is IT-201 LINE 60 — the total taxes — and not line 46.
+    A true-up built on line 46 alone would under-state a City resident's
+    requirement by the whole of their city tax, and a City resident is the
+    population this module exists for.
+
+    The same arithmetic reads through to the withholding: `ytd.state_withholding`
+    means ALL New York withholding — boxes 17 and 19 together, plus Yonkers —
+    because that is what the one voucher is measured against. The skill says so
+    where the figure is entered.
+
+    The instalments are EQUAL QUARTERS, not California's 30/40/0/30, and the
+    IT-2104 adjustments are the New York analogue of W-4 4(c).
+    """
+    liability: float
+    nyagi: float
+    ytd_withholding: float
+    projected_full_year_withholding: float
+    estimates_paid: float
+    projected_paid: float
+    required_annual_payment: float
+    # {"current_year": ..., "prior_year": ...} — the floors the requirement is
+    # the LESSER of. `prior_year` is absent when no prior return supplied one,
+    # which is a different fact from it being larger.
+    options: dict
+    shortfall: float
+    covered: bool
+    zero_shortfall: float
+    vouchers_penalty: "list[Voucher]"
+    vouchers_zero: "list[Voucher]"
+    it2104_penalty: W4Adjustment
+    it2104_zero: W4Adjustment
+    # Whatever `compute_ny_required_annual_payment` said — the no-prior-year
+    # note above all, which is SAID rather than assumed.
+    notes: "tuple[str, ...]" = ()
+    voucher_dates_note: "str | None" = None
+
+
+@dataclass(frozen=True)
 class TrueUpReport:
     year: int
     as_of: str
@@ -155,6 +207,14 @@ class TrueUpReport:
     w4_penalty: W4Adjustment
     w4_zero: W4Adjustment
     ca: "CaTrueUp | None" = None
+    ny: "NyTrueUp | None" = None
+    # A computed New York return with no tax-law cache to measure it against.
+    # Said out loud rather than left as an absent section: the §685(c) shares
+    # are fetched, so without the cache there is no New York requirement to
+    # publish — and a report that simply omits the block reads as "no New York
+    # estimated tax is due", which is the over-stating direction for a refund
+    # and the under-stating one for a payment.
+    ny_cache_missing: bool = False
     # The federal schedule's catch-up note (None when it is not true of the
     # table). Only the PENALTY column can carry it: the note is about
     # instalments, and an instalment is measured against the safe harbor.
@@ -301,6 +361,151 @@ def read_ca_inputs(result: dict) -> "tuple[float, float] | None":
     return round(tax, 2), round(agi, 2)
 
 
+def read_ny_inputs(result: dict) -> "tuple[float, float] | None":
+    """(IT-201 line 60 total taxes, IT-201 line 33 NYAGI), or None for a
+    non-New-York return.
+
+    LINE 60, NOT LINE 46. One Form IT-2105 voucher covers the State tax, the
+    New York City resident tax, the Yonkers surcharge and the MCTMT together,
+    so the requirement is measured against all four. Building this on line 46
+    would under-state a City resident's requirement by the whole of their city
+    tax — and a City resident is the population this module exists for.
+
+    NYAGI may legitimately be NEGATIVE (line 33 has no floor, and a Schedule C
+    loss, a K-1 loss or an NOL carryforward reaches it routinely); the tax may
+    not. A missing figure HARD-ERRORS rather than degrading, the same way the
+    California twin does: the §685(c) threshold is keyed to NYAGI, and assuming
+    it is below one under-states the requirement for exactly the taxpayers the
+    higher share is aimed at.
+    """
+    sec = result.get("new_york_it201")
+    if sec is None:
+        return None
+    if not isinstance(sec, dict):
+        raise WithholdingError(
+            f"result.json new_york_it201 must be an object, "
+            f"got {type(sec).__name__}")
+    # A template scaffold is not a computed $0 return. `_ny_section_computed`
+    # demands a non-zero compute-OUTPUT field, so parsed W-2 box 17 sitting in
+    # line 72 cannot vouch for untouched zeros in lines 33, 39 and 46 — the
+    # same guard, and the same reasoning, as the California side.
+    if not _ny_section_computed(result):
+        return None
+    raw_tax = sec.get("line_60_total_taxes")
+    if raw_tax is None:
+        raise WithholdingError(
+            "new_york_it201 has no line_60_total_taxes — run /tax-compute "
+            "(step 10) before the New York true-up.")
+    tax = _num(raw_tax, "new_york_it201.line_60_total_taxes")
+    if tax < 0:
+        raise WithholdingError(
+            f"line_60_total_taxes must not be negative, got {tax}")
+    raw_nyagi = sec.get("line_33_nyagi")
+    if raw_nyagi is None:
+        raise WithholdingError(
+            "new_york_it201 has no line_33_nyagi — required for the Tax Law "
+            "§685(c) high-income share; run /tax-compute (step 10) first.")
+    return round(tax, 2), round(_num(raw_nyagi, "new_york_it201.line_33_nyagi"), 2)
+
+
+def _prior_ny_tax_nyagi(prior):
+    """(prior IT-201 line 60, prior line 33) from the archived section, or
+    (None, None) when there is no computed one.
+
+    An all-zero template scaffold must not become a $0 prior-year tax: that
+    would make ANY current shortfall "covered" through the prior-year floor.
+    `_ny_section_computed` is what separates a computed $0 from an untouched
+    template, and it is the only guard here that can be wrong in the
+    under-stating direction.
+    """
+    if prior is None:
+        return None, None
+    result = getattr(prior, "result", {}) or {}
+    if not _ny_section_computed(result):
+        return None, None
+    sec = result.get("new_york_it201", {}) or {}
+    tax = _prior_numeric(sec.get("line_60_total_taxes"), allow_negative=False)
+    nyagi = _prior_numeric(sec.get("line_33_nyagi"), allow_negative=True)
+    if tax is None or nyagi is None:
+        # BOTH or NEITHER. `compute_ny_required_annual_payment` REFUSES a
+        # prior-year tax handed over without its NYAGI, and it is right to:
+        # the higher share applies above a NYAGI threshold, so assuming the
+        # lower one under-states the requirement for exactly the taxpayers it
+        # is aimed at. Dropping the pair here means the current-year share is
+        # the only floor, which over-states — the degrade direction.
+        return None, None
+    return tax, nyagi
+
+
+def build_ny_true_up(result: dict, proj_inputs: dict, prior,
+                     filing_status: "str | None", as_of: datetime.date,
+                     paychecks_left: int, year: int, tax_law: "dict | None",
+                     today: "datetime.date | None" = None) -> "NyTrueUp | None":
+    """Assemble the New York true-up block, or None for a non-NY return.
+
+    `tax_law` is required for New York and for no other jurisdiction here: the
+    §685(c) shares and thresholds are FETCHED, deliberately not shared with the
+    federal constants, because they are New York's and may diverge. Without the
+    cache this returns None rather than guessing — and the caller says why,
+    rather than leaving a New York taxpayer's report silently state-less.
+    """
+    ny_inputs = read_ny_inputs(result)
+    if ny_inputs is None:
+        return None
+    if not tax_law:
+        return None
+    ny_tax, nyagi = ny_inputs
+    frac = elapsed_fraction(as_of)
+    if frac <= 0:
+        raise WithholdingError("elapsed fraction must be > 0")
+    ytd = proj_inputs.get("ytd", {}) or {}
+    ytd_state_wh = _nonneg_num(ytd.get("state_withholding"), "ytd.state_withholding")
+    est = proj_inputs.get("estimated_payments_made", {}) or {}
+    state_estimates = round(
+        _nonneg_num(est.get("state"), "estimated_payments_made.state"), 2)
+    proj_state_wh = round(ytd_state_wh / frac, 2)
+    projected_paid = round(proj_state_wh + state_estimates, 2)
+
+    prior_tax, prior_nyagi = _prior_ny_tax_nyagi(prior)
+    required = compute_ny_required_annual_payment(
+        ny_tax, prior_tax, prior_nyagi,
+        # The canonical short code the engine's NY functions take. Validated
+        # HERE rather than passed through: a profile spelling the status out
+        # ("Married Filing Jointly") would otherwise read as `single` and put
+        # a married-separate threshold on the wrong return.
+        _canonical_status(filing_status, "NY estimated tax").lower(),
+        (tax_law.get("state") or {}).get("estimated_tax_safe_harbor"))
+    required_annual = required["required_annual_payment"]
+    shortfall = round(max(0.0, required_annual - projected_paid), 2)
+    zero_shortfall = round(max(0.0, ny_tax - projected_paid), 2)
+
+    vouchers_penalty = compute_ny_estimated_vouchers(
+        shortfall, as_of, state_estimates)
+    vouchers_zero = compute_ny_estimated_vouchers(
+        zero_shortfall, as_of, state_estimates)
+    return NyTrueUp(
+        liability=ny_tax,
+        nyagi=nyagi,
+        ytd_withholding=round(ytd_state_wh, 2),
+        projected_full_year_withholding=proj_state_wh,
+        estimates_paid=state_estimates,
+        projected_paid=projected_paid,
+        required_annual_payment=required_annual,
+        options=dict(required["options"]),
+        shortfall=shortfall,
+        covered=shortfall <= 0,
+        zero_shortfall=zero_shortfall,
+        vouchers_penalty=vouchers_penalty,
+        vouchers_zero=vouchers_zero,
+        it2104_penalty=compute_w4_4c(shortfall, paychecks_left),
+        it2104_zero=compute_w4_4c(zero_shortfall, paychecks_left),
+        notes=tuple(required["notes"]),
+        voucher_dates_note=_voucher_dates_note(
+            _NY_CALENDAR, [vouchers_penalty], year, today,
+            balance_schedules=[vouchers_zero]),
+    )
+
+
 def build_ca_true_up(result: dict, proj_inputs: dict, prior,
                      filing_status: "str | None", as_of: datetime.date,
                      paychecks_left: int, year: int,
@@ -367,11 +572,19 @@ def build_ca_true_up(result: dict, proj_inputs: dict, prior,
 
 def build_report(result: dict, proj_inputs: dict, prior, year: int,
                  as_of: datetime.date,
-                 today: "datetime.date | None" = None) -> TrueUpReport:
+                 today: "datetime.date | None" = None,
+                 tax_law: "dict | None" = None) -> TrueUpReport:
     """Build the report. `today` is the real date, NOT the as-of date.
 
     Optional, and omitting it omits the calendar notes rather than guessing
     at them — see `projection.build_report`, which states the whole of why.
+
+    `tax_law` is the year's cache, and NEW YORK is the only block that reads
+    it: the §685(c) shares and thresholds are FETCHED, deliberately not shared
+    with the federal constants. It is optional so every existing caller keeps
+    working; a New York return built without it gets no New York block, and
+    the renderer SAYS the cache was missing rather than leaving a New York
+    taxpayer's report silently state-less.
     """
     pay_frequency = validate_pay_frequency(proj_inputs.get("pay_frequency", "biweekly"))
     liability = read_liability(result, year)
@@ -430,6 +643,11 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
 
     ca = build_ca_true_up(result, proj_inputs, prior, filing_status, as_of,
                           inputs.paychecks_remaining, year, today=today)
+    ny = build_ny_true_up(result, proj_inputs, prior, filing_status, as_of,
+                          inputs.paychecks_remaining, year, tax_law,
+                          today=today)
+    ny_cache_missing = (ny is None and tax_law is None
+                        and read_ny_inputs(result) is not None)
 
     return TrueUpReport(
         year=year, as_of=as_of.strftime("%m-%d"), pay_frequency=pay_frequency,
@@ -440,7 +658,8 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
         inputs=inputs, safe_harbor=safe_harbor,
         penalty_target=penalty_target, zero_target=zero_target,
         vouchers_penalty=vouchers_penalty, vouchers_zero=vouchers_zero,
-        w4_penalty=w4_penalty, w4_zero=w4_zero, ca=ca,
+        w4_penalty=w4_penalty, w4_zero=w4_zero, ca=ca, ny=ny,
+        ny_cache_missing=ny_cache_missing,
         voucher_catchup_note=_voucher_catchup_note(
             _FEDERAL_CATCHUP, vouchers_penalty, safe_harbor, as_of),
         voucher_dates_note=_voucher_dates_note(
@@ -611,10 +830,71 @@ def render_markdown(r: TrueUpReport) -> str:
             lines += ["", c.voucher_dates_note]
         if c.voucher_catchup_note:
             lines += ["", c.voucher_catchup_note]
+    if r.ny is not None:
+        n = r.ny
+        lines += ["",
+                  "## New York true-up (Form IT-201)", "",
+                  "| Item | Amount |", "|---|---:|",
+                  f"| NY total taxes (IT-201 line 60 — State, City, Yonkers "
+                  f"and MCTMT) | {_money(n.liability)} |",
+                  f"| New York AGI (line 33) | {_money(n.nyagi)} |",
+                  f"| YTD New York withholding (all of it) | "
+                  f"{_money(n.ytd_withholding)} |",
+                  f"| Projected full-year NY withholding (current pace) | "
+                  f"{_money(n.projected_full_year_withholding)} |",
+                  f"| NY estimates paid | {_money(n.estimates_paid)} |",
+                  f"| **Projected NY paid** | {_money(n.projected_paid)} |", "",
+                  "### Required annual payment (Tax Law §685(c))", "",
+                  "| Test | Amount |", "|---|---:|",
+                  f"| Current-year share | "
+                  f"{_money(n.options['current_year'])} |"]
+        if "prior_year" in n.options:
+            lines.append(f"| Prior-year share | "
+                         f"{_money(n.options['prior_year'])} |")
+        lines += [f"| **Required annual payment** (the lesser) | "
+                  f"{_money(n.required_annual_payment)} |",
+                  f"| **Shortfall** | {_money(n.shortfall)} |",
+                  f"| Status | "
+                  f"{'covered' if n.covered else 'NOT covered'} |", ""]
+        for ny_note in n.notes:
+            lines += [f"- {ny_note}"]
+        lines += ["",
+                  "### IT-2104 per-paycheck extra NY withholding",
+                  f"- To avoid penalty (safe harbor): "
+                  f"**{_money(n.it2104_penalty.per_paycheck)}/paycheck** over "
+                  f"{n.it2104_penalty.paychecks_remaining} remaining paychecks",
+                  f"- To reach zero balance: "
+                  f"**{_money(n.it2104_zero.per_paycheck)}/paycheck**",
+                  "",
+                  "### IT-2105 installment schedule (four EQUAL quarters)", "",
+                  "One voucher covers the State tax, the New York City "
+                  "resident tax, the Yonkers surcharge and the MCTMT "
+                  "together — which is why the target above is line 60 and "
+                  "not line 46.", "",
+                  "| Installment | Due | To avoid penalty | To zero balance |",
+                  "|---|---|---:|---:|"]
+        for vp, vz in zip(n.vouchers_penalty, n.vouchers_zero):
+            lines.append(f"| Q{vp.quarter} | {vp.due_date} | "
+                         f"{_money(vp.amount)} | {_money(vz.amount)} |")
+        if n.voucher_dates_note:
+            lines += ["", n.voucher_dates_note]
     lines += ["",
               "## Caveats",
               "- This is a planning projection, not a filed return. Re-run after any "
               "material income or withholding change."]
+    if r.ny is not None:
+        lines.append("- The New York true-up reads `ytd.state_withholding` as ALL "
+                     "New York withholding — W-2 box 17, box 19 for a New York "
+                     "City locality, and any Yonkers amount together — because "
+                     "one Form IT-2105 voucher is measured against all of them. "
+                     "Entering the state figure alone over-states the shortfall.")
+    if r.ny_cache_missing:
+        lines.append("- **No New York true-up was computed**: result.json carries a "
+                     "computed IT-201 but no tax-law cache was supplied, and the "
+                     "Tax Law §685(c) shares and thresholds are FETCHED — they are "
+                     "New York's own and may diverge from the federal ones. Re-run "
+                     "with the year's `tax_law_{year}.json`. This is NOT a finding "
+                     "that no New York estimated tax is due.")
     if r.ca is not None:
         lines.append("- State true-up covers CA only, anchored to the actual computed "
                      "Form 540 tax. CA mandatory e-pay (R&TC §19011.5): once any "
@@ -622,9 +902,10 @@ def render_markdown(r: TrueUpReport) -> str:
                      "liability exceeds $80,000, ALL subsequent CA payments must be "
                      "electronic (FTB Web Pay) — a 1% penalty applies to paper "
                      "payments.")
-    else:
-        lines.append("- Federal only; no california_540 section in result.json — state "
-                     "withholding true-up is covered for CA returns only.")
+    elif r.ny is None and not r.ny_cache_missing:
+        lines.append("- Federal only; no california_540 or new_york_it201 section in "
+                     "result.json — the state withholding true-up is covered for CA "
+                     "and NY returns.")
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -645,6 +926,26 @@ def _report_to_dict(r: TrueUpReport) -> dict:
         "w4_lever_note": r.w4_lever_note,
         "stale_as_of_note": r.stale_as_of_note,
         "w4_penalty": vars(r.w4_penalty), "w4_zero": vars(r.w4_zero),
+        "ny_cache_missing": r.ny_cache_missing,
+        "ny": (None if r.ny is None else {
+            "liability": r.ny.liability,
+            "nyagi": r.ny.nyagi,
+            "ytd_withholding": r.ny.ytd_withholding,
+            "projected_full_year_withholding": r.ny.projected_full_year_withholding,
+            "estimates_paid": r.ny.estimates_paid,
+            "projected_paid": r.ny.projected_paid,
+            "required_annual_payment": r.ny.required_annual_payment,
+            "options": r.ny.options,
+            "shortfall": r.ny.shortfall,
+            "covered": r.ny.covered,
+            "zero_shortfall": r.ny.zero_shortfall,
+            "vouchers_penalty": [vars(v) for v in r.ny.vouchers_penalty],
+            "vouchers_zero": [vars(v) for v in r.ny.vouchers_zero],
+            "it2104_penalty": vars(r.ny.it2104_penalty),
+            "it2104_zero": vars(r.ny.it2104_zero),
+            "notes": list(r.ny.notes),
+            "voucher_dates_note": r.ny.voucher_dates_note,
+        }),
         "ca": (None if r.ca is None else {
             "liability": r.ca.liability,
             "ytd_withholding": r.ca.ytd_withholding,
@@ -703,13 +1004,26 @@ def _main(argv: list) -> int:
             )
 
         prior = load_prior_baseline(workspace / "archive" / str(year - 1), year - 1)
+
+        # Read for the NEW YORK block and for nothing else — the §685(c)
+        # shares are fetched, the federal and California figures here are
+        # not. ABSENT is tolerated, so a workspace that never ran /tax-setup
+        # still gets the federal report it always got; a New York return then
+        # sets `ny_cache_missing` and the report SAYS the cache was missing,
+        # rather than printing no New York block and reading as "nothing is
+        # due". PRESENT and for the wrong year is refused, because a cache
+        # declaring another year carries another year's thresholds.
+        tax_law_path = workspace / f"tax_law_{year}.json"
+        tax_law = _read_json(tax_law_path) if tax_law_path.exists() else None
+        if tax_law is not None:
+            _validate_tax_law_year(tax_law, year)
     except (WorkspaceError, WithholdingError, ProjectionError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
     try:
         report = build_report(result, proj_inputs, prior, year, as_of,
-                              today=today)
+                              today=today, tax_law=tax_law)
     except (WithholdingError, ProjectionError, ValueError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
