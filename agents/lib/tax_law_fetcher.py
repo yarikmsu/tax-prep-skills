@@ -502,8 +502,21 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "bracket_schedule_by_status": {
                 "single": "c", "mfs": "c", "mfj": "a", "qss": "a", "hoh": "b",
             },
+            # Each band carries the PUBLISHED CUMULATIVE BASE alongside its
+            # rate and floor:
+            #   [{"rate": 0.055, "min": 27900, "max": 161550, "base": 1202}, …]
+            # New York publishes its schedule as "base plus rate on the excess"
+            # and ROUNDS each base to the nearest dollar, so summing the bands
+            # disagrees with the form — on the TY2025 married-joint schedule the
+            # $323,200 base sums to 18,251.75 against a published 18,252.
+            # `/tax-verify` ties line by line against software that uses the
+            # published schedule, and a systematic sub-dollar drift at every
+            # band reads as a defect in whichever side is checked second.
+            # `base` is REQUIRED, not optional: `compute_ny_tax` refuses
+            # without it rather than falling back to summation, because a
+            # fallback is a second answer that differs quietly.
             "brackets": {
-                "a": [],  # [{"rate": 0.04, "min": 0, "max": ...}, ...]
+                "a": [],
                 "b": [],
                 "c": [],
             },
@@ -531,6 +544,17 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 # One figure for every status, unmoved since the regime began.
                 "entry_threshold": None,
                 "phase_in_band": None,
+                # The FIRST tier does not use a base and benefit at all: it
+                # phases from the graduated result up to a FLAT RATE on the
+                # whole taxable income, and that rate differs by schedule. A
+                # shape that only had the base-and-benefit form could not
+                # express it, which is how the first draft of this block ended
+                # up unable to compute the most common affected return.
+                "entry_tier": {
+                    "a": {"flat_rate": None, "taxable_income_not_over": None},
+                    "b": {"flat_rate": None, "taxable_income_not_over": None},
+                    "c": {"flat_rate": None, "taxable_income_not_over": None},
+                },
                 # Per SCHEDULE, matching `brackets`. Each entry:
                 # {"taxable_income_over", "taxable_income_not_over",
                 #  "recapture_base", "incremental_benefit", "nyagi_excess_over"}
@@ -541,13 +565,29 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 # compute silently falls back to the tiers.
                 "full_recapture": {"nyagi_over": None, "rate": None},
             },
-            # NY's tax TABLE and its rate SCHEDULE give different answers — the
-            # table is bracket-midpoint rounded — and which one applies turns
-            # on NY taxable income. `/tax-verify` compares line by line against
-            # software that uses the table, so a schedule-only computation
-            # differs by a few dollars for an ordinary filer and reads as a
-            # defect in whichever side is checked second.
-            "tax_table_max_taxable_income": None,
+            # NY's tax TABLE and its rate SCHEDULE are different METHODS, and
+            # the form selects between them on BOTH NYAGI and taxable income —
+            # the second condition is not implied by the first, which is why
+            # this cannot be folded into the recapture's threshold. The table
+            # is the schedule evaluated at each row's MIDPOINT and rounded to
+            # the dollar: the published TY2025 $50,000-$50,050 row reads
+            # 2,587 / 2,419 / 2,503 against a schedule-at-midpoint of
+            # 2,586.875 / 2,418.875 / 2,502.875, while the row FLOOR is a
+            # dollar low in every case. Using the schedule where the form says
+            # table is worth up to two dollars and runs BOTH ways — it
+            # OVER-states for anyone in the upper half of their row, which is
+            # half of all returns — against an acceptance bar of one dollar a
+            # line.
+            #
+            # The row WIDTH is not constant: the bottom of the table uses
+            # narrower rows than the $50 it settles into, so the widths are
+            # fetched as segments rather than assumed. One assumed width would
+            # be a guess at exactly the figure this block exists to pin.
+            "tax_table": {
+                "max_taxable_income": None,
+                # [{"over", "not_over", "row_width"}], spanning 0 to the max.
+                "row_segments": [],
+            },
             # §615(f) reduces the NY itemized deduction TWICE, §615(g) replaces
             # both with a CHARITABLE-only limit at very high NYAGI, and between
             # them sits a flat plateau. FOUR mechanisms, not two, and they are

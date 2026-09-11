@@ -153,9 +153,38 @@ OVER-states the number the taxpayer acts on is a hard error here:
    under-states tax.
 3. `compute_ny_taxable_income` — NYAGI less the greater of the standard
    deduction or IT-196, less dependent exemptions.
-4. `compute_ny_tax` — the §601 schedule for the status, **then §601(d-1) on
-   top**. The recapture is inside this function, not a caller's option: a
-   caller that can forget it is a caller that will.
+4. `compute_ny_tax` — **SHIPPED (slice 2).** Not one method but three,
+   selected on BOTH NYAGI and taxable income: New York's TAX TABLE below a
+   published taxable income, the §601 rate schedule above it, and the benefit
+   recapture on top once NYAGI passes the entry threshold. The recapture is
+   inside the function, not a caller's option — a caller that can forget it is
+   a caller that will.
+
+   **The table is not a restatement of the schedule**, and the first draft used
+   the schedule everywhere. It is the schedule evaluated at each row's MIDPOINT
+   and rounded to the dollar — the published TY2025 $50,000-$50,050 row reads
+   2,587 / 2,419 / 2,503 against a schedule-at-midpoint of 2,586.875 /
+   2,418.875 / 2,502.875, while the row FLOOR is a dollar low in all three.
+   Using the schedule there is worth up to two dollars and runs BOTH ways: it
+   OVER-states for anyone in the upper half of their row, which is half of all
+   returns, against an acceptance bar of one dollar a line. Slice 1's own cache
+   carried the cutoff key and the warning, and the compute ignored it.
+
+   Three more corrections from the same review, each a dollar or a block:
+   the rate schedule needs each band's PUBLISHED cumulative base (New York
+   rounds them, so summing the bands drifts by cents at most bands) and the
+   base is now cross-checked against that sum, because a MIS-TRANSCRIBED base
+   is likelier than a missing one and shifts a return by hundreds; the form
+   rounds the phase-in FRACTION and nothing else, so rounding the recapture to
+   cents first carried values across a whole-dollar boundary the form never
+   crosses; and `tax` is now the WHOLE-DOLLAR line 39, because returning cents
+   left the caller to round with Python's half-EVEN `round` where the form says
+   half-up.
+
+   **A negative New York AGI is an ordinary return** and the first draft
+   refused it. Line 33 has no floor — a Schedule C loss, a K-1 loss or an NOL
+   carryforward makes it negative routinely — while line 38 is floored, so the
+   tax is simply zero. Refusing blocked the whole return.
 5. `compute_nyc_tax` and `compute_yonkers_surcharge` — the city layer.
 6. `compute_mctmt` — self-employment in the MCTD, or a named limitation.
 7. NY credits, in the statutory ordering (**OPEN**, row 3).
@@ -220,6 +249,12 @@ Each emits a LOUD note that lands on `meta.limitations` — never silence:
   return and changes the amount owed, and it has no key. Named here rather than
   left to be noticed.
 - **Estates and trusts**, which §601(c) also covers. An IT-201 never is one.
+- **IT-201 line 44** (the separate tax on a lump-sum distribution, Form IT-230)
+  and **line 45** (net other New York State taxes, IT-201-ATT). `compute_ny_tax`
+  returns LINE 39, not the state total on line 46, and its inputs cannot
+  produce either component. Named in the function's own docstring as well,
+  because a caller that treats line 39 as the state tax under-states a return
+  that has one.
 
 ## 9. Sequencing
 

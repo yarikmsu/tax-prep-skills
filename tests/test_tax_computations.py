@@ -18,6 +18,7 @@ from agents.lib.tax_computations import (
     qdcg_worksheet_applies,
     _coerce_numeric,
     compute_bracket_tax,
+    compute_ny_tax,
     compute_qdcg_tax,
     compute_se_tax,
     compute_additional_medicare,
@@ -4633,3 +4634,473 @@ def test_the_fbar_skill_states_the_form_8938_figures_the_engine_holds():
     line = next(l for l in text.splitlines() if "form_8938_thresholds" in l and "MFJ in US" in l)
     assert f"MFJ in US = {k(T['mfj_us']['year_end'])} year-end / {k(T['mfj_us']['any_time'])} any time" in line
     assert f"unmarried abroad = {k(T['single_foreign']['year_end'])} / {k(T['single_foreign']['any_time'])}" in line
+
+
+# --- Z1 slice 2: the §601 schedule and the benefit recapture ----------------
+#
+# Every expected value below is hand-computed from New York's OWN published
+# worksheets and rate schedules — Form IT-201-I (2025), pages 33 through 38 —
+# and each case names the worksheet it reproduces. The figures are TY2025
+# because that is the instruction set that exists to check against; the module
+# fetches whatever year it is run for, which is why the function takes them all
+# as arguments and holds none.
+#
+# The recapture lives INSIDE compute_ny_tax on purpose. Above the entry
+# threshold, plain bracket math under-states New York tax by the whole benefit
+# of the graduated schedule, and under-stating what a taxpayer owes is the
+# direction AGENTS.md §4 calls a hard error.
+
+# IT-201-I (2025) p.33, "Married filing jointly and qualifying surviving
+# spouse". Written as bands so the test reads against the published table.
+_NY_2025_SCHEDULE_A = [
+    {"rate": 0.04, "min": 0, "max": 17150, "base": 0},
+    {"rate": 0.045, "min": 17150, "max": 23600, "base": 686},
+    {"rate": 0.0525, "min": 23600, "max": 27900, "base": 976},
+    {"rate": 0.055, "min": 27900, "max": 161550, "base": 1202},
+    {"rate": 0.06, "min": 161550, "max": 323200, "base": 8553},
+    {"rate": 0.0685, "min": 323200, "max": 2155350, "base": 18252},
+    {"rate": 0.0965, "min": 2155350, "max": 5000000, "base": 143754},
+    {"rate": 0.103, "min": 5000000, "max": 25000000, "base": 418263},
+    {"rate": 0.109, "min": 25000000, "max": None, "base": 2478263},]
+# IT-201-I (2025) p.33, "Single and married filing separately".
+_NY_2025_SCHEDULE_C = [
+    {"rate": 0.04, "min": 0, "max": 8500, "base": 0},
+    {"rate": 0.045, "min": 8500, "max": 11700, "base": 340},
+    {"rate": 0.0525, "min": 11700, "max": 13900, "base": 484},
+    {"rate": 0.055, "min": 13900, "max": 80650, "base": 600},
+    {"rate": 0.06, "min": 80650, "max": 215400, "base": 4271},
+    {"rate": 0.0685, "min": 215400, "max": 1077550, "base": 12356},
+    {"rate": 0.0965, "min": 1077550, "max": 5000000, "base": 71413},
+    {"rate": 0.103, "min": 5000000, "max": 25000000, "base": 449929},
+    {"rate": 0.109, "min": 25000000, "max": None, "base": 2509929},]
+_NY_SCHEDULE_BY_STATUS = {"single": "c", "mfs": "c", "mfj": "a", "qss": "a",
+                          "hoh": "b"}
+# IT-201-I (2025) pp.34-38, tax computation worksheets 1-16.
+_NY_2025_RECAPTURE = {
+    "entry_threshold": 107650,
+    "phase_in_band": 50000,
+    "entry_tier": {
+        # WS1: "Multiply line 2 by 5.5%", taxable income $161,550 or less.
+        "a": {"flat_rate": 0.055, "taxable_income_not_over": 161550},
+        # WS12: 6%, $269,300 or less.
+        "b": {"flat_rate": 0.06, "taxable_income_not_over": 269300},
+        # WS7: 6%, $215,400 or less.
+        "c": {"flat_rate": 0.06, "taxable_income_not_over": 215400},
+    },
+    "tiers": {
+        "a": [  # WS2-5
+            {"taxable_income_over": 161550, "taxable_income_not_over": 323200,
+             "recapture_base": 333, "incremental_benefit": 807,
+             "nyagi_excess_over": 161550},
+            {"taxable_income_over": 323200, "taxable_income_not_over": 2155350,
+             "recapture_base": 1140, "incremental_benefit": 2747,
+             "nyagi_excess_over": 323200},
+            {"taxable_income_over": 2155350,
+             "taxable_income_not_over": 5000000,
+             "recapture_base": 3887, "incremental_benefit": 60350,
+             "nyagi_excess_over": 2155350},
+            {"taxable_income_over": 5000000, "taxable_income_not_over": None,
+             "recapture_base": 64237, "incremental_benefit": 32500,
+             "nyagi_excess_over": 5000000},
+        ],
+        "b": [  # WS13-15
+            {"taxable_income_over": 269300, "taxable_income_not_over": 1616450,
+             "recapture_base": 787, "incremental_benefit": 2289,
+             "nyagi_excess_over": 269300},
+            {"taxable_income_over": 1616450,
+             "taxable_income_not_over": 5000000,
+             "recapture_base": 3076, "incremental_benefit": 45261,
+             "nyagi_excess_over": 1616450},
+            {"taxable_income_over": 5000000, "taxable_income_not_over": None,
+             "recapture_base": 48337, "incremental_benefit": 32500,
+             "nyagi_excess_over": 5000000},
+        ],
+        "c": [  # WS8-10
+            {"taxable_income_over": 215400, "taxable_income_not_over": 1077550,
+             "recapture_base": 568, "incremental_benefit": 1831,
+             "nyagi_excess_over": 215400},
+            {"taxable_income_over": 1077550,
+             "taxable_income_not_over": 5000000,
+             "recapture_base": 2399, "incremental_benefit": 30172,
+             "nyagi_excess_over": 1077550},
+            {"taxable_income_over": 5000000, "taxable_income_not_over": None,
+             "recapture_base": 32571, "incremental_benefit": 32500,
+             "nyagi_excess_over": 5000000},
+        ],
+    },
+    # WS6/WS11/WS16: above this NYAGI the whole taxable income is taxed at one
+    # rate, with no schedule at all.
+    "full_recapture": {"nyagi_over": 25000000, "rate": 0.109},
+}
+_NY_BRACKETS = {"a": _NY_2025_SCHEDULE_A, "c": _NY_2025_SCHEDULE_C, "b": []}
+# IT-201-I (2025) p.32: the TABLE is used when NYAGI is at or below the entry
+# threshold AND taxable income is under $65,000; the rate schedule takes over
+# above it. The rows are $50 wide over most of the range and NARROWER at the
+# very bottom — $0-13, $13-25, $25-50 — which is why the widths are fetched as
+# segments rather than assumed to be one figure.
+_NY_2025_TAX_TABLE = {
+    "max_taxable_income": 65000,
+    "row_segments": [
+        {"over": 0, "not_over": 13, "row_width": 13},
+        {"over": 13, "not_over": 25, "row_width": 12},
+        {"over": 25, "not_over": 50, "row_width": 25},
+        {"over": 50, "not_over": 65000, "row_width": 50},
+    ],
+}
+
+
+def _ny(taxable_income, nyagi, status="mfj", **over):
+    kwargs = {"brackets": _NY_BRACKETS,
+              "schedule_by_status": _NY_SCHEDULE_BY_STATUS,
+              "recapture": _NY_2025_RECAPTURE,
+              "tax_table": _NY_2025_TAX_TABLE}
+    kwargs.update(over)
+    return compute_ny_tax(taxable_income, nyagi, status, **kwargs)
+
+
+def test_ny_below_the_entry_threshold_is_the_schedule_alone():
+    """IT-201-I (2025) p.33, MFJ: "$1,202 plus 5.5% of the excess over
+    $27,900". 1,202 + 0.055 x (90,000 - 27,900) = 1,202 + 3,415.50.
+
+    Taxable income $90,000 is ABOVE the $65,000 table cutoff, so the schedule
+    is the right method here — which is the distinction the next test exists
+    for."""
+    out = _ny(90000, 100000)
+    assert out["tax_exact"] == 4617.50
+    assert out["tax"] == 4618   # line 39 carries whole dollars
+    assert out["regime"] == "graduated"
+    assert out["recapture_amount"] == 0.0
+    assert out["schedule"] == "a"
+
+
+def test_ny_entry_tier_phases_toward_the_flat_rate():
+    """Worksheet 1. NYAGI 132,650 is halfway through the 50,000 band, so half
+    the benefit is recaptured.
+
+    schedule tax = 1,202 + 0.055 x (130,000 - 27,900)        = 6,817.50
+    flat         = 0.055 x 130,000                           = 7,150.00
+    benefit      = 7,150.00 - 6,817.50                       =   332.50
+    fraction     = 25,000 / 50,000                           =    0.5
+    tax          = 6,817.50 + 166.25                         = 6,983.75
+    """
+    out = _ny(130000, 132650)
+    assert out["tax_exact"] == 6983.75
+    assert out["tax"] == 6984
+    assert out["regime"] == "entry_phase_in"
+    assert out["recapture_amount"] == 166.25
+
+
+def test_ny_entry_tier_fully_phased_in_is_exactly_the_flat_rate():
+    """Worksheet 1's own stop rule: "If the line 1 amount is $157,650 or more,
+    skip lines 4 through 8 and enter the line 3 amount". A capped fraction
+    reaches the same place without a special case — 0.055 x 150,000."""
+    out = _ny(150000, 160000)
+    assert out["tax_exact"] == 8250.00 == round(150000 * 0.055, 2)
+
+
+def test_ny_higher_tier_adds_a_base_and_a_phased_benefit():
+    """Worksheet 3: Recapture Base 1,140, Incremental Benefit 2,747, excess
+    over $323,200.
+
+    schedule tax = 18,252 + 0.0685 x (340,000 - 323,200)     = 19,402.80
+    fraction     = 26,800 / 50,000                           =    0.536
+    recapture    = 1,140 + 2,747 x 0.536                     =  2,612.39
+    tax                                                      = 22,015.19
+    """
+    out = _ny(340000, 350000)
+    assert out["tax_exact"] == 22015.192
+    assert out["tax"] == 22015
+    assert out["regime"] == "tier"
+    assert out["recapture_amount"] == 2612.392
+
+
+def test_ny_above_the_top_nyagi_is_one_flat_rate_with_no_schedule():
+    """Worksheet 6: "Multiply line 1 by 10.9%". Not a recapture — a different
+    tax, which is why it needs its own key rather than a fourth tier."""
+    out = _ny(26000000, 30000000)
+    assert out["tax_exact"] == round(26000000 * 0.109, 4)
+    assert out["regime"] == "full_recapture"
+
+
+def test_ny_mfs_uses_the_single_schedule_not_the_married_one():
+    """§601(c) covers the single filer AND married-filing-separately. The
+    pairing looks wrong — MFS is married — and it is the one most often guessed
+    wrong, so it is checked against the SINGLE table's own figures:
+    12,356 + 0.0685 x (250,000 - 215,400) = 14,726.10, then WS8's base 568 and
+    benefit 1,831 at a fraction of (260,000 - 215,400) / 50,000 = 0.892."""
+    out = _ny(250000, 260000, status="mfs")
+    assert out["schedule"] == "c"
+    assert out["tax_exact"] == round(14726.10 + 568 + 1831 * 0.892, 4)
+
+
+def test_ny_qss_uses_the_married_joint_schedule():
+    """§601(a) covers the surviving spouse. The playbook says not to map QSS by
+    reflex — this checks the mapping is the STATUTE's, not a reflex."""
+    assert _ny(90000, 100000, status="qss")["schedule"] == "a"
+    assert _ny(90000, 100000, status="qss")["tax"] == _ny(90000, 100000)["tax"]
+
+
+def test_ny_the_tier_boundary_is_inclusive_at_the_top_of_the_entry_tier():
+    """Worksheet 1 applies when taxable income is "$161,550 or less"; worksheet
+    2 when it is "more than $161,550". One dollar apart, two regimes."""
+    assert _ny(161550, 200000)["regime"] == "entry_phase_in"
+    assert _ny(161551, 200000)["regime"] == "tier"
+
+
+def test_ny_plain_bracket_math_under_states_above_the_threshold():
+    """The reason the recapture is inside this function and not a caller's
+    option. If these two were ever equal, the whole regime would be a no-op and
+    every test above would pass against a function that ignored it."""
+    for taxable, nyagi in ((130000, 132650), (340000, 350000),
+                           (3000000, 3100000)):
+        schedule_only, _ = compute_bracket_tax(taxable, _NY_2025_SCHEDULE_A)
+        assert _ny(taxable, nyagi)["tax_exact"] > schedule_only, (
+            f"the recapture added nothing at {taxable:,} / {nyagi:,}")
+
+
+def test_ny_refuses_a_return_above_the_threshold_with_no_recapture_fetched():
+    """The bias-direction guard, and the only safe answer. Every alternative —
+    falling back to the schedule, to the entry tier, to zero — under-states."""
+    for missing in ("entry_threshold", "phase_in_band", "entry_tier", "tiers",
+                    "full_recapture"):
+        recapture = {k: v for k, v in _NY_2025_RECAPTURE.items()
+                     if k != missing}
+        with pytest.raises(ValueError, match="not fetched|is empty"):
+            _ny(340000, 350000, recapture=recapture)
+
+
+def test_ny_refuses_when_the_brackets_and_the_flat_rate_disagree():
+    """A negative benefit means the schedule and the entry tier's flat rate
+    were fetched from different years or different states. Applying it would
+    REDUCE the tax, so it refuses instead of clamping — a clamp would hide the
+    mis-fetch and quietly compute on it."""
+    broken = {**_NY_2025_RECAPTURE,
+              "entry_tier": {**_NY_2025_RECAPTURE["entry_tier"],
+                             "a": {"flat_rate": 0.01,
+                                   "taxable_income_not_over": 161550}}}
+    with pytest.raises(ValueError, match="disagree"):
+        _ny(130000, 132650, recapture=broken)
+
+
+def test_ny_refuses_taxable_income_above_new_york_agi():
+    """Line 38 is computed FROM line 33, so this cannot happen — unless a
+    FEDERAL AGI was handed in where New York's belongs, which would then be
+    measured against every New York threshold."""
+    with pytest.raises(ValueError, match="mis-sourced"):
+        _ny(200000, 150000)
+
+
+def test_ny_refuses_an_unmapped_status_and_an_unfetched_schedule():
+    with pytest.raises(ValueError, match="§601 schedule"):
+        _ny(90000, 100000, status="qualifying_widow")
+    with pytest.raises(ValueError, match="empty"):
+        _ny(90000, 100000, status="hoh")   # schedule "b" is [] in the fixture
+
+
+@pytest.mark.parametrize("taxable,nyagi", [
+    (-1, 100000), (float("nan"), 100000),
+    (100000, float("inf")), (True, 100000),
+])
+def test_ny_refuses_a_malformed_figure(taxable, nyagi):
+    """NaN is rejected explicitly: it passes isinstance and every comparison
+    with it is False, so it would sail through both threshold tests and land in
+    the graduated branch."""
+    with pytest.raises(ValueError):
+        _ny(taxable, nyagi)
+
+
+def test_ny_refuses_a_taxable_income_no_tier_covers():
+    """A tier table whose last entry is CLOSED — a transcription that dropped
+    the "and over" row — would otherwise fall out of the loop and return the
+    schedule alone, which is the unbounded under-statement compute_bracket_tax
+    already refuses for brackets."""
+    closed = {**_NY_2025_RECAPTURE,
+              "tiers": {**_NY_2025_RECAPTURE["tiers"],
+                        "a": [{"taxable_income_over": 161550,
+                               "taxable_income_not_over": 323200,
+                               "recapture_base": 333,
+                               "incremental_benefit": 807,
+                               "nyagi_excess_over": 161550}]}}
+    with pytest.raises(ValueError, match="no fetched recapture tier"):
+        _ny(400000, 420000, recapture=closed)
+
+
+def test_ny_refuses_a_bracket_band_with_no_published_base():
+    """New York publishes its schedule as "base plus rate on the excess" and
+    ROUNDS each base to the nearest dollar, so summing the bands disagrees with
+    the form: on the TY2025 married-joint schedule the $323,200 base sums to
+    18,251.75 against a published 18,252. `/tax-verify` ties line by line
+    against software that uses the published schedule, so the drift reads as a
+    defect in whichever side is checked second. Refusing beats falling back to
+    summation, which would be a second answer that differs quietly."""
+    stripped = [{k: v for k, v in band.items() if k != "base"}
+                for band in _NY_2025_SCHEDULE_A]
+    with pytest.raises(ValueError, match="published cumulative base|'base'"):
+        _ny(90000, 100000,
+            brackets={**_NY_BRACKETS, "a": stripped})
+
+
+def test_ny_uses_the_published_base_not_the_sum_of_the_bands():
+    """The finding, pinned. If these ever agreed the requirement above would be
+    ceremony; they do not, and the difference is systematic rather than a
+    rounding accident of one case."""
+    summed, _ = compute_bracket_tax(340000, [
+        {k: v for k, v in band.items() if k != "base"}
+        for band in _NY_2025_SCHEDULE_A])
+    published = 18252 + 0.0685 * (340000 - 323200)
+    assert round(summed, 2) != round(published, 2), (
+        "band summation and the published base now agree — if New York has "
+        "stopped rounding its bases, this requirement can be relaxed")
+    out = _ny(340000, 350000)
+    assert out["tax_exact"] == round(round(published, 2) + 2612.392, 4)
+
+
+def test_ny_the_phase_in_fraction_is_rounded_to_four_places():
+    """"Divide line 6 by $50,000 and round the result to the fourth decimal
+    place" is the worksheet's own instruction, not a convenience. A mutation
+    to two places survived every other case here, because they all happened to
+    land on fractions that are exact at two — 0.5, 1.0, 0.536, 0.892.
+
+    NYAGI 120,987 is 13,337 into the band: 0.26674, which the form rounds to
+    0.2667 and two places would make 0.27.
+
+    schedule tax = 1,202 + 0.055 x (120,000 - 27,900)        = 6,267.50
+    flat         = 0.055 x 120,000                           = 6,600.00
+    benefit                                                  =   332.50
+    tax          = 6,267.50 + round(332.50 x 0.2667, 2)      = 6,356.18
+    """
+    out = _ny(120000, 120987)
+    assert out["recapture_amount"] == round(332.50 * 0.2667, 4)
+    assert out["tax_exact"] == round(6267.50 + 332.50 * 0.2667, 4)
+    assert out["tax"] == 6356
+
+
+def test_ny_a_higher_tiers_fraction_is_capped_at_the_band():
+    """"Enter the LESSER of line 6 or $50,000". Every other tier case here sits
+    inside the band, so an uncapped fraction survived them — and uncapped it
+    would recapture more than the whole incremental benefit, over-stating the
+    tax without limit as NYAGI rises.
+
+    NYAGI 400,000 is 76,800 over $323,200, so the fraction is 1.0, not 1.536.
+    tax = 19,402.80 + 1,140 + 2,747 = 23,289.80
+    """
+    out = _ny(340000, 400000)
+    assert out["recapture_amount"] == 1140 + 2747
+    assert out["tax_exact"] == round(18252 + 0.0685 * 16800 + 1140 + 2747, 4)
+
+
+def test_ny_a_negative_new_york_agi_is_an_ordinary_return():
+    """IT-201 line 33 is federal AGI plus and minus the IT-225 modifications and
+    has NO floor: a Schedule C loss, a K-1 loss or an NOL carryforward makes it
+    negative routinely. Line 38 IS floored — "if line 34 is more than line 33,
+    leave blank" — so the taxable income is zero and the tax is zero.
+
+    The first version refused this, which is a gate firing on correct data, and
+    it would have blocked the whole return rather than saying "you owe nothing".
+    """
+    out = _ny(0, -5000)
+    assert out["tax"] == 0.0
+    assert out["regime"] in ("graduated", "tax_table")
+
+
+def test_ny_uses_the_table_below_the_cutoff_and_the_schedule_above_it():
+    """IT-201-I (2025) p.32 selects the METHOD on BOTH figures, and the
+    taxable-income condition is not implied by the NYAGI one — which is why it
+    cannot be folded into one "at or below the threshold" branch.
+
+    The published $50,000-$50,050 row reads $2,419 for married-joint, which is
+    the schedule at the row's MIDPOINT ($50,025 -> 2,418.875). The row FLOOR
+    gives 2,417.50, a dollar low, and the schedule at the taxpayer's own
+    taxable income is wrong in EITHER direction depending on where in the row
+    they sit — over-stating for anyone in the upper half, which is half of all
+    returns.
+    """
+    assert _ny(50000, 80000)["tax"] == 2419
+    assert _ny(50000, 80000)["regime"] == "tax_table"
+    assert _ny(50049, 80000)["tax"] == 2419, (
+        "everyone in one row pays the same tax — that is what a table is")
+    # The published single/MFS and head-of-household figures for the same row.
+    assert _ny(50000, 80000, status="single")["tax"] == 2587
+    # One dollar above the cutoff the method changes.
+    assert _ny(65000, 80000)["regime"] == "graduated"
+
+
+def test_ny_refuses_when_the_table_region_is_unfetched():
+    """Falling back to the schedule is the silent two-dollar error this key
+    exists to prevent, so an unfetched table refuses rather than guessing."""
+    with pytest.raises(ValueError, match="max_taxable_income"):
+        _ny(50000, 80000, tax_table=None)
+    with pytest.raises(ValueError, match="row_segments"):
+        _ny(50000, 80000, tax_table={"max_taxable_income": 65000})
+
+
+def test_ny_table_rows_are_not_all_the_same_width():
+    """The bottom of the table uses narrower rows than the $50 it settles into,
+    so a single assumed width would be a guess at exactly the figure this
+    method exists to get right. $30 sits in a 25-wide row whose midpoint is
+    $37.50, not in a 50-wide row."""
+    out = _ny(30, 1000)
+    assert out["breakdown"][0]["row"] == "25 - 50"
+    assert out["tax"] == round(37.50 * 0.04)
+
+
+def test_ny_rounds_half_up_the_way_the_form_says():
+    """"Increase amounts from 50 to 99 cents to the next dollar" (IT-201-I,
+    Entering whole dollar amounts). Python's round() is HALF-EVEN and turns
+    2,416.50 into 2,416, which is a dollar low every time the cents tie."""
+    from agents.lib.tax_computations import _ny_round_half_up
+    assert _ny_round_half_up(2416.50) == 2417
+    assert _ny_round_half_up(2417.50) == 2418
+    assert round(2416.50) == 2416, (
+        "if Python's round has stopped being half-even, this helper can go")
+
+
+def test_ny_refuses_a_schedule_whose_bands_do_not_meet():
+    """A gap swallows the incomes inside it and an overlap makes the first
+    match win. Neither is visible to a per-band check, and both are ordinary
+    transcription errors."""
+    gapped = [dict(b) for b in _NY_2025_SCHEDULE_A]
+    gapped[3]["min"] = 28000          # the band below still ends at 27,900
+    with pytest.raises(ValueError, match="gap or an overlap"):
+        _ny(90000, 100000, brackets={**_NY_BRACKETS, "a": gapped})
+
+
+def test_ny_refuses_a_mis_transcribed_published_base():
+    """A MISSING base refuses already. A WRONG one — 18,522 for 18,252 — is the
+    likelier transcription error and would shift every affected return by
+    hundreds. The argument for requiring the published figure is that it differs
+    from the sum by CENTS, so a dollar of difference refutes the figure."""
+    transposed = [dict(b) for b in _NY_2025_SCHEDULE_A]
+    transposed[5]["base"] = 18522
+    with pytest.raises(ValueError, match="mis-transcribed"):
+        _ny(340000, 350000, brackets={**_NY_BRACKETS, "a": transposed})
+
+
+def test_ny_refuses_a_band_that_is_open_ended_in_the_middle():
+    """A dropped `max` makes its band terminal and every band above it
+    unreachable — a $400,000 return taxed at the 5.5% rate all the way up, from
+    one missing key."""
+    truncated = [dict(b) for b in _NY_2025_SCHEDULE_A]
+    truncated[3]["max"] = None
+    with pytest.raises(ValueError, match="not the last band"):
+        _ny(400000, 420000, brackets={**_NY_BRACKETS, "a": truncated})
+
+
+def test_ny_does_not_round_the_recapture_before_the_total():
+    """The form rounds the FRACTION and nothing else. Rounding the product to
+    cents first can carry a value across a whole-dollar boundary the form would
+    not cross.
+
+    MFJ, taxable income $323,201, NYAGI $323,588 (worksheet 3):
+      line 3 = 18,252 + 0.0685 x 1                     = 18,252.07
+      line 8 = 388 / 50,000 -> 0.0078
+      line 9 = 2,747 x 0.0078                          =     21.4266
+      line 10 = 18,252.07 + 1,140 + 21.4266            = 19,413.4966
+    which the form enters as $19,413. Rounding line 9 to cents first gives
+    19,413.50, which enters as $19,414.
+    """
+    out = _ny(323201, 323588)
+    assert out["tax_exact"] == round(
+        round(18252 + 0.0685 * 1, 2) + 1140 + 2747 * 0.0078, 4)
+    assert out["tax"] == 19413, (
+        "rounding the recapture to cents first would make this 19,414")

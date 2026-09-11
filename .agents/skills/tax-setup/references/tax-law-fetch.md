@@ -165,6 +165,14 @@ a figure from a prior year.
     AND married-filing-separately. `state.bracket_schedule_by_status` already
     holds the mapping — do not re-derive it, and do not split the schedules
     per status: an empty schedule is a silent ZERO tax, not an error.
+    **Record each band's published cumulative BASE as well as its rate and
+    floor** (`{"rate", "min", "max", "base"}`). New York publishes the schedule
+    as "base plus rate on the excess" and ROUNDS each base to the nearest
+    dollar, so summing the bands disagrees with the form by cents at every
+    step — and `/tax-verify` ties against software that uses the published
+    schedule. `compute_ny_tax` refuses a band with no `base` rather than
+    falling back to summation, because a fallback is a second answer that
+    differs quietly.
   - Search `"New York {year} standard deduction site:tax.ny.gov"` →
     `state.standard_deduction`, which has **SIX** keys. `qss` equals `mfj` and
     `mfs` equals `single` today — those are the pairings, not differences to
@@ -175,7 +183,10 @@ a figure from a prior year.
     incremental benefit"` → `state.tax_table_benefit_recapture`. **This is the
     one that decides whether the return is right.** Fetch ALL of it:
     `entry_threshold` (one figure for every status), `phase_in_band`, the
-    per-schedule `tiers` — each `{taxable_income_over,
+    per-schedule `entry_tier` — whose FIRST worksheet phases up to a FLAT RATE
+    on the whole taxable income rather than using a base and benefit, and whose
+    rate differs by schedule — the per-schedule `tiers` — each
+    `{taxable_income_over,
     taxable_income_not_over, recapture_base, incremental_benefit,
     nyagi_excess_over}` — and `full_recapture` for the top regime, where the
     whole taxable income is taxed at one rate with no schedule. The base and
@@ -184,10 +195,16 @@ a figure from a prior year.
     return above the first tier**, which is the direction the bias rule calls a
     hard error. The governing statute is a RANGE — §601(d) through (d-7), each
     with its own year window — so cite the one whose window contains `{year}`.
-  - Search `"New York {year} tax table taxable income less than"` →
-    `state.tax_table_max_taxable_income`. Below it NY uses a rounded TABLE and
-    above it the rate schedule, and `/tax-verify` compares against software
-    that uses the table.
+  - Search `"New York {year} tax table site:tax.ny.gov"` → `state.tax_table`.
+    The table and the schedule are different METHODS, selected on BOTH NYAGI
+    and taxable income, and the table is the schedule evaluated at each row's
+    MIDPOINT and rounded to the dollar — the row FLOOR is a dollar low. Record
+    `max_taxable_income` (the table's top) AND `row_segments`, because the rows
+    are NOT all the same width: the bottom of the table is narrower than the
+    $50 it settles into. Each segment is `{over, not_over, row_width}` and they
+    must span 0 up to the top. Using the schedule where the form says table is
+    worth up to two dollars and runs BOTH ways, against an acceptance bar of
+    one dollar a line — `compute_ny_tax` refuses rather than guessing a width.
   - Search `"New York IT-196 itemized deduction limitation {year}"` →
     `state.itemized_reduction`, which holds **FOUR** mutually exclusive
     mechanisms by NYAGI band: a first reduction (per-status threshold, band,

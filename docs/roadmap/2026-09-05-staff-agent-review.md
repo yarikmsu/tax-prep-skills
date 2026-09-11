@@ -431,6 +431,17 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   keying trap surfaced: NY's standard deduction has SIX rows, splitting a single filer
   on whether they can be claimed as a dependent. Twelve mutations, twelve reds.
 
+  **SLICE 2 SHIPPED**: `compute_ny_tax` — three methods, not one, selected on BOTH
+  NYAGI and taxable income. New York's TAX TABLE is not a restatement of its schedule
+  (it is the schedule at each row's MIDPOINT, rounded), the row widths are not constant,
+  and the first draft used the schedule everywhere — worth up to two dollars, BOTH ways,
+  against a one-dollar bar. The schedule needs each band's published cumulative base and
+  now cross-checks it against the sum beneath. The form rounds the phase-in FRACTION and
+  nothing else. `tax` is the whole-dollar line 39, half-up, because Python's `round` is
+  half-even. A negative New York AGI is an ORDINARY return and the first draft refused
+  it. Every expected value hand-computed from IT-201-I (2025) pp.32-38; twenty-two
+  mutations across the two rounds, twenty-two reds.
+
 - **Z1 (P2, L): New York IT-201 resident return** — Epic 3.1-3.4 and 3.10: the
   year-gated bracket tables and standard deductions, `compute_ny_tax` with tax-benefit
   recapture, the IT-225 modification set (414(h), IRC-125, PTET add-back, pension

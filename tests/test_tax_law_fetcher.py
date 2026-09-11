@@ -2365,6 +2365,20 @@ class TestTheNewYorkBlock:
             "the charitable tiers carry no YEAR WINDOW, so a tier that has "
             "expired cannot be distinguished from one nobody fetched")
 
+    def test_the_tax_table_is_a_method_with_its_own_row_widths(self):
+        """The table and the schedule are different METHODS, selected on BOTH
+        NYAGI and taxable income, and the table is the schedule at each row's
+        MIDPOINT rounded to the dollar. The row width is NOT constant — the
+        bottom of the table is narrower than the $50 it settles into — so one
+        assumed width would be a guess at exactly the figure this pins. The
+        first version of this block held the cutoff as a bare scalar and had
+        nowhere to put the widths, and `compute_ny_tax` ignored it entirely."""
+        block = create_state_template("NY")["tax_table"]
+        assert block["max_taxable_income"] is None
+        assert block["row_segments"] == [], (
+            "the tax table has no place for its row widths, so a caller has to "
+            "assume one — and it is wrong at the bottom of the table")
+
     def test_new_york_does_not_conform_to_federal(self):
         """This key read True until the module existed, and that is what makes
         a bracket estimate look like a return: NY applies its own IT-225

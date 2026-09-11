@@ -2417,6 +2417,394 @@ def compute_schedule_a(
     }
 
 
+def _ny_schedule_tax(taxable_income: float, table: list,
+                     schedule: str) -> "tuple[float, list]":
+    """New York's rate schedule the way New York publishes it: a cumulative
+    BASE plus a rate on the excess over the band's floor.
+
+    Not `compute_bracket_tax`, and the difference is not stylistic. New York
+    ROUNDS each published base to the nearest dollar, so summing the bands
+    disagrees with the form at most of them — on the TY2025 married-joint
+    schedule the $323,200 base sums to 18,251.75 against a published 18,252,
+    and the $2,155,350 base sums two and a half cents high. Two of that
+    schedule's nine bands do agree exactly, which is why the cross-check below
+    tolerates a dollar rather than demanding a difference. `/tax-verify` ties
+    line by line
+    against software that uses the published schedule, and a systematic
+    sub-dollar drift at every band is exactly the kind of difference that reads
+    as a defect in whichever side is checked second.
+
+    So `base` is REQUIRED on every band rather than optional. A fallback to
+    summation would be a second answer that differs quietly, which is the shape
+    this repository keeps paying for.
+    """
+    if taxable_income < 0:
+        raise ValueError(f"taxable_income cannot be negative, got {taxable_income}")
+    summed = 0.0
+    for i, band in enumerate(table):
+        for key in ("rate", "min", "base"):
+            if band.get(key) is None:
+                raise ValueError(
+                    f"New York bracket {i} of schedule {schedule!r} has no "
+                    f"{key!r}. Each band carries the PUBLISHED cumulative base; "
+                    "summing the bands instead disagrees with the form, because "
+                    "New York rounds those bases to the dollar.")
+        upper = band.get("max")
+        # A dropped `max` makes its band TERMINAL, and the bands above it
+        # unreachable: a $400,000 return would then be taxed at the 5.5% band's
+        # rate all the way up. That is a five-figure under-statement from one
+        # missing key, so only the LAST band may be open-ended.
+        if upper is None and i != len(table) - 1:
+            raise ValueError(
+                f"New York bracket {i} of schedule {schedule!r} has no 'max' "
+                "and is not the last band; every band above it would be "
+                "unreachable")
+        # The bands must meet exactly. A gap swallows the incomes inside it and
+        # an overlap makes the first match win, and both are transcription
+        # errors that no per-band check can see.
+        if band["min"] != (0 if i == 0 else table[i - 1].get("max")):
+            raise ValueError(
+                f"New York schedule {schedule!r} band {i} starts at "
+                f"{band['min']}, which does not meet the previous band's top; "
+                "the schedule has a gap or an overlap")
+        # The PUBLISHED base against the bands beneath it. A base that is
+        # MISSING refuses above; a base that is WRONG — a transposed 18,522 for
+        # 18,252 — is the likelier transcription error and would shift every
+        # affected return by hundreds. The whole argument for requiring the
+        # published figure is that it differs from the sum by CENTS, so a
+        # difference of more than a dollar refutes the figure, not the rule.
+        if abs(band["base"] - summed) > 1.0:
+            raise ValueError(
+                f"New York schedule {schedule!r} band {i} publishes a base of "
+                f"{band['base']:,} where the bands beneath it sum to "
+                f"{summed:,.2f}. New York rounds its bases to the dollar, so a "
+                "gap this size is a mis-transcribed figure, not rounding.")
+        if upper is not None:
+            summed += (upper - band["min"]) * band["rate"]
+        if taxable_income > band["min"] and (upper is None
+                                             or taxable_income <= upper):
+            excess = taxable_income - band["min"]
+            tax = round(band["base"] + excess * band["rate"], 2)
+            return tax, [{
+                "rate": band["rate"],
+                "range": f"{band['min']:,.0f} - "
+                         f"{upper:,.0f}" if upper is not None
+                         else f"{band['min']:,.0f} and over",
+                "base": band["base"],
+                "excess": round(excess, 2),
+                "tax": tax,
+            }]
+    # Only reachable at exactly zero, or from a table whose first band does not
+    # start at zero — a transcription gap rather than a taxpayer.
+    if taxable_income == 0:
+        return 0.0, []
+    raise ValueError(
+        f"taxable income {taxable_income:,.2f} falls in no band of New York "
+        f"schedule {schedule!r}; the first band must start at 0 and the last "
+        "must have a null max. Re-run /tax-setup.")
+
+
+def _ny_round_half_up(value: float) -> int:
+    """New York's own rounding: "Drop amounts that are less than 50 cents" and
+    "increase amounts from 50 to 99 cents to the next dollar" (IT-201-I,
+    Entering whole dollar amounts). Python's `round` is HALF-EVEN, so it turns
+    2,416.50 into 2,416 where the form says 2,417 — a dollar, every time the
+    cents land on a tie, in the direction that under-states."""
+    return math.floor(value + 0.5) if value >= 0 else -math.floor(-value + 0.5)
+
+
+def _ny_table_tax(taxable_income: float, table: list, schedule: str,
+                  tax_table: dict) -> "tuple[float, list]":
+    """New York's TAX TABLE, which is a different method from its schedule.
+
+    Below a published taxable income, and at or below the recapture's entry
+    threshold, the form says to use the TABLE — and the table is not a
+    restatement of the schedule. It is the schedule evaluated at each row's
+    MIDPOINT and rounded to the dollar, verified on all three schedules against
+    the published TY2025 table: the $50,000-$50,050 row reads 2,587 / 2,419 /
+    2,503 for single-and-MFS, married-joint and head-of-household, which is
+    exactly the schedule at $50,025. The row FLOOR gives 2,586 / 2,418 / 2,502,
+    one dollar low in every case.
+
+    Using the schedule where the form says table is worth up to about two
+    dollars and runs BOTH ways — it over-states whenever taxable income sits in
+    the upper half of its row, which is half of all returns — against a stated
+    acceptance bar of one dollar a line.
+
+    The ROW WIDTH is not constant. It is fetched as segments, because the
+    bottom of the table uses narrower rows than the $50 it settles into, and a
+    single width assumed across the range would be a guess at exactly the
+    figure this function exists to get right.
+    """
+    segments = (tax_table or {}).get("row_segments") or []
+    if not segments:
+        raise ValueError(
+            "state.tax_table.row_segments is not fetched, and this return is "
+            "in the TABLE region. The table is the schedule at each row's "
+            "midpoint, and its rows are not all the same width — using the "
+            "schedule instead is worth up to two dollars in EITHER direction. "
+            "Re-run /tax-setup.")
+    for segment in segments:
+        upper = segment.get("not_over")
+        if taxable_income >= segment["over"] and (upper is None
+                                                  or taxable_income < upper):
+            width = segment.get("row_width")
+            if not width:
+                raise ValueError(
+                    f"the tax-table segment containing {taxable_income:,.2f} "
+                    "has no row_width, so its midpoint cannot be found")
+            offset = taxable_income - segment["over"]
+            row_floor = segment["over"] + (offset // width) * width
+            midpoint = row_floor + width / 2
+            at_midpoint, _ = _ny_schedule_tax(midpoint, table, schedule)
+            tax = float(_ny_round_half_up(at_midpoint))
+            return tax, [{
+                "method": "tax table",
+                "row": f"{row_floor:,.0f} - {row_floor + width:,.0f}",
+                "midpoint": midpoint,
+                "tax": tax,
+            }]
+    raise ValueError(
+        f"taxable income {taxable_income:,.2f} is in the tax-table region and "
+        "no fetched row segment covers it; the segments must span 0 up to "
+        "state.tax_table.max_taxable_income")
+
+
+def _ny_result(exact: float, schedule: str, regime: str, recaptured: float,
+               breakdown: list, notes: list) -> dict:
+    """`tax` is IT-201 LINE 39 — a whole dollar, because that is what the form
+    carries: "enter whole dollar amounts only … increase amounts from 50 to 99
+    cents to the next dollar".
+
+    Returning cents and leaving the caller to round was a trap with no warning
+    in the signature. It cost a dollar twice over: Python's `round` is
+    half-EVEN, so a tie went down where the form goes up; and rounding to cents
+    first and to dollars second carried values across a boundary the form never
+    crosses — 19,413.4966 became 19,413.50 and then 19,414, where the form says
+    19,413. `tax_exact` keeps the unrounded figure for anything that needs to
+    audit the arithmetic.
+    """
+    return {
+        "tax": _ny_round_half_up(exact),
+        "tax_exact": round(exact, 4),
+        "schedule": schedule,
+        "regime": regime,
+        "recapture_amount": round(recaptured, 4),
+        "breakdown": breakdown,
+        "notes": notes,
+    }
+
+
+def compute_ny_tax(
+    taxable_income: float,
+    nyagi: float,
+    filing_status: str,
+    brackets: "dict[str, list]",
+    schedule_by_status: "dict[str, str]",
+    recapture: dict,
+    tax_table: "dict | None" = None,
+) -> dict:
+    """New York State tax: the §601 rate schedule PLUS the benefit recapture.
+
+    The recapture is INSIDE this function and not a caller's option, because a
+    caller that can forget it is a caller that will. Above the entry threshold,
+    plain bracket math UNDER-states New York tax — not by rounding, but by the
+    whole benefit of the graduated schedule — and under-stating what a taxpayer
+    owes is the direction AGENTS.md §4 calls a hard error rather than a degrade.
+
+    Three regimes, selected on NYAGI and then on TAXABLE INCOME:
+
+    - **At or below the entry threshold**: the schedule alone.
+    - **The entry tier**: the tax phases from the graduated result up to a FLAT
+      rate on the whole taxable income, over a band of NYAGI above the
+      threshold. The worksheet says "stop" once the band is exhausted; a capped
+      fraction reaches the same place without a special case.
+    - **The higher tiers**: the schedule result plus a fixed recapture BASE plus
+      an incremental BENEFIT phased over the same band. Both figures move year
+      to year, which is why they are fetched rather than written here.
+    - **Above the top NYAGI**: one flat rate on the whole taxable income, with
+      no schedule at all. Not a recapture — a different tax.
+
+    `filing_status` is mapped to a §601 SCHEDULE, never used directly: (a)
+    covers married-filing-jointly and the surviving spouse, (c) covers the
+    single filer and married-filing-separately. Those are statutory identities,
+    and the mapping comes from the cache so this function does not hold a second
+    copy of it.
+
+    Args:
+        taxable_income: IT-201 line 38.
+        nyagi: IT-201 line 33 — New York AGI, NOT federal AGI. The two differ by
+            the IT-225 modifications, and the thresholds below are New York's.
+        filing_status: single | mfj | mfs | hoh | qss.
+        brackets: `state.brackets`, keyed by schedule.
+        schedule_by_status: `state.bracket_schedule_by_status`.
+        recapture: `state.tax_table_benefit_recapture`.
+
+    NOT the whole of New York State tax. This is IT-201 LINE 39. Line 46 is the
+    state total, and two of its components are outside these inputs entirely:
+    line 44's separate tax on a lump-sum distribution (Form IT-230) and line
+    45's net other New York State taxes (IT-201-ATT). A caller that treats this
+    as the state tax under-states a return that has either. FULL-YEAR RESIDENTS
+    only — a part-year or nonresident return uses these worksheets against a
+    different base, and nothing here refuses one.
+
+    Every figure is an argument, which is what makes this year-agnostic: the
+    rates change, and TY2026's schedules are a cut from TY2025's. The recapture
+    tables must be re-fetched in LOCKSTEP with the brackets — a mixed pair
+    computes a benefit against rates that never coexisted.
+
+    Returns:
+        {"tax", "tax_exact", "schedule", "regime", "recapture_amount",
+         "breakdown", "notes"} — `tax` is the WHOLE-DOLLAR line 39.
+
+    Raises:
+        ValueError: on a malformed input, a missing schedule, or — the one that
+            matters — a return above the entry threshold whose recapture data
+            was never fetched. Refusing is the only safe answer there: every
+            other option under-states the tax.
+    """
+    for name, value in (("taxable_income", taxable_income), ("nyagi", nyagi)):
+        if value is None or isinstance(value, bool) or \
+                not isinstance(value, (int, float)):
+            raise ValueError(f"{name} must be a number, got {value!r}")
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite, got {value!r}")
+    # Taxable income is floored by the form — "if line 34 is more than line 33,
+    # leave blank" — so a negative one is a defect. NEW YORK AGI IS NOT: line 33
+    # is federal AGI plus and minus the IT-225 modifications and has no floor,
+    # so a Schedule C loss, a K-1 loss or an NOL carryforward routinely makes it
+    # negative. Refusing that refused an ordinary return whose New York tax is
+    # zero, and a gate that fires on correct data is the one that gets waved
+    # through next time.
+    if taxable_income < 0:
+        raise ValueError(
+            f"taxable_income cannot be negative, got {taxable_income!r}")
+    # NYAGI is the base taxable income is computed FROM, so taxable income can
+    # never exceed it. When it does, one of the two was mis-sourced — most
+    # likely a federal AGI handed in where line 33 belongs — and every
+    # threshold below would then be applied to the wrong figure.
+    if nyagi >= 0 and taxable_income > nyagi:
+        raise ValueError(
+            f"taxable income {taxable_income:,.2f} exceeds New York AGI "
+            f"{nyagi:,.2f}; line 38 is computed from line 33, so this is a "
+            "mis-sourced figure (federal AGI handed in as NYAGI?)")
+
+    schedule = (schedule_by_status or {}).get(filing_status)
+    if schedule is None:
+        raise ValueError(
+            f"no §601 schedule for filing status {filing_status!r} — known: "
+            f"{sorted(schedule_by_status or {})}")
+    table = (brackets or {}).get(schedule)
+    if not table:
+        raise ValueError(
+            f"New York bracket schedule {schedule!r} is empty; re-run "
+            "/tax-setup to fetch state.brackets")
+
+    schedule_tax, breakdown = _ny_schedule_tax(taxable_income, table, schedule)
+    notes: "list[str]" = []
+
+    entry_threshold = (recapture or {}).get("entry_threshold")
+    if entry_threshold is None:
+        raise ValueError(
+            "state.tax_table_benefit_recapture.entry_threshold is not fetched, "
+            "so nothing here knows whether this return is above the recapture. "
+            "Re-run /tax-setup: guessing under-states every affected return.")
+    if nyagi <= entry_threshold:
+        # THE TABLE, not the schedule, below the published taxable income. Two
+        # methods, selected on BOTH figures, and the taxable-income condition is
+        # not implied by the NYAGI one — which is why this cannot be folded into
+        # a single "at or below the threshold" branch.
+        table_max = (tax_table or {}).get("max_taxable_income")
+        if table_max is None:
+            raise ValueError(
+                "state.tax_table.max_taxable_income is not fetched, so nothing "
+                "here knows whether this return uses New York's TABLE or its "
+                "rate schedule. They give different answers — the table is "
+                "midpoint-rounded — and picking the wrong one is worth up to "
+                "two dollars in either direction. Re-run /tax-setup.")
+        if taxable_income < table_max:
+            table_tax, table_breakdown = _ny_table_tax(
+                taxable_income, table, schedule, tax_table)
+            return _ny_result(table_tax, schedule, "tax_table", 0.0,
+                              table_breakdown, notes)
+        return _ny_result(schedule_tax, schedule, "graduated", 0.0,
+                          breakdown, notes)
+
+    # Above the top NYAGI the schedule stops applying altogether.
+    top = (recapture.get("full_recapture") or {})
+    if top.get("nyagi_over") is None or top.get("rate") is None:
+        raise ValueError(
+            "state.tax_table_benefit_recapture.full_recapture is not fetched. "
+            "Above a very high NYAGI New York taxes the whole taxable income "
+            "at one rate; without it this return falls back to the tiers and "
+            "under-states.")
+    if nyagi > top["nyagi_over"]:
+        tax = taxable_income * top["rate"]
+        notes.append(
+            "New York AGI is above the top threshold: the entire taxable "
+            "income is taxed at one rate, with no rate schedule.")
+        return _ny_result(tax, schedule, "full_recapture",
+                          tax - schedule_tax, breakdown, notes)
+
+    band = recapture.get("phase_in_band")
+    if not band:
+        raise ValueError(
+            "state.tax_table_benefit_recapture.phase_in_band is not fetched, "
+            "and the recapture phases in over it. Re-run /tax-setup.")
+    # "Divide by the band and round the result to the FOURTH decimal place" is
+    # the worksheet's own instruction, not a convenience — rounding elsewhere
+    # moves the answer by cents against a software-prepared return.
+    fraction = round(min(nyagi - entry_threshold, band) / band, 4)
+
+    entry = (recapture.get("entry_tier") or {}).get(schedule) or {}
+    ceiling = entry.get("taxable_income_not_over")
+    flat_rate = entry.get("flat_rate")
+    if ceiling is None or flat_rate is None:
+        raise ValueError(
+            f"state.tax_table_benefit_recapture.entry_tier[{schedule!r}] is "
+            "not fetched. The first tier does not use a base and benefit at "
+            "all — it phases up to a FLAT rate on the whole taxable income — "
+            "so there is nothing to fall back to.")
+
+    if taxable_income <= ceiling:
+        benefit = round(taxable_income * flat_rate, 2) - schedule_tax
+        if benefit < 0:
+            raise ValueError(
+                f"the §601 schedule {schedule!r} produces {schedule_tax:,.2f} "
+                f"on {taxable_income:,.2f}, MORE than the entry tier's flat "
+                f"rate would ({taxable_income * flat_rate:,.2f}). The brackets "
+                "and the flat rate disagree, so one of them is mis-fetched; "
+                "applying the difference would REDUCE the tax.")
+        # The form rounds the FRACTION and nothing else. Rounding the product
+        # to cents first can carry a value across the whole-dollar boundary the
+        # form would not cross — worth a dollar on the return.
+        recaptured = benefit * fraction
+        return _ny_result(schedule_tax + recaptured, schedule,
+                          "entry_phase_in", recaptured, breakdown, notes)
+
+    tiers = (recapture.get("tiers") or {}).get(schedule) or []
+    if not tiers:
+        raise ValueError(
+            f"state.tax_table_benefit_recapture.tiers[{schedule!r}] is empty "
+            "and this return is above the entry tier. Each tier carries its "
+            "own base and benefit, and they move year to year — there is no "
+            "structural default to use instead.")
+    for tier in tiers:
+        upper = tier.get("taxable_income_not_over")
+        if taxable_income > tier["taxable_income_over"] and \
+                (upper is None or taxable_income <= upper):
+            excess = max(nyagi - tier["nyagi_excess_over"], 0.0)
+            tier_fraction = round(min(excess, band) / band, 4)
+            recaptured = (tier["recapture_base"]
+                          + tier["incremental_benefit"] * tier_fraction)
+            return _ny_result(schedule_tax + recaptured, schedule, "tier",
+                              recaptured, breakdown, notes)
+    raise ValueError(
+        f"taxable income {taxable_income:,.2f} falls in no fetched recapture "
+        f"tier for schedule {schedule!r}; the top tier's "
+        "taxable_income_not_over must be null. Re-run /tax-setup.")
+
+
 def compute_ca_itemized(
     federal_agi: float,
     ca_agi: float,
