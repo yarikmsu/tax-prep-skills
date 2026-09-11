@@ -1211,7 +1211,7 @@ apply_red_checks
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
 #   skill .md edit                 963 tests     19.7 - 23.4s         3
 #   cold pass, all seven modules  1184 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4663 tests    228.4 - 243.4s        2
+#   (for scale) `pytest tests/`   4679 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 197 and runs 195; and
@@ -1221,7 +1221,7 @@ apply_red_checks
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4670 and runs 4663 for the same skips — and that row
+# `pytest tests/` collects 4686 and runs 4679 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1399,8 +1399,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained six
-# hundred and ninety tests (3973 to 4663), and the gap was ZERO when the sitting ended: it took the
+# Against the counts the seconds were taken at, the suite has gained seven
+# hundred and six tests (3973 to 4679), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1604,8 +1604,8 @@ apply_red_checks
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
 # yet taken. FOUR pairs read none and three do not, and the third of those three is
-# what changed here: of the six hundred
-# and ninety tests the suite has gained since the sitting, TEN landed in
+# what changed here: of the seven hundred
+# and six tests the suite has gained since the sitting, TEN landed in
 # tests/test_secure_fs.py — the Windows cases plus one case each for
 # V2's, V1's, Y4's and V7's new engine modules, which is that module's pair — EIGHTEEN landed in
 # tests/test_portability.py, which is Y5, the Z1 skill-text checks and the
@@ -1614,7 +1614,7 @@ apply_red_checks
 # tests/test_capabilities.py, which is Z7's residency registry and Z1's depth
 # note, and is the third
 # such row, and
-# the other six hundred and three in test_answers, test_ci_workflow,
+# the other six hundred and nineteen in test_answers, test_ci_workflow,
 # test_pii_content_scan, test_evals, test_eval_run, test_parse_records,
 # test_return_builder, test_receipt, test_filing_package, test_pdf_render,
 # test_workspace, test_tie_out, test_yoy_diff, test_tax_calendar,
@@ -1626,7 +1626,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to eighty-seven; the remaining six hundred and three are modules this
+# They sum to eighty-seven; the remaining six hundred and nineteen are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

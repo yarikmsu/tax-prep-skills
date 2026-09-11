@@ -35,6 +35,7 @@ from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
+    hold_workspace,
     resolve_workspace,
 )
 
@@ -2413,9 +2414,10 @@ def _set_main(argv: list) -> int:
         period = args.applies_to
         if period is not None and re.fullmatch(r"\d{4}", period):
             period = int(period)
+        workspace = resolve_workspace(args.workspace)
+        hold_workspace(workspace, "tax_law_fetcher")
         out = set_figure(args.year, args.dotted, _parse_cli_value(args.value),
-                         args.source, str(resolve_workspace(args.workspace)),
-                         applies_to=period)
+                         args.source, str(workspace), applies_to=period)
     except (WorkspaceError, ValueError) as e:  # TaxLawSetError is one
         print(f"Error: {redact(e)}", file=sys.stderr)
         return 1

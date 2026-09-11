@@ -83,6 +83,7 @@ from agents.lib.tax_computations import (  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
+    hold_workspace,
     resolve_workspace,
 )
 
@@ -1807,6 +1808,7 @@ def _main(argv: list) -> int:
 
     try:
         workspace = resolve_workspace(args.workspace).resolve()
+        hold_workspace(workspace, "tie_out")
         ledger_path = _validate_subpath((workspace / "parse_ledger.json").resolve(), workspace)
         result_path = _validate_subpath((workspace / "result.json").resolve(), workspace)
         # BEFORE anything is read: the digests this gate's verdict will be

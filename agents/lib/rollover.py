@@ -979,7 +979,8 @@ def _main(argv: list[str]) -> int:
         WorkspaceError,
         add_workspace_argument,
         resolve_under_workspace,
-        resolve_workspace,
+        hold_workspace,
+    resolve_workspace,
     )
 
     import argparse
@@ -1004,6 +1005,7 @@ def _main(argv: list[str]) -> int:
         # documented command still runs; `--from archive/2025` resolves under
         # it rather than under whatever directory the command was run from.
         workspace = resolve_workspace(args.dst).resolve()
+        hold_workspace(workspace, "rollover")
         src = resolve_under_workspace(args.src, workspace)
         # CLI's --year is the NEW year; archive should contain prior return (year - 1)
         prior = load_prior(src, year - 1)

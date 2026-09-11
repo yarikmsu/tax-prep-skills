@@ -219,13 +219,11 @@ are plain Markdown instructions and are written to be executable that way.
   one that UNDER-states it degrades with a loud banner. Never guess a value that
   changes a return.
 
-**Two states are computed in depth**: CA Form 540, and NY Form IT-201 for a
-FULL-YEAR RESIDENT — including New York City, Yonkers and the MCTMT (lines
-47-58), so a City taxpayer sees no capability gate. Florida is modeled as a
-`type: "none"` regime, other states are bracket-estimate only, and part-year /
-nonresident returns are not modeled for either. Adding a state is
-community-contribution territory — follow
-`docs/contributing/state-module-playbook.md` and the spec template at
+**Two states are computed in depth**: CA Form 540 and NY Form IT-201, the
+latter for a FULL-YEAR RESIDENT only. FL is a `type: "none"` regime, every
+other state is bracket-estimate only, and part-year / nonresident returns are
+modeled for neither. What each depth module covers, and how to add one:
+`docs/contributing/state-module-playbook.md`, with the spec template at
 `docs/superpowers/specs/TEMPLATE-state-module.md`.
 
 ## 5. Directory structure
@@ -293,6 +291,8 @@ never the code. One read site: `workspace.resolve_workspace`.
   via `secure_fs`, the directory included); archived at cutover
 - `scenarios/` — derived planning artifacts; never mutated elsewhere
 - `tax_calendar_<year>.ics` — RFC 5545 calendar of the year's deadlines
+- `.tax-workspace.lock` — the RUN lock; a publishing CLI takes it and REFUSES
+  while another run holds it. Never delete one without checking
 - `generate_tax_pdf.py` — LEGACY, replaced by `agents/lib/pdf_render.py`, and
   blocked by NAME in the PII gate. Older workspaces have one; never run it
 

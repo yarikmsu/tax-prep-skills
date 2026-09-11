@@ -26,7 +26,7 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | V7 | #115 | needs `TAX_WORKSPACE` set, or it isolates nothing |
 | V8 | #91 | — |
 | V9 | #92 | — |
-| V10 | #93, #102 | the resumable / concurrency half is not started |
+| V10 | #93, #102, #139 | the RESUMABLE half is not started; the concurrency half shipped in #139 |
 | V11 | #95 | — |
 | W1 | #90 | — |
 | W4 | #90, #118 | the MEASURED COSTS *seconds* sitting is OWED — it needs an otherwise-idle machine, and three attempts were killed for host memory |

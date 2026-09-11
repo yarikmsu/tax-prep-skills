@@ -1,9 +1,23 @@
 # Adding a state module — contributor playbook (E5)
 
-California is the only state this toolkit computes in depth; every other
-state is a bracket-based estimate behind an honest capability note. That is
-a product decision (2026-07-12), not a technical limit — the CA module is a
-worked pattern this playbook writes down. Expectations: steps 0-2 (the
+TWO states are computed in depth; every other state is a bracket-based estimate
+behind an honest capability note. That is a product decision (2026-07-12), not
+a technical limit — the two modules are a worked pattern this playbook writes
+down.
+
+- **California, Form 540** — the first, and the one this playbook's examples
+  are drawn from.
+- **New York, Form IT-201**, FULL-YEAR RESIDENT only — including New York City,
+  Yonkers and the metropolitan commuter transportation mobility tax (lines
+  47-58), which is why a City taxpayer sees no capability gate: the
+  `nyc_resident` rule was deleted when the city tax began computing, and the
+  flag became the city-tax switch. Part-year and nonresident returns (IT-203)
+  are not modeled, and neither are IT-196 lines 1-45, IT-201 lines 44 and 45,
+  the AMOUNT of each refundable credit, or line 59's sales and use tax — each
+  taken as an input or asked, and each NAMED on `meta.limitations`. The design
+  spec is `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`; the
+  New York keying gotchas a cache reader needs are in
+  `docs/contributing/tax-law-cache.md`. Expectations: steps 0-2 (the
 questionnaire, the fetched-law block, the result section) fit a ~90-minute
 Claude Code session; compute functions + hand-computed worksheet tests are
 a further multi-hour session plus at least one adversarial review round —

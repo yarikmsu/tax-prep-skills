@@ -16,7 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.secure_fs import (  # noqa: E402
     is_reparse_point, redact, secure_path, year_or_shape,
 )
-from agents.lib.workspace import WorkspaceError, resolve_workspace  # noqa: E402
+from agents.lib.workspace import (  # noqa: E402
+    WorkspaceError,
+    hold_workspace,
+    resolve_workspace,
+)
 
 # EVERY path this module names in an error is a RUNTIME path, and the CLI below
 # prints them. An entry under documents/ — or under archive/{year}/documents/
@@ -383,7 +387,12 @@ if __name__ == "__main__":
         # `documents/` and `reviews/` under `archive/{year}/`, and it did that
         # to whatever directory the command ran from — which stopped being the
         # taxpayer's the moment $TAX_WORKSPACE existed (Y4).
-        report = archive_year(year, root=resolve_workspace())
+        root = resolve_workspace()
+        # Cutover MOVES `documents/`, `reviews/` and the year's artifacts at
+        # once. A compute running against the directory they are leaving is
+        # the worst of the concurrency cases this lock exists for.
+        hold_workspace(root, "archive")
+        report = archive_year(year, root=root)
     except (WorkspaceError, ArchiveError) as e:
         # Redacted again at the print site even though every message above
         # is already redacted: this is the LAST boundary before a taxpayer

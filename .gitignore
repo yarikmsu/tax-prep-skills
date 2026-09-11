@@ -27,6 +27,12 @@ validation_receipt.json
 # about today's fields rather than tomorrow's.
 eval_run.json
 crypto_transactions.json
+# The run lock (V10). A coordination artifact carrying a pid, a start time and
+# a CLI name — none of it the taxpayer's — but it appears in the workspace
+# root, and with $TAX_WORKSPACE unset that root IS the checkout. An untracked
+# file in `git status` during every compute is a file somebody eventually
+# commits.
+.tax-workspace.lock
 tax_calendar_*.ics
 # The PDF generator is written per workspace by tax-generate, so it is a
 # runtime artifact despite being source code — and it is the one runtime file

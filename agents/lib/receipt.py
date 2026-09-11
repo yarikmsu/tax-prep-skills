@@ -41,6 +41,7 @@ from agents.lib.secure_fs import atomic_write, redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
+    hold_workspace,
     resolve_workspace,
 )
 
@@ -559,8 +560,10 @@ def _main(argv: list) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "record":
-            path = record(resolve_workspace(args.workspace), args.gate,
-                          args.outcome)
+            # The WRITE subcommand takes the lock; `verify` reads and does not.
+            workspace = resolve_workspace(args.workspace)
+            hold_workspace(workspace, "receipt")
+            path = record(workspace, args.gate, args.outcome)
             print(f"recorded {args.gate}={args.outcome} in {redact(path)}")
             return 0
         report = verify(resolve_workspace(args.workspace))

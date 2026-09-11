@@ -174,6 +174,7 @@ from agents.lib.tie_out import (  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
+    hold_workspace,
     resolve_workspace,
 )
 
@@ -1145,6 +1146,7 @@ def _main(argv: list) -> int:
         # and the local copy that stood here went with it — the message it
         # printed named neither $TAX_WORKSPACE nor where the path came from.
         workspace = resolve_workspace(args.workspace)
+        hold_workspace(workspace, "return_builder")
     except WorkspaceError as e:
         print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
