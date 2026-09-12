@@ -40,8 +40,8 @@ from agents.lib.tax_computations import (  # noqa: E402
     qdcg_worksheet_applies,
     compute_se_tax,
     net_capital_gains,
+    _split_remainder_last,
     state_brackets_for_status,
-    compute_ny_tax,
     _SCH1A_EFFECTIVE_FROM,
     _SCH1A_EFFECTIVE_THROUGH,
 )
@@ -1658,53 +1658,10 @@ def compute_w4_4c(shortfall: float, paychecks_remaining: int) -> W4Adjustment:
                         paychecks_remaining=paychecks_remaining, per_paycheck=per)
 
 
-def _split_remainder_last(shortfall: float, weights: "list[float]") -> "list[float]":
-    """Split `shortfall` proportionally to `weights`, rounding remainder on
-    the LAST entry carrying positive weight — so the column always sums to
-    `shortfall` exactly, rather than a cent short from reusing one rounded
-    per-item share (three open quarters splitting $100.00 evenly round to
-    $33.33 x 3 = $99.99). Shared by the federal schedule (uniform weight,
-    `weights = [1.0] * n`) and the CA 30/40/0/30 one, which used to
-    duplicate this allocation with slightly different shapes — CA's zero-
-    weight Q3 slot is why the remainder goes on the last POSITIVE-weight
-    entry rather than simply the last one.
-
-    `weights` must sum to a positive total and have at least one positive
-    entry — both callers guarantee this before reaching here (Q4 always
-    carries positive weight in both schedules), and both floor `shortfall` at
-    zero before calling (each returns all-zero rows at `shortfall <= 0`).
-
-    NO SHARE MAY GO NEGATIVE, and the remainder-on-the-last design is exactly
-    what could produce one. Each earlier share rounds INDEPENDENTLY, so on a
-    shortfall smaller than a cent per open quarter every one of them rounds UP
-    and their sum overshoots the total the last entry is then given what is
-    left of: `_split_remainder_last(0.02, [1, 1, 1, 1])` allocated three
-    one-cent shares against two cents and printed a Q4 voucher of **-$0.01**,
-    in both report paths. So the running allocation is capped at what actually
-    remains, which cannot over-allocate and therefore cannot drive the
-    remainder below zero.
-
-    The cap is a NO-OP wherever the shortfall is large enough for the rounding
-    to behave — every ordinary schedule — so the existing splits are unchanged
-    ($100.00 over three open quarters is still 33.33 / 33.33 / 33.34). Where it
-    does bite, the cents land at the EARLIEST open deadlines and the later ones
-    read $0.00: paying a cent sooner than proportionality asks is the direction
-    that cannot accrue penalty, and a $0.00 voucher row is already what a
-    zero-weight CA Q3 prints.
-    """
-    total = sum(weights)
-    last = max(i for i, w in enumerate(weights) if w > 0)
-    shares = []
-    allocated = 0.0
-    for i, w in enumerate(weights):
-        remaining = round(shortfall - allocated, 2)
-        if i == last:
-            amt = remaining
-        else:
-            amt = min(round(shortfall * w / total, 2), remaining)
-            allocated = round(allocated + amt, 2)
-        shares.append(amt)
-    return shares
+# `_split_remainder_last` MOVED to `tax_computations` (PR #146). The New York
+# required-annual-payment function needed it and lives there, and importing
+# upward would be a cycle — the same direction `prior_year_prong` already went.
+# Re-exported by the import above so every existing caller here is unchanged.
 
 
 # What a reader of `projection_inputs.json` can actually search for. Both
@@ -2613,6 +2570,23 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
             "wages/SE/capital gains. If taxable interest/dividend income "
             "exceeded the filing threshold, handle the TN Hall return "
             "(Form INC 250) manually.")
+    # A state whose cache declares a BENEFIT RECAPTURE skips for a different
+    # reason, and the reader has to be told which. It is not that the brackets
+    # are missing — they are there — but that the WITHHOLDING figure this
+    # report would net against them belongs to more taxes than it computes.
+    # Left as the generic "no baseline" skip, a New York taxpayer reads that a
+    # projection was unavailable, when what happened is that the only available
+    # one was wrong in the refund-inflating direction.
+    elif (state is None and _st_cfg.get("tax_table_benefit_recapture")
+            and not no_income_tax and cache_mismatch is None):
+        state_unsupported_note = (
+            f"{_tn_resolved or 'this state'} is not projected here, and the "
+            "reason is not a missing cache. Its estimated-tax voucher covers "
+            "the STATE tax together with local and commuter taxes this "
+            "projection does not compute, while `ytd.state_withholding` on "
+            "such a return is the withholding for ALL of them. Netting the "
+            "two would show a refund that is not there. Run /tax-withholding, "
+            "which prices the whole return against the same figure.")
 
     return ProjectionReport(
         year=year, as_of=as_of.strftime("%m-%d"), pay_frequency=pay_frequency,
@@ -3376,6 +3350,29 @@ _FEDERAL_CATCHUP = _CatchupNote(_ES_VOUCHER_CATCHUP_NOTE,
                                 _ES_VOUCHER_TIMING_SCHEDULED,
                                 _federal_instalment_fraction,
                                 "federal")
+# NEW YORK's, and it reuses the FEDERAL instalment fraction rather than
+# defining a third. That is a reuse of the same QUESTION and not merely of the
+# same arithmetic: `_federal_instalment_fraction` answers "what share of the
+# requirement was due by instalment n under 25/50/75/100 weights", and Tax Law
+# §685(c)'s instalments are four equal quarters on the same statutory dates.
+# California's 30/70/70/100 is the one that differs, which is why the binding
+# in `_CatchupNote` exists at all.
+_NY_VOUCHER_CATCHUP_NOTE = (
+    "This schedule targets the ANNUAL requirement from the as-of date "
+    "forward, split evenly across the deadlines still open — Form IT-2105.9 "
+    "instead tracks each installment cumulatively against 25% of the required "
+    "annual payment, so with an earlier deadline already closed the earliest "
+    "still-open one can need MORE than an even share, and an installment "
+    "already missed keeps accruing until it is paid. Pay catch-up amounts NOW "
+    "rather than at the printed dates. Remember the voucher covers the State "
+    "tax, the New York City tax, the Yonkers surcharge and the MCTMT "
+    "together.")
+_NY_CATCHUP = _CatchupNote(_NY_VOUCHER_CATCHUP_NOTE,
+                           _ES_ESTIMATES_UNDATED,
+                           _ES_VOUCHER_TIMING_SETTLED,
+                           _ES_VOUCHER_TIMING_SCHEDULED,
+                           _federal_instalment_fraction,
+                           "NY")
 _CA_CATCHUP = _CatchupNote(_CA_VOUCHER_CATCHUP_NOTE,
                            _CA_ESTIMATES_UNDATED,
                            _CA_VOUCHER_TIMING_SETTLED,
@@ -4734,38 +4731,33 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
                  + proj.taxable_interest + proj.other_income
                  + proj.self_employment_net - se_deduction)
     state_ti = max(0.0, state_agi - std)
-    # A state whose cache declares a BENEFIT RECAPTURE does not get plain
-    # bracket math. Above the recapture's entry threshold the graduated
-    # schedule's benefit is clawed back, so `compute_bracket_tax` alone
-    # UNDER-states the liability by the whole of that benefit — the direction
-    # AGENTS.md §4 calls a hard error, and the reason the recapture shipped in
-    # the same slice as the schedules rather than after them. Keyed on the
-    # BLOCK's presence, not on a state name: a cache that declares a recapture
-    # is a cache whose bracket math is incomplete, whoever it belongs to, and
-    # compute_ny_tax refuses loudly on a block it cannot read rather than
-    # quietly computing the schedule.
+    # A state whose cache declares a BENEFIT RECAPTURE gets NO PROJECTION.
+    # Keyed on the BLOCK's presence and not on a state name: a cache declaring
+    # a recapture is a cache whose plain bracket math is incomplete, whoever it
+    # belongs to.
     recapture = state_cfg.get("tax_table_benefit_recapture")
     if recapture:
-        try:
-            # `state_agi` stands in for New York AGI. It is the same proxy the
-            # deduction and the brackets above already use, and the whole
-            # projection is an estimate over projected income — but the
-            # recapture thresholds are NYAGI's, so a projection built from a
-            # profile with large IT-225 modifications will sit on the wrong
-            # side of a threshold. That is the estimate's limit, not a silent
-            # substitution: /tax-compute computes line 33 for real.
-            ny = compute_ny_tax(
-                state_ti, state_agi,
-                _full_status_key(filing_status, "state projection"),
-                state_cfg.get("brackets") or {},
-                state_cfg.get("bracket_schedule_by_status") or {},
-                recapture, state_cfg.get("tax_table"))
-        except ValueError as exc:
-            raise ProjectionError(
-                f"state tax with a benefit recapture: {exc}") from exc
-        tax = float(ny["tax_exact"])
-    else:
-        tax, _ = compute_bracket_tax(state_ti, brackets)
+        # REFUSED, and this reverses what the first version of this branch did.
+        #
+        # `compute_ny_tax` returns IT-201 LINE 39 — the State tax alone. This
+        # function then subtracts `proj.state_withholding`, and on a New York
+        # return that field means ALL New York withholding: box 17, box 19 for
+        # a City locality, and any Yonkers amount, because ONE IT-2105 voucher
+        # is measured against all four taxes and `/tax-withholding` tells the
+        # taxpayer to enter it that way. One symbol, two concepts — and the two
+        # errors compound in the SAME direction.
+        #
+        # Measured: a Manhattan single filer on $200,000 of wages, entering
+        # $17,500 of combined withholding, was shown a state BALANCE of
+        # -$5,800 — a projected refund — against a city tax this function never
+        # computed. Over-stating a refund is the direction AGENTS.md §4 calls a
+        # hard error, and a banner does not make it a degrade.
+        #
+        # So no figure is published. `/tax-withholding` computes line 60 — all
+        # four taxes — against the same withholding definition, and is the
+        # tool for this question; `build_report`'s note below says so.
+        return None
+    tax, _ = compute_bracket_tax(state_ti, brackets)
     # CA mental-health services tax: 1% of taxable income over $1M is part
     # of Form 540 total tax — omitting it understates the safe-harbor
     # target for exactly the high earners the §19136.3 rule forces onto

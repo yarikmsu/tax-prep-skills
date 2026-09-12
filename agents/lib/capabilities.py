@@ -40,6 +40,7 @@ from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
+    hold_workspace,
     resolve_workspace,
 )
 
@@ -993,6 +994,15 @@ def _main(argv: list) -> int:
 
     try:
         workspace = resolve_workspace(args.workspace).resolve()
+        # This gate WRITES the validation receipt (`record_after_verdict`
+        # below), and `receipt.record` MERGES: it reads the file, adds its
+        # entry and writes the whole thing back. Two gates recording
+        # concurrently lose one of the two entries, and a lost entry makes
+        # `verify` report that gate as never having run. The direction is safe
+        # — a workspace reads as less validated than it is — but the
+        # declaration in `workspace.LOCKED_CLIS` is about who writes SHARED
+        # state, and this writes it.
+        hold_workspace(workspace, "capabilities")
         profile_path = _validate_subpath(
             (workspace / "taxpayer_profile.json").resolve(), workspace)
         if not profile_path.exists():

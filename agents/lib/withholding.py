@@ -31,6 +31,7 @@ from agents.lib.projection import (  # noqa: E402
     _CA_CALENDAR,
     _CA_CATCHUP,
     _NY_CALENDAR,
+    _NY_CATCHUP,
     _FEDERAL_CALENDAR,
     _FEDERAL_CATCHUP,
     _CA_ES_HEADING,
@@ -42,6 +43,7 @@ from agents.lib.projection import (  # noqa: E402
     _ca_split_note,
     _canonical_status,
     _confirmed_flag,
+    _full_status_key,
     _voucher_dates_note,
     _w4_lever_note,
     _ca_notes,
@@ -147,6 +149,27 @@ class CaTrueUp:
 
 
 @dataclass(frozen=True)
+class _NyHarbor:
+    """The four fields `_voucher_catchup_note` duck-types over, plus the label
+    it pairs a calendar by.
+
+    NOT a fifth safe-harbor class. `_voucher_catchup_note` reads exactly
+    `required_annual`, `withholding`, `estimates_paid` and a `jurisdiction`,
+    and binds the instalment weights by that label — the guard that stops a
+    federal note being run against California's 30/70/70/100. New York's
+    requirement is already computed by `compute_ny_required_annual_payment`, so
+    what is missing is only the SHAPE that gate reads, and inventing a full
+    harbor to carry four numbers would be a second place for the requirement
+    to be decided.
+    """
+    required_annual: float
+    withholding: float
+    estimates_paid: float
+    shortfall: float
+    jurisdiction: str = "NY"
+
+
+@dataclass(frozen=True)
 class NyTrueUp:
     """NY (Form IT-201) true-up block — present only when result.json carries a
     computed `new_york_it201` section AND the tax-law cache is New York's.
@@ -187,6 +210,13 @@ class NyTrueUp:
     # Whatever `compute_ny_required_annual_payment` said — the no-prior-year
     # note above all, which is SAID rather than assumed.
     notes: "tuple[str, ...]" = ()
+    # The AMOUNT half of the same table, which shipped without one. Both other
+    # jurisdictions carry it, and §685(c) has the cumulative structure it
+    # describes: a $20,000 shortfall at October 1 prints $20,000 against the
+    # January row — exactly what January asks — while 75% fell due across
+    # April, June and September and keeps accruing. The federal table beside it
+    # said so and the New York table did not.
+    voucher_catchup_note: "str | None" = None
     voucher_dates_note: "str | None" = None
 
 
@@ -469,11 +499,14 @@ def build_ny_true_up(result: dict, proj_inputs: dict, prior,
     prior_tax, prior_nyagi = _prior_ny_tax_nyagi(prior)
     required = compute_ny_required_annual_payment(
         ny_tax, prior_tax, prior_nyagi,
-        # The canonical short code the engine's NY functions take. Validated
-        # HERE rather than passed through: a profile spelling the status out
-        # ("Married Filing Jointly") would otherwise read as `single` and put
-        # a married-separate threshold on the wrong return.
-        _canonical_status(filing_status, "NY estimated tax").lower(),
+        # `_full_status_key`, not `_canonical_status(...).lower()`. The two
+        # agree on every status except QSS, which the hand-rolled form leaves
+        # as "qss" and the helper maps to "mfj" — harmless while
+        # `compute_ny_required_annual_payment` only tests `== "mfs"`, and the
+        # one that silently misses the day it grows an MFJ-keyed lookup. Every
+        # other New York entry point in this repository takes the helper's
+        # answer.
+        _full_status_key(filing_status, "NY estimated tax"),
         (tax_law.get("state") or {}).get("estimated_tax_safe_harbor"))
     required_annual = required["required_annual_payment"]
     shortfall = round(max(0.0, required_annual - projected_paid), 2)
@@ -500,6 +533,13 @@ def build_ny_true_up(result: dict, proj_inputs: dict, prior,
         it2104_penalty=compute_w4_4c(shortfall, paychecks_left),
         it2104_zero=compute_w4_4c(zero_shortfall, paychecks_left),
         notes=tuple(required["notes"]),
+        voucher_catchup_note=_voucher_catchup_note(
+            _NY_CATCHUP, vouchers_penalty,
+            _NyHarbor(required_annual=required_annual,
+                      withholding=proj_state_wh,
+                      estimates_paid=state_estimates,
+                      shortfall=shortfall),
+            as_of),
         voucher_dates_note=_voucher_dates_note(
             _NY_CALENDAR, [vouchers_penalty], year, today,
             balance_schedules=[vouchers_zero]),
@@ -646,7 +686,11 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
     ny = build_ny_true_up(result, proj_inputs, prior, filing_status, as_of,
                           inputs.paychecks_remaining, year, tax_law,
                           today=today)
-    ny_cache_missing = (ny is None and tax_law is None
+    # `not tax_law`, matching the builder's own gate. `tax_law is None` was the
+    # first spelling and disagreed with it: an EMPTY dict produced no New York
+    # block and no explanation either, which is the silent-omission case this
+    # flag exists to prevent.
+    ny_cache_missing = (ny is None and not tax_law
                         and read_ny_inputs(result) is not None)
 
     return TrueUpReport(
@@ -665,9 +709,19 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
         voucher_dates_note=_voucher_dates_note(
             _FEDERAL_CALENDAR, [vouchers_penalty], year, today,
             balance_schedules=[vouchers_zero]),
+        # BOTH state blocks, not just California. `_W4_LEVER_SPENT_CLEAR_
+        # STATE_DUE` exists because "no remaining payment target" was a lie for
+        # a CA taxpayer with a state balance; the New York block reproduced the
+        # closed bug on the day it landed — a closed year with a $6,000 New
+        # York shortfall printed "No federal balance is projected due, so there
+        # is no remaining payment target for this report" directly above the
+        # table showing it. A return has ONE resident state, so at most one of
+        # the two is real; `max` is the answer in every case and needs no
+        # branch to say which.
         w4_lever_note=_w4_lever_note(
             inputs.paychecks_remaining, year, zero_shortfall,
-            ca.zero_shortfall if ca is not None else 0.0),
+            max(ca.zero_shortfall if ca is not None else 0.0,
+                ny.zero_shortfall if ny is not None else 0.0)),
     )
 
 
@@ -878,6 +932,8 @@ def render_markdown(r: TrueUpReport) -> str:
                          f"{_money(vp.amount)} | {_money(vz.amount)} |")
         if n.voucher_dates_note:
             lines += ["", n.voucher_dates_note]
+        if n.voucher_catchup_note:
+            lines += ["", n.voucher_catchup_note]
     lines += ["",
               "## Caveats",
               "- This is a planning projection, not a filed return. Re-run after any "
@@ -944,6 +1000,7 @@ def _report_to_dict(r: TrueUpReport) -> dict:
             "it2104_penalty": vars(r.ny.it2104_penalty),
             "it2104_zero": vars(r.ny.it2104_zero),
             "notes": list(r.ny.notes),
+            "voucher_catchup_note": r.ny.voucher_catchup_note,
             "voucher_dates_note": r.ny.voucher_dates_note,
         }),
         "ca": (None if r.ca is None else {

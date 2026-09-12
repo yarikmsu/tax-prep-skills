@@ -509,7 +509,40 @@ class TestEveryWriterOfSharedStateTakesTheLock:
             LIB / "workspace.py").read_text(encoding="utf-8")
 
     def test_the_set_is_not_empty_and_names_the_pipeline(self):
-        assert len(W.LOCKED_CLIS) >= 7
+        assert len(W.LOCKED_CLIS) >= 8
         for name in ("tax_law_fetcher", "return_builder", "tie_out",
-                     "parse_records", "archive"):
+                     "parse_records", "capabilities", "archive"):
             assert name in W.LOCKED_CLIS, name
+
+    def test_every_writer_of_the_RECEIPT_is_in_the_set(self):
+        """The capability gate was missed on the first pass because it reads
+        as a CHECK rather than a writer — and `receipt.record` MERGES, reading
+        the file, adding its entry and writing the whole thing back, so two
+        gates recording concurrently lose one of the two.
+
+        DERIVED from who calls the recorder, not listed again: a fourth gate
+        added later is caught by this rather than by somebody remembering."""
+        writers = {p.stem for p in sorted(LIB.glob("*.py"))
+                   if "record_after_verdict(" in p.read_text(encoding="utf-8")
+                   and p.stem != "receipt"}
+        assert writers, "nothing calls record_after_verdict — this is vacuous"
+        missing = sorted(writers - set(W.LOCKED_CLIS))
+        assert not missing, (
+            f"{missing} write the validation receipt and take no run lock. "
+            "`receipt.record` is a read-modify-write merge; two of them at "
+            "once lose an entry, and a lost entry reads as a gate that never "
+            "ran.")
+
+    def test_the_cache_CREATE_subcommand_is_locked_not_just_set(self):
+        """`set` edits ONE figure; `create` overwrites the whole cache. The
+        destructive one was locked second, because `set` was the subcommand
+        being read at the time."""
+        source = (LIB / "tax_law_fetcher.py").read_text(encoding="utf-8")
+        create = source[source.index('if cmd == "create":'):
+                        source.index('elif cmd == "load":')]
+        assert "hold_workspace(" in create
+        read_only = source[source.index('elif cmd == "load":'):]
+        assert "hold_workspace(" not in read_only, (
+            "a read-only subcommand took the lock — refusing `load` or "
+            "`freshness` while a compute runs is a gate firing on an "
+            "operation that cannot corrupt anything")

@@ -103,6 +103,8 @@
     "_comment_filed_extension": "Set by /tax-extend (not the interview). Drives the Apr-15 pay-by + Oct-15 extended-deadline events in tax_calendar_{year}.ics.",
     "moved_states_this_year": false,
     "nyc_resident": false,
+    "nyc_resident_spouses": null,
+    "_comment_nyc_resident_spouses": "How many spouses were New York City residents for the WHOLE year: 0, 1 or 2. Only meaningful on a joint return, and REQUIRED there \u2014 IT-201 line 47 is not used at all when exactly one spouse was a city resident (that return goes to line 51, a computation this engine does not do). One household boolean cannot carry it: nyc_resident says whether the household owes city tax, and this says whether BOTH spouses are residents. Assuming two over-states the city tax for a mixed-residence couple by the non-resident spouse's whole share.",
     "yonkers_resident": false,
     "yonkers_nonresident_earnings": false,
     "statutory_resident_of_another_state": false,

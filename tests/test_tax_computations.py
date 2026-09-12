@@ -6320,3 +6320,123 @@ class TestTheNewYorkResultSection:
                     "IT-230", "IT-213", "line 59"):
             assert gap in ny, gap
         assert "meta.limitations" in ny
+
+
+class TestWhatTheReviewPassFound:
+    """Findings from the four-angle review of the NY module, each REPRODUCED
+    before it was believed and each pinned here so it cannot come back."""
+
+    SAFE_HARBOR = {"current_year_share": 1.0, "prior_year_share": 1.0,
+                   "prior_year_share_high_income": 1.1,
+                   "high_income_nyagi_threshold": 150000,
+                   "high_income_nyagi_threshold_mfs": 75000}
+
+    def test_no_instalment_is_ever_NEGATIVE(self):
+        """The hand-rolled quarter reproduced the exact defect
+        `_split_remainder_last`'s docstring already records: a required payment
+        of $0.02 allocated three one-cent shares against two cents and printed
+        a fourth voucher of -$0.01. A negative voucher is not a rounding
+        artefact to a person reading a payment schedule."""
+        out = compute_ny_required_annual_payment(0.02,
+                                                 safe_harbor=self.SAFE_HARBOR)
+        assert out["instalments"] == [0.01, 0.01, 0.0, 0.0]
+        assert all(i >= 0 for i in out["instalments"])
+
+    @pytest.mark.parametrize("amount", [0.01, 0.02, 0.03, 1.0, 10000.01,
+                                        33333.33, 1234567.89])
+    def test_the_instalments_always_sum_and_never_go_negative(self, amount):
+        out = compute_ny_required_annual_payment(amount,
+                                                 safe_harbor=self.SAFE_HARBOR)
+        assert round(sum(out["instalments"]), 2) == out["required_annual_payment"]
+        assert all(i >= 0 for i in out["instalments"]), out["instalments"]
+
+    def test_it_uses_the_shared_splitter(self):
+        """One copy. The helper moved into this module rather than being
+        duplicated, which is the direction `prior_year_prong` already went."""
+        import inspect
+        source = inspect.getsource(compute_ny_required_annual_payment)
+        assert "_split_remainder_last(required, [1.0] * 4)" in source
+
+    def test_a_malformed_IT225_addition_REFUSES_rather_than_vanishing(self):
+        """The hand-rolled normaliser skipped an entry whose shape it did not
+        recognise. The A-219 pairing check then never ran against it and the
+        caller was told to add an add-back that was already there — and adding
+        it twice over-states the tax by the whole of the credit."""
+        with pytest.raises(ValueError, match="no code"):
+            compute_ny_ptet_owner(nys_ptet_credit=5000.0,
+                                  it225_additions=[{"code": None,
+                                                    "amount": 5000.0}])
+
+    def test_a_subtraction_code_on_the_addition_side_refuses_too(self):
+        with pytest.raises(ValueError, match="prefix"):
+            compute_ny_ptet_owner(nys_ptet_credit=5000.0,
+                                  it225_additions=[{"code": "S-201",
+                                                    "amount": 5000.0}])
+
+    def test_a_lowercase_code_still_matches(self):
+        """The shared normaliser does the strip and upper, so what the hand
+        loop got right is not lost."""
+        out = compute_ny_ptet_owner(nys_ptet_credit=5000.0,
+                                    it225_additions=[{"code": " a-219 ",
+                                                      "amount": 5000.0}])
+        assert out["notes"] == []
+
+    # --- the city-residence question that had no source ---------------------
+
+    def test_a_joint_return_must_SAY_how_many_spouses_are_city_residents(self):
+        """The guard could not fire on real data. `nyc_resident_spouses`
+        shipped optional and the workspace has no field carrying it — one
+        household boolean, one interview question — so a Manhattan-and-
+        Connecticut couple arrived with the argument omitted, took the ordinary
+        path, and had the CITY tax computed on the whole household."""
+        # Matched on the ABSENCE message, not on the flag name: an out-of-
+        # domain value refuses too and its message names the flag as well, so
+        # a looser pattern passed while the absence branch was deleted — the
+        # mutation caught the test, not the code.
+        with pytest.raises(ValueError, match="must say how many spouses"):
+            compute_nyc_taxable_income(300000.0, filing_status="mfj")
+
+    def test_one_resident_spouse_still_refuses(self):
+        with pytest.raises(ValueError, match="line 51"):
+            compute_nyc_taxable_income(300000.0, nyc_resident_spouses=1,
+                                       filing_status="mfj")
+
+    def test_two_resident_spouses_is_the_ordinary_path(self):
+        out = compute_nyc_taxable_income(300000.0, nyc_resident_spouses=2,
+                                         filing_status="mfj")
+        assert out["nyc_taxable_income"] == 300000.0
+
+    def test_zero_resident_spouses_is_accepted_and_computes(self):
+        """A joint return can carry the flag as False for both — the caller
+        simply does not reach the city branch — and the engine must not refuse
+        a figure it was handed."""
+        out = compute_nyc_taxable_income(300000.0, nyc_resident_spouses=0,
+                                         filing_status="mfj")
+        assert out["nyc_taxable_income"] == 300000.0
+
+    @pytest.mark.parametrize("bad", [3, -1, True, "two", 1.5])
+    def test_an_out_of_domain_answer_refuses(self, bad):
+        with pytest.raises(ValueError, match="0, 1 or 2"):
+            compute_nyc_taxable_income(300000.0, nyc_resident_spouses=bad,
+                                       filing_status="mfj")
+
+    def test_a_single_filer_needs_no_answer(self):
+        """A gate firing on a taxpayer who has no spouse is a gate firing on
+        correct data."""
+        out = compute_nyc_taxable_income(85000.0, filing_status="single")
+        assert out["nyc_taxable_income"] == 85000.0
+
+    def test_the_field_exists_and_the_interview_asks_for_it(self):
+        """A guard whose precondition is a field nobody collects is not a
+        guard — which is what this one was."""
+        template = json.loads(
+            (Path(__file__).resolve().parents[1]
+             / "agents/templates/taxpayer_profile_template.json")
+            .read_text(encoding="utf-8"))
+        assert "nyc_resident_spouses" in template["flags"]
+        assert template["flags"]["nyc_resident_spouses"] is None, (
+            "it must ship UNANSWERED: a default of 2 is the assumption that "
+            "over-states the city tax for a mixed-residence couple")
+        setup = skill_text("tax-setup")
+        assert "nyc_resident_spouses" in setup
+        assert "only one" in setup

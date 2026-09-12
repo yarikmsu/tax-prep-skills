@@ -1,5 +1,6 @@
 """Tests for agents/lib/withholding.py — federal withholding true-up."""
 import datetime
+import textwrap
 import json
 import sys
 from pathlib import Path
@@ -1514,3 +1515,106 @@ class TestTheNewYorkTrueUp:
         r = self._build(result=result)
         assert r.ca is not None and r.ny is not None
         assert r.ca.liability == 9000.0 and r.ny.liability == 20000.0
+
+
+class TestWhatTheReviewPassFoundInTheTrueUp:
+    """Two findings, both REPRODUCED before they were believed."""
+
+    AS_OF = datetime.date(2026, 12, 31)
+
+    def _report(self, state_wh=3000.0, as_of=None, law="default"):
+        result = {"meta": {"tax_year": 2026, "filing_status": "MFJ"},
+                  "form_1040": {"line_24_total_tax": 10000.0},
+                  "new_york_it201": {"line_33_nyagi": 200000.0,
+                                     "line_34_deduction": 16050.0,
+                                     "line_46_total_state_tax": 5000.0,
+                                     "line_58_total_city_and_yonkers": 4000.0,
+                                     "line_60_total_taxes": 9000.0}}
+        inputs = {"pay_frequency": "biweekly",
+                  "ytd": {"federal_withholding": 10000.0,
+                          "state_withholding": state_wh},
+                  "estimated_payments_made": {"federal": 0, "state": 0}}
+        at = as_of or self.AS_OF
+        return wh.build_report(
+            result, inputs, None, 2026, at, today=at,
+            tax_law=({"tax_year": 2026, "state": ny_state_cache()}
+                     if law == "default" else law))
+
+    def test_the_lede_names_a_NEW_YORK_balance_it_used_to_ignore(self):
+        """`_W4_LEVER_SPENT_CLEAR_STATE_DUE` exists because "no remaining
+        payment target" was a lie for a CA taxpayer with a state balance. The
+        New York block reproduced the closed bug on the day it landed: a
+        closed year with a $6,000 New York shortfall printed "there is no
+        remaining payment target for this report" directly above the table
+        showing it."""
+        r = self._report()
+        assert r.ny.zero_shortfall == 6000.0
+        assert "no remaining payment target" not in (r.w4_lever_note or "")
+        assert "state balance" in (r.w4_lever_note or "").lower()
+
+    def test_a_covered_new_york_return_does_not_manufacture_a_state_lede(self):
+        """The counterweight: a gate firing on a return with nothing owed is
+        a gate firing on correct data."""
+        r = self._report(state_wh=20000.0)
+        assert r.ny.zero_shortfall == 0.0
+        assert "state balance" not in (r.w4_lever_note or "").lower()
+
+    def test_an_EMPTY_cache_is_reported_the_same_as_an_absent_one(self):
+        """`ny_cache_missing` tested `tax_law is None` while the builder bailed
+        on `if not tax_law`, so `tax_law={}` produced no New York block AND no
+        explanation — the silent omission the flag exists to prevent."""
+        r = self._report(law={})
+        assert r.ny is None
+        assert r.ny_cache_missing is True
+        assert "No New York true-up was computed" in wh.render_markdown(r)
+
+    def test_the_schedule_carries_a_CATCH_UP_note(self):
+        """Both other jurisdictions pass through `_voucher_catchup_note`; the
+        New York table shipped without one. Tax Law §685(c) has the same
+        cumulative structure: a shortfall at October 1 prints the whole figure
+        against the January row — exactly what January asks — while 75% fell
+        due across April, June and September and keeps accruing."""
+        r = self._report(state_wh=0.0, as_of=datetime.date(2026, 10, 1))
+        assert r.ny.shortfall > 0
+        assert r.ny.voucher_catchup_note, (
+            "the NY schedule prints identically-split amounts with no warning "
+            "that the earliest still-open instalment can need more")
+        assert "IT-2105.9" in r.ny.voucher_catchup_note
+        assert "MCTMT" in r.ny.voucher_catchup_note
+        md = wh.render_markdown(r)
+        assert r.ny.voucher_catchup_note in md
+
+    def test_the_catch_up_note_is_silent_when_nothing_is_behind(self):
+        """It runs the cumulative test rather than proxying it: over-warning
+        is the hard-error direction for this note."""
+        r = self._report(state_wh=20000.0,
+                         as_of=datetime.date(2026, 10, 1))
+        assert not r.ny.voucher_catchup_note
+
+    def test_the_catch_up_note_is_paired_with_NEW_YORKs_own_weights(self):
+        """`_CatchupNote` binds the text to the instalment fraction by LABEL,
+        so a federal note cannot be run against California's 30/70/70/100.
+        New York's four equal quarters share the FEDERAL fraction — the same
+        question, not merely the same arithmetic."""
+        assert proj._NY_CATCHUP.jurisdiction == "NY"
+        assert (proj._NY_CATCHUP.instalment_fraction
+                is proj._FEDERAL_CATCHUP.instalment_fraction)
+        assert (proj._NY_CATCHUP.instalment_fraction
+                is not proj._CA_CATCHUP.instalment_fraction)
+
+    def test_the_status_key_is_the_canonical_one(self):
+        """`.lower()` and `_full_status_key` agree on every status except QSS,
+        which the hand-rolled form left as "qss" and the helper maps to "mfj".
+        Harmless today, and the one that silently misses the day the function
+        grows an MFJ-keyed lookup."""
+        import ast
+        import inspect
+        source = inspect.getsource(wh.build_ny_true_up)
+        assert '_full_status_key(filing_status, "NY estimated tax")' in source
+        # The CODE, not the source text — the comment beside the call explains
+        # the change and contains the very spelling it replaced, so a substring
+        # check over the whole source can never go red.
+        tree = ast.parse(textwrap.dedent(source))
+        called = {n.func.attr for n in ast.walk(tree)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        assert "lower" not in called

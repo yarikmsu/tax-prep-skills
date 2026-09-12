@@ -174,8 +174,16 @@ stays the taxpayer's assertion.
 Run `compute_nyc_taxable_income(state_taxable_income,
 charitable_gifts_trust_deducted, nyc_resident_spouses, filing_status)`. City
 taxable income is the STATE's **except** that a Charitable Gifts Trust
-deduction taken for the state is added back. **A joint return with only ONE
-city resident REFUSES** rather than taxing the household as residents.
+deduction taken for the state is added back.
+
+**On a joint return `nyc_resident_spouses` is REQUIRED**, and it comes from
+`flags.nyc_resident_spouses` (0, 1 or 2), which `/tax-setup` asks as its own
+question — `flags.nyc_resident` answers whether the household owes city tax,
+not whether BOTH spouses are residents. **A joint return with only ONE city
+resident REFUSES** rather than taxing the household as residents: that return
+is computed on line 51, which this engine does not do. Omitting the argument
+refuses too, because assuming two over-states the city tax by the non-resident
+spouse's entire share.
 
 The NYC household credit REUSES `compute_ny_household_credit` against the
 city's own tables (4/5/6 rather than 1/2/3) — the same function, a different

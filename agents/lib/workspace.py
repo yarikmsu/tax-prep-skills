@@ -184,11 +184,6 @@ _LOCK_NAME = ".tax-workspace.lock"
 # every entry in it is the same.
 ABANDONED_NAME = ".tax-workspace.abandoned"
 
-# The keys the lock file holds. Deliberately not the taxpayer's anything: a
-# lock is a coordination artifact and carries no return data.
-_LOCK_FIELDS = ("pid", "started", "command")
-
-
 # WHICH CLIs take it, declared here rather than discovered by reading twenty
 # `_main`s — and pinned by test in BOTH directions, so neither a new writer
 # that forgets the lock nor a reader that acquires one can land quietly.
@@ -219,6 +214,14 @@ LOCKED_CLIS = (
     "return_builder",
     "tie_out",
     "receipt",
+    # The capability gate WRITES the receipt too, through
+    # `receipt.record_after_verdict`. It was missed on the first pass because
+    # it reads as a check rather than a writer — and `receipt.record` MERGES,
+    # reading the file, adding its entry and writing the whole thing back, so
+    # two gates recording concurrently lose one of the two. The direction is
+    # safe (a workspace reads as LESS validated than it is) and the
+    # declaration was still wrong, which is worse than narrow.
+    "capabilities",
     "archive",
 )
 

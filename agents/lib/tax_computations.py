@@ -75,6 +75,63 @@ def _coerce_numeric(value, default=None):
     return default
 
 
+def _split_remainder_last(shortfall: float, weights: "list[float]") -> "list[float]":
+    """Split `shortfall` proportionally to `weights`, rounding remainder on
+    the LAST entry carrying positive weight — so the column always sums to
+    `shortfall` exactly, rather than a cent short from reusing one rounded
+    per-item share (three open quarters splitting $100.00 evenly round to
+    $33.33 x 3 = $99.99). Shared by the federal schedule (uniform weight,
+    `weights = [1.0] * n`) and the CA 30/40/0/30 one, which used to
+    duplicate this allocation with slightly different shapes — CA's zero-
+    weight Q3 slot is why the remainder goes on the last POSITIVE-weight
+    entry rather than simply the last one.
+
+    `weights` must sum to a positive total and have at least one positive
+    entry — both callers guarantee this before reaching here (Q4 always
+    carries positive weight in both schedules), and both floor `shortfall` at
+    zero before calling (each returns all-zero rows at `shortfall <= 0`).
+
+    NO SHARE MAY GO NEGATIVE, and the remainder-on-the-last design is exactly
+    what could produce one. Each earlier share rounds INDEPENDENTLY, so on a
+    shortfall smaller than a cent per open quarter every one of them rounds UP
+    and their sum overshoots the total the last entry is then given what is
+    left of: `_split_remainder_last(0.02, [1, 1, 1, 1])` allocated three
+    one-cent shares against two cents and printed a Q4 voucher of **-$0.01**,
+    in both report paths. So the running allocation is capped at what actually
+    remains, which cannot over-allocate and therefore cannot drive the
+    remainder below zero.
+
+    The cap is a NO-OP wherever the shortfall is large enough for the rounding
+    to behave — every ordinary schedule — so the existing splits are unchanged
+    ($100.00 over three open quarters is still 33.33 / 33.33 / 33.34). Where it
+    does bite, the cents land at the EARLIEST open deadlines and the later ones
+    read $0.00: paying a cent sooner than proportionality asks is the direction
+    that cannot accrue penalty, and a $0.00 voucher row is already what a
+    zero-weight CA Q3 prints.
+
+
+    MOVED here from `projection` (PR #146) because `compute_ny_required_annual_
+    payment` needs it: New York's IT-2105 instalments are four equal quarters
+    and it hand-rolled the split, reproducing the exact negative share this
+    docstring already records — `compute_ny_required_annual_payment(0.02)` gave
+    `[0.01, 0.01, 0.01, -0.01]`. A helper whose docstring names the defect,
+    duplicated by code that then has the defect, is the argument for one copy.
+    """
+    total = sum(weights)
+    last = max(i for i, w in enumerate(weights) if w > 0)
+    shares = []
+    allocated = 0.0
+    for i, w in enumerate(weights):
+        remaining = round(shortfall - allocated, 2)
+        if i == last:
+            amt = remaining
+        else:
+            amt = min(round(shortfall * w / total, 2), remaining)
+            allocated = round(allocated + amt, 2)
+        shares.append(amt)
+    return shares
+
+
 def state_brackets_for_status(state_cfg: dict,
                               filing_status: "str | None") -> "list[dict]":
     """The flat list of bands that `state.brackets` means for one filing status.
@@ -3520,12 +3577,38 @@ def compute_nyc_taxable_income(
     taxable = _ny_amount(state_taxable_income, "state_taxable_income")
     addback = _ny_amount(charitable_gifts_trust_deducted,
                          "charitable_gifts_trust_deducted")
-    if filing_status == "mfj" and nyc_resident_spouses == 1:
-        raise ValueError(
-            "a joint return with only ONE New York City resident does not "
-            "enter a line 47 amount — it is computed on line 51 instead. "
-            "Taxing the whole household as residents would over-state the "
-            "city tax by the non-resident spouse's whole share.")
+    # REQUIRED on a joint return, and that is the fix for a guard that could
+    # not fire. `nyc_resident_spouses` shipped optional, and the workspace has
+    # no field carrying it: the profile holds ONE household boolean,
+    # `flags.nyc_resident`, and the interview asks one question. So a joint
+    # return with a Manhattan spouse and a Connecticut spouse arrived here with
+    # the argument omitted, took the ordinary path, and had the CITY tax
+    # computed on the whole household — over-stating it by the non-resident
+    # spouse's entire share, which is the direction this refusal exists for.
+    #
+    # A guard whose precondition is a field nobody collects is not a guard. So
+    # the ABSENCE is refused too, and `/tax-setup` now asks the second question
+    # — one flag cannot stand for two independent facts.
+    if filing_status == "mfj":
+        if nyc_resident_spouses is None:
+            raise ValueError(
+                "a joint return must say how many spouses were New York City "
+                "residents for the whole year: the answer decides whether "
+                "line 47 is used at all. Pass nyc_resident_spouses (0, 1 or "
+                "2) from `flags.nyc_resident_spouses`. Assuming two "
+                "over-states the city tax for a couple with one resident by "
+                "the non-resident spouse's whole share.")
+        if nyc_resident_spouses not in (0, 1, 2) \
+                or isinstance(nyc_resident_spouses, bool):
+            raise ValueError(
+                "nyc_resident_spouses must be 0, 1 or 2, got "
+                f"{nyc_resident_spouses!r}")
+        if nyc_resident_spouses == 1:
+            raise ValueError(
+                "a joint return with only ONE New York City resident does not "
+                "enter a line 47 amount — it is computed on line 51 instead. "
+                "Taxing the whole household as residents would over-state the "
+                "city tax by the non-resident spouse's whole share.")
     notes: "list[str]" = []
     if addback:
         notes.append(
@@ -3703,10 +3786,20 @@ def compute_ny_ptet_owner(
     """
     claimed = {"nys": _ny_amount(nys_ptet_credit, "nys_ptet_credit"),
                "nyc": _ny_amount(nyc_ptet_credit, "nyc_ptet_credit")}
-    existing = {}
-    for entry in it225_additions or []:
-        if isinstance(entry, dict) and isinstance(entry.get("code"), str):
-            existing[entry["code"].strip().upper()] = entry.get("amount")
+    # NORMALISED by `compute_ny_modifications`, not by hand. The loop that
+    # stood here did the strip and upper itself and SILENTLY DROPPED an entry
+    # whose shape it did not recognise: a `{"code": None}` addition was
+    # skipped, the A-219 pairing check never ran against it, and the caller was
+    # told to add an add-back that was already there. Adding it twice
+    # over-states the tax by the whole of the credit.
+    #
+    # The shared function also refuses what this loop accepted — a duplicate
+    # code, and a SUBTRACTION-prefixed code filed on the addition side — and it
+    # is the same question: "given this IT-225 addition side, what amount sits
+    # under each code?"
+    existing = {entry["code"]: entry["amount"]
+                for entry in compute_ny_modifications(
+                    it225_additions, "addition")["entries"]}
 
     required = []
     notes: "list[str]" = []
@@ -3823,11 +3916,14 @@ def compute_ny_required_annual_payment(
     # "Each required installment is 25% of the required annual payment" — but a
     # quarter of an odd number of cents does not divide, and four figures that
     # do not sum to the total are a small lie in a schedule somebody pays from.
-    # The LAST instalment absorbs the remainder, which is also where a taxpayer
-    # would notice it least and where the form's own true-up sits.
-    instalment = round(required / 4, 2)
-    instalments = [instalment] * 3
-    instalments.append(round(required - instalment * 3, 2))
+    #
+    # `_split_remainder_last` and NOT a hand-rolled quarter. The first version
+    # here WAS hand-rolled and reproduced the exact defect that helper's
+    # docstring records: a required payment of $0.02 allocated three one-cent
+    # shares against two cents and printed a fourth instalment of -$0.01. A
+    # negative voucher is not a rounding artefact to a person reading a payment
+    # schedule. The cap inside the helper is what makes that impossible.
+    instalments = _split_remainder_last(required, [1.0] * 4)
     return {
         "required_annual_payment": required,
         "options": options,

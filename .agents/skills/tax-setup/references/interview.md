@@ -146,6 +146,15 @@ interview never captures is invisible to every downstream check.
   makes an unanswered one worse, not better: a missing answer once stopped the
   return loudly and would now omit the city tax from a return that owes it, so
   it must still be answered explicitly, true or false.
+- **On a JOINT return, ask a second question**: how many of you were New York
+  City residents for the WHOLE year — both, or only one? → sets
+  `nyc_resident_spouses` (0, 1 or 2). One household boolean cannot carry this:
+  `nyc_resident` says whether the household owes city tax at all, and this says
+  whether BOTH spouses are residents. **When exactly one was, IT-201 line 47 is
+  not used at all** — that return is computed on line 51, which this engine
+  does not do, and it REFUSES rather than taxing the whole household. Leaving
+  it unanswered refuses too: assuming two over-states the city tax for a
+  Manhattan-and-Connecticut couple by the non-resident spouse's entire share.
 - Under the same "if NY appears anywhere" condition, ask BOTH Yonkers
   questions. They are two DIFFERENT taxes with two different populations, and
   a taxpayer can owe either without the other, so one question cannot stand

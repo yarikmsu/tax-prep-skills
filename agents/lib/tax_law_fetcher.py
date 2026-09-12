@@ -2451,6 +2451,13 @@ if __name__ == "__main__":
     if cmd == "create":
         data = create_empty_tax_law(year)
         workspace = _cli_workspace(3)
+        # `create` OVERWRITES `tax_law_{year}.json` wholesale, which is the
+        # most destructive thing this module does — `set` edits one figure and
+        # was locked first only because it was the subcommand being read at the
+        # time. `load`, `freshness` and `state` take no lock: they read, or
+        # print a template, and refusing them while a compute ran would be a
+        # gate firing on an operation that cannot corrupt anything.
+        hold_workspace(workspace, "tax_law_fetcher")
         path = save_tax_law(year, data, workspace)
         print(f"Created empty tax law template: {redact(path)}")
     elif cmd == "load":
