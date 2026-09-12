@@ -475,3 +475,107 @@ class TestOnlyTheValidatedResultIsPackaged:
         assert "changed since the tie-out gate ran" in receipt.covers_result(
             tmp_path, tmp_path / "result.json", contents=packaged)
 
+
+
+class TestAnInterruptedRunIsNotValidated:
+    """V10's resumable half. A killed run leaves artifacts part-written, and a
+    receipt whose digests happen to match says only that nothing has changed
+    SINCE — not that what is here was ever whole."""
+
+    def _interrupt(self, ws, command="tax-compute",
+                   started="2026-09-11T09:00:00"):
+        from agents.lib import workspace as W
+        (ws / W.ABANDONED_NAME).write_text(
+            json.dumps({"pid": 2 ** 22, "started": started,
+                        "command": command}), encoding="utf-8")
+        return ws
+
+    def test_a_workspace_with_every_gate_passing_is_still_NOT_valid(self,
+                                                                   tmp_path):
+        ws = _passing(_workspace(tmp_path))
+        assert verify(ws).valid, "the fixture must be valid before the marker"
+        self._interrupt(ws)
+        report = verify(ws)
+        assert not report.valid
+        assert "never finished" in report.reasons[0]
+        assert "tax-compute" in report.reasons[0]
+
+    def test_it_is_reported_FIRST(self, tmp_path):
+        """Every other reason names a file to look at; this one names the
+        reason all of them may be wrong, and a reader working down a list acts
+        on what they read first."""
+        ws = _passing(_workspace(tmp_path))
+        (ws / "result.json").write_text(json.dumps({"meta": {"tax_year": 2027}}))
+        self._interrupt(ws)
+        reasons = verify(ws).reasons
+        assert len(reasons) > 1, "the fixture must carry a second reason too"
+        assert "never finished" in reasons[0]
+
+    def test_re_recording_ONE_gate_does_not_clear_it(self, tmp_path):
+        """A run that re-passes one gate has not re-validated the workspace,
+        and clearing on that would make the marker vanish at the first of
+        three."""
+        ws = _workspace(tmp_path)
+        self._interrupt(ws)
+        receipt.record(ws, receipt.REQUIRED_GATES[0], receipt.PASS)
+        assert not verify(ws).valid
+        from agents.lib import workspace as W
+        assert W.abandoned_run(ws)
+
+    def test_the_LAST_required_gate_passing_clears_it(self, tmp_path):
+        """The resumption condition, checked rather than assumed: the
+        interruption is forgotten only once every required gate verifies clean
+        against the files that are here NOW."""
+        from agents.lib import workspace as W
+        ws = _workspace(tmp_path)
+        self._interrupt(ws)
+        for gate in receipt.REQUIRED_GATES:
+            receipt.record(ws, gate, receipt.PASS)
+        assert not W.abandoned_run(ws)
+        assert verify(ws).valid
+
+    def test_a_FAILING_gate_leaves_the_marker_where_it_was(self, tmp_path):
+        from agents.lib import workspace as W
+        ws = _workspace(tmp_path)
+        self._interrupt(ws)
+        for gate in receipt.REQUIRED_GATES[:-1]:
+            receipt.record(ws, gate, receipt.PASS)
+        receipt.record(ws, receipt.REQUIRED_GATES[-1], "FAILED")
+        assert W.abandoned_run(ws)
+        assert not verify(ws).valid
+
+    def test_a_gate_passing_on_STALE_inputs_does_not_clear_it(self, tmp_path):
+        """"Some later command ran" is not the condition. The gates must
+        verify against what is in the workspace NOW."""
+        from agents.lib import workspace as W
+        ws = _workspace(tmp_path)
+        self._interrupt(ws)
+        for gate in receipt.REQUIRED_GATES:
+            receipt.record(ws, gate, receipt.PASS)
+        assert not W.abandoned_run(ws)
+        # A second interruption, then a document arriving: the gates verify
+        # against files that have moved on, so nothing clears.
+        self._interrupt(ws, command="tax-parse")
+        (ws / "documents" / "late-1099.pdf").write_bytes(b"%PDF-1.4 late")
+        receipt.record(ws, receipt.REQUIRED_GATES[0], receipt.PASS)
+        assert W.abandoned_run(ws)
+
+    def test_the_verdict_never_writes(self, tmp_path):
+        """A verify that mutated the workspace it is reporting on would be the
+        thing it exists to detect."""
+        from agents.lib import workspace as W
+        ws = _passing(_workspace(tmp_path))
+        self._interrupt(ws)
+        before = (ws / W.ABANDONED_NAME).read_bytes()
+        for _ in range(3):
+            assert not verify(ws).valid
+        assert (ws / W.ABANDONED_NAME).read_bytes() == before
+
+    def test_the_reason_names_the_command_and_when(self, tmp_path):
+        ws = _passing(_workspace(tmp_path))
+        self._interrupt(ws, command="tax-parse", started="2026-09-11T22:14:03")
+        reason = verify(ws).reasons[0]
+        assert "tax-parse" in reason and "2026-09-11T22:14:03" in reason
+        assert "clears itself" in reason, (
+            "a reader told a workspace is invalid needs the remedy in the same "
+            "sentence, or the remedy is to delete the file")

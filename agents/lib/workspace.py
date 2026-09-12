@@ -165,6 +165,25 @@ def resolve_under_workspace(path_arg: str, workspace: Path) -> Path:
 # case: a killed terminal, a crashed session.
 _LOCK_NAME = ".tax-workspace.lock"
 
+# WHAT AN INTERRUPTED RUN LEAVES BEHIND, and the other half of V10.
+#
+# Reclaiming a stale lock answers "may this run proceed" and throws away the
+# more interesting fact: a run STARTED and never finished, so the artifacts it
+# was part-way through writing are a mixture of two generations. The reclaim
+# printed that to stderr and it was gone — a line on a terminal nobody is
+# watching is not a record.
+#
+# So the stale lock is MOVED here rather than deleted, and `receipt.verify`
+# reads it: a workspace holding one is not validated, whatever its gates last
+# said, because the gates ran before the interruption or during it. It is
+# cleared by the run that gets the workspace back to a validated state, which
+# is the resumption condition stated as a check rather than as a hope.
+#
+# ONE file, overwritten. Two interruptions in a row is still "this workspace
+# was interrupted"; a growing list would be an audit log, and the remedy for
+# every entry in it is the same.
+ABANDONED_NAME = ".tax-workspace.abandoned"
+
 # The keys the lock file holds. Deliberately not the taxpayer's anything: a
 # lock is a coordination artifact and carries no return data.
 _LOCK_FIELDS = ("pid", "started", "command")
@@ -313,7 +332,13 @@ def workspace_lock(workspace, command: str, *, now=None):
             # the same race, and the branch above refuses rather than looping.
             reclaimed = held
             try:
-                path.unlink()
+                # MOVED, not removed. `os.replace` is atomic, so there is no
+                # instant where the lock is gone and the record is not yet
+                # there — a second run arriving between the two would see an
+                # unlocked, unmarked workspace and believe the interrupted run
+                # never happened.
+                os.replace(str(path), str(root / ABANDONED_NAME))
+                secure_path(root / ABANDONED_NAME)
             except OSError:
                 raise WorkspaceBusy(_busy_message(held)) from None
             continue
@@ -333,13 +358,48 @@ def workspace_lock(workspace, command: str, *, now=None):
               f"{reclaimed.get('command', 'an unknown command')!r} "
               f"(pid {reclaimed.get('pid')}, started "
               f"{reclaimed.get('started', 'unknown')}) — that run did not "
-              f"finish, so check what it left behind.", file=sys.stderr)
+              f"finish. Recorded in `{ABANDONED_NAME}`; the validation receipt "
+              f"reads it, and this workspace is not validated until the gates "
+              f"pass again on what is here now.", file=sys.stderr)
     try:
         yield path
     finally:
         # OURS, by the record we wrote and not by the path. See the docstring.
         if _read_lock(path) == record:
             path.unlink(missing_ok=True)
+
+
+def abandoned_run(workspace) -> dict:
+    """The record an interrupted run left, or `{}`.
+
+    A READ, and only a read. `receipt.verify` calls it to add its reason and
+    `receipt.record` calls it to decide whether to clear one; neither is a
+    place to write, and a verify that mutated the workspace it is reporting on
+    would be the thing it exists to detect.
+    """
+    return _read_lock(Path(workspace) / ABANDONED_NAME)
+
+
+def clear_abandoned_run(workspace) -> bool:
+    """Forget the interruption. True when there was one to forget.
+
+    Called ONLY from `receipt.record`, and only once the gates verify clean on
+    the inputs that are here now. That is the resumption condition the backlog
+    names — "resumes from validated inputs" — stated as a check rather than as
+    a hope that the next command redid the right work.
+    """
+    path = Path(workspace) / ABANDONED_NAME
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        # A record that cannot be removed keeps reporting the interruption,
+        # which is the safe direction: the workspace reads as not-validated
+        # until a person looks. Refusing the gate's write instead would make a
+        # permissions problem on one file block the whole return.
+        return False
 
 
 def hold_workspace(workspace, command: str) -> Path:

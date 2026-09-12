@@ -33,6 +33,9 @@ crypto_transactions.json
 # file in `git status` during every compute is a file somebody eventually
 # commits.
 .tax-workspace.lock
+# ...and what an interrupted run leaves behind, which is read by the
+# validation receipt and cleared when the gates pass again.
+.tax-workspace.abandoned
 tax_calendar_*.ics
 # The PDF generator is written per workspace by tax-generate, so it is a
 # runtime artifact despite being source code — and it is the one runtime file

@@ -345,6 +345,47 @@ class TestTheRunLock:
         and the ones nobody widened would have printed a traceback."""
         assert issubclass(W.WorkspaceBusy, W.WorkspaceError)
 
+    def test_a_stale_lock_becomes_an_ABANDONED_RECORD_not_nothing(self,
+                                                                  tmp_path):
+        """Reclaiming answers "may this run proceed" and throws away the more
+        interesting fact: a run STARTED and never finished, so the artifacts it
+        was part-way through are a mixture of two generations. A line on a
+        terminal nobody is watching is not a record."""
+        import json
+        held = {"pid": 2 ** 22, "started": "2026-09-11T09:00:00",
+                "command": "tax-compute"}
+        (tmp_path / W._LOCK_NAME).write_text(json.dumps(held), encoding="utf-8")
+        with W.workspace_lock(tmp_path, "tax-generate"):
+            pass
+        assert W.abandoned_run(tmp_path) == held
+        assert (tmp_path / W.ABANDONED_NAME).exists()
+
+    def test_the_record_is_the_lock_MOVED_not_a_copy(self, tmp_path):
+        """`os.replace` is atomic, so there is no instant where the lock is
+        gone and the record is not yet there — a second run arriving between
+        the two would see an unlocked, unmarked workspace and believe the
+        interrupted run never happened."""
+        import json
+        (tmp_path / W._LOCK_NAME).write_text(json.dumps(
+            {"pid": 2 ** 22, "started": "x", "command": "tax-compute"}),
+            encoding="utf-8")
+        with W.workspace_lock(tmp_path, "tax-generate"):
+            # the live lock is this run's, not the dead one's
+            assert self._held(tmp_path)["command"] == "tax-generate"
+        assert W.abandoned_run(tmp_path)["command"] == "tax-compute"
+
+    def test_no_interruption_leaves_no_record(self, tmp_path):
+        with W.workspace_lock(tmp_path, "tax-compute"):
+            pass
+        assert W.abandoned_run(tmp_path) == {}
+        assert not (tmp_path / W.ABANDONED_NAME).exists()
+
+    def test_clearing_reports_whether_there_was_one(self, tmp_path):
+        assert W.clear_abandoned_run(tmp_path) is False
+        (tmp_path / W.ABANDONED_NAME).write_text("{}", encoding="utf-8")
+        assert W.clear_abandoned_run(tmp_path) is True
+        assert W.clear_abandoned_run(tmp_path) is False
+
     def test_a_stale_lock_is_reclaimed_and_SAID(self, tmp_path, capsys):
         """A killed terminal is the common case, not the rare one. A lock that
         silently disappears teaches nobody that a run died."""
@@ -357,6 +398,9 @@ class TestTheRunLock:
         note = capsys.readouterr().err
         assert "reclaimed a stale workspace lock" in note
         assert "tax-compute" in note and "did not finish" in note
+        assert W.ABANDONED_NAME in note, (
+            "the note must say WHERE the interruption was recorded, or the "
+            "reader has a line and no artifact")
 
     def test_an_unreadable_lock_is_HELD_not_reclaimed(self, tmp_path):
         """A file whose contents nothing can vouch for is not evidence its

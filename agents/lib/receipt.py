@@ -40,7 +40,9 @@ from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
 from agents.lib.secure_fs import atomic_write, redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
+    abandoned_run,
     add_workspace_argument,
+    clear_abandoned_run,
     hold_workspace,
     resolve_workspace,
 )
@@ -350,7 +352,21 @@ def record(workspace, gate: str, outcome: str, *,
         "result_schema": result_schema_digest(),
         "inputs": gate_inputs(workspace, gate) if inputs is None else dict(inputs),
     }
-    return _write(workspace, data)
+    path = _write(workspace, data)
+    # THE RESUMPTION CONDITION, checked rather than assumed. An interruption is
+    # forgotten only once every required gate verifies clean against the files
+    # that are here NOW — which is what "resumes from validated inputs" means,
+    # and is not the same as "some later command ran". A gate recording a
+    # FAILURE leaves the marker exactly where it was.
+    #
+    # `required=REQUIRED_GATES` and not the caller's narrower set: a run that
+    # re-passes one gate has not re-validated the workspace, and clearing on
+    # that would make the marker vanish at the first of three.
+    if abandoned_run(workspace):
+        report = verify(workspace)
+        if not [r for r in report.reasons if r != _interruption_reason(workspace)]:
+            clear_abandoned_run(workspace)
+    return path
 
 
 def record_after_verdict(workspace, gate: str, outcome: str, exit_code: int, *,
@@ -424,11 +440,34 @@ class VerifyReport:
                 "notes": self.notes}
 
 
+def _interruption_reason(workspace: Path) -> "str | None":
+    """The reason an INTERRUPTED run puts on the report, or None.
+
+    Separate from the gate checks so `record` can ask "would the gates verify
+    clean?" without this answer making that question unanswerable — a marker
+    that blocks the verdict that clears it never clears.
+    """
+    abandoned = abandoned_run(workspace)
+    if not abandoned:
+        return None
+    who = abandoned.get("command", "an unknown command")
+    started = abandoned.get("started", "an unknown time")
+    return (f"a run of {who!r} started {started} and never finished, so the "
+            "artifacts here may mix two generations — the gates below ran "
+            "either before it or during it. Re-run them; this clears itself "
+            "when they pass on what is in the workspace now.")
+
+
 def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyReport:
     """Re-read what each gate read and report every way the receipt is stale.
 
     Every reason is stated, not just the first: an agent handed one drift at a
     time re-runs the gates once per file.
+
+    An INTERRUPTED run is one of those ways, and it is reported even when every
+    gate verifies: a killed run leaves artifacts part-written, and a receipt
+    whose digests happen to match says only that nothing has changed SINCE —
+    not that what is here was ever whole.
     """
     workspace = Path(workspace).resolve()
     data = _read(workspace)
@@ -493,6 +532,12 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
                 reasons.append(f"{gate}: {_name(key)} appeared after that gate ran")
             elif (recorded[key] or {}).get("digest") != current[key]["digest"]:
                 reasons.append(f"{gate}: {_name(key)} changed since that gate ran")
+    interrupted = _interruption_reason(workspace)
+    if interrupted:
+        # FIRST. Every other reason names a file to look at; this one names the
+        # reason all of them may be wrong, and a reader working down a list
+        # acts on what they read first.
+        reasons.insert(0, interrupted)
     return VerifyReport(not reasons, reasons, notes)
 
 

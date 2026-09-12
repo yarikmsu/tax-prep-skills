@@ -291,8 +291,8 @@ never the code. One read site: `workspace.resolve_workspace`.
   via `secure_fs`, the directory included); archived at cutover
 - `scenarios/` — derived planning artifacts; never mutated elsewhere
 - `tax_calendar_<year>.ics` — RFC 5545 calendar of the year's deadlines
-- `.tax-workspace.lock` — the RUN lock; a publishing CLI takes it and REFUSES
-  while another run holds it. Never delete one without checking
+- `.tax-workspace.{lock,abandoned}` — the RUN lock, and what an interrupted
+  run leaves; the receipt reads the second. Never delete either unchecked
 - `generate_tax_pdf.py` — LEGACY, replaced by `agents/lib/pdf_render.py`, and
   blocked by NAME in the PII gate. Older workspaces have one; never run it
 

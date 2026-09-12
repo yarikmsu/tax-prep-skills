@@ -26,7 +26,7 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | V7 | #115 | needs `TAX_WORKSPACE` set, or it isolates nothing |
 | V8 | #91 | — |
 | V9 | #92 | — |
-| V10 | #93, #102, #139 | the RESUMABLE half is not started; the concurrency half shipped in #139 |
+| V10 | #93, #102, #139, #140 | — |
 | V11 | #95 | — |
 | W1 | #90 | — |
 | W4 | #90, #118 | the MEASURED COSTS *seconds* sitting is OWED — it needs an otherwise-idle machine, and three attempts were killed for host memory |
@@ -59,9 +59,9 @@ keying gotchas went to `docs/contributing/tax-law-cache.md` for that reason.
 ### Not started
 
 Nothing here has shipped in any part. An item that shipped in PART is in the table
-above with the remainder named in its third column — `V10`'s resumable half and `V3`'s
-last case are the two, and they are deliberately NOT repeated here, because an id in
-both lists leaves a reader unable to say which is true. **Bold** in this section means
+above with the remainder named in its third column — `V3`'s last case is the one left,
+and it is deliberately NOT repeated here, because an id in both lists leaves a reader
+unable to say which is true. **Bold** in this section means
 the item is in this list; the backticks above are references to the table.
 
 **W2**, **W3**, **W7**, **W8**, **W9**, **X4**, **X5**,
@@ -281,7 +281,7 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   PDFs for zero-tax, refund, balance-due and long-manifest cases get layout and
   field-presence checks. Retires the "check the generator by hand" rule in AGENTS.md
   §8 and the PII gate's by-name block for that file.
-- **V10 — DONE (#93, #102) (P2, M): Atomic writes and resumable state.** Extract one temp-then-replace
+- **V10 — DONE (#93, #102, #139, #140) (P2, M): Atomic writes and resumable state.** Extract one temp-then-replace
   writer into `secure_fs` from the three hand-rolled copies (`tax_law_fetcher`,
   `rollover`, `tax_calendar`) and route every runtime writer through it —
   `scenario.py:524` and `tie_out.py:1745` write in place today, and the second is
