@@ -240,3 +240,50 @@ def _prorated_mortgage_interest(interest: float, avg_balance, limit: float,
         "Pub 936 average-balance method")
     return interest * limit / bal
 
+# A GUARD, and the reason one is a primitive. `qdcg_worksheet_applies` decides
+# nothing about a form: it answers whether the fetched capital-gains
+# breakpoints are usable at all, and REFUSES rather than falling through to
+# ordinary rates when half of them are there. The X2 finding was four divergent
+# read sites, so there is exactly one, and both `compute_scenario` (the spine)
+# and `compute_form_6251` (a form) ask it — which is what puts it here rather
+# than in either.
+
+def qdcg_worksheet_applies(
+    preferential_income: float,
+    cg_zero_limit: "float | None",
+    cg_fifteen_limit: "float | None",
+) -> bool:
+    """Whether the QDCG worksheet must run — and refuse when it cannot.
+
+    The one guard shared by `compute_scenario`, `compute_form_6251`'s Part III
+    coordination, `loss_harvest`'s entry point and
+    `projection.project_federal_tax`, which has its own worksheet branch and
+    never calls `compute_scenario`. Both used to read `limit is not None` as
+    the condition for the worksheet and fall through to `compute_bracket_tax`
+    otherwise, so a cache whose `federal.capital_gains_rates` was never
+    fetched priced qualified dividends and net long-term gain at ORDINARY
+    rates. That over-states the tax the user acts on — a Roth rung's marginal
+    cost, a safe-harbor payment — which is the direction AGENTS.md §4 makes a
+    hard error, and it was silent: nothing downstream can tell 0/15/20% from
+    22/24/32% on a figure that looks plausible either way. Only `loss_harvest`
+    guarded it, at its own entry point.
+
+    `preferential_income` is qualified dividends plus net long-term gain; a net
+    LOSS is capped and deducted from ordinary income and is not preferential,
+    so a wages-only or loss-only case stays usable without the limits — an
+    ordinary-income what-if is not wrong for lack of a breakpoint it never
+    reaches. Returns False when there is nothing to price, True when both
+    breakpoints are present, and raises when income exists and either is
+    missing: half a worksheet is the same fall-through by another door.
+    """
+    if preferential_income <= 0:
+        return False
+    if cg_zero_limit is None or cg_fifteen_limit is None:
+        raise ValueError(
+            "Capital gains rate thresholds not loaded from tax_law JSON "
+            "(federal.capital_gains_rates zero_pct_limit / fifteen_pct_limit "
+            "for this filing status), and the return has qualified dividends "
+            "or a net long-term gain that they price. Refusing rather than "
+            "taxing that income at ordinary rates. Run /tax-setup to fetch "
+            "current rates.")
+    return True

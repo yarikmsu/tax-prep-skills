@@ -85,7 +85,7 @@ GATE_MODULES = (
 )
 
 # The rest of the engine, and it is checked just as hard. Most of these ARE some
-# skill's whole computation — `projection.py` is what /tax-project DOES — and
+# skill's whole computation — `projection` is what /tax-project DOES — and
 # nothing imports them, so a copy that keeps the four gate modules and drops
 # these passes a gate-only check while the skill it powers has nothing left to
 # run. Checking the gates alone would have made this preflight report OK on a
@@ -991,12 +991,6 @@ def _load(name: str):
         return None, (f"{type(e).__name__}: {e}", True, False)
 
 
-# Column-anchored on purpose: a guard indented inside a function or a class
-# never runs at module scope, so it is not the dispatch the skills reach.
-_MAIN_DISPATCH = re.compile(r"^if\s+__name__\s*==\s*['\"]__main__['\"]\s*:",
-                            re.MULTILINE)
-
-
 def _cli_dispatch_error(name: str):
     """The module's file carries the `__main__` dispatch the skills EXECUTE.
 
@@ -1041,62 +1035,85 @@ def _cli_dispatch_error(name: str):
         return (f"{type(e).__name__}: {leaf.name} imported but could not be "
                 f"read back to verify its command-line entry point: {e}",
                 True, False)
-    # A package's `__main__.py` IS the dispatch. `python -m <package>` runs it
-    # by name, so it carries no `if __name__ == "__main__":` guard — that guard
-    # exists so a MODULE can be imported without running its CLI, and a
-    # `__main__.py` is never imported for its contents. Searching it for the
-    # guard reported a runnable package as having no entry point at all.
-    #
-    # Returning a clean verdict there would have closed the gate and reopened
-    # the band this whole function exists for, which for a `__main__.py` is
-    # WIDER than for a module: the file is never imported, so a SyntaxError in
-    # it survives every check above, and a cut after its imports leaves a file
-    # that runs, does nothing and exits 0 with no absent line to notice. So ask
-    # the same question a different way — does anything here RUN.
+    return _dispatch_error(stem, leaf, source, is_package)
+
+
+def _module_scope_guard(tree):
+    """The `if __name__ == "__main__":` node at MODULE scope, or None.
+
+    From the tree, not from a column-anchored regex. The regex it replaces
+    could only ask whether the LINE was present, and a guard whose body was
+    truncated to nothing still satisfied that — the exit-0 no-op this whole
+    function exists for, two lines deeper than it was looking.
+
+    Module scope is the point: a guard indented inside a function or a class
+    never runs when the file is executed, and `tree.body` is the only place it
+    counts. `ast` decides that rather than a `^` anchor, which reads column one
+    and would be defeated by a tab.
+    """
+    for node in tree.body:
+        if (isinstance(node, ast.If)
+                and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "__name__"):
+            return node
+    return None
+
+
+def _dispatch_error(stem: str, leaf, source: str, is_package: bool):
+    """One question, asked of both shapes: does running this file DO anything.
+
+    The two shapes announce an entry point differently, which is the only
+    reason this branches at all. A MODULE guards its CLI with
+    `if __name__ == "__main__":`, so that importing it does not run one. A
+    PACKAGE cannot — `python -m <pkg>` runs `__main__.py` by name, and nothing
+    ever imports that file for its contents, so it carries no guard and
+    searching for one reported a runnable package as having no entry point.
+
+    What is NOT different is the failure. A module cut above its guard and a
+    `__main__.py` cut above its first statement both import cleanly, expose
+    every roster symbol, run, fall off the end and exit 0 — and `tax-compute`
+    Step 12.7 reads exit 0 as TIED OUT. So both are asked for a CALL: at the
+    top level for a package, anywhere inside the guard for a module (the
+    twenty-seven that ship spread theirs across `Expr`, `Raise`, `Try`, `With`
+    and `For`, so the statement KIND is not the question).
+
+    `ast.parse` is also the SyntaxError check a `__main__.py` gets nowhere
+    else: the import probe imports the PACKAGE, which runs `__init__.py` and
+    never looks at `__main__.py`, so a file that cannot be compiled at all
+    passes every check above this one and fails when a skill runs it. A module
+    is imported and could not have reached here uncompilable, but the branch
+    costs nothing and the message is true of both.
+    """
+    where = "__main__.py" if is_package else "its `__main__` guard"
+    try:
+        tree = ast.parse(source, filename=str(leaf))
+    except SyntaxError as e:
+        # The line number is the file's own text, not a taxpayer's data, and it
+        # is the whole value of the message.
+        return (f"SyntaxError: {stem} does not compile (line {e.lineno}) — "
+                f"nothing above this check reads {where}, so a skill running "
+                f"it is where this would otherwise be found", False, False)
+
     if is_package:
-        return _package_dispatch_error(stem, leaf, source)
-    if _MAIN_DISPATCH.search(source):
+        runs = any(isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                   for node in tree.body)
+    else:
+        guard = _module_scope_guard(tree)
+        runs = guard is not None and any(
+            isinstance(inner, ast.Call)
+            for statement in guard.body for inner in ast.walk(statement))
+
+    if runs:
         return "", False, False
     # Authored text with no variable in it, so `needs_redaction` is False for
     # the reason `ModuleFailure` records: in the scenario this module exists for
     # the redactor is part of what went missing, and a message that never
     # carried a path must not collapse to the withheld marker with the ones that
     # did.
-    return ("IncompleteModule: imported but carries no "
-            "`if __name__ == \"__main__\":` dispatch — the skills run this "
-            "file as a command, and without it it would exit 0 having done "
-            "nothing", False, False)
-
-
-def _package_dispatch_error(stem: str, leaf, source: str):
-    """`<package>/__main__.py` carries a command-line entry point that RUNS.
-
-    Parsed rather than pattern-matched, because both failures are structural.
-    `ast.parse` is also the SyntaxError check this file gets nowhere else: the
-    import probe imports the PACKAGE, which runs `__init__.py` and never looks
-    at `__main__.py`, so a file that cannot be compiled at all passes every
-    check above this one and fails at the moment a skill runs it.
-
-    "Runs" is a top-level call expression. The self-test bodies are sequences of
-    `print(...)` and assertions, so a truncation anywhere above the first one
-    leaves imports and constants and nothing that does work — the exit-0 no-op
-    in its package shape.
-    """
-    try:
-        tree = ast.parse(source, filename=str(leaf))
-    except SyntaxError as e:
-        # The line number is the file's own text, not a taxpayer's data, and it
-        # is the whole value of the message.
-        return (f"SyntaxError: {stem} is a package whose __main__.py does not "
-                f"compile (line {e.lineno}) — the package imports, so nothing "
-                f"above this check looks at the file the skills actually run",
-                False, False)
-    if any(isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-           for node in tree.body):
-        return "", False, False
-    return (f"IncompleteModule: {stem} is a package whose __main__.py carries "
-            "no top-level call — run as a command it would exit 0 having done "
-            "nothing", False, False)
+    return (f"IncompleteModule: {stem} imported, but nothing in {where} CALLS "
+            "anything — the skills run this file as a command and read its "
+            "exit code, and it would exit 0 having done nothing", False, False)
 
 
 def _engine_file(name, dispatch=False):

@@ -2824,6 +2824,24 @@ def test_the_zero_liability_keys_the_engine_reads_are_ones_a_user_can_set():
                 f"/{skill} never tells the user to set `{key}`")
 
 
+def _engine_source(name: str) -> str:
+    """Every line of one engine module, whether it is a file or a PACKAGE.
+
+    W2 made `projection` a directory. A test reading `agents/lib/projection.py`
+    raises FileNotFoundError, which is loud — but the near miss is the one that
+    is not: reading only `projection/__init__.py` would keep passing while
+    covering strictly less, and a forbidden string that moved into
+    `projection/render.py` would come back absent. Concatenate the tree.
+    """
+    leaf = REPO / "agents" / "lib" / f"{name}.py"
+    if leaf.is_file():
+        return leaf.read_text()
+    package = REPO / "agents" / "lib" / name
+    return "\n".join(
+        p.read_text() for p in sorted(package.rglob("*.py"))
+        if "__pycache__" not in p.parts)
+
+
 def test_no_ca_confirmation_flag_survives_anywhere():
     """The CA $0 gate is gone, and must not come back half-wired.
 
@@ -2845,8 +2863,8 @@ def test_no_ca_confirmation_flag_survives_anywhere():
          "projection_inputs_template.json").read_text())
     assert not [k for k in template if dead in k], (
         f"`{dead}` is back in the planning template — nothing reads it")
-    for name in ("projection.py", "withholding.py"):
-        assert dead not in (REPO / "agents" / "lib" / name).read_text(), (
+    for name in ("projection", "withholding"):
+        assert dead not in _engine_source(name), (
             f"`{dead}` is back in agents/lib/{name}")
     for skill in ("tax-project", "tax-withholding"):
         assert dead not in skill_text(skill), (
@@ -5208,11 +5226,11 @@ def test_the_prior_baseline_clarifier_has_exactly_one_copy():
     §19136.3 high-income case, where `prior_based` is None but the archive DID
     supply a baseline — had to be made twice with nothing relating the copies.
     """
-    proj_src = (REPO / "agents" / "lib" / "projection.py").read_text()
-    wh_src = (REPO / "agents" / "lib" / "withholding.py").read_text()
+    proj_src = _engine_source("projection")
+    wh_src = _engine_source("withholding")
     fragment = "supplies the CA prior-year harbor below"
     assert proj_src.count(fragment) == 1, (
-        "the clarifier is spelled out more than once in projection.py")
+        "the clarifier is spelled out more than once in projection/")
     assert wh_src.count(fragment) == 0, (
         "withholding.py spells the clarifier out again instead of calling "
         "`_prior_baseline_lines`")

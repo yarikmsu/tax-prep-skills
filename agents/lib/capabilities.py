@@ -11,7 +11,7 @@ worksheets (8863, 2441, 5695/8936, gambling, FEIE-vs-FTC) are non-blocking
 limitations that land in result.json meta.limitations (the C2 manifest,
 printed on page 1 of the PDF by /tax-generate).
 
-Pure compute + markdown renderer + CLI, following projection.py / yoy_diff.py.
+Pure compute + markdown renderer + CLI, following projection / yoy_diff.py.
 Read-only: never writes any file (the SKILL copies the manifest lines into
 result.json).
 

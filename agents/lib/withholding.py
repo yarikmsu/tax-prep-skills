@@ -11,7 +11,7 @@ added: the actual Form 540 tax vs YTD state withholding, the FTB 5805 safe harbo
 (incl. the R&TC §19136.3 high-income 90%-only rule), DE 4 per-paycheck extra
 withholding, and a 540-ES voucher schedule under CA's 30/40/0/30 weighting (E7).
 
-Reuses projection.py for the safe-harbor / 4(c) / voucher math and rollover.py for
+Reuses projection for the safe-harbor / 4(c) / voucher math and rollover.py for
 the prior-year baseline + path/year validation.
 """
 

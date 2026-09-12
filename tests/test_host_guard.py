@@ -22,6 +22,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import agents.lib as G  # noqa: E402
+from tests.engine_tree import (  # noqa: E402
+    GUARD as ENGINE_GUARD,
+    engine_files,
+    engine_relpath,
+)
 from agents.lib import preflight as P  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -588,27 +593,54 @@ class TestEveryModuleIsCovered:
     asserted statically and fails the day such a module is written.
     """
 
+    # BY PATH, not by name, and that is the whole of the fix. The set used to
+    # hold the bare string `"__init__.py"` to name ONE file — the package that
+    # IS the guard. W2 gave the engine four more initialisers and the exemption
+    # silently covered all five, so `tax_computations/federal/__init__.py` and
+    # `state/__init__.py` were excused a check they had never passed. The
+    # roster count did not move and nothing went red: the same shape that took
+    # the federal engine out of `secure_fs`'s sweep one slice earlier.
     EXEMPT = {
         # The package itself — it IS the guard.
-        "__init__.py",
+        ENGINE_GUARD,
         # Exempt BY DESIGN: preflight must run on the host interpreter to
         # report the defect. It reaches its siblings through `importlib`
         # inside `_load`, not through a module-level package import.
-        "preflight.py",
+        LIB / "preflight.py",
     }
 
     def test_every_engine_module_imports_the_package(self):
         pattern = re.compile(r"^(from agents\.lib\b|import agents\.lib\b)", re.M)
         missing = sorted(
-            path.name for path in sorted(LIB.rglob("*.py"))
-            if "__pycache__" not in path.parts
-            if path.name not in self.EXEMPT
+            engine_relpath(path) for path in engine_files()
+            if path not in self.EXEMPT
             and not pattern.search(path.read_text(encoding="utf-8")))
         assert not missing, (
             f"{missing} reach the engine without importing `agents.lib`, so "
             f"`python3 agents/lib/<module>.py` runs them on a host interpreter "
             f"with no guard. Add the package import the siblings carry; the "
-            f"only exempt names are {sorted(self.EXEMPT)}.")
+            f"only exempt paths are "
+            f"{sorted(engine_relpath(x) for x in self.EXEMPT)}.")
+
+    def test_the_exemption_names_paths_and_not_filenames(self):
+        """The regression this pins is the set going back to bare names.
+
+        `"__init__.py"` reads as one file and matches five. A package
+        initialiser that grows code would then keep an exemption written for
+        the guard, on a check whose whole subject is whether the guard is
+        reachable.
+        """
+        assert all(isinstance(x, Path) for x in
+                   TestEveryModuleIsCovered.EXEMPT), (
+            "the host-guard exemption holds a bare filename again — it must "
+            "hold PATHS, or it excuses every package's `__init__.py`")
+        initialisers = [p for p in engine_files() if p.name == "__init__.py"]
+        assert len(initialisers) > 1, (
+            "the engine holds one initialiser, so this guard is about nothing "
+            "— read it again rather than keeping it")
+        assert sum(p in TestEveryModuleIsCovered.EXEMPT
+                   for p in initialisers) == 1, (
+            "more than one `__init__.py` is exempt from the host-guard check")
 
 
 class TestNoTestSpawnsABareInterpreter:

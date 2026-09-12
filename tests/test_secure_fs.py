@@ -1469,9 +1469,9 @@ class TestNoRuntimePathReachesAMessageUnredacted:
     # The exclusion is spelled inline because a genexpr in a CLASS body cannot
     # see a name bound beside it.
     MODULES = tuple(sorted(
-        str(p.relative_to(Path(REPO_ROOT, "agents", "lib")))
+        p.relative_to(Path(REPO_ROOT, "agents", "lib")).as_posix()
         for p in Path(REPO_ROOT, "agents", "lib").rglob("*.py")
-        if str(p.relative_to(Path(REPO_ROOT, "agents", "lib"))) != "__init__.py"
+        if p.relative_to(Path(REPO_ROOT, "agents", "lib")).as_posix() != "__init__.py"
         and "__pycache__" not in p.parts))
     # Matched against the identifier's `_`-separated TOKENS, not against the
     # whole name and not as a raw substring. The first version of this gate

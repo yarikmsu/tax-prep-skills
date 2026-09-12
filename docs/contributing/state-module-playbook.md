@@ -130,7 +130,7 @@ conventions are load-bearing:
   computed-evidence gating so a template copied by `/tax-setup` never
   reads as a computed $0 return. There is no generic registry: write a
   `_<XX>_COMPUTED_EVIDENCE_FIELDS` tuple + `_<xx>_section_computed()`
-  pair in `projection.py` mirroring the CA pair
+  pair in `projection/` mirroring the CA pair
   (`_CA_COMPUTED_EVIDENCE_FIELDS` / `_ca_section_computed`), and consume
   it from any state-specific projection/withholding block you add — if
   you add none, say so explicitly in your spec. Give your section a field
@@ -200,7 +200,7 @@ Grep-verify each of these — they are the places "state" is enumerated:
 | `capabilities._state_note` | upgrade your state from the bracket-estimate note to a depth note — **do this LAST (step 7)** |
 | `retirement_dashboard` sets | `_HSA_NON_CONFORMING_STATES`, `_IRA_DEDUCTION_NONCONFORMING_STATES`, `_RETIREMENT_DEFERRAL_NONCONFORMING_STATES` if your state belongs |
 | `tax_calendar.py` **and** `agents/lib/ptet.py` | weighted estimated-payment events if not equal quarters (CA-ES precedent); PTET: BOTH modules carry independent `_PTET_STATES` + `_PTET_WINDOWS` copies — update both or neither |
-| `withholding.py` / `projection.py` | projection has a generic bracket path (`project_state_tax`); **withholding has NO generic state path** — it is federal + CA-only, so either add a state true-up block or list the gap explicitly in your spec's non-goals (an unlisted gap silently drops your state's true-up) |
+| `withholding.py` / `projection/` | projection has a generic bracket path (`project_state_tax`); **withholding has NO generic state path** — it is federal + CA-only, so either add a state true-up block or list the gap explicitly in your spec's non-goals (an unlisted gap silently drops your state's true-up) |
 | `/tax-extend` | your state's extension mechanics (only CA is modeled today — the skill says so) |
 
 ## Step 6 — Tests

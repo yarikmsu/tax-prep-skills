@@ -20,6 +20,12 @@ from agents.lib import workspace as W  # noqa: E402
 
 LIB = REPO / "agents" / "lib"
 
+from tests.engine_tree import (  # noqa: E402
+    GUARD as ENGINE_GUARD,
+    engine_files,
+    engine_module_name,
+)
+
 
 @pytest.fixture(autouse=True)
 def _no_inherited_root(monkeypatch):
@@ -132,7 +138,7 @@ class TestEveryCliResolvesThroughIt:
         path is also what a reader needs in order to open the offender, and
         every `allowed` entry below is a top-level module, so it spells the
         same either way."""
-        return {str(p.relative_to(LIB)): p.read_text(encoding="utf-8")
+        return {p.relative_to(LIB).as_posix(): p.read_text(encoding="utf-8")
                 for p in LIB.rglob("*.py")
                 if "__pycache__" not in p.parts}
 
@@ -531,9 +537,15 @@ class TestEveryWriterOfSharedStateTakesTheLock:
 
         DERIVED from who calls the recorder, not listed again: a fourth gate
         added later is caught by this rather than by somebody remembering."""
-        writers = {p.stem for p in sorted(LIB.rglob("*.py"))
-                   if "record_after_verdict(" in p.read_text(encoding="utf-8")
-                   and p.stem != "receipt"}
+        # By MODULE NAME, which is what `LOCKED_CLIS` holds. `p.stem` named a
+        # module while `agents/lib/` was flat; under packages it reports
+        # `projection/__init__.py` as `__init__`, a name no CLI list contains,
+        # so the day a packaged gate writes a receipt this would report
+        # `__init__` as unlocked and tell a reader nothing about which file.
+        writers = {engine_module_name(p) for p in engine_files()
+                   if p != ENGINE_GUARD
+                   and "record_after_verdict(" in p.read_text(encoding="utf-8")
+                   and engine_module_name(p) != "receipt"}
         assert writers, "nothing calls record_after_verdict — this is vacuous"
         missing = sorted(writers - set(W.LOCKED_CLIS))
         assert not missing, (

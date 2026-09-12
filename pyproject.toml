@@ -48,8 +48,9 @@ explicit_package_bases = true
 module = [
     "agents.lib.tax_computations",      # 68
     "agents.lib.tax_computations.state.ny",  # 16, inherited
+    "agents.lib.tax_computations.federal.penalties",  # 14, inherited
     "agents.lib.tie_out",               # 30
-    "agents.lib.projection",            # 8
+    "agents.lib.projection",            # 7, inherited
     "agents.lib.roth_ladder",           # 6
     "agents.lib.tax_law_fetcher",       # 5
     "agents.lib.rollover",              # 4

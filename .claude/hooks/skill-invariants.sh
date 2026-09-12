@@ -504,7 +504,7 @@ select_modules_for() {
         # an addition shows up as the directory's own timestamp moving. Reasoning
         # from that alone, this arm was once narrowed to the directory — and left
         # a hole, because `preflight.check()` IMPORTS all twenty-one modules and
-        # executes one of them. A SyntaxError in `projection.py` turns
+        # executes one of them. A SyntaxError in `projection/` turns
         # test_preflight red while the hook, selecting nothing, exits 0 silent.
         # Verified by breaking that module. An engine edit therefore costs the
         # preflight module (MEASURED COSTS: between capabilities and
@@ -581,6 +581,29 @@ select_modules_for() {
             # test_secure_fs bans a bare `chmod` and a shell fetcher anywhere
             # under agents/ and scripts/.
             RUN_SECUREFS=1
+            ;;
+        # A PACKAGE DIRECTORY, named one at a time and ahead of the generic
+        # arm, which it then repeats exactly — a `case` is first-match-wins.
+        #
+        # `agents/lib/*.py` below already reaches a module at any depth inside
+        # a package, because a `case` pattern's `*` spans `/`. What it does NOT
+        # reach is the DIRECTORY, and that is what `find` prints when a file is
+        # added to or deleted from one. Widening it to a bare `agents/lib/*`
+        # was tried and is wrong: it swallows `__pycache__/*.pyc`, which every
+        # engine run rewrites, so the next tool call would select a module on
+        # the strength of compiled bytecode nothing reads. A test caught that
+        # within the minute, which is the argument for the hand list.
+        #
+        # W2 makes one of these per slice. The generic normalisation that would
+        # retire the list is recorded against W2 in the backlog.
+        # `tax_computations`'s own sub-packages need no entry: the arm above
+        # already reads `agents/lib/tax_computations/*`, and a `case` glob's
+        # `*` spans `/`, so `federal` and `state` match it as directories.
+        agents/lib/projection)
+            RUN_PREFLIGHT=1
+            RUN_HOSTGUARD=1
+            RUN_SECUREFS=1
+            RUN_PORTABILITY=1
             ;;
         agents/lib/*.py)
             RUN_PREFLIGHT=1
@@ -660,6 +683,17 @@ select_modules_for() {
             RUN_CAPABILITIES=1
             # test_preflight.py derives its whole skill roster through this.
             RUN_PREFLIGHT=1
+            RUN_HOSTGUARD=1
+            ;;
+        # The OTHER shared test helper, and watched for the same reason
+        # `skill_text.py` is: the modules below do not merely import it, they
+        # ask it what `agents/lib/` CONTAINS. Narrowing its walk narrows the
+        # host-guard coverage assertion and the packaged-engine guard at once,
+        # and both would stay green — which is the failure the helper itself
+        # exists to end. `test_workspace.py` reads it too and is not one of the
+        # seven; CI is where that one shows.
+        tests/engine_tree.py)
+            RUN_PORTABILITY=1
             RUN_HOSTGUARD=1
             ;;
         # .vscode/settings.json is watched as a FILE and .vscode is not a root:
@@ -1229,19 +1263,19 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.08 - 0.11s         6
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
-#   skill .md edit                 989 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1210 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4777 tests    228.4 - 243.4s        2
+#   skill .md edit                1003 tests     19.7 - 23.4s         3
+#   cold pass, all seven modules  1225 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   4792 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
-# passes two `--deselect` flags, so portability collects 213 and runs 211; and
+# passes two `--deselect` flags, so portability collects 218 and runs 216; and
 # the hooks module holds two platform skips, so it collects 130 and runs 128.
 # THE SUITE holds seven skips, not two: those two plus the five Windows-only
 # DACL cases W6 added, which are skipped everywhere but on the windows job.
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4784 and runs 4777 for the same skips — and that row
+# `pytest tests/` collects 4799 and runs 4792 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1260,12 +1294,12 @@ apply_red_checks
 # module dominates, and by how much, survives a change of machine.
 #
 #   tests/test_claude_hooks.py     128 tests    114.7 - 130.0s       4
-#   tests/test_portability.py      211 tests     11.1 - 13.1s        6
+#   tests/test_portability.py      216 tests     11.1 - 13.1s        6
 #   tests/test_capabilities.py     175 tests      0.8 - 3.1s         6
 #   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
-#   tests/test_secure_fs.py        175 tests      1.4 - 2.1s         6
-#   tests/test_preflight.py        380 tests      5.6 - 7.2s         6
-#   tests/test_host_guard.py        93 tests      1.4 - 1.8s         6
+#   tests/test_secure_fs.py        182 tests      1.4 - 2.1s         6
+#   tests/test_preflight.py        382 tests      5.6 - 7.2s         6
+#   tests/test_host_guard.py        94 tests      1.4 - 1.8s         6
 #
 # The agent-definition row above and the agents row here are the SAME
 # invocation — that trigger selects that module alone — and are stated with the
@@ -1361,7 +1395,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 175 + 175 + 211 + 380 = 989 for a skill edit, plus 93 + 128 = 1210 for a
+# 48 + 175 + 182 + 216 + 382 = 1003 for a skill edit, plus 94 + 128 = 1225 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1420,7 +1454,7 @@ apply_red_checks
 # the branch settles.
 #
 # Against the counts the seconds were taken at, the suite has gained eight
-# hundred and four tests (3973 to 4777), and the gap was ZERO when the sitting ended: it took the
+# hundred and nineteen tests (3973 to 4792), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1614,27 +1648,29 @@ apply_red_checks
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained thirty-four (177 to 211), preflight has gained five (375 to 380), the
-# agents module none (48 to 48), secure_fs has gained fifteen (160 to 175), the hooks module
-# none (128 to 128), capabilities has gained fifty-nine (116 to 175) and the host guard has gained none (93 to 93). EVERY pair is measured from the SITTING and not from the round
+# portability has gained thirty-nine (177 to 216), preflight has gained seven (375 to 382), the
+# agents module none (48 to 48), secure_fs has gained twenty-two (160 to 182), the hooks module
+# none (128 to 128), capabilities has gained fifty-nine (116 to 175) and the host guard has gained one (93 to 94). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
 # the seconds, so the six could not be reconciled against the total by anyone
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. THREE pairs read none and four do not, and the FOURTH is new: W2
-# put the engine's largest module into a package, and preflight is the gate
-# that had to learn to resolve one. Of the eight hundred
-# and four tests the suite has gained since the sitting, FIFTEEN landed in
+# yet taken. TWO pairs read none and five do not, and the host guard is the
+# newest of the five: W2 put the engine's largest modules into packages, and
+# its coverage assertion had been exempting every package initialiser by
+# NAME. Of the eight hundred
+# and nineteen tests the suite has gained since the sitting, TWENTY-TWO landed in
 # tests/test_secure_fs.py — the Windows cases, one case each for
-# V2's, V1's, Y4's and V7's new engine modules, and W2's three further engine
-# files, that module's roster being parametrised per file — THIRTY-FOUR landed in
+# V2's, V1's, Y4's and V7's new engine modules, and W2's ten further engine
+# files, that module's roster being parametrised per file — THIRTY-NINE landed in
 # tests/test_portability.py, which is Y5, the Z1 skill-text checks, the
-# backlog-status pair, X5's figure lint and W2's packaged-engine guard, and is a row
-# moving on its OWN account
-# rather than by parametrisation, FIVE landed in tests/test_preflight.py, which
-# is W2's package entry-point check in both directions, FIFTY-NINE landed in
+# backlog-status pair, X5's figure lint, W2's packaged-engine guard and the
+# shared engine enumerator's own five, and is a row moving on its OWN account
+# rather than by parametrisation, SEVEN landed in tests/test_preflight.py, which
+# is W2's package entry-point check in both directions and the two that pin the
+# unified dispatch rule, FIFTY-NINE landed in
 # tests/test_capabilities.py, which is Z7's residency registry and Z1's depth
 # note, and is the third
 # such row, and
@@ -1650,7 +1686,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to one hundred and thirteen; the remaining six hundred and ninety-one are modules this
+# They sum to one hundred and twenty-eight; the remaining six hundred and ninety-one are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

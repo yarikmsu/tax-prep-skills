@@ -2793,7 +2793,7 @@ if _ROOT not in sys.path:
 """)
         assert report.blocking, (
             "a package whose entry point does nothing was certified runnable")
-        assert "no top-level call" in report.failures[0].error
+        assert "CALLS anything" in report.failures[0].error
 
     def test_a_package_with_no_entry_point_at_all_blocks(self, tmp_path,
                                                          monkeypatch):
@@ -9062,6 +9062,56 @@ class TestAGateModuleThatWouldExitZeroDoingNothing:
         report = P.check(modules=(("headless.tie_out", "the tie-out gate",
                                    "load_ledger"),))
         assert report.blocking, "an indented guard was read as a CLI entry point"
+
+    def test_a_guard_whose_body_does_nothing_blocks(self, tmp_path, monkeypatch):
+        """The band the REGEX could not see, and the reason it is gone.
+
+        The check that stood here asked whether the LINE
+        `if __name__ == "__main__":` was present at column one. A file whose
+        guard body was truncated to a `pass` — or to a comment, or to a
+        docstring left behind by a half-applied edit — still has that line, so
+        it passed, and running it defines some functions, enters the guard,
+        does nothing and exits 0. `tax-compute` Step 12.7 reads exit 0 as TIED
+        OUT, which is the CP2000 failure the whole check exists to prevent,
+        arriving two lines deeper than the pattern was looking.
+        """
+        self._headless(
+            tmp_path, monkeypatch,
+            "def load_ledger(path):\n"
+            "    return {}\n"
+            "\n"
+            'if __name__ == "__main__":\n'
+            "    pass\n")
+        report = P.check(modules=(("headless.tie_out", "the tie-out gate",
+                                   "load_ledger"),))
+        assert report.blocking, (
+            "a `__main__` guard with nothing in it was read as a CLI entry "
+            "point — the exit-0 no-op, wearing the line the old check matched")
+        assert "CALLS anything" in report.failures[0].error
+
+    def test_a_guard_that_calls_through_a_raise_is_a_dispatch(self, tmp_path,
+                                                              monkeypatch):
+        """Counterweight, and not hypothetical: `ptet.py` dispatches with
+        `raise SystemExit(_main(...))`, and across the twenty-seven shipped
+        guards the bodies span `Expr`, `Raise`, `Try`, `With`, `For`, `Assign`
+        and `If`. A rule keyed on the statement KIND would refuse correct
+        modules, which is the gate-that-cries-wolf shape this repository has
+        paid for; the question is whether anything CALLS.
+        """
+        self._headless(
+            tmp_path, monkeypatch,
+            "def load_ledger(path):\n"
+            "    return {}\n"
+            "\n"
+            "def _main(argv):\n"
+            "    return 0\n"
+            "\n"
+            'if __name__ == "__main__":\n'
+            "    import sys\n"
+            "    raise SystemExit(_main(sys.argv[1:]))\n")
+        report = P.check(modules=(("headless.tie_out", "the tie-out gate",
+                                   "load_ledger"),))
+        assert not report.blocking, [f.error for f in report.failures]
 
     def test_a_complete_module_passes(self, tmp_path, monkeypatch):
         """The counterweight for the check itself, at the level of one file."""

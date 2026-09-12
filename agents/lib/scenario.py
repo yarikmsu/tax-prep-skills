@@ -8,7 +8,7 @@ movement in AGI / taxable income / effective rate. Scenarios are stackable via
 
 Never mutates result.json or taxpayer_profile.json. Writes ONLY under
 workspace/scenarios/. Pure compute + markdown renderer + guarded writer + CLI.
-Reuses tax_computations.compute_scenario (the keystone), projection.py helpers,
+Reuses tax_computations.compute_scenario (the keystone), projection helpers,
 and rollover.py path/year validation.
 """
 
@@ -158,7 +158,7 @@ def read_tax_year(result: dict, year: int) -> None:
         )
 
 
-# Netting logic lives in tax_computations.net_capital_gains so projection.py
+# Netting logic lives in tax_computations.net_capital_gains so projection
 # (which scenario.py imports FROM — importing scenario there would be circular)
 # can reuse the identical character-preservation rules. This private alias is the
 # stable name loss_harvest.py and the tests import.

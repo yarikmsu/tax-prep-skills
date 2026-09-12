@@ -25,7 +25,7 @@ Marginal-saved semantics:
 - after_tax: $0 current-year savings (tax-free growth not modeled in v1)
 
 Architectural lineage:
-- pure-compute lib (no result.json mutation) modeled on projection.py /
+- pure-compute lib (no result.json mutation) modeled on projection /
   withholding.py
 - reuses rollover._validate_subpath + _validate_year_arg for boundary
   checks (same pattern as every write-derived skill)

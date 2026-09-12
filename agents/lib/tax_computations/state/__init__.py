@@ -28,3 +28,5 @@ This file exists so the directory is a REGULAR package: a namespace package
 resolves at import time from whatever happens to be on `sys.path`, which is the
 one failure that would put a second checkout's state math into this return.
 """
+
+import agents.lib  # noqa: F401 — the host-interpreter guard, as every sibling carries it

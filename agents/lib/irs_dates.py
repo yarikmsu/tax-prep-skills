@@ -8,7 +8,7 @@ Emancipation Day (April 16, observed) moves the April 15 deadline nationwide
 (TY2021 filing day was Apr 18 2022; TY2022's was Apr 18 2023).
 
 Consumers: compute_form_2210 rolls the four §6654 installment due dates with
-this, projection.py rolls both voucher schedules, tax_calendar.py rolls every
+this, projection rolls both voucher schedules, tax_calendar.py rolls every
 federal and CA/NY/NJ deadline it emits, and ptet.py rolls its election and
 payment dates. An Epic-L-era caveat stood here claiming the two named skills
 emitted unrolled statutory dates; the same epic wired them through this module,

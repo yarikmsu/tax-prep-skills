@@ -13,7 +13,7 @@ pass-through owners this regime targets).
 
 This module is the analyzer behind `/tax-ptet` and the PTET sections the backlog
 calls for in `/tax-review` and `/tax-project`. It mirrors the established
-read-only planning pattern (projection.py / withholding.py / yoy_diff.py): a pure
+read-only planning pattern (projection / withholding.py / yoy_diff.py): a pure
 compute core + markdown renderer + CLI `_main`, reusing `scenario.py` to ANCHOR
 the federal benefit to the real `result.json` line 24 (the entity deduction is
 modeled as a negative `other_income` delta through the `compute_scenario`

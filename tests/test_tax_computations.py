@@ -4703,14 +4703,23 @@ def test_the_capital_gains_limits_are_read_at_one_site():
     lib = Path(__file__).resolve().parent.parent / "agents" / "lib"
     reads = {}
     key = r"""["'](?:zero|fifteen)_pct_limit["']"""
+    # Keyed by RELATIVE PATH. `p.name` was enough while `agents/lib/` was flat;
+    # under packages it reports `projection/__init__.py` as `__init__.py`,
+    # which names nothing a reader can open and collides with every other
+    # package's initialiser.
+    #
+    # `.as_posix()`, not `str()`: `str(Path)` uses the OS separator, so on
+    # Windows this would build `projection\\__init__.py` and fail against a
+    # literal written with a forward slash — a red test on a correct tree, on
+    # the platform whose first CI run found two shipped defects.
     for f in sorted(p for p in lib.rglob("*.py")
                     if "__pycache__" not in p.parts):
         if f.name == "tax_law_fetcher.py":
             continue
         hits = re.findall(rf"""\.get\(\s*{key}|\[{key}\]""", f.read_text())
         if hits:
-            reads[f.name] = len(hits)
-    assert reads == {"projection.py": 2}, (
+            reads[f.relative_to(lib).as_posix()] = len(hits)
+    assert reads == {"projection/__init__.py": 2}, (
         f"a capital-gains breakpoint is read outside the accessor: {reads}")
 
 
@@ -6300,12 +6309,20 @@ class TestOneReaderOfStateBrackets:
     def test_the_sweep_is_not_vacuous(self):
         """It must still be able to SEE a read — otherwise a renamed accessor
         or a changed spelling turns this green by finding nothing at all."""
-        source = (self.LIB / "projection.py").read_text()
-        tree = ast.parse(source)
-        reads = [n for n in ast.walk(tree)
-                 if self._is_state_brackets_read(n, source)]
+        # The whole PACKAGE. `projection.py` is a directory since W2, and
+        # reading only its `__init__.py` would be the quieter version of the
+        # same defect: the read could move into `render.py` and this would go
+        # green having looked at the wrong file.
+        package = self.LIB / "projection"
+        reads = []
+        for f in sorted(package.rglob("*.py")):
+            if "__pycache__" in f.parts:
+                continue
+            source = f.read_text()
+            reads += [n for n in ast.walk(ast.parse(source))
+                      if self._is_state_brackets_read(n, source)]
         assert reads, (
-            "projection.py no longer reads state.brackets in any form the "
+            "projection/ no longer reads state.brackets in any form the "
             "sweep recognises; the sweep above is now vacuous")
 
 

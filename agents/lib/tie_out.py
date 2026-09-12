@@ -31,7 +31,7 @@ intake-to-output MAPPING instead:
     figures are genuinely unavailable (zero-scaffold Schedule D proceeds
     detail) is WARNED loudly, never silently passed.
 
-Pure compute + markdown renderer + CLI, following projection.py/capabilities.py.
+Pure compute + markdown renderer + CLI, following projection/capabilities.py.
 Read-only: writes only summaries/_tie_out.md (workspace-bounded), never touches
 result.json. CLI exit codes mirror the capability gate: 0 = tied out
 (warnings allowed, printed), 2 = FAILED (compute must not be marked complete),

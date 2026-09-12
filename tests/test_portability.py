@@ -5720,6 +5720,15 @@ class TestTheBacklogSaysWhatIsOpen:
             "a reader cannot tell which is true")
 
 
+# The shared enumerator's entry points. A function that calls one of these has
+# handed the walk to `tests/engine_tree.py`, which excludes `__pycache__`,
+# spells paths POSIX-style and knows a package's name is its directory.
+_ENGINE_TREE_CALLS = frozenset({
+    "engine_files", "engine_packages", "engine_top_level_names",
+    "engine_module_name", "engine_relpath",
+})
+
+
 def flat_engine_sweeps(tree):
     """(function name, line) for every flat `glob("*.py")` over the ENGINE.
 
@@ -5740,9 +5749,15 @@ def flat_engine_sweeps(tree):
     ACCOUNTED-FOR is not the same as flat. Two sweeps glob the top level and
     then ADD the package names with `iterdir()` — preflight's roster pin and
     the §5 runnable check — which covers the engine completely and is the right
-    shape where the question is about module NAMES rather than files. So the
-    offence is a flat glob in a function that does neither `rglob` nor
-    `iterdir`.
+    shape where the question is about module NAMES rather than files. Asking
+    `tests/engine_tree.py` counts for the same reason and is the better answer:
+    a function that calls `engine_files`, `engine_packages` or
+    `engine_top_level_names` has delegated the walk to the one place that gets
+    it right, and pairing that with a flat glob is how a test PROVES the two
+    spellings differ.
+
+    So the offence is a flat glob in a function that neither descends, nor
+    walks the packages itself, nor asks the shared enumerator.
     """
     found = []
     for node in ast.walk(tree):
@@ -5751,8 +5766,16 @@ def flat_engine_sweeps(tree):
         descends = False
         flat = []
         for inner in ast.walk(node):
-            if not (isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Attribute)):
+            if not isinstance(inner, ast.Call):
+                continue
+            # The helper is called by BARE NAME, not as an attribute, so it is
+            # matched before the `Attribute` narrowing below — a check written
+            # only for `x.rglob(...)` cannot see `engine_files()` at all.
+            if (isinstance(inner.func, ast.Name)
+                    and inner.func.id in _ENGINE_TREE_CALLS):
+                descends = True
+                continue
+            if not isinstance(inner.func, ast.Attribute):
                 continue
             if inner.func.attr in ("rglob", "iterdir"):
                 descends = True
@@ -5770,6 +5793,89 @@ def flat_engine_sweeps(tree):
 # `"lib"` covers the path written out. Both spellings are in the suite, and a
 # receiver naming neither is some other directory.
 _NAMES_THE_ENGINE = re.compile(r'\bLIB\b|["\']lib["\']')
+
+
+class TestTheEngineIsEnumeratedInOnePlace:
+    """`tests/engine_tree.py` answers "how do I walk `agents/lib/`" once.
+
+    Fifteen sweeps across nine modules ask it, and until W2 made the engine a
+    directory of packages each could get away with its own spelling. Three of
+    them were then wrong in three different ways within one week — a roster
+    excluding `__init__` by STEM dropped the whole federal engine, the
+    host-guard exemption named `__init__.py` and covered five files, and a
+    dict keyed by `p.name` reported `projection/__init__.py` as a filename
+    that names nothing. None of the three went red.
+
+    The detector in the class below is the backstop; this is the fix.
+    """
+
+    def test_it_excludes_compiled_bytecode(self, tmp_path, monkeypatch):
+        """`__pycache__` is rewritten by every engine run. A sweep that reads
+        it is reading yesterday's source, and on this repo's hook it would put
+        a pytest module behind the next tool call."""
+        import tests.engine_tree as ET
+        monkeypatch.setattr(ET, "LIB", tmp_path)
+        (tmp_path / "real.py").write_text("x = 1\n")
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "real.cpython-312.py").write_text("x = 2\n")
+        assert [p.name for p in ET.engine_files()] == ["real.py"]
+
+    def test_a_path_is_posix_spelled(self):
+        """`str(Path)` uses the OS separator, so a comparison against a literal
+        written with a forward slash fails on Windows — a red test on a correct
+        tree, on the platform whose first CI run found two shipped defects."""
+        from pathlib import PureWindowsPath
+
+        from tests.engine_tree import LIB, engine_relpath
+        assert engine_relpath(LIB / "projection" / "render.py") == \
+            "projection/render.py"
+        assert str(PureWindowsPath("projection") / "render.py") != \
+            "projection/render.py", (
+            "the Windows separator no longer differs from POSIX, so this rule "
+            "is about nothing — read it again rather than keeping it")
+
+    def test_a_packages_name_is_its_directory_not_init(self):
+        """`__init__` is not a name any roster, CLI list or exemption set
+        means. Five files are called `__init__.py` and one of them is the
+        engine package itself."""
+        from tests.engine_tree import GUARD, LIB, engine_files, engine_module_name
+        assert engine_module_name(LIB / "projection" / "__init__.py") == "projection"
+        assert engine_module_name(LIB / "tie_out.py") == "tie_out"
+        assert engine_module_name(LIB / "tax_computations" / "state" / "ny.py") == \
+            "tax_computations.state.ny", (
+            "a file inside a package needs its DOTTED path — `ny` is not "
+            "importable and a second state with a same-named module would "
+            "silently replace the first")
+        initialisers = [p for p in engine_files() if p.name == "__init__.py"]
+        assert len(initialisers) > 1, (
+            "the engine holds one initialiser, so none of this is about "
+            "anything yet — read this class again rather than keeping it")
+        with pytest.raises(ValueError, match="the engine package"):
+            engine_module_name(GUARD)
+
+    def test_the_top_level_roster_counts_packages(self):
+        """A flat `glob(\"*.py\")` produces this set and a package silently is
+        not in it, which is how the engine's largest module came to be missing
+        from a list that read as complete."""
+        from tests.engine_tree import engine_packages, engine_top_level_names
+        names = engine_top_level_names()
+        assert "tax_computations" in names and "projection" in names
+        assert "__init__" not in names
+        assert engine_packages() <= names
+        flat = {p.stem for p in (REPO / "agents" / "lib").glob("*.py")}
+        assert engine_packages() - flat, (
+            "every package is also a flat `.py`, so the two spellings agree "
+            "and this assertion is measuring nothing")
+
+    def test_the_helper_is_actually_CALLED(self):
+        """Non-vacuity, and the shape the class below exists for: a helper
+        written and never used is the detector's own first draft again."""
+        callers = sorted(
+            p.name for p in (REPO / "tests").glob("test_*.py")
+            if "engine_tree" in p.read_text(encoding="utf-8"))
+        assert len(callers) >= 3, (
+            f"only {callers} import tests/engine_tree.py — the sweeps went "
+            "back to re-deriving the walk, and the helper is dead code")
 
 
 class TestNoSweepOverTheEngineIsFlat:
@@ -5847,6 +5953,16 @@ class TestNoSweepOverTheEngineIsFlat:
         assert offends(
             'def f():\n    return (REPO / "agents" / "lib").glob("*.py")\n'
         ) == ["f"], "the engine spelled out as a path must still be seen"
+        assert not offends(
+            'def f():\n    a = LIB.glob("*.py")\n    b = engine_packages()\n'
+            '    return a, b\n'), (
+            "a function that asks `tests/engine_tree.py` has handed the walk "
+            "to the one place that gets it right; pairing that with a flat "
+            "glob is how a test PROVES the two spellings differ")
+        assert offends(
+            'def f():\n    return LIB.glob("*.py")\n    engine_nonsense()\n'), (
+            "any bare call now counts as accounting for packages — the "
+            "allowlist stopped being an allowlist")
 
     def test_the_engine_really_does_hold_a_package(self):
         """If it did not, every assertion above would be about nothing."""

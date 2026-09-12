@@ -330,21 +330,50 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   package, including the entry point a package announces differently. Four things were
   found by review and DEFERRED rather than folded in, because each is its own task:
 
-  - **A shared engine enumerator for `tests/`.** Eleven sweeps each carry their own
-    `rglob("*.py")` + `"__pycache__" not in p.parts`, and the new guard polices the
-    idiom from outside by AST. One `engine_modules()` / `engine_packages()` helper that
-    every sweep calls would make the twelfth sweep impossible to write flat rather than
-    merely detectable, and delete eleven copies of the filter. The two that already
-    disagreed — one keyed by relative path, one by bare filename — are what the copies
-    cost.
-  - **One dispatch checker in `preflight`, not two.** A package's entry point is checked
-    by AST ("is there a top-level call"); a module's is still `_MAIN_DISPATCH`, a regex
-    that a `__main__` block truncated to nothing still satisfies. The AST question is
-    strictly the better one and should cover both, retiring the regex and the shape
-    branch with it.
-  - **`_engine_file` should resolve from `importlib.util.find_spec`**, which already
-    knows the origin file and whether the name is a package, rather than probing the
-    filesystem in three branches.
+  - **One generic rule in the hook for a package directory.** `find` prints
+    `agents/lib/<pkg>` when a file is added to or deleted from a package, and
+    that matches no arm — `agents/lib/*.py` reaches modules at any depth but
+    not the directory. Each package therefore gets a hand-written arm that
+    repeats the generic selections, and the one that is forgotten selects
+    nothing while looking identical to a clean path. Widening the glob to a
+    bare `agents/lib/*` is NOT the fix and was tried: it swallows
+    `__pycache__/*.pyc`, which every engine run rewrites. Normalising the
+    payload (`agents/lib/<pkg>/…` → `agents/lib/<pkg>`) with an explicit
+    `__pycache__` exclusion is.
+
+  - ~~**A shared engine enumerator for `tests/`.**~~ **SHIPPED** as
+    `tests/engine_tree.py`, after the same defect arrived a third and fourth time.
+    It answers the walk once: `__pycache__` excluded, paths `.as_posix()` (a
+    `str(Path)` key fails on Windows against a forward-slash literal — Codex caught
+    that one), and a file's MODULE NAME is its package directory for an
+    `__init__.py`, never `__init__`. Two live holes were closed with it: the
+    host-guard coverage assertion exempted `"__init__.py"` BY NAME and so excused
+    five files where it meant one — `federal/__init__.py` and `state/__init__.py`
+    had never passed a check they were silently exempt from — and the
+    receipt-writer sweep keyed by `p.stem`, which would have reported a packaged
+    gate as `__init__`. The flat-glob detector now counts a call to the helper as
+    accounting for packages, so using it is the cheap path.
+
+    STILL OPEN: about a dozen path-keyed `rglob` sweeps are correct as written and
+    were left alone. Converting them is mechanical and would make a hand-rolled
+    walk impossible rather than merely unnecessary.
+  - ~~**One dispatch checker in `preflight`, not two.**~~ **SHIPPED.** `_MAIN_DISPATCH`
+    is gone and both shapes are asked one question — does running this file CALL
+    anything: at the top level for a package, anywhere inside the guard for a module.
+    The regex could only ask whether the LINE was present, so a guard truncated to
+    `pass` satisfied it and the file ran, did nothing and exited 0, which Step 12.7
+    reads as TIED OUT. The rule is keyed on a CALL and not on a statement kind because
+    the twenty-seven shipped guards spread their bodies across `Expr`, `Raise`, `Try`,
+    `With`, `For`, `Assign` and `If` — `ptet.py` dispatches through a `raise`, and a
+    kind-keyed rule would refuse it.
+  - ~~**`_engine_file` should resolve from `importlib.util.find_spec`.**~~ **DECLINED,
+    and reproduced before deciding.** `find_spec` imports the PARENT packages in order
+    to locate a submodule, so on a package whose `__init__.py` does not compile it
+    RAISES where `os.stat` answers cleanly — verified against a fixture. This module's
+    whole subject is a broken engine; resolving its paths through the import machinery
+    means the resolver fails on exactly the installations the gate exists to report.
+    The three filesystem branches stay, and this is the reason, so it is not proposed
+    a third time.
   - ~~**Where the state aggregation seam belongs.**~~ **SETTLED in slice 3, and the
     answer is "where it is."** With California beside New York the block is seventeen
     import lines, explicit and greppable, growing linearly and slowly. Aggregating in
@@ -380,6 +409,15 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
     yet converted. Converting it is mechanical and is a behaviour change at
     every NY entry point. `_ny_amount` is a third copy of `_shared._amount`
     with an NY-specific sentence, and folds into the same task.
+
+  **SLICES 4-5 SHIPPED**: `projection` is a package — `render.py` (the eighteen
+  prose constants, the note-builders and `render_markdown`), `types.py` (the
+  records both sides read), `__main__.py`, and 3,564 lines of compute. And
+  `tax_computations/federal/` holds `penalties.py` (Form 2210, §6651, §6601),
+  `international.py` (§988, PFIC §1291, Form 8938, §904 FTC) and `amt.py`
+  (Forms 6251 and 8801). The engine `__init__.py` is 3,235 lines, down from
+  7,359. `qdcg_worksheet_applies` joined `_shared.py` — the spine and a form
+  both ask it, which is what puts it in neither.
 
   **SLICE 3 SHIPPED**: California is `state/ca.py` — Schedule CA itemized, Schedule P
   (540) AMT and the excess SDI/VPDI credit. Unlike New York this was NOT one contiguous

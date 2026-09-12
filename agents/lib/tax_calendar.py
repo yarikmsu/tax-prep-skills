@@ -19,7 +19,7 @@ resident state — the 540-ES and IT-2105 events, by contrast, follow
 Read-only with respect to result.json / taxpayer_profile.json — this module only
 WRITES a derived `tax_calendar_{year}.ics` sibling. It mirrors the
 "pure compute lib + CLI + reused workspace boundary check" pattern of
-projection.py / withholding.py / scenario.py.
+projection / withholding.py / scenario.py.
 
 Caveats:
 - §7503 next-business-day rollover IS applied (L1). FEDERAL deadlines

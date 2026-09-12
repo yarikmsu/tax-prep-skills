@@ -659,6 +659,8 @@ class TestSkillInvariantsHook:
         ("agents/install.sh", PORTABILITY),
         ("docs/contributing/agents-compat.md", PORTABILITY),
         ("tests/skill_text.py", PORTABILITY),
+        ("tests/engine_tree.py", PORTABILITY),
+        ("tests/engine_tree.py", HOSTGUARD),
         ("scripts/pre-commit-pii-scan.sh", HOOKS),
         (".claude/settings.json", HOOKS),
         (".claude/hooks/harden-runtime-perms.sh", HOOKS),
