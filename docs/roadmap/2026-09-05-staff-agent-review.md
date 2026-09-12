@@ -315,6 +315,14 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   together. `TestTheEngineDirectoryIsFlat` now asserts the flatness and names what a move
   has to carry with it. `receipt.tree_digest` already descends, so the validation
   receipt's engine binding is the one mechanism that survives untouched.
+
+  **OWNER RULING 2026-09-12 on AGENTS.md §5**: "every module exposes a `_main` CLI entry
+  point" is NARROWED to "every module a SKILL invokes is runnable through the launcher";
+  a module nothing invokes needs no entry point, which is what lets `federal/` and
+  `state/` hold pure-function submodules. Shipped in #148 — and the old sentence was
+  already FALSE when it was narrowed: seven modules have no `def _main`, including
+  `tax_computations`, the one §5 names first. The narrowed rule is DERIVED from the
+  skills' own `run.sh` commands and enforced, which the old one never was.
 - **W3 (P3, L): Move the hook state machine to Python.** 3,800 lines of bash tested by
   5,200 lines of Python is the wrong language boundary; the stamp and red-carry-forward
   logic is a state machine bash makes hard to read. Python also lets the hook share

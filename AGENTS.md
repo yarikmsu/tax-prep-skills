@@ -256,15 +256,14 @@ scripts/                         # pre-commit-pii-scan.sh
 tests/                           # pytest suite
 ```
 
-`agents/lib/` holds the computation engine: `tax_computations.py` for the
-parameterized tax math, `tax_law_fetcher.py` for the cache, `preflight.py` for the
-engine gate, `run.sh` for the launcher every skill invokes, and one module per gate
-and per planning skill. The roster is not listed here — it changes, and a list in
-prose goes stale silently. **Every module exposes a `_main` CLI entry point and
-imports nothing agent-specific**; four self-test when run with no arguments
-(`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer` — the claim is
-pinned by test), `preflight` exits 0, 2 (blocked) or 1 (could not run), and the
-rest report usage.
+`agents/lib/` holds the computation engine: the parameterized tax math, the
+cache, the engine gate, `run.sh` for the launcher every skill invokes, and one
+module per gate and per planning skill. The roster is not listed here — it
+changes, and a list in prose goes stale silently. **Every module a SKILL invokes is RUNNABLE through
+the launcher and none imports anything agent-specific**; one nothing invokes
+needs no entry point. Four self-test with no arguments (`tax_computations`,
+`secure_fs`, `irs_dates`, `crypto_importer` — pinned by test); `preflight`
+exits 0, 2 or 1; the rest report usage.
 
 ## 6. Runtime files (created per taxpayer, all gitignored)
 

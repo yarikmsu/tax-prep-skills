@@ -5799,3 +5799,107 @@ class TestTheEngineDirectoryIsFlat:
         assert 'LIB.glob("*.py")' in host_guard, (
             "the host-guard roster no longer reads a flat glob; if it learned "
             "to descend, this guard's premise has moved")
+
+
+class TestEveryModuleASkillInvokesIsRunnable:
+    """AGENTS.md §5's rule, narrowed by owner ruling (2026-09-12) and made TRUE
+    in the same change.
+
+    It used to read "Every module exposes a `_main` CLI entry point", and that
+    was already FALSE: seven modules have no `def _main` at all — `archive`,
+    `crypto_importer`, `irs_dates`, `parse_utils`, `secure_fs`,
+    `tax_law_fetcher`, and `tax_computations`, which is the module §5 names
+    first. Each does its CLI work inline under `__main__` or through a
+    differently-named `main`, and nothing checked the sentence, so it sat there
+    describing a shape the engine did not have.
+
+    What the rule is FOR is that a skill can always run what it names. That is
+    the version enforced here, derived from the skills rather than listed: a
+    module a skill invokes must be runnable, and one nothing invokes needs no
+    entry point. W2 — splitting the engine into `federal/` and `state/`
+    packages of pure functions — is the change that made the distinction
+    matter, and it could not have been made honestly against the old sentence.
+    """
+
+    LIB = REPO / "agents" / "lib"
+    # `sh agents/lib/run.sh -m agents.lib.X` and `... agents/lib/X.py`, the two
+    # forms the skills use. Both spellings, because a skill that switched from
+    # one to the other would otherwise drop out of this set silently — the
+    # audit `docs/contributing/skill-catalog.md` says a grep cannot do.
+    INVOCATION = re.compile(
+        r"run\.sh\s+(?:-m\s+agents\.lib\.([a-z_]+)|agents/lib/([a-z_]+)\.py)")
+
+    def _invoked(self) -> "set[str]":
+        found = set()
+        for directory in sorted(SKILLS_DIR.iterdir()):
+            if not directory.is_dir():
+                continue
+            for match in self.INVOCATION.finditer(skill_text(directory.name)):
+                found.add(match.group(1) or match.group(2))
+        return found
+
+    def test_the_set_is_derived_and_substantial(self):
+        invoked = self._invoked()
+        assert len(invoked) >= 20, (
+            f"only {sorted(invoked)} parse as skill-invoked — the pattern no "
+            "longer matches the skills' own commands, and everything below is "
+            "then asserting something about nothing")
+        assert "preflight" in invoked and "capabilities" in invoked
+
+    def test_every_one_of_them_runs(self):
+        """RUNNABLE, not `_main` by name. `python -m agents.lib.X` needs a
+        `__main__` block; what the block calls is the module's business."""
+        missing = []
+        for name in sorted(self._invoked()):
+            path = self.LIB / f"{name}.py"
+            assert path.is_file(), f"a skill invokes {name}, which is not a module"
+            if '__name__ == "__main__"' not in path.read_text(encoding="utf-8"):
+                missing.append(name)
+        assert not missing, (
+            f"{missing} are invoked by a skill and cannot be run: no "
+            "`__main__` block, so the command in the skill fails at the shell. "
+            "A skill must always be able to run what it names.")
+
+    def test_a_module_no_skill_invokes_is_OUT_OF_SCOPE_for_the_check(self):
+        """The half the ruling added, and the half W2 needs.
+
+        Pinned as the CHECKER'S SCOPE and not as a fact about today's tree: at
+        the time of the ruling every uninvoked module still happened to carry a
+        `__main__` block, so an assertion that one does not would have been
+        asserting the future. W2's `federal/` and `state/` submodules are the
+        first case, and what has to be true BEFORE they land is that the
+        runnable check does not reach them.
+        """
+        on_disk = {p.stem for p in sorted(self.LIB.glob("*.py"))
+                   if p.stem != "__init__"}
+        invoked = self._invoked()
+        assert invoked < on_disk, (
+            "every module on disk is skill-invoked, so the exemption has no "
+            "subject and this test is asserting nothing")
+        # The scope is the derived set, not the directory. Read from the
+        # check's own source so the two cannot drift: a check widened to the
+        # whole directory would re-impose the rule the ruling narrowed.
+        import inspect
+        body = inspect.getsource(self.test_every_one_of_them_runs)
+        assert "self._invoked()" in body and "glob(" not in body, (
+            "the runnable check no longer scopes itself to the skill-invoked "
+            "set — it would refuse a pure-function submodule for having no "
+            "entry point, which is exactly what the ruling exempted")
+
+    def test_the_old_sentence_is_gone_from_AGENTS_md(self):
+        """The regression this pins is the sentence coming back, because it
+        reads plausibly and was false for seven modules."""
+        text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+        assert "Every module exposes a `_main`" not in text
+        flat = re.sub(r"\s+", " ", text)
+        assert "Every module a SKILL invokes is RUNNABLE through the launcher" in flat
+
+    def test_the_seven_that_disproved_the_old_rule_still_do(self):
+        """Named, so the claim above is checkable rather than historical."""
+        without_main = {p.stem for p in sorted(self.LIB.glob("*.py"))
+                        if p.stem != "__init__"
+                        and "\ndef _main" not in p.read_text(encoding="utf-8")}
+        assert "tax_computations" in without_main, (
+            "the module §5 named first is the sharpest case: it has no "
+            "`_main`, and the old sentence said every module did")
+        assert len(without_main) >= 5
