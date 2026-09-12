@@ -86,6 +86,26 @@ FIELD_MAP: dict[str, dict] = {
         "target_path": "prior_year.ca_amt_credit_carryforward",
         "transform": "abs",
     },
+    "prior_overpayment_applied": {
+        "category": "carryforwards",
+        # Form 1040 line 36 — the part of LAST year's overpayment applied to
+        # THIS year's estimated tax. It becomes part of this year's line 26,
+        # "estimated tax payments and amount applied from the prior-year
+        # return", and it is the one payment on that line with no document
+        # behind it: no 1099, no ledger record, nothing the tie-out gate can
+        # see. The profile field existed and NOTHING wrote it — dead
+        # scaffolding, which is the D1 lesson this repository already learned
+        # once — so the carry was manual and silently skippable.
+        #
+        # Losing it UNDER-states line 26, which under-states line 33's
+        # payments, which OVER-states line 37: the taxpayer is billed for money
+        # they have already paid. `return_builder._check_the_prior_overpayment`
+        # is the other end, and refuses a line 26 smaller than this figure.
+        "source_path": "form_1040.line_36_applied_to_next_year",
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.estimated_payments_applied",
+        "transform": "abs",
+    },
     # Category 2: Static identity
     "primary_first_name": {
         "category": "identity",

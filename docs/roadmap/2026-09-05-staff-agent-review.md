@@ -35,6 +35,7 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | X1 | #89 | the auditor's own keying note joins the Y2 replay |
 | X2 | #86 | — |
 | X3 | #88 | — |
+| X4 | #110, #142 | — |
 | Y4 | #112 | — |
 | Y5 | #113 | — |
 | Y6 | #114, #119 | — |
@@ -66,7 +67,7 @@ here — an id in both lists leaves a reader unable to say which is true. As of 
 are none: every item in the table shipped in full. **Bold** in this section means
 the item is in this list; the backticks above are references to the table.
 
-**W2**, **W3**, **W7**, **W8**, **W9**, **X4**, **X5**,
+**W2**, **W3**, **W7**, **W8**, **W9**, **X5**,
 **X6** (= T3), **X7** (= U1), **Y1** (postponed until the owner asks), **Y2** (gated on
 TY2026 figures publishing), **Y3** (an owner ruling is open), **Z4**, **Z5**, **Z6**,
 **Z8**.
@@ -360,8 +361,11 @@ they run ahead of the orchestrator rather than waiting behind it.
   `_abs`, `_ftc_unused` and `_ira_basis` transforms pass them the same way. A legacy
   combined-only figure requires an explicit resolution rather than a guessed split,
   and an explicit zero is distinguished from an absent block.
-- **X4 (P3, S):** Add `prior_overpayment_applied` (line 36) to the result template and
-  generator.
+- **X4 — DONE (#110, #142) (P3, S):** Add `prior_overpayment_applied` (line 36) to the result
+  template and generator. V1 (#110) added the FIELD; #142 made it a CARRY — the profile's
+  `prior_year.estimated_payments_applied` was written by nothing and read by nothing, so
+  last year's line 36 never reached this year's line 26 and the taxpayer was billed for
+  money they had already paid.
 - **X5 (P3, S):** Extend the safe-harbor "no dollar figure in prose" lint to
   `tax-setup` and `tax-parse`, which still quote indexed figures inline.
 - **X6 (P3, S):** Annual statutory re-verification — **= T3** in the 08-12 backlog.

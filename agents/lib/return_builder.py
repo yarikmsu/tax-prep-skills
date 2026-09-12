@@ -613,9 +613,15 @@ def _schedule_d_nets(result: dict) -> "tuple[float, float]":
     )
 
 
-def check(result: dict) -> None:
+def check(result: dict, profile: "dict | None" = None) -> None:
     """Everything wrong with the return AS RECORDED, in one place and before
     any arithmetic.
+
+    `profile` is OPTIONAL and that is a narrow allowance, not a default: one
+    check below needs a figure that lives in `taxpayer_profile.json` and
+    nowhere on the return, and every caller inside this module passes it. A
+    caller that does not gets the other checks and is TOLD, in
+    `_check_the_prior_overpayment`'s own refusal, which one it did not get.
 
     Split across the value-assemblers it was easier to write in, a reader
     looking for "what does this refuse" had to open a function whose name says
@@ -630,6 +636,7 @@ def check(result: dict) -> None:
     _check_components(result.get("form_1040") or {})
     _check_the_amt(result)
     _check_the_payments(result)
+    _check_the_prior_overpayment(result, profile)
     net_st, net_lt = _schedule_d_nets(result)
     _check_line_7_against_schedule_d(result, net_st + net_lt)
 
@@ -662,6 +669,57 @@ def _check_the_payments(result: dict) -> None:
             "line 33 adds line 31 and not the two — so an excess larger than "
             "the total it belongs to means either that line 31 never picked it "
             "up, which loses the credit, or that it is being counted twice.")
+
+
+def _check_the_prior_overpayment(result: dict, profile: "dict | None") -> None:
+    """LAST YEAR'S line 36 is part of THIS year's line 26, and nothing else
+    would notice it missing.
+
+    Form 1040 line 26 is "estimated tax payments and amount applied from
+    {year-1} return" — one line carrying two things. The second has no
+    document: an applied overpayment is a figure the taxpayer's PREVIOUS return
+    carried forward, so it produces no 1099, no ledger record, and the tie-out
+    gate — which compares intake against the return — cannot see it at all. The
+    only place it exists in this workspace is
+    `taxpayer_profile.json`'s `prior_year.estimated_payments_applied`, which
+    /tax-rollover fills from the prior result's line 36.
+
+    THE DIRECTION IS THE ONE AGENTS.md §4 CALLS A HARD ERROR. Omitting it
+    under-states line 26, which under-states line 33's payments, which
+    OVER-states line 37's amount owed — the taxpayer pays money they already
+    paid. Nothing downstream catches it: every total is correct arithmetic over
+    a component that is simply too small.
+
+    An INEQUALITY, deliberately. Line 26 is the applied overpayment PLUS any
+    quarterly estimates paid during the year, so it can exceed this figure by
+    any amount; it can never fall below it. A caller that passes no profile
+    cannot run the check at all, and it says so rather than passing — a check
+    that silently does not apply is the vacuity the receipt exists to prevent.
+    """
+    applied = (((profile or {}).get("prior_year") or {})
+               .get("estimated_payments_applied"))
+    if profile is None or applied in (None, 0):
+        return
+    applied = _num(applied, "prior_year.estimated_payments_applied")
+    if applied < 0:
+        raise Blocked(
+            f"taxpayer_profile.json prior_year.estimated_payments_applied is "
+            f"{applied:,.2f}. An overpayment applied forward is money already "
+            "paid; a negative one reaches line 26 as a payment being taken "
+            "away.")
+    line_26 = _path_num(result, "form_1040.line_26_estimated_payments",
+                        "line_26_estimated_payments")
+    if applied - line_26 > CENT:
+        raise Blocked(
+            f"Form 1040 line 26 is {line_26:,.2f}, and last year's return "
+            f"applied {applied:,.2f} forward to this year's estimated tax "
+            "(taxpayer_profile.json prior_year.estimated_payments_applied). "
+            "Line 26 is \"estimated tax payments AND amount applied from the "
+            "prior-year return\" — one line carrying both — so it cannot be "
+            "less than what was applied. Add the applied overpayment to any "
+            "quarterly estimates actually paid. Left out, line 33's payments "
+            "are short by that much and line 37 bills the taxpayer for money "
+            "they have already paid.")
 
 
 def _check_the_refund(available: float, applied: float) -> None:
@@ -891,7 +949,8 @@ def _context(result: dict, tax_law: dict, filing_status: str) -> _Context:
     )
 
 
-def build(result: dict, tax_law: dict, ledger, filing_status: str) -> "dict[str, float]":
+def build(result: dict, tax_law: dict, ledger, filing_status: str,
+          profile: "dict | None" = None) -> "dict[str, float]":
     """Every derived line of Form 1040 lines 1-38, from the components.
 
     Returns the field -> value map; it does not mutate `result`. The INJECTED
@@ -902,7 +961,7 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str) -> "dict[str,
     """
     if not isinstance(result, dict) or not isinstance(result.get("form_1040"), dict):
         raise ReturnBuilderError(f"{RESULT_NAME} has no form_1040 section")
-    check(result)
+    check(result, profile)
 
     working = {**result["form_1040"], **ledger_income(ledger),
                AMT_FIELD: _amt(result)}
@@ -1161,7 +1220,8 @@ def _main(argv: list) -> int:
             # certifying a return it never saw, which is what the receipt
             # exists to catch (V8).
             inputs = receipt.gate_inputs(workspace, GATE, contents=contents)
-        derived = build(result, tax_law, ledger, _filing_status(profile, result))
+        derived = build(result, tax_law, ledger,
+                        _filing_status(profile, result), profile)
         changes = differences(result, derived)
         if args.check:
             if changes:

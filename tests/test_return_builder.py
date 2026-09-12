@@ -109,7 +109,7 @@ def _workspace(tmp_path, form_1040=None, *, records=(), law=None, extra=None,
 def _build(ws):
     result, profile, ledger, tax_law, _bytes = RB.load(ws)
     return result, RB.build(result, tax_law, ledger,
-                            RB._filing_status(profile, result))
+                            RB._filing_status(profile, result), profile)
 
 
 class TestItReproducesTheHandComputedGolden:
@@ -1415,3 +1415,125 @@ class TestTheSkillTellsTheAgentToRunIt:
         text = (REPO / ".agents" / "skills" / "tax-compute" / "references"
                 / "income-and-agi.md").read_text(encoding="utf-8")
         assert "return_builder" in text
+
+
+class TestLastYearsLine36IsThisYearsLine26:
+    """Form 1040 line 26 is "estimated tax payments AND amount applied from the
+    prior-year return" — one line carrying two things, and the second has no
+    document behind it."""
+
+    def _profile(self, applied):
+        return {"filing_status": "MFJ", "tax_year": 2026,
+                "prior_year": {"estimated_payments_applied": applied}}
+
+    def _result(self, line_26):
+        return {"form_1040": {"line_26_estimated_payments": line_26}}
+
+    def test_a_line_26_below_the_applied_overpayment_is_REFUSED(self):
+        """The direction that matters: omitting it under-states line 26, which
+        under-states line 33's payments, which OVER-states line 37 — the
+        taxpayer pays money they already paid."""
+        with pytest.raises(RB.Blocked) as e:
+            RB._check_the_prior_overpayment(self._result(0.0),
+                                            self._profile(3000.0))
+        assert "3,000.00" in str(e.value)
+        assert "already paid" in str(e.value)
+
+    def test_it_is_an_INEQUALITY_not_an_equality(self):
+        """Line 26 is the applied overpayment PLUS any quarterly estimates
+        paid during the year, so it can exceed this figure by any amount — an
+        equality would refuse every taxpayer who also paid estimates."""
+        RB._check_the_prior_overpayment(self._result(12000.0),
+                                        self._profile(3000.0))
+
+    def test_exactly_equal_passes(self):
+        RB._check_the_prior_overpayment(self._result(3000.0),
+                                        self._profile(3000.0))
+
+    def test_a_negative_applied_figure_is_REFUSED(self):
+        """An overpayment applied forward is money already paid; a negative one
+        reaches line 26 as a payment being taken away."""
+        with pytest.raises(RB.Blocked, match="already paid"):
+            RB._check_the_prior_overpayment(self._result(0.0),
+                                            self._profile(-500.0))
+
+    def test_no_prior_overpayment_checks_nothing(self):
+        """A gate firing on a taxpayer who applied nothing forward is a gate
+        firing on correct data."""
+        RB._check_the_prior_overpayment(self._result(0.0), self._profile(0))
+        RB._check_the_prior_overpayment(self._result(0.0),
+                                        {"filing_status": "MFJ"})
+
+    def test_the_check_runs_inside_the_ordinary_check(self):
+        """It is part of "everything wrong with the return", not a separate
+        call a caller can forget.
+
+        Built from the shipped template rather than the two-field stub the
+        other cases use: `check` runs the component sweep first, and a sparse
+        return is refused for the missing lines before it reaches this."""
+        template = json.loads(
+            (REPO / "agents/templates/result_template.json")
+            .read_text(encoding="utf-8"))
+        result = {k: v for k, v in template.items()
+                  if k in ("form_1040", "schedule_d", "form_6251")}
+        result["form_1040"] = {k: v for k, v in result["form_1040"].items()
+                               if not k.startswith("_")}
+        RB.check(result, self._profile(0))          # the fixture is otherwise sound
+        with pytest.raises(RB.Blocked, match="already paid"):
+            RB.check(result, self._profile(3000.0))
+
+    def test_a_caller_that_passes_no_profile_does_not_silently_pass_it(self):
+        """The figure lives in `taxpayer_profile.json` and nowhere on the
+        return, so a caller without one cannot run this check at all. What it
+        must not do is look like it ran."""
+        import inspect
+        source = inspect.getsource(RB._check_the_prior_overpayment)
+        assert "profile is None" in source
+        doc = inspect.getdoc(RB._check_the_prior_overpayment)
+        assert "cannot run the check at all" in doc
+
+    def test_build_passes_the_profile_through(self):
+        import inspect
+        assert "profile" in inspect.signature(RB.build).parameters
+        assert "check(result, profile)" in inspect.getsource(RB.build)
+
+
+class TestTheRolloverFillsTheFieldNothingUsedToWrite:
+    """`prior_year.estimated_payments_applied` sat in the profile template
+    written by nothing and read by nothing — dead scaffolding, the D1 lesson
+    this repository already learned once."""
+
+    def test_the_field_map_carries_line_36(self):
+        from agents.lib.rollover import FIELD_MAP
+        entry = FIELD_MAP["prior_overpayment_applied"]
+        assert entry["source_path"] == "form_1040.line_36_applied_to_next_year"
+        assert entry["target_path"] == "prior_year.estimated_payments_applied"
+        assert entry["category"] == "carryforwards"
+
+    def test_the_target_exists_in_the_profile_template(self):
+        """A carryforward whose target is not a real field writes into a
+        document nothing reads."""
+        template = json.loads(
+            (REPO / "agents/templates/taxpayer_profile_template.json")
+            .read_text(encoding="utf-8"))
+        assert "estimated_payments_applied" in template["prior_year"]
+
+    def test_the_source_exists_in_the_result_template(self):
+        template = json.loads(
+            (REPO / "agents/templates/result_template.json")
+            .read_text(encoding="utf-8"))
+        assert "line_36_applied_to_next_year" in template["form_1040"]
+
+    def test_both_ends_are_documented_as_a_pair(self):
+        """The note used to say the carry was manual. A stale caveat is worse
+        than none: it tells a reader to do by hand what the engine now does,
+        and a figure entered twice is a payment counted twice."""
+        template = json.loads(
+            (REPO / "agents/templates/result_template.json")
+            .read_text(encoding="utf-8"))
+        note = template["form_1040"]["_note_line_36"]
+        assert "still manual" not in note
+        assert "CARRIES it" in note
+        from tests.skill_text import skill_text
+        body = skill_text("tax-compute")
+        assert "prior_year.estimated_payments_applied" in body

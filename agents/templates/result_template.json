@@ -93,7 +93,7 @@
     "line_34_overpayment": 0,
     "line_35a_refund": 0,
     "line_36_applied_to_next_year": 0,
-    "_note_line_36": "Form 1040 line 36 \u2014 the part of an overpayment APPLIED to next year's estimated tax rather than refunded. Line 35a = line 34 minus this. It must not exceed line 34. It is RECORDED, not yet carried: /tax-rollover has no reader for it, so putting it into next year's line 26 (\"estimated tax payments + prior-year overpayment applied\") is still manual. Before this field the figure could not even be written down, so line 35a equalled line 34 for every filer who applied part of a refund forward.",
+    "_note_line_36": "Form 1040 line 36 \u2014 the part of an overpayment APPLIED to next year's estimated tax rather than refunded. Line 35a = line 34 minus this. It must not exceed line 34. /tax-rollover CARRIES it into next year's taxpayer_profile.json prior_year.estimated_payments_applied, and next year's derived-lines gate refuses a line 26 smaller than it \u2014 line 26 is \"estimated tax payments AND amount applied from the prior-year return\", one line carrying both, and the applied half is the one payment on it with no document behind it. Before this field the figure could not even be written down, so line 35a equalled line 34 for every filer who applied part of a refund forward.",
     "line_37_amount_owed": 0,
     "line_38_estimated_tax_penalty": 0
   },

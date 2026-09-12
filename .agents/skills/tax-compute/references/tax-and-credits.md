@@ -367,12 +367,23 @@ Line 31: Schedule 3 Part II total. Excess social security withholding is INSIDE
          it — record the audit figure in `schedule_3_line_11_excess_ss` AND
          include it in line 31. The builder refuses an excess larger than the
          total it belongs to.
+Line 26: estimated tax payments AND the amount applied from the prior-year
+         return — ONE line carrying both. The applied half is
+         `taxpayer_profile.json prior_year.estimated_payments_applied`, put
+         there by `/tax-rollover` from last year's line 36, and it is the one
+         payment on this line with no document behind it: no 1099, no ledger
+         record, nothing the tie-out gate can see. ADD it to the quarterly
+         estimates actually paid. Leaving it out under-states line 33 and so
+         OVER-states line 37 — the taxpayer is billed for money already paid,
+         and every total above is correct arithmetic over a component that is
+         simply too small. The builder refuses a line 26 below it.
 Line 33: DERIVED — total payments = 25d + 26 + 27 + 28 + 29 + 31
 Line 34: DERIVED — overpayment = max(0, 33 - 24)
 Line 35a: DERIVED — refund = 34 - 36
 Line 36: amount APPLIED to next year's estimated tax — yours, and it may not
-         exceed line 34. RECORDED only: `/tax-rollover` has no reader for it,
-         so carrying it into next year's line 26 is still a manual step.
+         exceed line 34. `/tax-rollover` CARRIES it into next year's
+         `prior_year.estimated_payments_applied`, and next year's builder
+         refuses a line 26 smaller than it.
 Line 37: DERIVED — amount owed = max(0, 24 + 38 - 33). The line 38 penalty IS
          in it; the 1040's line-37 instruction says so and tax software does
          the same, which is what lets /tax-verify compare like for like.
