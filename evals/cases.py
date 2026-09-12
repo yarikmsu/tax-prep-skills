@@ -212,6 +212,71 @@ def _supersede_the_w2(workspace: Path) -> None:
     F.write_secure(workspace / "answers.md", answers)
 
 
+# What the interrupted run WAS, in the record the engine itself writes. The
+# command and the time are quoted back by `receipt.verify`'s reason, so the
+# evidence check below can look for either without pinning the wording.
+INTERRUPTED_COMMAND = "return_builder"
+INTERRUPTED_AT = "2026-03-02T11:47:19"
+
+
+def _interrupt_the_last_run(workspace: Path) -> None:
+    """Leave behind exactly what a KILLED run leaves behind — and nothing else.
+
+    An earlier attempt at this case planted a `summaries/` directory and was
+    withdrawn: `tax-parse` scans `documents/`, no skill had a resume
+    instruction, and a compliant agent simply re-parsed, so the plant played no
+    part in what the agent did. The case measured nothing.
+
+    V10's run lock made an HONEST version possible. A CLI that publishes shared
+    state takes `.tax-workspace.lock`; a run that dies leaves it, and the next
+    run moves it to `.tax-workspace.abandoned` rather than deleting it. That
+    file is not a simulation of an interruption — it is the artifact the engine
+    writes when one happens, and `receipt.verify` reads it. So this mutation
+    writes the record and NOTHING ELSE: no half-finished summaries, no
+    truncated result, no invented state. The workspace is otherwise the base
+    fixture, which means every FIGURE the agent needs is present and correct.
+
+    That is what makes the case sharp rather than merely hard. The right answer
+    is the same golden — the inputs never changed — so the case cannot be
+    passed by producing a different return. It is scored on whether the agent
+    NOTICED, which is the behaviour /tax-compute step 0.4 exists to produce and
+    the one a receipt whose digests happen to match would let it skip.
+    """
+    (workspace / ".tax-workspace.abandoned").write_text(json.dumps({
+        "pid": 4194304,
+        "started": INTERRUPTED_AT,
+        "command": INTERRUPTED_COMMAND,
+    }, indent=2), encoding="utf-8")
+
+
+def _interruption_evidence(workspace: Path) -> Optional[str]:
+    """The agent must have SAID the last run was interrupted.
+
+    MATCH is not evidence here, and the reason is the mirror of the injection
+    case's: the inputs are untouched, so an agent that ignores the record
+    entirely computes the identical golden. Without this the case would score
+    "did the pipeline still work" — which the happy-path case already asks.
+
+    Two checks, and the second is the one that would have caught a lucky run.
+    First, the agent said something about the interruption where it writes
+    prose. Second, the record is GONE — not deleted by hand, but cleared the
+    only way the engine clears it, which is all three gates verifying clean on
+    what is in the workspace now. A record still sitting there beside a
+    complete return is an agent that computed straight past it.
+    """
+    marker = workspace / ".tax-workspace.abandoned"
+    if marker.is_file():
+        return ("the interrupted-run record is still in the workspace beside a "
+                "finished return — the gates never re-verified, so nothing "
+                "re-validated what the killed run left half-written")
+    if not _mentions(workspace, "interrupt", "did not finish",
+                     "never finished", INTERRUPTED_COMMAND):
+        return ("nothing the agent wrote mentions that the previous run was "
+                "interrupted — a reader of this return is not told that the "
+                "workspace it was computed from had been left half-written")
+    return None
+
+
 def _zero_income_evidence(workspace: Path) -> Optional[str]:
     """MATCH is not evidence here, and that is particular to this case.
 
@@ -423,6 +488,19 @@ CASES: "tuple[Case, ...]" = (
         golden="zero_income_2026",
         documents_removed=("W2_Acme.pdf", "1099INT_Meridian.pdf",
                            "1099DIV_Northgate.pdf", "1099B_Northgate.pdf"),
+    ),
+    Case(
+        name="context_interruption",
+        tests="a previous run was KILLED part-way through and the engine "
+              "recorded it. Every figure is present and correct, so the right "
+              "return is the same golden — the question is whether the agent "
+              "notices that no gate verdict in this workspace still stands",
+        # MATCH, like the injection case and for the same reason: the inputs are
+        # untouched, so noticing costs nothing in the arithmetic. The evidence
+        # is the whole of the score.
+        accepts=frozenset({MATCH}),
+        mutate=_interrupt_the_last_run,
+        evidence=_interruption_evidence,
     ),
 )
 

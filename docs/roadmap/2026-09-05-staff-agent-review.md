@@ -19,7 +19,7 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | V0 | #85 | — |
 | V1 | #109, #110, #111 | — |
 | V2 | #108 | — |
-| V3 | #97, #98, #107, #116, #117 | ONE case: `context_interruption` |
+| V3 | #97, #98, #107, #116, #117, #141 | — |
 | V4 | #87 | the auditor's `_provenance` check waits for the Y2 replay |
 | V5 | #103, #104 | — |
 | V6 | #99, #100, #101, #106 | — |
@@ -44,10 +44,12 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | Z3 | #131 | — |
 | Z7 | #121 | domicile as a GATE is deliberately not modeled |
 
-**`context_interruption` (V3) needs a way to interrupt an agent that is honest about
-what it simulates.** A planted `summaries/` was tried in #116 and withdrawn: `tax-parse`
-scans `documents/`, no skill has a resume instruction, so a compliant agent simply
-re-parses and the plant plays no part.
+**`context_interruption` (V3) SHIPPED in #141, and V10's run lock is what made it
+possible.** A planted `summaries/` was tried in #116 and withdrawn: `tax-parse` scans
+`documents/`, no skill had a resume instruction, so a compliant agent simply re-parsed
+and the plant played no part. The case now plants `.tax-workspace.abandoned` — not a
+simulation of an interruption but the artifact the engine writes when one happens, read
+by `receipt.verify` and acted on by `/tax-compute` step 0.4.
 
 **Two deferrals are owed to the Y2 fresh-session replay**, and both are blocked for the
 same reason: `.claude/agents/tax-law-freshness-auditor.md` is digest-pinned to a PASSED
@@ -59,9 +61,9 @@ keying gotchas went to `docs/contributing/tax-law-cache.md` for that reason.
 ### Not started
 
 Nothing here has shipped in any part. An item that shipped in PART is in the table
-above with the remainder named in its third column — `V3`'s last case is the one left,
-and it is deliberately NOT repeated here, because an id in both lists leaves a reader
-unable to say which is true. **Bold** in this section means
+above with the remainder named in its third column, and is deliberately NOT repeated
+here — an id in both lists leaves a reader unable to say which is true. As of #141 there
+are none: every item in the table shipped in full. **Bold** in this section means
 the item is in this list; the backticks above are references to the table.
 
 **W2**, **W3**, **W7**, **W8**, **W9**, **X4**, **X5**,
@@ -220,7 +222,7 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   document (form type, boxes, payer); a script derives `parse_ledger.json` and the
   result inputs from those files. Markdown summaries stay for humans. Second-read runs
   on the JSON.
-- **V3 — DONE (#97, #98, #107, #116, #117) (P1, M): Agent-level eval harness.** Synthetic fixture workspaces (W-2 and 1099
+- **V3 — DONE (#97, #98, #107, #116, #117, #141) (P1, M): Agent-level eval harness.** Synthetic fixture workspaces (W-2 and 1099
   PDFs generated with reportlab), parse + compute run headless via the agents' batch
   modes, `result.json` diffed against a golden with tolerances. Nightly or on release
   tags, not per PR. **Gates V1 and V2 per slice, not as a whole:** each migrated form

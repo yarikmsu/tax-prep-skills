@@ -39,6 +39,32 @@ sibling of `.agents/skills/` that does not travel with a copied skill — which
 then still reads as a complete procedure while every script it names is absent.
 So a failure to RUN this check IS the blocking condition, never a step to skip.
 
+### Step 0.4: Did the last run finish?
+
+```bash
+sh agents/lib/run.sh -m agents.lib.receipt verify --json
+```
+
+Read `reasons`. A reason opening **"a run of ... started ... and never
+finished"** means a previous run was KILLED part-way through and the engine
+recorded it — a stale lock reclaimed into `.tax-workspace.abandoned`. Say so to
+the user before anything else, in one line naming the command and when.
+
+**Do NOT delete the record, and do NOT treat any gate verdict as standing.**
+The gates it lists ran either before that interruption or during it, so their
+digests matching proves only that nothing has changed SINCE — not that what is
+in the workspace was ever whole. Re-run this whole skill from step 1; the
+record clears itself when all three gates pass on what is in the workspace now.
+
+`--json` is also how you tell this from an ordinary stale receipt: every OTHER
+reason names a file that moved, and the remedy for those is the same re-run,
+so a workspace with no interruption reason needs no extra step here.
+
+This runs BEFORE the freshness check below, and before the capability gate: a
+workspace whose last run died is one where every later answer is about a
+half-written return, and a reader given that fact after two other verdicts has
+already started believing them.
+
 ### Step 0.5: Tax Law Freshness Verification
 
 Before any computation, verify tax law data is current:
@@ -137,8 +163,8 @@ Read each reference file when you reach its steps; do not read them all up front
 | 11 – 11.5 | International compliance and the optimization discovery engine | [references/international-and-optimization.md](references/international-and-optimization.md) |
 | 12, 13 | Write result files and produce the summary | [references/finalize.md](references/finalize.md) |
 
-Steps 0.5, 0.7, 12.6 and 12.7 are gates and are written out in full in this
-file. Never skip one because a reference file did not mention it.
+Steps 0.4, 0.5, 0.7, 12.6 and 12.7 are gates and are written out in full in
+this file. Never skip one because a reference file did not mention it.
 
 ### Form 1040 lines 1-38 are DERIVED — run the builder, do not type them
 

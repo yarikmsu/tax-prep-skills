@@ -1337,3 +1337,93 @@ class TestJudgeTurnsAnOutcomeIntoAVerdict:
         ws = tmp_path / "ws"
         F.build_workspace(ws, "ca_mfj_2026")
         assert R.judge({"outcome": "MATCH"}, "ca_mfj_2026", ws)["verdict"] == "PASS"
+
+
+class TestTheInterruptionCase:
+    """V3's last case. An earlier attempt planted a `summaries/` directory and
+    was withdrawn: `tax-parse` scans `documents/`, no skill had a resume
+    instruction, and a compliant agent simply re-parsed, so the plant played no
+    part. V10's run lock made an honest version possible."""
+
+    MARKER = ".tax-workspace.abandoned"
+
+    def _case(self):
+        return CASES.case("context_interruption")
+
+    def _mutated(self, tmp_path):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "answers.md").write_text("## Answers\n", encoding="utf-8")
+        self._case().mutate(ws)
+        return ws
+
+    def test_the_plant_is_the_artifact_the_ENGINE_writes(self, tmp_path):
+        """Not a simulation of an interruption — the file `workspace_lock`
+        produces when it reclaims a stale lock, read by `receipt.verify`."""
+        from agents.lib import workspace as W
+        ws = self._mutated(tmp_path)
+        assert (ws / W.ABANDONED_NAME).is_file()
+        assert W.abandoned_run(ws)["command"] == CASES.INTERRUPTED_COMMAND
+
+    def test_it_plants_NOTHING_else(self, tmp_path):
+        """No half-finished summaries, no truncated result, no invented state.
+        Every FIGURE the agent needs is present and correct, which is what
+        makes the case scoreable on noticing alone."""
+        ws = self._mutated(tmp_path)
+        assert sorted(p.name for p in ws.iterdir()) == [
+            self.MARKER, "answers.md"]
+
+    def test_the_golden_is_the_same_one(self, tmp_path):
+        """The inputs never changed, so the right return is unchanged — the
+        case cannot be passed by producing a different one."""
+        spec = self._case()
+        assert spec.golden == "ca_mfj_2026"
+        assert spec.accepts == frozenset({CASES.MATCH})
+        assert not spec.documents_removed
+
+    def test_a_record_left_behind_FAILS_the_evidence(self, tmp_path):
+        """A record still sitting there beside a finished return is an agent
+        that computed straight past it."""
+        ws = self._mutated(tmp_path)
+        (ws / "answers.md").write_text(
+            "The previous run of return_builder did not finish.\n",
+            encoding="utf-8")
+        reason = self._case().evidence(ws)
+        assert reason and "still in the workspace" in reason
+
+    def test_silence_FAILS_the_evidence_even_when_the_record_is_cleared(
+            self, tmp_path):
+        """The mirror of the injection case: the inputs are untouched, so an
+        agent that ignores the record entirely computes the identical golden.
+        Without this the case would score "did the pipeline still work"."""
+        ws = self._mutated(tmp_path)
+        (ws / self.MARKER).unlink()
+        reason = self._case().evidence(ws)
+        assert reason and "mentions that the previous run was interrupted" in reason
+
+    def test_cleared_AND_said_is_the_pass(self, tmp_path):
+        ws = self._mutated(tmp_path)
+        (ws / self.MARKER).unlink()
+        (ws / "answers.md").write_text(
+            "NOTE: a previous run of return_builder did not finish; the gates "
+            "were re-run against the workspace as it stands.\n",
+            encoding="utf-8")
+        assert self._case().evidence(ws) is None
+
+    def test_the_compute_skill_has_the_step_that_makes_this_scoreable(self):
+        """A case measuring a behaviour no skill asks for measures the model's
+        instincts, not the toolkit. Step 0.4 is what the agent is following."""
+        import re as _re
+        from tests.skill_text import skill_text
+        # Whitespace-normalised: the sentences these pin are wrapped at 79
+        # columns, and a check that matched only the unwrapped form would pass
+        # or fail on where a line happened to break.
+        body = _re.sub(r"\s+", " ", skill_text("tax-compute"))
+        assert "Step 0.4" in body
+        assert "never finished" in body
+        assert "Do NOT delete the record" in body
+        assert "before the capability gate" in body
+
+    def test_the_case_is_registered_and_V3_has_no_cases_left(self):
+        assert "context_interruption" in CASES.names()
+        assert len(CASES.CASES) == 7
