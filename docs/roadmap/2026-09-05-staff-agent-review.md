@@ -337,11 +337,62 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
 - **W7 (P3, M): ADRs.** Move multi-paragraph "why" comments into `docs/adr/` and leave
   a one-line rule plus a link in code. The narrative style is valuable, but preflight
   carries ~890 comment lines for an existence check.
+
+  **RECOMMEND AGAINST as specified — owner's call.** AGENTS.md §9's criterion governs
+  the INSTRUCTION FILES, which are size-capped because Codex truncates them silently;
+  source comments have no such cap and no such reader. What they have is the next person
+  editing the line, and moving the reasoning to `docs/adr/` removes it from exactly
+  there. Every defect fixed in the 09-11/09-12 sessions was found by reading one of
+  those paragraphs beside the code it guards. If preflight's 890 lines are the concern,
+  the question is whether they are TRUE and load-bearing, not where they live.
 - **W8 (P3, S): Renumber skill steps** (0.5, 0.7, 6.5, 6.7, 6.8, 12.7) in a docs-only
   PR. Fractional numbering is accretion made visible.
+
+  **RECOMMEND AGAINST as specified — owner's call.** The fractional numbers are what
+  keeps every existing cross-reference valid. `tests/test_portability.py` pins every
+  `/tax-safe-harbor step N` an engine module names against the skill's real headings;
+  AGENTS.md §4 cites "Step 12.7" and "Step 0.7" by number; the changelog, the memories
+  and merged PR bodies cite them too. A renumber breaks a reference in each of those for
+  a tidier sequence, and the one thing fractional numbering buys — that step 6.5 is
+  visibly a later insertion between 6 and 7 — is information, not accretion.
 - **W9 (P3, S): Trim `_comment_*` keys** in the profile template.
   `foreign_holdings_detail._comment` is a ~2,000-character paragraph inside JSON; it
   belongs in a schema doc.
+
+  **RECOMMEND AGAINST for THAT key specifically — owner's call.** Measured at 2,923
+  characters of 17,663 in the file. It is not prose: it is the field-by-field schema an
+  agent must follow to fill the block, and several clauses are ALARMS — "the signed
+  amount MUST be recorded because the tie-out treats a `disposed` holding with no finite
+  value as an unverifiable event and BLOCKS the return"; "every taxable fund needs a
+  UNIQUE one"; "carry BOTH `distribution_date` and `disposition_date` when both occur".
+  The agent that fills this block reads this template. Moving the rules to a schema doc
+  leaves it filling the block without them, and the pointer that would fix that is
+  itself a `_comment`. The smaller keys are a different question and could go.
+
+### Follow-ups from the 2026-09-12 four-angle review
+
+Raised by the altitude pass over the New York module and NOT acted on — each is a
+refactor across modules rather than a defect, and each is the owner's to schedule.
+
+- **A state REGISTRY.** Six parallel per-state tables across four modules:
+  `projection.STATE_SECTION_KEYS` and `_STATE_SECTION_CODES`, the two
+  `_*_COMPUTED_EVIDENCE_FIELDS`, `yoy_diff`'s three, `capabilities._state_note`'s
+  if/elif chain, `tie_out`'s per-state withholding rows, and `tax_calendar`'s
+  `if CA / elif NY`. Adding a state means finding all six and NOTHING fails if one is
+  missed. One `agents/lib/state_registry.py` keyed by code, with each module deriving
+  its table and a test forbidding a local copy.
+- **One `StateTrueUpSpec` in `withholding.py`.** `CaTrueUp`/`NyTrueUp`,
+  `read_ca_inputs`/`read_ny_inputs`, `_prior_ca_tax_agi`/`_prior_ny_tax_nyagi`,
+  `build_ca_true_up`/`build_ny_true_up`, two render blocks and a three-way caveat chain.
+  `projection._section_computed` is the right move made once and stopped one level
+  short; a third state duplicates all of it again.
+- **Let a test module DECLARE its inputs.** `.claude/hooks/skill-invariants.sh` encodes
+  cross-module test dependencies in a shell `case` in a different file from the tests
+  that have them, and this session added three arms plus a hand-move between the
+  watched and unwatched lists. A `WATCHES = (...)` at module level, with the hook
+  building its map from those declarations and a test asserting every path a module
+  opens is under its own `WATCHES`, collapses two hand-maintained lists into one — and
+  a test that grows a new input could not then go unselected.
 
 ### EPIC X — Tax correctness, known and unfixed — **P1 for X1-X3, P3 for the rest**
 
