@@ -179,15 +179,17 @@ topic at a time:
    - Form 5498 (IRA contributions) — arrives by end of May
    - Corrected 1099-B (brokerage cost basis corrections) — can arrive through March
    - Schedule K-1 (partnerships/S-corps) — often arrives late
-   - Form 1099-K (payment platforms) — check threshold. **OBBBA restored the
-     $20,000 / 200-transaction reporting threshold** (repealing the phased
-     $600 rule), so EXPECT FEWER 1099-Ks for TY2025+; a taxpayer under the
-     threshold gets no form — but the income is reportable regardless, so ask
-     about platform/gig income even when no 1099-K arrived. (The reconciliation
-     logic is unchanged; only how many forms to expect.)
-   - **1099-NEC/MISC (TY2026+):** the payer filing threshold rises to $2,000
-     (indexed) from $600, so small contractors may receive no form for
-     TY2026+ — the income is still reportable; ask.
+   - Form 1099-K (payment platforms) — **OBBBA RAISED the reporting threshold
+     back up**, repealing the phased low one, so EXPECT FEWER 1099-Ks for
+     TY2025+. A taxpayer under it gets no form — and the income is reportable
+     regardless, so ask about platform/gig income even when no 1099-K arrived.
+     (The reconciliation logic is unchanged; only how many forms to expect. No
+     figure is written here on purpose: the action does not depend on one, and
+     a threshold quoted in prose is a threshold that goes stale while still
+     reading as current.)
+   - **1099-NEC/MISC (TY2026+):** the payer filing threshold ROSE too, and is
+     INDEXED, so small contractors may receive no form — the income is still
+     reportable; ask.
    Ask: "Are you waiting on any of these? We can proceed and update later."
 
 ### 3. Parse Each Document Group

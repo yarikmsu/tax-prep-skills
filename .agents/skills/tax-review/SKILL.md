@@ -118,7 +118,7 @@ Simulate an IRS officer reviewing this return. Check:
   DIF signal. For each cluster found, ask whether receipts/records support
   the exact figures and note the answer in the review workpaper. (Statutory
   caps that legitimately land on round numbers — the $3,000 capital-loss
-  cap, a $10,000 SALT cap — are NOT flags; check provenance before flagging.)
+  cap, the year's SALT cap — are NOT flags; check provenance before flagging.)
 - **HoH substantiation (H2 tie-in):** if filing status is HoH, confirm
   `answers.md` carries the "HoH qualifying tests" block from `/tax-setup`
   (qualifying person + cost-of-keeping-up-home + considered-unmarried).
@@ -172,7 +172,8 @@ Simulate an IRS officer reviewing this return. Check:
     issue; what records exist (school/medical/lease showing the child's
     address)? With NO qualifying child, the taxpayer (or on MFJ, AT LEAST
     ONE spouse) must be 25-64 at year end.
-  - Investment income under the year's cap (~$11,600 TY2024, indexed —
+  - Investment income under the year's cap (INDEXED; take it from the covered
+  year's Form 1040 instructions, not from here —
     verify from the fetched tax law)?
   - Filing status consistent (MFS generally disqualifies unless the
     ARPA separated-spouse rules — effective TY2021 onward — are met)?
@@ -232,7 +233,7 @@ Simulate a tax professional reviewing for optimization.
 | 7 | Income | Rental income / royalties (Schedule E)? | |
 | 8 | Income | K-1 income from partnerships/S-corps/trusts? | |
 | 9 | Deductions | Student loan interest (up to $2,500)? | |
-| 10 | Deductions | Educator expenses (up to $300)? | |
+| 10 | Deductions | Educator expenses (Schedule 1 line 11; the cap is INDEXED — take it from the covered year's instructions)? | |
 | 11 | Deductions | SE health insurance deduction? | |
 | 12 | Deductions | HSA deduction (personal contributions beyond employer)? | |
 | 13 | Deductions | IRA deduction (if eligible — check phaseout)? | |
@@ -257,7 +258,8 @@ For any item marked "not checked" or "unknown", investigate whether it applies. 
 
 **Missed Deductions/Credits:**
 _(Covered by checklist rows 9-22 above. Additionally check:)_
-- Adoption credit (up to $17,280/child; OBBBA: $5,000 refundable)?
+- Adoption credit (Form 8839; both the exclusion and the OBBBA refundable
+  portion are INDEXED — take both from the covered year's instructions)?
 - SALT deduction — would itemizing beat standard deduction?
 
 **Retirement Optimization:**
@@ -305,14 +307,24 @@ A power user can run the same command with `--threshold 500` for a finer-grained
 
 If the taxpayer has K-1 income from a pass-through entity in **CA, NY, or NJ**,
 the pass-through-entity tax (PTET) election can convert state tax that's stranded
-by the $10,000 SALT cap into a fully-deductible federal expense. This step is
+by the federal SALT cap into a fully-deductible federal expense. This step is
 read-only (`ptet.py` writes nothing).
+
+**Do not state the cap from memory.** OBBBA raised it from $10,000 to $40,000
+($20,000 MFS) for TY2025-2029 and INDEXES the base through 2029, after which it
+reverts — so a figure written here would be wrong for most of the years this
+skill runs in, and it was: this step said "$10,000" while `ptet._salt_cap` had
+been returning the OBBBA figure since PR #22. The engine prints the cap it
+actually used, labelled with the regime it came from; read it off the output
+rather than telling the taxpayer a number first.
 
 1. Check `flags.has_k1_income`. If false and no K-1 surfaced during parsing,
    record `_PTET: not applicable (no pass-through income)._` and proceed to Step 4.
 2. Else, for each entity state in `flags.k1_states` that is CA/NY/NJ, ask the
-   taxpayer for the qualifying pass-through income and whether their $10K SALT cap
-   is already exhausted (usually yes). Then run:
+   taxpayer for the qualifying pass-through income and whether their SALT cap
+   is already exhausted — ask it as "is your state-and-local-tax deduction
+   already at the cap?", without naming a figure, since the answer depends on
+   a cap that has moved twice in two years. Then run:
    ```bash
    sh agents/lib/run.sh -m agents.lib.ptet --year {year} \
  --income CA=<amount> [--income NY=<amount>] [--salt-room <unused $>]

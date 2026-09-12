@@ -4517,6 +4517,115 @@ class TestTheSkillsReadWhatTheEngineEmits:
             "this class is about cannot reach /tax-withholding at all")
 
 
+# Words that turn an amount into a stated legal ceiling. Shared by every skill
+# the lint covers, because the question each one is being asked is the same:
+# was this figure written down as LAW, or narrated as an illustration?
+_LIMIT_WORDS = (r"per child|per person|cap(?:ped)?|limit|threshold|"
+                r"maximum|max\b|ceiling|exclusion|up to")
+_LIMIT_PATTERN = re.compile(
+    rf"(?:{_LIMIT_WORDS})[^.\n]{{0,40}}?(\$[0-9][0-9,]*(?:\.[0-9]+)?)"
+    rf"|(\$[0-9][0-9,]*(?:\.[0-9]+)?)[^.\n]{{0,40}}?(?:{_LIMIT_WORDS})",
+    re.I)
+
+
+def _quoted_limits(body: str) -> "set[tuple[str, str]]":
+    """Every dollar amount this text presents AS A LIMIT, with its context.
+
+    Arithmetic-adjacency was the first rule tried and is the wrong one: worked
+    examples narrate their figures in prose ("put $1,982.50 at EACH of those
+    two dates"), and those examples are what make a procedure checkable. The
+    limit WORDS are what turn an amount into a stated ceiling.
+    """
+    out = set()
+    for match in _LIMIT_PATTERN.finditer(body):
+        out.add((match.group(1) or match.group(2), match.group(0).strip()[:70]))
+    return out
+
+
+# Per skill, the dollar figures it may state as a limit — every one STATUTORY
+# and UNINDEXED, so it cannot go stale the way a fetched figure can.
+#
+# X5's premise held, and it was worse than X5 said. `tax-review` told the agent
+# the SALT cap was $10,000, three times, while `ptet._salt_cap` had been
+# returning OBBBA's $40,000 since PR #22 — a skill instructing a reviewer to
+# ask a taxpayer about a cap thirty thousand dollars below the real one. The
+# other offenders were stale-in-waiting: an ACTC cap dated TY2024/2025, an
+# adoption credit at TY2025's figure, a kiddie-tax threshold, an educator
+# deduction, a net-investment-income cap "(~$11,600 TY2024)".
+#
+# NOT tax-compute, and that is a named gap rather than an oversight: it quotes
+# eighteen, most of them beside the cache key they are fetched from, and each
+# needs its own judgement about whether the figure is instruction or
+# illustration. It is the next slice, and until it lands the lint here does not
+# cover the skill that computes.
+_FIGURE_REGISTRY = {
+    # §121's home-sale exclusion. $250,000/$500,000 since the Taxpayer Relief
+    # Act of 1997 and never indexed.
+    "tax-setup": {"$250", "$250,000", "$500,000"},
+    # Nothing. Both thresholds it used to quote were about how many FORMS to
+    # expect, and the instruction — ask about platform and gig income whatever
+    # arrived — is the same at any figure, so the figures went rather than
+    # being registered.
+    "tax-parse": set(),
+    # §1211(b)'s $3,000 capital-loss cap and §221(b)(1)'s $2,500 student-loan
+    # interest cap. Both flat statutory amounts; §221's INDEXING applies to the
+    # phase-out range, not to the cap.
+    "tax-review": {"$3,000", "$2,500"},
+}
+
+
+@pytest.mark.parametrize("skill", sorted(_FIGURE_REGISTRY))
+def test_the_taxpayer_facing_skills_quote_no_indexed_tax_figure(skill):
+    """AGENTS.md §2's rule reaches the skills that ASK, not just the one that
+    restates §6654 (X5).
+
+    A figure quoted in a skill has no cache behind it and no freshness check
+    over it. It goes stale silently while still reading as current — and unlike
+    a stale cache, nothing downstream can notice, because the figure never
+    becomes a value the engine compares against anything. It is read by an
+    agent, spoken to a taxpayer, and gone.
+    """
+    offenders = {pair for pair in _quoted_limits(skill_text(skill))
+                 if pair[0] not in _FIGURE_REGISTRY[skill]}
+    assert not offenders, (
+        f"{skill} states a dollar amount as a LIMIT that is not one of the "
+        f"unindexed statutory figures its registry holds: {sorted(offenders)}. "
+        "Name the cache key it is fetched from, or the form whose instructions "
+        "carry it — an indexed figure in a skill goes stale while still "
+        "reading as current, and a taxpayer hears it as this year's.")
+
+
+def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
+    """The counterweight. `_FIGURE_REGISTRY` makes the lint satisfiable by
+    adding a line, so the figures in it are named and pinned: every one is
+    statutory and unindexed, and this is the sentence that has to be edited to
+    claim otherwise."""
+    assert _FIGURE_REGISTRY["tax-parse"] == set(), (
+        "tax-parse quoted two REPORTING thresholds and needs neither: the "
+        "instruction it gives — ask about platform and gig income whatever "
+        "arrived — is the same at any figure")
+    everything = set().union(*_FIGURE_REGISTRY.values())
+    assert everything == {"$250", "$250,000", "$500,000", "$3,000", "$2,500"}, (
+        "a figure joined the registry without this test being edited. Each one "
+        "here is flat statutory law — §121's exclusion, §1211(b)'s capital-loss "
+        "cap, §221(b)(1)'s student-loan cap — and an INDEXED figure does not "
+        "become safe by being listed")
+
+
+def test_the_lint_would_still_catch_the_defect_it_was_written_for():
+    """Non-vacuity, against the real one. `/tax-review` said "$10,000 SALT cap"
+    three times while `ptet._salt_cap` returned $40,000 for TY2025-2029 — a
+    reviewer told to ask a taxpayer whether a cap thirty thousand dollars below
+    the real one was "already exhausted (usually yes)"."""
+    caught = _quoted_limits("stranded by the $10,000 SALT cap into a deduction")
+    assert caught, "the scanner no longer sees a figure beside the word `cap`"
+    assert "$10,000" in {amount for amount, _ in caught}
+    assert "$10,000" not in _FIGURE_REGISTRY["tax-review"]
+    for name in _FIGURE_REGISTRY:
+        body = skill_text(name)
+        assert "$10,000 SALT" not in body and "$10K SALT" not in body
+
+
 def test_the_safe_harbor_skill_quotes_no_indexed_tax_figure():
     """This skill restates law in PROSE and has no cache to go stale against.
 

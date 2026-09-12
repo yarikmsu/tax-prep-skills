@@ -417,7 +417,8 @@ own state of residence)**:**
 - For each: name, SSN (last 4), DOB, relationship, months lived with taxpayer
 - Under 17 at end of tax year? (for CTC eligibility)
 - Does any dependent have investment/unearned income over the kiddie-tax
-  threshold (~$2,600)? → sets `has_dependent_unearned_income` (Form 8615 is
+  threshold (INDEXED — take it from the covered year's Form 8615 instructions;
+  do not state a figure to the taxpayer)? → sets `has_dependent_unearned_income` (Form 8615 is
   NOT modeled — capability gate)
 - **Trump accounts (OBBBA §530A "MAGA"/newborn savings accounts) are NOT
   modeled** (out of persona): the $1,000 seed for children born 2025-2028 and
@@ -507,8 +508,9 @@ own state of residence)**:**
     NOT a passive/portfolio investment (e.g. a rental, a limited-partner
     interest you don't run, or REIT dividends)? → sets `qbi_active_trade`. This
     is load-bearing for TY2026+: §70105 grants an active qualified business a
-    MINIMUM QBI deduction (indexed ~$400) once QBI is at/above the indexed
-    income threshold (~$1,000), even when 20% of QBI is smaller. It defaults
+    MINIMUM QBI deduction once QBI is at or above an income threshold — both
+    figures INDEXED and both fetched into `federal.qbi_minimum`, which is why
+    neither is written here — even when 20% of QBI is smaller. It defaults
     False (no floor → no over-claim), so leaving it unset silently forgoes an
     otherwise-applicable floor and OVERSTATES tax for a small active business.
     Ask explicitly whenever `has_self_employment` or `has_k1_income` is set.

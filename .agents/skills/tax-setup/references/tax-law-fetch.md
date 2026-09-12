@@ -22,8 +22,9 @@ a figure from a prior year.
 - Search: `"IRS {year} standard deduction"`
 - Search: `"IRS {year} child tax credit amount"` — populate BOTH
   `child_tax_credit.amount_per_child` AND `child_tax_credit.refundable_limit`
-  (the per-child ACTC cap, indexed — $1,700 for TY2024/2025; needed for the
-  Schedule 8812 refundable split in `/tax-compute`)
+  (the per-child ACTC cap, INDEXED — fetch it for the filing year rather than
+  carrying one over; needed for the Schedule 8812 refundable split in
+  `/tax-compute`)
 - Search: `"IRS {year} section 199A QBI taxable income threshold"` — populate
   `federal.qbi_threshold` (`single`/`mfj`; above it Form 8995-A limits apply and
   `compute_qbi_deduction` flags `over_threshold`)
@@ -74,8 +75,8 @@ a figure from a prior year.
   not nag; `compute_charitable_non_itemizer` hard-errors at use if unfetched
   when actually needed).
 - Search: `"IRS §70105 minimum QBI deduction {year} amount threshold"` —
-  populate `federal.qbi_minimum` (`income_threshold` ~$1,000, `amount` ~$400,
-  both indexed). ONLY needed for a TY2026+ filer with a small ACTIVE qualified
+  populate `federal.qbi_minimum` (`income_threshold` and `amount`, BOTH
+  indexed — fetch both, and do not carry either over). ONLY needed for a TY2026+ filer with a small ACTIVE qualified
   trade — leave all-null otherwise (the minimum is taxpayer-favorable, so
   `compute_qbi_deduction` DEGRADES with a note rather than guessing).
 - Search: `"IRS quarterly interest rates underpayment {year}"` (and `{year+1}`
