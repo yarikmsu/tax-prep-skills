@@ -633,8 +633,11 @@ class TestSkillInvariantsHook:
         # in the test below recovers `REPO / "..."` reads and finds nothing to
         # recover here, so this row is the whole of the local signal — without
         # it a change to the Form 8995 cap left the hook green and turned
-        # test_claude_agents red at CI.
-        ("agents/lib/tax_computations.py", AGENTS),
+        # test_claude_agents red at CI. W2 made it a PACKAGE, and the path
+        # here is the FEDERAL half specifically — `compute_qbi_deduction` is
+        # in `__init__.py`, and pointing this row at the directory would claim
+        # `state/ny.py` can turn the agents module red, which it cannot.
+        ("agents/lib/tax_computations/__init__.py", AGENTS),
         ("agents/lib/capabilities.py", CAPABILITIES),
         ("agents/lib/rollover.py", CAPABILITIES),
         ("agents/templates/taxpayer_profile_template.json", CAPABILITIES),

@@ -40,10 +40,14 @@ explicit_package_bases = true
 # each is what mypy reported when the gate landed — it is a starting line, not a
 # budget, and it is not maintained as one; if a number here goes UP the module
 # was edited without clearing its errors, which is what the list exists to make
-# visible.
+# visible. Splitting a listed module carries the entry to each piece that still
+# has errors, marked `inherited`: the debt MOVED, it was not incurred, and the
+# pieces do not sum to the original because suppressing a module also erases the
+# types its siblings read from it.
 [[tool.mypy.overrides]]
 module = [
     "agents.lib.tax_computations",      # 68
+    "agents.lib.tax_computations.state.ny",  # 16, inherited
     "agents.lib.tie_out",               # 30
     "agents.lib.projection",            # 8
     "agents.lib.roth_ladder",           # 6

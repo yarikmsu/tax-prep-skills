@@ -126,7 +126,15 @@ class TestEveryCliResolvesThroughIt:
     alone — and the failure is invisible, because the flag still works."""
 
     def _sources(self):
-        return {p.name: p.read_text(encoding="utf-8") for p in LIB.glob("*.py")}
+        """Keyed by RELATIVE PATH, because this is a dict and the engine now
+        holds packages: two `ny.py` under different states would collapse to
+        one entry and the sweep would read whichever `rglob` yielded last. The
+        path is also what a reader needs in order to open the offender, and
+        every `allowed` entry below is a top-level module, so it spells the
+        same either way."""
+        return {str(p.relative_to(LIB)): p.read_text(encoding="utf-8")
+                for p in LIB.rglob("*.py")
+                if "__pycache__" not in p.parts}
 
     def test_no_module_reads_the_flag_without_the_resolver(self):
         offenders = [name for name, src in self._sources().items()
@@ -479,7 +487,8 @@ class TestEveryWriterOfSharedStateTakesTheLock:
 
     def _sources(self):
         return {p.stem: p.read_text(encoding="utf-8")
-                for p in sorted(LIB.glob("*.py"))}
+                for p in sorted(LIB.rglob("*.py"))
+                if "__pycache__" not in p.parts}
 
     def test_every_declared_cli_actually_takes_it(self):
         sources = self._sources()
@@ -522,7 +531,7 @@ class TestEveryWriterOfSharedStateTakesTheLock:
 
         DERIVED from who calls the recorder, not listed again: a fourth gate
         added later is caught by this rather than by somebody remembering."""
-        writers = {p.stem for p in sorted(LIB.glob("*.py"))
+        writers = {p.stem for p in sorted(LIB.rglob("*.py"))
                    if "record_after_verdict(" in p.read_text(encoding="utf-8")
                    and p.stem != "receipt"}
         assert writers, "nothing calls record_after_verdict — this is vacuous"

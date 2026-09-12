@@ -5,6 +5,7 @@ have no CI coverage (no vendor CLI licenses in CI, spec section 9). A silently-b
 symlink or a dropped frontmatter field would make the toolkit undiscoverable on that
 agent with no other signal — the user just sees zero skills and no error.
 """
+import ast
 import dataclasses
 import datetime
 import inspect
@@ -2481,12 +2482,17 @@ class TestSelfTestClaim:
         import sys
 
         for name in self.SELF_TESTING:
+            # `-m`, not a script path. `tax_computations` is a PACKAGE since
+            # W2, so `agents/lib/tax_computations.py` names a file that is now
+            # a directory — and the module form is what AGENTS.md §8 tells a
+            # reader to run, so it is what this should have been checking all
+            # along.
             result = subprocess.run(
-                [sys.executable, f"agents/lib/{name}.py"],
+                [sys.executable, "-m", f"agents.lib.{name}"],
                 cwd=str(REPO), capture_output=True, text=True, timeout=120)
             assert result.returncode == 0, (
-                f"{name}.py is documented as self-testing when run with no "
-                f"arguments, and it exited {result.returncode}: "
+                f"agents.lib.{name} is documented as self-testing when run "
+                f"with no arguments, and it exited {result.returncode}: "
                 f"{result.stderr[-300:]}")
 
     def test_both_documents_name_the_same_modules(self):
@@ -4119,7 +4125,8 @@ class TestTheEngineNotesPointAtRealSkillSteps:
         headings = self._headings()
         assert headings, "the skill's step headings stopped matching '## Step N — ...'"
         found = []
-        for src in sorted((REPO / "agents" / "lib").glob("*.py")):
+        for src in sorted(p for p in (REPO / "agents" / "lib").rglob("*.py")
+                          if "__pycache__" not in p.parts):
             for n in self.REF.findall(src.read_text()):
                 found.append((src.name, int(n)))
                 assert int(n) in headings, (
@@ -5713,92 +5720,183 @@ class TestTheBacklogSaysWhatIsOpen:
             "a reader cannot tell which is true")
 
 
-class TestTheEngineDirectoryIsFlat:
-    """`agents/lib/` holds modules, not packages — and a dozen sweeps depend on
-    it without saying so.
+def flat_engine_sweeps(tree):
+    """(function name, line) for every flat `glob("*.py")` over the ENGINE.
 
-    W2 in the 09-05 backlog proposes splitting the two monoliths into a
-    `federal/` package by form and a `state/` package by state, described as
-    "pure moves, tests unchanged". Tests unchanged is exactly what would go
-    wrong: ELEVEN `glob("*.py")` sweeps across nine test modules enumerate the
-    engine flatly, and `glob` does not descend. Every one of them would keep
-    passing while covering strictly less — the module that moved into a package
-    would leave the host-interpreter roster, preflight's module set, the
-    workspace-refusal sweep, secure_fs's roster and the state-brackets
-    single-reader sweep all at once, silently.
+    Three judgements, each of which a simpler version got wrong:
 
-    That is the shape this repository keeps re-learning: a sweep that sees
-    nothing is green. So the flatness is ASSERTED rather than assumed, and the
-    failure names what a move has to carry with it.
+    BY AST, not by line. The prose in `TestNoSweepOverTheEngineIsFlat` quotes
+    `glob("*.py")` while explaining the defect, and a line scan reported the
+    explanation as an offender. `rglob` CONTAINS `glob`, so a substring check
+    counts a converted sweep as though it were still flat.
+
+    THE RECEIVER decides whether it is the engine's business. `tests/` is
+    swept flat on purpose by the host-guard spawn audit, and that directory
+    holds no packages — a rule that fires there is firing on correct code.
+    Recognised by the receiver's SOURCE naming the engine directory, which is
+    every spelling in use: `self.LIB`, a bare `LIB`, and `REPO / "agents" /
+    "lib"` written out.
+
+    ACCOUNTED-FOR is not the same as flat. Two sweeps glob the top level and
+    then ADD the package names with `iterdir()` — preflight's roster pin and
+    the §5 runnable check — which covers the engine completely and is the right
+    shape where the question is about module NAMES rather than files. So the
+    offence is a flat glob in a function that does neither `rglob` nor
+    `iterdir`.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        descends = False
+        flat = []
+        for inner in ast.walk(node):
+            if not (isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)):
+                continue
+            if inner.func.attr in ("rglob", "iterdir"):
+                descends = True
+            elif (inner.func.attr == "glob" and inner.args
+                  and isinstance(inner.args[0], ast.Constant)
+                  and inner.args[0].value == "*.py"
+                  and _NAMES_THE_ENGINE.search(ast.unparse(inner.func.value))):
+                flat.append(inner.lineno)
+        if flat and not descends:
+            found += [(node.name, line) for line in flat]
+    return found
+
+
+# `LIB` as a whole word covers `self.LIB` and the bare constant; the quoted
+# `"lib"` covers the path written out. Both spellings are in the suite, and a
+# receiver naming neither is some other directory.
+_NAMES_THE_ENGINE = re.compile(r'\bLIB\b|["\']lib["\']')
+
+
+class TestNoSweepOverTheEngineIsFlat:
+    """`agents/lib/` holds PACKAGES now, and the sweeps that enumerate it must
+    descend.
+
+    This replaces `TestTheEngineDirectoryIsFlat`, which asserted the opposite
+    and retired itself the moment W2 landed — which is what it was for. Its
+    message named the eleven flat `glob("*.py")` sweeps that would each have
+    kept passing while covering strictly less: the host-interpreter roster,
+    preflight's module set, the workspace-refusal sweep, secure_fs's roster and
+    the state-brackets single-reader sweep. All eleven moved in the same change,
+    and this is the invariant that keeps them moved.
+
+    The rule is stronger than "the ones we fixed still descend". A NEW sweep
+    written flat is the same defect arriving later, and nothing about the tree
+    would stop it — `glob` over a packaged engine is simply quieter than it
+    looks.
     """
 
     LIB = REPO / "agents" / "lib"
 
-    def test_no_python_module_sits_in_a_subdirectory(self):
-        nested = sorted(
-            str(p.relative_to(self.LIB)) for p in self.LIB.rglob("*.py")
-            if p.parent != self.LIB and "__pycache__" not in p.parts)
-        assert not nested, (
-            f"{nested} sit below agents/lib/ rather than in it. Every "
-            f"`glob(\"*.py\")` sweep over the engine — {self._sweep_count()} of "
-            "them, across the host guard, preflight, secure_fs, workspace, "
-            "irs_dates, portability and tax_computations — stops covering them "
-            "the moment they move, and stays GREEN while doing it. If this is "
-            "W2, the split and every one of those sweeps land in the same "
-            "change; `rglob` is the one-word fix in most of them, and the "
-            "roster tests need the package name too.")
+    def _flat_engine_sweeps(self):
+        """Every function in `tests/` that enumerates the ENGINE flatly."""
+        offenders = []
+        for path in sorted((REPO / "tests").glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            offenders += [f"{path.name}:{line} in {func}"
+                          for func, line in flat_engine_sweeps(tree)]
+        return offenders
 
-    # `(?<!r)` is load-bearing and was missing: `rglob` CONTAINS `glob`, so the
-    # first version counted a converted sweep as though it were still flat. The
-    # mutation that should have caught it — rewrite every sweep to `rglob` —
-    # left the figure unchanged and the check green. A counter that cannot tell
-    # the two apart is measuring the letters, not the behaviour.
-    _FLAT_SWEEP = re.compile(r'(?<!r)glob\(\s*["\']\*\.py["\']\s*\)')
+    def test_no_sweep_over_the_engine_is_flat(self):
+        """The rule itself. It was once written and never called — the class
+        held a detector, a non-vacuity probe for the detector, and nothing that
+        asked it the question, so the invariant it names was enforced by
+        nothing while reading as covered.
+        """
+        offenders = self._flat_engine_sweeps()
+        assert not offenders, (
+            f"{offenders} enumerate agents/lib/ with a flat `glob(\"*.py\")` "
+            "and account for no packages. `glob` does not descend, so each "
+            "covers strictly less than it reads as covering the moment a "
+            "module moves into one — and stays GREEN while doing it. Use "
+            "`rglob` (excluding `__pycache__`), or pair the flat glob with an "
+            "`iterdir()` that adds the package names.")
 
-    def _sweep_count(self) -> int:
-        return sum(len(self._FLAT_SWEEP.findall(p.read_text(encoding="utf-8")))
-                   for p in sorted((REPO / "tests").glob("test_*.py")))
+    def test_the_detector_tells_a_flat_sweep_from_an_accounted_one(self):
+        """Non-vacuity for `flat_engine_sweeps`, and the three ways earlier
+        versions of it failed.
 
-    def test_the_sweeps_this_protects_still_exist(self):
-        """Non-vacuity. If the sweeps were rewritten to `rglob` the assertion
-        above would still pass and would be protecting nothing — so the count
-        is checked, and a drop means the reason for the guard has changed and
-        this class should be re-read rather than kept."""
-        count = self._sweep_count()
-        assert count >= 10, (
-            f"only {count} flat `glob(\"*.py\")` sweeps remain in tests/ — "
-            "this guard exists because a dozen of them enumerate the engine "
-            "flatly. If they became `rglob`, the engine may be packaged and "
-            "this class should go with the change that did it")
+        It matched `glob` inside `rglob` (a substring check on the letters). It
+        read PROSE — this class's own explanation quotes the call it forbids.
+        And it ignored the RECEIVER, so it reported a flat sweep of `tests/`,
+        a directory that holds no packages and is not the engine.
 
-    def test_engine_digest_would_survive_the_move_and_the_rosters_would_not(self):
-        """Which mechanisms are and are not at risk, pinned so the failure
-        message above stays true.
+        The probe calls the SHIPPED predicate rather than restating it. The
+        version that restated it was the only copy that ran, which is how the
+        rule above came to be enforced by nothing.
+        """
+        def offends(src):
+            return [f for f, _line in flat_engine_sweeps(ast.parse(src))]
 
-        `receipt.tree_digest` already uses `rglob`, so the validation receipt's
-        engine binding covers a package without changing — that one is safe and
-        is NOT in the list the message names. The rosters are the opposite: they
-        read names out of a flat glob."""
+        assert offends('def f():\n    return LIB.glob("*.py")\n') == ["f"]
+        assert not offends('def f():\n    return LIB.rglob("*.py")\n'), (
+            "`rglob` must not read as a flat `glob`")
+        assert not offends(
+            'def f():\n    a = LIB.glob("*.py")\n    b = LIB.iterdir()\n'
+            '    return a, b\n'), (
+            "a flat glob PAIRED with an explicit package walk accounts for the "
+            "engine and is not the defect")
+        assert not offends(
+            'def f():\n    return Path(__file__).parent.glob("*.py")\n'), (
+            "a flat sweep of a directory that is not the engine is not this "
+            "rule's business — tests/ holds no packages")
+        assert offends(
+            'def f():\n    return (REPO / "agents" / "lib").glob("*.py")\n'
+        ) == ["f"], "the engine spelled out as a path must still be seen"
+
+    def test_the_engine_really_does_hold_a_package(self):
+        """If it did not, every assertion above would be about nothing."""
+        packages = sorted(d.name for d in self.LIB.iterdir()
+                          if d.is_dir() and (d / "__init__.py").is_file())
+        assert packages, (
+            "agents/lib/ holds no packages, so the sweeps could go back to "
+            "`glob` and nothing here would notice — read this class again "
+            "rather than keeping it")
+        assert "tax_computations" in packages
+
+    def test_the_receipt_still_binds_the_whole_engine(self, tmp_path):
+        """`receipt.tree_digest` descends, so the validation receipt's engine
+        binding covers a submodule. It was the one mechanism the retired guard
+        named as already safe, and now that packages exist it is load-bearing
+        rather than hypothetical: an edit to `state/ny.py` must move the digest
+        that every gate's verdict is bound to.
+
+        Probed on a tree of its own, NOT by editing the engine and restoring it.
+        A test that writes to a tracked source file leaves the repository
+        modified on any interrupt, and this one would do it to the file whose
+        permissions two hooks re-assert. `engine_digest` is one line of
+        delegation, so what is left to check about it is that it still
+        delegates — read below, not simulated.
+        """
         import ast
         import inspect
         from agents.lib import receipt
-        # The CODE, not the docstring — which says the word "rglob" too, and so
-        # satisfied a substring check over the whole source even after the call
-        # was changed to a flat `glob`. Read the call the function makes.
-        tree = ast.parse(textwrap.dedent(inspect.getsource(receipt.tree_digest)))
-        calls = {node.func.attr for node in ast.walk(tree)
-                 if isinstance(node, ast.Call)
-                 and isinstance(node.func, ast.Attribute)}
-        assert "rglob" in calls and "glob" not in calls, (
-            f"receipt.tree_digest calls {sorted(calls)} — it must DESCEND, or "
-            "the validation receipt's engine binding narrows the day the "
-            "engine is packaged, and this guard's message is wrong about "
-            "which mechanisms are safe")
-        host_guard = (REPO / "tests" / "test_host_guard.py").read_text(
-            encoding="utf-8")
-        assert 'LIB.glob("*.py")' in host_guard, (
-            "the host-guard roster no longer reads a flat glob; if it learned "
-            "to descend, this guard's premise has moved")
+
+        nested = tmp_path / "pkg" / "state"
+        nested.mkdir(parents=True)
+        (tmp_path / "top.py").write_text("x = 1\n")
+        (nested / "ny.py").write_text("y = 1\n")
+        before = receipt.tree_digest(tmp_path)
+        (nested / "ny.py").write_text("y = 2\n")
+        assert receipt.tree_digest(tmp_path) != before, (
+            "editing a file inside a package did not move the tree digest — "
+            "every gate verdict would survive a change to the module that "
+            "produced it")
+
+        # The CODE, not the docstring — which says "digest over
+        # `agents/lib/*.py`" and would satisfy any substring check while
+        # calling something else entirely.
+        tree = ast.parse(textwrap.dedent(inspect.getsource(receipt.engine_digest)))
+        called = {node.func.id for node in ast.walk(tree)
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+        assert "tree_digest" in called, (
+            f"receipt.engine_digest calls {sorted(called)} — it must go through "
+            "`tree_digest`, which is what descends; a digest built any other "
+            "way narrows to the top level the day the engine is packaged")
 
 
 class TestEveryModuleASkillInvokesIsRunnable:
@@ -5846,19 +5944,63 @@ class TestEveryModuleASkillInvokesIsRunnable:
             "then asserting something about nothing")
         assert "preflight" in invoked and "capabilities" in invoked
 
+    def _unrunnable_reason(self, name: str) -> str:
+        """Empty if `run.sh -m agents.lib.<name>` reaches an entry point.
+
+        RUNNABLE, not `_main` by name — what the entry point calls is the
+        module's own business. Two shapes answer that with different files. A
+        MODULE announces its entry point with `if __name__ == "__main__":`. A
+        PACKAGE cannot: `python -m` on one runs its `__main__.py`, which
+        carries no guard because nothing imports it for its contents. Asking a
+        package's `__init__.py` for the guard reports a runnable package as
+        unrunnable, and asking for a `<name>.py` that W2 turned into a
+        directory reports it as not a module at all — a refusal of the one
+        command AGENTS.md §8 tells a reader to run.
+        """
+        package = self.LIB / name
+        if (package / "__init__.py").is_file():
+            if (package / "__main__.py").is_file():
+                return ""
+            return (f"{name} is a package with no `__main__.py` — a package "
+                    "cannot be executed the way a module can")
+        module = self.LIB / f"{name}.py"
+        if not module.is_file():
+            return f"{name} is neither a module nor a package under agents/lib/"
+        if '__name__ == "__main__"' not in module.read_text(encoding="utf-8"):
+            return f"{name} has no `__main__` block"
+        return ""
+
     def test_every_one_of_them_runs(self):
-        """RUNNABLE, not `_main` by name. `python -m agents.lib.X` needs a
-        `__main__` block; what the block calls is the module's business."""
-        missing = []
-        for name in sorted(self._invoked()):
-            path = self.LIB / f"{name}.py"
-            assert path.is_file(), f"a skill invokes {name}, which is not a module"
-            if '__name__ == "__main__"' not in path.read_text(encoding="utf-8"):
-                missing.append(name)
+        missing = [reason for name in sorted(self._invoked())
+                   if (reason := self._unrunnable_reason(name))]
         assert not missing, (
-            f"{missing} are invoked by a skill and cannot be run: no "
-            "`__main__` block, so the command in the skill fails at the shell. "
-            "A skill must always be able to run what it names.")
+            f"{missing} — invoked by a skill and not runnable, so the command "
+            "in the skill fails at the shell. A skill must always be able to "
+            "run what it names.")
+
+    def test_the_check_reads_a_package_by_its_entry_point(self, tmp_path,
+                                                          monkeypatch):
+        """Non-vacuity for the PACKAGE branch, which no skill exercises today.
+
+        `tax_computations` is a package and nothing under `.agents/skills/`
+        names it — AGENTS.md §8 does, and that is not a skill — so the branch
+        W2 added would sit unrun until the first skill invoked it, which is the
+        moment being wrong about it costs something. Both directions are
+        checked here instead: the shipped package passes, and a package with no
+        entry point does not.
+        """
+        assert self._unrunnable_reason("tax_computations") == "", (
+            "the shipped package reads as unrunnable — `run.sh -m "
+            "agents.lib.tax_computations` is AGENTS.md §8's own command")
+        monkeypatch.setattr(type(self), "LIB", tmp_path)
+        (tmp_path / "pure").mkdir()
+        (tmp_path / "pure" / "__init__.py").write_text("x = 1\n")
+        assert "no `__main__.py`" in self._unrunnable_reason("pure")
+        (tmp_path / "pure" / "__main__.py").write_text("print(1)\n")
+        assert self._unrunnable_reason("pure") == ""
+        (tmp_path / "quiet.py").write_text("def _main():\n    pass\n")
+        assert "no `__main__` block" in self._unrunnable_reason("quiet")
+        assert "neither a module nor a package" in self._unrunnable_reason("gone")
 
     def test_a_module_no_skill_invokes_is_OUT_OF_SCOPE_for_the_check(self):
         """The half the ruling added, and the half W2 needs.
@@ -5870,8 +6012,14 @@ class TestEveryModuleASkillInvokesIsRunnable:
         first case, and what has to be true BEFORE they land is that the
         runnable check does not reach them.
         """
+        # Packages too, by DIRECTORY name: `tax_computations/__init__.py` has
+        # the stem `__init__`, which names nothing a skill could invoke, so a
+        # flat glob leaves the engine's largest module out of the set that
+        # `invoked` is compared against.
         on_disk = {p.stem for p in sorted(self.LIB.glob("*.py"))
                    if p.stem != "__init__"}
+        on_disk |= {d.name for d in self.LIB.iterdir()
+                    if d.is_dir() and (d / "__init__.py").is_file()}
         invoked = self._invoked()
         assert invoked < on_disk, (
             "every module on disk is skill-invoked, so the exemption has no "
@@ -5896,9 +6044,19 @@ class TestEveryModuleASkillInvokesIsRunnable:
 
     def test_the_seven_that_disproved_the_old_rule_still_do(self):
         """Named, so the claim above is checkable rather than historical."""
-        without_main = {p.stem for p in sorted(self.LIB.glob("*.py"))
-                        if p.stem != "__init__"
-                        and "\ndef _main" not in p.read_text(encoding="utf-8")}
+        without_main = {
+            p.stem for p in sorted(self.LIB.rglob("*.py"))
+            if p.stem not in ("__init__", "__main__")
+            and "__pycache__" not in p.parts
+            and "\ndef _main" not in p.read_text(encoding="utf-8")}
+        # A PACKAGE reads as its directory name: `tax_computations/__init__.py`
+        # has the stem `__init__`, which names nothing. W2 made the engine's
+        # largest module one, and it is the case this test is about.
+        for directory in sorted(self.LIB.iterdir()):
+            init = directory / "__init__.py"
+            if directory.is_dir() and init.is_file() \
+                    and "\ndef _main" not in init.read_text(encoding="utf-8"):
+                without_main.add(directory.name)
         assert "tax_computations" in without_main, (
             "the module §5 named first is the sharpest case: it has no "
             "`_main`, and the old sentence said every module did")

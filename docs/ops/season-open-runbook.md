@@ -92,7 +92,7 @@ lookalike (`irs.gov.evil.com`) resolves to a non-`.gov` host and is rejected.
 ```bash
 source .venv/bin/activate
 python3 -m pytest tests/test_ty2026_readiness.py -v   # M1 golden path + absence matrix
-sh agents/lib/run.sh agents/lib/tax_computations.py   # engine self-test
+sh agents/lib/run.sh -m agents.lib.tax_computations  # engine self-test
 python3 -m pytest tests/ -q                            # full suite
 ```
 

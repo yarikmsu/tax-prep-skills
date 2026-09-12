@@ -17,7 +17,7 @@ that produces the opportunities table.
 - If aggregate > `fbar_threshold` (from `tax_law JSON`): set fbar_required = true
 
 **Form 8938 check:**
-Use `check_form_8938_required()` from `agents/lib/tax_computations.py`:
+Use `check_form_8938_required()` from `agents/lib/tax_computations/`:
 - ⚠️ Use REALISTIC simultaneous peak values, NOT conservative FBAR max values
 - FBAR and 8938 use different valuation approaches
 

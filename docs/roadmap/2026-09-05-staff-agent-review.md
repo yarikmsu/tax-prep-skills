@@ -323,6 +323,34 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   already FALSE when it was narrowed: seven modules have no `def _main`, including
   `tax_computations`, the one §5 names first. The narrowed rule is DERIVED from the
   skills' own `run.sh` commands and enforced, which the old one never was.
+
+  **SLICE 2 SHIPPED**: `tax_computations.py` is a PACKAGE — `__init__.py` (federal),
+  `_shared.py`, `state/ny.py`. All eleven sweeps descend, `TestTheEngineDirectoryIsFlat`
+  retired into `TestNoSweepOverTheEngineIsFlat`, and preflight resolves a module OR a
+  package, including the entry point a package announces differently. Four things were
+  found by review and DEFERRED rather than folded in, because each is its own task:
+
+  - **A shared engine enumerator for `tests/`.** Eleven sweeps each carry their own
+    `rglob("*.py")` + `"__pycache__" not in p.parts`, and the new guard polices the
+    idiom from outside by AST. One `engine_modules()` / `engine_packages()` helper that
+    every sweep calls would make the twelfth sweep impossible to write flat rather than
+    merely detectable, and delete eleven copies of the filter. The two that already
+    disagreed — one keyed by relative path, one by bare filename — are what the copies
+    cost.
+  - **One dispatch checker in `preflight`, not two.** A package's entry point is checked
+    by AST ("is there a top-level call"); a module's is still `_MAIN_DISPATCH`, a regex
+    that a `__main__` block truncated to nothing still satisfies. The AST question is
+    strictly the better one and should cover both, retiring the regex and the shape
+    branch with it.
+  - **`_engine_file` should resolve from `importlib.util.find_spec`**, which already
+    knows the origin file and whether the name is a package, rather than probing the
+    filesystem in three branches.
+  - **Where the state aggregation seam belongs.** `__init__.py` re-exports New York by
+    name so `tax_computations.<name>` keeps working for callers that are skill MARKDOWN.
+    That is one block per state forever. The alternatives — a star import, or a module
+    `__getattr__` — each cost more than they save at ONE state (`select = ["F"]` makes a
+    star import flood F405; `__getattr__` hides every name from mypy and from a reader).
+    Decide it when state #2 lands, with a second case to reason from.
 - **W3 (P3, L): Move the hook state machine to Python.** 3,800 lines of bash tested by
   5,200 lines of Python is the wrong language boundary; the stamp and red-carry-forward
   logic is a state machine bash makes hard to read. Python also lets the hook share

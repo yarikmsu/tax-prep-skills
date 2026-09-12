@@ -1280,7 +1280,7 @@ def _cli_compute(argv: 'list[str]') -> int:
 
 
 def _self_test() -> int:
-    """Minimal self-test (run with no args). Mirrors tax_computations.py convention."""
+    """Minimal self-test (run with no args). Mirrors the tax_computations convention."""
     txns = [
         {"date": "2023-01-10", "kind": "buy", "asset": "BTC", "quantity": 1.0,
          "usd_amount": 20000, "fee_usd": 50},

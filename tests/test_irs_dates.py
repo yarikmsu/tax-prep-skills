@@ -178,7 +178,8 @@ class TestNoModuleRestatesTheSupersededStateRule:
 
     def test_no_engine_module_restates_it(self):
         lib = Path(__file__).resolve().parent.parent / "agents" / "lib"
-        modules = sorted(lib.glob("*.py"))
+        modules = sorted(p for p in lib.rglob("*.py")
+                         if "__pycache__" not in p.parts)
         assert len(modules) > 10, "glob found no engine modules — vacuous"
         for module in modules:
             flat = " ".join(module.read_text().split()).lower()

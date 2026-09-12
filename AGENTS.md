@@ -328,12 +328,12 @@ a parser version the lock does not pin.
 
 ## 8. Development guidelines
 
-**Modifying `agents/lib/tax_computations.py`**
+**Modifying `agents/lib/tax_computations/`**
 - Every function takes rates/brackets as parameters — never hardcode bracket
   values. The only hardcoded constants are structural (SE threshold `$400`, SE
   factor `92.35%`).
 - Always round output to 2 decimal places.
-- Run `sh agents/lib/run.sh agents/lib/tax_computations.py` after changes — the
+- Run `sh agents/lib/run.sh -m agents.lib.tax_computations` after changes — the
   self-test must pass.
 
 **Input validation (all lib parsers)**

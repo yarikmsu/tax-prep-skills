@@ -339,7 +339,7 @@ kept at full precision (the IRS 3-dp form rule injects error — matches tax sof
   applies, so `test_portability.py::TestTheAdvisorySkillRestatesTheEnginesLawExactly`
   derives the expected strings from the constants in the module that OWNS each one —
   `PRIOR_YEAR_AGI_THRESHOLD{,_MFS}`, `PRIOR_YEAR_FACTOR{,_HIGH}` and `DE_MINIMIS_BALANCE`
-  from `agents/lib/tax_computations.py`, which holds the §6654 figures and which
+  from `agents/lib/tax_computations/`, which holds the §6654 figures and which
   `projection.py` deliberately does NOT re-export, and `CA_ES_SCHEDULE`,
   `CA_HIGH_INCOME_AGI_LIMIT{,_MFS}`, `CA_ES_DE_MINIMIS{,_MFS}` from
   `agents/lib/projection.py` — and additionally runs

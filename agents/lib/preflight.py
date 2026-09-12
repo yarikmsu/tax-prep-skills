@@ -37,6 +37,7 @@ Exit codes mirror `capabilities.py` and `tie_out.py`: 0 = engine usable,
 # would print nothing at all, which is worse than a wrong verdict.
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib
 # EXPLICIT, not reached through `importlib`. Importing a package does not bind
@@ -562,12 +563,12 @@ def probe_failure_remedy() -> str:
         "Every module imported, so this is not a missing or unreadable engine "
         "— the tax math itself returned the wrong answer on a known-answer "
         "probe with synthetic brackets. That means the installed "
-        "`tax_computations.py` is not the one this check expects:\n\n"
-        "    git status agents/lib/tax_computations.py\n"
-        "    git diff agents/lib/tax_computations.py\n\n"
-        "Restore it (`git checkout -- agents/lib/tax_computations.py`) or, if "
+        "`tax_computations` is not the one this check expects:\n\n"
+        "    git status agents/lib/tax_computations/\n"
+        "    git diff agents/lib/tax_computations/\n\n"
+        "Restore it (`git checkout -- agents/lib/tax_computations/`) or, if "
         "the change is deliberate, run its own self-test — "
-        "`sh agents/lib/run.sh agents/lib/tax_computations.py` — which "
+        "`sh agents/lib/run.sh -m agents.lib.tax_computations` — which "
         "exercises the same "
         "arithmetic against IRS worksheet values."
     )
@@ -958,7 +959,7 @@ def _load(name: str):
     # does not enumerate, leaving the dropped-1099 tie-out gate a silent no-op
     # behind a green preflight. Checking what the skills will actually run
     # closes the gap the import alone cannot see.
-    leaf = _HERE / f"{name.rsplit('.', 1)[-1]}.py"
+    stem, leaf, _is_package = _engine_file(name)
     try:
         # `os.stat` with an explicit ENOENT, not `Path.is_file()`. That
         # primitive is banned by name three times in this module for swallowing
@@ -971,7 +972,10 @@ def _load(name: str):
         if not stat.S_ISREG(os.stat(leaf).st_mode):
             raise FileNotFoundError(leaf)
     except FileNotFoundError:
-        return None, (f"FileNotFoundError: no {leaf.name} beside preflight.py",
+        # `stem` and not `leaf.name`: a package's leaf is `__init__.py`, and
+        # "no __init__.py beside preflight.py" names neither the module that is
+        # missing nor a file anyone would go looking for.
+        return None, (f"FileNotFoundError: no {stem}.py beside preflight.py",
                       False, True)
     except OSError as e:
         return None, (f"{type(e).__name__}: {leaf.name} could not be "
@@ -1018,7 +1022,15 @@ def _cli_dispatch_error(name: str):
     self-test. Nothing here claims the CLI is correct — only that the file still
     has the entry point without which its exit code means nothing.
     """
-    leaf = _HERE / f"{name.rsplit('.', 1)[-1]}.py"
+    stem, leaf, is_package = _engine_file(name, dispatch=True)
+    if is_package and _absent(leaf):
+        # Said here rather than left to the read below, which would report an
+        # ENOENT as "imported but could not be read back" — a mount-blinked
+        # message for a file that was never written.
+        return (f"IncompleteModule: {stem} is a package with no `__main__.py` "
+                f"— `sh agents/lib/run.sh -m agents.lib.{stem}` has nothing "
+                "to run, so it exits without doing the work the skill reads an "
+                "exit code from", False, True)
     try:
         source = leaf.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
@@ -1029,6 +1041,20 @@ def _cli_dispatch_error(name: str):
         return (f"{type(e).__name__}: {leaf.name} imported but could not be "
                 f"read back to verify its command-line entry point: {e}",
                 True, False)
+    # A package's `__main__.py` IS the dispatch. `python -m <package>` runs it
+    # by name, so it carries no `if __name__ == "__main__":` guard — that guard
+    # exists so a MODULE can be imported without running its CLI, and a
+    # `__main__.py` is never imported for its contents. Searching it for the
+    # guard reported a runnable package as having no entry point at all.
+    #
+    # Returning a clean verdict there would have closed the gate and reopened
+    # the band this whole function exists for, which for a `__main__.py` is
+    # WIDER than for a module: the file is never imported, so a SyntaxError in
+    # it survives every check above, and a cut after its imports leaves a file
+    # that runs, does nothing and exits 0 with no absent line to notice. So ask
+    # the same question a different way — does anything here RUN.
+    if is_package:
+        return _package_dispatch_error(stem, leaf, source)
     if _MAIN_DISPATCH.search(source):
         return "", False, False
     # Authored text with no variable in it, so `needs_redaction` is False for
@@ -1040,6 +1066,93 @@ def _cli_dispatch_error(name: str):
             "`if __name__ == \"__main__\":` dispatch — the skills run this "
             "file as a command, and without it it would exit 0 having done "
             "nothing", False, False)
+
+
+def _package_dispatch_error(stem: str, leaf, source: str):
+    """`<package>/__main__.py` carries a command-line entry point that RUNS.
+
+    Parsed rather than pattern-matched, because both failures are structural.
+    `ast.parse` is also the SyntaxError check this file gets nowhere else: the
+    import probe imports the PACKAGE, which runs `__init__.py` and never looks
+    at `__main__.py`, so a file that cannot be compiled at all passes every
+    check above this one and fails at the moment a skill runs it.
+
+    "Runs" is a top-level call expression. The self-test bodies are sequences of
+    `print(...)` and assertions, so a truncation anywhere above the first one
+    leaves imports and constants and nothing that does work — the exit-0 no-op
+    in its package shape.
+    """
+    try:
+        tree = ast.parse(source, filename=str(leaf))
+    except SyntaxError as e:
+        # The line number is the file's own text, not a taxpayer's data, and it
+        # is the whole value of the message.
+        return (f"SyntaxError: {stem} is a package whose __main__.py does not "
+                f"compile (line {e.lineno}) — the package imports, so nothing "
+                f"above this check looks at the file the skills actually run",
+                False, False)
+    if any(isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+           for node in tree.body):
+        return "", False, False
+    return (f"IncompleteModule: {stem} is a package whose __main__.py carries "
+            "no top-level call — run as a command it would exit 0 having done "
+            "nothing", False, False)
+
+
+def _engine_file(name, dispatch=False):
+    """(stem, the file this import reads, whether it is a package).
+
+    W2 made `tax_computations` a package, and both callers below carried the
+    same line: `_HERE / f"{stem}.py"`. That file no longer exists, so the
+    import check reported the engine's largest module MISSING and blocked every
+    run — the failure this module exists to catch, manufactured by the refactor
+    rather than by an absent file.
+
+    `dispatch=True` asks the second question, and it resolves DIFFERENTLY: a
+    package's command-line entry point is `__main__.py`, because a package
+    cannot be executed the way a module can. Asking `__init__.py` for it would
+    report a runnable package as having none. One function answers both, so the
+    next package cannot fix one caller and leave the other.
+
+    The third return value is the SHAPE, stated rather than left to be
+    recovered from the filename. Two callers and a test were each about to
+    re-derive it with `leaf.name == "__main__.py"`, which is the same fact
+    spelled three more times.
+    """
+    stem = name.rsplit(".", 1)[-1]
+    leaf = _HERE / (stem + ".py")
+    if not _absent(leaf):
+        return stem, leaf, False
+    package = _HERE / stem
+    if not _absent(package / "__init__.py"):
+        return stem, package / ("__main__.py" if dispatch else "__init__.py"), True
+    # Neither shape is there. The MODULE path is what goes back, because that
+    # is the file a reader would look for and the name the remedy prints.
+    return stem, leaf, False
+
+
+def _absent(path) -> bool:
+    """The file is NOT THERE — and nothing else reads as absence.
+
+    `Path.exists()` and `Path.is_file()` both answer False for a path behind a
+    permission error or a blinked mount, and this module bans the latter by
+    name three times for exactly that. Here the cost of the confusion is a
+    resolution that walks past a real file and hands its caller a path that
+    does not exist, turning "could not be read" into "missing" — the one
+    substitution that sends a reader to rebuild a clone that is already intact.
+
+    So only ENOENT (and its sibling on a non-directory component) is absence,
+    which is `_exists_or_raises`'s contract exactly — asked here rather than
+    restated, because two functions asking one question about a path is how
+    this module came to have a fix applied to one of them and not the other.
+    What differs is what to do with the raise: any other `OSError` returns
+    False, which hands the path back to the caller, whose own `os.stat` is
+    inside a `try` that reports the errno and says what actually happened.
+    """
+    try:
+        return not _exists_or_raises(path)
+    except OSError:
+        return False
 
 
 def _probe_environment_fault(what, exc):

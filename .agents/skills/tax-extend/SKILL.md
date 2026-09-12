@@ -185,7 +185,7 @@ filer, but **interest never stops** — §6601 runs on any unpaid balance from
 the April 15 due date regardless of the extension. To price the "pay the
 balance now vs at the October filing" decision, estimate the interest with
 `compute_underpayment_interest(unpaid_tax, due_date, pay_date,
-underpayment_rates)` from `agents/lib/tax_computations.py`:
+underpayment_rates)` from `agents/lib/tax_computations/`:
 
 - `unpaid_tax` = the balance not paid by April 15 (the same figure from step 1,
   net of any April payment being made now).
@@ -233,7 +233,7 @@ how-to-pay instructions, and the two new calendar dates.
 - **Estimating the penalty when a return is already late:** use
   `compute_late_filing_penalty(unpaid_tax, ftf_months, ftp_months,
   filed_over_60_days_late=, min_penalty_floor=)` from
-  `agents/lib/tax_computations.py`. `unpaid_tax` is the net balance due as of the
+  `agents/lib/tax_computations/`. `unpaid_tax` is the net balance due as of the
   deadline (tax required to be shown − payments/credits by the due date); count
   each month OR FRACTION as one whole month for `ftf_months` (filing) and
   `ftp_months` (payment) separately. Pass the year's indexed `min_penalty_floor`

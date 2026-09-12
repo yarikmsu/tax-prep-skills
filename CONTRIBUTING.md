@@ -84,7 +84,7 @@ source .venv/bin/activate && python3 -m pytest tests/ -q
   non-obvious ways.
 - Every module under `agents/lib/` exposes a `_main` CLI. Four of them
   (`tax_computations`, `secure_fs`, `irs_dates`, `crypto_importer`) run a built-in
-  self-test when invoked with no arguments — `sh agents/lib/run.sh agents/lib/tax_computations.py`
+  self-test when invoked with no arguments — `sh agents/lib/run.sh -m agents.lib.tax_computations`
   is the one to run after touching the math.
 - **`-m "not slow"` is the engine-only run.** Two modules — the Claude hooks and
   preflight — execute real scripts in a subprocess once per case, and they are most of

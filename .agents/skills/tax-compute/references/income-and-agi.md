@@ -126,7 +126,7 @@ isn't blocked by an unrelated Schedule E loss. Leave it 0 when there is no
 qualifying K-1 income.
 
 **Taxable Social Security (line 6b):** When any SSA-1099 exists, use
-`compute_taxable_ss()` from `agents/lib/tax_computations.py` — never hand-run
+`compute_taxable_ss()` from `agents/lib/tax_computations/` — never hand-run
 the worksheet:
 - `ss_benefits` = SSA-1099 box 5, both spouses combined on a joint return
 - `other_income` = all other 1040 income (lines 1z, 2b, 3b, 4b, 5b, 7, 8)
@@ -217,7 +217,7 @@ unrelated code-B correction on another lot from corrupting the total).
   pass review.
 
 **ESPP §423 disposition split (J2):** For ESPP sales, use
-`compute_espp_disposition()` from `agents/lib/tax_computations.py` with the Form
+`compute_espp_disposition()` from `agents/lib/tax_computations/` with the Form
 3922 boxes (3 = grant FMV/sh, 4 = purchase FMV/sh, 5 = price paid/sh, 8 =
 shares) + the sale proceeds and the grant/purchase/sale dates. It returns the
 `ordinary_income` component, the corrected `capital_basis`, the
@@ -243,7 +243,7 @@ shares) + the sale proceeds and the grant/purchase/sale dates. It returns the
 **§988 foreign-currency bond disposition (P3):** For a directly-held
 foreign-currency (non-USD) BOND that was sold or redeemed — NOT a fund (a fund
 is a PFIC and is BLOCKED by the capability gate, `pfic_taxable_event`) — call
-`compute_section_988()` from `agents/lib/tax_computations.py` with the
+`compute_section_988()` from `agents/lib/tax_computations/` with the
 foreign-currency cost/proceeds and the spot rates on the acquisition and
 disposition dates (from `foreign_holdings_detail.holdings`). It returns the
 Reg. §1.988-2(b) split:
@@ -424,7 +424,7 @@ conversion (`has_roth_conversion`/`has_backdoor_roth`), a traditional-IRA distri
 with after-tax basis, a nondeductible contribution this year, or a prior-year basis
 (`taxpayer_profile.json prior_year.ira_basis > 0`).
 
-Use `compute_form_8606()` from `agents/lib/tax_computations.py`. Gather:
+Use `compute_form_8606()` from `agents/lib/tax_computations/`. Gather:
 - `nondeductible_contrib_current` — this year's nondeductible traditional-IRA contribution.
 - `prior_basis` — `taxpayer_profile.json prior_year.ira_basis` (rolled forward by `/tax-rollover`).
 - `year_end_value` — **Dec 31 FMV of ALL traditional/SEP/SIMPLE IRAs** (ask the taxpayer; this
@@ -477,7 +477,7 @@ Line 11: AGI = Line 9 - Line 10
 ```
 
 **Form 8889 HSA return-side test (`has_hsa`):** run `compute_form_8889()` from
-`agents/lib/tax_computations.py` to get the HSA deduction (line 13) AND catch an
+`agents/lib/tax_computations/` to get the HSA deduction (line 13) AND catch an
 EXCESS contribution + its §4973 6% excise. Pass `coverage_type` /
 `eligible_months` / `last_month_rule` / `family_limit_share` from
 `hsa_detail`, the employee + employer (W-2 box 12 code W) contributions, and the
@@ -682,7 +682,7 @@ persona SALT usually exceeds the OBBBA cap by itself):
   actually available (i.e. `compute_schedule_a` did not force itemization).
 
 **QBI Deduction (Form 8995):**
-Use `compute_qbi_deduction()` from `agents/lib/tax_computations.py`:
+Use `compute_qbi_deduction()` from `agents/lib/tax_computations/`:
 - QBI = Schedule C net income (can be negative → loss carryforward). **Exclude
   §224 qualified tips:** when the Schedule 1-A tip deduction (line 13b) came
   from this trade or business, the 2025 Form 8995 instructions EXCLUDE that tip

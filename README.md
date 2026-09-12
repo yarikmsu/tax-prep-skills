@@ -307,7 +307,7 @@ agents/
 │   ├── parse_utils.py        # PDF/Excel/CSV extraction
 │   ├── tax_law_fetcher.py    # Tax law cache management
 │   ├── preflight.py          # Engine-presence gate (run first by every skill)
-│   └── tax_computations.py   # Parameterized tax math
+│   └── tax_computations/     # Parameterized tax math (state/ per state)
 └── install.sh        # Git hooks, gitignore, optional global skill install
 AGENTS.md             # Project truth for every agent (security, architecture)
 CLAUDE.md             # Claude Code specifics; imports AGENTS.md
@@ -351,10 +351,10 @@ requirements.txt      # Pinned runtime dependencies
 
 ### Modifying Computation Functions
 
-All functions in `agents/lib/tax_computations.py` take rates/brackets as parameters — never hardcode values. Run the self-test after changes:
+All functions in `agents/lib/tax_computations/` take rates/brackets as parameters — never hardcode values. Run the self-test after changes:
 
 ```bash
-sh agents/lib/run.sh agents/lib/tax_computations.py
+sh agents/lib/run.sh -m agents.lib.tax_computations
 ```
 
 ## License

@@ -2,7 +2,7 @@
 """Mid-year tax projection for /tax-project.
 
 Read-only: never writes result.json or taxpayer_profile.json. Pure compute
-functions + a markdown renderer + a CLI. Reuses tax_computations.py for tax
+functions + a markdown renderer + a CLI. Reuses tax_computations for tax
 math and rollover.py for the prior-year baseline + path/year validation.
 """
 

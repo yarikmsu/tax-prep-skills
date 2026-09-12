@@ -600,7 +600,8 @@ class TestEveryModuleIsCovered:
     def test_every_engine_module_imports_the_package(self):
         pattern = re.compile(r"^(from agents\.lib\b|import agents\.lib\b)", re.M)
         missing = sorted(
-            path.name for path in sorted(LIB.glob("*.py"))
+            path.name for path in sorted(LIB.rglob("*.py"))
+            if "__pycache__" not in path.parts
             if path.name not in self.EXEMPT
             and not pattern.search(path.read_text(encoding="utf-8")))
         assert not missing, (

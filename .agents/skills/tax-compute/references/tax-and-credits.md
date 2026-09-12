@@ -25,7 +25,7 @@ meant.
 
 **QDCG Tax Worksheet** (if qualified dividends or net capital gain > 0):
 
-`compute_qdcg_tax()` from `agents/lib/tax_computations.py`:
+`compute_qdcg_tax()` from `agents/lib/tax_computations/`:
 - taxable_income: Form 1040 line 15
 - qualified_dividends: Form 1040 line 3a
 - **net_ltcg: Schedule D line 15 (NET long-term, AFTER foreign losses)**
@@ -312,7 +312,7 @@ When `flags.has_education_expenses` is true, use `compute_education_credits()`:
    Schedule 3 line 3 from the CTC's Credit Limit Worksheet amount above.
 
 **Dependent-care credit (Form 2441, `has_dependent_care`):** run
-`compute_form_2441()` from `agents/lib/tax_computations.py` (Schedule 3 line 6f
+`compute_form_2441()` from `agents/lib/tax_computations/` (Schedule 3 line 6f
 → nonrefundable). Pass from `dependent_care_detail`: `qualifying_persons`,
 `qualified_expenses`, `dependent_care_benefits` (= W-2 box 10 excluded), the
 `taxpayer_student_disabled_months` / `spouse_student_disabled_months`, and

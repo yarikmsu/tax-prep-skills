@@ -4626,7 +4626,8 @@ def test_the_capital_gains_limits_are_read_at_one_site():
     lib = Path(__file__).resolve().parent.parent / "agents" / "lib"
     reads = {}
     key = r"""["'](?:zero|fifteen)_pct_limit["']"""
-    for f in sorted(lib.glob("*.py")):
+    for f in sorted(p for p in lib.rglob("*.py")
+                    if "__pycache__" not in p.parts):
         if f.name == "tax_law_fetcher.py":
             continue
         hits = re.findall(rf"""\.get\(\s*{key}|\[{key}\]""", f.read_text())
@@ -6174,8 +6175,14 @@ class TestOneReaderOfStateBrackets:
 
     def test_only_the_accessor_binds_a_raw_state_brackets_read(self):
         offenders = {}
-        for path in sorted(self.LIB.glob("*.py")):
-            if path.name in ("tax_computations.py", "tax_law_fetcher.py"):
+        for path in sorted(p for p in self.LIB.rglob("*.py")
+                          if "__pycache__" not in p.parts):
+            # By PATH, not by filename. The accessor moved into
+            # `tax_computations/__init__.py` when W2 made the engine's largest
+            # module a package, and a name-based skip then excluded nothing
+            # and flagged the accessor itself.
+            rel = path.relative_to(self.LIB)
+            if rel.parts[0] in ("tax_computations", "tax_law_fetcher.py"):
                 continue
             lines = self._bindings(path)
             if lines:

@@ -1456,9 +1456,23 @@ class TestNoRuntimePathReachesAMessageUnredacted:
     # touch. Scoping it to those would have left `projection.py` naming a raw
     # workspace path and `tax_law_fetcher.py` naming the cache — the same
     # defect, one import away, with a gate sitting next to it reporting green.
+    # RELATIVE PATHS, not stems. W2 made `tax_computations` a package, and a
+    # stem no longer names a file: `ny` is `tax_computations/state/ny.py` and
+    # two packages could both hold a `state`. The id pytest prints is the path,
+    # which is also the thing a reader needs in order to open the offender.
+    # Excluded by PATH and not by stem. `p.stem != "__init__"` named ONE file
+    # while this directory was flat; under a package it names one per package,
+    # and the first of those was `tax_computations/__init__.py` — 5,600 lines,
+    # the entire federal engine, and the module likeliest of all of them to
+    # name a workspace path. It left this gate silently, with the roster count
+    # going UP.
+    # The exclusion is spelled inline because a genexpr in a CLASS body cannot
+    # see a name bound beside it.
     MODULES = tuple(sorted(
-        p.stem for p in Path(REPO_ROOT, "agents", "lib").glob("*.py")
-        if p.stem != "__init__"))
+        str(p.relative_to(Path(REPO_ROOT, "agents", "lib")))
+        for p in Path(REPO_ROOT, "agents", "lib").rglob("*.py")
+        if str(p.relative_to(Path(REPO_ROOT, "agents", "lib"))) != "__init__.py"
+        and "__pycache__" not in p.parts))
     # Matched against the identifier's `_`-separated TOKENS, not against the
     # whole name and not as a raw substring. The first version of this gate
     # held whole names and passed green over `workspace_dir`, `doc_id` and
@@ -1503,7 +1517,8 @@ class TestNoRuntimePathReachesAMessageUnredacted:
     def _offenders(self, module_name):
         import ast
 
-        source = Path(REPO_ROOT, "agents", "lib", f"{module_name}.py").read_text(encoding="utf-8")
+        source = Path(REPO_ROOT, "agents", "lib",
+                      module_name).read_text(encoding="utf-8")
         found = []
         for node in ast.walk(ast.parse(source)):
             is_raise = isinstance(node, ast.Raise)
@@ -1554,7 +1569,7 @@ class TestNoRuntimePathReachesAMessageUnredacted:
             'def write(path, src):\n'
             '    print(f"writing {src.name}")\n'
             '    raise OSError(f"could not open {path}")\n', encoding="utf-8")
-        offenders = self._offenders_from(tmp_path, "sample")
+        offenders = self._offenders_from(tmp_path, "sample.py")
         assert sorted(o.split(": ")[1] for o in offenders) == ["{path}", "{src.name}"]
 
     def test_the_detector_passes_a_module_that_redacts(self, tmp_path):
@@ -1568,7 +1583,7 @@ class TestNoRuntimePathReachesAMessageUnredacted:
             'def write(path, e, p):\n'
             '    raise OSError(f"{redact(path)} failed: {redact(e)}")\n'
             '    raise ValueError(f"bad suffix {p.suffix}: {type(e).__name__}")\n', encoding="utf-8")
-        assert self._offenders_from(tmp_path, "clean") == []
+        assert self._offenders_from(tmp_path, "clean.py") == []
 
     def _offenders_from(self, root, module_name):
         """Run the shipped `_offenders` against an arbitrary root, so the guards

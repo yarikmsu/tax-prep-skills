@@ -29,6 +29,7 @@ inside a shell comment splits a span before `_blank_comments` runs; and
 pipe whose downstream head is split by a backslash continuation before
 `python3 -` clears.
 """
+import importlib
 import io
 import json
 import os
@@ -2745,6 +2746,125 @@ class TestEngineCheck:
         assert report.blocking, "an empty engine module was certified usable"
         assert "exposes no `load_ledger`" in report.failures[0].error
 
+    def _hollow_package(self, tmp_path, monkeypatch, main_source):
+        """A fake engine holding one PACKAGE whose `__main__.py` is `main_source`."""
+        pkg = tmp_path / "hollow"
+        pkg.mkdir()
+        _complete_package(pkg)
+        inner = pkg / "tax_computations"
+        inner.mkdir()
+        (inner / "__init__.py").write_text(
+            "def compute_bracket_tax(income, brackets):\n"
+            "    return 0.0, []\n")
+        (inner / "__main__.py").write_text(main_source)
+        # Every fixture here builds a package called `hollow` in a tmp_path of
+        # its own, and the FIRST one to be imported wins: `sys.modules["hollow"]`
+        # keeps a `__path__` into the previous test's directory, so the second
+        # fixture's submodule is simply not found. Left uncleared, the assertion
+        # would still pass — the message it matches is produced by the FILE
+        # checks, which read the freshly patched `_HERE` — while the import it
+        # is supposed to get past never reached this fixture at all.
+        for cached in [m for m in sys.modules
+                       if m == "hollow" or m.startswith("hollow.")]:
+            monkeypatch.delitem(sys.modules, cached, raising=False)
+        importlib.invalidate_caches()
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(P, "_HERE", pkg)
+        return P.check(modules=(("hollow.tax_computations", "the tax math",
+                                 "compute_bracket_tax"),))
+
+    def test_a_package_whose_main_only_imports_blocks(self, tmp_path, monkeypatch):
+        """The truncation band, in its PACKAGE shape — and it is WIDER here.
+
+        A module announces its entry point with `if __name__ == "__main__":`,
+        so a copy cut above that line is missing a string this gate can look
+        for. A `__main__.py` announces nothing: the file IS the entry point,
+        and a cut after its imports leaves a file that compiles, runs, does
+        nothing and exits 0 — with no absent line to notice. The skills read
+        that exit code as a verdict, which is the whole reason this check runs.
+        """
+        report = self._hollow_package(tmp_path, monkeypatch, """
+import sys
+from pathlib import Path
+
+_ROOT = str(Path(__file__).resolve().parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+""")
+        assert report.blocking, (
+            "a package whose entry point does nothing was certified runnable")
+        assert "no top-level call" in report.failures[0].error
+
+    def test_a_package_with_no_entry_point_at_all_blocks(self, tmp_path,
+                                                         monkeypatch):
+        """The file is not there, and the verdict says so in those words.
+
+        Resolution hands back the `__main__.py` a package is supposed to have,
+        so an absent one reaches the read as an ENOENT and used to come back as
+        "imported but could not be read back to verify its command-line entry
+        point" — a blinked-mount message for a file nobody ever wrote, and one
+        whose remedy is to check permissions rather than to add the file.
+        """
+        pkg = tmp_path / "hollow"
+        pkg.mkdir()
+        _complete_package(pkg)
+        inner = pkg / "tax_computations"
+        inner.mkdir()
+        (inner / "__init__.py").write_text(
+            "def compute_bracket_tax(income, brackets):\n"
+            "    return 0.0, []\n")
+        for cached in [m for m in sys.modules
+                       if m == "hollow" or m.startswith("hollow.")]:
+            monkeypatch.delitem(sys.modules, cached, raising=False)
+        importlib.invalidate_caches()
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(P, "_HERE", pkg)
+        report = P.check(modules=(("hollow.tax_computations", "the tax math",
+                                   "compute_bracket_tax"),))
+        assert report.blocking, "a package with no entry point was certified"
+        error = report.failures[0].error
+        assert "no `__main__.py`" in error, error
+        assert "could not be read" not in error, error
+
+    def test_a_package_whose_main_does_not_compile_blocks(self, tmp_path,
+                                                          monkeypatch):
+        """Nothing above this check ever opens the file.
+
+        The import probe imports the PACKAGE, which runs `__init__.py`; a
+        `__main__.py` is reached only by `python -m`. So the one failure that
+        every other module gets for free — SyntaxError at import — reaches a
+        package only at the moment a skill runs it, and until then the module
+        imports, exposes its symbol and reads as healthy.
+        """
+        report = self._hollow_package(tmp_path, monkeypatch,
+                                      "print('unterminated\n")
+        assert report.blocking, "a package entry point that cannot compile passed"
+        assert "does not compile" in report.failures[0].error
+
+    def test_a_package_with_a_real_entry_point_passes(self, tmp_path, monkeypatch):
+        """Non-vacuity, and the cry-wolf direction.
+
+        The two assertions above are only worth having if the CORRECT shape
+        passes: a gate that blocks a runnable package teaches an agent to reason
+        past the one gate the engine cannot run without.
+        """
+        report = self._hollow_package(tmp_path, monkeypatch, """
+import sys
+
+print("self-test OK", file=sys.stdout)
+""")
+        assert not report.blocking, [f.error for f in report.failures]
+
+    def test_the_shipped_package_entry_point_passes_this_check(self):
+        """The same assertion against the REAL file, not a fixture of one.
+
+        The three above build their own `__main__.py`, so all three would stay
+        green if the shipped one were deleted tomorrow.
+        """
+        error, _redaction, _missing = P._cli_dispatch_error(
+            "agents.lib.tax_computations")
+        assert error == "", error
+
     def test_the_flagship_verdict_prints_one_remedy_not_two(self):
         """A skill copied away from the engine used to get BOTH the clone
         remedy and a second one asserting the files ARE present — under a
@@ -2783,7 +2903,15 @@ class TestEngineCheck:
         `_cli_dispatch_error` would look for a `lib.py` beside preflight that a
         package does not have. The class below is what keeps that half honest.
         """
-        on_disk = {p.stem for p in (REPO / "agents" / "lib").glob("*.py")}
+        # Modules AND packages. W2 made `tax_computations` a directory, and a
+        # flat `glob("*.py")` stopped seeing it — the roster would have read as
+        # naming a module that is not there while the engine's largest one went
+        # unlisted, which is the silent narrowing `TestTheEnginePackagesAreDeclared`
+        # exists to make loud.
+        lib = REPO / "agents" / "lib"
+        on_disk = {p.stem for p in lib.glob("*.py")}
+        on_disk |= {d.name for d in lib.iterdir()
+                    if d.is_dir() and (d / "__init__.py").is_file()}
         listed = {e[0].rsplit(".", 1)[-1] for e in P.ENGINE_MODULES}
         assert listed == on_disk - {"__init__", "preflight"}
 
@@ -8907,10 +9035,18 @@ class TestAGateModuleThatWouldExitZeroDoingNothing:
         paid for before.
         """
         for name, role, _sym in P.ENGINE_MODULES:
-            leaf = P._HERE / f"{name.rsplit('.', 1)[-1]}.py"
-            assert P._MAIN_DISPATCH.search(leaf.read_text()), (
-                f"{leaf.name} ({role}) has no `__main__` dispatch, so the gate "
-                f"blocks every run of every skill")
+            # Through the gate's own verdict, not a reconstruction of it.
+            # Spelling the path here was a SECOND copy of "where does this
+            # module live", and W2 moved one of them: `tax_computations.py`
+            # became a directory and this read raised FileNotFoundError while
+            # the gate it is checking had already learned to descend. Reading
+            # `_engine_file` instead still left this re-deriving which CHECK
+            # applies — and a package skipped the assertion entirely, so the
+            # module W2 moved was the one this stopped covering.
+            error, _redaction, _missing = P._cli_dispatch_error(name)
+            assert error == "", (
+                f"{name} ({role}) carries no command-line entry point, so the "
+                f"gate blocks every run of every skill: {error}")
 
     def test_an_indented_guard_is_not_a_dispatch(self, tmp_path, monkeypatch):
         """A guard inside a function never runs at module scope, so a file
