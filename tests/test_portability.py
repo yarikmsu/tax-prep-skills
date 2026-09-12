@@ -5711,3 +5711,91 @@ class TestTheBacklogSaysWhatIsOpen:
         assert not both, (
             f"{both} are in BOTH the shipped table and the not-started list — "
             "a reader cannot tell which is true")
+
+
+class TestTheEngineDirectoryIsFlat:
+    """`agents/lib/` holds modules, not packages — and a dozen sweeps depend on
+    it without saying so.
+
+    W2 in the 09-05 backlog proposes splitting the two monoliths into a
+    `federal/` package by form and a `state/` package by state, described as
+    "pure moves, tests unchanged". Tests unchanged is exactly what would go
+    wrong: ELEVEN `glob("*.py")` sweeps across nine test modules enumerate the
+    engine flatly, and `glob` does not descend. Every one of them would keep
+    passing while covering strictly less — the module that moved into a package
+    would leave the host-interpreter roster, preflight's module set, the
+    workspace-refusal sweep, secure_fs's roster and the state-brackets
+    single-reader sweep all at once, silently.
+
+    That is the shape this repository keeps re-learning: a sweep that sees
+    nothing is green. So the flatness is ASSERTED rather than assumed, and the
+    failure names what a move has to carry with it.
+    """
+
+    LIB = REPO / "agents" / "lib"
+
+    def test_no_python_module_sits_in_a_subdirectory(self):
+        nested = sorted(
+            str(p.relative_to(self.LIB)) for p in self.LIB.rglob("*.py")
+            if p.parent != self.LIB and "__pycache__" not in p.parts)
+        assert not nested, (
+            f"{nested} sit below agents/lib/ rather than in it. Every "
+            f"`glob(\"*.py\")` sweep over the engine — {self._sweep_count()} of "
+            "them, across the host guard, preflight, secure_fs, workspace, "
+            "irs_dates, portability and tax_computations — stops covering them "
+            "the moment they move, and stays GREEN while doing it. If this is "
+            "W2, the split and every one of those sweeps land in the same "
+            "change; `rglob` is the one-word fix in most of them, and the "
+            "roster tests need the package name too.")
+
+    # `(?<!r)` is load-bearing and was missing: `rglob` CONTAINS `glob`, so the
+    # first version counted a converted sweep as though it were still flat. The
+    # mutation that should have caught it — rewrite every sweep to `rglob` —
+    # left the figure unchanged and the check green. A counter that cannot tell
+    # the two apart is measuring the letters, not the behaviour.
+    _FLAT_SWEEP = re.compile(r'(?<!r)glob\(\s*["\']\*\.py["\']\s*\)')
+
+    def _sweep_count(self) -> int:
+        return sum(len(self._FLAT_SWEEP.findall(p.read_text(encoding="utf-8")))
+                   for p in sorted((REPO / "tests").glob("test_*.py")))
+
+    def test_the_sweeps_this_protects_still_exist(self):
+        """Non-vacuity. If the sweeps were rewritten to `rglob` the assertion
+        above would still pass and would be protecting nothing — so the count
+        is checked, and a drop means the reason for the guard has changed and
+        this class should be re-read rather than kept."""
+        count = self._sweep_count()
+        assert count >= 10, (
+            f"only {count} flat `glob(\"*.py\")` sweeps remain in tests/ — "
+            "this guard exists because a dozen of them enumerate the engine "
+            "flatly. If they became `rglob`, the engine may be packaged and "
+            "this class should go with the change that did it")
+
+    def test_engine_digest_would_survive_the_move_and_the_rosters_would_not(self):
+        """Which mechanisms are and are not at risk, pinned so the failure
+        message above stays true.
+
+        `receipt.tree_digest` already uses `rglob`, so the validation receipt's
+        engine binding covers a package without changing — that one is safe and
+        is NOT in the list the message names. The rosters are the opposite: they
+        read names out of a flat glob."""
+        import ast
+        import inspect
+        from agents.lib import receipt
+        # The CODE, not the docstring — which says the word "rglob" too, and so
+        # satisfied a substring check over the whole source even after the call
+        # was changed to a flat `glob`. Read the call the function makes.
+        tree = ast.parse(textwrap.dedent(inspect.getsource(receipt.tree_digest)))
+        calls = {node.func.attr for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)}
+        assert "rglob" in calls and "glob" not in calls, (
+            f"receipt.tree_digest calls {sorted(calls)} — it must DESCEND, or "
+            "the validation receipt's engine binding narrows the day the "
+            "engine is packaged, and this guard's message is wrong about "
+            "which mechanisms are safe")
+        host_guard = (REPO / "tests" / "test_host_guard.py").read_text(
+            encoding="utf-8")
+        assert 'LIB.glob("*.py")' in host_guard, (
+            "the host-guard roster no longer reads a flat glob; if it learned "
+            "to descend, this guard's premise has moved")

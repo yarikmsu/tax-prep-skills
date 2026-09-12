@@ -306,8 +306,15 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   contracts first; clear the current pyflakes baseline (12 at `9f3bdb7`) in the same
   PR.
 - **W2 (P2, M): Split the monoliths.** `tax_computations.py` into a `federal/` package
-  by form and a `state/` package by state; `projection.py` likewise. Pure moves, tests
-  unchanged.
+  by form and a `state/` package by state; `projection.py` likewise. ~~Pure moves, tests
+  unchanged.~~ **"Tests unchanged" is exactly what would go wrong, and #145 made that
+  loud**: ELEVEN flat `glob("*.py")` sweeps across nine test modules enumerate the engine,
+  `glob` does not descend, and every one would keep passing while covering strictly less —
+  the host-interpreter roster, preflight's module set, the workspace-refusal sweep,
+  secure_fs's roster and the state-brackets single-reader sweep, all narrowing silently
+  together. `TestTheEngineDirectoryIsFlat` now asserts the flatness and names what a move
+  has to carry with it. `receipt.tree_digest` already descends, so the validation
+  receipt's engine binding is the one mechanism that survives untouched.
 - **W3 (P3, L): Move the hook state machine to Python.** 3,800 lines of bash tested by
   5,200 lines of Python is the wrong language boundary; the stamp and red-carry-forward
   logic is a state machine bash makes hard to read. Python also lets the hook share
