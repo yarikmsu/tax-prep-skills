@@ -26,18 +26,18 @@ Use `check_form_8938_required()` from `agents/lib/tax_computations.py`:
 After computing the return, systematically check for missed optimization opportunities. For each item, compare the current return against what's possible:
 
 **Category 1 — Deduction optimization:**
-- Itemized vs standard deduction: compute itemized total (SALT up to the cap in `federal.salt_cap` from tax_law JSON — OBBBA: $40K / $20K-MFS for TY2025-2029 (base indexed ~1%/yr 2026-2029; MAGI phasedown above $500K not modeled), reverting to $10K / $5K-MFS in TY2030 — plus mortgage interest, charitable, medical >7.5% AGI). Would itemizing save money?
+- Itemized vs standard deduction: compute itemized total (SALT up to the cap in `federal.salt_cap` from tax_law JSON — OBBBA RAISED it for TY2025-2029 with the base INDEXED ~1%/yr 2026-2029, a MAGI phasedown above the high-income threshold that is NOT modeled, and a reversion in TY2030. No figure is written here: `ptet._salt_cap` is the one place that decides it, and `/tax-review` carried a stale $10,000 in prose for as long as this row carried a number — plus mortgage interest, charitable, medical >7.5% AGI). Would itemizing save money?
 - Charitable bunching: if charitable is close to tipping point, mention bunching strategy for next year
-- Above-the-line deductions: student loan interest ($2,500 max), educator expenses ($300), SE health insurance — all used?
+- Above-the-line deductions: student loan interest ($2,500 max — §221(b)(1), flat), educator expenses (the cap is INDEXED; take it from the covered year's Schedule 1 instructions), SE health insurance — all used?
 
 **Category 2 — Credit optimization:**
 - American Opportunity Tax Credit (AOTC) — up to $2,500, 40% refundable
 - Lifetime Learning Credit — up to $2,000
 - Saver's Credit — 10-50% of retirement contributions if AGI qualifies
-- Energy credits: Residential Clean Energy (25D, 30% uncapped), Energy Efficient Home (25C, up to $3,200)
-- EV credit: Clean Vehicle (30D, up to $7,500), Previously Owned (25E, up to $4,000)
+- Energy credits: Residential Clean Energy (25D), Energy Efficient Home (25C) — **confirm for the COVERED YEAR whether each still applies and at what cap**; OBBBA moved several energy provisions' end dates, and a credit claimed after its termination is disallowed on examination
+- EV credit: Clean Vehicle (30D), Previously Owned (25E) — same check: **confirm availability and cap for the covered year** before claiming either
 - Dependent Care Credit (Form 2441) — verify current limits on the web if legislation changed
-- Adoption Credit — up to $17,280/child (OBBBA: up to $5,000 refundable, remainder non-refundable)
+- Adoption Credit (Form 8839) — the per-child exclusion AND the OBBBA refundable portion are both INDEXED; take both from the covered year's instructions, and record which year's figures were used
 - Premium Tax Credit (Form 8962) — if marketplace insurance
 
 **Category 3 — Retirement optimization:**

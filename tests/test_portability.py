@@ -4538,7 +4538,12 @@ def _quoted_limits(body: str) -> "set[tuple[str, str]]":
     """
     out = set()
     for match in _LIMIT_PATTERN.finditer(body):
-        out.add((match.group(1) or match.group(2), match.group(0).strip()[:70]))
+        # A trailing comma is punctuation, not part of the figure. Without
+        # this, "up to $2,500," and "$2,500 max" are two different strings and
+        # a registry has to hold both — which is a registry describing where a
+        # comma happened to fall.
+        amount = (match.group(1) or match.group(2)).rstrip(",")
+        out.add((amount, match.group(0).strip()[:70]))
     return out
 
 
@@ -4571,6 +4576,26 @@ _FIGURE_REGISTRY = {
     # interest cap. Both flat statutory amounts; §221's INDEXING applies to the
     # phase-out range, not to the cap.
     "tax-review": {"$3,000", "$2,500"},
+    # The skill that COMPUTES, added in the slice X5's own row named as owed.
+    # Eighteen figures were quoted; what survives is flat statutory law:
+    #   $2,500  AOTC ceiling, §25A(i) — and §221(b)(1)'s student-loan cap
+    #   $1,000  the AOTC's refundable 40%, which is 40% of a flat $2,500
+    #   $2,000  Lifetime Learning Credit, §25A(c)
+    #   $3,000  capital-loss cap, §1211(b)
+    #   $150,000  the §6654(d)(1)(C) prior-year AGI threshold
+    #   $1 / $500  CALIFORNIA's pre-TCJA $1M mortgage limit, halved for MFS —
+    #              the regex sees the leading digits of "$1M" and "$500K"
+    #   $0  not a figure that can go stale
+    #
+    # What went: the SALT cap (indexed, and the exact figure `/tax-review`
+    # carried wrong), the educator deduction, the adoption exclusion and its
+    # OBBBA refundable portion, the senior deduction, and the 25C/25D/30D/25E
+    # energy and vehicle caps — those last four replaced by an instruction to
+    # confirm AVAILABILITY as well as amount, because OBBBA moved several of
+    # their end dates and a credit claimed after termination is disallowed on
+    # examination rather than merely mis-sized.
+    "tax-compute": {"$0", "$1", "$500", "$1,000", "$2,000", "$2,500",
+                    "$3,000", "$150,000"},
 }
 
 
@@ -4605,11 +4630,14 @@ def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
         "instruction it gives — ask about platform and gig income whatever "
         "arrived — is the same at any figure")
     everything = set().union(*_FIGURE_REGISTRY.values())
-    assert everything == {"$250", "$250,000", "$500,000", "$3,000", "$2,500"}, (
+    assert everything == {"$0", "$1", "$250", "$250,000", "$500", "$500,000",
+                          "$1,000", "$2,000", "$2,500", "$3,000",
+                          "$150,000"}, (
         "a figure joined the registry without this test being edited. Each one "
         "here is flat statutory law — §121's exclusion, §1211(b)'s capital-loss "
-        "cap, §221(b)(1)'s student-loan cap — and an INDEXED figure does not "
-        "become safe by being listed")
+        "cap, §221(b)(1)'s student-loan cap, §25A's two education ceilings, "
+        "§6654(d)(1)(C)'s threshold and CA's pre-TCJA mortgage limit — and an "
+        "INDEXED figure does not become safe by being listed")
 
 
 def test_the_lint_would_still_catch_the_defect_it_was_written_for():

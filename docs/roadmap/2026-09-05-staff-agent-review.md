@@ -36,7 +36,7 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | X2 | #86 | — |
 | X3 | #88 | — |
 | X4 | #110, #142 | — |
-| X5 | #143 | `tax-compute`'s eighteen quoted figures are NOT covered — the next slice |
+| X5 | #143, #144 | — |
 | Y4 | #112 | — |
 | Y5 | #113 | — |
 | Y6 | #114, #119 | — |
@@ -371,9 +371,11 @@ they run ahead of the orchestrator rather than waiting behind it.
   `tax-setup` and `tax-parse`, which still quote indexed figures inline. **The premise
   held and was worse than stated**: `tax-review` — not on X5's list — told the agent the
   SALT cap was $10,000, three times, while `ptet._salt_cap` had been returning OBBBA's
-  $40,000 since PR #22. **`tax-compute` is NOT covered and that is a named gap**: it
-  quotes eighteen figures, most beside the cache key they are fetched from, and each
-  needs its own judgement about instruction versus illustration. It is the next slice.
+  $40,000 since PR #22. **`tax-compute` was the named gap, now closed**: it
+  quoted eighteen figures, and #144 covered it: what survives is flat statutory law, and
+  the 25C/25D/30D/25E caps were replaced by an instruction to confirm AVAILABILITY as
+  well as amount, because OBBBA moved several of their end dates and a credit claimed
+  after termination is disallowed rather than merely mis-sized.
 - **X6 (P3, S):** Annual statutory re-verification — **= T3** in the 08-12 backlog.
 - **X7 (P3, S):** The O3 planning-tool carry-forwards — **= U1** in the 08-12 backlog:
   deduction-only marginal probe for `_est_marginal_fed`; scenario-keystone

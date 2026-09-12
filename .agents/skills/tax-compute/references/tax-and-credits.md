@@ -179,7 +179,8 @@ $250-450K band):
   lowers this year's TMT, which is exactly what frees the Form 8801
   credit. Ask whenever `prior_year.amt_credit_carryforward` > 0.
 - `senior_deduction`: the OBBBA Schedule 1-A line 37 enhanced senior
-  deduction (TY2025+, up to $6K per eligible spouse) is NOT allowed for
+  deduction (TY2025+, per eligible spouse — take the amount from the covered
+  year's Schedule 1-A instructions rather than from here) is NOT allowed for
   AMT — pass the amount claimed so it's added back to AMTI.
 - Pass `qualified_dividends`/`net_ltcg` + the capital_gains_rates limits so
   Part III taxes them at 0/15/20 inside AMT.
