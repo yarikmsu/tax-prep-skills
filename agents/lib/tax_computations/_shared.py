@@ -1,14 +1,50 @@
 #!/usr/bin/env python3
-"""Helpers the federal side and a state module both need.
+"""Primitives the federal side and a state module both need.
 
-Its own file so that neither has to import the other. `state/ny.py` needs the
-instalment splitter and nothing else from the rest of the engine — measured:
-twenty-four New York symbols depending on exactly ONE non-New-York top-level
-name — and importing it from the package `__init__` that re-exports New York
-would be a cycle.
+Its own file so that neither has to import the other. The package `__init__`
+re-exports every state module's public names, so a state module importing a
+helper FROM `__init__` would be a cycle — and the fix that dodges it (a lazy
+import inside each function) makes correctness depend on which module is
+imported first.
+
+WHAT BELONGS HERE is a primitive with no form of its own: a coercion, a
+validation, an allocation, a statutory RATE that more than one jurisdiction
+conforms to. A function that computes a line of a return does not, however
+many callers it has — that line belongs to a form, and the form belongs to a
+jurisdiction.
+
+New York needed exactly one of these. California needed nine, which is the
+difference between a state whose law is self-contained and one the federal
+Schedule A is threaded through: `compute_ca_itemized` starts from the federal
+itemized deduction and re-computes it under R&TC §17077, so it reaches for the
+same amount-parsers and the same two statutory floors the federal side does.
 """
 
+import math
+
 import agents.lib  # noqa: F401 — the host-interpreter guard, see agents/lib/__init__.py
+
+
+# TWO AUTHORITIES THAT AGREE, not one rule with two readers. The federal floor
+# is §213(a) at 7.5% of AGI (permanent since 2021) and the federal appreciated-
+# property charitable cap is §170(b)(1)(C) at 30%; California arrives at the
+# same two figures through R&TC conformity, and that is a coincidence of the
+# current law rather than a definition. It has already come apart once —
+# §213(a) sat at 10% through the mid-2010s while California stayed at 7.5%.
+#
+# So if either federal figure MOVES, this is not a one-line edit: split the
+# constant, give each its own citation, and expect the CA tests that read it to
+# go red in a way that reads like a stale expected value and is not. They are
+# shared here because both sides really do read one figure today, and a
+# duplicate would drift on the ordinary year when nothing changes.
+#
+# CA's own NON-conforming figures — the $1M mortgage limit it kept and the 50%
+# cash charitable cap it never raised to the federal 60% — are in `state/ca.py`,
+# because those are California's law and not a shared primitive.
+_SCHED_A_MEDICAL_FLOOR = 0.075
+_CHARITY_APPRECIATED_AGI_CAP = 0.30
+
+_CANONICAL_FILING_STATUSES = {"SINGLE", "MFJ", "MFS", "HOH", "QSS"}
 
 def _split_remainder_last(shortfall: float, weights: "list[float]") -> "list[float]":
     """Split `shortfall` proportionally to `weights`, rounding remainder on
@@ -65,3 +101,142 @@ def _split_remainder_last(shortfall: float, weights: "list[float]") -> "list[flo
             allocated = round(allocated + amt, 2)
         shares.append(amt)
     return shares
+
+
+def _coerce_numeric(value, default=None):
+    """Coerce a value to float, handling string amounts like '$5,000'.
+
+    Returns None by default for unparseable values so callers must handle
+    the failure explicitly. Pass default=0 only for non-financial display fields.
+
+    Rejects bool (isinstance(True, int) is True in Python, but booleans
+    are never valid financial amounts — always a data error).
+    """
+    if isinstance(value, bool):
+        raise TypeError(f"Expected numeric value, got bool: {value}")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.replace(",", "").replace("$", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return default
+    return default
+
+
+def _normalize_filing_status(filing_status) -> str:
+    """Canonical filing-status validation (repo VALUE-validation rule):
+    'Married Filing Jointly' or '' must hard-error, not fall through to a
+    Single-shaped default."""
+    if not isinstance(filing_status, str):
+        raise ValueError(f"filing_status must be a string, got {type(filing_status).__name__}")
+    fs = filing_status.strip().upper()
+    if fs not in _CANONICAL_FILING_STATUSES:
+        raise ValueError(
+            f"filing_status must be one of Single/MFJ/MFS/HoH/QSS, got {filing_status!r}"
+        )
+    return fs
+
+
+def _multi_employer_excess(
+    withheld: "list[float]",
+    wages: "list[float]",
+    rate: float,
+    wage_cap: float,
+) -> "tuple[float, float]":
+    """Split withholding above a per-person maximum into (return_credit,
+    employer_error_amount).
+
+    IRS Topic 608 (and EDD DE 1964 for CA SDI): anything an employer withheld
+    beyond what that employer's SUBJECT WAGES support — min(wages, cap) × rate
+    — is an employer error, recovered from the employer (or Form 843), NEVER
+    as a credit on the return. Withholding alone cannot establish the credit:
+    two below-base W-2s with erroneous over-withholding can exceed the annual
+    max without any creditable excess existing. Only the correctly-withheld
+    portions count, and only their multi-employer total above the per-person
+    max is creditable.
+    """
+    clamped_total = 0.0
+    employer_error = 0.0
+    for w_amt, wg in zip(withheld, wages):
+        proper = min(wg, wage_cap) * rate  # what this employer SHOULD have withheld, at most
+        allowed = min(w_amt, proper)
+        clamped_total += allowed
+        employer_error += w_amt - allowed
+    per_person_max = round(wage_cap * rate, 2)
+    credit = (max(0.0, round(clamped_total - per_person_max, 2))
+              if len(withheld) >= 2 else 0.0)
+    return credit, round(employer_error, 2)
+
+
+def _validated_withholding_list(withheld_by_employer, what: str) -> "list[float]":
+    if not isinstance(withheld_by_employer, list):
+        raise ValueError(f"{what} must be a list of per-employer amounts")
+    out = []
+    for i, raw in enumerate(withheld_by_employer):
+        try:
+            v = _coerce_numeric(raw, default=None)
+        except TypeError:
+            raise ValueError(f"{what}[{i}] must be numeric, got bool")
+        if v is None or not math.isfinite(v) or v < 0:
+            raise ValueError(f"{what}[{i}] must be a finite non-negative number, got {raw!r}")
+        out.append(v)
+    return out
+
+
+def _amount(value, what: str, allow_negative: bool = False) -> float:
+    """A user-supplied money figure, validated at the parse boundary.
+
+    `bool` first, because `isinstance(True, int)` — a flag that reached a money
+    field would otherwise be worth a dollar. Then FINITE, because `json.loads`
+    accepts `NaN` and `Infinity`, both pass the isinstance test, and every
+    comparison with NaN is False, so the range check below silently does
+    nothing (AGENTS.md §8).
+
+    `allow_negative` is the only axis these ever differed on. It was two
+    functions — `_sched_a_amount` and `_f2210_amount` — with byte-identical
+    bodies and identical messages, one of them simply lacking the flag. Two
+    federal FORM numbers in the names of a shared primitive is also the wrong
+    label for what this is: a state module reaching for it had to know that
+    "the Form 2210 one is the signed one". Both names survive below as
+    aliases, because ninety-eight call sites spell them and the prose in three
+    documents names them; new code calls `_amount`.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{what} must be a number, got {value!r}")
+    v = float(value)
+    if not math.isfinite(v):
+        raise ValueError(f"{what} must be finite, got {value!r}")
+    if v < 0 and not allow_negative:
+        raise ValueError(f"{what} cannot be negative, got {v}")
+    return v
+
+
+# The same function under the two names the engine already calls it by. Not
+# wrappers: the identical object, so there is one body to fix and no way for a
+# caller to be reading a stale copy of the rule.
+_sched_a_amount = _amount
+_f2210_amount = _amount
+
+
+def _prorated_mortgage_interest(interest: float, avg_balance, limit: float,
+                                notes: list, label: str) -> float:
+    """Pub 936 simplified method: deductible interest = interest ×
+    limit / average balance when the balance exceeds the limit."""
+    if avg_balance is None:
+        if interest > 0:
+            notes.append(
+                f"{label}: average mortgage balance not provided — interest "
+                f"taken in full, ASSUMING acquisition debt ≤ ${limit:,.0f}; "
+                "if the balance exceeds the limit this OVERSTATES the "
+                "deduction (Pub 936 proration)")
+        return interest
+    bal = _sched_a_amount(avg_balance, "average_mortgage_balance")
+    if bal <= limit or bal == 0:
+        return interest
+    notes.append(
+        f"{label}: interest prorated × {limit:,.0f}/{bal:,.0f} per the "
+        "Pub 936 average-balance method")
+    return interest * limit / bal
+

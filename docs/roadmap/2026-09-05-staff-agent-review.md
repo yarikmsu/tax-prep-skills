@@ -345,12 +345,48 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   - **`_engine_file` should resolve from `importlib.util.find_spec`**, which already
     knows the origin file and whether the name is a package, rather than probing the
     filesystem in three branches.
-  - **Where the state aggregation seam belongs.** `__init__.py` re-exports New York by
-    name so `tax_computations.<name>` keeps working for callers that are skill MARKDOWN.
-    That is one block per state forever. The alternatives — a star import, or a module
-    `__getattr__` — each cost more than they save at ONE state (`select = ["F"]` makes a
-    star import flood F405; `__getattr__` hides every name from mypy and from a reader).
-    Decide it when state #2 lands, with a second case to reason from.
+  - ~~**Where the state aggregation seam belongs.**~~ **SETTLED in slice 3, and the
+    answer is "where it is."** With California beside New York the block is seventeen
+    import lines, explicit and greppable, growing linearly and slowly. Aggregating in
+    `state/__init__.py` needs the parent to pull the names back out, which is either a
+    star import — `select = ["F"]` turns that into an F405 finding on every unresolved
+    name in a 5,100-line file, the flood that cost slice 2 a cleanup — or a SECOND
+    explicit list, which is strictly worse than one. A module `__getattr__` removes the
+    list entirely and takes every name out of mypy's and a reader's reach with it, for
+    ten importers under `agents/lib/` alone. Revisit only if a state arrives whose
+    public surface is much larger than New York's fourteen names.
+
+  **Three questions slice 3's review raised and did NOT settle**, each its own
+  task because each changes a shipped contract rather than where code lives:
+
+  - **Three sibling forms, three contracts for one election.** The federal
+    `compute_schedule_a` REQUIRES `standard_deduction`. `compute_ca_itemized`
+    makes it optional and returns `use_itemized: None`. `compute_ny_itemized`
+    makes it optional and sets `deduction` to the itemized total anyway, which
+    reads as elected. Slice 3 gave the two silent paths a banner, which is what
+    the under-statement direction is owed; making the parameter required on all
+    three is the fix and breaks callers.
+  - **An unfetched R&TC §17077 threshold DEGRADES where AGENTS.md §2 says
+    STOP.** `compute_ca_itemized(phaseout_threshold=None)` skips the phase-out
+    and notes it, which OVER-states the CA deduction — the hard-error direction
+    — and the skill text already documents the degrade. Slice 3 gated the note
+    so it stops firing where nothing can be overstated and made it quantify
+    itself; whether an indexed figure that changes a return may degrade at all
+    is the owner's call.
+  - **`state/ny.py` does not VALUE-validate filing status.** It compares
+    lowercase literals and never calls `_normalize_filing_status`, so the
+    canonical uppercase code that function returns takes the wrong branch there
+    rather than raising. The playbook now says CA is the example and NY is not
+    yet converted. Converting it is mechanical and is a behaviour change at
+    every NY entry point. `_ny_amount` is a third copy of `_shared._amount`
+    with an NY-specific sentence, and folds into the same task.
+
+  **SLICE 3 SHIPPED**: California is `state/ca.py` — Schedule CA itemized, Schedule P
+  (540) AMT and the excess SDI/VPDI credit. Unlike New York this was NOT one contiguous
+  block: each of the three sat beside the FEDERAL form it mirrors, which is why the file
+  read as one subject and was three. It also needed nine shared helpers where New York
+  needed one, so `_shared.py` becomes what its name says — the primitives with no form
+  of their own — and its docstring now states the rule for what may join it.
 - **W3 (P3, L): Move the hook state machine to Python.** 3,800 lines of bash tested by
   5,200 lines of Python is the wrong language boundary; the stamp and red-carry-forward
   logic is a state machine bash makes hard to read. Python also lets the hook share

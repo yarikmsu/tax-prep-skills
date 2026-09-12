@@ -56,28 +56,6 @@ ACTC_EARNED_INCOME_RATE = 0.15
 ODC_PER_DEPENDENT = 500
 
 
-def _coerce_numeric(value, default=None):
-    """Coerce a value to float, handling string amounts like '$5,000'.
-
-    Returns None by default for unparseable values so callers must handle
-    the failure explicitly. Pass default=0 only for non-financial display fields.
-
-    Rejects bool (isinstance(True, int) is True in Python, but booleans
-    are never valid financial amounts — always a data error).
-    """
-    if isinstance(value, bool):
-        raise TypeError(f"Expected numeric value, got bool: {value}")
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        cleaned = value.replace(",", "").replace("$", "").strip()
-        try:
-            return float(cleaned)
-        except ValueError:
-            return default
-    return default
-
-
 def state_brackets_for_status(state_cfg: dict,
                               filing_status: "str | None") -> "list[dict]":
     """The flat list of bands that `state.brackets` means for one filing status.
@@ -1370,22 +1348,6 @@ def compute_qbi_deduction(
 _SS_BASE_AMOUNT = {"single": 25000.0, "mfj": 32000.0}
 _SS_SECOND_THRESHOLD = {"single": 34000.0, "mfj": 44000.0}
 
-_CANONICAL_FILING_STATUSES = {"SINGLE", "MFJ", "MFS", "HOH", "QSS"}
-
-
-def _normalize_filing_status(filing_status) -> str:
-    """Canonical filing-status validation (repo VALUE-validation rule):
-    'Married Filing Jointly' or '' must hard-error, not fall through to a
-    Single-shaped default."""
-    if not isinstance(filing_status, str):
-        raise ValueError(f"filing_status must be a string, got {type(filing_status).__name__}")
-    fs = filing_status.strip().upper()
-    if fs not in _CANONICAL_FILING_STATUSES:
-        raise ValueError(
-            f"filing_status must be one of Single/MFJ/MFS/HoH/QSS, got {filing_status!r}"
-        )
-    return fs
-
 
 def compute_taxable_ss(
     ss_benefits: float,
@@ -1550,52 +1512,6 @@ def compute_taxable_ss(
     })
 
 
-def _multi_employer_excess(
-    withheld: "list[float]",
-    wages: "list[float]",
-    rate: float,
-    wage_cap: float,
-) -> "tuple[float, float]":
-    """Split withholding above a per-person maximum into (return_credit,
-    employer_error_amount).
-
-    IRS Topic 608 (and EDD DE 1964 for CA SDI): anything an employer withheld
-    beyond what that employer's SUBJECT WAGES support — min(wages, cap) × rate
-    — is an employer error, recovered from the employer (or Form 843), NEVER
-    as a credit on the return. Withholding alone cannot establish the credit:
-    two below-base W-2s with erroneous over-withholding can exceed the annual
-    max without any creditable excess existing. Only the correctly-withheld
-    portions count, and only their multi-employer total above the per-person
-    max is creditable.
-    """
-    clamped_total = 0.0
-    employer_error = 0.0
-    for w_amt, wg in zip(withheld, wages):
-        proper = min(wg, wage_cap) * rate  # what this employer SHOULD have withheld, at most
-        allowed = min(w_amt, proper)
-        clamped_total += allowed
-        employer_error += w_amt - allowed
-    per_person_max = round(wage_cap * rate, 2)
-    credit = (max(0.0, round(clamped_total - per_person_max, 2))
-              if len(withheld) >= 2 else 0.0)
-    return credit, round(employer_error, 2)
-
-
-def _validated_withholding_list(withheld_by_employer, what: str) -> "list[float]":
-    if not isinstance(withheld_by_employer, list):
-        raise ValueError(f"{what} must be a list of per-employer amounts")
-    out = []
-    for i, raw in enumerate(withheld_by_employer):
-        try:
-            v = _coerce_numeric(raw, default=None)
-        except TypeError:
-            raise ValueError(f"{what}[{i}] must be numeric, got bool")
-        if v is None or not math.isfinite(v) or v < 0:
-            raise ValueError(f"{what}[{i}] must be a finite non-negative number, got {raw!r}")
-        out.append(v)
-    return out
-
-
 def compute_excess_ss_withholding(
     withheld_by_employer: list,
     ss_wages_by_employer: list,
@@ -1672,122 +1588,16 @@ def compute_excess_ss_withholding(
     }
 
 
-# SB 951 removed the CA SDI taxable wage ceiling starting TY2024 — from that
-# year there is no per-person maximum and therefore no excess-SDI credit.
-_SDI_NO_CEILING_FROM = 2024
-
-
-def compute_excess_sdi(
-    sdi_by_employer: list,
-    sdi_wages_by_employer: list,
-    sdi_rate: float,
-    sdi_wage_limit: float,
-    tax_year: int,
-) -> dict:
-    """CA excess-SDI/VPDI credit (Form 540 line 74) — per person, like the
-    federal excess-SS credit.
-
-    The tax year DISAMBIGUATES a None wage limit: for TY2024+ (SB 951) None
-    is CORRECT — no ceiling exists, so the credit is not applicable. For
-    pre-2024 years a ceiling DID exist, so a None limit means the cache is
-    unfetched and the function HARD-ERRORS instead of silently reporting $0
-    for a refundable credit the taxpayer is owed (fail closed, not fail-$0).
-
-    Args:
-        sdi_by_employer: One SDI/VPDI figure (W-2 Box 14) per employer for ONE
-            person.
-        sdi_wages_by_employer: The matching CA wages subject to SDI per
-            employer, parallel to sdi_by_employer (lengths must match).
-        sdi_rate: CA SDI rate (tax_law state.sdi_rate).
-        sdi_wage_limit: SDI taxable wage ceiling (tax_law state.sdi_wage_limit);
-            None is valid ONLY for tax_year >= 2024.
-        tax_year: The return's tax year (4-digit int).
-
-    Per EDD DE 1964, the amount any individual employer withheld beyond what
-    that employer's SDI wages support (min(wages, limit) × rate) is recovered
-    from that employer, not via the excess-SDI claim — the same wage-aware
-    per-employer clamp as the federal excess-SS credit applies (erroneous
-    over-withholding on below-limit wages is never creditable).
-
-    Returns:
-        Dict with max_sdi, total_withheld, excess_credit, not_applicable,
-        employer_error_amount + employer_over_withheld.
-    """
-    if isinstance(tax_year, bool) or not isinstance(tax_year, int) \
-            or not (2000 <= tax_year <= 2099):
-        raise ValueError(f"tax_year must be a 4-digit year integer, got {tax_year!r}")
-    amounts = _validated_withholding_list(sdi_by_employer, "sdi_by_employer")
-    wages = _validated_withholding_list(sdi_wages_by_employer, "sdi_wages_by_employer")
-    if len(wages) != len(amounts):
-        raise ValueError(
-            f"sdi_wages_by_employer must parallel sdi_by_employer "
-            f"({len(amounts)} employers, got {len(wages)} wage figures)."
-        )
-    total = round(sum(amounts), 2)
-    try:
-        rate = _coerce_numeric(sdi_rate, default=None)
-    except TypeError:
-        raise ValueError("sdi_rate must be numeric, got bool")
-    if rate is None or not math.isfinite(rate) or rate <= 0:
-        raise ValueError("sdi_rate must be a finite positive number")
-
-    # The YEAR decides applicability, not the cache: for TY2024+ SB 951 means
-    # no ceiling regardless of what the cache carries — a stale pre-2024
-    # sdi_wage_limit left in a newer cache must not invent a line 74 credit.
-    if tax_year >= _SDI_NO_CEILING_FROM:
-        # No ceiling ≠ no employer errors: each employer should still withhold
-        # exactly wages × rate, and anything above that is recovered from the
-        # employer — hiding it here would contradict the guidance in the note.
-        employer_error = round(
-            sum(max(0.0, a - wg * rate) for a, wg in zip(amounts, wages)), 2)
-        note = ("No SDI wage ceiling (SB 951, TY2024+) — no excess-SDI "
-                "credit exists; an employer that over-withheld must "
-                "refund it directly.")
-        if sdi_wage_limit is not None:
-            note += (" A stale state.sdi_wage_limit in the tax_law cache was "
-                     "IGNORED — computing against it would invent a credit; "
-                     "clear the field for TY2024+.")
-        return {
-            "max_sdi": None, "total_withheld": total, "num_employers": len(amounts),
-            "excess_credit": 0.0, "employer_error_amount": employer_error,
-            "employer_over_withheld": employer_error > 0,
-            "not_applicable": True,
-            "note": note,
-        }
-    if sdi_wage_limit is None:
-        raise ValueError(
-            f"TY{tax_year} had an SDI wage ceiling, but state.sdi_wage_limit "
-            "is missing from tax_law — fetch it. Treating a missing pre-2024 "
-            "cap as 'no ceiling' would silently drop a refundable credit."
-        )
-    try:
-        limit = _coerce_numeric(sdi_wage_limit, default=None)
-    except TypeError:
-        raise ValueError("sdi_wage_limit must be numeric, got bool")
-    if limit is None or not math.isfinite(limit) or limit <= 0:
-        raise ValueError("sdi_wage_limit must be a finite positive number")
-
-    max_sdi = round(rate * limit, 2)
-    credit, employer_error = _multi_employer_excess(amounts, wages, rate, limit)
-    return {
-        "max_sdi": max_sdi, "total_withheld": total, "num_employers": len(amounts),
-        "excess_credit": credit,
-        "employer_error_amount": employer_error,
-        "employer_over_withheld": employer_error > 0,
-        "not_applicable": False,
-    }
-
-
 # Schedule A structural statutory constants (none indexed):
-# medical floor 7.5% of AGI (§213(a), permanent since 2021); charitable AGI
-# caps — cash 60% (§170(b)(1)(G), made permanent by OBBBA), appreciated
-# property 30%, overall 50% ordering per Pub 526; OBBBA §70425 0.5%-of-AGI
-# charitable floor for itemizers from TY2026; acquisition-debt limits
-# $750K post-TCJA / $1M for pre-Dec-16-2017 originations (§163(h)(3));
+# charitable AGI caps — cash 60% (§170(b)(1)(G), made permanent by OBBBA),
+# appreciated property 30%, overall 50% ordering per Pub 526; OBBBA §70425
+# 0.5%-of-AGI charitable floor for itemizers from TY2026; acquisition-debt
+# limits $750K post-TCJA / $1M for pre-Dec-16-2017 originations (§163(h)(3));
 # the SALT cap dollar amount is INDEXED and comes from federal.salt_cap.
-_SCHED_A_MEDICAL_FLOOR = 0.075
+# The medical floor and the appreciated-property cap are in `_shared.py`, not
+# because they are less federal but because California conforms to both and
+# `compute_ca_itemized` reads them — see that file's note on what belongs there.
 _CHARITY_CASH_AGI_CAP = 0.60
-_CHARITY_APPRECIATED_AGI_CAP = 0.30
 _CHARITY_OBBBA_FLOOR_RATE = 0.005
 _CHARITY_OBBBA_FLOOR_FROM = 2026
 _MORTGAGE_LIMIT_TCJA = 750000.0
@@ -1796,48 +1606,6 @@ _MORTGAGE_LIMIT_GRANDFATHERED = 1000000.0
 # lesser of the itemized total or the income taxed in the 37% bracket.
 _OBBBA_ITEMIZED_HAIRCUT = 2.0 / 37.0
 _OBBBA_ITEMIZED_HAIRCUT_FROM = 2026
-# CA Schedule CA: mortgage limit stays $1M (+$100K equity, unmodeled); cash
-# charitable cap stays 50% (CA never conformed to the TCJA 60%); the
-# high-AGI itemized phase-out reduces itemized by the LESSER of 6% of
-# FEDERAL AGI over the (indexed, cached) threshold or 80% of the
-# phase-out-subject deductions (R&TC §17077 — exempt: medical, investment
-# interest, and — if ever modeled — casualty and gambling losses).
-_CA_MORTGAGE_LIMIT = 1000000.0
-_CA_CHARITY_CASH_AGI_CAP = 0.50
-_CA_ITEMIZED_PHASEOUT_RATE = 0.06
-_CA_ITEMIZED_PHASEOUT_MAX = 0.80
-
-
-def _sched_a_amount(value, what: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{what} must be a number, got {value!r}")
-    v = float(value)
-    if not math.isfinite(v):
-        raise ValueError(f"{what} must be finite, got {value!r}")
-    if v < 0:
-        raise ValueError(f"{what} cannot be negative, got {v}")
-    return v
-
-
-def _prorated_mortgage_interest(interest: float, avg_balance, limit: float,
-                                notes: list, label: str) -> float:
-    """Pub 936 simplified method: deductible interest = interest ×
-    limit / average balance when the balance exceeds the limit."""
-    if avg_balance is None:
-        if interest > 0:
-            notes.append(
-                f"{label}: average mortgage balance not provided — interest "
-                f"taken in full, ASSUMING acquisition debt ≤ ${limit:,.0f}; "
-                "if the balance exceeds the limit this OVERSTATES the "
-                "deduction (Pub 936 proration)")
-        return interest
-    bal = _sched_a_amount(avg_balance, "average_mortgage_balance")
-    if bal <= limit or bal == 0:
-        return interest
-    notes.append(
-        f"{label}: interest prorated × {limit:,.0f}/{bal:,.0f} per the "
-        "Pub 936 average-balance method")
-    return interest * limit / bal
 
 
 # §4973 excise tax on excess HSA contributions — statutory 6%, not indexed.
@@ -2479,174 +2247,6 @@ def compute_schedule_a(
         "election_margin": round(itemized_total - std, 2),
         "notes": notes,
     }
-
-
-def compute_ca_itemized(
-    federal_agi: float,
-    ca_agi: float,
-    tax_year: int,
-    mfs_spouse_itemizes: bool = False,
-    married_filing_separately: bool = False,
-    medical_expenses: float = 0.0,
-    state_local_income_taxes: float = 0.0,
-    real_estate_taxes: float = 0.0,
-    personal_property_taxes: float = 0.0,
-    mortgage_interest: float = 0.0,
-    mortgage_points: float = 0.0,
-    average_mortgage_balance: float = None,
-    investment_interest: float = 0.0,
-    charitable_cash: float = 0.0,
-    charitable_noncash: float = 0.0,
-    misc_2pct_expenses: float = 0.0,
-    ca_standard_deduction: float = None,
-    phaseout_threshold: float = None,
-) -> dict:
-    """CA Schedule CA itemized deductions — computed from the SOURCE figures
-    (not by adjusting the federal Schedule A total), because the differences
-    are structural:
-
-    - State/local INCOME taxes (incl. CA income tax and SDI) and sales taxes
-      are disallowed entirely, but property taxes have NO cap (no SALT cap).
-    - Mortgage limit stays $1M regardless of origination date — interest the
-      federal $750K limit prorated away comes BACK for CA.
-    - Cash charitable cap is 50% of AGI (CA never conformed to the TCJA
-      60%); the OBBBA 0.5% floor is federal-only.
-    - Misc 2%-floor deductions (unreimbursed employee expenses, investment
-      fees, tax prep) are STILL allowed for CA (no TCJA suspension).
-    - High-AGI itemized phase-out (R&TC §17077): reduce by the lesser of 6%
-      of FEDERAL AGI over the (indexed, cached) threshold or 80% of the
-      phase-out-subject amount — exempt: medical, investment interest (and,
-      when ever modeled, casualty and gambling losses — the FTB worksheet
-      excludes those too). phaseout_threshold None → phase-out NOT applied,
-      loud note (a high-AGI CA itemizer's deduction would be overstated
-      until fetched).
-
-    EVERY AGI-anchored floor/cap here (medical 7.5%, charitable 50%/30%,
-    misc 2%) uses FEDERAL AGI — Schedule CA Part II lines reference federal
-    Form 1040 line 11, not CA AGI. ca_agi is accepted for future CA-AGI-
-    based lines but is currently unused in the math; a CA-AGI base would
-    overstate a retiree's medical deduction (CA subtracts Social Security,
-    so CA AGI < federal AGI).
-
-    mfs_spouse_itemizes: CA mirrors the federal §63(c)(6)(A) coupling — an
-    MFS/RDP-separate filer whose spouse itemizes cannot take the CA
-    standard deduction.
-
-    ca_standard_deduction None → election not computed (amounts only).
-    """
-    if isinstance(tax_year, bool) or not isinstance(tax_year, int):
-        raise ValueError(f"tax_year must be an int, got {tax_year!r}")
-    for name, v in (("federal_agi", federal_agi), ("ca_agi", ca_agi)):
-        if isinstance(v, bool) or not isinstance(v, (int, float)) \
-                or not math.isfinite(float(v)):
-            raise ValueError(f"{name} must be a finite number, got {v!r}")
-    for fname, flag in (("mfs_spouse_itemizes", mfs_spouse_itemizes),
-                        ("married_filing_separately", married_filing_separately)):
-        if not isinstance(flag, bool):
-            raise ValueError(f"{fname} must be a boolean, got {flag!r}")
-    fed_agi = float(federal_agi)     # unfloored §17077 trigger
-    # FTB anchors the medical/charitable/misc floors on FEDERAL AGI
-    # (Schedule CA Part II references 1040 line 11) — floored for the same
-    # negative-AGI reason as the federal function. ca_agi intentionally
-    # unused in the current math.
-    agi_v = max(0.0, fed_agi)
-    med = _sched_a_amount(medical_expenses, "medical_expenses")
-    _sched_a_amount(state_local_income_taxes, "state_local_income_taxes")
-    re_tax = _sched_a_amount(real_estate_taxes, "real_estate_taxes")
-    pp_tax = _sched_a_amount(personal_property_taxes, "personal_property_taxes")
-    mort_int = _sched_a_amount(mortgage_interest, "mortgage_interest")
-    points = _sched_a_amount(mortgage_points, "mortgage_points")
-    inv_int = _sched_a_amount(investment_interest, "investment_interest")
-    cash = _sched_a_amount(charitable_cash, "charitable_cash")
-    noncash = _sched_a_amount(charitable_noncash, "charitable_noncash")
-    misc = _sched_a_amount(misc_2pct_expenses, "misc_2pct_expenses")
-
-    notes = ["CA disallows state/local income taxes (incl. CA tax + SDI) "
-             "and sales taxes — property taxes deductible WITHOUT cap"]
-
-    medical_deductible = round(max(0.0, med - _SCHED_A_MEDICAL_FLOOR * agi_v), 2)
-    taxes_deductible = round(re_tax + pp_tax, 2)
-    # CA keeps the pre-TCJA acquisition-debt limit, halved for MFS/RDP-
-    # separate filers ($500K) per the Schedule CA line 8 instructions.
-    ca_limit = (_CA_MORTGAGE_LIMIT / 2 if married_filing_separately
-                else _CA_MORTGAGE_LIMIT)
-    mortgage_deductible = round(
-        _prorated_mortgage_interest(mort_int + points,
-                                    average_mortgage_balance,
-                                    ca_limit, notes,
-                                    f"CA (${ca_limit:,.0f} limit)"),
-        2)
-
-    cash_cap = _CA_CHARITY_CASH_AGI_CAP * agi_v
-    cash_allowed = min(cash, cash_cap)
-    noncash_cap = min(_CHARITY_APPRECIATED_AGI_CAP * agi_v,
-                      max(0.0, 0.50 * agi_v - cash_allowed))
-    noncash_allowed = min(noncash, noncash_cap)
-    charitable_deductible = round(cash_allowed + noncash_allowed, 2)
-    ca_charitable_carryforward = round(
-        (cash - cash_allowed) + (noncash - noncash_allowed), 2)
-    if ca_charitable_carryforward > 0:
-        notes.append(
-            "CA cash charitable cap is 50% of FEDERAL AGI (no TCJA 60% "
-            f"conformity) — ${ca_charitable_carryforward:,.2f} carries "
-            "forward for CA (tracked separately from the federal "
-            "carryforward; enter manually next year)")
-
-    misc_deductible = round(max(0.0, misc - 0.02 * agi_v), 2)
-    if misc > 0:
-        notes.append("misc 2%-floor deductions allowed for CA only "
-                     "(federal TCJA suspension does not apply)")
-
-    subtotal = round(medical_deductible + taxes_deductible
-                     + mortgage_deductible + inv_int
-                     + charitable_deductible + misc_deductible, 2)
-
-    phaseout = 0.0
-    if phaseout_threshold is None:
-        notes.append(
-            "CA itemized phase-out threshold (R&TC §17077, indexed) not in "
-            "the tax_law cache — phase-out NOT applied; a high-AGI "
-            "itemizer's CA deduction may be OVERSTATED until /tax-setup "
-            "fetches state.itemized_phaseout")
-    else:
-        thr = _sched_a_amount(phaseout_threshold, "phaseout_threshold")
-        if fed_agi > thr:
-            subject = max(0.0, subtotal - medical_deductible - inv_int)
-            phaseout = round(min(_CA_ITEMIZED_PHASEOUT_RATE * (fed_agi - thr),
-                                 _CA_ITEMIZED_PHASEOUT_MAX * subject), 2)
-            notes.append(
-                f"CA itemized phase-out applied: −${phaseout:,.2f} (lesser "
-                "of 6% of AGI over threshold or 80% of subject deductions)")
-    itemized_total = round(subtotal - phaseout, 2)
-
-    out = {
-        "medical_deductible": medical_deductible,
-        "taxes_deductible": taxes_deductible,
-        "mortgage_deductible": mortgage_deductible,
-        "investment_interest": round(inv_int, 2),
-        "charitable_deductible": charitable_deductible,
-        "misc_deductible": misc_deductible,
-        "charitable_carryforward": ca_charitable_carryforward,
-        "phaseout_reduction": phaseout,
-        "itemized_total": itemized_total,
-        "use_itemized": None,
-        "notes": notes,
-    }
-    if ca_standard_deduction is not None:
-        std = _sched_a_amount(ca_standard_deduction, "ca_standard_deduction")
-        if mfs_spouse_itemizes:
-            out["use_itemized"] = True
-            notes.append(
-                "MFS/RDP-separate with an itemizing spouse MUST itemize for "
-                "CA too — the CA standard deduction is unavailable")
-        else:
-            out["use_itemized"] = itemized_total > std
-        out["election_margin"] = round(itemized_total - std, 2)
-        if out["use_itemized"] and itemized_total > std:
-            notes.append(
-                "CA itemizes even when the federal return takes the "
-                "standard deduction — the elections are independent")
-    return out
 
 
 # Schedule 1-A structural statutory constants (OBBBA). Amounts (caps, senior
@@ -3431,146 +3031,6 @@ def compute_form_6251(
     }
 
 
-# CA Schedule P (540) statutory-structural constants (R&TC §17062, §17062.1
-# conforming to IRC §§55-59 as of 2015-01-01). The 7% tentative-minimum-tax
-# rate and the 25% exemption phase-out are set in statute and NOT indexed —
-# inline with citation, like the 1% mental-health surcharge. CA does NOT adopt
-# OBBBA §70107 (the federal 50% phase-out from TY2026) — its conformity date is
-# fixed at 2015, so CA stays 25% in every year.
-_CA_AMT_TMT_RATE = 0.07
-_CA_AMT_PHASEOUT_RATE = 0.25
-
-
-def compute_ca_schedule_p(
-    ca_taxable_income: float,
-    ca_regular_tax: float,
-    filing_status: str,
-    exemption: float,
-    phaseout_start: float,
-    ca_preference_adjustments: float = 0.0,
-    iso_bargain_element: float = 0.0,
-    tmt_rate: float = _CA_AMT_TMT_RATE,
-    phaseout_rate: float = _CA_AMT_PHASEOUT_RATE,
-) -> dict:
-    """California Schedule P (540) alternative minimum tax (N1).
-
-    The CA analogue of federal Form 6251 — v1 models the same ISO-exerciser
-    path, since a CA equity-comp filer who triggers federal AMT on an ISO
-    exercise almost always triggers CA AMT on the SAME spread (CA conforms to
-    the ISO adjustment). CA differs from the federal computation in three ways,
-    all reflected here: a FLAT 7% tentative-minimum-tax rate (no 26/28 tiers, so
-    no rate_28 breakpoint), NO Part III capital-gains coordination (CA taxes
-    capital gains as ordinary income), and a fixed 25% exemption phase-out that
-    does NOT follow OBBBA §70107 (CA's conformity date is 2015).
-
-    Args:
-        ca_taxable_income: Form 540 line 19 (CA regular taxable income) — the
-            Schedule P Part I line 1 starting point. May be negative (accepted).
-        ca_regular_tax: the CA regular tax before AMT (the Schedule P comparison
-            base) — CA AMT is the excess of TMT over this.
-        exemption / phaseout_start: the CA AMT exemption and its phase-out
-            threshold for the filing status, from state.amt in the tax_law
-            cache (INDEXED annually — REQUIRED, never hardcoded; an unfetched
-            table hard-errors rather than zeroing a CA ISO exerciser's AMT).
-        ca_preference_adjustments: net CA Schedule P Part I adjustments and
-            preference items OTHER than the ISO spread (signed) — scoped v1 to
-            what the workspace already carries. Excludes the ISO spread, which
-            is passed separately so the deferral/exclusion carryforward split
-            can be computed.
-        iso_bargain_element: the ISO exercise spread (FMV − strike for shares
-            not sold in the same year) — the CA deferral item that generates the
-            Schedule P AMT credit carryforward.
-
-    Returns dict: ca_amti, ca_exemption_allowed, ca_tmt, ca_regular_tax,
-    ca_amt (added to Form 540 tax), schedule_p_carryforward (deferral-
-    attributable CA AMT — persists to next year via /tax-rollover, the Form
-    8801 pattern), iso_bargain_element echo, notes.
-    """
-    fs = _normalize_filing_status(filing_status)
-    for what, v in (("exemption", exemption), ("phaseout_start", phaseout_start)):
-        if v is None:
-            raise ValueError(
-                f"state.amt.{what} is unfetched — refusing to compute CA "
-                "Schedule P without the indexed table (a guessed exemption "
-                "would silently zero the CA AMT for an ISO exerciser); fetch "
-                "via /tax-setup")
-    ti = _f2210_amount(ca_taxable_income, "ca_taxable_income", allow_negative=True)
-    rtax = _sched_a_amount(ca_regular_tax, "ca_regular_tax")
-    ex = _sched_a_amount(exemption, "exemption")
-    ph_start = _sched_a_amount(phaseout_start, "phaseout_start")
-    adj = _f2210_amount(ca_preference_adjustments,
-                        "ca_preference_adjustments", allow_negative=True)
-    iso = _sched_a_amount(iso_bargain_element, "iso_bargain_element")
-    for what, r in (("tmt_rate", tmt_rate), ("phaseout_rate", phaseout_rate)):
-        if isinstance(r, bool) or not isinstance(r, (int, float)) \
-                or not math.isfinite(float(r)) or not (0 < float(r) <= 1):
-            raise ValueError(f"{what} must be a finite fraction in (0, 1], got {r!r}")
-    tmt_rate = float(tmt_rate)
-    phaseout_rate = float(phaseout_rate)
-
-    def _tmt(iso_amount: float) -> float:
-        amti = ti + adj + iso_amount
-        exemption_allowed = max(0.0, ex - phaseout_rate * max(0.0, amti - ph_start))
-        return tmt_rate * max(0.0, amti - exemption_allowed)
-
-    # Round the TMT and the regular tax at source so the returned breakdown
-    # reconciles: ca_amt == round(ca_tmt − ca_regular_tax) exactly (the §6651
-    # breakdown-reconciliation lesson — deriving ca_amt from the UNROUNDED tmt
-    # while displaying a rounded ca_tmt can drift a cent at a boundary). The tax
-    # form itself works with the rounded TMT, so this is also more form-accurate.
-    rtax_r = round(rtax, 2)
-    tmt_r = round(_tmt(iso), 2)
-    ca_amt = round(max(0.0, tmt_r - rtax_r), 2)
-    # Schedule P AMT credit: like Form 8801, the credit equals CA AMT
-    # attributable to DEFERRAL items — refigure with exclusion items only (v1's
-    # only deferral item is the ISO spread), so the split is the with/without-
-    # ISO delta. Both AMT figures come from rounded TMTs for the same reason.
-    amt_exclusion_only = round(max(0.0, round(_tmt(0.0), 2) - rtax_r), 2)
-    carryforward = round(max(0.0, ca_amt - amt_exclusion_only), 2)
-
-    amti_full = ti + adj + iso
-    exemption_allowed = max(0.0, ex - phaseout_rate * max(0.0, amti_full - ph_start))
-    notes = [
-        "v1 models the CA ISO-exerciser path (7% flat TMT, 25% exemption "
-        "phase-out per R&TC §17062); other CA Schedule P preference/adjustment "
-        "items go through ca_preference_adjustments and are the caller's to "
-        "supply. CA taxes capital gains as ordinary income, so there is no "
-        "federal-style Part III coordination.",
-    ]
-    # MFS caveat: the federal §55(d)(3) MFS exemption-RECAPTURE addback (AMTI
-    # increased past the phase-out ceiling, which compute_form_6251 models) is
-    # NOT applied here — CA's exemption still phases to $0 at the ceiling
-    # (modeled), but whether Schedule P carries the additional AMTI add-back is
-    # not confirmed in the FTB instructions, so it is flagged rather than
-    # invented (inventing it would OVERstate; the exemption-to-zero is the
-    # modeled, verified part). Fires only for an MFS filer past the ceiling.
-    if fs == "MFS":
-        ceiling = ph_start + ex / phaseout_rate
-        if amti_full > ceiling:
-            notes.append(
-                "MFS filer past the exemption phase-out ceiling: the CA "
-                "exemption is fully phased out (modeled), but any federal-style "
-                "§55(d)(3) MFS AMTI recapture add-back is NOT modeled — verify "
-                "the MFS exemption worksheet on Schedule P; the CA AMT may be "
-                "understated.")
-    if ca_amt > 0:
-        notes.append(
-            f"CA AMT of ${ca_amt:,.2f} applies (added to the Form 540 tax). "
-            f"${carryforward:,.2f} of it is deferral-attributable (ISO) and "
-            "becomes a Schedule P AMT credit carryforward — record it via "
-            "/tax-rollover; losing it forfeits the money permanently.")
-    return {
-        "ca_amti": round(amti_full, 2),
-        "ca_exemption_allowed": round(exemption_allowed, 2),
-        "ca_tmt": tmt_r,
-        "ca_regular_tax": rtax_r,
-        "ca_amt": ca_amt,
-        "schedule_p_carryforward": carryforward,
-        "iso_bargain_element": round(iso, 2),
-        "notes": notes,
-    }
-
-
 def compute_form_8801_credit(
     prior_carryforward: float,
     regular_tax: float,
@@ -3663,17 +3123,6 @@ def prior_year_prong(prior_tax: float, prior_agi: "float | None",
               if (prior_agi or 0) > prior_year_agi_threshold(mfs)
               else PRIOR_YEAR_FACTOR)
     return factor, round(factor * prior_tax, 2)
-
-
-def _f2210_amount(value, what: str, allow_negative: bool = False) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{what} must be a number, got {value!r}")
-    v = float(value)
-    if not math.isfinite(v):
-        raise ValueError(f"{what} must be finite, got {value!r}")
-    if v < 0 and not allow_negative:
-        raise ValueError(f"{what} cannot be negative, got {v}")
-    return v
 
 
 def _f2210_date(value, what: str) -> datetime.date:
@@ -5577,9 +5026,30 @@ def compute_pfic_1291(
 # asked for a move. The private `_ny_*` helpers come across too — the New York
 # tests reach for them by name, and a test that has to import from a deeper
 # path than the code under test knows about is a seam in the wrong place.
-from agents.lib.tax_computations._shared import (  # noqa: E402,F401
+# The shared primitives, imported back under the names the federal code below
+# calls them by — this is not only a re-export. `_coerce_numeric` in particular
+# is addressed as `tax_computations._coerce_numeric` from outside the package,
+# by tests and by the review-subagent acceptance fixture.
+from agents.lib.tax_computations._shared import (  # noqa: F401
+    _CHARITY_APPRECIATED_AGI_CAP,
+    _SCHED_A_MEDICAL_FLOOR,
+    _coerce_numeric,
+    _f2210_amount,
+    _multi_employer_excess,
+    _normalize_filing_status,
+    _prorated_mortgage_interest,
+    _sched_a_amount,
     _split_remainder_last,
+    _validated_withholding_list,
 )
+# California — same contract as New York below, and the same reason for it.
+from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
+    compute_ca_itemized,
+    compute_ca_schedule_p,
+    compute_excess_sdi,
+)
+
+
 # New York, re-exported so that `tax_computations.<name>` keeps working. The
 # callers are skill MARKDOWN as well as code — an instruction file naming a
 # function is not something a sweep can find and rewrite — so the addresses

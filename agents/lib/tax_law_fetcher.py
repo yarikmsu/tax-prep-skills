@@ -31,6 +31,9 @@ from agents.lib.capabilities import (  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
     atomic_write, first_non_finite, is_reparse_point)
 from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
+from agents.lib.tax_computations.state.ca import (  # noqa: E402
+    _SDI_NO_CEILING_FROM,
+)
 from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
@@ -1222,11 +1225,15 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # not-applicable for those years. Without this exception a correctly
     # populated 2024+ cache reports INCOMPLETE forever and skills keep asking
     # to re-fetch a value that must not exist. Pre-2024 caches still flag it
-    # (the ceiling existed and must be fetched). Keep the effective year in
-    # sync with tax_computations._SDI_NO_CEILING_FROM.
+    # (the ceiling existed and must be fetched). READ from the engine rather
+    # than repeated here: this used to be a literal `2024` under a comment
+    # saying "keep in sync with tax_computations._SDI_NO_CEILING_FROM", and
+    # W2's state split made that pointer resolve to nothing while the literal
+    # stayed — a quantity in two places with the pointer between them broken,
+    # which is how it gets to be two different quantities.
     _sdi_null_is_valid = (isinstance(data.get("tax_year"), int)
                           and not isinstance(data.get("tax_year"), bool)
-                          and data["tax_year"] >= 2024)
+                          and data["tax_year"] >= _SDI_NO_CEILING_FROM)
     # MAINTENANCE: Two categories are skipped during None/empty scanning:
     #   1. Keys prefixed with "_" (metadata/comments) — auto-skipped
     #   2. Non-prefixed descriptive fields — add to _SKIP_KEYS below

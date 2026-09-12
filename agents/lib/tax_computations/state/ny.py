@@ -16,6 +16,7 @@ import math
 
 from agents.lib.tax_computations._shared import _split_remainder_last
 
+
 def _ny_schedule_tax(taxable_income: float, table: list,
                      schedule: str) -> "tuple[float, list]":
     """New York's rate schedule the way New York publishes it: a cumulative
@@ -1577,6 +1578,19 @@ def compute_ny_itemized(
                     "the spouse is not itemizing.")
             use_itemized = False
         deduction = line_49 if use_itemized else standard
+    else:
+        # The same silence `compute_ca_itemized` carried, one degree worse:
+        # `deduction` is already SET to the itemized figure above, so a caller
+        # reading it gets a number that looks elected. When the NY standard
+        # deduction is the larger of the two that UNDER-states the deduction
+        # and over-states the tax, and nothing said so.
+        notes.append(
+            f"New York itemize-vs-standard election NOT computed — no NY "
+            f"standard deduction was supplied, so `deduction` is the ITEMIZED "
+            f"total of ${line_49:,.2f} rather than an elected one. It "
+            f"under-states the deduction for any taxpayer whose NY standard "
+            f"deduction is larger. Pass standard_deduction from "
+            f"state.standard_deduction to settle it")
     return {
         "line_46_adjustment": line_46,
         "line_47_after_adjustment": line_47,

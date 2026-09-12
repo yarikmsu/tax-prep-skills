@@ -140,11 +140,40 @@ conventions are load-bearing:
 
 ## Step 3 — Compute functions
 
-Follow `compute_ca_itemized` / the CA blocks in `tax_computations.py`:
+**The state's FORM math goes in `agents/lib/tax_computations/state/<postal>.py`**,
+one file named by the postal code. W2 made `tax_computations` a package for
+this; `ny.py` and `ca.py` are the two worked examples.
+
+That is form math and not "everything about the state". PLANNING-side state
+math stays beside its federal twin in the planning module that owns the
+question — `projection.compute_ca_safe_harbor` and
+`projection.compute_ca_estimated_vouchers` are the pattern, with
+`withholding.py`, `tax_calendar.py` and `ptet.py` carrying their own CA blocks
+for the same reason. `compute_ny_required_annual_payment` sits in `state/ny.py`
+instead and is the EXCEPTION, not a second convention to copy.
+
+Two rules that are structural rather than stylistic:
+
+- Shared primitives come from `_shared.py`, **never from the parent package** —
+  the parent re-exports every state module, so importing from it is a cycle. If
+  a primitive you need is still in the parent, MOVE it to `_shared.py` in your
+  change; `_shared.py`'s docstring says what may live there.
+- Add your public names to the parent `__init__.py`'s re-export block in the
+  same change. Callers address them as `tax_computations.<name>`, and some of
+  those callers are skill markdown that no sweep can rewrite.
+
+Follow `compute_ca_itemized` and the rest of `state/ca.py`:
 rates and thresholds as PARAMETERS (from the fetched block), round to 2dp,
-strict validators (reject bool/NaN/Infinity/negative where negative is
-impossible; VALUE-validate filing status via `_normalize_filing_status`),
-return dicts with a `notes` list. Bias rule: **never silently understate
+strict validators (`_shared._amount` rejects bool/NaN/Infinity, and negative
+unless you pass `allow_negative`), return dicts with a `notes` list.
+
+**Filing status: the two examples DISAGREE, and CA is the one to copy.** `ca.py`
+VALUE-validates through `_shared._normalize_filing_status`, which returns a
+canonical UPPERCASE code and hard-errors on anything outside the set. `ny.py`
+does not — it compares lowercase literals, so the very string
+`_normalize_filing_status` returns takes the wrong branch there rather than
+raising. Converting NY is its own change; until it happens, do not read `ny.py`
+as stating the convention. Bias rule: **never silently understate
 tax or overstate deductions** — degrade loudly (a note naming the gap) or
 hard-error; a missing fetched value is an error or a loud skip, never a
 guessed number.

@@ -2231,6 +2231,25 @@ class TestScheduleA:
         assert r["charitable_carryforward"] == 30000.00
         assert any("carries forward" in n for n in r["notes"])
 
+    def test_the_appreciated_property_cap_is_30_pct_and_BINDS(self):
+        """§170(b)(1)(C), pinned where it decides the answer.
+
+        The case above passes `charitable_noncash` too, but there the OVERALL
+        50% limit is what binds — the cash gift has already exhausted it — so
+        the 30% term is inert and could hold any value. W2 moved this constant
+        into `_shared.py`, where one definition now governs Schedule A and
+        Schedule CA together, so an unpinned figure moves two returns at once.
+        AGI 100,000 and 40,000 of appreciated property: 30% is 30,000 against
+        a 50,000 overall limit, so the 30% is the lesser and 10,000 carries.
+        """
+        r = compute_schedule_a(
+            agi=100000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000,
+            charitable_noncash=40000,
+            charitable_over_250_substantiated=True)
+        assert r["charitable_deductible"] == 30000.00
+        assert r["charitable_carryforward"] == 10000.00
+
     def test_mfs_spouse_itemizes_forces_itemizing(self):
         r = compute_schedule_a(
             agi=80000, filing_status="MFS", tax_year=2025,
@@ -2331,6 +2350,64 @@ class TestCaItemized:
             real_estate_taxes=12000)
         assert r["phaseout_reduction"] == 0.0
         assert any("OVERSTATED" in n for n in r["notes"])
+
+    def test_the_unfetched_phaseout_banner_does_not_fire_on_nothing(self):
+        """Cry-wolf, on the one note a real over-statement depends on.
+
+        It fired on EVERY unfetched call, including a return with no itemized
+        deductions at all — where the phase-out cannot bite at any published
+        threshold, because it is a share of deductions that are zero. A
+        STOP-shaped warning on correct data is what teaches an agent to read
+        past the one that is real.
+        """
+        nothing = compute_ca_itemized(
+            federal_agi=45000, ca_agi=45000, tax_year=2025)
+        assert nothing["itemized_total"] == 0.0
+        assert not any("OVERSTATED" in n for n in nothing["notes"]), (
+            "the phase-out banner fired on a return with nothing to overstate")
+
+    def test_the_unfetched_phaseout_banner_quantifies_itself(self):
+        """The threshold is the missing figure, so the note carries the two
+        numbers a reader needs to decide whether this one matters: the AGI it
+        would have been compared against, and the deductions at stake."""
+        r = compute_ca_itemized(
+            federal_agi=400000, ca_agi=400000, tax_year=2025,
+            real_estate_taxes=12000)
+        banner = [n for n in r["notes"] if "OVERSTATED" in n]
+        assert len(banner) == 1, r["notes"]
+        assert "$400,000.00" in banner[0] and "$12,000.00" in banner[0]
+
+    def test_an_uncomputed_election_says_so(self):
+        """The one degrade path here that emitted NOTHING.
+
+        `use_itemized` comes back None and `election_margin` is absent, and
+        both read as "no" to a caller that tests them for truth — so a taxpayer
+        whose CA standard deduction is the larger of the two takes
+        `itemized_total` instead, which UNDER-states the deduction and
+        over-states the tax. That direction is owed a banner; it had silence.
+        """
+        r = compute_ca_itemized(
+            federal_agi=70000, ca_agi=70000, tax_year=2025,
+            charitable_cash=1200, phaseout_threshold=244000)
+        assert r["use_itemized"] is None
+        assert "election_margin" not in r
+        assert any("election NOT computed" in n for n in r["notes"]), r["notes"]
+
+    def test_the_appreciated_property_cap_is_30_pct_and_BINDS(self):
+        """§170(b)(1)(C), pinned where it actually decides the answer.
+
+        The only case that passed `charitable_noncash` had the overall-50%
+        side binding, so this constant could be set to 0.60 or 0.10 with the
+        whole suite green — on a figure that now governs Schedule A AND
+        Schedule CA through one shared definition. AGI 100,000 with 40,000 of
+        appreciated property: the 30% cap is 30,000 and the 50% overall limit
+        is 50,000, so the 30% is the lesser and 10,000 carries forward.
+        """
+        r = compute_ca_itemized(
+            federal_agi=100000, ca_agi=100000, tax_year=2025,
+            charitable_noncash=40000, phaseout_threshold=244000)
+        assert r["charitable_deductible"] == 30000.00
+        assert r["charitable_carryforward"] == 10000.00
 
     def test_ca_cash_cap_is_50_pct(self):
         """CA never conformed to the TCJA 60% cash cap."""
@@ -5280,6 +5357,29 @@ def _item(line_45=40000.0, charitable=10000.0, nyagi=90000.0, status="single",
         line_45, charitable, nyagi, status,
         _NY_2025_ITEMIZED_REDUCTION if reduction is None else reduction,
         _NY_2025_CHARITABLE_LIMIT if limit is None else limit, **kw)
+
+
+def test_ny_itemized_says_when_it_has_not_made_the_election():
+    """The same silence `compute_ca_itemized` carried, one degree worse.
+
+    `deduction` is SET to the itemized total before the election runs, so a
+    caller reading it without a standard deduction gets a number that looks
+    elected. When the NY standard deduction is the larger of the two that
+    UNDER-states the deduction and over-states the tax — the degrade
+    direction, which is owed a banner and had none. The figure itself is
+    unchanged: refusing or returning None would break a shipped field for
+    every caller that is doing the election itself.
+    """
+    out = _item(line_45=3000.0, charitable=0.0, nyagi=60000.0)
+    assert out["use_itemized"] is None
+    assert out["deduction"] == out["line_49_total"]
+    assert any("election NOT computed" in n for n in out["notes"]), out["notes"]
+
+    settled = _item(line_45=3000.0, charitable=0.0, nyagi=60000.0,
+                    standard_deduction=8000.0)
+    assert settled["use_itemized"] is False
+    assert settled["deduction"] == 8000.0
+    assert not any("election NOT computed" in n for n in settled["notes"])
 
 
 def test_ny_itemized_is_unreduced_at_or_below_the_first_threshold():
