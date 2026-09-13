@@ -4634,6 +4634,75 @@ def test_the_taxpayer_facing_skills_quote_no_indexed_tax_figure(skill):
         "reading as current, and a taxpayer hears it as this year's.")
 
 
+class TestTheTwoSkillsTheFigureRegistryDoesNotCover:
+    """X6's re-verification found both of these, and the lint above found
+    neither — `tax-extend` and `tax-ptet` are not in `_FIGURE_REGISTRY`, and
+    its detector cannot see a figure that markdown wrapped onto the next line.
+    Widening it is its own slice (the reasoning and the measurements are in
+    `docs/ops/season-open-runbook.md`); until then these two claims are pinned
+    by hand, because both were WRONG in the direction a taxpayer acts on.
+    """
+
+    def test_tax_extend_states_no_dollar_floor_and_maps_the_rev_procs_right(self):
+        """A Revenue Procedure states the §6651(a) floor for the year AFTER its
+        own tax year. The note shifted both by one, which sends a TY2025 return
+        to the document for TY2026 — and quoted "~$510", the figure for returns
+        filed in 2025, one sentence before telling the reader not to reuse a
+        prior year's figure."""
+        body = skill_text("tax-extend")
+        flat = re.sub(r"\s+", " ", body)
+        assert "~$510" not in flat and "$510" not in flat, (
+            "/tax-extend quotes a §6651(a) floor again. It indexes every year; "
+            "the skill's own next sentence says to fetch it, and a figure in "
+            "prose has no cache behind it and no freshness check over it")
+        assert "2024-40 gives" in flat and "filed in **2026** ($525)" in flat, (
+            "the Rev. Proc. 2024-40 -> 2026 mapping is gone or changed. Each "
+            "Rev. Proc. names the year AFTER its own tax year, and the note "
+            "that shifted both by one is what this pins against")
+        assert "2025-32 gives" in flat and "filed in **2027** ($535)" in flat, (
+            "the Rev. Proc. 2025-32 -> 2027 mapping is gone or changed")
+
+    def test_tax_ptet_does_not_state_a_flat_salt_cap_for_a_year_RANGE(self):
+        """§164(b)(7) steps the cap every year — $40,000 TY2025, $40,400 TY2026,
+        then 101% a year through TY2029. A flat figure across the range is
+        wrong from TY2026 on, and UNDER-stating the cap makes the election look
+        better than it is: what PTET rescues is the state tax the cap blocks.
+        """
+        flat = re.sub(r"\s+", " ", skill_text("tax-ptet"))
+        assert "$40,000 ($20,000 MFS) for TY2025–2029" not in flat, (
+            "/tax-ptet states a FLAT SALT cap across TY2025-2029 again. It is "
+            "$40,400 in TY2026 and steps every year after; under-stating it "
+            "over-states the benefit of electing")
+        assert "federal.salt_cap" in flat, (
+            "/tax-ptet no longer names the cache key the cap is read from, so "
+            "the figure in the prose is all a reader has")
+        assert "$40,400 for TY2026" in flat, (
+            "the TY2026 figure is the one the flat range got wrong, and it is "
+            "the current filing year — name it")
+
+    def test_the_salt_cap_subsection_is_cited_as_164_b_7(self):
+        """OBBBA put the cap in §164(b)(7). (b)(6) is the superseded 2018-2025
+        limitation, and a reader who follows it finds the OLD $10,000 rule and
+        no step-up at all."""
+        # The three doc trees that INSTRUCT — contributing, ops and roadmap —
+        # and not `docs/changelog`, which is the record of what was done and
+        # whose entries are dated statements rather than guidance. That
+        # boundary is the hook's too: watching all of `docs` would put a
+        # portability run behind every changelog entry, which
+        # `test_an_unwatched_source_edit_stays_silent` exists to prevent.
+        trees = (REPO / "docs" / "contributing", REPO / "docs" / "ops",
+                 REPO / "docs" / "roadmap")
+        for tree in trees:
+            for path in sorted(tree.rglob("*.md")):
+                text = path.read_text(encoding="utf-8")
+                if "OBBBA SALT cap" not in text:
+                    continue
+                assert "164(b)(6)" not in text, (
+                    f"{path.relative_to(REPO)} cites §164(b)(6) for the OBBBA "
+                    "SALT cap — that subsection is the superseded 2018-2025 "
+                    "limitation; the cap is (b)(7)")
+
+
 def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
     """The counterweight. `_FIGURE_REGISTRY` makes the lint satisfiable by
     adding a line, so the figures in it are named and pinned: every one is

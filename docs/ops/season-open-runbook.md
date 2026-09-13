@@ -70,6 +70,57 @@ confirm each against the year's guidance and update the constant if it moved:
   $500 ODC (statutory-fixed — confirm no legislative change).
 - SALT cap reversion year (2030 under current law).
 
+**Record the result here, with the source, every time.** A run that leaves no
+trace is indistinguishable next year from a run that never happened, and the
+constants that turned out to be RIGHT are most of the value — they are what
+lets the next reader spend the time on the ones that moved.
+
+#### Verified 2026-09-13 (X6)
+
+Checked against primary authority, live. Every constant below is in the
+engine today and every one of them was found CORRECT:
+
+| Constant | Code | Authority | Result |
+|---|---|---|---|
+| §24(d)(1)(B)(i) refundability floor + rate | `ACTC_EARNED_INCOME_FLOOR` 2500, `ACTC_EARNED_INCOME_RATE` 0.15 | 26 USC §24(d)(1)(B)(i) | unchanged |
+| §24(h)(4)(A) credit for other dependents | `ODC_PER_DEPENDENT` 500 | 26 USC §24(h)(4)(A) | unchanged |
+| §6654(d)(1)(C)(i) prior-year AGI threshold | `PRIOR_YEAR_AGI_THRESHOLD` 150_000 / `_MFS` 75_000 | 26 USC §6654(d)(1)(C)(i) | unchanged |
+| §6654(e)(1) de-minimis balance | `DE_MINIMIS_BALANCE` 1000 | 26 USC §6654(e)(1) | unchanged |
+| §1211(b) capital-loss limit | `CAPITAL_LOSS_LIMIT` 3000 / `_MFS` 1500 | 26 USC §1211(b) | unchanged |
+| SALT cap reversion year | `_salt_cap` falls back at 2030 | 26 USC §164(b)(7) | unchanged |
+| SS wage base TY2026 | not hardcoded anywhere; fetched | SSA contribution and benefit base | $184,500, matches the TY2026 eval golden |
+
+Four things were WRONG, none of them a constant — every one was a figure or a
+citation in PROSE, where nothing computes against it:
+
+- `/tax-extend` mapped each Revenue Procedure to the wrong year. **A Rev. Proc.
+  states the §6651(a) floor for the year AFTER its own tax year**: 2024-40 gives
+  returns required to be filed in 2026 ($525), 2025-32 gives 2027 ($535). The
+  note shifted both by one, sending a TY2025 return to the wrong document.
+- `/tax-extend` quoted the floor as "~$510" — the figure for returns filed in
+  2025, two cycles stale, in a skill whose very next sentence says not to reuse
+  a prior year's figure. The figure is gone; the fetch instruction stays.
+- `/tax-ptet` stated the SALT cap as a flat "$40,000 ($20,000 MFS) for
+  TY2025–2029". §164(b)(7) steps it: $40,000 TY2025, **$40,400 TY2026**, then
+  101% a year through TY2029. Under-stating the cap makes the PTET election look
+  BETTER than it is — the over-statement direction, in the current filing year.
+- `2026-state-support-ny-fl-wa.md` cited §164(b)(6) for the OBBBA cap. (b)(6) is
+  the superseded 2018–2025 limitation; the cap lives in (b)(7).
+
+**The lint did not and could not catch any of them.** The per-skill figure
+registry (`test_the_taxpayer_facing_skills_quote_no_indexed_tax_figure`) covers
+four skills and neither `tax-extend` nor `tax-ptet` is one. Its detector has a
+second, wider blind spot, measured rather than assumed: `[^.\n]` between the
+limit word and the amount cannot cross a LINE BREAK, so any figure that markdown
+happened to wrap onto the next line is invisible — which is exactly why "~$510"
+survived. Adding floor words (`minimum`, `floor`) alone changes nothing, because
+distance was never the problem. Allowing the wrap reveals it, and also makes the
+detector read backticked CACHE FIELD NAMES (`min`/`max`) as limit words, which
+fires on a worked example in `/tax-setup` that is correct. Blanking backticked
+spans fixes that and silently LOSES two detections that hold today. Widening
+this detector is therefore its own slice, with its own cry-wolf validation in
+both directions — not a regex tweak.
+
 ---
 
 ## 2. Pin every source (K2)

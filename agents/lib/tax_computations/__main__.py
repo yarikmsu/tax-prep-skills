@@ -151,10 +151,15 @@ print(f"Marginal cost of $40K conversion: ${delta_tax:,.2f} "
       f"({delta_tax / 40000:.1%} marginal rate)")
 
 print("\n=== §6651 Late-Filing/Late-Payment Penalty Test ===")
-# $10K unpaid, 5 months late (both), filed >60 days late, 2025 floor $485.
+# $10K unpaid, 5 months late (both), filed >60 days late.
 # FTF 22.5% + FTP 2.5% = $2,250 + $250 = $2,500 (classic 25% combined).
+# The floor is ILLUSTRATIVE and cannot reach the printed figures: $535 is far
+# below the $2,250 FTF piece, so the §6651(a) minimum never binds here. That is
+# why the value sat at $485 — two cycles stale, and labelled with a year it did
+# not belong to — through every run of this self-test: no output could move.
+# $535 is Rev. Proc. 2025-32's figure for a return REQUIRED TO BE FILED in 2027.
 pen = compute_late_filing_penalty(10000, 5, 5, filed_over_60_days_late=True,
-                                  min_penalty_floor=485)
+                                  min_penalty_floor=535)
 print(f"FTF ${pen['ftf_penalty']:,.2f} + FTP ${pen['ftp_penalty']:,.2f} "
       f"= ${pen['total_penalty']:,.2f} (overlap −${pen['overlap_reduction']:,.2f})")
 

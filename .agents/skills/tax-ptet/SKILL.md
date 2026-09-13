@@ -109,9 +109,15 @@ Steps:
    the real `result.json` line 24.
 
 3. **Forgone-SALT offset.** Only state tax that would have fit under your remaining
-   SALT cap was federally deductible anyway. The cap is year/status-aware: **$40,000
-   ($20,000 MFS) for TY2025–2029** under OBBBA (indexed ~1%/yr, phasing down above
-   $500K MAGI toward a $10,000 floor — not modeled), reverting to $10,000 in 2030.
+   SALT cap was federally deductible anyway. The cap is year/status-aware and is
+   READ FROM THE CACHE (`federal.salt_cap`, `amount`/`mfs_amount`), because
+   §164(b)(7) as amended by OBBBA steps it up every year: **$40,000 for TY2025,
+   $40,400 for TY2026**, then 101% of the prior year's figure through TY2029,
+   reverting to $10,000 ($5,000 MFS) in TY2030. It also phases down above $500K
+   MAGI toward a $10,000 floor, which is not modeled. A flat "$40,000 for
+   TY2025–2029" stood here and was wrong from TY2026 on — and under-stating the
+   cap makes the PTET election look BETTER than it is, since it is the portion
+   of state tax the cap blocks that the election rescues.
    By default the estimate **assumes the cap is fully exhausted** — but with the
    larger OBBBA cap that's less likely, so pass `--other-salt <property + state
    income/wage tax>` to derive the unused headroom from the cap, or `--salt-room

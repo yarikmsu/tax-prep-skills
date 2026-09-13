@@ -229,7 +229,9 @@ how-to-pay instructions, and the two new calendar dates.
   prevents. When BOTH run in the same month they do NOT stack: §6651(c)(1)
   reduces the 5% failure-to-file by the 0.5% failure-to-pay (combined 5%,
   not 5.5%). A return more than 60 days late also faces the minimum FTF
-  penalty (lesser of an indexed ~$510 or 100% of the unpaid tax).
+  penalty — the lesser of an INDEXED dollar floor or 100% of the unpaid tax.
+  The floor is not stated here on purpose: it moves every year, and the next
+  bullet is where it is fetched from.
 - **Estimating the penalty when a return is already late:** use
   `compute_late_filing_penalty(unpaid_tax, ftf_months, ftp_months,
   filed_over_60_days_late=, min_penalty_floor=)` from
@@ -239,10 +241,15 @@ how-to-pay instructions, and the two new calendar dates.
   `ftp_months` (payment) separately. Pass the year's indexed `min_penalty_floor`
   — **fetch the §6651(a) minimum for the year the return was REQUIRED TO BE FILED**
   (the calendar year the due date falls in — generally the tax year + 1, NOT the
-  year the return is actually filed) from that year's IRS Revenue Procedure
-  (Rev. Proc. 2024-40 for returns required to be filed in 2025, Rev. Proc.
-  2025-32 for 2026); do NOT hardcode or reuse a prior year's figure (it indexes
-  annually — a stale value understates the mandatory minimum) — so the >60-day
+  year the return is actually filed) from the Revenue Procedure that NAMES that
+  year. **Each Rev. Proc. states the floor for the year AFTER its own tax year**,
+  so the mapping is not the one the numbering suggests: Rev. Proc. 2024-40 gives
+  returns required to be filed in **2026** ($525) and Rev. Proc. 2025-32 gives
+  returns required to be filed in **2027** ($535). Read the "Failure to File Tax
+  Return" paragraph and check the year it names before taking the figure — this
+  note previously shifted both by one, which sends a TY2025 return to the wrong
+  document. Do NOT hardcode or reuse a prior year's figure (it indexes annually
+  — a stale value understates the mandatory minimum) — so the >60-day
   minimum is applied; omitting it degrades with a loud note rather than silently
   understating. The helper encodes the §6651(c)(1) overlap and both 25% caps; it
   does NOT compute §6601 interest (use `compute_underpayment_interest` — step 5.5)

@@ -245,4 +245,4 @@ standalone value.
   deduction adjustments, Quinn v. Washington (2023).
 - FL: Fla. Const. Art. VII §5; F.S. 196.183 (TPP $25K), 222.17 (Declaration of Domicile),
   197.162 (discounts); Amendment 5 (2024) CPI-adjusted homestead ($50,722 for 2025);
-  IRS §164(b)(6) OBBBA SALT cap + indexed phase-down ($40,400 / $505K TY2026).
+  IRS §164(b)(7) OBBBA SALT cap + indexed phase-down ($40,400 / $505K TY2026).
