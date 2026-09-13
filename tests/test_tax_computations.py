@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tests.skill_text import skill_text  # noqa: E402
+from tests.engine_tree import engine_files, engine_relpath  # noqa: E402
 from agents.lib.tax_law_fetcher import create_empty_tax_law  # noqa: E402
 from agents.lib.tax_computations import (
     qdcg_worksheet_applies,
@@ -4700,25 +4701,19 @@ def test_the_capital_gains_limits_are_read_at_one_site():
     (`tax_law_fetcher`) and the AMT function's own parameter names are the
     only other places the key may be spelled."""
     import re
-    lib = Path(__file__).resolve().parent.parent / "agents" / "lib"
     reads = {}
     key = r"""["'](?:zero|fifteen)_pct_limit["']"""
-    # Keyed by RELATIVE PATH. `p.name` was enough while `agents/lib/` was flat;
-    # under packages it reports `projection/__init__.py` as `__init__.py`,
-    # which names nothing a reader can open and collides with every other
-    # package's initialiser.
-    #
-    # `.as_posix()`, not `str()`: `str(Path)` uses the OS separator, so on
-    # Windows this would build `projection\\__init__.py` and fail against a
-    # literal written with a forward slash — a red test on a correct tree, on
-    # the platform whose first CI run found two shipped defects.
-    for f in sorted(p for p in lib.rglob("*.py")
-                    if "__pycache__" not in p.parts):
+    # The walk and the key spelling are both `tests/engine_tree.py`'s: relative
+    # POSIX paths, because `p.name` reports `projection/__init__.py` as
+    # `__init__.py` — a name that opens nothing and collides with every other
+    # package's initialiser — and because `str(Path)` uses the OS separator and
+    # would fail on Windows against a literal written with a forward slash.
+    for f in engine_files():
         if f.name == "tax_law_fetcher.py":
             continue
         hits = re.findall(rf"""\.get\(\s*{key}|\[{key}\]""", f.read_text())
         if hits:
-            reads[f.relative_to(lib).as_posix()] = len(hits)
+            reads[engine_relpath(f)] = len(hits)
     assert reads == {"projection/__init__.py": 2}, (
         f"a capital-gains breakpoint is read outside the accessor: {reads}")
 
@@ -6284,18 +6279,20 @@ class TestOneReaderOfStateBrackets:
 
     def test_only_the_accessor_binds_a_raw_state_brackets_read(self):
         offenders = {}
-        for path in sorted(p for p in self.LIB.rglob("*.py")
-                          if "__pycache__" not in p.parts):
-            # By PATH, not by filename. The accessor moved into
-            # `tax_computations/__init__.py` when W2 made the engine's largest
-            # module a package, and a name-based skip then excluded nothing
-            # and flagged the accessor itself.
-            rel = path.relative_to(self.LIB)
-            if rel.parts[0] in ("tax_computations", "tax_law_fetcher.py"):
+        for path in engine_files():
+            # By PATH, not by filename — for the skip AND for the key. The
+            # accessor moved into `tax_computations/__init__.py` when W2 made
+            # the engine's largest module a package: a name-based skip then
+            # excluded nothing and flagged the accessor itself, and a key of
+            # `path.name` reports `projection/__init__.py` as `__init__.py`,
+            # which names nothing a reader can open and collides with the next
+            # package's initialiser.
+            rel = engine_relpath(path)
+            if rel.split("/")[0] in ("tax_computations", "tax_law_fetcher.py"):
                 continue
             lines = self._bindings(path)
             if lines:
-                offenders[path.name] = lines
+                offenders[rel] = lines
         assert not offenders, (
             f"{offenders} take the VALUE of state.brackets directly. It is a "
             "flat list for California and a dict keyed by rate schedule for "
@@ -6312,12 +6309,10 @@ class TestOneReaderOfStateBrackets:
         # The whole PACKAGE. `projection.py` is a directory since W2, and
         # reading only its `__init__.py` would be the quieter version of the
         # same defect: the read could move into `render.py` and this would go
-        # green having looked at the wrong file.
-        package = self.LIB / "projection"
+        # green having looked at the wrong file. `engine_files` takes the
+        # subtree for exactly this: one question about one package.
         reads = []
-        for f in sorted(package.rglob("*.py")):
-            if "__pycache__" in f.parts:
-                continue
+        for f in engine_files(self.LIB / "projection"):
             source = f.read_text()
             reads += [n for n in ast.walk(ast.parse(source))
                       if self._is_state_brackets_read(n, source)]

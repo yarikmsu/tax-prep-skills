@@ -14,6 +14,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from skill_text import skill_text  # noqa: E402
+from engine_tree import LIB as ENGINE_LIB, engine_files  # noqa: E402
 from ny_fixtures import ny_state_cache  # noqa: E402
 from agents.lib import projection as P  # noqa: E402
 from agents.lib import tax_computations as TC  # noqa: E402
@@ -2833,13 +2834,11 @@ def _engine_source(name: str) -> str:
     covering strictly less, and a forbidden string that moved into
     `projection/render.py` would come back absent. Concatenate the tree.
     """
-    leaf = REPO / "agents" / "lib" / f"{name}.py"
+    leaf = ENGINE_LIB / f"{name}.py"
     if leaf.is_file():
         return leaf.read_text()
-    package = REPO / "agents" / "lib" / name
-    return "\n".join(
-        p.read_text() for p in sorted(package.rglob("*.py"))
-        if "__pycache__" not in p.parts)
+    return "\n".join(p.read_text()
+                      for p in engine_files(ENGINE_LIB / name))
 
 
 def test_no_ca_confirmation_flag_survives_anywhere():

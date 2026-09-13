@@ -1,10 +1,10 @@
 """How `agents/lib/` is enumerated — once, for every sweep that does it.
 
-Fifteen sweeps across nine test modules walk the engine, and until W2 made it a
-directory of packages every one of them could get away with its own spelling:
-the tree was flat, so `glob` and `rglob` agreed, `p.stem` named a module and
-`p.name` named a file. None of that survived the split, and each sweep found
-out separately.
+Sweeps across the test suite walk the engine, and until W2 made it a directory
+of packages every one of them could get away with its own spelling: the tree
+was flat, so `glob` and `rglob` agreed, `p.stem` named a module and `p.name`
+named a file. None of that survived the split, and each sweep found out
+separately.
 
 The failures were not loud. `secure_fs`'s roster excluded `__init__` by STEM —
 one file while the tree was flat, one per PACKAGE after — and dropped the whole

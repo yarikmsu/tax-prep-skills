@@ -11,13 +11,13 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pathlib import Path  # noqa: E402
 from agents.lib.irs_dates import (  # noqa: E402
     dc_legal_holidays,
     next_business_day,
     next_business_day_state,
     state_conforms_to_federal_holidays,
 )
+from tests.engine_tree import engine_files, engine_relpath  # noqa: E402
 
 
 D = datetime.date
@@ -177,15 +177,14 @@ class TestNoModuleRestatesTheSupersededStateRule:
         assert next_business_day_state(D(2023, 4, 15), "NY") == D(2023, 4, 17)
 
     def test_no_engine_module_restates_it(self):
-        lib = Path(__file__).resolve().parent.parent / "agents" / "lib"
-        modules = sorted(p for p in lib.rglob("*.py")
-                         if "__pycache__" not in p.parts)
-        assert len(modules) > 10, "glob found no engine modules — vacuous"
+        modules = engine_files()
+        assert len(modules) > 10, "the engine walk found nothing — vacuous"
         for module in modules:
             flat = " ".join(module.read_text().split()).lower()
             for premise in self.PREMISE:
                 assert premise not in flat, (
-                    f"{module.name} restates the superseded state-rollover "
+                    f"{engine_relpath(module)} restates the superseded "
+                    f"state-rollover "
                     f"rule verbatim ({premise!r}). California adopts the "
                     "FEDERAL holiday set (R&TC §18410) and its deadlines roll "
                     "past DC Emancipation Day and MLK Day; paraphrase the "

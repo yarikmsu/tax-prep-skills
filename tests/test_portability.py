@@ -20,6 +20,13 @@ from pathlib import Path
 import pytest
 
 from tests.skill_text import CONTRIBUTOR_SKILLS, skill_text
+from tests.engine_tree import (
+    GUARD as ENGINE_GUARD,
+    engine_files,
+    engine_module_name,
+    engine_relpath,
+    engine_top_level_names,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / ".agents" / "skills"
@@ -4125,12 +4132,12 @@ class TestTheEngineNotesPointAtRealSkillSteps:
         headings = self._headings()
         assert headings, "the skill's step headings stopped matching '## Step N — ...'"
         found = []
-        for src in sorted(p for p in (REPO / "agents" / "lib").rglob("*.py")
-                          if "__pycache__" not in p.parts):
+        for src in engine_files():
+            rel = engine_relpath(src)
             for n in self.REF.findall(src.read_text()):
-                found.append((src.name, int(n)))
+                found.append((rel, int(n)))
                 assert int(n) in headings, (
-                    f"{src.name} sends the reader to /tax-safe-harbor step {n}, "
+                    f"{rel} sends the reader to /tax-safe-harbor step {n}, "
                     f"which is not a heading in the skill (it has "
                     f"{sorted(headings)}) — the note points at the wrong "
                     f"procedure and nothing else would say so")
@@ -5632,6 +5639,77 @@ class TestTheNewYorkExtensionAndConformityGaps:
         assert "0 on purpose" in doc
 
 
+class TestACaveatMatchesTheSchemaItDescribes:
+    """A caveat naming a simplification the engine no longer has is a LIE to
+    the taxpayer, and this repository's own rule is that a lying caveat is
+    worse than a missing one.
+
+    `/tax-scenario` and `/tax-roth-convert` both printed "MFS and HOH use the
+    single-status capital-gains brackets", one of them adding that "MFS gains
+    near the 15%/20% boundary may read low". X1 (#89) made those breakpoints
+    four-status a month earlier, and both renderers read them through
+    `_rate_kwargs` → `capital_gains_limits`, so MFS had its OWN $300,000
+    fifteen-percent breakpoint against single's $533,400 while the output told
+    the taxpayer otherwise. Nothing was pinning the claim, so nothing moved.
+
+    The direction was the safe one — it understates the tool rather than the
+    refund — which is exactly why it survived: no gate fires on a caveat that
+    is merely false. This binds the claim to `create_empty_tax_law`, which is
+    the schema both the caveat and the accessor are about.
+    """
+
+    SURFACES = ("scenario.py", "roth_ladder.py", "loss_harvest.py", "ptet.py",
+                "projection/render.py", "withholding.py")
+
+    def _texts(self):
+        lib = REPO / "agents" / "lib"
+        out = {name: (lib / name).read_text(encoding="utf-8")
+               for name in self.SURFACES}
+        for skill in ("tax-scenario", "tax-roth-convert", "tax-harvest"):
+            out[skill] = skill_text(skill)
+        return out
+
+    def test_nothing_tells_a_taxpayer_mfs_shares_the_single_cg_brackets(self):
+        """The claim, against the schema that decides whether it is true."""
+        from agents.lib.tax_law_fetcher import create_empty_tax_law
+        seeded = create_empty_tax_law(2026)["federal"]["capital_gains_rates"]
+        assert set(seeded["zero_pct_limit"]) == {"single", "mfj", "mfs", "hoh"}, (
+            "the capital-gains breakpoints are no longer four-status, so the "
+            "caveat this forbids may have become true again — read this class "
+            "rather than deleting the assertion")
+        offenders = sorted(
+            name for name, text in self._texts().items()
+            if re.search(r"single[- ]status capital[- ]gains", text, re.I))
+        assert not offenders, (
+            f"{offenders} tell a taxpayer that MFS and HOH fall back to the "
+            "single-status capital-gains brackets. They have had their own "
+            "since X1 (#89) — MFS's 15% breakpoint is not single's — so this "
+            "is a caveat that is simply false, and a false one is worse than "
+            "none: it invites a reader to discount a figure that is right.")
+
+    def test_the_half_of_that_caveat_that_IS_true_survived(self):
+        """Non-vacuity, and the other direction.
+
+        The sentence carried TWO facts — capital gains AND IRMAA — and only
+        one of them moved. Deleting the whole line would have withdrawn a
+        disclosure that is still owed: `federal.irmaa.tiers` really is keyed
+        `single`/`mfj` alone, so an MFS or HOH ladder really is reading the
+        single schedule. One symbol, two concepts: the fix was to split them,
+        not to drop the sentence.
+        """
+        from agents.lib.tax_law_fetcher import create_empty_tax_law
+        tiers = create_empty_tax_law(2026)["federal"]["irmaa"]["tiers"]
+        assert set(tiers) == {"single", "mfj"}, (
+            f"irmaa.tiers is keyed {sorted(tiers)} — if it grew MFS and HOH "
+            "the surviving half of the caveat is stale in its turn")
+        texts = self._texts()
+        assert re.search(r"single-status IRMAA", texts["roth_ladder.py"]), (
+            "the IRMAA disclosure went with the capital-gains one; it is the "
+            "half that is still true")
+        assert re.search(r"single-status IRMAA", texts["tax-roth-convert"]), (
+            "the skill dropped the IRMAA disclosure its engine still owes")
+
+
 class TestTheBacklogSaysWhatIsOpen:
     """The 09-05 backlog is the artifact every PR is cut from, and its Part 4
     list is what a reader works down.
@@ -5704,6 +5782,23 @@ class TestTheBacklogSaysWhatIsOpen:
             f"{orphans} are marked DONE in Part 4 but have no row in the "
             "shipped table, so nothing records which PR did the work")
 
+    def test_the_table_reads_in_epic_order(self):
+        """A row appended to the bottom instead of filed under its epic.
+
+        Not cosmetic: this table is what a reader scans to answer "did W2
+        ship", and an id parked between the Z rows is one they scroll past.
+        It happened on the W2 row within a minute of it being written, and
+        nothing said so — the two directions above both passed, because a row
+        in the wrong PLACE is still a row.
+        """
+        order = [(m.group(1)[0], int(m.group(1)[1:]))
+                 for m in self.ROW.finditer(
+                     self._text()[self._text().index("### Shipped"):
+                                  self._text().index("### Not started")])]
+        assert order, "the table parses as empty"
+        assert order == sorted(order, key=lambda k: ("VWXYZ".index(k[0]), k[1])), (
+            f"the shipped table is out of epic order: {order}")
+
     def test_every_row_names_at_least_one_pull_request(self):
         for item, prs in sorted(self._table().items()):
             assert re.search(r"#\d+", prs), f"{item}'s row names no PR: {prs!r}"
@@ -5727,6 +5822,73 @@ _ENGINE_TREE_CALLS = frozenset({
     "engine_files", "engine_packages", "engine_top_level_names",
     "engine_module_name", "engine_relpath",
 })
+
+
+# Functions that walk the engine BY HAND on purpose, keyed (module, function)
+# and not by bare name — a name alone would exempt a same-named function in
+# another module, which is the scope-by-key-name shape this repo has already
+# paid for once. Each of these is a CONTROL: it re-derives what
+# `tests/engine_tree.py` claims, so calling the helper would make it assert
+# that the helper agrees with itself.
+_HAND_WALK_CONTROLS = frozenset({
+    ("test_portability.py", "test_the_engine_really_does_hold_a_package"),
+})
+
+
+def handrolled_engine_walks(tree, module_name: str):
+    """(function name, line) for every function that walks the ENGINE itself.
+
+    `flat_engine_sweeps` below asks a narrower question — is this glob FLAT —
+    and answers "descends" for any `rglob`. That was the whole gap: four
+    hand-rolled `rglob` walks sat in the suite through the change that exists
+    to end them, each re-deriving the `__pycache__` exclusion and the
+    `.as_posix()` spelling, and the flatness lint could not see one of them.
+    Being correct today is not the property being asserted. The property is
+    that the walk is written ONCE, so the next spelling of it cannot be wrong.
+
+    A function offends when it NAMES the engine directory and calls `glob`,
+    `rglob` or `iterdir` without asking `tests/engine_tree.py`. Keyed on the
+    function rather than on the receiver because the receiver is routinely a
+    local: `package = self.LIB / "projection"` names the engine on one line and
+    is walked on the next, and a receiver-only rule reads `package.rglob` as
+    some unrelated directory.
+
+    A wider root is NOT this rule's business. `test_secure_fs` sweeps
+    `agents/`, deliberately one level above the engine, and narrowing that to
+    `engine_files()` would drop a module added beside `lib/` — so a rule that
+    fired on it would be asking for the defect. `_NAMES_THE_ENGINE` matches
+    `lib`, which `agents/` alone does not.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if (module_name, node.name) in _HAND_WALK_CONTROLS:
+            continue
+        walks = []
+        delegates = False
+        names_engine = False
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call):
+                if (isinstance(inner.func, ast.Name)
+                        and inner.func.id in _ENGINE_TREE_CALLS):
+                    delegates = True
+                    continue
+                if (isinstance(inner.func, ast.Attribute)
+                        and inner.func.attr in ("glob", "rglob", "iterdir")):
+                    walks.append(inner.lineno)
+            # The engine may be named anywhere in the function — bound to a
+            # local, passed as an argument, or written out at the call.
+            if isinstance(inner, (ast.Attribute, ast.BinOp, ast.Name,
+                                  ast.Constant)):
+                try:
+                    if _NAMES_THE_ENGINE.search(ast.unparse(inner)):
+                        names_engine = True
+                except Exception:   # pragma: no cover - unparse is total here
+                    pass
+        if walks and names_engine and not delegates:
+            found += [(node.name, line) for line in walks]
+    return found
 
 
 def flat_engine_sweeps(tree):
@@ -5798,7 +5960,7 @@ _NAMES_THE_ENGINE = re.compile(r'\bLIB\b|["\']lib["\']')
 class TestTheEngineIsEnumeratedInOnePlace:
     """`tests/engine_tree.py` answers "how do I walk `agents/lib/`" once.
 
-    Fifteen sweeps across nine modules ask it, and until W2 made the engine a
+    Every sweep across the suite asks it, and until W2 made the engine a
     directory of packages each could get away with its own spelling. Three of
     them were then wrong in three different ways within one week — a roster
     excluding `__init__` by STEM dropped the whole federal engine, the
@@ -5806,7 +5968,12 @@ class TestTheEngineIsEnumeratedInOnePlace:
     dict keyed by `p.name` reported `projection/__init__.py` as a filename
     that names nothing. None of the three went red.
 
-    The detector in the class below is the backstop; this is the fix.
+    No count is written down here. The number of sweeps is not the claim, it
+    changes with every round, and a figure in prose that nothing reads is how
+    this block has gone stale before; the claim is that NONE of them walks the
+    engine by hand, and `TestNoSweepWalksTheEngineByHand` is what says so.
+
+    The detectors in the classes below are the backstop; this is the fix.
     """
 
     def test_it_excludes_compiled_bytecode(self, tmp_path, monkeypatch):
@@ -5869,13 +6036,26 @@ class TestTheEngineIsEnumeratedInOnePlace:
 
     def test_the_helper_is_actually_CALLED(self):
         """Non-vacuity, and the shape the class below exists for: a helper
-        written and never used is the detector's own first draft again."""
-        callers = sorted(
-            p.name for p in (REPO / "tests").glob("test_*.py")
-            if "engine_tree" in p.read_text(encoding="utf-8"))
+        written and never used is the detector's own first draft again.
+
+        A CALL, found by AST — not the string `engine_tree` appearing in a
+        file. Under a substring rule this module counts as a caller for
+        NAMING the helper in its own prose, and an import left behind by a
+        reverted conversion counts too. Neither walks the engine through it,
+        which is the only thing that makes the helper load-bearing.
+        """
+        callers = {}
+        for path in sorted((REPO / "tests").glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            sites = sum(1 for node in ast.walk(tree)
+                        if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id in _ENGINE_TREE_CALLS)
+            if sites:
+                callers[path.name] = sites
         assert len(callers) >= 3, (
-            f"only {callers} import tests/engine_tree.py — the sweeps went "
-            "back to re-deriving the walk, and the helper is dead code")
+            f"only {sorted(callers)} CALL tests/engine_tree.py — the sweeps "
+            "went back to re-deriving the walk, and the helper is dead code")
 
 
 class TestNoSweepOverTheEngineIsFlat:
@@ -6015,6 +6195,98 @@ class TestNoSweepOverTheEngineIsFlat:
             "way narrows to the top level the day the engine is packaged")
 
 
+class TestNoSweepWalksTheEngineByHand:
+    """One spelling of the walk, not sixteen correct ones.
+
+    `TestNoSweepOverTheEngineIsFlat` above asks whether a sweep DESCENDS, and
+    answers yes for any `rglob`. That is the narrower question, and the gap it
+    left was not hypothetical: four hand-rolled `rglob` walks sat in the suite
+    through the change that converted the others, each re-deriving the
+    `__pycache__` exclusion and the `.as_posix()` spelling, and the flatness
+    lint reported every one of them as fine. Three reviewers found them; the
+    lint could not.
+
+    So this is the stronger rule the backlog entry actually asked for — making
+    a hand-rolled walk IMPOSSIBLE rather than merely unnecessary. It is the
+    shape `state_brackets_for_status` already earned: one accessor, plus a
+    structural sweep forbidding anyone else to take the raw value. Correct
+    today is not the property; written once is.
+    """
+
+    def _hand_walks(self):
+        offenders = []
+        for path in sorted((REPO / "tests").glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            offenders += [f"{path.name}:{line} in {func}"
+                          for func, line in handrolled_engine_walks(
+                              tree, path.name)]
+        return offenders
+
+    def test_no_test_module_walks_the_engine_itself(self):
+        assert not self._hand_walks(), (
+            f"{self._hand_walks()} name agents/lib/ and walk it with "
+            "`glob`/`rglob`/`iterdir` instead of asking `tests/engine_tree.py`. "
+            "Every such walk re-derives the `__pycache__` exclusion, the POSIX "
+            "path spelling and a package's module NAME, and the three of them "
+            "that were wrong were wrong in three different ways inside one "
+            "week. Call `engine_files()` — it takes a subtree for a question "
+            "about one package — or add the function to `_HAND_WALK_CONTROLS` "
+            "with the reason it must re-derive the answer.")
+
+    def test_the_detector_sees_a_hand_walk_and_spares_a_delegated_one(self):
+        """Cry-wolf validation in both directions, since a rule this broad is
+        the kind that gets watered down the first time it fires on correct
+        code."""
+        def walks(src):
+            return [f for f, _ in handrolled_engine_walks(
+                ast.parse(textwrap.dedent(src)), "probe.py")]
+
+        assert walks('def f():\n    return LIB.rglob("*.py")\n') == ["f"], (
+            "a bare `rglob` over the engine is the exact shape that survived "
+            "the conversion — if this passes, so did they")
+        assert walks('def f():\n    p = self.LIB / "projection"\n'
+                     '    return p.rglob("*.py")\n') == ["f"], (
+            "the engine named on one line and walked on the next is how two "
+            "of the four hid; a receiver-only rule reads `p` as some other "
+            "directory")
+        assert not walks('def f():\n    return engine_files()\n'), (
+            "delegating to the helper must not offend")
+        assert not walks('def f():\n    return engine_files(LIB / "x")\n'), (
+            "a SUBTREE question delegates too — `engine_files` takes a root, "
+            "and a rule that refused it would push callers back to `rglob`")
+        assert not walks(
+            'def f():\n    return Path(REPO, "agents").rglob("*.py")\n'), (
+            "`agents/` is deliberately WIDER than the engine — test_secure_fs "
+            "sweeps it so a module added beside `lib/` is still seen, and "
+            "narrowing that to `engine_files()` would be the defect, not the "
+            "fix")
+        # NOT a real directory name: the hook's own path-literal locator reads
+        # `REPO / "<name>"` out of this module's source and would report the
+        # probe as a genuine read, asking for an arm that covers a string in a
+        # test fixture.
+        assert not walks(
+            'def f():\n    return (REPO / "elsewhere").glob("*.md")\n'), (
+            "some other directory is nobody's business here")
+
+    def test_the_controls_are_named_and_still_exist(self):
+        """An exemption for a function that has been renamed or deleted is an
+        exemption for nothing, and reads as a considered decision."""
+        assert _HAND_WALK_CONTROLS, (
+            "no controls are exempt, so the pair-keying above and this test "
+            "are asserting nothing — read the class again rather than keeping "
+            "it")
+        for module, func in sorted(_HAND_WALK_CONTROLS):
+            path = REPO / "tests" / module
+            assert path.is_file(), f"{module} no longer exists"
+            names = {n.name for n in ast.walk(ast.parse(
+                path.read_text(encoding="utf-8")))
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            assert func in names, (
+                f"{module} holds no `{func}` — the exemption survives its "
+                "subject and would silently excuse a future function that "
+                "takes the name")
+
+
 class TestEveryModuleASkillInvokesIsRunnable:
     """AGENTS.md §5's rule, narrowed by owner ruling (2026-09-12) and made TRUE
     in the same change.
@@ -6131,11 +6403,9 @@ class TestEveryModuleASkillInvokesIsRunnable:
         # Packages too, by DIRECTORY name: `tax_computations/__init__.py` has
         # the stem `__init__`, which names nothing a skill could invoke, so a
         # flat glob leaves the engine's largest module out of the set that
-        # `invoked` is compared against.
-        on_disk = {p.stem for p in sorted(self.LIB.glob("*.py"))
-                   if p.stem != "__init__"}
-        on_disk |= {d.name for d in self.LIB.iterdir()
-                    if d.is_dir() and (d / "__init__.py").is_file()}
+        # `invoked` is compared against. That is what `engine_top_level_names`
+        # answers, and asking it is how this stays true of the NEXT package.
+        on_disk = engine_top_level_names()
         invoked = self._invoked()
         assert invoked < on_disk, (
             "every module on disk is skill-invoked, so the exemption has no "
@@ -6160,19 +6430,16 @@ class TestEveryModuleASkillInvokesIsRunnable:
 
     def test_the_seven_that_disproved_the_old_rule_still_do(self):
         """Named, so the claim above is checkable rather than historical."""
+        # By MODULE NAME, which is what §5's sentence is about — and a PACKAGE
+        # reads as its directory name, `tax_computations/__init__.py` being
+        # `tax_computations` and not the stem `__init__`, which names nothing.
+        # W2 made the engine's largest module one, and it is the case this test
+        # is about. `__main__.py` is excluded because it IS the entry point the
+        # sentence asks for, under a different spelling than `_main`.
         without_main = {
-            p.stem for p in sorted(self.LIB.rglob("*.py"))
-            if p.stem not in ("__init__", "__main__")
-            and "__pycache__" not in p.parts
+            engine_module_name(p) for p in engine_files()
+            if p != ENGINE_GUARD and p.name != "__main__.py"
             and "\ndef _main" not in p.read_text(encoding="utf-8")}
-        # A PACKAGE reads as its directory name: `tax_computations/__init__.py`
-        # has the stem `__init__`, which names nothing. W2 made the engine's
-        # largest module one, and it is the case this test is about.
-        for directory in sorted(self.LIB.iterdir()):
-            init = directory / "__init__.py"
-            if directory.is_dir() and init.is_file() \
-                    and "\ndef _main" not in init.read_text(encoding="utf-8"):
-                without_main.add(directory.name)
         assert "tax_computations" in without_main, (
             "the module §5 named first is the sharpest case: it has no "
             "`_main`, and the old sentence said every module did")

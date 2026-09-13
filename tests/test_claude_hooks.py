@@ -82,8 +82,9 @@ _STAMP_VERSION_MATCH = re.search(r"^STAMP_VERSION='(\d+)'",
 assert _STAMP_VERSION_MATCH, "the skill hook no longer declares STAMP_VERSION"
 SKILL_STAMP_VERSION = _STAMP_VERSION_MATCH.group(1)
 
-# The four modules the skill hook can run, named here so a test can say which
-# one a given edit is supposed to select. `test_the_hook_runs_test_files_that
+# The seven modules the skill hook can run, named here so a test can say which
+# one a given edit is supposed to select. It said "four" for several rounds
+# after the fifth, sixth and seventh were added directly beneath it. `test_the_hook_runs_test_files_that
 # _exist` pins that these paths resolve; this set pins what they MEAN.
 PORTABILITY = "tests/test_portability.py"
 CAPABILITIES = "tests/test_capabilities.py"
@@ -92,6 +93,21 @@ HOOKS = "tests/test_claude_hooks.py"
 PREFLIGHT = "tests/test_preflight.py"
 SECUREFS = "tests/test_secure_fs.py"
 HOSTGUARD = "tests/test_host_guard.py"
+
+# The same seven, paired with the shell variable each arm sets. Written out
+# once so a test can read an arm's BODY and say which modules it selects, which
+# is the only way to assert a claim about an arm that has no path literal to
+# match on.
+_RUN_FLAG = {
+    PORTABILITY: "RUN_PORTABILITY=1",
+    CAPABILITIES: "RUN_CAPABILITIES=1",
+    AGENTS: "RUN_AGENTS=1",
+    HOOKS: "RUN_HOOKS=1",
+    PREFLIGHT: "RUN_PREFLIGHT=1",
+    SECUREFS: "RUN_SECUREFS=1",
+    HOSTGUARD: "RUN_HOSTGUARD=1",
+}
+ALL_MODULES = tuple(_RUN_FLAG)
 
 # The stamp is deliberately backdated one second, so a file written in the same
 # coarse filesystem tick as the pass start still reads as newer than it. A test
@@ -171,6 +187,112 @@ def _run_skill_hook_bash(project_dir: Path, command="python helper.py",
         env=dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir)))
 
 
+def _shared_test_helpers() -> list:
+    """Every non-test module under `tests/` that another module can import.
+
+    DERIVED, because a hardcoded pair is the very thing the assertion below
+    exists to replace: a third helper added tomorrow would have no arm, fall
+    through to the generic `tests` arm, and be covered by nothing — while a
+    two-name list went on reading as complete.
+
+    `conftest.py` is out because it has its own arm that selects EVERY module
+    (it can end collection before one test runs, so nothing narrower is safe),
+    and `__init__.py` is out because it is the package marker and holds no
+    code anyone imports by name.
+    """
+    # `Path(__file__).parent`, not `REPO / "tests"`: the watched-set locator
+    # recovers `REPO / "<literal>"` chains out of this module's source and
+    # would read that spelling as this module depending on the whole `tests`
+    # directory — which would put the 115-second hooks module on every test
+    # edit in the repository. The helpers live beside this file; say so.
+    here = Path(__file__).resolve().parent
+    return sorted(f"tests/{p.name}" for p in here.glob("*.py")
+                  if not p.name.startswith("test_")
+                  and p.name not in ("__init__.py", "conftest.py"))
+
+
+def _case_arm_body(script: str, arm: str):
+    """The body of the `case` arm whose pattern list contains `arm`, or None.
+
+    Not a regex over `^\\s{8}<arm>\\)$`. That was the first version and it
+    cry-wolfed: the dominant arm shape in this script is `a|b)` — fifteen of
+    them — plus five spread over continuation lines, so merging two arms, or
+    adding one alternative to an existing one, made a CORRECT script read as
+    unparseable. The pattern LIST is what an arm is; membership in it is the
+    question.
+
+    Returns None rather than asserting, so a caller can tell "this helper has
+    no arm at all" (which is a finding about coverage) from "the arm is there
+    and selects too little" (which is a different finding).
+    """
+    lines = script.splitlines()
+    i = 0
+    while i < len(lines):
+        line, start = lines[i], i
+        while line.endswith("|\\") and i + 1 < len(lines):
+            i += 1
+            line = line[:-1] + lines[i].strip()
+        if (line.startswith(" " * 8) and not line.startswith(" " * 9)
+                and line.rstrip().endswith(")")):
+            patterns = [x.strip() for x in line.strip()[:-1].split("|")]
+            if arm in patterns:
+                body = []
+                for follow in lines[start + 1:]:
+                    if follow.strip() == ";;":
+                        return "\n".join(body)
+                    body.append(follow)
+                return None
+        i += 1
+    return None
+
+
+def _modules_selected_by(body: str) -> set:
+    """Which of the seven a `case` arm body turns on, from its RUN_ flags.
+
+    ANCHORED to a whole line of code, not a substring of the body. A substring
+    test reads the arm's COMMENTS too, and these arms are mostly comment — the
+    `tests/skill_text.py` one runs seven lines of prose to five of code. Both
+    `# RUN_SECUREFS=1  (temporarily disabled)` and `# deliberately NOT
+    RUN_SECUREFS=1 here` were verified to leave the check GREEN over a hook
+    that had stopped selecting the module: a sweep that sees nothing reporting
+    green, reintroduced inside the test written to end it.
+    """
+    return {m for m in ALL_MODULES
+            if re.search(rf"(?m)^\s*{re.escape(_RUN_FLAG[m])}\s*$", body)}
+
+
+def _imports(path, helper: str) -> bool:
+    """Does this module import `tests/<helper>.py`, in ANY spelling it may use?
+
+    Parsed rather than grepped: the name of a shared helper turns up in tables,
+    comments and assertion messages across this suite, and none of those is a
+    dependency.
+
+    Every spelling, because `tests/` is on `sys.path` for part of this suite
+    and the bare form is LIVE — `tests/test_projection.py` and
+    `tests/test_answers.py` both write `from skill_text import ...`. A rule
+    that only knew `from tests.skill_text import ...` would answer "does not
+    read it" for a module that does, which is a silent NARROWING of exactly
+    the kind being asserted against. Verified by rewriting a watched module to
+    each form in turn.
+    """
+    stem = helper[len("tests/"):-len(".py")]
+    dotted = f"tests.{stem}"
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            # `from .engine_tree import x` and `from . import engine_tree`
+            # both carry level >= 1 and a module of None or the stem.
+            if node.module in (dotted, stem):
+                return True
+            if node.module in (None, "tests") and any(
+                    a.name == stem for a in node.names):
+                return True
+        if isinstance(node, ast.Import) and any(
+                a.name in (dotted, stem) for a in node.names):
+            return True
+    return False
+
+
 def _selected_modules(result) -> list:
     """The module list the hook handed pytest, read back from an echoing shim.
 
@@ -219,6 +341,11 @@ HOOKS_DEPENDENTS = {
     # either of the two deselected tests silently puts the registry pair back
     # inside the gate for every skill edit.
     "TestHookRegistration::test_only_the_registry_pair_is_deselected_and_both_ids_resolve",
+    # The third direction: a watched module that grows an import of a shared
+    # test helper must be selected by that helper's arm. The invalidating edit
+    # lands in a test module, not in the helper, so this row is what gives the
+    # assertion a local signal at all.
+    "TestSkillInvariantsHook::test_every_watched_module_that_reads_a_shared_helper_is_in_its_arm",
 }
 
 # NOT in it, and the absence is a decision rather than an oversight — see the
@@ -661,6 +788,13 @@ class TestSkillInvariantsHook:
         ("tests/skill_text.py", PORTABILITY),
         ("tests/engine_tree.py", PORTABILITY),
         ("tests/engine_tree.py", HOSTGUARD),
+        # The W2 tail moved preflight's roster comparison and secure_fs's
+        # unredacted-path roster onto the helper too. Both ask it what the
+        # engine CONTAINS, so narrowing its walk narrows a roster — and a
+        # narrowed roster is the shape that passes green over the files it
+        # stopped seeing.
+        ("tests/engine_tree.py", PREFLIGHT),
+        ("tests/engine_tree.py", SECUREFS),
         ("scripts/pre-commit-pii-scan.sh", HOOKS),
         (".claude/settings.json", HOOKS),
         (".claude/hooks/harden-runtime-perms.sh", HOOKS),
@@ -742,6 +876,151 @@ class TestSkillInvariantsHook:
             "these watched paths do not reach the module that reads them: "
             f"{wrong}")
 
+    def test_every_watched_module_that_reads_a_shared_helper_is_in_its_arm(
+            self):
+        """The table above runs one direction: a watched PATH reaches a module.
+        This is the other, and it is the one that rots — a test module grows an
+        import, and the helper's arm is somewhere else entirely.
+
+        ALL THREE SIDES derived, none listed. The helpers come from the `tests/`
+        directory, the importers from the test files' own source, and the
+        selections from the script — so a module that starts reading
+        `tests/engine_tree.py` tomorrow, or a THIRD helper added beside it, is
+        covered without anybody remembering this test exists. A hardcoded pair
+        of helper names was the first draft, and a list that cannot see an
+        addition is the same silent-green this whole mechanism is about.
+
+        It matters more for these helpers than for most: the modules reading
+        `engine_tree` do not merely import it, they ask it what `agents/lib/`
+        CONTAINS, and a narrowed walk narrows a roster. A narrowed roster
+        passes green over the files it stopped seeing — the exact failure the
+        helper was written to end, reintroduced by the helper itself.
+
+        Scoped to the seven modules the hook can run. `test_workspace.py`,
+        `test_irs_dates.py`, `test_tax_computations.py` and `test_projection.py`
+        read a helper too and are not among them, so CI is their only signal;
+        that is a cost of the hook's scope, not a gap here.
+        """
+        script = SKILL_HOOK.read_text()
+        helpers = _shared_test_helpers()
+        assert helpers, "no shared helpers under tests/ — the derivation broke"
+
+        read_by_a_watched_module, missing_arm, selects_too_little = [], [], []
+        for helper in helpers:
+            importers = {m for m in ALL_MODULES if _imports(REPO / m, helper)}
+            if not importers:
+                # `ny_fixtures.py` today: real, shared, and read by nothing the
+                # hook runs. Nothing to assert, and demanding an arm for it
+                # would be demanding cost for no coverage.
+                continue
+            read_by_a_watched_module.append(helper)
+            arm = _case_arm_body(script, helper)
+            if arm is None:
+                missing_arm.append(f"{helper} (read by {sorted(importers)})")
+                continue
+            short = sorted(importers - _modules_selected_by(arm))
+            if short:
+                selects_too_little.append(f"{helper} -> {short}")
+
+        assert read_by_a_watched_module, (
+            "no shared helper is imported by any of the seven — either the "
+            "spellings changed or this assertion has stopped measuring "
+            "anything")
+        assert not missing_arm, (
+            f"{missing_arm} have no `case` arm at all, so an edit to one "
+            "falls through to the generic `tests` arm and reaches almost "
+            "nothing that reads it")
+        assert not selects_too_little, (
+            f"{selects_too_little} read a helper whose arm does not select "
+            "them. Editing the helper would leave them green locally, and the "
+            "ones asking it what the engine CONTAINS would have a roster "
+            "narrowed silently — the defect the helper exists to end.")
+
+    def test_the_helper_arm_reader_survives_a_multi_pattern_arm(self):
+        """Cry-wolf validation for `_case_arm_body`.
+
+        Its first version required the helper to be an arm's SOLE pattern, and
+        fifteen arms in this script are written `a|b)` with five more spread
+        over continuation lines. Merging the two helper arms — correct,
+        behaviour-preserving shell, and the obvious next refactor now that
+        their selections overlap — made the test report a clean script as
+        unparseable.
+        """
+        script = ("case $x in\n"
+                  "        tests/engine_tree.py|tests/other.py)\n"
+                  "            RUN_PORTABILITY=1\n"
+                  "            ;;\n"
+                  "esac\n")
+        assert _case_arm_body(script, "tests/engine_tree.py") is not None, (
+            "an arm listing the helper alongside another pattern must still "
+            "be found — it selects the helper just as much")
+        assert _case_arm_body(script, "tests/absent.py") is None, (
+            "a helper with no arm must read as ABSENT, not as an arm that "
+            "failed to parse: the two are different findings")
+
+    def test_a_commented_out_flag_does_not_count_as_selected(self):
+        """The other cry-wolf direction, and this one was a FALSE GREEN.
+
+        `RUN_X=1 in body` read the arm's comments, and these arms are mostly
+        comment. Both spellings below were verified to leave the check green
+        over a hook that had genuinely stopped selecting the module.
+        """
+        for disabled in ("            # RUN_SECUREFS=1  (temporarily off)",
+                         "            # deliberately NOT RUN_SECUREFS=1 here"):
+            body = f"            RUN_PORTABILITY=1\n{disabled}"
+            assert _modules_selected_by(body) == {PORTABILITY}, (
+                f"{disabled!r} counted as a selection — a flag inside a "
+                "comment is prose, and the hook does not run it")
+
+    def test_the_path_locator_does_not_read_a_comment_as_a_read(self):
+        """Cry-wolf validation for `_code_only`, which the locator now uses.
+
+        The locator is a regex over source text and cannot tell prose from
+        code. It read a comment warning AGAINST a spelling as a use of it, and
+        asked for a hook arm covering the whole suite directory — cost with no
+        coverage behind it, on a module that was right.
+        """
+        # A directory that does NOT exist, because the locator reading this
+        # module recovers string literals from its source and would report the
+        # probe itself as a genuine read — which is the same cry-wolf one
+        # level up.
+        commented = 'x = 1  # REPO / "elsewhere" is what NOT to write here\n'
+        assert '"elsewhere"' not in _code_only(commented), (
+            "a path named in a comment is prose; the module does not read it")
+        real = 'p = REPO / "elsewhere"\n'
+        assert '"elsewhere"' in _code_only(real), (
+            "stripping comments must not touch code — a real read that "
+            "vanished here would be a watched path silently unwatched")
+        assert '#' in _code_only('s = "a#b"\n'), (
+            "a `#` inside a string is not a comment, and cutting at the first "
+            "one would corrupt the line it sits on")
+
+    def test_the_import_reader_knows_every_spelling_in_this_suite(self):
+        """`tests/` is on `sys.path` for part of this suite, so the bare form
+        is live — `test_projection.py` writes `from engine_tree import ...`.
+        A reader that knew only the dotted form would answer "does not read
+        it" for a module that does, silently narrowing the set it checks."""
+        import tempfile
+        forms = ["from tests.engine_tree import engine_files",
+                 "from tests import engine_tree",
+                 "from engine_tree import engine_files",
+                 "import tests.engine_tree",
+                 "import tests.engine_tree as ET",
+                 "import engine_tree",
+                 "from .engine_tree import engine_files",
+                 "from . import engine_tree"]
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "probe.py"
+            for form in forms:
+                probe.write_text(form + "\n", encoding="utf-8")
+                assert _imports(probe, "tests/engine_tree.py"), form
+            probe.write_text('# tests/engine_tree.py is named here only\n'
+                             'X = ["tests/engine_tree.py"]\n', encoding="utf-8")
+            assert not _imports(probe, "tests/engine_tree.py"), (
+                "naming the helper in a table or a comment is not reading it "
+                "— this module does exactly that, and a substring rule called "
+                "it an importer")
+
     def test_a_per_file_arm_never_selects_less_than_the_generic_one(
             self, quiescent_workspace):
         """`case` is first-match-wins, so an engine module with its OWN arm gets
@@ -769,7 +1048,7 @@ class TestSkillInvariantsHook:
         exited 0. Reported by review against PR #82. A half-derived comparison
         is the same failure this test's first paragraph records, one level up.
         """
-        script = (HOOKS_DIR / "skill-invariants.sh").read_text()
+        script = SKILL_HOOK.read_text()
         arms = re.findall(r"^\s{8}((?:agents/lib/\w+\.py\|?)+)\)$",
                           script, re.MULTILINE)
         paths = sorted({p for arm in arms for p in arm.split("|")})
@@ -777,15 +1056,8 @@ class TestSkillInvariantsHook:
             f"no per-file engine arms found — the pattern stopped matching the "
             f"script, so this test now asserts nothing (found {paths})")
 
-        generic_arm = re.search(
-            r"^\s{8}agents/lib/\*\.py\)\n((?:.*\n)*?)^\s{12};;$",
-            script, re.MULTILINE)
-        assert generic_arm, "the `agents/lib/*.py` arm no longer parses"
-        by_flag = {"PORTABILITY": PORTABILITY, "CAPABILITIES": CAPABILITIES,
-                   "AGENTS": AGENTS, "HOOKS": HOOKS, "PREFLIGHT": PREFLIGHT,
-                   "SECUREFS": SECUREFS, "HOSTGUARD": HOSTGUARD}
-        generic = {by_flag[f] for f in
-                   re.findall(r"RUN_(\w+)=1", generic_arm.group(1))}
+        generic = _modules_selected_by(
+            _case_arm_body(script, "agents/lib/*.py"))
         assert generic >= {PREFLIGHT, SECUREFS, PORTABILITY, HOSTGUARD}, (
             f"the generic engine arm selects only {sorted(generic)} — the "
             "derivation lost a flag, or the arm did")
@@ -1164,11 +1436,11 @@ class TestSkillInvariantsHook:
         chain = re.compile(r'REPO((?:\s*/\s*"[^"]+")+)'
                            r'|Path\(\s*REPO_ROOT\s*,((?:\s*"[^"]+"\s*,?)+)\)')
         reads: dict[str, set[str]] = {}
-        for module in (PORTABILITY, CAPABILITIES, AGENTS, HOOKS, PREFLIGHT,
-                       SECUREFS, HOSTGUARD):
+        for module in ALL_MODULES:
             for rel in _path_constants((REPO / module).read_text()):
                 reads.setdefault(rel, set()).add(module)
-            for match in chain.finditer((REPO / module).read_text()):
+            for match in chain.finditer(
+                    _code_only((REPO / module).read_text())):
                 rel = "/".join(re.findall(r'"([^"]+)"',
                                           match.group(1) or match.group(2)))
                 # A literal naming a path that does NOT exist is an assertion
@@ -4387,6 +4659,42 @@ def _pair_delta(match):
     if moved is None:
         return None
     return -moved if match.group("dir") == "lost" else moved
+
+
+def _code_only(source: str) -> str:
+    """`source` with its COMMENTS removed, line numbering preserved.
+
+    The chain locator below is a regex over text, so it reads prose as though
+    it were code. It fired on a comment in this very module — one explaining
+    which spelling of the tests directory NOT to use, and therefore quoting it
+    — and demanded a hook arm that would put the 115-second hooks module
+    behind every edit anywhere under the suite. A gate firing on correct code
+    gets reasoned past, and this one had an exact fix sitting one function
+    away: the sibling rule for the hook's own `RUN_` flags had just been
+    anchored for the same reason.
+
+    Comments only. A docstring is a string token and stays, because a path
+    named in one may be a real constant; the rule is narrow on purpose.
+
+    By TOKEN, not by cutting at the first `#`: a `#` inside a string literal
+    is not a comment, and a textual cut would corrupt the line it sits on.
+    """
+    import io
+    import tokenize
+    out, last = [], (1, 0)
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, IndentationError):   # pragma: no cover
+        return source
+    for token in tokens:
+        if token.type == tokenize.COMMENT:
+            continue
+        (srow, scol), (erow, ecol) = token.start, token.end
+        out.append("\n" * (srow - last[0]))
+        out.append(" " * (scol - (last[1] if srow == last[0] else 0)))
+        out.append(token.string)
+        last = (erow, ecol)
+    return "".join(out)
 
 
 def _path_constants(source: str) -> list[str]:

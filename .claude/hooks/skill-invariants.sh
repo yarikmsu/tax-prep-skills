@@ -238,6 +238,13 @@ HOOKS_DEPENDENTS=(
     # inside the gate for every skill edit, with tests/test_claude_hooks.py the
     # only thing red and CI the only place it shows.
     "tests/test_claude_hooks.py::TestHookRegistration::test_only_the_registry_pair_is_deselected_and_both_ids_resolve"
+    # ...and the third direction, added with it: a watched module that GROWS an
+    # import of a shared test helper must be selected by that helper's arm. The
+    # edit that invalidates it is an edit to one of the five — the import lands
+    # in a test module, not in the helper — so without this row the assertion
+    # written to end a CI-only failure would itself have had CI as its only
+    # signal. It costs one file read and seven `ast.parse` calls.
+    "tests/test_claude_hooks.py::TestSkillInvariantsHook::test_every_watched_module_that_reads_a_shared_helper_is_in_its_arm"
 )
 
 # Takes a REPOSITORY-RELATIVE path and turns on the modules it can break. The
@@ -684,17 +691,33 @@ select_modules_for() {
             # test_preflight.py derives its whole skill roster through this.
             RUN_PREFLIGHT=1
             RUN_HOSTGUARD=1
+            # test_claude_agents.py reads every parsing skill through it, and
+            # has been missing from this arm since PR #101 gave it the import:
+            # dropping the `references/*.md` fold turns three of its
+            # parse-boundary assertions red, and this hook ran four modules,
+            # passed them and exited 0. Found by DERIVING the importers rather
+            # than listing them, which is what the W2 tail added — the list had
+            # simply never been revisited after the import landed.
+            RUN_AGENTS=1
             ;;
         # The OTHER shared test helper, and watched for the same reason
         # `skill_text.py` is: the modules below do not merely import it, they
         # ask it what `agents/lib/` CONTAINS. Narrowing its walk narrows the
-        # host-guard coverage assertion and the packaged-engine guard at once,
-        # and both would stay green — which is the failure the helper itself
-        # exists to end. `test_workspace.py` reads it too and is not one of the
-        # seven; CI is where that one shows.
+        # host-guard coverage assertion, the packaged-engine guard, preflight's
+        # roster comparison and the unredacted-path roster at once, and every
+        # one of them would stay green — which is the failure the helper itself
+        # exists to end. The W2 tail moved the last hand-rolled walks onto it,
+        # which is what added the second pair. Four more modules read it and
+        # are not among the seven — CI is where those show. They are not listed
+        # here: the membership is DERIVED by
+        # `test_every_watched_module_that_reads_a_shared_helper_is_in_its_arm`,
+        # and a list in a comment beside a derivation is the second copy that
+        # goes stale.
         tests/engine_tree.py)
             RUN_PORTABILITY=1
             RUN_HOSTGUARD=1
+            RUN_PREFLIGHT=1
+            RUN_SECUREFS=1
             ;;
         # .vscode/settings.json is watched as a FILE and .vscode is not a root:
         # everything else under that directory is gitignored editor state, and
@@ -1263,19 +1286,19 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.08 - 0.11s         6
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
-#   skill .md edit                1003 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1225 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4792 tests    228.4 - 243.4s        2
+#   skill .md edit                1009 tests     19.7 - 23.4s         3
+#   cold pass, all seven modules  1236 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   4803 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
-# passes two `--deselect` flags, so portability collects 218 and runs 216; and
-# the hooks module holds two platform skips, so it collects 130 and runs 128.
+# passes two `--deselect` flags, so portability collects 224 and runs 222; and
+# the hooks module holds two platform skips, so it collects 135 and runs 133.
 # THE SUITE holds seven skips, not two: those two plus the five Windows-only
 # DACL cases W6 added, which are skipped everywhere but on the windows job.
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4799 and runs 4792 for the same skips — and that row
+# `pytest tests/` collects 4810 and runs 4803 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1293,8 +1316,8 @@ apply_red_checks
 # deselections run_focused_modules passes. This is the durable half: WHICH
 # module dominates, and by how much, survives a change of machine.
 #
-#   tests/test_claude_hooks.py     128 tests    114.7 - 130.0s       4
-#   tests/test_portability.py      216 tests     11.1 - 13.1s        6
+#   tests/test_claude_hooks.py     133 tests    114.7 - 130.0s       4
+#   tests/test_portability.py      222 tests     11.1 - 13.1s        6
 #   tests/test_capabilities.py     175 tests      0.8 - 3.1s         6
 #   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
 #   tests/test_secure_fs.py        182 tests      1.4 - 2.1s         6
@@ -1395,7 +1418,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 175 + 182 + 216 + 382 = 1003 for a skill edit, plus 94 + 128 = 1225 for a
+# 48 + 175 + 182 + 222 + 382 = 1009 for a skill edit, plus 94 + 133 = 1236 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1454,7 +1477,7 @@ apply_red_checks
 # the branch settles.
 #
 # Against the counts the seconds were taken at, the suite has gained eight
-# hundred and nineteen tests (3973 to 4792), and the gap was ZERO when the sitting ended: it took the
+# hundred and thirty tests (3973 to 4803), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1648,33 +1671,38 @@ apply_red_checks
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained thirty-nine (177 to 216), preflight has gained seven (375 to 382), the
+# portability has gained forty-five (177 to 222), preflight has gained seven (375 to 382), the
 # agents module none (48 to 48), secure_fs has gained twenty-two (160 to 182), the hooks module
-# none (128 to 128), capabilities has gained fifty-nine (116 to 175) and the host guard has gained one (93 to 94). EVERY pair is measured from the SITTING and not from the round
+# has gained five (128 to 133), capabilities has gained fifty-nine (116 to 175) and the host guard has gained one (93 to 94). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
 # the seconds, so the six could not be reconciled against the total by anyone
 # who tried. A module that SHRINKS is written `has lost <words>`, which is a
 # shape the reader of this paragraph could not parse at all until it was asked
 # for — the guard blocked the honest refresh in the one direction no round had
-# yet taken. TWO pairs read none and five do not, and the host guard is the
-# newest of the five: W2 put the engine's largest modules into packages, and
-# its coverage assertion had been exempting every package initialiser by
-# NAME. Of the eight hundred
-# and nineteen tests the suite has gained since the sitting, TWENTY-TWO landed in
+# yet taken. ONE pair reads none and six do not, and the hooks module is the
+# newest of the six: the W2 tail moved the last hand-rolled engine walks onto
+# tests/engine_tree.py and pinned the helper's arms by DERIVING which watched
+# modules import it, which is the case that found test_claude_agents.py reading
+# tests/skill_text.py with no arm selecting it. Of the eight hundred
+# and thirty tests the suite has gained since the sitting, TWENTY-TWO landed in
 # tests/test_secure_fs.py — the Windows cases, one case each for
 # V2's, V1's, Y4's and V7's new engine modules, and W2's ten further engine
-# files, that module's roster being parametrised per file — THIRTY-NINE landed in
+# files, that module's roster being parametrised per file — FORTY-FIVE landed in
 # tests/test_portability.py, which is Y5, the Z1 skill-text checks, the
 # backlog-status pair, X5's figure lint, W2's packaged-engine guard and the
-# shared engine enumerator's own five, and is a row moving on its OWN account
+# shared engine enumerator's own five, the backlog table's ordering pin, the
+# caveat-matches-the-schema pair and the hand-walk guard's three, and
+# is a row moving on its OWN account
 # rather than by parametrisation, SEVEN landed in tests/test_preflight.py, which
 # is W2's package entry-point check in both directions and the two that pin the
 # unified dispatch rule, FIFTY-NINE landed in
 # tests/test_capabilities.py, which is Z7's residency registry and Z1's depth
 # note, and is the third
-# such row, and
-# the other six hundred and eighty-five in test_answers, test_ci_workflow,
+# such row, FIVE in tests/test_claude_hooks.py — the derived helper-arm
+# check and its three cry-wolf probes, plus W2's — and ONE in
+# tests/test_host_guard.py, and
+# the other six hundred and ninety-one in test_answers, test_ci_workflow,
 # test_pii_content_scan, test_evals, test_eval_run, test_parse_records,
 # test_return_builder, test_receipt, test_filing_package, test_pdf_render,
 # test_workspace, test_tie_out, test_yoy_diff, test_tax_calendar,
@@ -1686,7 +1714,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to one hundred and twenty-eight; the remaining six hundred and ninety-one are modules this
+# They sum to one hundred and thirty-nine; the remaining six hundred and ninety-one are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
@@ -2354,7 +2382,7 @@ apply_red_checks
 # host guard together are at most 31.2s even taking each at its slowest, so of a
 # cold pass that never measured below 148.9s, at least 79% is
 # tests/test_claude_hooks.py. A hook can only be tested by running it — that
-# module spawns bash processes across its 128 tests, more than one per case
+# module spawns bash processes across its 133 tests, more than one per case
 # (205 spawns over 105 cases when last counted with a `bash` shim on PATH;
 # the RATIO is what carries forward, not the absolute) and holds deliberate
 # sleeps — five tests at about 4.5s each. Selecting a subset is therefore the

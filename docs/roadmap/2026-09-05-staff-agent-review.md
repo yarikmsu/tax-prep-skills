@@ -1,11 +1,18 @@
 # Staff Agent-Developer Review + Backlog — 2026-09-05
 
-> **Status 2026-09-11 — ADOPTED; one task per PR, in the Part 4 order** (Y1 postponed
-> until the owner asks). Every item below is reviewed locally — code review, cleanup,
-> bias direction — and then by `codex review --base <its base branch>` where the budget
-> allowed; the findings and their fixes are in `docs/changelog/epic-V.md` and
-> `epic-X.md`. **Step 4 is blocked on the owner rulings in Part 5**, which is why step 9
-> was taken ahead of it.
+> **Status 2026-09-12 — ADOPTED, in the Part 4 order** (Y1 postponed until the owner
+> asks). Every item below is reviewed locally — code review, cleanup, bias direction —
+> and then by `codex review --base <its base branch>` where the budget allowed; the
+> findings and their fixes are in `docs/changelog/epic-V.md` and `epic-X.md`. **Step 4
+> is blocked on the owner rulings in Part 5**, which is why step 9 was taken ahead of
+> it.
+>
+> **One task per PR was the convention until 2026-09-12 and is no longer.** GitHub
+> Actions minutes reached 90%, and the owner's ruling is to BATCH: land each slice
+> locally behind the full local gate set — ruff, mypy, preflight, the engine self-test
+> and `pytest tests/` — and open ONE PR for the batch. W2's last four slices went that
+> way in #151. The local gates cost nothing and are what caught the defects; it is the
+> CI run that is scarce, so the thing to economise is PUSHES, never checks.
 
 ### Shipped
 
@@ -29,10 +36,11 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | V10 | #93, #102, #139, #140 | — |
 | V11 | #95 | — |
 | W1 | #90 | — |
+| W2 | #149, #150, #151 | THREE tax-contract questions need an owner ruling, listed in the Part 4 entry. The engine sweeps now go through `tests/engine_tree.py`; one generic hook arm for a package DIRECTORY is still open, also in that entry |
 | W4 | #90, #118 | the MEASURED COSTS *seconds* sitting is OWED — it needs an otherwise-idle machine, and three attempts were killed for host memory |
 | W5 | #90 | — |
 | W6 | #105 | — |
-| X1 | #89 | the auditor's own keying note joins the Y2 replay |
+| X1 | #89 | the auditor's keying note is not pending but WRONG — it still tells the auditor `federal.capital_gains_rates` is keyed `single`/`mfj` alone, and #89 made it four-status. The definition is digest-pinned to a PASSED acceptance, so correcting it needs the Y2 fresh-session replay; two user-facing caveats repeating the same stale claim were fixed in the audit that found this |
 | X2 | #86 | — |
 | X3 | #88 | — |
 | X4 | #110, #142 | — |
@@ -53,8 +61,15 @@ and the plant played no part. The case now plants `.tax-workspace.abandoned` —
 simulation of an interruption but the artifact the engine writes when one happens, read
 by `receipt.verify` and acted on by `/tax-compute` step 0.4.
 
-**Two deferrals are owed to the Y2 fresh-session replay**, and both are blocked for the
-same reason: `.claude/agents/tax-law-freshness-auditor.md` is digest-pinned to a PASSED
+**Two deferrals are owed to the Y2 fresh-session replay**, and one of them has since
+stopped being a deferral: X1's keying note is now FACTUALLY WRONG rather than merely
+incomplete — it tells the auditor that `federal.capital_gains_rates` is keyed
+`single`/`mfj` alone, which #89 changed a month ago. An auditor told the wrong shape
+audits the wrong thing. A 2026-09-12 sweep found the same stale claim in two places that
+DO ship to a taxpayer — `/tax-scenario` and `/tax-roth-convert` each printed "MFS and HOH
+use the single-status capital-gains brackets", and one added that MFS gains "may read
+low" — and both are corrected and pinned to the schema. The auditor's copy could not be,
+for the reason below. Both deferrals are blocked the same way: `.claude/agents/tax-law-freshness-auditor.md` is digest-pinned to a PASSED
 acceptance in `docs/ops/review-subagent-acceptance.md`, definitions load at session
 start, and so a same-session replay tests the old one. Editing it without a replay
 silently withdraws an acceptance this repository still advertises. Z1's own New York
@@ -64,11 +79,12 @@ keying gotchas went to `docs/contributing/tax-law-cache.md` for that reason.
 
 Nothing here has shipped in any part. An item that shipped in PART is in the table
 above with the remainder named in its third column, and is deliberately NOT repeated
-here — an id in both lists leaves a reader unable to say which is true. As of #141 there
-are none: every item in the table shipped in full. **Bold** in this section means
+here — an id in both lists leaves a reader unable to say which is true. W2 is the first
+row to use that third column for real: the monoliths ARE split, and the tail named
+beside it is open. **Bold** in this section means
 the item is in this list; the backticks above are references to the table.
 
-**W2**, **W3**, **W7**, **W8**, **W9**,
+**W3**, **W7**, **W8**, **W9**,
 **X6** (= T3), **X7** (= U1), **Y1** (postponed until the owner asks), **Y2** (gated on
 TY2026 figures publishing), **Y3** (an owner ruling is open), **Z4**, **Z5**, **Z6**,
 **Z8**.
@@ -305,7 +321,7 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   in CI. Baseline the existing findings and enforce on changed modules and new
   contracts first; clear the current pyflakes baseline (12 at `9f3bdb7`) in the same
   PR.
-- **W2 (P2, M): Split the monoliths.** `tax_computations.py` into a `federal/` package
+- **W2 — DONE (#149, #150, #151) (P2, M): Split the monoliths.** `tax_computations.py` into a `federal/` package
   by form and a `state/` package by state; `projection.py` likewise. ~~Pure moves, tests
   unchanged.~~ **"Tests unchanged" is exactly what would go wrong, and #145 made that
   loud**: ELEVEN flat `glob("*.py")` sweeps across nine test modules enumerate the engine,
@@ -354,9 +370,67 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
     gate as `__init__`. The flat-glob detector now counts a call to the helper as
     accounting for packages, so using it is the cheap path.
 
-    STILL OPEN: about a dozen path-keyed `rglob` sweeps are correct as written and
-    were left alone. Converting them is mechanical and would make a hand-rolled
-    walk impossible rather than merely unnecessary.
+    ~~STILL OPEN: about a dozen path-keyed `rglob` sweeps are correct as written and
+    were left alone.~~ **SHIPPED.** Nine sites across six modules now ask the helper.
+    It was not the mechanical no-op it was filed as — two of the sweeps were
+    keyed in a way that made them partly BLIND, and one gap was outside the
+    engine entirely:
+
+    - `test_workspace`'s receipt-writer sweep keyed a DICT by `p.stem`, so the
+      five package initialisers collapsed to one entry holding whichever the
+      walk yielded last. A `hold_workspace()` taken in any of the other four
+      was read by neither direction of the class. Reproduced: the call added to
+      `projection/__init__.py` is invisible to the old keying and named by the
+      new one.
+    - Three sweeps reported an offender as `p.name`, which prints
+      `__init__.py` for a packaged module — a name that opens nothing and
+      collides with the next package's initialiser.
+    - Pinning the helper's hook arm by DERIVING which watched modules import it
+      — rather than listing them — found that `test_claude_agents.py` has read
+      `tests/skill_text.py` since #101 with no arm selecting it. Dropping that
+      helper's `references/*.md` fold turns three of its parse-boundary
+      assertions red; the hook ran four modules, passed them and exited 0.
+      Fixed in the same change.
+
+    Two sites were deliberately LEFT hand-rolled: both independently re-derive
+    what `engine_tree.py` claims, and converting them would be a probe
+    validating a copy of the detector.
+
+    The conversion alone would not have held. Review found THREE hand-rolled
+    `rglob` walks still standing after it — one in a file the change had
+    already converted, four thousand lines from the site it touched — because
+    the flatness lint only asks whether a sweep DESCENDS and answers yes for
+    any `rglob`. So the rule is now the stronger one this entry asked for:
+    `TestNoSweepWalksTheEngineByHand` refuses any function that NAMES the
+    engine and walks it, keyed on the function rather than the receiver
+    (`package = self.LIB / "projection"` names it on one line and walks it on
+    the next), with the two controls exempt by (module, function) pair. A
+    wider root is not its business — `test_secure_fs` sweeps `agents/` on
+    purpose, and narrowing that to the engine would DROP a module added beside
+    `lib/`.
+
+    Three defects in the new hook-arm check itself, each reproduced by a
+    reviewer before it was believed, and each the same family as the bug the
+    check exists to catch:
+
+    - **False green.** Membership was a substring test over the arm's body,
+      and these arms are mostly comment. Both `# RUN_SECUREFS=1 (temporarily
+      off)` and `# deliberately NOT RUN_SECUREFS=1 here` left the check green
+      over a hook that had genuinely stopped selecting the module. Anchored to
+      a whole line of code now.
+    - **False negative.** The import reader knew only `from tests.x import y`,
+      while `tests/` is on `sys.path` for part of the suite and the bare form
+      is live in two modules. A watched module rewritten to it would have read
+      as not depending on the helper at all.
+    - **Cry-wolf.** The arm reader required the helper to be an arm's SOLE
+      pattern; fifteen arms are written `a|b)`. Merging the two helper arms —
+      correct shell, and the obvious next refactor — made a clean script read
+      as unparseable.
+
+    One more found on the way: the watched-set locator is a regex over source
+    TEXT, so it read a comment warning against a spelling as a use of it and
+    demanded an arm putting the 115-second hooks module behind every edit under
+    `tests/`. Comments are stripped by token now.
   - ~~**One dispatch checker in `preflight`, not two.**~~ **SHIPPED.** `_MAIN_DISPATCH`
     is gone and both shapes are asked one question — does running this file CALL
     anything: at the top level for a package, anywhere inside the guard for a module.

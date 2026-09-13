@@ -433,7 +433,8 @@ in full, so a new file in either goes in this table.
 | Feature specs and implementation plans | `docs/superpowers/` |
 
 **Roadmap status** (`docs/roadmap/` holds several backlogs — which is
-which): the active one is `2026-08-12-product-owner-review.md` (Epics R-U);
-Epics I-Q are shipped bar O3, carried there as U1. State-support context is
+which): in progress is `2026-09-05-staff-agent-review.md` (Epics V-Z);
+`2026-08-12-product-owner-review.md` (R-U) waits on publishing; I-Q shipped
+bar O3, carried there as U1. State-support context is
 `2026-07-12-three-perspective-review.md` and `2026-state-support-ny-fl-wa.md`,
 portability `2026-multi-agent-portability.md`.

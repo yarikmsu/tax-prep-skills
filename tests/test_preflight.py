@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import preflight as P  # noqa: E402
 from tests.skill_text import (  # noqa: E402
     CONTRIBUTOR_SKILLS, ENGINE_FREE_SKILLS, skill_text)
+from tests.engine_tree import engine_top_level_names  # noqa: E402
 
 # W4: this module EXECUTES `run.sh` and the package initialiser in subprocesses
 # rather than asserting against their text — the trade that bought a test able
@@ -2903,17 +2904,16 @@ print("self-test OK", file=sys.stdout)
         `_cli_dispatch_error` would look for a `lib.py` beside preflight that a
         package does not have. The class below is what keeps that half honest.
         """
-        # Modules AND packages. W2 made `tax_computations` a directory, and a
-        # flat `glob("*.py")` stopped seeing it — the roster would have read as
-        # naming a module that is not there while the engine's largest one went
-        # unlisted, which is the silent narrowing `TestTheEnginePackagesAreDeclared`
-        # exists to make loud.
-        lib = REPO / "agents" / "lib"
-        on_disk = {p.stem for p in lib.glob("*.py")}
-        on_disk |= {d.name for d in lib.iterdir()
-                    if d.is_dir() and (d / "__init__.py").is_file()}
+        # Modules AND packages, which is `engine_top_level_names()`. W2 made
+        # `tax_computations` a directory, and a flat `glob("*.py")` stopped
+        # seeing it — the roster would have read as naming a module that is not
+        # there while the engine's largest one went unlisted, which is the
+        # silent narrowing `TestTheEnginePackagesAreDeclared` exists to make
+        # loud. `agents/lib/__init__.py` is not in that set at all: it is the
+        # package, excluded above and checked by `_guard_error` instead.
+        on_disk = engine_top_level_names()
         listed = {e[0].rsplit(".", 1)[-1] for e in P.ENGINE_MODULES}
-        assert listed == on_disk - {"__init__", "preflight"}
+        assert listed == on_disk - {"preflight"}
 
     def test_the_package_itself_is_checked_somewhere(self):
         """The roster's exclusion above is only safe while this holds.

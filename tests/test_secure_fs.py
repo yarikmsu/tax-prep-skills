@@ -22,6 +22,7 @@ from agents.lib.secure_fs import (
     HalfApplied, atomic_paths, is_reparse_point, redact, secure_fd,
     secure_path, year_or_shape, _MIN_PRINTABLE_YEAR, _MAX_PRINTABLE_YEAR,
 )
+from tests.engine_tree import GUARD as ENGINE_GUARD, engine_files, engine_relpath
 
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -1456,23 +1457,21 @@ class TestNoRuntimePathReachesAMessageUnredacted:
     # touch. Scoping it to those would have left `projection.py` naming a raw
     # workspace path and `tax_law_fetcher.py` naming the cache — the same
     # defect, one import away, with a gate sitting next to it reporting green.
-    # RELATIVE PATHS, not stems. W2 made `tax_computations` a package, and a
-    # stem no longer names a file: `ny` is `tax_computations/state/ny.py` and
-    # two packages could both hold a `state`. The id pytest prints is the path,
-    # which is also the thing a reader needs in order to open the offender.
-    # Excluded by PATH and not by stem. `p.stem != "__init__"` named ONE file
-    # while this directory was flat; under a package it names one per package,
-    # and the first of those was `tax_computations/__init__.py` — 5,600 lines,
-    # the entire federal engine, and the module likeliest of all of them to
-    # name a workspace path. It left this gate silently, with the roster count
-    # going UP.
-    # The exclusion is spelled inline because a genexpr in a CLASS body cannot
-    # see a name bound beside it.
+    # RELATIVE PATHS, not stems, and the walk is `tests/engine_tree.py`'s
+    # rather than this class's. A stem no longer names a file: `ny` is
+    # `tax_computations/state/ny.py` and two packages could both hold a
+    # `state`. The id pytest prints is the path, which is also the thing a
+    # reader needs in order to open the offender.
+    # The engine package itself is excluded by PATH and not by stem.
+    # `p.stem != "__init__"` named ONE file while this directory was flat;
+    # under a package it names one per package, and the first of those was
+    # `tax_computations/__init__.py` — 5,600 lines, the entire federal engine,
+    # and the module likeliest of all of them to name a workspace path. It left
+    # this gate silently, with the roster count going UP.
+    # Global names only: a genexpr in a CLASS body cannot see a name bound
+    # beside it, which is the other reason the walk belongs in a module.
     MODULES = tuple(sorted(
-        p.relative_to(Path(REPO_ROOT, "agents", "lib")).as_posix()
-        for p in Path(REPO_ROOT, "agents", "lib").rglob("*.py")
-        if p.relative_to(Path(REPO_ROOT, "agents", "lib")).as_posix() != "__init__.py"
-        and "__pycache__" not in p.parts))
+        engine_relpath(p) for p in engine_files() if p != ENGINE_GUARD))
     # Matched against the identifier's `_`-separated TOKENS, not against the
     # whole name and not as a raw substring. The first version of this gate
     # held whole names and passed green over `workspace_dir`, `doc_id` and
@@ -1691,6 +1690,12 @@ class TestTheNoNetworkClaimIsTrue:
     SHELL_FETCHERS = ("curl ", "wget ", "nc ", "ssh ")
 
     def _python_sources(self):
+        # `agents/`, deliberately WIDER than `agents/lib/`, and so deliberately
+        # not `engine_files()`: the question is whether anything shipped under
+        # `agents/` reaches the network, and a module added beside `lib/`
+        # tomorrow is exactly the case that must not slip through. The two
+        # spellings enumerate the same files today, which is what would make
+        # narrowing this to the engine look free.
         return sorted(Path(REPO_ROOT, "agents").rglob("*.py"))
 
     def test_no_library_module_imports_a_network_client(self):

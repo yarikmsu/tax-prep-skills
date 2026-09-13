@@ -492,8 +492,8 @@ def render_markdown(r: LadderReport) -> str:
               "is per beneficiary; double it if both spouses are on Medicare.",
               "- Marginal-rate column already reflects LTCG bracket bumping (the QDCG "
               "worksheet stacks the conversion under preferential income).",
-              "- MFS/HOH use single-status capital-gains and IRMAA schedules (toolkit-wide "
-              "`tax_law` simplification).",
+              "- MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` "
+              "is keyed `single`/`mfj` only).",
               "- This is a planning estimate, not a filed return.", ""]
     return "\n".join(lines) + "\n"
 

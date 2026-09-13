@@ -24,6 +24,7 @@ from tests.engine_tree import (  # noqa: E402
     GUARD as ENGINE_GUARD,
     engine_files,
     engine_module_name,
+    engine_relpath,
 )
 
 
@@ -134,13 +135,12 @@ class TestEveryCliResolvesThroughIt:
     def _sources(self):
         """Keyed by RELATIVE PATH, because this is a dict and the engine now
         holds packages: two `ny.py` under different states would collapse to
-        one entry and the sweep would read whichever `rglob` yielded last. The
+        one entry and the sweep would read whichever the walk yielded last. The
         path is also what a reader needs in order to open the offender, and
         every `allowed` entry below is a top-level module, so it spells the
         same either way."""
-        return {p.relative_to(LIB).as_posix(): p.read_text(encoding="utf-8")
-                for p in LIB.rglob("*.py")
-                if "__pycache__" not in p.parts}
+        return {engine_relpath(p): p.read_text(encoding="utf-8")
+                for p in engine_files()}
 
     def test_no_module_reads_the_flag_without_the_resolver(self):
         offenders = [name for name, src in self._sources().items()
@@ -492,9 +492,17 @@ class TestEveryWriterOfSharedStateTakesTheLock:
     acquires one can land quietly."""
 
     def _sources(self):
-        return {p.stem: p.read_text(encoding="utf-8")
-                for p in sorted(LIB.rglob("*.py"))
-                if "__pycache__" not in p.parts}
+        """Keyed by MODULE NAME, which is the vocabulary `LOCKED_CLIS` holds.
+
+        `p.stem` named a module while `agents/lib/` was flat. Under packages it
+        reports every initialiser as `__init__`, and this is a DICT: the five
+        collapse to one entry holding whichever the walk yielded last, so a
+        `hold_workspace()` taken in any of the other four is read by neither
+        direction of this class. Reproduced rather than reasoned about —
+        `hold_workspace(` added to `projection/__init__.py` was invisible to the
+        stem keying and is named by this one."""
+        return {engine_module_name(p): p.read_text(encoding="utf-8")
+                for p in engine_files() if p != ENGINE_GUARD}
 
     def test_every_declared_cli_actually_takes_it(self):
         sources = self._sources()

@@ -110,7 +110,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   aggregates all traditional/SEP/SIMPLE IRAs (per IRS rules) and is per-individual.
 - MAGI approximated as AGI (no tax-exempt-interest / foreign-EI add-backs).
 - Second-order Social Security taxability is not re-computed.
-- MFS/HOH use single-status capital-gains and IRMAA schedules (toolkit-wide simplification).
+- MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` is keyed `single`/`mfj` only).
 - A planning estimate, not a filed return.
 
 ## Security & safety

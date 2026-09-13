@@ -468,8 +468,6 @@ def render_markdown(r: ScenarioReport) -> str:
               "minimum QBI deduction (TY2026+ small active trade) is not applied (all held "
               "from the baseline result.json); marginal pricing near a threshold may read "
               "slightly off. The filed /tax-compute return handles them exactly.",
-              "- MFS and HOH use the single-status capital-gains brackets (a toolkit-wide "
-              "tax_law simplification); MFS gains near the 15%/20% boundary may read low.",
               "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6).",
               "- This is a planning estimate, not a filed return.", ""]
     return "\n".join(lines) + "\n"
