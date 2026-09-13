@@ -488,6 +488,192 @@ def quiescent_workspace(tmp_path_factory):
     return workspace
 
 
+@pytest.fixture(scope="module")
+def packaged_workspace(tmp_path_factory):
+    """A quiescent workspace that actually HOLDS packages.
+
+    `quiescent_workspace` is deliberately almost empty, and a package-directory
+    payload is the one case whose answer depends on the TREE: the hook rewrites
+    `agents/lib/<pkg>` to its `__init__.py` only when the directory is really
+    there. Asserting that against an empty workspace would measure the absence
+    of the directory and report it as the rule working.
+
+    The packages are created BEFORE the stamp settles, for the reason the other
+    fixture's docstring gives: writing into a watched root afterwards makes the
+    tree non-quiescent, the scan unions in its own modules, and every selection
+    assertion then passes for the wrong reason.
+    """
+    workspace = tmp_path_factory.mktemp("packaged")
+    (workspace / ".claude").mkdir()
+    (workspace / "AGENTS.md").write_text("# a watched root\n")
+    lib = workspace / "agents" / "lib"
+    for package in ("projection", "tax_computations", "tax_computations/state",
+                    "a_package_no_arm_names"):
+        (lib / package).mkdir(parents=True)
+        (lib / package / "__init__.py").write_text("x = 1\n")
+    # A package that has LOST its initialiser, and the bytecode directories
+    # every engine run rewrites.
+    (lib / "lost_its_initialiser").mkdir()
+    (lib / "__pycache__").mkdir()
+    (lib / "projection" / "__pycache__").mkdir()
+    (lib / "tie_out.py").write_text("x = 1\n")
+    (lib / "__init__.py").write_text("x = 1\n")
+    # A package REPLACED BY A FILE, and a module replaced by a DIRECTORY. Both
+    # are what a broken engine looks like mid-edit, and both were found by
+    # review rather than imagined: the first selected nothing at all once the
+    # hand-written arms came out, and the second normalised into the generic
+    # arm and dropped the two modules only its own arm names.
+    (lib / "capabilities.py").mkdir()
+    (lib / "was_a_package").write_text("x = 1\n")
+
+    _fake_venv(workspace, exit_code=0, lines=["288 passed"])
+    time.sleep(STAMP_OVERLAP_SECONDS)
+    bootstrap = _run_skill_hook_bash(workspace)
+    assert bootstrap.returncode == 0, bootstrap.stderr
+
+    _fake_venv(workspace, exit_code=1, lines=["$*"])
+    settled = _run_skill_hook_bash(workspace)
+    assert settled.returncode == 0 and _selected_modules(settled) == [], (
+        "the workspace is not quiescent, so nothing below measures selection")
+    return workspace
+
+
+@needs_jq
+class TestAPackageDirectoryReadsAsItsInitialiser:
+    """`find` prints the DIRECTORY when a file is added to or deleted from a
+    package, and that string matched no arm.
+
+    The generic engine arm reaches a module at any depth — a `case` glob's `*` spans
+    `/` — but never the directory itself, so every package carried a
+    hand-written arm repeating the generic selections, W2 adding one per slice.
+    The arm that gets forgotten selects NOTHING and looks exactly like a clean
+    path, which is this hook's whole failure mode.
+
+    The payload is normalised to `<dir>/__init__.py` instead, so a package
+    reaches the arms that already exist and no package needs an entry anywhere
+    again.
+    """
+
+    def _selects_for(self, workspace, relative):
+        _clear_red_carry_forward(workspace)
+        return set(_selected_modules(
+            _run_skill_hook(workspace, str(workspace / relative))))
+
+    def test_a_package_selects_exactly_what_its_initialiser_does(
+            self, packaged_workspace):
+        """DERIVED, not a listed set: the claim is that the two spellings are
+        the same edit, and a hardcoded expectation would pass just as happily
+        over two arms that had drifted apart."""
+        for package in ("projection", "tax_computations",
+                        "tax_computations/state"):
+            directory = self._selects_for(
+                packaged_workspace, f"agents/lib/{package}")
+            initialiser = self._selects_for(
+                packaged_workspace, f"agents/lib/{package}/__init__.py")
+            assert directory == initialiser and directory, (
+                f"agents/lib/{package} selects {sorted(directory)} and its "
+                f"initialiser {sorted(initialiser)} — a file added to or "
+                "deleted from the package reaches a different set of checks "
+                "than editing it does, and the add is the case with no other "
+                "signal")
+
+    def test_the_agents_module_still_rides_the_tax_computations_arm(
+            self, packaged_workspace):
+        """The normalisation must not flatten a package that needs MORE than
+        the generic arm. `test_claude_agents` asserts what the shipped
+        `compute_qbi_deduction` returns, and nothing else selects it."""
+        for package in ("tax_computations", "tax_computations/state"):
+            assert _selects(AGENTS, self._selects_for(
+                packaged_workspace, f"agents/lib/{package}")), package
+
+    def test_a_NEW_package_needs_no_arm(self, packaged_workspace):
+        """The point of the change. This directory is named in no arm, in no
+        test but this one, and in nothing the hook reads."""
+        selected = self._selects_for(
+            packaged_workspace, "agents/lib/a_package_no_arm_names")
+        for module in (PREFLIGHT, HOSTGUARD, SECUREFS, PORTABILITY):
+            assert _selects(module, selected), (
+                f"a package no arm names misses {module} — the hand list was "
+                "retired on the promise that this holds without one")
+
+    def test_a_package_that_lost_its_initialiser_still_selects(
+            self, packaged_workspace):
+        """The rewrite is NOT conditional on the initialiser existing, and this
+        is why. A package whose `__init__.py` has just been deleted is exactly
+        the edit preflight and the host guard exist to report; a rule that
+        declined there would go quiet at the one moment it matters."""
+        assert self._selects_for(
+            packaged_workspace, "agents/lib/lost_its_initialiser"), (
+            "a package missing its initialiser selected nothing — the engine "
+            "cannot import and the hook said so to no one")
+
+    @pytest.mark.parametrize("relative", ["agents/lib/__pycache__",
+                                          "agents/lib/projection/__pycache__"])
+    def test_bytecode_directories_select_nothing(self, packaged_workspace,
+                                                 relative):
+        """The cost half, and the defect that killed the first attempt at this.
+
+        Widening the arm to a bare `agents/lib/*` was the other candidate: it
+        swallows `__pycache__`, which EVERY engine run rewrites, so the next
+        tool call would run a pytest module on the strength of compiled
+        bytecode nothing reads. `__pycache__` is named explicitly now, and this
+        is what says so — at both depths, since a nested one is what an engine
+        run inside a package leaves.
+        """
+        assert self._selects_for(packaged_workspace, relative) == set(), (
+            f"{relative} selected a module. Every engine run rewrites it, so "
+            "this puts a pytest module behind the next tool call for as long "
+            "as nobody notices")
+
+    def test_a_path_under_the_engine_that_is_not_a_py_FILE_still_selects(
+            self, packaged_workspace):
+        """Found by review, and it is why the generic arm says `agents/lib/*`.
+
+        Scoping that arm to `.py` was never about `.py`: it was dodging
+        `__pycache__`, which the bytecode return now settles once. The cost was
+        paid in the direction nobody watches — a package replaced by a file,
+        or a directory whose initialiser was just deleted, matched NOTHING and
+        the hook exited 0 over an engine that cannot import.
+        """
+        for relative in ("agents/lib/was_a_package",
+                         "agents/lib/lost_its_initialiser"):
+            selected = self._selects_for(packaged_workspace, relative)
+            assert _selects(PREFLIGHT, selected), (
+                f"{relative} does not reach preflight. The engine cannot "
+                "import in this state and the gate that exists to say so was "
+                "not run.")
+
+    def test_a_module_replaced_by_a_DIRECTORY_keeps_its_own_arm(
+            self, packaged_workspace):
+        """The other half of the same finding, in the opposite direction.
+
+        `capabilities.py` as a directory is still `capabilities.py` to every
+        arm that names it. Normalising it to `capabilities.py/__init__.py`
+        would drop it into the generic arm and lose the two modules only its
+        own arm selects — a NARROWING dressed as a generalisation, which is
+        the shape this whole mechanism keeps producing.
+        """
+        selected = self._selects_for(packaged_workspace,
+                                     "agents/lib/capabilities.py")
+        for module in (CAPABILITIES, AGENTS):
+            assert _selects(module, selected), (
+                f"agents/lib/capabilities.py lost {module} once it became a "
+                "directory — the normalisation reached a path that already "
+                "had a better arm")
+
+    def test_the_engine_ROOT_keeps_its_own_meaning(self, packaged_workspace):
+        """`agents/lib` holds an `__init__.py` too, and folding it in would
+        have been the quiet loss: its arm means "a module was added to or
+        removed from the engine" and names two modules the generic arm does
+        not."""
+        root = self._selects_for(packaged_workspace, "agents/lib")
+        for module in (CAPABILITIES, AGENTS):
+            assert _selects(module, root), (
+                f"agents/lib no longer selects {module} — the root was "
+                "normalised into its own initialiser and lost the two modules "
+                "only it names")
+
+
 @needs_jq
 class TestSkillInvariantsHook:
     def test_a_bash_call_runs_the_focused_invariants(self, tmp_path):
@@ -751,7 +937,7 @@ class TestSkillInvariantsHook:
         # The SECOND engine module test_claude_agents.py reads. Its OBBBA window
         # decides whether the acceptance fixture is corrupt at all, so editing
         # that window is the change those guards exist to catch — and it fell
-        # through to the generic `agents/lib/*.py` arm, which selects every
+        # through to the generic `agents/lib/*` arm, which selects every
         # module except this one.
         ("agents/lib/ptet.py", AGENTS),
         # The THIRD, and the one whose edge is not a path literal anywhere: the
@@ -1024,7 +1210,8 @@ class TestSkillInvariantsHook:
     def test_a_per_file_arm_never_selects_less_than_the_generic_one(
             self, quiescent_workspace):
         """`case` is first-match-wins, so an engine module with its OWN arm gets
-        exactly what that arm lists — never the `agents/lib/*.py` arm below it.
+        exactly what that arm lists — never the generic `agents/lib/*` arm
+        below it.
 
         Every such arm therefore has to REPEAT the generic selections on top of
         its extra ones, and twice now it has not: RUN_PORTABILITY was missing
@@ -1041,7 +1228,7 @@ class TestSkillInvariantsHook:
 
         BOTH SIDES from the script, not one. The per-file arms were derived and
         the generic selection was a hardcoded set of three, so when the
-        `agents/lib/*.py` arm gained the host-guard flag the set did not, and
+        generic engine arm gained the host-guard flag the set did not, and
         this test stayed green over five arms that never selected it: editing
         `secure_fs.py` to drop its package import turned
         `test_host_guard.py::TestEveryModuleIsCovered` red at CI while the hook
@@ -1057,7 +1244,7 @@ class TestSkillInvariantsHook:
             f"script, so this test now asserts nothing (found {paths})")
 
         generic = _modules_selected_by(
-            _case_arm_body(script, "agents/lib/*.py"))
+            _case_arm_body(script, "agents/lib/*"))
         assert generic >= {PREFLIGHT, SECUREFS, PORTABILITY, HOSTGUARD}, (
             f"the generic engine arm selects only {sorted(generic)} — the "
             "derivation lost a flag, or the arm did")
@@ -1078,7 +1265,7 @@ class TestSkillInvariantsHook:
                 short.append(f"{relative} misses {sorted(generic - selected)}")
         assert not short, (
             "these engine modules have their own case arm and it selects less "
-            f"than `agents/lib/*.py` would: {short}")
+            f"than `agents/lib/*` would: {short}")
 
     # The paths whose edits must NOT reach this module. Every other assertion
     # about the mapping is a lower bound — "does this path reach the module that
@@ -1356,7 +1543,7 @@ class TestSkillInvariantsHook:
         """The counterweight to the parametrization above: the watched set is a
         list, not a mood.
 
-        `agents/lib/*.py` USED to be the sharpest case here, on the reasoning
+        The generic engine arm USED to be the sharpest case here, on the reasoning
         that widening the filter to the engine would make every module edit pay
         for a pytest run that said nothing about it. That reasoning expired when
         `preflight.py` arrived: `check()` imports all twenty-one modules and

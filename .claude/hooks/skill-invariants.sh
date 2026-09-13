@@ -264,6 +264,84 @@ select_modules_for() {
         */../*|*/./*|*//*) return 0 ;;
     esac
 
+    # COMPILED BYTECODE IS NEVER SOURCE, and saying so once here is what lets
+    # the arms below be written as what they mean. Every engine run rewrites
+    # `__pycache__/*.pyc`, whose ctime then beats the stamp on the next Bash
+    # call — so the arms that wanted to say "anything under this directory"
+    # each said "anything with these two extensions" instead, and a rule
+    # phrased around the thing it is dodging stops covering what it was for:
+    # a package DIRECTORY has no extension and matched none of them.
+    #
+    # Only the ENGINE arm was widened on the strength of this. The `agents/`,
+    # `scripts/` and `tests/` arms keep their `*.py`/`*.sh` scoping, and it is
+    # not a leftover: each mirrors a sweep that parses exactly those
+    # extensions, so the scoping is faithful to what can actually turn the
+    # module red rather than a workaround for bytecode.
+    case "/$path/" in
+        */__pycache__/*) return 0 ;;
+    esac
+
+    # A PACKAGE DIRECTORY reads as its own `__init__.py`.
+    #
+    # `find` prints the bare directory when a file is ADDED to or DELETED from
+    # it, and that string matches no arm below: `agents/lib/*.py` reaches a
+    # module at any depth — a `case` glob's `*` spans `/` — but never the
+    # directory. Every package therefore carried a hand-written arm repeating
+    # the generic selections, W2 adding one per slice, and the one that gets
+    # forgotten selects NOTHING while looking exactly like a clean path.
+    #
+    # `__pycache__` is excluded EXPLICITLY, and that is the whole reason this
+    # is a normalisation rather than a wider glob. Widening the arm to a bare
+    # `agents/lib/*` was the other candidate and is wrong: it swallows
+    # `agents/lib/__pycache__/*.pyc`, which every engine run rewrites, so the
+    # next tool call would run a pytest module on the strength of compiled
+    # bytecode nothing reads. A hook test caught that within the minute, and
+    # naming the one directory is what the second attempt costs.
+    #
+    # The rewrite is NOT conditional on the initialiser existing. A package
+    # that has just lost its `__init__.py` is precisely the change worth
+    # selecting on — preflight and the host guard both go red for it — and a
+    # rule that declined there would go quiet at the one moment it matters.
+    #
+    # It lands on a path the arms ALREADY handle, so it adds no selections of
+    # its own: `projection` becomes `projection/__init__.py` and falls to the
+    # generic engine arm, `tax_computations` becomes
+    # `tax_computations/__init__.py`, which its own arm still wins first and
+    # still adds the agents module to, and `tax_computations/state` lands under
+    # that same arm. No package needs an entry anywhere again.
+    #
+    # `agents/lib` ITSELF is excluded, and that is the whole reason this is
+    # scoped to paths strictly beneath it. The engine root holds an
+    # `__init__.py` too, but its arm means "a module was added to or removed
+    # from the engine" and names two modules the generic arm does not; folding
+    # it into its own initialiser would silently drop them.
+    # Matched on `"/$path/"`, like the two guards above and NOT like the arms
+    # below. Two reasons, and the first is mechanical: the selector's own
+    # `case` carries an `agents/lib/*` arm, and a rule written the same way
+    # here gives one function two arms spelled identically — which is how
+    # `test_a_per_file_arm_never_selects_less_than_the_generic_one` came to
+    # read this block's body as the generic arm's and measure zero flags.
+    #
+    # The second is that the delimited form says what is meant. `agents/lib`
+    # ITSELF must not be rewritten — the engine root's arm means "a module was
+    # added to or removed from the engine" and names two modules the generic
+    # arm does not — and `/agents/lib/*/` already excludes it, because `*/`
+    # cannot match an empty remainder. An explicit arm for the root would be
+    # dead code; the test that the root keeps its own selections is what says
+    # this still holds.
+    case "/$path/" in
+        # A dot beneath `agents/lib/` means a FILE's name, and a file keeps
+        # whatever arm it already had. Without this a module replaced by a
+        # directory of the same name — `capabilities.py/` — would normalise
+        # into the generic arm and lose the two modules only its own arm
+        # names. A Python package never has a dot in a path segment, so
+        # nothing this rule is for is excluded by it.
+        /agents/lib/*.*/) ;;
+        /agents/lib/*/)
+            [ -d "$path" ] && path="$path/__init__.py"
+            ;;
+    esac
+
     case "$path" in
         .agents/skills|.agents/skills/*|.claude/skills|.claude/skills/*)
             RUN_PORTABILITY=1
@@ -469,10 +547,12 @@ select_modules_for() {
         # literal here to recover — which is exactly why the hand list this arm
         # belongs to still exists, and exactly why a new edge slips past it.
         # W2 made this a PACKAGE, and there is no `tax_computations.py` left
-        # to name. The bare directory is what find prints when a file is added
-        # directly beneath it, and the glob reaches every module inside at any
-        # depth — a `case` pattern's `*` spans `/`, so `state/ny.py` matches
-        # the same arm `__init__.py` does.
+        # to name. One glob covers it: a `case` pattern's `*` spans `/`, so
+        # `state/ny.py` and `__init__.py` match the same arm, and the bare
+        # directory `find` prints on an add or a delete is normalised into
+        # `tax_computations/__init__.py` before this `case` runs — which is why
+        # the alternative that used to name it here is gone rather than merely
+        # unused.
         agents/lib/tax_computations|agents/lib/tax_computations/*)
             RUN_AGENTS=1
             RUN_PREFLIGHT=1
@@ -589,30 +669,13 @@ select_modules_for() {
             # under agents/ and scripts/.
             RUN_SECUREFS=1
             ;;
-        # A PACKAGE DIRECTORY, named one at a time and ahead of the generic
-        # arm, which it then repeats exactly — a `case` is first-match-wins.
-        #
-        # `agents/lib/*.py` below already reaches a module at any depth inside
-        # a package, because a `case` pattern's `*` spans `/`. What it does NOT
-        # reach is the DIRECTORY, and that is what `find` prints when a file is
-        # added to or deleted from one. Widening it to a bare `agents/lib/*`
-        # was tried and is wrong: it swallows `__pycache__/*.pyc`, which every
-        # engine run rewrites, so the next tool call would select a module on
-        # the strength of compiled bytecode nothing reads. A test caught that
-        # within the minute, which is the argument for the hand list.
-        #
-        # W2 makes one of these per slice. The generic normalisation that would
-        # retire the list is recorded against W2 in the backlog.
-        # `tax_computations`'s own sub-packages need no entry: the arm above
-        # already reads `agents/lib/tax_computations/*`, and a `case` glob's
-        # `*` spans `/`, so `federal` and `state` match it as directories.
-        agents/lib/projection)
-            RUN_PREFLIGHT=1
-            RUN_HOSTGUARD=1
-            RUN_SECUREFS=1
-            RUN_PORTABILITY=1
-            ;;
-        agents/lib/*.py)
+        # `agents/lib/*`, not `agents/lib/*.py`. The extension was there to
+        # dodge `__pycache__`, which the early return above now settles, and it
+        # cost coverage in the one direction nobody watches: a path under the
+        # engine that is NOT a `.py` file — a package replaced by a file, a
+        # directory whose initialiser was just deleted — matched nothing at all
+        # and this hook exited 0 over a broken engine.
+        agents/lib/*)
             RUN_PREFLIGHT=1
             # test_host_guard reads agents/lib/__init__.py directly (the
             # no-env-opt-out assertion) and sweeps every module here for the
@@ -1287,18 +1350,18 @@ apply_red_checks
 #   nothing watched changed        no pytest    0.08 - 0.11s         6
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
 #   skill .md edit                1009 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1236 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4803 tests    228.4 - 243.4s        2
+#   cold pass, all seven modules  1245 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   4812 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 224 and runs 222; and
-# the hooks module holds two platform skips, so it collects 135 and runs 133.
+# the hooks module holds two platform skips, so it collects 144 and runs 142.
 # THE SUITE holds seven skips, not two: those two plus the five Windows-only
 # DACL cases W6 added, which are skipped everywhere but on the windows job.
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4810 and runs 4803 for the same skips — and that row
+# `pytest tests/` collects 4819 and runs 4812 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1316,7 +1379,7 @@ apply_red_checks
 # deselections run_focused_modules passes. This is the durable half: WHICH
 # module dominates, and by how much, survives a change of machine.
 #
-#   tests/test_claude_hooks.py     133 tests    114.7 - 130.0s       4
+#   tests/test_claude_hooks.py     142 tests    114.7 - 130.0s       4
 #   tests/test_portability.py      222 tests     11.1 - 13.1s        6
 #   tests/test_capabilities.py     175 tests      0.8 - 3.1s         6
 #   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
@@ -1418,7 +1481,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 175 + 182 + 222 + 382 = 1009 for a skill edit, plus 94 + 133 = 1236 for a
+# 48 + 175 + 182 + 222 + 382 = 1009 for a skill edit, plus 94 + 142 = 1245 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1477,7 +1540,7 @@ apply_red_checks
 # the branch settles.
 #
 # Against the counts the seconds were taken at, the suite has gained eight
-# hundred and thirty tests (3973 to 4803), and the gap was ZERO when the sitting ended: it took the
+# hundred and thirty-nine tests (3973 to 4812), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1673,7 +1736,7 @@ apply_red_checks
 # modules this hook selects,
 # portability has gained forty-five (177 to 222), preflight has gained seven (375 to 382), the
 # agents module none (48 to 48), secure_fs has gained twenty-two (160 to 182), the hooks module
-# has gained five (128 to 133), capabilities has gained fifty-nine (116 to 175) and the host guard has gained one (93 to 94). EVERY pair is measured from the SITTING and not from the round
+# has gained fourteen (128 to 142), capabilities has gained fifty-nine (116 to 175) and the host guard has gained one (93 to 94). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
 # the seconds, so the six could not be reconciled against the total by anyone
@@ -1685,7 +1748,7 @@ apply_red_checks
 # tests/engine_tree.py and pinned the helper's arms by DERIVING which watched
 # modules import it, which is the case that found test_claude_agents.py reading
 # tests/skill_text.py with no arm selecting it. Of the eight hundred
-# and thirty tests the suite has gained since the sitting, TWENTY-TWO landed in
+# and thirty-nine tests the suite has gained since the sitting, TWENTY-TWO landed in
 # tests/test_secure_fs.py — the Windows cases, one case each for
 # V2's, V1's, Y4's and V7's new engine modules, and W2's ten further engine
 # files, that module's roster being parametrised per file — FORTY-FIVE landed in
@@ -1699,8 +1762,9 @@ apply_red_checks
 # unified dispatch rule, FIFTY-NINE landed in
 # tests/test_capabilities.py, which is Z7's residency registry and Z1's depth
 # note, and is the third
-# such row, FIVE in tests/test_claude_hooks.py — the derived helper-arm
-# check and its three cry-wolf probes, plus W2's — and ONE in
+# such row, FOURTEEN in tests/test_claude_hooks.py — the derived helper-arm
+# check and its three cry-wolf probes, the package-directory class's nine,
+# and W2's — and ONE in
 # tests/test_host_guard.py, and
 # the other six hundred and ninety-one in test_answers, test_ci_workflow,
 # test_pii_content_scan, test_evals, test_eval_run, test_parse_records,
@@ -1714,7 +1778,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to one hundred and thirty-nine; the remaining six hundred and ninety-one are modules this
+# They sum to one hundred and forty-eight; the remaining six hundred and ninety-one are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
@@ -2382,7 +2446,7 @@ apply_red_checks
 # host guard together are at most 31.2s even taking each at its slowest, so of a
 # cold pass that never measured below 148.9s, at least 79% is
 # tests/test_claude_hooks.py. A hook can only be tested by running it — that
-# module spawns bash processes across its 133 tests, more than one per case
+# module spawns bash processes across its 142 tests, more than one per case
 # (205 spawns over 105 cases when last counted with a `bash` shim on PATH;
 # the RATIO is what carries forward, not the absolute) and holds deliberate
 # sleeps — five tests at about 4.5s each. Selecting a subset is therefore the

@@ -36,7 +36,7 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | V10 | #93, #102, #139, #140 | — |
 | V11 | #95 | — |
 | W1 | #90 | — |
-| W2 | #149, #150, #151 | THREE tax-contract questions need an owner ruling, listed in the Part 4 entry. The engine sweeps now go through `tests/engine_tree.py`; one generic hook arm for a package DIRECTORY is still open, also in that entry |
+| W2 | #149, #150, #151, #152 | THREE tax-contract questions need an owner ruling, listed in the Part 4 entry. Everything else in it has shipped: the engine sweeps go through `tests/engine_tree.py`, and a package directory normalises to its own `__init__.py` rather than needing an arm |
 | W4 | #90, #118 | the MEASURED COSTS *seconds* sitting is OWED — it needs an otherwise-idle machine, and three attempts were killed for host memory |
 | W5 | #90 | — |
 | W6 | #105 | — |
@@ -346,16 +346,33 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   package, including the entry point a package announces differently. Four things were
   found by review and DEFERRED rather than folded in, because each is its own task:
 
-  - **One generic rule in the hook for a package directory.** `find` prints
-    `agents/lib/<pkg>` when a file is added to or deleted from a package, and
-    that matches no arm — `agents/lib/*.py` reaches modules at any depth but
-    not the directory. Each package therefore gets a hand-written arm that
-    repeats the generic selections, and the one that is forgotten selects
-    nothing while looking identical to a clean path. Widening the glob to a
-    bare `agents/lib/*` is NOT the fix and was tried: it swallows
-    `__pycache__/*.pyc`, which every engine run rewrites. Normalising the
-    payload (`agents/lib/<pkg>/…` → `agents/lib/<pkg>`) with an explicit
-    `__pycache__` exclusion is.
+  - ~~**One generic rule in the hook for a package directory.**~~ **SHIPPED.**
+    `find` prints `agents/lib/<pkg>` when a file is added to or deleted from a
+    package, and that matched no arm — `agents/lib/*.py` reaches modules at any
+    depth but not the directory — so each package carried a hand-written arm
+    repeating the generic selections, and the one that gets forgotten selects
+    nothing while looking identical to a clean path.
+
+    **The direction recorded here was backwards.** It proposed
+    `agents/lib/<pkg>/…` → `agents/lib/<pkg>`, which maps every module edit
+    onto the directory and throws away the per-file arms that give
+    `tax_law_fetcher.py` and `ptet.py` the agents module. It is the other way:
+    `agents/lib/<pkg>` → `agents/lib/<pkg>/__init__.py`, so a package reaches
+    the arms that ALREADY exist and adds no selections of its own.
+
+    The `__pycache__` exclusion stays explicit, as recorded — widening to a
+    bare `agents/lib/*` swallows the bytecode every engine run rewrites, which
+    is what killed the first attempt. Two more judgements the note did not
+    reach: the rewrite is NOT conditional on the initialiser existing, because
+    a package that has just lost its `__init__.py` is the change preflight and
+    the host guard exist to report; and `agents/lib` ITSELF is excluded,
+    because the engine root's arm means "a module was added to or removed from
+    the engine" and names two modules the generic arm does not.
+
+    No package needs an entry anywhere again — `agents/lib/projection)` is
+    deleted and the bare alternative on the `tax_computations` arm with it.
+    Pinned by a workspace that really holds packages: an empty one would
+    measure the absence of the directory and report it as the rule working.
 
   - ~~**A shared engine enumerator for `tests/`.**~~ **SHIPPED** as
     `tests/engine_tree.py`, after the same defect arrived a third and fourth time.
