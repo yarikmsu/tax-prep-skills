@@ -1376,8 +1376,42 @@ rather than listing it, with a probe proving the wrapper is not hollow.
 part was one sentence about which schedule a negative belongs on, and `_amount`
 takes it as `negative_hint` at the one boundary where it is true.
 
-**Q8 + Q10** is one PR (the §2 sentence and its byte-cap trim, the deleted PTET
-schedule, the pinned SALT anchors, `/tax-ptet` leaving `_FIGURE_LINT_EXEMPT`).
+**Q8 + Q10 — SHIPPED 2026-09-13.** One PR, and the re-framings held up under
+implementation with one correction each.
+
+Q8's sentence is in AGENTS.md §2: a fallback may degrade instead of stopping only
+when the output is ADVISORY and it UNDER-states; anything else STOPs. Applied to
+both instances. CA's §17077 phase-out now REFUSES when the threshold is unfetched
+and the return has deductions subject to it — keeping the cry-wolf gate the banner
+already had, which matters more for a refusal than it did for a note. The paid
+cost was the byte cap: §2 grew, so §8's hardcoded-threshold list and §4's
+`meta.limitations` mechanism moved to the docs that already carried them.
+
+Q10 turned out to understate what was wrong. `ptet._salt_cap` had THREE defects,
+all over-stating: the flat TY2025-2029 amount (X6 found it in the prose; it was in
+the code too), MFS kept as a second hardcoded pair where §164(b)(6)(B) says HALF of
+whatever the amount is, and §164(b)(7)(B)'s MAGI phasedown not modeled at all —
+for a tool whose population is pass-through owners, who are frequently over the
+threshold. The statute specifies the phasedown's rate, thresholds and floor, so
+Q8's ruling was satisfiable by MODELING it rather than refusing.
+
+Review then corrected the DIRECTION, and the fix with it: an over-stated cap
+over-states HEADROOM, and more headroom SHRINKS the modeled benefit, because what
+the election rescues is the state tax the cap blocks. So omitting the phasedown
+UNDER-states the benefit — which, `/tax-ptet` being advisory, is exactly the case
+§2 permits to degrade. The first draft made it a STOP, stricter than the rule it
+implemented; it is a loud banner naming the direction now. CA's refusal stands,
+because that one over-states a deduction on a FILED return. **The two cases
+landing on opposite sides of the same sentence is the evidence the rule is
+usable.** §164(b)(7) is AGENTS.md §2's third
+enumerated exception, `/tax-ptet` is in `_FIGURE_REGISTRY`, and its stated figures
+are pinned to the engine constants by test.
+
+**A test had certified the defect.** `test_salt_cap_absent_falls_back_to_statutory`
+in the TY2026 absence matrix asserted $40,000 for TY2026 — so the wrong fallback
+was pinned as intended behaviour, which is why nothing went red when X6 found the
+same figure wrong in the skill text.
+
 Q11 closes with its trigger recorded; Q12 closes with the shim, which is W3's
 first slice.
 

@@ -269,13 +269,33 @@ def test_analyze_rejects_nan_salt_room():
                 salt_room=float("nan"))
 
 
-def test_salt_cap_is_year_and_status_aware():
-    # OBBBA: $40k ($20k MFS) for TY2025-2029; $10k ($5k MFS) otherwise.
-    assert ptet._salt_cap(2026, "MFJ") == 40000.0
-    assert ptet._salt_cap(2026, "MFS") == 20000.0
-    assert ptet._salt_cap(2024, "MFJ") == 10000.0
-    assert ptet._salt_cap(2030, "MFJ") == 10000.0
-    assert ptet._salt_cap(2030, "MFS") == 5000.0
+def test_the_salt_schedule_is_the_one_the_statute_states():
+    """§164(b)(7)(A), every arm, against the section text (verified 2026-09-13).
+
+    This asserted a FLAT $40,000 across TY2025-2029 and so agreed with a
+    `_salt_cap` that returned one — while (A)(ii) names $40,400 for TY2026 and
+    (A)(iii) steps 101% a year after it. Under-stating the cap over-states the
+    benefit of the PTET election this whole module prices, and the skill text
+    repeated the flat figure to taxpayers (X6). Q10, ruled 2026-09-13: the
+    anchors are statutory and may be constants, pinned HERE.
+    """
+    assert ptet._salt_cap(2025, "MFJ") == 40000.0          # (A)(i)
+    assert ptet._salt_cap(2026, "MFJ") == 40400.0          # (A)(ii)
+    assert ptet._salt_cap(2027, "MFJ") == 40804.0          # (A)(iii), 101%
+    assert ptet._salt_cap(2028, "MFJ") == 41212.04
+    assert ptet._salt_cap(2029, "MFJ") == 41624.16
+    assert ptet._salt_cap(2030, "MFJ") == 10000.0          # (A)(iv)
+    assert ptet._salt_cap(2024, "MFJ") == 10000.0          # pre-OBBBA §164(b)(6)
+
+
+def test_mfs_is_half_the_limitation_amount_not_a_second_schedule():
+    """§164(b)(6)(B): "half the applicable limitation amount in the case of a
+    married individual filing a separate return". It was a second hardcoded
+    pair of figures, which is two things to keep in step where the statute has
+    one rule — and the pair was already out of step for TY2026."""
+    for year in (2024, 2025, 2026, 2027, 2028, 2029, 2030):
+        joint = ptet._salt_cap(year, "MFJ")
+        assert ptet._salt_cap(year, "MFS") == round(joint / 2, 2), year
 
 
 def test_salt_cap_prefers_tax_law_cache():
@@ -288,9 +308,9 @@ def test_salt_cap_prefers_tax_law_cache():
 
 def test_salt_cap_cache_partial_falls_back():
     """Unfetched (None) cache values fall back to the statutory schedule."""
-    assert ptet._salt_cap(2026, "MFJ", {"amount": None, "mfs_amount": None}) == 40000.0
-    assert ptet._salt_cap(2026, "MFS", {"amount": 40400}) == 20000.0
-    assert ptet._salt_cap(2026, "MFJ", None) == 40000.0
+    assert ptet._salt_cap(2026, "MFJ", {"amount": None, "mfs_amount": None}) == 40400.0
+    assert ptet._salt_cap(2026, "MFS", {"amount": 40400}) == 20200.0
+    assert ptet._salt_cap(2026, "MFJ", None) == 40400.0
 
 
 def test_salt_cap_cache_invalid_value_hard_errors():
@@ -304,20 +324,23 @@ def test_salt_cap_cache_invalid_value_hard_errors():
 
 
 def test_analyze_other_salt_derives_headroom_from_cap():
-    # Codex P1: TY2026 cap is $40k. With $25k of other SALT, $15k of headroom was
-    # deductible anyway → offset 30% × min(15000, 18600) = 4,500; net 5,580 − 4,500.
+    # TY2026's cap is §164(b)(7)(A)(ii)'s $40,400, not the flat $40,000 this
+    # said when the schedule was wrong. With $25k of other SALT, $15,400 of
+    # headroom was deductible anyway → offset 30% × min(15400, 18600) = 4,620;
+    # net 5,580 − 4,620. MAGI $400k is under TY2026's $505,000 threshold, so
+    # (B) does not bite and the cap is the full amount.
     r = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                 state_incomes={"CA": 200000}, tax_year=2026, filing_status="MFJ",
-                other_salt=25000, marginal_fed=0.30)
-    assert r.salt_room == 15000.0
-    assert r.states[0].lost_salt_offset == 4500.0
-    assert r.states[0].net_fed_savings == 1080.0
+                other_salt=25000, modified_agi=400000, marginal_fed=0.30)
+    assert r.salt_room == 15400.0
+    assert r.states[0].lost_salt_offset == 4620.0
+    assert r.states[0].net_fed_savings == 960.0
 
 
 def test_analyze_other_salt_zero_headroom_when_salt_exceeds_cap():
     r = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                 state_incomes={"CA": 200000}, tax_year=2026, filing_status="MFJ",
-                other_salt=50000, marginal_fed=0.30)
+                other_salt=50000, modified_agi=400000, marginal_fed=0.30)
     assert r.salt_room == 0.0
     assert r.states[0].net_fed_savings == 5580.0
 
@@ -341,8 +364,10 @@ def test_analyze_standard_deduction_suppresses_salt_offset():
 def test_analyze_default_note_cites_current_cap_not_10k():
     r = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                 state_incomes={"CA": 200000}, tax_year=2026, filing_status="MFJ")
-    assert any("$40,000 SALT cap" in n for n in r.notes)
-    assert any("phases DOWN" in n for n in r.notes)  # MAGI phasedown caveat
+    assert any("$40,400 SALT cap" in n for n in r.notes)
+    # No --other-salt here, so nothing was derived from the cap and there is
+    # nothing for a phasedown banner to warn about.
+    assert not any("phasedown was NOT applied" in n for n in r.notes), r.notes
 
 
 def test_analyze_phantom_income_guard_uses_passthrough_bucket():
@@ -808,3 +833,160 @@ def test_obs_date_honours_the_conforming_holiday_set():
     # The real deadlines still render, and still agree with tax_calendar.
     assert ptet._obs_date(2026, 3, 15, "NY") == "March 16, 2026", "Sunday"
     assert ptet._obs_date(2026, 6, 15, "CA") == "June 15, 2026", "Monday"
+
+
+def test_the_magi_phasedown_is_modeled_not_caveated():
+    """§164(b)(7)(B), against the section text (verified 2026-09-13).
+
+    Not modeling it OVER-stated the cap for exactly this tool's population —
+    pass-through owners are frequently over the threshold — and an over-stated
+    cap prices headroom the filer does not have, inflating the PTET benefit.
+    Under AGENTS.md §2 as amended by Q8 a fallback may degrade only when it
+    UNDER-states and the output is advisory, so this had to be modeled or
+    refused; the statute specifies the rate, the thresholds and the floor, so
+    it is modeled.
+    """
+    # TY2025: threshold $500,000, 30% of the excess, floor $10,000.
+    assert ptet._salt_cap(2025, "MFJ", None, 500000.0) == 40000.0
+    assert ptet._salt_cap(2025, "MFJ", None, 550000.0) == 25000.0
+    # The OBBBA increase is fully spent at threshold + $100,000...
+    assert ptet._salt_cap(2025, "MFJ", None, 600000.0) == 10000.0
+    # ...and the floor holds however high MAGI goes.
+    assert ptet._salt_cap(2025, "MFJ", None, 5000000.0) == 10000.0
+    # TY2026's threshold is $505,000, not TY2025's — the note used to quote
+    # $500,000 for every year in the range.
+    assert ptet._salt_cap(2026, "MFJ", None, 505000.0) == 40400.0
+    assert ptet._salt_cap(2026, "MFJ", None, 555000.0) == 25400.0
+
+
+def test_the_phasedown_threshold_halves_for_a_separate_return():
+    """§164(b)(7)(B)(i) halves the THRESHOLD in its own words, and
+    §164(b)(6)(B) halves the resulting amount. Both apply: an MFS filer's
+    reduction starts at $250,000 of MAGI for TY2025, and the $10,000 floor
+    reaches them as $5,000."""
+    assert ptet._salt_cap(2025, "MFS", None, 250000.0) == 20000.0
+    assert ptet._salt_cap(2025, "MFS", None, 300000.0) == 12500.0
+    assert ptet._salt_cap(2025, "MFS", None, 400000.0) == 5000.0
+
+
+def test_deriving_headroom_without_magi_degrades_with_the_direction_named():
+    """AGENTS.md §2 as amended by Q8 allows a degrade where the output is
+    ADVISORY and the fallback UNDER-states — and this is that case, which took
+    a review to establish. An un-reduced cap over-states HEADROOM, and more
+    headroom SHRINKS the modeled benefit, because what a PTET election rescues
+    is the state tax the cap blocks. So omitting the phasedown errs toward not
+    electing. The first draft made it a STOP, which is stricter than the rule
+    it was written to implement.
+    """
+    r = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                state_incomes={"CA": 200000}, tax_year=2026,
+                filing_status="MFJ", other_salt=25000, marginal_fed=0.30)
+    banner = [n for n in r.notes if "phasedown was NOT applied" in n]
+    assert len(banner) == 1, r.notes
+    assert "CEILING" in banner[0] and "FLOOR" in banner[0], banner
+    assert "$505,000" in banner[0], banner
+
+
+def test_the_phasedown_banner_does_not_fire_where_it_cannot_matter():
+    """Cry-wolf, on three paths where the missing MAGI cannot move the answer.
+
+    A banner on any of them is noise about a figure that changes nothing, which
+    is how an agent learns to read past the one that is real. All three were
+    reproduced against a first draft that refused outright.
+    """
+    def notes_for(**over):
+        kw = dict(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                  state_incomes={"CA": 200000}, tax_year=2026,
+                  filing_status="MFJ", other_salt=25000, marginal_fed=0.30)
+        kw.update(over)
+        return analyze(**kw).notes
+
+    for label, over in (
+        ("a pre-OBBBA year, where the cap IS the floor", {"tax_year": 2024}),
+        ("a post-reversion year, same reason", {"tax_year": 2030}),
+        ("a standard-deduction filer, who gets no SALT offset at all",
+         {"itemizes": False}),
+    ):
+        assert not any("phasedown was NOT applied" in n for n in notes_for(**over)), (
+            f"the phasedown banner fired for {label}")
+
+
+def test_the_mfs_reading_taken_is_the_one_that_cannot_flatter():
+    """§164(b)(7)(B) admits two readings and they differ FOURFOLD.
+
+    Taken: (B)(i) halves the threshold, (B)(iii) floors at $10,000, then
+    §164(b)(6)(B) halves the result. The alternative computes the whole of (7)
+    on a joint basis and halves only at the end.
+
+    Pinned because the divergence is large, real and silent — both readings
+    return a plausible number, and nothing downstream compares them. The one
+    taken is the only reading under which (B)(i)'s explicit MFS threshold does
+    anything, AND the one that cannot over-state: the alternative hands the MFS
+    filer the larger cap, and an over-stated cap inflates the PTET benefit.
+    """
+    def joint_basis_reading(magi):
+        amount = max(10000.0, 40000.0 - 0.30 * max(0.0, magi - 500000.0))
+        return round(amount / 2, 2)
+
+    # The band where the two readings disagree, and by how much.
+    assert ptet._salt_cap(2025, "MFS", None, 350000.0) == 5000.0
+    assert joint_basis_reading(350000.0) == 20000.0
+
+    # An MFS filer is exactly half a joint filer at the same distance above
+    # their own threshold — which is what makes the taken reading coherent.
+    for excess in (0.0, 50000.0, 100000.0, 250000.0):
+        joint = ptet._salt_cap(2025, "MFJ", None, 500000.0 + excess)
+        separate = ptet._salt_cap(2025, "MFS", None, 250000.0 + excess)
+        assert separate == round(joint / 2, 2), excess
+
+
+def test_a_fetched_cap_is_a_BASE_and_still_takes_the_phasedown():
+    """The cache carries the YEAR's statutory amount, the same for every
+    taxpayer; §164(b)(7)(B) reduces it per RETURN. Applying the phasedown only
+    on the fallback path made a populated cache the one way to get the
+    unreduced cap — so fetching the figure the cache exists for made the answer
+    worse, and silently."""
+    magi = 600000.0
+    assert ptet._salt_cap(2026, "MFJ", {"amount": 40400}, magi) == \
+        ptet._salt_cap(2026, "MFJ", None, magi) == 11900.0
+
+    # ...and a cached `mfs_amount` is already a separate return's figure, so it
+    # must not be halved a second time.
+    assert ptet._salt_cap(2026, "MFS", {"mfs_amount": 20200}, None) == 20200.0
+    assert ptet._salt_cap(2026, "MFS", {"mfs_amount": 20200}, 300000.0) == \
+        ptet._salt_cap(2026, "MFS", None, 300000.0)
+
+
+def test_a_negative_magi_is_a_real_return_and_not_a_refusal():
+    """MAGI is AGI plus the §911/§931/§933 exclusions (§164(b)(7)(B)(iv)) and
+    can be negative — a loss year. The validator rejected it, which refused the
+    taxpayer furthest from the phasedown."""
+    assert ptet._salt_cap(2026, "MFJ", None, -1000.0) == 40400.0
+    assert ptet._salt_cap(2026, "MFJ", None, 0.0) == 40400.0
+    for bad in (float("nan"), float("inf"), "40000", True, None):
+        if bad is None:
+            continue                      # None means "not supplied"
+        with pytest.raises(PtetError):
+            ptet._salt_cap(2026, "MFJ", None, bad)
+
+
+def test_the_applied_banner_compares_like_with_like_for_MFS():
+    """The note computed its reduction against the UNHALVED statutory base, so
+    every MFS return read as a phasedown of half its cap — an ordinary
+    §164(b)(6)(B) halving misreported as a MAGI reduction, on returns whose
+    MAGI was nowhere near the threshold. It also promised a $10,000 floor to a
+    filer whose floor is $5,000."""
+    below = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                    state_incomes={"CA": 200000}, tax_year=2026,
+                    filing_status="MFS", other_salt=5000,
+                    modified_agi=200000.0, marginal_fed=0.30)
+    assert any("does not bite" in n for n in below.notes), below.notes
+    assert not any("APPLIED" in n for n in below.notes), below.notes
+
+    above = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                    state_incomes={"CA": 200000}, tax_year=2026,
+                    filing_status="MFS", other_salt=5000,
+                    modified_agi=300000.0, marginal_fed=0.30)
+    applied = [n for n in above.notes if "APPLIED" in n]
+    assert len(applied) == 1, above.notes
+    assert "$5,000" in applied[0], applied      # the MFS floor, not $10,000

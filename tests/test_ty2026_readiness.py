@@ -253,8 +253,16 @@ class TestTY2026AbsenceMatrix:
         assert r["total_deduction"] == 300.0  # 20% of 1,500, unfloored
 
     def test_salt_cap_absent_falls_back_to_statutory(self):
-        """Absent cache → the built-in OBBBA statutory schedule ($40K TY2026)."""
-        assert _salt_cap(2026, "Single", None) == 40000.0
+        """Absent cache → §164(b)(7)(A)'s own schedule.
+
+        This asserted $40,000 for TY2026 and so agreed with a `_salt_cap` that
+        returned a FLAT amount for the whole of TY2025-2029, while (A)(ii)
+        names $40,400 for TY2026. An absence matrix that pins the wrong
+        fallback certifies the defect as the intended behaviour — which is why
+        X6 found the same figure wrong in the skill text and nothing here went
+        red. Corrected with the schedule, 2026-09-13.
+        """
+        assert _salt_cap(2026, "Single", None) == 40400.0
 
     def test_amt_phaseout_absent_falls_back_to_statutory(self):
         """Absent override → statutory 50% for TY2026 (§70107), 25% pre-2026."""

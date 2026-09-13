@@ -2346,56 +2346,60 @@ class TestCaItemized:
         assert r["itemized_total"] == 30640.00
         assert r["use_itemized"] is True
 
-    def test_phaseout_unfetched_degrades_loudly(self):
-        r = compute_ca_itemized(
-            federal_agi=400000, ca_agi=400000, tax_year=2025,
-            real_estate_taxes=12000, ca_standard_deduction=5809)
-        assert r["phaseout_reduction"] == 0.0
-        assert any("OVERSTATED" in n for n in r["notes"])
+    def test_an_unfetched_phaseout_threshold_REFUSES(self):
+        """Q8, ruled 2026-09-13: STOP, not a banner.
 
-    def test_the_unfetched_phaseout_banner_does_not_fire_on_nothing(self):
-        """Cry-wolf, on the one note a real over-statement depends on.
+        Skipping §17077 OVER-states the CA deduction on a FILED return, and
+        AGENTS.md §2 now allows a degrade only where the output is advisory AND
+        the fallback under-states. This was a loud note, which is what the
+        other direction is owed. The message carries the two figures a reader
+        needs to judge it — the AGI it would have been compared against, and
+        the deductions at stake — because the threshold is the missing one.
+        """
+        with pytest.raises(ValueError, match="OVER-states the CA deduction") as e:
+            compute_ca_itemized(
+                federal_agi=400000, ca_agi=400000, tax_year=2025,
+                real_estate_taxes=12000, ca_standard_deduction=5809)
+        assert "$400,000.00" in str(e.value) and "$12,000.00" in str(e.value)
+        assert "state.itemized_phaseout" in str(e.value)
 
-        It fired on EVERY unfetched call, including a return with no itemized
-        deductions at all — where the phase-out cannot bite at any published
-        threshold, because it is a share of deductions that are zero. A
-        STOP-shaped warning on correct data is what teaches an agent to read
-        past the one that is real.
+    def test_the_refusal_does_not_fire_where_nothing_can_be_overstated(self):
+        """Cry-wolf, and it matters more for a refusal than it did for a note.
+
+        Two cases where §17077 can reduce nothing at any published threshold:
+        a return with no itemized deductions at all, and one made entirely of
+        the two categories the FTB worksheet exempts. A STOP on correct data is
+        what teaches an agent to route around the one that is real.
         """
         nothing = compute_ca_itemized(
-            federal_agi=45000, ca_agi=45000, tax_year=2025, ca_standard_deduction=5809)
+            federal_agi=45000, ca_agi=45000, tax_year=2025,
+            ca_standard_deduction=5809)
         assert nothing["itemized_total"] == 0.0
-        assert not any("OVERSTATED" in n for n in nothing["notes"]), (
-            "the phase-out banner fired on a return with nothing to overstate")
 
-    def test_the_unfetched_phaseout_banner_reads_the_subject_amount(self):
-        """§17077 leaves medical and investment interest alone, so a return of
-        NOTHING BUT investment interest has deductions and still nothing the
-        phase-out can reduce. The gate read the subtotal and fired on it —
-        the same cry-wolf one line further in. Gate and banner both read the
-        SUBJECT amount now."""
-        only_interest = compute_ca_itemized(
+        exempt_only = compute_ca_itemized(
             federal_agi=400000, ca_agi=400000, tax_year=2025,
-            investment_interest=1000, ca_standard_deduction=5809)
-        assert only_interest["itemized_total"] == 1000.0
-        assert not any("OVERSTATED" in n for n in only_interest["notes"]), (
-            "the phase-out banner fired on deductions §17077 cannot touch")
-        mixed = compute_ca_itemized(
-            federal_agi=400000, ca_agi=400000, tax_year=2025,
-            real_estate_taxes=12000, investment_interest=1000, ca_standard_deduction=5809)
-        banner = [n for n in mixed["notes"] if "OVERSTATED" in n]
-        assert len(banner) == 1 and "$12,000.00" in banner[0], banner
+            investment_interest=1000, medical_expenses=0,
+            ca_standard_deduction=5809)
+        assert exempt_only["itemized_total"] == 1000.0
+        assert exempt_only["phaseout_reduction"] == 0.0
 
-    def test_the_unfetched_phaseout_banner_quantifies_itself(self):
-        """The threshold is the missing figure, so the note carries the two
-        numbers a reader needs to decide whether this one matters: the AGI it
-        would have been compared against, and the deductions at stake."""
-        r = compute_ca_itemized(
-            federal_agi=400000, ca_agi=400000, tax_year=2025,
-            real_estate_taxes=12000, ca_standard_deduction=5809)
-        banner = [n for n in r["notes"] if "OVERSTATED" in n]
-        assert len(banner) == 1, r["notes"]
-        assert "$400,000.00" in banner[0] and "$12,000.00" in banner[0]
+        # ...and with CENTS, which is the case a review reproduced. The subject
+        # amount is the rounded subtotal minus UNROUNDED exempt figures, so it
+        # carried float residue — about 1e-13 of "deductions subject to the
+        # phase-out", enough to arm the refusal, which then printed "$0.00" as
+        # the amount at stake. A refusal whose own message says nothing is at
+        # stake is the cry-wolf case arriving through a true rule.
+        # A ZERO federal AGI is what makes it bite: the 7.5% medical floor is
+        # then zero too, so BOTH exempt figures reach the subtotal and the
+        # subtraction has cents to lose. At a high AGI the medical is floored
+        # away and the residue never appears — which is why the first version
+        # of this case, written at $400,000, passed against the defect.
+        cents = compute_ca_itemized(
+            federal_agi=0, ca_agi=0, tax_year=2026,
+            medical_expenses=100.10, investment_interest=200.20,
+            ca_standard_deduction=6000)
+        assert cents["itemized_total"] == 300.30
+        assert cents["phaseout_reduction"] == 0.0
 
     def test_the_election_cannot_be_skipped(self):
         """Q7, ruled 2026-09-13: the standard deduction is REQUIRED.

@@ -51,8 +51,8 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    gifts at 50% of AGI, still allows misc 2%-floor expenses, and phases out
    itemized deductions above the R&TC §17077 FEDERAL-AGI threshold from
    `state.itemized_phaseout` — keyed `single`/`mfj`/`hoh`: map MFS→single
-   (FTB publishes Single/MFS as one tier) and QSS→mfj; unfetched →
-   phase-out skipped with a loud note). All AGI-anchored floors use
+   (FTB publishes Single/MFS as one tier) and QSS→mfj; unfetched REFUSES
+   when the return has deductions subject to the phase-out, so fetch it). All AGI-anchored floors use
    FEDERAL AGI (the function handles this — pass both AGIs). Pass
    `mfs_spouse_itemizes` AND `married_filing_separately` for MFS/RDP-
    separate (CA mirrors the federal forced-itemize rule, and the CA

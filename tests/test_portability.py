@@ -4630,6 +4630,14 @@ _FIGURE_REGISTRY = {
     # and loses a real §121 detection to backtick mis-pairing (runbook).
     "tax-roth-convert": {"$0"},
     "tax-verify": {"$200K"},
+    # Q10, ruled 2026-09-13. §164(b)(7) is a statutory STEP SCHEDULE, not an
+    # indexed figure — the statute NAMES $40,000 and $40,400 and gives a formula
+    # for the rest, and no inflation index appears in the section. That puts it
+    # in the `tax-safe-harbor` class: statutory, so it may be STATED, and pinned
+    # to the engine constant by the test below. AGENTS.md §2's third enumerated
+    # exception. The figures here are the pre-OBBBA cap, the phase-down MAGI
+    # threshold, and `$40K` as the skill twice abbreviates the current cap.
+    "tax-ptet": {"$10,000", "$40K", "$500,000"},
     "tax-withholding": {"$150,000"},
     # Empty, and each verified empty rather than assumed. An empty entry is not
     # a formality: it is what puts the skill UNDER the lint, so the first
@@ -4656,18 +4664,6 @@ _FIGURE_LINT_EXEMPT = {
     # CLOSED `allowed` set by the test below this one, which is stricter than
     # this registry, not looser.
     "tax-safe-harbor": "has its own closed `allowed` set (AGENTS.md §2)",
-    # OPEN QUESTION, and named here so it is loud rather than absent. X6
-    # corrected this skill from a flat "$40,000 for TY2025-2029" to the
-    # §164(b)(7) schedule, which states $40,000 for TY2025 and $40,400 for
-    # TY2026 — and the skill now also names `federal.salt_cap`, the cache key
-    # those are read from, which is exactly the remedy the lint's own message
-    # prescribes. Whether a figure that is BOTH statutorily named AND fetched
-    # may be stated in prose is the question, and it is the owner's: stating it
-    # let X6 replace a wrong flat number, and not stating it means TY2027
-    # cannot read "$40,400 for TY2026" as current. Until it is answered this
-    # skill is out, with the reason, rather than registered by default.
-    "tax-ptet": "pending the owner ruling on stating a statutory SCHEDULE that "
-                "is also fetched — see the X6 entry in the season-open runbook",
 }
 
 
@@ -4799,6 +4795,37 @@ class TestTheTwoSkillsTheFigureRegistryDoesNotCover:
             "the TY2026 figure is the one the flat range got wrong, and it is "
             "the current filing year — name it")
 
+    def test_the_ptet_skill_figures_match_the_engine_constants(self):
+        """Q10's actual requirement: the skill may STATE §164(b)(7)'s amounts
+        because the statute names them — and a stated figure earns that only by
+        being pinned to the one place the engine keeps it.
+
+        This is the `tax-safe-harbor` arrangement. Without it the skill's prose
+        and `ptet._salt_cap` are two copies of the same law, and three audits
+        have now found that the copy which drifts is the PROSE, because nothing
+        computes against it.
+        """
+        import importlib
+        ptet = importlib.import_module("agents.lib.ptet")
+        flat = re.sub(r"\s+", " ", skill_text("tax-ptet"))
+        for constant, spelling in (
+            (ptet._SALT_CAP_2025, "$40,000 for TY2025"),
+            (ptet._SALT_CAP_2026, "$40,400 for TY2026"),
+        ):
+            amount = f"${constant:,.0f}"
+            assert spelling in flat, (
+                f"/tax-ptet no longer states {spelling!r}; the engine holds "
+                f"{amount} and a reader has nothing to check it against")
+            assert amount in spelling, (
+                f"the engine constant {amount} and the skill's {spelling!r} "
+                "have diverged — that is the drift this test exists to catch")
+        assert f"${ptet._SALT_CAP_REVERSION:,.0f}" in flat, (
+            "the TY2030 reversion is no longer stated, and it is the arm that "
+            "tells a reader the schedule ENDS")
+        assert "101%" in flat, (
+            "the 101%-a-year step is gone from the skill; without it the two "
+            "named years read as the whole schedule")
+
     def test_the_salt_cap_subsection_is_cited_as_164_b_7(self):
         """OBBBA put the cap in §164(b)(7). (b)(6) is the superseded 2018-2025
         limitation, and a reader who follows it finds the OLD $10,000 rule and
@@ -4832,16 +4859,31 @@ def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
         "instruction it gives — ask about platform and gig income whatever "
         "arrived — is the same at any figure")
     everything = set().union(*_FIGURE_REGISTRY.values())
-    assert everything == {"$0", "$1M", "$3K", "$200K", "$250K", "$250,000",
-                          "$500K", "$500,000", "$1,000", "$2,000", "$2,500",
-                          "$3,000", "$150,000"}, (
+    assert everything == {"$0", "$1M", "$3K", "$10,000", "$40K", "$200K",
+                          "$250K", "$250,000", "$500K", "$500,000",
+                          "$1,000", "$2,000", "$2,500", "$3,000",
+                          "$150,000"}, (
         "a figure joined the registry without this test being edited. Each one "
         "here is flat statutory law — §121's exclusion, §1211(b)'s capital-loss "
         "cap, §221(b)(1)'s student-loan "
         "cap, §25A's two education ceilings, §6654(d)(1)(C)'s threshold, "
         "§3102(f)'s never-indexed $200,000 employer withholding threshold "
-        "for Additional Medicare Tax, and CA's pre-TCJA mortgage limit — and an "
+        "for Additional Medicare Tax, CA's pre-TCJA mortgage limit, and "
+        "§164(b)(7)'s SALT schedule — and an "
         "INDEXED figure does not become safe by being listed")
+
+    # §164(b)(7) is the one entry that is a SCHEDULE rather than a single flat
+    # figure, and it is here on the strength of the statute NAMING each amount:
+    # $40,000 for TY2025, $40,400 for TY2026, 101% of the prior year through
+    # TY2029, $10,000 after. No inflation index appears in the section — which
+    # is what separates it from a figure a Revenue Procedure publishes each
+    # autumn, and is what the owner ruled on in Q10. Both `$40K` spellings in
+    # the skill abbreviate the current cap, and `$10,000` is the pre-OBBBA
+    # limitation the skill contrasts it with.
+    assert _FIGURE_REGISTRY["tax-ptet"] == {"$10,000", "$40K", "$500,000"}, (
+        "the /tax-ptet entry changed. Its figures are §164(b)(7)'s, pinned to "
+        "the engine constants by "
+        "`test_the_ptet_skill_figures_match_the_engine_constants`")
 
 
 def test_the_lint_would_still_catch_the_defect_it_was_written_for():

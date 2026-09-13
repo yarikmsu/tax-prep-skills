@@ -190,9 +190,11 @@ def compute_ca_itemized(
       of FEDERAL AGI over the (indexed, cached) threshold or 80% of the
       phase-out-subject amount — exempt: medical, investment interest (and,
       when ever modeled, casualty and gambling losses — the FTB worksheet
-      excludes those too). phaseout_threshold None → phase-out NOT applied,
-      loud note (a high-AGI CA itemizer's deduction would be overstated
-      until fetched).
+      excludes those too). phaseout_threshold None REFUSES where the return
+      has deductions subject to it (Q8, 2026-09-13): skipping the phase-out
+      over-states a deduction on a filed return, and AGENTS.md §2 allows a
+      degrade only where the output is advisory AND under-states. It was a
+      loud note, which is what the other direction is owed.
 
     EVERY AGI-anchored floor/cap here (medical 7.5%, charitable 50%/30%,
     misc 2%) uses FEDERAL AGI — Schedule CA Part II lines reference federal
@@ -279,26 +281,35 @@ def compute_ca_itemized(
                      + charitable_deductible + misc_deductible, 2)
 
     # What §17077 can reduce: medical and investment interest are outside it.
-    subject = max(0.0, subtotal - medical_deductible - inv_int)
+    # ROUNDED, because `subtotal` already is and subtracting unrounded exempt
+    # amounts from it leaves float residue — 1e-13 of "deductions subject to
+    # the phase-out" on a return made entirely of the two categories the FTB
+    # worksheet exempts. That residue is > 0, so it armed the refusal below and
+    # then printed "$0.00" as the amount at stake.
+    subject = round(max(0.0, subtotal - medical_deductible - inv_int), 2)
     phaseout = 0.0
     if phaseout_threshold is None:
-        # Only where there is something to overstate. The note fired on every
-        # unfetched call, including a return with no itemized deductions at
-        # all, where the phase-out cannot bite at any published threshold — a
-        # STOP-shaped warning on correct data, which is what teaches an agent
-        # to read past the one that is real. Gated on the SUBJECT amount, not
-        # the subtotal: a return of nothing but investment interest has
-        # deductions and still nothing the phase-out can touch. The AGI is
-        # interpolated because the threshold is the figure that is missing: a
-        # reader who knows the published tier can decide in one glance whether
-        # this one matters.
+        # Q8, ruled 2026-09-13 and now AGENTS.md §2: a fallback may DEGRADE
+        # only when the output is advisory AND it under-states. This is a
+        # figure on a filed CA return and skipping the phase-out OVER-states
+        # the deduction, so it STOPS. It was a banner, which is what the
+        # under-statement direction is owed and not this one.
+        #
+        # The gate the banner already had is kept, and matters more for a
+        # refusal than it did for a note: only where there is something to
+        # overstate. §17077 leaves medical and investment interest alone, so a
+        # return of nothing but those has deductions and still nothing the
+        # phase-out can touch — refusing there would be a STOP on correct
+        # data, which is how an agent learns to route around the one that is
+        # real.
         if subject > 0:
-            notes.append(
-                f"CA itemized phase-out threshold (R&TC §17077, indexed) not "
-                f"in the tax_law cache — phase-out NOT applied against a "
-                f"federal AGI of ${fed_agi:,.2f} and ${subject:,.2f} of "
-                f"deductions subject to it, so the CA deduction may be "
-                f"OVERSTATED. Run /tax-setup to fetch state.itemized_phaseout")
+            raise ValueError(
+                f"CA itemized phase-out threshold (R&TC §17077, indexed) is "
+                f"not in the tax_law cache, and this return has "
+                f"${subject:,.2f} of deductions subject to it at a federal AGI "
+                f"of ${fed_agi:,.2f}. Computing without it OVER-states the CA "
+                f"deduction. Run /tax-setup to fetch state.itemized_phaseout, "
+                f"or pass phaseout_threshold explicitly.")
     else:
         thr = _amount(phaseout_threshold, "phaseout_threshold")
         if fed_agi > thr:

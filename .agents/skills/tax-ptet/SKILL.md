@@ -113,11 +113,16 @@ Steps:
    READ FROM THE CACHE (`federal.salt_cap`, `amount`/`mfs_amount`), because
    §164(b)(7) as amended by OBBBA steps it up every year: **$40,000 for TY2025,
    $40,400 for TY2026**, then 101% of the prior year's figure through TY2029,
-   reverting to $10,000 ($5,000 MFS) in TY2030. It also phases down above $500K
-   MAGI toward a $10,000 floor, which is not modeled. A flat "$40,000 for
-   TY2025–2029" stood here and was wrong from TY2026 on — and under-stating the
-   cap makes the PTET election look BETTER than it is, since it is the portion
-   of state tax the cap blocks that the election rescues.
+   reverting to $10,000 in TY2030. MFS is HALF the amount, whatever it is
+   (§164(b)(6)(B)) — not a second schedule. A flat "$40,000 for TY2025–2029"
+   stood here and was wrong from TY2026 on — and under-stating the cap makes the
+   PTET election look BETTER than it is, since it is the portion of state tax
+   the cap blocks that the election rescues.
+   **§164(b)(7)(B) then phases the cap DOWN** by 30% of MAGI over $500,000
+   (TY2025; $505,000 for TY2026, then 101% a year), halved for MFS, never below
+   $10,000 — so the OBBBA increase is fully spent by about $100,000 of excess
+   MAGI. This IS modeled: pass `--magi`. Deriving headroom with `--other-salt`
+   and no `--magi` REFUSES rather than pricing a cap the filer may not have.
    By default the estimate **assumes the cap is fully exhausted** — but with the
    larger OBBBA cap that's less likely, so pass `--other-salt <property + state
    income/wage tax>` to derive the unused headroom from the cap, or `--salt-room

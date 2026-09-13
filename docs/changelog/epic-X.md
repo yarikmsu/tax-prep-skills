@@ -195,3 +195,107 @@ single/mfj (its item 7); editing it needs the fresh-session replay — Y2, with 
   skill's Form 8938 figures are derived from the one table by test. The rebase's
   four duplicated invariant bullets are removed. The auditor definition's
   keying note stays deferred to the Y2 fresh-session replay.
+
+## Q8 + Q10 — the degrade policy, and §164(b)(7)'s actual schedule
+
+Two owner rulings of 2026-09-13, shipped together because both are the SALT cap.
+
+### Q8 — when a fallback may degrade instead of stopping
+
+AGENTS.md §2 said STOP; AGENTS.md §4 said an over-stating fallback is a hard
+error and an under-stating one degrades with a banner. Neither said which won,
+so it was being decided case by case — and by the time the question was asked
+there were two instances in the engine, both over-stating. The rule now in §2:
+
+> A fallback may DEGRADE instead only when BOTH hold: the output is ADVISORY,
+> and it UNDER-states. Anything else STOPs.
+
+`compute_ca_itemized` refuses when the R&TC §17077 threshold is unfetched and
+the return carries deductions subject to the phase-out. It used to note the gap
+loudly, which is what the under-statement direction is owed and not this one —
+skipping the phase-out over-states a deduction on a FILED return. The gate the
+banner already had is kept and matters more now: §17077 exempts medical and
+investment interest, so a return made only of those has deductions and still
+nothing the phase-out can touch, and refusing there would be a STOP on correct
+data.
+
+Paying for the §2 sentence at the byte cap moved two ANSWERS out of the
+instruction file into the docs that already carried them: §8's list of
+statutory-fixed thresholds (to `tax-law-cache.md`, which had been deferring to
+§8 for it) and §4's `meta.limitations` manifest mechanism (to
+`skill-catalog.md`, which states it in more detail).
+
+### Q10 — §164(b)(7) is a statutory step schedule
+
+The question was whether a skill may STATE a figure that is both statutorily
+named and fetched. The answer was yes, on the `tax-safe-harbor` terms — and
+implementing it found that `ptet._salt_cap` had three defects, every one in the
+over-stating direction:
+
+1. **A flat $40,000 for the whole of TY2025-2029.** (A)(ii) names $40,400 for
+   TY2026 and (A)(iii) steps 101% a year after it. X6 found this figure wrong in
+   the skill's prose and corrected it there; the engine had the same error, and
+   the skill was then right about a number the code still got wrong.
+2. **MFS as a second hardcoded pair.** §164(b)(6)(B) makes a separate return
+   HALF the applicable limitation amount — one rule, not two figures to keep in
+   step, and the pair was already out of step for TY2026.
+3. **The (B) MAGI phasedown not modeled at all**, for a tool whose users are
+   pass-through owners — the population most likely to be over the threshold.
+   30% of the excess over $500,000 (TY2025; $505,000 for TY2026, then 101% a
+   year), halved for MFS, never below $10,000. The OBBBA increase is fully spent
+   by about $100,000 of excess MAGI, so this is not a rounding difference.
+
+Q8's ruling made (3) a choice between refusing and modeling, and the statute
+specifies the whole of it, so it is modeled.
+
+### What the review corrected, including the direction
+
+**The bias direction in the first draft was backwards, and the fix was too
+strict because of it.** The docstring said an over-stated cap "inflates the PTET
+benefit". It deflates it: more SALT headroom means more of the state tax was
+federally deductible ANYWAY, so the election rescues less — measured at
+$5,580 of net saving with no headroom against $960 at $15,400 of it. So
+omitting the phasedown leaves the cap too high, which UNDER-states the benefit
+and errs toward not electing. (X6's converse claim was right and stays right: a
+cap too LOW over-states the benefit.)
+
+That matters because it is the rule's own test. `/tax-ptet` is advisory and the
+omission under-states, so §2 PERMITS a degrade — the first draft made it a STOP,
+stricter than the rule it was written to implement. It is a loud banner now,
+naming the direction: modeled headroom is a CEILING and the benefit below it a
+FLOOR. CA's refusal stands, because that one over-states a deduction on a filed
+return. The two cases landing on opposite sides is the rule working.
+
+**A fetched cap is a BASE, not an answer.** The first draft treated a populated
+`federal.salt_cap` as already post-phasedown and skipped both the reduction and
+the banner. The cache carries the YEAR's statutory amount — identical for every
+taxpayer — and (B) reduces it per RETURN, so fetching the figure the cache
+exists for was the one way to get the unreduced cap: `_salt_cap(2026, "MFJ",
+{"amount": 40400}, 600000)` returned $40,400 where the statutory path returned
+$11,900.
+
+**Three smaller ones, all reproduced.** The banner computed its reduction
+against the UNHALVED statutory base, so every MFS return read as a phasedown of
+half its cap — an ordinary §164(b)(6)(B) halving misreported as a MAGI
+reduction — and promised a $10,000 floor to a filer whose floor is $5,000. A
+negative MAGI was refused, though §164(b)(7)(B)(iv) defines it as AGI plus the
+§911/§931/§933 exclusions and a loss year is a real return. And CA's new
+refusal fired on a return made entirely of the exempt categories: the subject
+amount was the ROUNDED subtotal minus unrounded exempt figures, leaving about
+1e-13 of "deductions subject to the phase-out" — enough to arm the refusal,
+which then printed "$0.00" as the amount at stake. A refusal whose own message
+says nothing is at stake is the cry-wolf case arriving through a true rule.
+
+The caveat that said the phasedown was "not modeled here" is gone with the
+limitation, and what replaced it says which of the two actually happened. A
+caveat describing a limitation the code no longer has is the lying kind: it
+teaches a reader to discount the figure that is now right.
+
+### A test had certified the defect
+
+`test_salt_cap_absent_falls_back_to_statutory`, in the TY2026 absence matrix,
+asserted $40,000 for TY2026. The matrix exists to prove each fallback is
+reachable and correct, and it had pinned the wrong one — so the flat schedule
+was not merely untested, it was **certified as intended**. That is why nothing
+went red when X6 found the same figure wrong in the skill text: the engine's own
+absence test agreed with the error.

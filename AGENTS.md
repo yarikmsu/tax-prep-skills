@@ -81,15 +81,14 @@ and the usual cause is a `web_search` that is not live — Codex ships
 - Skills **fetch current-year rates, brackets and thresholds at runtime** from
   authoritative sources (IRS.gov and state revenue departments), caching them in
   `tax_law_<year>.json`. Never hardcode a rate, bracket, cap, or threshold.
-- **Live web results are required, and several agents do not give them by
-  default** — one ships cached, one caches for minutes, one has no web search at
-  all until you wire it up. Confirm YOURS before any tax-law fetch; which agent
-  does what: `docs/contributing/agents-compat.md`.
+- **Live web results are required and several agents do not give them by
+  default.** Confirm YOURS before any tax-law fetch; which agent does what:
+  `docs/contributing/agents-compat.md`.
 - **Narrow enumerated exception:** CA's statutory-fixed
   `mental_health_surcharge` rate and threshold may remain inline with their
   R&TC §17043 citation. A new state surtax is fetched even when currently
   unindexed; adding another exception requires changing this governing list.
-- **Second and last: `tax-safe-harbor`** restates §6654 in prose, having no
+- **Second: `tax-safe-harbor`** restates §6654 in prose, having no
   cache. Statutory and unindexed as above, but AMENDED: it refuses a covered
   year outside 2003-2026 (2010 for CA). Every figure it may state belongs to the
   closed `allowed` set in `tests/test_portability.py`, each pinned to an engine
@@ -97,15 +96,20 @@ and the usual cause is a `web_search` that is not live — Codex ships
   residency day and abode counts, closed set and sources in
   `docs/contributing/residency-guardrails.md`. One of them is AUDIT POLICY, not
   statute, and has already moved once — re-read it at season open.
+- **Third: §164(b)(7)'s SALT schedule** — the statute NAMES each amount
+  ($40,000 TY2025, $40,400 TY2026, 101%/yr to TY2029, $10,000 after; half that
+  for MFS) and carries no inflation index, so it is statutory. Pinned to
+  `ptet`'s constants by test; the cache still wins.
 - **If live web access is unavailable, cached-only, or you cannot confirm the
   figure is current: STOP.** Ask the user to paste the current figures along with
   the source URL. Never infer a figure from a prior year and never let a
-  plausible-looking stale number through.
+  plausible-looking stale number through. A fallback may DEGRADE instead only
+  when BOTH hold: the output is ADVISORY, and it UNDER-states. Anything else
+  STOPs — over-stating is §4's hard error and a banner is not a substitute.
 - Always confirm a fetched figure explicitly names the tax year you are filing.
-- Fetched sources are pinned in the cache's `_sources` block. The authoritative
-  policy is `agents/lib/tax_law_fetcher.py::_source_host_authoritative`: http(s)
-  `.gov` hosts plus its explicit primary-authority exceptions
-  (`law.cornell.edu` and Florida DOR's `floridarevenue.com` today).
+- Fetched sources are pinned in the cache's `_sources` block; the policy is
+  `agents/lib/tax_law_fetcher.py::_source_host_authoritative` — http(s) `.gov`
+  plus the primary-authority hosts it names.
 
 ## 3. The pipeline
 
@@ -189,9 +193,7 @@ are plain Markdown instructions and are written to be executable that way.
   with the named form (exit 2) unless the user explicitly acknowledges the
   limitation in `acknowledged_limitations`, with the decision recorded in
   `answers.md`. Unknown ids hard-error so a typo cannot silently unblock nothing.
-  Manual-worksheet items plus the state-scope note form the `meta.limitations`
-  manifest, copied verbatim into `result.json` and printed on page 1 of the
-  generated PDF. Every capability rule's flag must exist in
+  Every capability rule's flag must exist in
   `taxpayer_profile_template.json` **and** be asked by the `tax-setup` interview
   (enforced by test) — a rule keyed on a flag nothing sets is dead code, and Form
   8958 is the one rule that is STATUS+STATE-driven rather than flag-driven. What
@@ -330,8 +332,8 @@ a parser version the lock does not pin.
 
 **Modifying `agents/lib/tax_computations/`**
 - Every function takes rates/brackets as parameters — never hardcode bracket
-  values. The only hardcoded constants are structural (SE threshold `$400`, SE
-  factor `92.35%`).
+  values. Hardcoded constants are structural (SE `$400`/92.35%) or one of §2's
+  enumerated exceptions.
 - Always round output to 2 decimal places.
 - Run `sh agents/lib/run.sh -m agents.lib.tax_computations` after changes — the
   self-test must pass.
@@ -354,8 +356,6 @@ a parser version the lock does not pin.
 - Several blocks are INDEXED per year, so a carried-over value goes stale silently.
   `irmaa.tiers` ships EMPTY — **`tax-setup` must fetch it**, and `tax-roth-convert`
   degrades to "IRMAA not modeled" when it has not been.
-- Statutory-fixed thresholds (safe-harbor $150k/$75k; ACTC $2,500 floor + 15%
-  rate; $500 ODC) are hardcoded constants, not in the cache.
 - Key paths, the per-block keying table and which values index:
   `docs/contributing/tax-law-cache.md`
 

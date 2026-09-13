@@ -68,15 +68,24 @@ fires on correct data.
 
 ## Indexed per year, so a carried-over value goes stale silently
 
-- `salt_cap` — the OBBBA base indexes roughly 1%/yr for 2026-2029. `ptet._salt_cap`
-  prefers the cache and falls back to the unindexed statutory schedule when it is unset.
+- `salt_cap` — §164(b)(7) steps the cap: $40,000 for TY2025, $40,400 for TY2026,
+  101% of the prior year through TY2029, then $10,000. `ptet._salt_cap` prefers the
+  cache and falls back to that schedule, which is the STATUTE's own and not an
+  inference — the section carries no inflation index, which is why AGENTS.md §2
+  lists it as an enumerated exception rather than requiring a fetch. The published
+  IRS figure for a stepped year is still authority over arithmetic from an anchor,
+  so a populated cache wins. Fetch it.
 - `child_tax_credit.refundable_limit` — the indexed per-child ACTC cap that
   `compute_child_tax_credit`'s refundable split requires.
 
 ## What is NOT in the cache
 
-AGENTS.md §8 lists the statutory-fixed thresholds that are hardcoded constants, and it
-lists them there rather than here because a FIGURE stated in two files is two files to
-change when it moves — the failure §2 says has no downstream check. They are constants
-on purpose: moving them into the cache would make an unindexed figure look like one that
-needs fetching.
+The statutory-fixed thresholds are hardcoded constants and live HERE, in one place:
+the safe-harbor $150,000/$75,000, the ACTC $2,500 floor and its 15% rate, and the $500
+ODC. AGENTS.md §8 used to carry the list and now points at this file — a FIGURE stated
+in two files is two files to change when it moves, the failure §2 says has no
+downstream check, and the instruction file keeps the ALARM rather than the list (§9).
+
+They are constants on purpose: moving them into the cache would make an unindexed
+figure look like one that needs fetching. Each is pinned to its engine constant by
+test, which is the arrangement AGENTS.md §2's enumerated exceptions all ride on.
