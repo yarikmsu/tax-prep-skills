@@ -14,7 +14,11 @@ reader needs are in `docs/contributing/tax-law-cache.md`.
 
 import math
 
-from agents.lib.tax_computations._shared import _split_remainder_last
+from agents.lib.tax_computations._shared import (
+    _amount,
+    _normalize_filing_status,
+    _split_remainder_last,
+)
 
 
 def _ny_schedule_tax(taxable_income: float, table: list,
@@ -104,27 +108,31 @@ def _ny_schedule_tax(taxable_income: float, table: list,
         "must have a null max. Re-run /tax-setup.")
 
 
-def _ny_amount(value, label: str, allow_negative: bool = False) -> float:
-    """One figure off the New York return, validated where it enters.
+def _ny_status(filing_status) -> str:
+    """Validate the filing status BY VALUE, and hand back the token New York's
+    own tables and the cache blocks are keyed by.
 
-    `json.loads` accepts NaN and Infinity, both pass `isinstance(x, (int,
-    float))`, and every comparison with NaN is False — so an unchecked NaN
-    walks past a cap, past a floor, and into a total that then reads as a
-    number. Booleans are rejected for the same reason they are elsewhere here:
-    `True` is an int, and `True` dollars is not an amount anybody meant.
+    AGENTS.md §8 requires the value checked at the parse boundary, not just the
+    type: a type-valid but out-of-domain string otherwise falls through to a
+    wrong-but-plausible default. This module compared lowercase literals and
+    never validated at all, so the canonical `"MFJ"` the federal normaliser
+    returns took the SINGLE branch at four sites rather than raising — the exact
+    failure value-validation exists to stop (Q9).
+
+    Lowercase, because that is how `bracket_schedule_by_status`, the 529 caps
+    and the household-credit table are keyed. Callers may now pass either
+    spelling; anything outside the canonical set raises.
     """
-    if value is None or isinstance(value, bool) or \
-            not isinstance(value, (int, float)):
-        raise ValueError(f"{label} must be a number, got {value!r}")
-    if not math.isfinite(value):
-        raise ValueError(f"{label} must be finite, got {value!r}")
-    if value < 0 and not allow_negative:
-        raise ValueError(
-            f"{label} cannot be negative, got {value!r}. New York's additions "
-            "and subtractions are both entered as POSITIVE amounts — the "
-            "SCHEDULE carries the direction, so a negative here means the "
-            "figure is on the wrong one.")
-    return float(value)
+    return _normalize_filing_status(filing_status).lower()
+
+
+# New York enters BOTH modification schedules as positive amounts, so a
+# negative on one of them is a figure on the wrong schedule. Passed to
+# `_amount` where that is what a negative means, and nowhere else.
+_NY_WRONG_SCHEDULE = (
+    ". New York's additions and subtractions are both entered as POSITIVE "
+    "amounts — the SCHEDULE carries the direction, so a negative here means "
+    "the figure is on the wrong one.")
 
 
 _NY_MODIFICATION_PREFIXES = {"addition": ("A-", "EA-"),
@@ -191,7 +199,8 @@ def compute_ny_modifications(entries: "list[dict] | None", direction: str,
                 f"IT-225 code {code!r} is not valid on the form being filed. "
                 "New York disallows the modification rather than adjusting it, "
                 "so this is a return that would be corrected, not rounded.")
-        amount = _ny_amount(entry.get("amount"), f"IT-225 {code} amount")
+        amount = _amount(entry.get("amount"), f"IT-225 {code} amount",
+                         negative_hint=_NY_WRONG_SCHEDULE)
         total += amount
         detail.append({"code": code, "amount": amount})
     return {"total": round(total, 2), "entries": detail, "notes": notes}
@@ -233,7 +242,7 @@ def compute_ny_pension_exclusion(entries: "list[dict] | None",
             "state.subtractions.pension_annuity_exclusion.amount is not "
             "fetched, and the exclusion is capped. Claiming it uncapped "
             "under-states the tax; re-run /tax-setup.")
-    cap = _ny_amount(cap, "pension exclusion cap")
+    cap = _amount(cap, "pension exclusion cap")
     per_taxpayer = []
     seen: "set[str]" = set()
     total = 0.0
@@ -264,7 +273,7 @@ def compute_ny_pension_exclusion(entries: "list[dict] | None",
                 f"the pension exclusion entry for {who!r} is marked a "
                 "GOVERNMENT pension. Those are fully excluded on their own "
                 "line; capping one here would silently limit a full exclusion.")
-        amount = _ny_amount(entry.get("qualifying_amount"),
+        amount = _amount(entry.get("qualifying_amount"),
                             f"pension exclusion qualifying_amount for {who!r}")
         allowed = min(amount, cap)
         if allowed < amount:
@@ -354,18 +363,20 @@ def compute_ny_agi(
             schedule, or a capped subtraction whose cap was never fetched —
             claiming one uncapped under-states the tax.
     """
+    filing_status = _ny_status(filing_status)
     additions = additions or {}
     subtractions = subtractions or {}
     limits = limits or {}
     notes: "list[str]" = []
     lines: "dict[str, float]" = {}
 
-    agi = _ny_amount(federal_agi, "federal_agi", allow_negative=True)
+    agi = _amount(federal_agi, "federal_agi", allow_negative=True)
     lines["line_19_federal_agi"] = round(agi, 2)
 
     total_additions = 0.0
     for name, line_no in _NY_ADDITION_LINES:
-        amount = _ny_amount(additions.get(name, 0) or 0, f"additions.{name}")
+        amount = _amount(additions.get(name, 0) or 0, f"additions.{name}",
+                         negative_hint=_NY_WRONG_SCHEDULE)
         lines[f"line_{line_no}_{name}"] = round(amount, 2)
         total_additions += amount
     it225_add = compute_ny_modifications(additions.get("it225"), "addition",
@@ -377,8 +388,9 @@ def compute_ny_agi(
 
     total_subtractions = 0.0
     for name, line_no in _NY_SUBTRACTION_LINES:
-        amount = _ny_amount(subtractions.get(name, 0) or 0,
-                            f"subtractions.{name}")
+        amount = _amount(subtractions.get(name, 0) or 0,
+                         f"subtractions.{name}",
+                         negative_hint=_NY_WRONG_SCHEDULE)
         lines[f"line_{line_no}_{name}"] = round(amount, 2)
         total_subtractions += amount
 
@@ -391,7 +403,7 @@ def compute_ny_agi(
     lines["line_29_pension_annuity_exclusion"] = pension["total"]
     total_subtractions += pension["total"]
 
-    college = _ny_amount(subtractions.get("college_savings_contributions", 0)
+    college = _amount(subtractions.get("college_savings_contributions", 0)
                          or 0, "subtractions.college_savings_contributions")
     if college:
         # New York keys this cap as married-joint against EVERYBODY ELSE — the
@@ -406,7 +418,7 @@ def compute_ny_agi(
                 "state.subtractions.college_savings_deduction is not fetched "
                 f"for {filing_status!r}, and the deduction is capped. Claiming "
                 "it uncapped under-states the tax; re-run /tax-setup.")
-        cap = _ny_amount(cap, "college savings cap")
+        cap = _amount(cap, "college savings cap")
         if college > cap:
             notes.append(
                 f"529 contributions {college:,.2f} exceed the deduction cap; "
@@ -564,7 +576,10 @@ def compute_ny_tax(
         taxable_income: IT-201 line 38.
         nyagi: IT-201 line 33 — New York AGI, NOT federal AGI. The two differ by
             the IT-225 modifications, and the thresholds below are New York's.
-        filing_status: single | mfj | mfs | hoh | qss.
+        filing_status: Single | MFJ | MFS | HoH | QSS, in either case —
+            validated by VALUE and lower-cased by `_ny_status`, so the
+            canonical code the federal normaliser returns is accepted
+            here rather than silently taking the Single branch (Q9).
         brackets: `state.brackets`, keyed by schedule.
         schedule_by_status: `state.bracket_schedule_by_status`.
         recapture: `state.tax_table_benefit_recapture`.
@@ -592,6 +607,7 @@ def compute_ny_tax(
             was never fetched. Refusing is the only safe answer there: every
             other option under-states the tax.
     """
+    filing_status = _ny_status(filing_status)
     for name, value in (("taxable_income", taxable_income), ("nyagi", nyagi)):
         if value is None or isinstance(value, bool) or \
                 not isinstance(value, (int, float)):
@@ -775,7 +791,8 @@ def compute_ny_household_credit(
     return. Past the last column the table gives a per-head increment to add,
     which is why the count is passed rather than clamped by the caller.
     """
-    agi = _ny_amount(federal_agi, "federal_agi", allow_negative=True)
+    filing_status = _ny_status(filing_status)
+    agi = _amount(federal_agi, "federal_agi", allow_negative=True)
     if isinstance(exemptions, bool) or not isinstance(exemptions, int) \
             or exemptions < 1:
         raise ValueError(
@@ -804,7 +821,7 @@ def compute_ny_household_credit(
         # still lands in it.
         if (lower is None or agi > lower) and (upper is None or agi <= upper):
             if "amount" in band:
-                credit = _ny_amount(band["amount"], "household credit amount")
+                credit = _amount(band["amount"], "household credit amount")
             else:
                 by_count = band.get("by_exemptions") or []
                 if not by_count:
@@ -812,7 +829,7 @@ def compute_ny_household_credit(
                         "a household credit band carries neither a flat "
                         "`amount` nor a `by_exemptions` column list")
                 if exemptions <= len(by_count):
-                    credit = _ny_amount(by_count[exemptions - 1],
+                    credit = _amount(by_count[exemptions - 1],
                                         "household credit amount")
                 else:
                     # "For each individual over 7, ADD the amount in this
@@ -825,8 +842,8 @@ def compute_ny_household_credit(
                             "column and the band has no `each_additional`; the "
                             "table continues rather than stopping, so "
                             "truncating here under-states the credit")
-                    credit = (_ny_amount(by_count[-1], "household credit") +
-                              _ny_amount(each, "household credit increment")
+                    credit = (_amount(by_count[-1], "household credit") +
+                              _amount(each, "household credit increment")
                               * (exemptions - len(by_count)))
             return {"credit": round(credit, 2),
                     "band": {"over": lower, "not_over": upper}, "notes": []}
@@ -862,12 +879,12 @@ def compute_ny_state_tax_total(
     form, and treating one as nonrefundable would silently discard the part
     that should have been refunded.
     """
-    tax = _ny_amount(tax_before_credits, "tax_before_credits")
-    household = _ny_amount(household_credit, "household_credit")
-    resident = _ny_amount(resident_credit, "resident_credit")
-    other = _ny_amount(other_nonrefundable_credits,
+    tax = _amount(tax_before_credits, "tax_before_credits")
+    household = _amount(household_credit, "household_credit")
+    resident = _amount(resident_credit, "resident_credit")
+    other = _amount(other_nonrefundable_credits,
                        "other_nonrefundable_credits")
-    net_other = _ny_amount(net_other_state_taxes, "net_other_state_taxes")
+    net_other = _amount(net_other_state_taxes, "net_other_state_taxes")
 
     total_credits = round(household + resident + other, 2)
     notes: "list[str]" = []
@@ -949,7 +966,7 @@ def compute_ny_settlement(
     exceed it — the form computes line 78 as line 77 minus line 79, and a
     larger figure would manufacture a refund out of nothing.
     """
-    tax = _ny_amount(total_tax, "total_tax")
+    tax = _amount(total_tax, "total_tax")
     credits = refundable_credits or {}
     known = {name for name, _ in _NY_REFUNDABLE_CREDIT_LINES}
     unknown = sorted(set(credits) - known)
@@ -969,7 +986,7 @@ def compute_ny_settlement(
     lines: "dict[str, float]" = {}
     total_payments = 0.0
     for name, line_no in _NY_REFUNDABLE_CREDIT_LINES:
-        amount = _ny_amount(credits.get(name, 0) or 0,
+        amount = _amount(credits.get(name, 0) or 0,
                             f"refundable_credits.{name}")
         lines[f"line_{line_no}_{name}"] = round(amount, 2)
         total_payments += amount
@@ -978,14 +995,14 @@ def compute_ny_settlement(
             ("city_withholding", 73, city_withholding),
             ("yonkers_withholding", 74, yonkers_withholding),
             ("estimated_payments", 75, estimated_payments)):
-        amount = _ny_amount(value, name)
+        amount = _amount(value, name)
         lines[f"line_{line_no}_{name}"] = round(amount, 2)
         total_payments += amount
     lines["line_76_total_payments"] = round(total_payments, 2)
 
-    penalty = _ny_amount(estimated_tax_penalty, "estimated_tax_penalty")
-    other = _ny_amount(other_penalties, "other_penalties")
-    applied = _ny_amount(applied_to_next_year, "applied_to_next_year")
+    penalty = _amount(estimated_tax_penalty, "estimated_tax_penalty")
+    other = _amount(other_penalties, "other_penalties")
+    applied = _amount(applied_to_next_year, "applied_to_next_year")
     notes: "list[str]" = []
 
     overpaid = round(max(total_payments - tax, 0.0), 2)
@@ -1056,8 +1073,9 @@ def compute_nyc_taxable_income(
     on a different computation this function cannot do. It refuses rather than
     taxing the whole household as residents.
     """
-    taxable = _ny_amount(state_taxable_income, "state_taxable_income")
-    addback = _ny_amount(charitable_gifts_trust_deducted,
+    filing_status = _ny_status(filing_status)
+    taxable = _amount(state_taxable_income, "state_taxable_income")
+    addback = _amount(charitable_gifts_trust_deducted,
                          "charitable_gifts_trust_deducted")
     # REQUIRED on a joint return, and that is the fix for a guard that could
     # not fire. `nyc_resident_spouses` shipped optional, and the workspace has
@@ -1127,13 +1145,13 @@ def compute_mctmt(
             "is a CLIFF and it changed for tax year 2026, so neither a "
             "default nor a stale figure is safe: one taxes a filer who owes "
             "nothing, the other exempts one who owes.")
-    threshold = _ny_amount(threshold, "MCTMT threshold")
+    threshold = _amount(threshold, "MCTMT threshold")
     lines: "dict[str, float]" = {}
     total = 0.0
     notes: "list[str]" = []
     for zone, earnings, line_no in (("zone_1", zone_1_net_earnings, "54c"),
                                     ("zone_2", zone_2_net_earnings, "54d")):
-        amount = _ny_amount(earnings, f"{zone}_net_earnings")
+        amount = _amount(earnings, f"{zone}_net_earnings")
         rate = (mctmt.get(zone) or {}).get("rate")
         lines[f"line_{'54a' if zone == 'zone_1' else '54b'}_{zone}_earnings"] \
             = round(amount, 2)
@@ -1146,7 +1164,7 @@ def compute_mctmt(
                 f"{amount:,.2f} of net earnings there. The two zones carry "
                 "DIFFERENT rates, so neither the other zone's nor a default "
                 "may stand in.")
-        tax = round(amount * _ny_amount(rate, f"{zone} rate"), 2)
+        tax = round(amount * _amount(rate, f"{zone} rate"), 2)
         lines[f"line_{line_no}_{zone}_tax"] = tax
         total += tax
         notes.append(
@@ -1182,15 +1200,15 @@ def compute_city_and_yonkers_total(
     Part-year city and Yonkers lines (50 and 57) are not here. This module is
     full-year residents, and a part-year figure belongs to IT-360.1.
     """
-    city_tax = _ny_amount(nyc_resident_tax, "nyc_resident_tax")
-    household = _ny_amount(nyc_household_credit, "nyc_household_credit")
-    other_city = _ny_amount(other_nyc_taxes, "other_nyc_taxes")
-    city_credits = _ny_amount(nyc_nonrefundable_credits,
+    city_tax = _amount(nyc_resident_tax, "nyc_resident_tax")
+    household = _amount(nyc_household_credit, "nyc_household_credit")
+    other_city = _amount(other_nyc_taxes, "other_nyc_taxes")
+    city_credits = _amount(nyc_nonrefundable_credits,
                               "nyc_nonrefundable_credits")
-    mobility = _ny_amount(mctmt, "mctmt")
-    yonkers_res = _ny_amount(yonkers_resident_surcharge,
+    mobility = _amount(mctmt, "mctmt")
+    yonkers_res = _amount(yonkers_resident_surcharge,
                              "yonkers_resident_surcharge")
-    yonkers_non = _ny_amount(yonkers_nonresident_earnings_tax,
+    yonkers_non = _amount(yonkers_nonresident_earnings_tax,
                              "yonkers_nonresident_earnings_tax")
 
     notes: "list[str]" = []
@@ -1266,8 +1284,8 @@ def compute_ny_ptet_owner(
     the two credits back under one code is a different return from the one the
     form describes, and it is the mistake a single "PTET addback" invites.
     """
-    claimed = {"nys": _ny_amount(nys_ptet_credit, "nys_ptet_credit"),
-               "nyc": _ny_amount(nyc_ptet_credit, "nyc_ptet_credit")}
+    claimed = {"nys": _amount(nys_ptet_credit, "nys_ptet_credit"),
+               "nyc": _amount(nyc_ptet_credit, "nyc_ptet_credit")}
     # NORMALISED by `compute_ny_modifications`, not by hand. The loop that
     # stood here did the strip and upper itself and SILENTLY DROPPED an entry
     # whose shape it did not recognise: a `{"code": None}` addition was
@@ -1299,7 +1317,7 @@ def compute_ny_ptet_owner(
         required.append({"code": code, "amount": round(amount, 2)})
         if code in existing:
             stated = existing[code]
-            if stated is None or abs(_ny_amount(
+            if stated is None or abs(_amount(
                     stated, f"IT-225 {code} amount") - amount) > 0.005:
                 raise ValueError(
                     f"IT-225 code {code} is {stated!r} but the {which.upper()} "
@@ -1344,6 +1362,7 @@ def compute_ny_required_annual_payment(
     prior-year safe harbour, and a taxpayer who simply has not supplied one is
     in a different position that the caller has to resolve.
     """
+    filing_status = _ny_status(filing_status)
     safe_harbor = safe_harbor or {}
     current_share = safe_harbor.get("current_year_share")
     prior_share = safe_harbor.get("prior_year_share")
@@ -1363,9 +1382,9 @@ def compute_ny_required_annual_payment(
             "safe harbour against the wrong thresholds — they are keyed to NY "
             "adjusted gross income and may diverge.")
 
-    tax = _ny_amount(current_year_tax, "current_year_tax")
+    tax = _amount(current_year_tax, "current_year_tax")
     notes: "list[str]" = []
-    current_floor = round(tax * _ny_amount(current_share, "current_year_share"),
+    current_floor = round(tax * _amount(current_share, "current_year_share"),
                           2)
     options = {"current_year": current_floor}
 
@@ -1376,8 +1395,8 @@ def compute_ny_required_annual_payment(
             "prior-year safe harbour; a taxpayer who simply has not supplied "
             "one may have a lower requirement.")
     else:
-        prior = _ny_amount(prior_year_tax, "prior_year_tax")
-        share = _ny_amount(prior_share, "prior_year_share")
+        prior = _amount(prior_year_tax, "prior_year_tax")
+        share = _amount(prior_share, "prior_year_share")
         applicable = (threshold_mfs if filing_status == "mfs" else threshold)
         if prior_year_nyagi is None:
             raise ValueError(
@@ -1385,10 +1404,10 @@ def compute_ny_required_annual_payment(
                 "adjusted gross income, and the higher share applies above a "
                 "NYAGI threshold. Assuming the lower one under-states the "
                 "required payment for exactly the taxpayers it is aimed at.")
-        nyagi = _ny_amount(prior_year_nyagi, "prior_year_nyagi",
+        nyagi = _amount(prior_year_nyagi, "prior_year_nyagi",
                            allow_negative=True)
-        if nyagi > _ny_amount(applicable, "high income threshold"):
-            share = _ny_amount(high_share, "prior_year_share_high_income")
+        if nyagi > _amount(applicable, "high income threshold"):
+            share = _amount(high_share, "prior_year_share_high_income")
             notes.append(
                 "Prior-year New York AGI is above the threshold, so the higher "
                 "prior-year share applies.")
@@ -1423,7 +1442,8 @@ def compute_ny_itemized(
     reduction: "dict | None" = None,
     charitable_limit: "dict | None" = None,
     college_tuition_deduction: float = 0.0,
-    standard_deduction: "float | None" = None,
+    *,
+    standard_deduction: float,
     mfs_spouse_itemizes: bool = False,
 ) -> dict:
     """Form IT-196 lines 46 through 49 — the §615 adjustment and the election.
@@ -1464,17 +1484,18 @@ def compute_ny_itemized(
         {"line_46_adjustment", "line_47_after_adjustment", "line_48_college",
          "line_49_total", "deduction", "use_itemized", "regime", "notes"}
     """
+    filing_status = _ny_status(filing_status)
     reduction = reduction or {}
     charitable_limit = charitable_limit or {}
     notes: "list[str]" = []
 
-    line_45 = _ny_amount(itemized_before_adjustment,
+    line_45 = _amount(itemized_before_adjustment,
                          "itemized_before_adjustment")
-    charitable = _ny_amount(charitable_contributions,
+    charitable = _amount(charitable_contributions,
                             "charitable_contributions")
-    college = _ny_amount(college_tuition_deduction,
+    college = _amount(college_tuition_deduction,
                          "college_tuition_deduction")
-    agi = _ny_amount(nyagi, "nyagi", allow_negative=True)
+    agi = _amount(nyagi, "nyagi", allow_negative=True)
 
     thresholds = reduction.get("first_threshold") or {}
     first_threshold = thresholds.get(filing_status)
@@ -1561,15 +1582,31 @@ def compute_ny_itemized(
         regime = "unreduced"
 
     line_49 = round(line_47 + college, 2)
-    use_itemized = None
-    deduction = line_49
-    if standard_deduction is not None:
-        standard = _ny_amount(standard_deduction, "standard_deduction")
-        use_itemized = line_49 > standard
-        # "If you are married and filing separate returns, BOTH of you must
-        # take the standard deduction unless BOTH of you elect to itemize."
-        # One spouse's choice is not their own to make.
-        if filing_status == "mfs" and not mfs_spouse_itemizes:
+    # Q7, ruled 2026-09-13. `standard_deduction` was optional, and omitting it
+    # left `deduction` holding the ITEMIZED total — a number that READS as
+    # elected to every caller, which is worse than CA's `None`: there was no
+    # value to test for. When the NY standard deduction was the larger of the
+    # two that UNDER-stated the deduction and over-stated the tax. Required
+    # now, so `deduction` is an election in every return from here.
+    standard = _amount(standard_deduction, "standard_deduction")
+    use_itemized = line_49 > standard
+    # "If you are married and filing separate returns, BOTH of you must take
+    # the standard deduction unless BOTH of you elect to itemize." One
+    # spouse's choice is not their own to make — and the coupling binds in
+    # BOTH directions. Only the first was implemented: a filer whose spouse
+    # itemizes still took the standard deduction whenever it was larger, which
+    # is the election the instruction forbids and OVER-states the deduction.
+    # `compute_ca_itemized` has forced the mirror-image federal §63(c)(6)(A)
+    # case since it was written; New York's half was missing.
+    if filing_status == "mfs":
+        if mfs_spouse_itemizes and not use_itemized:
+            notes.append(
+                "Married filing separately: the New York standard deduction "
+                "is larger, but the spouse is ITEMIZING and BOTH must elect "
+                "the same way. The itemized deduction is taken here, and it "
+                "is the smaller of the two.")
+            use_itemized = True
+        elif not mfs_spouse_itemizes:
             if use_itemized:
                 notes.append(
                     "Married filing separately: the New York itemized "
@@ -1577,20 +1614,7 @@ def compute_ny_itemized(
                     "NEITHER may. The standard deduction is taken here because "
                     "the spouse is not itemizing.")
             use_itemized = False
-        deduction = line_49 if use_itemized else standard
-    else:
-        # The same silence `compute_ca_itemized` carried, one degree worse:
-        # `deduction` is already SET to the itemized figure above, so a caller
-        # reading it gets a number that looks elected. When the NY standard
-        # deduction is the larger of the two that UNDER-states the deduction
-        # and over-states the tax, and nothing said so.
-        notes.append(
-            f"New York itemize-vs-standard election NOT computed — no NY "
-            f"standard deduction was supplied, so `deduction` is the ITEMIZED "
-            f"total of ${line_49:,.2f} rather than an elected one. It "
-            f"under-states the deduction for any taxpayer whose NY standard "
-            f"deduction is larger. Pass standard_deduction from "
-            f"state.standard_deduction to settle it")
+    deduction = line_49 if use_itemized else standard
     return {
         "line_46_adjustment": line_46,
         "line_47_after_adjustment": line_47,

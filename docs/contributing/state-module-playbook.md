@@ -165,15 +165,30 @@ Two rules that are structural rather than stylistic:
 Follow `compute_ca_itemized` and the rest of `state/ca.py`:
 rates and thresholds as PARAMETERS (from the fetched block), round to 2dp,
 strict validators (`_shared._amount` rejects bool/NaN/Infinity, and negative
-unless you pass `allow_negative`), return dicts with a `notes` list.
+unless you pass `allow_negative`; `negative_hint` appends a sentence saying what
+a negative MEANS in your domain, which is the whole of what NY once kept a
+private copy of the function for), return dicts with a `notes` list.
 
-**Filing status: the two examples DISAGREE, and CA is the one to copy.** `ca.py`
-VALUE-validates through `_shared._normalize_filing_status`, which returns a
-canonical UPPERCASE code and hard-errors on anything outside the set. `ny.py`
-does not — it compares lowercase literals, so the very string
-`_normalize_filing_status` returns takes the wrong branch there rather than
-raising. Converting NY is its own change; until it happens, do not read `ny.py`
-as stating the convention. Bias rule: **never silently understate
+**A figure the module ELECTS on is a required parameter, never an optional
+one.** Both itemized forms took an optional standard deduction and, without it,
+returned something that read as a settled election — CA a `None` that tests
+falsy, NY the itemized total sitting in the field a caller reads as elected.
+Both under-state the deduction for a taxpayer whose standard deduction is
+larger. Q7, ruled 2026-09-13: require it. A banner warning that an election may
+be wrong is not a substitute for the election.
+
+**Filing status is VALUE-validated at every entry point, and a test derives
+that rather than listing it.** Both examples now agree: `ca.py` calls
+`_shared._normalize_filing_status`, which returns a canonical UPPERCASE code and
+hard-errors on anything outside the set, and `ny.py` calls `_ny_status`, a
+one-line wrapper that delegates to the same validator and lower-cases the result
+because New York keys its own tables and its cache blocks in lowercase. Either
+shape is fine; validating nothing is not. `ny.py` used to compare lowercase
+literals and never validate, so the very string `_normalize_filing_status`
+returns took the SINGLE branch rather than raising — Q9 in the 09-05 backlog,
+ruled and converted 2026-09-13. `TestEveryStateEntryPointValidatesItsFilingStatus`
+asks the tree which public functions take a `filing_status` and requires each to
+normalise it, so a new one cannot arrive unvalidated. Bias rule: **never silently understate
 tax or overstate deductions** — degrade loudly (a note naming the gap) or
 hard-error; a missing fetched value is an error or a loud skip, never a
 guessed number.

@@ -83,11 +83,17 @@ tax return."
 
 Run `compute_ny_itemized(itemized_before_adjustment, charitable_contributions,
 nyagi, filing_status, reduction, charitable_limit, college_tuition_deduction,
-standard_deduction, mfs_spouse_itemizes)` with `reduction =
+standard_deduction=..., mfs_spouse_itemizes=...)` with `reduction =
 state.itemized_reduction`, `charitable_limit = state.charitable_limit` and
 `standard_deduction = state.standard_deduction[status]`. It returns
 `use_itemized`, which decides `deduction_regime`, and `deduction`, which is
 line 34.
+
+**`standard_deduction` is REQUIRED and keyword-only.** It used to be optional,
+and omitting it returned `deduction` holding the ITEMIZED total — a figure that
+reads as elected, under-stating the deduction for any taxpayer whose NY standard
+deduction is larger. If `state.standard_deduction` is not in the cache, STOP and
+re-run `/tax-setup`; do not call this with a guess.
 
 - **`itemized_before_adjustment` is IT-196 lines 1-45 and is an INPUT.** It is
   computed on federal rules **as they existed before the TCJA** — the 2%

@@ -641,6 +641,24 @@ they run ahead of the orchestrator rather than waiting behind it.
   §63(f)/SE-tips threading; `/tax-harvest` §1091 basis-shift modeling. The first two
   are absorbed by V1 if the orchestrator exposes a deduction knob on
   `compute_scenario`; sequence them after it rather than as separate work.
+- **X8 (P1, S):** Value-validate `filing_status` in the three engine modules that
+  still upper-case it without checking the result. Found by sweeping the siblings
+  after Q9 converted `state/ny.py` — the finding's scope was never one module. Two
+  are REPRODUCED, not read: `ptet._salt_cap(2026, "Married Filing Separately")`
+  returns **$40,000** where `"MFS"` returns $20,000, doubling an MFS filer's SALT
+  cap and OVER-stating the PTET benefit it is used to price; and
+  `retirement_dashboard.compute_ira_traditional_deductible_fraction` reads the
+  `single_covered` phase-out window for that same spelling where `"MFJ"` reads
+  `mfj_covered`, a narrower band that under-states the IRA deduction. Both are the
+  wrong-but-plausible branch AGENTS.md §8 names. `return_builder.build` and
+  `withholding.build_ca_true_up` pass the status to a callee that DOES validate and
+  need nothing; `international.check_form_8938_required` validates inline against
+  its own set and `state_brackets_for_status` raises on an unknown key, so both are
+  correct today and merely spell the rule a third and fourth way — fold them onto
+  the shared validator only if it is free. The engine-wide sweep is the deliverable
+  alongside the fix: `TestEveryStateEntryPointValidatesItsFilingStatus` covers
+  `state/` only, and a hand-written roster of the rest is the silent green this
+  epic keeps finding.
 
 ### EPIC Y — Distribution and product
 
@@ -1113,16 +1131,16 @@ question, skip that task, take the next). **Q1-Q6 were ruled on 2026-09-07**; ea
 kept with its question so a later reader can see what was traded away, and none of them
 is re-opened by an implementer without the owner.
 
-**Q7-Q12 are OPEN as of 2026-09-13.** Every one blocks a task that is otherwise ready,
-and every one changes a SHIPPED contract or something a taxpayer reads — which is why
-none was decided by the implementer who found it. Each carries what it would cost to
-answer either way, and a recommendation that is not a decision. The list of what is
-blocked on an owner ACTION rather than a ruling is at the end of this part.
+**Q7-Q12 were ruled on 2026-09-13**, all six as proposed. Every one blocked a task
+that was otherwise ready, and every one changes a SHIPPED contract or something a
+taxpayer reads — which is why none was decided by the implementer who found it.
+Each is kept with its question, what answering it either way would have cost, and
+the proposal the owner adopted. The list of what is blocked on an owner ACTION
+rather than a ruling is at the end of this part.
 
-**A staff product-owner review PROPOSED a ruling for each of Q7-Q12 on 2026-09-13**,
-recorded under its question as *PROPOSED*. A proposal is not a ruling: an
-implementer who finds one still asks. What each review did first was check the
-code, and three of the six questions turned out to be asked about something other
+**A staff product-owner review proposed a ruling for each of Q7-Q12 on 2026-09-13
+and the owner adopted all six the same day**, recorded under its question as
+*RULED*. What that review did first was check the code, and three of the six questions turned out to be asked about something other
 than what is shipped — the re-framings are recorded because they change the
 answer, not just the confidence. When the owner rules, the *PROPOSED* paragraph
 becomes a *RULED* one in the Part 5 shape, and the work is sequenced at the end of
@@ -1207,7 +1225,7 @@ direction is owed. Making the parameter required on all three is the fix and
 **breaks callers** — that is the whole question. Recommendation: require it;
 a banner is a warning that an election may be wrong, and an election that may be
 wrong is not something to warn about.
-*PROPOSED — require it, and record the decomposition as the target shape.* The
+**RULED 2026-09-13: require it, and record the decomposition as the target shape.** The
 three functions have forty-three call sites in the test suite, of which
 twenty-one already pass a standard deduction, none in the engine (the one that
 greps as a call is inside a docstring), and three in skill markdown: "breaks
@@ -1239,8 +1257,8 @@ indexed figure turns a planning tool off entirely for a taxpayer who only wanted
 an estimate. Recommendation: STOP for anything that reaches a FILED return,
 degrade-with-banner for advisory planning output, and write that split into §2 so
 it stops being decided case by case.
-*PROPOSED — degrade only when BOTH hold: the output is advisory AND the fallback
-is in the under-statement direction; otherwise STOP.* Two corrections to the
+**RULED 2026-09-13: degrade only when BOTH hold — the output is advisory AND the
+fallback is in the under-statement direction; otherwise STOP.** Two corrections to the
 question as asked. First, `ptet._salt_cap`'s fallback is not a degrade at all —
 it is a HARDCODED schedule (`if 2025 <= tax_year <= 2029: return 40000.0`), the
 thing §2 forbids outright, and it should be deleted rather than corrected, leaving
@@ -1267,7 +1285,7 @@ accepts silently. The cost of not: a wrong-but-plausible branch, which AGENTS.md
 §8 names as the exact failure value-validation exists to stop.
 Recommendation: convert. This is the rule the repo already states; NY is the
 exception nobody decided to make.
-*PROPOSED — convert.* Verified: `state/ny.py` calls `_normalize_filing_status`
+**RULED 2026-09-13: convert.** Verified: `state/ny.py` calls `_normalize_filing_status`
 ZERO times (one executable call in CA, seven in the federal module), and the
 normaliser upper-cases its input, so `"mfj"` keeps working after conversion — the
 only input that starts being refused is input that was already taking the wrong
@@ -1294,9 +1312,9 @@ complete when TY2027's value appears nowhere.
 Recommendation: state the SHAPE and the cache key, drop the per-year figures. Until
 this is answered `/tax-ptet` sits in `_FIGURE_LINT_EXEMPT` with this question named,
 so the gap is loud rather than absent.
-*PROPOSED — state the two statutory anchors, the 101% rule and the 2030
+**RULED 2026-09-13: state the two statutory anchors, the 101% rule and the 2030
 reversion, name the cache key, and PIN the anchors to one engine constant by test
-— the `tax-safe-harbor` pattern.* The re-framing that decides it: §164(b)(7) is
+— the `tax-safe-harbor` pattern.** The re-framing that decides it: §164(b)(7) is
 NOT inflation-indexed. The statute itself names $40,000 for 2025 and $40,400 for
 2026 and says "101 percent of the prior year" for 2027-2029 — a fixed step
 schedule, the same legal class as the $10,000 reversion the engine already
@@ -1318,7 +1336,7 @@ and most of preflight's 2,700 lines exist to compensate for not being a package.
 The trade is the whole of §5's "a skill without its engine must not compute": a
 distribution is installable, which is the point, and also detachable from the
 skills that must not travel without it.
-*PROPOSED — no, with a re-open trigger.* The repository is not public (Y1), so
+**RULED 2026-09-13: no, with a re-open trigger.** The repository is not public (Y1), so
 there is no consumer to install a distribution; this is the largest contract
 change in the backlog with zero demand signal, and it defeats the venv-refusal
 guard by design. Revisit when a second consumer of the engine exists outside a
@@ -1332,7 +1350,7 @@ finds there is a host interpreter. (`agents/lib/__init__.py` refuses a host
 interpreter only when a workspace venv EXISTS; with none it imports — the guard is
 not the obstacle, the missing dependencies are.) A Python hook that cannot start
 is a hook that fails OPEN, which is the direction this repository never accepts.
-*PROPOSED — a bash shim of a few lines, and W3 proceeds.* The question is already
+**RULED 2026-09-13: a bash shim of a few lines, and W3 proceeds.** The question is already
 answered in production: `skill-invariants.sh` reads `[ -x .venv/bin/python ] ||
 exit 0` before any stamp write, with a comment defending it — and because the
 change boundary is NOT advanced, the first run after the venv exists checks
@@ -1342,13 +1360,26 @@ then `exec`s `.venv/bin/python -m <hook module>`. The Python lives outside
 `agents/lib/` so it never meets the import guard. Sequenced after the Q7-Q10 tax
 work: P2, and the largest refactor in the backlog.
 
-### If the proposals are ruled as written
+### The sequence the rulings put in flight
 
-Two PRs, then W3. **Q7 + Q9** is one engine-contract PR (the required parameter,
-the NY election field, the NY value-validation, `_ny_amount` folded). **Q8 + Q10**
-is one PR (the §2 sentence and its byte-cap trim, the deleted PTET schedule, the
-pinned SALT anchors, `/tax-ptet` leaving `_FIGURE_LINT_EXEMPT`). Q11 closes with
-its trigger recorded; Q12 closes with the shim, which is W3's first slice.
+Two PRs, then W3.
+
+**Q7 + Q9 — SHIPPED 2026-09-13.** One engine-contract PR: `ca_standard_deduction`
+and NY's `standard_deduction` are required keyword parameters, so neither form can
+return an unelected deduction; both degrade banners are gone with the paths that
+needed them. Every public state function taking a `filing_status` now validates it
+by value — NY through `_ny_status`, a wrapper that delegates to
+`_normalize_filing_status` and lower-cases for NY's own keying — and
+`TestEveryStateEntryPointValidatesItsFilingStatus` DERIVES that set from the tree
+rather than listing it, with a probe proving the wrapper is not hollow.
+`_ny_amount`, the third copy of `_shared._amount`, is folded: the only NY-specific
+part was one sentence about which schedule a negative belongs on, and `_amount`
+takes it as `negative_hint` at the one boundary where it is true.
+
+**Q8 + Q10** is one PR (the §2 sentence and its byte-cap trim, the deleted PTET
+schedule, the pinned SALT anchors, `/tax-ptet` leaving `_FIGURE_LINT_EXEMPT`).
+Q11 closes with its trigger recorded; Q12 closes with the shim, which is W3's
+first slice.
 
 ### Blocked on an owner ACTION, not a ruling
 

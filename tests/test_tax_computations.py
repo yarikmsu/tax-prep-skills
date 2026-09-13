@@ -10,6 +10,7 @@ import json
 import pytest
 import sys
 import os
+import textwrap
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -2348,7 +2349,7 @@ class TestCaItemized:
     def test_phaseout_unfetched_degrades_loudly(self):
         r = compute_ca_itemized(
             federal_agi=400000, ca_agi=400000, tax_year=2025,
-            real_estate_taxes=12000)
+            real_estate_taxes=12000, ca_standard_deduction=5809)
         assert r["phaseout_reduction"] == 0.0
         assert any("OVERSTATED" in n for n in r["notes"])
 
@@ -2362,7 +2363,7 @@ class TestCaItemized:
         past the one that is real.
         """
         nothing = compute_ca_itemized(
-            federal_agi=45000, ca_agi=45000, tax_year=2025)
+            federal_agi=45000, ca_agi=45000, tax_year=2025, ca_standard_deduction=5809)
         assert nothing["itemized_total"] == 0.0
         assert not any("OVERSTATED" in n for n in nothing["notes"]), (
             "the phase-out banner fired on a return with nothing to overstate")
@@ -2375,13 +2376,13 @@ class TestCaItemized:
         SUBJECT amount now."""
         only_interest = compute_ca_itemized(
             federal_agi=400000, ca_agi=400000, tax_year=2025,
-            investment_interest=1000)
+            investment_interest=1000, ca_standard_deduction=5809)
         assert only_interest["itemized_total"] == 1000.0
         assert not any("OVERSTATED" in n for n in only_interest["notes"]), (
             "the phase-out banner fired on deductions §17077 cannot touch")
         mixed = compute_ca_itemized(
             federal_agi=400000, ca_agi=400000, tax_year=2025,
-            real_estate_taxes=12000, investment_interest=1000)
+            real_estate_taxes=12000, investment_interest=1000, ca_standard_deduction=5809)
         banner = [n for n in mixed["notes"] if "OVERSTATED" in n]
         assert len(banner) == 1 and "$12,000.00" in banner[0], banner
 
@@ -2391,26 +2392,38 @@ class TestCaItemized:
         would have been compared against, and the deductions at stake."""
         r = compute_ca_itemized(
             federal_agi=400000, ca_agi=400000, tax_year=2025,
-            real_estate_taxes=12000)
+            real_estate_taxes=12000, ca_standard_deduction=5809)
         banner = [n for n in r["notes"] if "OVERSTATED" in n]
         assert len(banner) == 1, r["notes"]
         assert "$400,000.00" in banner[0] and "$12,000.00" in banner[0]
 
-    def test_an_uncomputed_election_says_so(self):
-        """The one degrade path here that emitted NOTHING.
+    def test_the_election_cannot_be_skipped(self):
+        """Q7, ruled 2026-09-13: the standard deduction is REQUIRED.
 
-        `use_itemized` comes back None and `election_margin` is absent, and
-        both read as "no" to a caller that tests them for truth — so a taxpayer
-        whose CA standard deduction is the larger of the two takes
-        `itemized_total` instead, which UNDER-states the deduction and
-        over-states the tax. That direction is owed a banner; it had silence.
+        It was optional, and omitting it returned `use_itemized: None` with
+        `election_margin` absent — both of which read as "no" to a caller
+        testing them for truth, so a taxpayer whose CA standard deduction was
+        the larger took `itemized_total` instead: UNDER-stating the deduction
+        and over-stating the tax. A banner was added for that direction, and
+        the ruling went further — a warning that an election MAY be wrong is
+        not a thing to warn about, so there is no longer an election to skip.
         """
-        r = compute_ca_itemized(
-            federal_agi=70000, ca_agi=70000, tax_year=2025,
-            charitable_cash=1200, phaseout_threshold=244000)
-        assert r["use_itemized"] is None
-        assert "election_margin" not in r
-        assert any("election NOT computed" in n for n in r["notes"]), r["notes"]
+        with pytest.raises(TypeError, match="ca_standard_deduction"):
+            compute_ca_itemized(
+                federal_agi=70000, ca_agi=70000, tax_year=2025,
+                charitable_cash=1200, phaseout_threshold=244000)
+
+    def test_the_election_is_always_answered(self):
+        """The other half: given the figure, both keys are always present and
+        never None — there is no state in which a caller has to test for it."""
+        for cash, expect in ((1200, False), (40000, True)):
+            r = compute_ca_itemized(
+                federal_agi=70000, ca_agi=70000, tax_year=2025,
+                charitable_cash=cash, phaseout_threshold=244000,
+                ca_standard_deduction=5809)
+            assert r["use_itemized"] is expect, r
+            assert r["election_margin"] == round(r["itemized_total"] - 5809, 2)
+            assert not any("NOT computed" in n for n in r["notes"]), r["notes"]
 
     def test_the_appreciated_property_cap_is_30_pct_and_BINDS(self):
         """§170(b)(1)(C), pinned where it actually decides the answer.
@@ -2424,7 +2437,7 @@ class TestCaItemized:
         """
         r = compute_ca_itemized(
             federal_agi=100000, ca_agi=100000, tax_year=2025,
-            charitable_noncash=40000, phaseout_threshold=244000)
+            charitable_noncash=40000, phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["charitable_deductible"] == 30000.00
         assert r["charitable_carryforward"] == 10000.00
 
@@ -2432,14 +2445,14 @@ class TestCaItemized:
         """CA never conformed to the TCJA 60% cash cap."""
         r = compute_ca_itemized(
             federal_agi=100000, ca_agi=100000, tax_year=2025,
-            charitable_cash=55000, phaseout_threshold=244000)
+            charitable_cash=55000, phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["charitable_deductible"] == 50000.00
         assert any("50%" in n for n in r["notes"])
 
     def test_misc_2pct_floor_allowed_for_ca(self):
         r = compute_ca_itemized(
             federal_agi=100000, ca_agi=100000, tax_year=2025,
-            misc_2pct_expenses=5000, phaseout_threshold=244000)
+            misc_2pct_expenses=5000, phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["misc_deductible"] == 3000.00
 
     def test_ca_mortgage_limit_1m(self):
@@ -2448,7 +2461,7 @@ class TestCaItemized:
         r = compute_ca_itemized(
             federal_agi=500000, ca_agi=500000, tax_year=2025,
             mortgage_interest=60000, average_mortgage_balance=2000000,
-            phaseout_threshold=244000)
+            phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["mortgage_deductible"] == 30000.00
 
     def test_phaseout_80pct_branch_and_exemptions(self):
@@ -2459,7 +2472,7 @@ class TestCaItemized:
         r = compute_ca_itemized(
             federal_agi=2000000, ca_agi=2000000, tax_year=2025,
             medical_expenses=200000, investment_interest=10000,
-            real_estate_taxes=20000, phaseout_threshold=244000)
+            real_estate_taxes=20000, phaseout_threshold=244000, ca_standard_deduction=5809)
         # medical deductible = 200000 - 7.5%×2M = 50,000 (exempt)
         assert r["medical_deductible"] == 50000.00
         # subject = 20,000 (taxes only) → phaseout = 80% × 20,000 = 16,000
@@ -2474,11 +2487,11 @@ class TestCaItemized:
         overstate to 4,500)."""
         r = compute_ca_itemized(
             federal_agi=100000, ca_agi=60000, tax_year=2025,
-            medical_expenses=9000, phaseout_threshold=244000)
+            medical_expenses=9000, phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["medical_deductible"] == 1500.00
         cap = compute_ca_itemized(
             federal_agi=100000, ca_agi=60000, tax_year=2025,
-            charitable_cash=55000, phaseout_threshold=244000)
+            charitable_cash=55000, phaseout_threshold=244000, ca_standard_deduction=5809)
         assert cap["charitable_deductible"] == 50000.00  # 50% of FEDERAL AGI
 
     def test_ca_mfs_spouse_itemizes_forces_itemizing(self):
@@ -2518,7 +2531,7 @@ class TestCaItemized:
                                charitable_over_250_substantiated="yes")
         with pytest.raises(ValueError, match="mfs_spouse_itemizes"):
             compute_ca_itemized(100000, 100000, 2025,
-                                mfs_spouse_itemizes="yes")
+                                mfs_spouse_itemizes="yes", ca_standard_deduction=5809)
 
     def test_mfs_mortgage_limits_halved(self):
         """Codex P2: Pub 936 halves the caps for MFS — $375K post-TCJA
@@ -2536,7 +2549,7 @@ class TestCaItemized:
         r = compute_ca_itemized(
             federal_agi=200000, ca_agi=200000, tax_year=2025,
             mortgage_interest=32000, average_mortgage_balance=800000,
-            married_filing_separately=True, phaseout_threshold=244000)
+            married_filing_separately=True, phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["mortgage_deductible"] == 20000.00
 
     def test_obbba_70111_haircut(self):
@@ -2570,7 +2583,7 @@ class TestCaItemized:
         the excess must be RETURNED, not just noted."""
         r = compute_ca_itemized(
             federal_agi=100000, ca_agi=100000, tax_year=2025,
-            charitable_cash=55000, phaseout_threshold=244000)
+            charitable_cash=55000, phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["charitable_carryforward"] == 5000.00
 
 
@@ -4915,10 +4928,31 @@ def test_ny_refuses_taxable_income_above_new_york_agi():
 
 
 def test_ny_refuses_an_unmapped_status_and_an_unfetched_schedule():
-    with pytest.raises(ValueError, match="§601 schedule"):
+    """Three refusals, and they are not the same one (Q9).
+
+    An out-of-domain status is refused at the BOUNDARY now, by value, before
+    any cache lookup — `"qualifying_widow"` used to reach the §601 map and be
+    reported as a missing schedule, which reads as "fetch it" for a status that
+    does not exist. The §601 message still belongs to a CANONICAL status the
+    cache has no schedule for, which is the fetchable case, and the empty-table
+    message to a schedule that was fetched as `[]`.
+    """
+    with pytest.raises(ValueError, match="must be one of"):
         _ny(90000, 100000, status="qualifying_widow")
+    with pytest.raises(ValueError, match="§601 schedule"):
+        _ny(90000, 100000, status="qss",
+            schedule_by_status={k: v for k, v in _NY_SCHEDULE_BY_STATUS.items()
+                                if k != "qss"})
     with pytest.raises(ValueError, match="empty"):
         _ny(90000, 100000, status="hoh")   # schedule "b" is [] in the fixture
+
+
+def test_ny_accepts_the_canonical_uppercase_status():
+    """The failure Q9 names: `_normalize_filing_status` hands back `"MFJ"`, and
+    every NY comparison was against a lowercase literal — so the canonical
+    spelling took the SINGLE branch rather than raising. Both spellings now
+    reach the same schedule."""
+    assert _ny(90000, 100000, status="MFJ") == _ny(90000, 100000, status="mfj")
 
 
 @pytest.mark.parametrize("taxable,nyagi", [
@@ -5202,6 +5236,25 @@ def test_ny_modifications_accept_the_pass_through_prefixes():
     assert out["total_subtractions"] == 100
 
 
+@pytest.mark.parametrize("side,payload", [
+    ("additions", {"state_local_bond_interest": -1}),
+    ("subtractions", {"us_government_bond_interest": -1}),
+])
+def test_a_negative_on_a_named_modification_line_says_which_schedule(side, payload):
+    """The direction sentence has to reach EVERY positive-entry schedule.
+
+    `_ny_amount` carried it on all 51 of its call sites; folding it onto
+    `_shared._amount` moved it to an explicit `negative_hint`, and the first
+    draft wired that into the IT-225 entry path alone. The named addition and
+    subtraction lines are the same kind of figure and lost the explanation —
+    a reviewer reproduced it. Both schedules take POSITIVE amounts, so a
+    negative on either is a figure on the wrong one, and the message is what
+    tells the agent that rather than to flip the sign.
+    """
+    with pytest.raises(ValueError, match="SCHEDULE carries the direction"):
+        _agi(**{side: payload})
+
+
 def test_ny_modifications_refuse_a_negative_amount():
     """A negative addition is a subtraction wearing the wrong prefix. Flipping
     it silently is the direction confusion the schedules exist to prevent."""
@@ -5375,33 +5428,64 @@ _NY_2025_CHARITABLE_LIMIT = {"tiers": [
 
 def _item(line_45=40000.0, charitable=10000.0, nyagi=90000.0, status="single",
           reduction=None, limit=None, **kw):
+    # The NY standard deduction is REQUIRED (Q7), so the helper supplies a
+    # default that a caller can still override — TY2025 single, IT-201-I.
+    kw.setdefault("standard_deduction", 8000.0)
     return compute_ny_itemized(
         line_45, charitable, nyagi, status,
         _NY_2025_ITEMIZED_REDUCTION if reduction is None else reduction,
         _NY_2025_CHARITABLE_LIMIT if limit is None else limit, **kw)
 
 
-def test_ny_itemized_says_when_it_has_not_made_the_election():
-    """The same silence `compute_ca_itemized` carried, one degree worse.
+def test_ny_itemized_mfs_coupling_binds_in_both_directions():
+    """IT-196-I: "BOTH of you must take the standard deduction unless BOTH of
+    you elect to itemize." Only one half was implemented.
 
-    `deduction` is SET to the itemized total before the election runs, so a
-    caller reading it without a standard deduction gets a number that looks
-    elected. When the NY standard deduction is the larger of the two that
-    UNDER-states the deduction and over-states the tax — the degrade
-    direction, which is owed a banner and had none. The figure itself is
-    unchanged: refusing or returning None would break a shipped field for
-    every caller that is doing the election itself.
+    The missing half: a filer whose spouse IS itemizing, whose own standard
+    deduction is the larger, took the standard anyway — the election the
+    instruction forbids, and it OVER-states the deduction. `compute_ca_itemized`
+    has forced the mirror-image federal §63(c)(6)(A) case since it was written.
+    Found reviewing Q7 (2026-09-13), in the election this change rewrote.
     """
-    out = _item(line_45=3000.0, charitable=0.0, nyagi=60000.0)
-    assert out["use_itemized"] is None
-    assert out["deduction"] == out["line_49_total"]
-    assert any("election NOT computed" in n for n in out["notes"]), out["notes"]
+    # Spouse itemizes, our itemized total is SMALLER — we must still itemize.
+    forced = _item(line_45=1000.0, charitable=0.0, nyagi=60000.0, status="mfs",
+                   standard_deduction=8000.0, mfs_spouse_itemizes=True)
+    assert forced["use_itemized"] is True
+    assert forced["deduction"] == forced["line_49_total"] == 1000.0
+    assert any("spouse is ITEMIZING" in n for n in forced["notes"]), forced["notes"]
 
+    # Spouse does NOT itemize and ours is larger — we must take the standard.
+    barred = _item(line_45=40000.0, charitable=0.0, nyagi=60000.0, status="mfs",
+                   standard_deduction=8000.0, mfs_spouse_itemizes=False)
+    assert barred["use_itemized"] is False
+    assert barred["deduction"] == 8000.0
+
+    # Spouse itemizes and ours is larger too — no coupling note, it is free.
+    agreed = _item(line_45=40000.0, charitable=0.0, nyagi=60000.0, status="mfs",
+                   standard_deduction=8000.0, mfs_spouse_itemizes=True)
+    assert agreed["use_itemized"] is True
+    assert not any("spouse is ITEMIZING" in n for n in agreed["notes"])
+
+
+def test_ny_itemized_cannot_return_an_unelected_deduction():
+    """Q7, ruled 2026-09-13 — and this was the worse of the two forms.
+
+    `deduction` was SET to the itemized total before the election ran, so a
+    caller who supplied no standard deduction got a number that READS as
+    elected: unlike CA there was no `None` to test for. When the NY standard
+    deduction was the larger of the two, that under-stated the deduction and
+    over-stated the tax. The banner that direction was owed is gone with the
+    path — `deduction` is now an election in every return this makes.
+    """
+    with pytest.raises(TypeError, match="standard_deduction"):
+        compute_ny_itemized(3000.0, 0.0, 60000.0, "single",
+                            _NY_2025_ITEMIZED_REDUCTION,
+                            _NY_2025_CHARITABLE_LIMIT)
     settled = _item(line_45=3000.0, charitable=0.0, nyagi=60000.0,
                     standard_deduction=8000.0)
     assert settled["use_itemized"] is False
     assert settled["deduction"] == 8000.0
-    assert not any("election NOT computed" in n for n in settled["notes"])
+    assert not any("NOT computed" in n for n in settled["notes"])
 
 
 def test_ny_itemized_is_unreduced_at_or_below_the_first_threshold():
@@ -6577,3 +6661,158 @@ class TestWhatTheReviewPassFound:
         setup = skill_text("tax-setup")
         assert "nyc_resident_spouses" in setup
         assert "only one" in setup
+
+
+class TestEveryStateEntryPointValidatesItsFilingStatus:
+    """A `filing_status` parameter is validated BY VALUE, in every state module.
+
+    Derived, not listed. New York had six public functions taking a filing
+    status and validating none of them, comparing lowercase literals instead —
+    so the canonical `"MFJ"` the federal normaliser returns took the SINGLE
+    branch rather than raising, which AGENTS.md §8 names as the exact failure
+    value-validation exists to stop (Q9, ruled 2026-09-13).
+
+    Pinning the six by name would have been the same silent green that let them
+    accumulate: a SEVENTH function added tomorrow reads identically to a file
+    with nothing left to fix. So the sweep asks the tree which functions take
+    the parameter, and requires each to normalise it.
+    """
+
+    STATE_DIR = (Path(__file__).resolve().parents[1] / "agents" / "lib"
+                 / "tax_computations" / "state")
+    # The normalising calls a function may make: the shared validator itself, or
+    # a module-local wrapper whose whole body delegates to it (NY keys its
+    # tables lowercase, so it has one). A wrapper is proved to delegate below,
+    # rather than trusted by name.
+    NORMALISERS = {"_normalize_filing_status", "_ny_status"}
+
+    def _normalises_its_own_status(self, func) -> bool:
+        """An UNCONDITIONAL normalising call HANDED the `filing_status` param.
+
+        Two weaker questions were tried and both admit a false green:
+
+        - "does the name appear in the body" lets a module that normalises
+          some OTHER status-shaped value — a spouse's, a prior year's — read
+          as validating the one it was given. The ARGUMENT ties the call to
+          the parameter.
+        - "anywhere in the body" (`ast.walk` over the whole function) counts a
+          call the function may never reach. Wrapping `state/ny.py`'s
+          normalisation in `if False:` left this class green while
+          `compute_ny_agi` accepted `filing_status="invalid"` and returned
+          normally. Validation that runs on SOME paths is not validation, so
+          only the function's own top-level simple statements are read —
+          which is where both real implementations put it.
+        """
+        for stmt in func.body:
+            if not isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr)):
+                continue     # a compound statement is a CONDITION, not a guard
+            for node in ast.walk(stmt):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = (getattr(node.func, "id", None)
+                        or getattr(node.func, "attr", None))
+                if name not in self.NORMALISERS:
+                    continue
+                handed = list(node.args) + [k.value for k in node.keywords]
+                if any(isinstance(a, ast.Name) and a.id == "filing_status"
+                       for a in handed):
+                    return True
+        return False
+
+    def _public_functions_taking_a_status(self, path):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
+                continue
+            names = [a.arg for a in node.args.args + node.args.kwonlyargs]
+            if "filing_status" in names:
+                yield node
+
+    def test_every_public_state_function_normalises_the_status_it_takes(self):
+        offenders, seen = [], []
+        for path in sorted(self.STATE_DIR.glob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            for func in self._public_functions_taking_a_status(path):
+                seen.append(f"{path.name}::{func.name}")
+                if not self._normalises_its_own_status(func):
+                    offenders.append(f"{path.name}::{func.name}")
+        # A sweep that sees nothing is green. Both state modules take a filing
+        # status somewhere, so a run that inspected neither has lost its
+        # subject — a renamed directory, a changed predicate — rather than
+        # found nothing to report.
+        assert {p.split("::")[0] for p in seen} == {"ca.py", "ny.py"}, (
+            f"the sweep inspected {sorted(set(p.split('::')[0] for p in seen))} "
+            "— it is meant to read both depth modules, and a module it cannot "
+            "see is a module it cannot hold")
+        assert not offenders, (
+            f"{offenders} take a filing_status and never validate it. A "
+            "type-valid, out-of-domain status falls through to whichever "
+            "branch the comparisons happen to leave — a wrong-but-plausible "
+            "return rather than a refusal (AGENTS.md §8).")
+
+    def test_the_local_wrapper_really_delegates_to_the_shared_validator(self):
+        """`NORMALISERS` above would otherwise accept a wrapper that validates
+        NOTHING — a name spelled like a guard is not a guard, and the sweep
+        would read as green over exactly the defect it was written for."""
+        from agents.lib.tax_computations.state import ny
+        assert ny._ny_status("MFJ") == "mfj"
+        assert ny._ny_status("mfj") == "mfj"
+        for rejected in ("qualifying_widow", "Married Filing Jointly", "", None):
+            with pytest.raises((ValueError, TypeError, AttributeError)):
+                ny._ny_status(rejected)
+
+    def test_the_sweep_sees_a_function_that_skips_the_validator(self):
+        """Cry-wolf's opposite: proof the detector fires. A function shaped
+        exactly like the six, minus the normalising call."""
+        source = textwrap.dedent('''
+            def compute_something(income, filing_status="single"):
+                return 1 if filing_status == "mfj" else 2
+        ''')
+        func = [n for n in ast.parse(source).body
+                if isinstance(n, ast.FunctionDef)][0]
+        assert not self._normalises_its_own_status(func), (
+            "the sweep reports a function that never normalises as fine — it "
+            "cannot catch the defect it exists for")
+
+        # ...and the weaker predicate this replaced: normalising SOMETHING, but
+        # not the status the function was handed. It reads as validated and is
+        # not, which is the shape the argument check exists to refuse.
+        wrong_value = textwrap.dedent('''
+            def compute_something(income, filing_status="single", spouse="mfj"):
+                spouse = _normalize_filing_status(spouse)
+                return 1 if filing_status == "mfj" else 2
+        ''')
+        other = [n for n in ast.parse(wrong_value).body
+                 if isinstance(n, ast.FunctionDef)][0]
+        assert not self._normalises_its_own_status(other), (
+            "a call that normalises a DIFFERENT value satisfies the sweep — "
+            "the tie between the call and the parameter is gone")
+
+        # ...and the third: validation the function can SKIP. This is the one
+        # a review actually reproduced, by wrapping the real call in `if
+        # False:` — the class stayed green while the function accepted an
+        # invalid status and returned normally.
+        conditional = textwrap.dedent('''
+            def compute_something(income, filing_status="single", strict=False):
+                if strict:
+                    filing_status = _normalize_filing_status(filing_status)
+                return 1 if filing_status == "mfj" else 2
+        ''')
+        skippable = [n for n in ast.parse(conditional).body
+                     if isinstance(n, ast.FunctionDef)][0]
+        assert not self._normalises_its_own_status(skippable), (
+            "a normalising call the function can skip satisfies the sweep — "
+            "validation on SOME paths is not validation")
+
+        # The shape that MUST still pass, or the sweep is unsatisfiable and
+        # every module would have to be exempted to go green.
+        real = textwrap.dedent('''
+            def compute_something(income, filing_status="single"):
+                filing_status = _ny_status(filing_status)
+                return 1 if filing_status == "mfj" else 2
+        ''')
+        good = [n for n in ast.parse(real).body
+                if isinstance(n, ast.FunctionDef)][0]
+        assert self._normalises_its_own_status(good), (
+            "the sweep rejects the shape both state modules actually use")

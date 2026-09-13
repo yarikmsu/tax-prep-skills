@@ -170,7 +170,8 @@ def compute_ca_itemized(
     charitable_cash: float = 0.0,
     charitable_noncash: float = 0.0,
     misc_2pct_expenses: float = 0.0,
-    ca_standard_deduction: float | None = None,
+    *,
+    ca_standard_deduction: float,
     phaseout_threshold: float | None = None,
 ) -> dict:
     """CA Schedule CA itemized deductions — computed from the SOURCE figures
@@ -204,7 +205,11 @@ def compute_ca_itemized(
     MFS/RDP-separate filer whose spouse itemizes cannot take the CA
     standard deduction.
 
-    ca_standard_deduction None → election not computed (amounts only).
+    ca_standard_deduction is REQUIRED and keyword-only (Q7, ruled
+    2026-09-13). It was optional, and without it this returned
+    `use_itemized: None` with no `election_margin` — which a caller
+    testing for truth reads as "do not itemize", under-stating the
+    deduction for anyone whose CA standard deduction is the larger.
     """
     if isinstance(tax_year, bool) or not isinstance(tax_year, int):
         raise ValueError(f"tax_year must be an int, got {tax_year!r}")
@@ -304,7 +309,28 @@ def compute_ca_itemized(
                 "of 6% of AGI over threshold or 80% of subject deductions)")
     itemized_total = round(subtotal - phaseout, 2)
 
-    out = {
+    # The election is UNCONDITIONAL now (Q7, ruled 2026-09-13). It used to be
+    # skipped when no standard deduction was supplied, and `use_itemized` came
+    # back None with `election_margin` absent — both of which read as "no" to a
+    # caller testing them for truth, so a taxpayer whose CA standard deduction
+    # was the larger of the two took `itemized_total` instead: UNDER-stating
+    # the deduction and over-stating the tax. A banner was what that direction
+    # was owed, and it was added; requiring the figure is what stops there
+    # being an election to warn about.
+    std = _amount(ca_standard_deduction, "ca_standard_deduction")
+    if mfs_spouse_itemizes:
+        use_itemized = True
+        notes.append(
+            "MFS/RDP-separate with an itemizing spouse MUST itemize for "
+            "CA too — the CA standard deduction is unavailable")
+    else:
+        use_itemized = itemized_total > std
+    if use_itemized and itemized_total > std:
+        notes.append(
+            "CA itemizes even when the federal return takes the "
+            "standard deduction — the elections are independent")
+
+    return {
         "medical_deductible": medical_deductible,
         "taxes_deductible": taxes_deductible,
         "mortgage_deductible": mortgage_deductible,
@@ -314,38 +340,10 @@ def compute_ca_itemized(
         "charitable_carryforward": ca_charitable_carryforward,
         "phaseout_reduction": phaseout,
         "itemized_total": itemized_total,
-        "use_itemized": None,
+        "use_itemized": use_itemized,
+        "election_margin": round(itemized_total - std, 2),
         "notes": notes,
     }
-    if ca_standard_deduction is not None:
-        std = _amount(ca_standard_deduction, "ca_standard_deduction")
-        if mfs_spouse_itemizes:
-            out["use_itemized"] = True
-            notes.append(
-                "MFS/RDP-separate with an itemizing spouse MUST itemize for "
-                "CA too — the CA standard deduction is unavailable")
-        else:
-            out["use_itemized"] = itemized_total > std
-        out["election_margin"] = round(itemized_total - std, 2)
-        if out["use_itemized"] and itemized_total > std:
-            notes.append(
-                "CA itemizes even when the federal return takes the "
-                "standard deduction — the elections are independent")
-    else:
-        # The one degrade path here that said NOTHING. `use_itemized` comes
-        # back None and `election_margin` is absent, and both read as "no" to
-        # a caller that tests them for truth — so a taxpayer whose CA standard
-        # deduction is the larger of the two takes `itemized_total` instead,
-        # which UNDER-states the deduction and over-states the tax. A banner is
-        # what that direction is owed; silence is not.
-        notes.append(
-            f"CA itemize-vs-standard election NOT computed — no CA standard "
-            f"deduction was supplied, so `itemized_total` of "
-            f"${itemized_total:,.2f} is an AMOUNT and not a deduction. Taking "
-            f"it as one under-states the deduction for any taxpayer whose CA "
-            f"standard deduction is larger. Pass ca_standard_deduction from "
-            f"state.standard_deduction to settle it")
-    return out
 
 
 # CA Schedule P (540) statutory-structural constants (R&TC §17062, §17062.1

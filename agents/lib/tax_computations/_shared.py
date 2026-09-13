@@ -185,7 +185,8 @@ def _validated_withholding_list(withheld_by_employer, what: str) -> "list[float]
     return out
 
 
-def _amount(value, what: str, allow_negative: bool = False) -> float:
+def _amount(value, what: str, allow_negative: bool = False,
+            negative_hint: str = "") -> float:
     """A user-supplied money figure, validated at the parse boundary.
 
     `bool` first, because `isinstance(True, int)` — a flag that reached a money
@@ -194,7 +195,14 @@ def _amount(value, what: str, allow_negative: bool = False) -> float:
     comparison with NaN is False, so the range check below silently does
     nothing (AGENTS.md §8).
 
-    `allow_negative` is the only axis these ever differed on. It was two
+    `negative_hint` is appended to the NEGATIVE message alone, for a caller
+    whose domain explains what a negative there MEANS — New York enters both
+    its addition and its subtraction schedules as positive amounts, so a
+    negative on one of them is a figure on the wrong schedule rather than a
+    typo. That sentence used to justify a third copy of this whole function in
+    the NY module; the sentence is the only part that was ever NY-specific.
+
+    `allow_negative` is the only other axis these ever differed on. It was two
     functions — `_sched_a_amount` and `_f2210_amount` — with byte-identical
     bodies and identical messages, one of them simply lacking the flag. Two
     federal FORM numbers in the names of a shared primitive is also the wrong
@@ -209,7 +217,7 @@ def _amount(value, what: str, allow_negative: bool = False) -> float:
     if not math.isfinite(v):
         raise ValueError(f"{what} must be finite, got {value!r}")
     if v < 0 and not allow_negative:
-        raise ValueError(f"{what} cannot be negative, got {v}")
+        raise ValueError(f"{what} cannot be negative, got {v}{negative_hint}")
     return v
 
 

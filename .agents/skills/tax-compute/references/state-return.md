@@ -56,8 +56,13 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    FEDERAL AGI (the function handles this — pass both AGIs). Pass
    `mfs_spouse_itemizes` AND `married_filing_separately` for MFS/RDP-
    separate (CA mirrors the federal forced-itemize rule, and the CA
-   mortgage limit halves to $500K). Compare against the CA standard deduction
-   (tax_law JSON, CA section): **the CA election is independent of the
+   mortgage limit halves to $500K). **`ca_standard_deduction` is REQUIRED and
+   keyword-only** — it used to be optional, and omitting it returned
+   `use_itemized: None` with no `election_margin`, which reads as "do not
+   itemize" to a caller testing it and under-states the deduction for any
+   taxpayer whose CA standard deduction is larger. Pass it from the tax_law
+   JSON CA section; if it is not there, STOP and re-run `/tax-setup`. The
+   function makes the election: **the CA election is independent of the
    federal one** — with CA's small standard deduction, itemizing CA-only
    is the norm for the persona. Write the `schedule_ca_itemized` section
    when itemizing.

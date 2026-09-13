@@ -161,3 +161,100 @@ measures the pytest process only, so `preflight.py` and every CLI arm read as
 unexercised when they are among the most exercised code here — stated where the
 number is configured, and pinned, because a reader who does not know that draws
 the opposite conclusion from the lowest rows.
+
+## W2 residue — the itemize-vs-standard election, and NY's unvalidated status
+
+Q7 and Q9 of the backlog's Part 5b, ruled by the owner 2026-09-13 and shipped
+together because both change an entry-point contract in `tax_computations/state/`.
+
+**Q7 — one election, three contracts.** `compute_schedule_a` required a
+`standard_deduction`; its two state siblings did not, and what each returned
+without one was the defect:
+
+- `compute_ca_itemized` set `use_itemized` to `None` and omitted
+  `election_margin` — both of which a caller testing for truth reads as "do not
+  itemize".
+- `compute_ny_itemized` was worse. `deduction` was already holding the ITEMIZED
+  total when the election was skipped, so there was no sentinel at all: the
+  field a caller reads as elected held a number that was not.
+
+Either way a taxpayer whose STANDARD deduction was the larger of the two got the
+itemized figure — under-stating the deduction and over-stating the tax. Slice 3
+had given both paths a loud banner, which is what the under-statement direction
+is owed. The ruling went past that: a warning that an election MAY be wrong is
+not a substitute for making it. Both parameters are required and keyword-only —
+keyword-only rather than reordered, because these functions have positional
+callers and moving a parameter into an occupied slot converts a would-be
+`TypeError` into a silently wrong value. Both degrade arms are deleted with the
+paths that needed them.
+
+**Q9 — New York validated no filing status at all.** Six public functions took
+one, four compared lowercase literals, and none called
+`_shared._normalize_filing_status` — so the canonical `"MFJ"` that function
+returns took the SINGLE branch rather than raising: the wrong-but-plausible
+branch AGENTS.md §8 names as the reason value-validation exists. NY now routes
+through `_ny_status`, which delegates to the shared validator and lower-cases,
+because NY keys its own tables and every cache block it reads in lowercase.
+
+The guard is DERIVED, not listed. `TestEveryStateEntryPointValidatesItsFilingStatus`
+asks the tree which public functions in `state/` take a `filing_status` and
+requires each to normalise it, so a seventh function added tomorrow cannot arrive
+unvalidated — a hand-written roster of the six would have read exactly like a
+file with nothing left to fix. Two companions keep the sweep honest: one asserts
+it inspected both depth modules (a sweep that sees nothing is green), and one
+proves `_ny_status` is not a hollow wrapper, since accepting a delegating name on
+faith would have read green over precisely the defect it was written for.
+
+One refusal got SHARPER rather than merely earlier: `"qualifying_widow"` used to
+reach the §601 schedule map and be reported as a missing schedule, which reads as
+"go fetch it" for a status that does not exist. It is refused by value now, and
+the §601 message is left to a canonical status the cache genuinely lacks.
+
+**`_ny_amount` is gone**, a third copy of `_shared._amount` across 51 call sites.
+The only NY-specific thing about it was one sentence — that New York enters both
+modification schedules as positive amounts, so a negative is a figure on the
+wrong schedule. `_amount` takes that as `negative_hint` at the boundaries where
+it is true, instead of a whole function carrying it everywhere it is not. The
+first draft wired the hint into the IT-225 entry path alone and silently dropped
+it from the named addition and subtraction lines, which are the same kind of
+figure; a review reproduced that, and both are covered now.
+
+### What the review of this change found
+
+Four findings, all reproduced against the tree, and one of them is a tax defect
+rather than a defect in the change:
+
+**New York's MFS coupling bound in one direction only.** IT-196-I says "BOTH of
+you must take the standard deduction unless BOTH of you elect to itemize", and
+the code's own comment said so — while implementing only the half where the
+spouse does NOT itemize. A filer whose spouse WAS itemizing still took the
+standard deduction whenever it was the larger: the election the instruction
+forbids, and it OVER-states the deduction. `compute_ca_itemized` has forced the
+mirror-image federal §63(c)(6)(A) case since it was written, so this was New
+York missing a rule its sibling already had. Both directions are pinned now,
+including the case where the spouses happen to agree and no coupling note is
+owed.
+
+**The status sweep admitted a false green twice**, and each was caught by
+someone trying it rather than reading it. First it accepted a normalising call
+on any value, so a module validating a SPOUSE's status would have read as
+validating its own — the argument ties the call to the parameter now. Then it
+accepted a call the function can skip: wrapping `state/ny.py`'s real
+normalisation in `if False:` left the class green while `compute_ny_agi`
+accepted `filing_status="invalid"` and returned normally. Only the function's
+own top-level statements are read now, because validation that runs on some
+paths is not validation. Both false greens are probes in the class, alongside
+one asserting the shape both modules actually use still passes — a sweep nothing
+can satisfy is the other way to be useless.
+
+### Recorded, not fixed here — X8
+
+Sweeping the siblings after the conversion found the same defect class outside
+`state/`, and two instances are REPRODUCED: `ptet._salt_cap(2026, "Married
+Filing Separately")` returns **$40,000** where `"MFS"` returns $20,000 — double
+the SALT cap for an MFS filer, over-stating the PTET benefit it prices — and
+`retirement_dashboard` reads the `single_covered` IRA phase-out window for that
+same spelling where `"MFJ"` reads `mfj_covered`. Both are the wrong-but-plausible
+branch. They are a separate contract change in three more modules, so they are
+X8 in the backlog with the reproductions attached, not silent scope on an
+engine-contract PR.
