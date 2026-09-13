@@ -107,19 +107,42 @@ citation in PROSE, where nothing computes against it:
 - `2026-state-support-ny-fl-wa.md` cited §164(b)(6) for the OBBBA cap. (b)(6) is
   the superseded 2018–2025 limitation; the cap lives in (b)(7).
 
-**The lint did not and could not catch any of them.** The per-skill figure
-registry (`test_the_taxpayer_facing_skills_quote_no_indexed_tax_figure`) covers
-four skills and neither `tax-extend` nor `tax-ptet` is one. Its detector has a
-second, wider blind spot, measured rather than assumed: `[^.\n]` between the
-limit word and the amount cannot cross a LINE BREAK, so any figure that markdown
-happened to wrap onto the next line is invisible — which is exactly why "~$510"
-survived. Adding floor words (`minimum`, `floor`) alone changes nothing, because
-distance was never the problem. Allowing the wrap reveals it, and also makes the
-detector read backticked CACHE FIELD NAMES (`min`/`max`) as limit words, which
-fires on a worked example in `/tax-setup` that is correct. Blanking backticked
-spans fixes that and silently LOSES two detections that hold today. Widening
-this detector is therefore its own slice, with its own cry-wolf validation in
-both directions — not a regex tweak.
+**The lint did not and could not catch any of them**, for two separate reasons
+— one now fixed, one measured and deferred.
+
+**SCOPE — FIXED.** The per-skill figure registry
+(`test_the_taxpayer_facing_skills_quote_no_indexed_tax_figure`) named four
+skills out of twenty-three by hand, and a skill nobody had added read exactly
+like a skill with nothing to declare. Its scope is DERIVED now: every
+taxpayer-facing skill must appear either in `_FIGURE_REGISTRY` or in
+`_FIGURE_LINT_EXEMPT` with a reason, so a new skill fails until somebody looks
+at its figures. Nine skills that quote nothing got an empty entry, each verified
+empty rather than assumed — an empty entry is what puts a skill UNDER the lint,
+so the first figure it grows has to be defended. `tax-extend` is the case that
+proves the point: X6 took a stale §6651(a) floor out of it, and nothing would
+have stopped the next one going back in.
+
+`tax-ptet` is EXEMPT pending an owner ruling, named rather than quietly
+registered. X6 corrected it from a flat "$40,000 for TY2025–2029" to the
+§164(b)(7) schedule, and the skill now also names `federal.salt_cap`, the cache
+key those figures are read from — which is exactly the remedy the lint's own
+message prescribes. **The open question: may a skill state a figure that is both
+statutorily NAMED and FETCHED?** Stating it is what let X6 replace a wrong flat
+number; not stating it is what stops TY2027 reading "$40,400 for TY2026" as
+current.
+
+**DETECTOR — measured, deferred.** `[^.\n]` between the limit word and the
+amount cannot cross a LINE BREAK, so any figure that markdown happened to wrap
+onto the next line is invisible — which is exactly why "~$510" survived. Adding
+floor words (`minimum`, `floor`) alone changes nothing, because distance was
+never the problem. Allowing the wrap reveals it, and also makes the detector
+read backticked CACHE FIELD NAMES (`min`/`max`) as limit words, firing on a
+worked example in `/tax-setup` that is correct. Blanking backticked spans fixes
+that and LOSES two detections — one a false positive worth losing (`--max` read
+as the word "maximum") and one a real §121 hit that must be kept. Masking only
+the LETTERS inside backticks preserves distances and keeps §121, but backtick
+MIS-PAIRING across a line leaves both artifacts standing. This is its own slice
+with its own cry-wolf validation in both directions, not a regex tweak.
 
 ---
 

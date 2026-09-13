@@ -1349,19 +1349,19 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.08 - 0.11s         6
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
-#   skill .md edit                1012 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1248 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4815 tests    228.4 - 243.4s        2
+#   skill .md edit                1029 tests     19.7 - 23.4s         3
+#   cold pass, all seven modules  1265 tests    137.6 - 150.1s        3
+#   (for scale) `pytest tests/`   4833 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
-# passes two `--deselect` flags, so portability collects 227 and runs 225; and
+# passes two `--deselect` flags, so portability collects 244 and runs 242; and
 # the hooks module holds two platform skips, so it collects 144 and runs 142.
 # THE SUITE holds seven skips, not two: those two plus the five Windows-only
 # DACL cases W6 added, which are skipped everywhere but on the windows job.
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4822 and runs 4815 for the same skips — and that row
+# `pytest tests/` collects 4840 and runs 4833 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1380,7 +1380,7 @@ apply_red_checks
 # module dominates, and by how much, survives a change of machine.
 #
 #   tests/test_claude_hooks.py     142 tests    114.7 - 130.0s       4
-#   tests/test_portability.py      225 tests     11.1 - 13.1s        6
+#   tests/test_portability.py      242 tests     11.1 - 13.1s        6
 #   tests/test_capabilities.py     175 tests      0.8 - 3.1s         6
 #   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
 #   tests/test_secure_fs.py        182 tests      1.4 - 2.1s         6
@@ -1481,7 +1481,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 175 + 182 + 225 + 382 = 1012 for a skill edit, plus 94 + 142 = 1248 for a
+# 48 + 175 + 182 + 242 + 382 = 1029 for a skill edit, plus 94 + 142 = 1265 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1540,7 +1540,7 @@ apply_red_checks
 # the branch settles.
 #
 # Against the counts the seconds were taken at, the suite has gained eight
-# hundred and forty-two tests (3973 to 4815), and the gap was ZERO when the sitting ended: it took the
+# hundred and sixty tests (3973 to 4833), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1734,7 +1734,7 @@ apply_red_checks
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained forty-eight (177 to 225), preflight has gained seven (375 to 382), the
+# portability has gained sixty-five (177 to 242), preflight has gained seven (375 to 382), the
 # agents module none (48 to 48), secure_fs has gained twenty-two (160 to 182), the hooks module
 # has gained fourteen (128 to 142), capabilities has gained fifty-nine (116 to 175) and the host guard has gained one (93 to 94). EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
@@ -1748,15 +1748,17 @@ apply_red_checks
 # tests/engine_tree.py and pinned the helper's arms by DERIVING which watched
 # modules import it, which is the case that found test_claude_agents.py reading
 # tests/skill_text.py with no arm selecting it. Of the eight hundred
-# and forty-two tests the suite has gained since the sitting, TWENTY-TWO landed in
+# and sixty tests the suite has gained since the sitting, TWENTY-TWO landed in
 # tests/test_secure_fs.py — the Windows cases, one case each for
 # V2's, V1's, Y4's and V7's new engine modules, and W2's ten further engine
-# files, that module's roster being parametrised per file — FORTY-EIGHT landed in
+# files, that module's roster being parametrised per file — SIXTY-FIVE landed in
 # tests/test_portability.py, which is Y5, the Z1 skill-text checks, the
 # backlog-status pair, X5's figure lint, W2's packaged-engine guard and the
 # shared engine enumerator's own five, the backlog table's ordering pin, the
-# caveat-matches-the-schema pair, the hand-walk guard's three and X6's three
-# pins on the two skills the figure registry does not cover, and
+# caveat-matches-the-schema pair, the hand-walk guard's three, X6's three pins
+# on the skills the figure registry did not cover, and the seventeen the
+# registry's DERIVED scope added — one per triaged skill, plus the two that
+# refuse an untriaged or unexplained one, and
 # is a row moving on its OWN account
 # rather than by parametrisation, SEVEN landed in tests/test_preflight.py, which
 # is W2's package entry-point check in both directions and the two that pin the
@@ -1779,7 +1781,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to one hundred and fifty-one; the remaining six hundred and ninety-one are modules this
+# They sum to one hundred and sixty-eight; the remaining six hundred and ninety-two are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

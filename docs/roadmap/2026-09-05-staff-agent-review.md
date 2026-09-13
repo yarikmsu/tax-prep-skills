@@ -491,7 +491,7 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
     and notes it, which OVER-states the CA deduction — the hard-error direction
     — and the skill text already documents the degrade. Slice 3 gated the note
     so it stops firing where nothing can be overstated and made it quantify
-    itself; whether an indexed figure that changes a return may degrade at all
+    itself (on the subtotal; #155 moved both to the amount §17077 can touch); whether an indexed figure that changes a return may degrade at all
     is the owner's call.
   - **`state/ny.py` does not VALUE-validate filing status.** It compares
     lowercase literals and never calls `_normalize_filing_status`, so the
@@ -1109,9 +1109,24 @@ the harness.
 ## Part 5 — The questions, and the owner's rulings
 
 Recorded rather than asked mid-flight (owner instruction 2026-09-07: document the
-question, skip that task, take the next). **All six were ruled on 2026-09-07**; each is
+question, skip that task, take the next). **Q1-Q6 were ruled on 2026-09-07**; each is
 kept with its question so a later reader can see what was traded away, and none of them
 is re-opened by an implementer without the owner.
+
+**Q7-Q12 are OPEN as of 2026-09-13.** Every one blocks a task that is otherwise ready,
+and every one changes a SHIPPED contract or something a taxpayer reads — which is why
+none was decided by the implementer who found it. Each carries what it would cost to
+answer either way, and a recommendation that is not a decision. The list of what is
+blocked on an owner ACTION rather than a ruling is at the end of this part.
+
+**A staff product-owner review PROPOSED a ruling for each of Q7-Q12 on 2026-09-13**,
+recorded under its question as *PROPOSED*. A proposal is not a ruling: an
+implementer who finds one still asks. What each review did first was check the
+code, and three of the six questions turned out to be asked about something other
+than what is shipped — the re-framings are recorded because they change the
+answer, not just the confidence. When the owner rules, the *PROPOSED* paragraph
+becomes a *RULED* one in the Part 5 shape, and the work is sequenced at the end of
+Part 5b.
 
 **Q1 — V3's first golden: whose return shape?** *(gated step 4, and V1/V2 behind it)*
 A golden is only as good as the case it covers. The alternatives were a synthetic
@@ -1170,3 +1185,193 @@ Russian bank's column headers, and the PFIC fixtures carry RU-domiciled funds), 
 taxpayer whose own name is Cyrillic gets a summary that cannot print it. The loud
 declaration is what stands in for that, and this ruling is what stops it being
 re-litigated as a bug.
+
+---
+
+## Part 5b — Open questions (Q7-Q12), 2026-09-13
+
+Same convention as Part 5: recorded rather than asked mid-flight, each with what
+either answer costs. **None is decided by an implementer.** The first three came
+out of W2 slice 3's review, the fourth and fifth out of X6, the sixth out of W3's
+own entry.
+
+**Q7 — three sibling forms, three contracts for one itemize-vs-standard
+election.** *(blocks the W2 residue; changes a shipped signature)*
+`compute_schedule_a` REQUIRES `standard_deduction`. `compute_ca_itemized` makes
+it optional and returns `use_itemized: None`. `compute_ny_itemized` makes it
+optional and sets `deduction` to the itemized total anyway, which READS as
+elected. One election, three answers to "what happens when nobody says what the
+standard deduction is".
+Slice 3 gave the two silent paths a banner, which is what the under-statement
+direction is owed. Making the parameter required on all three is the fix and
+**breaks callers** — that is the whole question. Recommendation: require it;
+a banner is a warning that an election may be wrong, and an election that may be
+wrong is not something to warn about.
+*PROPOSED — require it, and record the decomposition as the target shape.* The
+three functions have forty-three call sites in the test suite, of which
+twenty-one already pass a standard deduction, none in the engine (the one that
+greps as a call is inside a docstring), and three in skill markdown: "breaks
+callers" is twenty-two test edits and three skill paragraphs, all in this
+repository. The alternative worth naming is the repo's own "one symbol, two
+concepts" rule — each of these computes a SCHEDULE and makes an ELECTION, and a
+shared `elect_deduction(itemized, standard, mfs_spouse_itemizes)` would own the
+second — but that is a three-module refactor for a defect the required parameter
+closes in one PR, and NY's §615 reduction makes the split less clean than it reads.
+Whatever is ruled, `compute_ny_itemized` must stop writing the itemized total into
+`deduction` when no election was made: that field READS as elected, which is the
+lie. Ships with Q9 as one engine-contract PR.
+
+**Q8 — may an indexed figure that changes a return DEGRADE at all, when
+AGENTS.md §2 says STOP?** *(blocks the CA phase-out task; now has a second
+instance)*
+`compute_ca_itemized(phaseout_threshold=None)` skips the R&TC §17077 phase-out
+and notes it, which OVER-states the CA deduction — the hard-error direction —
+and the skill text documents the degrade. Slice 3 gated the note on the itemized
+SUBTOTAL and made it quantify itself; review of this entry found that gate still
+firing on a return of nothing but investment interest, which §17077 cannot touch
+— #155 gates and quantifies on the SUBJECT amount.
+**X6 found the same shape in code a second time**: `ptet._salt_cap` falls back to
+a flat $40,000 for TY2025-2029 when the cache carries nothing, and §164(b)(7)
+makes TY2026 $40,400. Understating the SALT cap over-states the benefit of a PTET
+election. Two instances is what makes this a policy rather than a bug.
+The trade: STOP is what §2 says and is unambiguous, but a hard stop on a missing
+indexed figure turns a planning tool off entirely for a taxpayer who only wanted
+an estimate. Recommendation: STOP for anything that reaches a FILED return,
+degrade-with-banner for advisory planning output, and write that split into §2 so
+it stops being decided case by case.
+*PROPOSED — degrade only when BOTH hold: the output is advisory AND the fallback
+is in the under-statement direction; otherwise STOP.* Two corrections to the
+question as asked. First, `ptet._salt_cap`'s fallback is not a degrade at all —
+it is a HARDCODED schedule (`if 2025 <= tax_year <= 2029: return 40000.0`), the
+thing §2 forbids outright, and it should be deleted rather than corrected, leaving
+only the statutory $10,000 / $5,000 (see Q10 for why that one may stay). Second,
+both instances fall in the OVER-statement direction — a larger CA deduction, a
+larger PTET benefit — so §4 already refuses them a banner; the two rules read
+together decide both cases without a new judgment. The split-by-output
+recommendation above was rejected because "advisory" is a per-skill judgment,
+which is the case-by-case deciding the question exists to end, and because it
+would let an over-stating banner exist. The cost of the proposed sentence is that
+AGENTS.md sits at its byte cap, so something is trimmed to fit it. The "planning
+tool turned off" cost is mostly theoretical: `/tax-setup` is the documented
+prerequisite that fetches the figure.
+
+**Q9 — should `state/ny.py` VALUE-validate filing status?** *(blocks a mechanical
+conversion; behaviour change at every NY entry point)*
+It compares lowercase literals and never calls `_normalize_filing_status`, so the
+canonical uppercase code that function returns takes the WRONG BRANCH rather than
+raising. The playbook already says CA is the example and NY is not yet converted.
+`_ny_amount` is a third copy of `_shared._amount` with an NY-specific sentence and
+folds into the same task.
+The cost of converting: every NY entry point starts refusing input it currently
+accepts silently. The cost of not: a wrong-but-plausible branch, which AGENTS.md
+§8 names as the exact failure value-validation exists to stop.
+Recommendation: convert. This is the rule the repo already states; NY is the
+exception nobody decided to make.
+*PROPOSED — convert.* Verified: `state/ny.py` calls `_normalize_filing_status`
+ZERO times (one executable call in CA, seven in the federal module), and the
+normaliser upper-cases its input, so `"mfj"` keeps working after conversion — the
+only input that starts being refused is input that was already taking the wrong
+branch. Four sites compare lowercase literals and hand a canonical `"MFJ"` to the
+single branch; one lookup, the household-credit table, already raises on an
+unknown status, which is the behaviour the other four are being brought to. The
+cost is close to nothing; this is a defect carrying a ruling only because it
+changes an entry-point contract. `_ny_amount` folds into `_shared._amount` in the
+same PR, with Q7.
+
+**Q10 — may a skill state a figure that is both statutorily NAMED and FETCHED?**
+*(blocks bringing `/tax-ptet` into the figure registry; new 2026-09-13)*
+X6 corrected `/tax-ptet` from a flat "$40,000 for TY2025-2029" to the §164(b)(7)
+schedule — $40,000 TY2025, $40,400 TY2026, 101% a year to TY2029, $10,000 in
+TY2030 — and the skill now also names `federal.salt_cap`, the cache key those are
+read from, which is exactly the remedy the figure lint's own message prescribes.
+So the skill may already comply. But `_FIGURE_REGISTRY` holds only figures that
+are statutory AND unindexed, and a companion test says an indexed figure does not
+become safe by being listed.
+Stating it is what let X6 replace a wrong flat number, and a reader can sanity-check
+the cache against it. Not stating it is what stops TY2027 reading "$40,400 for
+TY2026" as current — and a reader seeing two explicit years may assume the list is
+complete when TY2027's value appears nowhere.
+Recommendation: state the SHAPE and the cache key, drop the per-year figures. Until
+this is answered `/tax-ptet` sits in `_FIGURE_LINT_EXEMPT` with this question named,
+so the gap is loud rather than absent.
+*PROPOSED — state the two statutory anchors, the 101% rule and the 2030
+reversion, name the cache key, and PIN the anchors to one engine constant by test
+— the `tax-safe-harbor` pattern.* The re-framing that decides it: §164(b)(7) is
+NOT inflation-indexed. The statute itself names $40,000 for 2025 and $40,400 for
+2026 and says "101 percent of the prior year" for 2027-2029 — a fixed step
+schedule, the same legal class as the $10,000 reversion the engine already
+hardcodes. Confirmed independently by a second reviewer against the enacted text,
+Pub. L. 119-21 §70120(b): the 2025 and 2026 amounts, the 101% steps and the 2030
+reversion are all stated in the statute, and no inflation index appears. That makes it a figure the statute names, which is what the closed
+`allowed` set exists for, and the cache still wins at runtime. Shape-and-key-only
+(the recommendation above) was rejected because X6 caught the flat-$40,000 error
+ONLY because a figure was written down; leaving the one figure that has bitten
+twice as the one figure nothing tests is the wrong trade. The cost: §164(b)(7)
+joins §2's governing exception list, which is the owner's list and is why this
+stays a question. Ships with Q8 as one PR — both touch §2 and both are the SALT
+cap.
+
+**Q11 — Y3: package `agents/lib` as a distribution?** *(recorded as open since
+2026-09-05; `pyproject.toml` declares no `[project]` table on purpose)*
+`tax-engine preflight` would replace `sh agents/lib/run.sh agents/lib/preflight.py`,
+and most of preflight's 2,700 lines exist to compensate for not being a package.
+The trade is the whole of §5's "a skill without its engine must not compute": a
+distribution is installable, which is the point, and also detachable from the
+skills that must not travel without it.
+*PROPOSED — no, with a re-open trigger.* The repository is not public (Y1), so
+there is no consumer to install a distribution; this is the largest contract
+change in the backlog with zero demand signal, and it defeats the venv-refusal
+guard by design. Revisit when a second consumer of the engine exists outside a
+clone — recorded so it is not re-litigated as "still open".
+
+**Q12 — W3: what runs the hook before the venv exists?** *(blocks W3, which is
+otherwise a large but ordinary refactor)*
+Moving 3,800 lines of hook bash to Python needs a stated answer for the bootstrap:
+the hook must run on a checkout that has no `.venv` yet, and whatever Python it
+finds there is a host interpreter. (`agents/lib/__init__.py` refuses a host
+interpreter only when a workspace venv EXISTS; with none it imports — the guard is
+not the obstacle, the missing dependencies are.) A Python hook that cannot start
+is a hook that fails OPEN, which is the direction this repository never accepts.
+*PROPOSED — a bash shim of a few lines, and W3 proceeds.* The question is already
+answered in production: `skill-invariants.sh` reads `[ -x .venv/bin/python ] ||
+exit 0` before any stamp write, with a comment defending it — and because the
+change boundary is NOT advanced, the first run after the venv exists checks
+everything since. That is fail-DEFERRED, not fail-open, and a Python hook inherits
+it through a shim that makes the same check, holds the boundary the same way, and
+then `exec`s `.venv/bin/python -m <hook module>`. The Python lives outside
+`agents/lib/` so it never meets the import guard. Sequenced after the Q7-Q10 tax
+work: P2, and the largest refactor in the backlog.
+
+### If the proposals are ruled as written
+
+Two PRs, then W3. **Q7 + Q9** is one engine-contract PR (the required parameter,
+the NY election field, the NY value-validation, `_ny_amount` folded). **Q8 + Q10**
+is one PR (the §2 sentence and its byte-cap trim, the deleted PTET schedule, the
+pinned SALT anchors, `/tax-ptet` leaving `_FIGURE_LINT_EXEMPT`). Q11 closes with
+its trigger recorded; Q12 closes with the shim, which is W3's first slice.
+
+### Blocked on an owner ACTION, not a ruling
+
+Written as a table, deliberately: an `- **ID — text**` bullet is the shape Part 4
+uses for an ITEM ENTRY, and repeating an id in that shape here makes a shipped
+item read as open work in a second place. `TestTheBacklogSaysWhatIsOpen` caught
+exactly that on the first draft of this section — W4 is in the shipped table, and
+a bullet naming it again put it straight back into the list V11 got lost in.
+
+| Item | What it waits on |
+|---|---|
+| Y1 | The owner publishing the repository and enabling Discussions. Verified still private, Discussions off; everything else in Epic R is done. |
+| Y2 | TY2026 figures publishing, AND re-running the review-subagent replay from a FRESH session first. It is also the only route to X1's stale auditor keying note, whose definition is digest-pinned to a passed acceptance and cannot be edited without that replay. |
+| W4 | An otherwise-idle machine for the MEASURED COSTS *seconds* sitting. Four attempts have now been killed for host memory, the most recent 2026-09-13. The counts half is refreshed every round and is not what is owed. |
+
+### Deferred with the work specified, not blocked
+
+- **The figure-lint detector.** Its scope is derived now, but `[^.\n]` between the
+  limit word and the amount cannot cross a LINE BREAK, so a figure markdown wrapped
+  is invisible — which is how "~$510" survived in `/tax-extend`. Every fix measured
+  so far trades one blind spot for another; the measurements are in
+  `docs/ops/season-open-runbook.md` under the X6 entry.
+- The X7 carry-forwards are sequenced AFTER V1 exposes a deduction knob on
+  `compute_scenario`, not before. (Not written as an entry bullet: `_entries()`
+  is last-wins, so a second `- **X7**` line anywhere in this file shadows the
+  real entry and would report it as open the day it ships.)

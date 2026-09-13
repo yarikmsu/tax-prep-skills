@@ -2367,6 +2367,24 @@ class TestCaItemized:
         assert not any("OVERSTATED" in n for n in nothing["notes"]), (
             "the phase-out banner fired on a return with nothing to overstate")
 
+    def test_the_unfetched_phaseout_banner_reads_the_subject_amount(self):
+        """§17077 leaves medical and investment interest alone, so a return of
+        NOTHING BUT investment interest has deductions and still nothing the
+        phase-out can reduce. The gate read the subtotal and fired on it —
+        the same cry-wolf one line further in. Gate and banner both read the
+        SUBJECT amount now."""
+        only_interest = compute_ca_itemized(
+            federal_agi=400000, ca_agi=400000, tax_year=2025,
+            investment_interest=1000)
+        assert only_interest["itemized_total"] == 1000.0
+        assert not any("OVERSTATED" in n for n in only_interest["notes"]), (
+            "the phase-out banner fired on deductions §17077 cannot touch")
+        mixed = compute_ca_itemized(
+            federal_agi=400000, ca_agi=400000, tax_year=2025,
+            real_estate_taxes=12000, investment_interest=1000)
+        banner = [n for n in mixed["notes"] if "OVERSTATED" in n]
+        assert len(banner) == 1 and "$12,000.00" in banner[0], banner
+
     def test_the_unfetched_phaseout_banner_quantifies_itself(self):
         """The threshold is the missing figure, so the note carries the two
         numbers a reader needs to decide whether this one matters: the AGI it

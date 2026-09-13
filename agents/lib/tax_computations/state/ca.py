@@ -273,26 +273,30 @@ def compute_ca_itemized(
                      + mortgage_deductible + inv_int
                      + charitable_deductible + misc_deductible, 2)
 
+    # What §17077 can reduce: medical and investment interest are outside it.
+    subject = max(0.0, subtotal - medical_deductible - inv_int)
     phaseout = 0.0
     if phaseout_threshold is None:
         # Only where there is something to overstate. The note fired on every
         # unfetched call, including a return with no itemized deductions at
         # all, where the phase-out cannot bite at any published threshold — a
         # STOP-shaped warning on correct data, which is what teaches an agent
-        # to read past the one that is real. The AGI is interpolated because
-        # the threshold is the figure that is missing: a reader who knows the
-        # published tier can decide in one glance whether this one matters.
-        if subtotal > 0:
+        # to read past the one that is real. Gated on the SUBJECT amount, not
+        # the subtotal: a return of nothing but investment interest has
+        # deductions and still nothing the phase-out can touch. The AGI is
+        # interpolated because the threshold is the figure that is missing: a
+        # reader who knows the published tier can decide in one glance whether
+        # this one matters.
+        if subject > 0:
             notes.append(
                 f"CA itemized phase-out threshold (R&TC §17077, indexed) not "
                 f"in the tax_law cache — phase-out NOT applied against a "
-                f"federal AGI of ${fed_agi:,.2f} and ${subtotal:,.2f} of "
-                f"itemized deductions, so the CA deduction may be OVERSTATED. "
-                f"Run /tax-setup to fetch state.itemized_phaseout")
+                f"federal AGI of ${fed_agi:,.2f} and ${subject:,.2f} of "
+                f"deductions subject to it, so the CA deduction may be "
+                f"OVERSTATED. Run /tax-setup to fetch state.itemized_phaseout")
     else:
         thr = _amount(phaseout_threshold, "phaseout_threshold")
         if fed_agi > thr:
-            subject = max(0.0, subtotal - medical_deductible - inv_int)
             phaseout = round(min(_CA_ITEMIZED_PHASEOUT_RATE * (fed_agi - thr),
                                  _CA_ITEMIZED_PHASEOUT_MAX * subject), 2)
             notes.append(

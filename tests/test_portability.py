@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.skill_text import CONTRIBUTOR_SKILLS, skill_text
+from tests.skill_text import CONTRIBUTOR_SKILLS, skill_names, skill_text
 from tests.engine_tree import (
     GUARD as ENGINE_GUARD,
     engine_files,
@@ -4536,9 +4536,13 @@ class TestTheSkillsReadWhatTheEngineEmits:
 # was this figure written down as LAW, or narrated as an illustration?
 _LIMIT_WORDS = (r"per child|per person|cap(?:ped)?|limit|threshold|"
                 r"maximum|max\b|ceiling|exclusion|up to")
+# The multiplier is part of the figure. Without the suffix "$200K" tokenised as
+# "$200", and a registry holding "$200" let "$200M" through while refusing the
+# spelled-out "$200,000" — a registry describing how a figure was abbreviated.
+_AMOUNT = r"\$[0-9][0-9,]*(?:\.[0-9]+)?(?:[KkMm]\b)?"
 _LIMIT_PATTERN = re.compile(
-    rf"(?:{_LIMIT_WORDS})[^.\n]{{0,40}}?(\$[0-9][0-9,]*(?:\.[0-9]+)?)"
-    rf"|(\$[0-9][0-9,]*(?:\.[0-9]+)?)[^.\n]{{0,40}}?(?:{_LIMIT_WORDS})",
+    rf"(?:{_LIMIT_WORDS})[^.\n]{{0,40}}?({_AMOUNT})"
+    rf"|({_AMOUNT})[^.\n]{{0,40}}?(?:{_LIMIT_WORDS})",
     re.I)
 
 
@@ -4580,7 +4584,7 @@ def _quoted_limits(body: str) -> "set[tuple[str, str]]":
 _FIGURE_REGISTRY = {
     # §121's home-sale exclusion. $250,000/$500,000 since the Taxpayer Relief
     # Act of 1997 and never indexed.
-    "tax-setup": {"$250", "$250,000", "$500,000"},
+    "tax-setup": {"$250K", "$250,000", "$500,000"},
     # Nothing. Both thresholds it used to quote were about how many FORMS to
     # expect, and the instruction — ask about platform and gig income whatever
     # arrived — is the same at any figure, so the figures went rather than
@@ -4608,8 +4612,62 @@ _FIGURE_REGISTRY = {
     # confirm AVAILABILITY as well as amount, because OBBBA moved several of
     # their end dates and a credit claimed after termination is disallowed on
     # examination rather than merely mis-sized.
-    "tax-compute": {"$0", "$1", "$500", "$1,000", "$2,000", "$2,500",
+    "tax-compute": {"$0", "$1M", "$500K", "$1,000", "$2,000", "$2,500",
                     "$3,000", "$150,000"},
+    # X6 brought the rest in. Every figure below is statutory and unindexed,
+    # and the four that are not figures at all — `$0` outcomes — are here
+    # because the detector counts them and nothing about a zero can go stale.
+    #
+    #   $3K       §1211(b)'s cap, as the skill abbreviates it
+    #   $150,000  §6654(d)(1)(C)'s prior-year AGI threshold
+    #   $200K     §3102(f)'s employer withholding threshold
+    "tax-harvest": {"$0", "$3K"},
+    "tax-project": {"$150,000"},
+    "tax-retirement": {"$0"},
+    # `$0` here is `--min $0` to `--max` — a CLI FLAG the detector reads as the
+    # word "max". Registered rather than chased: the alternative is teaching
+    # the detector that a backticked identifier is not prose, which was tried
+    # and loses a real §121 detection to backtick mis-pairing (runbook).
+    "tax-roth-convert": {"$0"},
+    "tax-verify": {"$200K"},
+    "tax-withholding": {"$150,000"},
+    # Empty, and each verified empty rather than assumed. An empty entry is not
+    # a formality: it is what puts the skill UNDER the lint, so the first
+    # dollar figure any of them grows has to be defended. `tax-extend` is the
+    # case that proves it — X6 removed a two-cycles-stale §6651(a) floor from
+    # it, and nothing would have stopped the next one going back in.
+    "tax-amend": set(),
+    "tax-archive": set(),
+    "tax-calendar": set(),
+    "tax-extend": set(),
+    "tax-fbar": set(),
+    "tax-generate": set(),
+    "tax-parse-crypto": set(),
+    "tax-rollover": set(),
+    "tax-scenario": set(),
+}
+
+# Taxpayer-facing skills the registry deliberately does NOT cover, each with
+# the reason. An entry here is a decision; absence from both this and the
+# registry is what `test_every_taxpayer_facing_skill_is_triaged` refuses.
+_FIGURE_LINT_EXEMPT = {
+    # AGENTS.md §2's second and last exception: `tax-safe-harbor` restates
+    # §6654 in prose because it has no cache to read. Its figures are held to a
+    # CLOSED `allowed` set by the test below this one, which is stricter than
+    # this registry, not looser.
+    "tax-safe-harbor": "has its own closed `allowed` set (AGENTS.md §2)",
+    # OPEN QUESTION, and named here so it is loud rather than absent. X6
+    # corrected this skill from a flat "$40,000 for TY2025-2029" to the
+    # §164(b)(7) schedule, which states $40,000 for TY2025 and $40,400 for
+    # TY2026 — and the skill now also names `federal.salt_cap`, the cache key
+    # those are read from, which is exactly the remedy the lint's own message
+    # prescribes. Whether a figure that is BOTH statutorily named AND fetched
+    # may be stated in prose is the question, and it is the owner's: stating it
+    # let X6 replace a wrong flat number, and not stating it means TY2027
+    # cannot read "$40,400 for TY2026" as current. Until it is answered this
+    # skill is out, with the reason, rather than registered by default.
+    "tax-ptet": "pending the owner ruling on stating a statutory SCHEDULE that "
+                "is also fetched — see the X6 entry in the season-open runbook",
 }
 
 
@@ -4632,6 +4690,67 @@ def test_the_taxpayer_facing_skills_quote_no_indexed_tax_figure(skill):
         "Name the cache key it is fetched from, or the form whose instructions "
         "carry it — an indexed figure in a skill goes stale while still "
         "reading as current, and a taxpayer hears it as this year's.")
+
+
+def test_every_taxpayer_facing_skill_is_triaged():
+    """The registry's SCOPE, derived rather than listed.
+
+    X6 found two wrong figures in two skills, and the lint could not have caught
+    either: it named four skills by hand out of twenty-three, and a skill that
+    was simply never added read exactly like a skill with nothing to declare.
+    A hand-written scope is the same silent-green as a hand-written arm.
+
+    So every taxpayer-facing skill appears in ONE of the two — the registry, or
+    the exemption list with its reason. A new skill fails here until somebody
+    looks at its figures, which is the point: absence stops being an answer.
+
+    Contributor tooling is out because it instructs a maintainer running from a
+    clone, not a taxpayer, and `CONTRIBUTOR_SKILLS` is where that judgement
+    already lives.
+    """
+    facing = set(skill_names()) - CONTRIBUTOR_SKILLS
+    assert facing, "no taxpayer-facing skills found — the derivation broke"
+    both = sorted(set(_FIGURE_REGISTRY) & set(_FIGURE_LINT_EXEMPT))
+    assert not both, (
+        f"{both} are registered AND exempt — an exemption beside a registry "
+        "entry is the entry nobody has to keep")
+    triaged = set(_FIGURE_REGISTRY) | set(_FIGURE_LINT_EXEMPT)
+    missing = sorted(facing - triaged)
+    assert not missing, (
+        f"{missing} are taxpayer-facing and appear in neither _FIGURE_REGISTRY "
+        "nor _FIGURE_LINT_EXEMPT. A skill nothing has looked at reads exactly "
+        "like a skill with nothing to declare — which is how /tax-ptet came to "
+        "state a SALT cap wrong for the current filing year. Register the "
+        "figures it quotes, or exempt it and say why.")
+    stale = sorted(triaged - facing)
+    assert not stale, (
+        f"{stale} are registered or exempted and are not taxpayer-facing "
+        "skills any more — an entry that outlives its skill excuses whatever "
+        "later takes the name")
+
+
+# Where an exemption's decision may be recorded. A reason that names none of
+# these is an opinion.
+_EXEMPTION_POINTERS = frozenset({"AGENTS.md", "runbook", "docs/"})
+
+
+def test_the_exemptions_each_carry_a_reason():
+    """An exemption is a decision, and a decision is recorded somewhere.
+
+    A length check was the first draft and answers the wrong question: thirty
+    spaces passed it and a short true reason failed it. What a reason has to
+    carry is WHERE the decision lives — the instruction file, the runbook, a
+    doc — so a reader can find the ruling rather than take the word for it.
+    """
+    assert _FIGURE_LINT_EXEMPT, "the exemption list is empty — read it again"
+    for skill, reason in sorted(_FIGURE_LINT_EXEMPT.items()):
+        assert any(where in reason for where in _EXEMPTION_POINTERS), (
+            f"{skill}'s exemption names no place the decision is recorded "
+            f"({sorted(_EXEMPTION_POINTERS)}): {reason!r}")
+    assert "tax-safe-harbor" in _FIGURE_LINT_EXEMPT, (
+        "the one skill AGENTS.md §2 names as restating statute in prose is no "
+        "longer exempt — it has a CLOSED allowed set instead, which is "
+        "stricter than this registry and must not be replaced by it")
 
 
 class TestTheTwoSkillsTheFigureRegistryDoesNotCover:
@@ -4713,13 +4832,15 @@ def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
         "instruction it gives — ask about platform and gig income whatever "
         "arrived — is the same at any figure")
     everything = set().union(*_FIGURE_REGISTRY.values())
-    assert everything == {"$0", "$1", "$250", "$250,000", "$500", "$500,000",
-                          "$1,000", "$2,000", "$2,500", "$3,000",
-                          "$150,000"}, (
+    assert everything == {"$0", "$1M", "$3K", "$200K", "$250K", "$250,000",
+                          "$500K", "$500,000", "$1,000", "$2,000", "$2,500",
+                          "$3,000", "$150,000"}, (
         "a figure joined the registry without this test being edited. Each one "
         "here is flat statutory law — §121's exclusion, §1211(b)'s capital-loss "
-        "cap, §221(b)(1)'s student-loan cap, §25A's two education ceilings, "
-        "§6654(d)(1)(C)'s threshold and CA's pre-TCJA mortgage limit — and an "
+        "cap, §221(b)(1)'s student-loan "
+        "cap, §25A's two education ceilings, §6654(d)(1)(C)'s threshold, "
+        "§3102(f)'s never-indexed $200,000 employer withholding threshold "
+        "for Additional Medicare Tax, and CA's pre-TCJA mortgage limit — and an "
         "INDEXED figure does not become safe by being listed")
 
 
