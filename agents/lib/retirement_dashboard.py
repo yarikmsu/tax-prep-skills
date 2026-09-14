@@ -49,6 +49,9 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_year_arg,
 )
 from agents.lib.capabilities import _USPS_STATES  # noqa: E402
+from agents.lib.tax_computations._shared import (  # noqa: E402
+    _normalize_filing_status,
+)
 from agents.lib.secure_fs import redact, year_or_shape  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
@@ -402,8 +405,21 @@ def compute_hsa_limit(tax_law: dict, *, coverage: str,
 # Phase-out computations
 # ---------------------------------------------------------------------------
 
+def _status(filing_status) -> str:
+    """The canonical UPPERCASE code, or a hard error (X8).
+
+    Every read here was `(filing_status or "").upper()` compared against a
+    literal — a TYPE check wearing a value check's clothes. "Married Filing
+    Jointly" is not "MFJ", so it matched nothing and fell to the Single
+    branch: a NARROWER IRA and Roth phase-out window than the taxpayer is
+    entitled to, silently. AGENTS.md §8 names that wrong-but-plausible branch
+    as the reason value-validation exists.
+    """
+    return _normalize_filing_status(filing_status)
+
+
 def _binary_status_key(filing_status: str) -> str:
-    return "mfj" if (filing_status or "").upper() in {"MFJ", "QSS"} else "single"
+    return "mfj" if _status(filing_status) in {"MFJ", "QSS"} else "single"
 
 
 def _phaseout_fraction(magi: float, start: float, end: float) -> float:
@@ -484,7 +500,7 @@ def compute_ira_traditional_deductible_fraction(
     7. Neither covered (any filing status, including MFS lived apart with
        spouse covered → treated as Single → no phase-out) → unlimited (1.0)
     """
-    status_key = (filing_status or "").upper()
+    status_key = _status(filing_status)
     is_mfj = status_key in {"MFJ", "QSS"}
     is_mfs = status_key == "MFS"
     if covered_by_employer_plan:
@@ -555,7 +571,7 @@ def compute_roth_contribution_fraction(
     Above the phase-out end, direct Roth is disallowed (the user can
     still do a backdoor Roth — handled by /tax-roth-convert).
     """
-    status_key = (filing_status or "").upper()
+    status_key = _status(filing_status)
     if status_key == "MFS" and not lived_apart_from_spouse_all_year:
         # Case 1: MFS-with-spouse → $0-$10k window (statutory constant)
         return _phaseout_fraction(
@@ -1268,7 +1284,7 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
         # which is MFJ alone (MFS technically has a living spouse but
         # §219(c) is statutorily MFJ-only).
         ira_combines_spouse_comp = (
-            (filing_status or "").upper() == "MFJ"
+            _status(filing_status) == "MFJ"
         )
         if ira_combines_spouse_comp and spouse_taxable_compensation is not None:
             available_compensation = (
@@ -1383,7 +1399,7 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
             "excise tax."
         )
     elif (
-        (filing_status or "").upper() == "MFJ"
+        _status(filing_status) == "MFJ"
         and spouse_taxable_compensation is None
         and taxable_compensation < ira_statutory_limit
     ):
@@ -1492,7 +1508,7 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
         # NOT inflate the MFS primary's own contribution capacity. Only
         # MFJ's single household return legitimately combines both
         # spouses' catch-ups.
-        spouse_catchup_on_this_return = (filing_status or "").upper() == "MFJ"
+        spouse_catchup_on_this_return = _status(filing_status) == "MFJ"
         if (
             hsa_coverage == "family"
             and age_55_spouse

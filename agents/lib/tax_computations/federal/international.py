@@ -12,7 +12,11 @@ import datetime
 
 import agents.lib  # noqa: F401 — the host-interpreter guard
 from agents.lib.irs_dates import next_business_day
-from agents.lib.tax_computations._shared import _amount, _coerce_numeric
+from agents.lib.tax_computations._shared import (
+    _amount,
+    _coerce_numeric,
+    _normalize_filing_status,
+)
 from agents.lib.tax_computations.federal.penalties import (
     compute_underpayment_interest,
 )
@@ -110,12 +114,13 @@ def check_form_8938_required(
     if accounts is None:
         raise ValueError("accounts cannot be None. Pass an empty list [] if no foreign accounts.")
 
-    _valid_statuses = {"single", "mfj", "mfs", "hoh"}
-    if filing_status not in _valid_statuses:
-        raise ValueError(
-            f"Invalid filing_status '{filing_status}'. "
-            f"Must be one of {sorted(_valid_statuses)}."
-        )
+    # X8: this had its own lowercase-only set, so it REFUSED the canonical
+    # "MFJ" that `_normalize_filing_status` returns — a fifth spelling of the
+    # same rule, and the one that rejected the engine's own output. It
+    # validated (nothing silently mis-branched), so the fix is consistency
+    # rather than a defect: one validator, both spellings accepted, and QSS
+    # reaches the Single threshold row the same way every non-MFJ status does.
+    filing_status = _normalize_filing_status(filing_status).lower()
 
     # IRS Form 8938 thresholds: MFJ has its own row; every other status
     # (single, MFS, HoH) takes "single". The cache's block when it has one,

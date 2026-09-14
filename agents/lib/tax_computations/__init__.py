@@ -74,7 +74,19 @@ def state_brackets_for_status(state_cfg: dict,
     """
     brackets = (state_cfg or {}).get("brackets")
     if not brackets:
+        # No bands at all — a `type: "none"` state, or a cache not fetched yet.
+        # The status is not consulted because there is nothing to select with
+        # it, and this arm is why the parameter is typed `str | None`: refusing
+        # here would be a STOP on a question nobody asked.
         return []
+    # From here there ARE bands, so which ones apply is a real question and the
+    # status is the argument to it. Validated for BOTH shapes: the first draft
+    # put this beside the schedule lookup, one branch further down, so a FLAT
+    # bracket list returned its bands for a status that does not exist — the
+    # module that had just been converted still had an arm taking anything (X8
+    # review). Refusing a bad status must not depend on how one state happens
+    # to key its table.
+    filing_status = _normalize_filing_status(filing_status).lower()
     if isinstance(brackets, list):
         return brackets
     if not isinstance(brackets, dict):
@@ -90,6 +102,12 @@ def state_brackets_for_status(state_cfg: dict,
             "knows which schedule this filing status reads. Picking one would "
             "put a married couple on a single filer's rates; re-run "
             "/tax-setup.")
+    # The lookup used the RAW argument against a lowercase-keyed cache, so the
+    # canonical "MFJ" this engine's own normaliser returns missed every key and
+    # was reported as a missing SCHEDULE — which reads as "re-run /tax-setup"
+    # for a cache that is complete. `filing_status` is already canonical and
+    # lower-cased above, so a status the cache genuinely lacks still reaches
+    # the message below and a status that does not exist never gets here.
     schedule = by_status.get(filing_status)
     if schedule is None:
         raise ValueError(
@@ -1118,8 +1136,24 @@ def compute_qbi_deduction(
         if _thr8995 is not None and _ti8995 is not None \
                 and math.isfinite(_thr8995) and math.isfinite(_ti8995) \
                 and _ti8995 > _thr8995:
-            is_mfj = _normalize_filing_status(filing_status) == "MFJ" \
-                if filing_status is not None else False
+            # ABOVE the threshold the status changes the answer: §199A's
+            # phase-in range for MFJ is double every other status's, so a
+            # missing one silently took the narrower band and HALVED the
+            # deduction — $6,666.67 where an MFJ filer is owed $13,333.33,
+            # with `form_8995a_applied` reporting True and no warning. That
+            # under-states a deduction on a FILED return, so it STOPS
+            # (AGENTS.md §2 as amended by Q8: a fallback may degrade only when
+            # the output is advisory AND it under-states). Below the threshold
+            # the deduction is 20% for every status and this branch is not
+            # reached, so nothing is refused where nothing can differ.
+            if filing_status is None:
+                raise ValueError(
+                    "filing_status is required once taxable income exceeds the "
+                    f"§199A threshold (${_thr8995:,.2f}): the phase-in range "
+                    "for MFJ is double every other status's, so assuming one "
+                    "halves or doubles the deduction. Pass it from "
+                    "result.json meta.filing_status.")
+            is_mfj = _normalize_filing_status(filing_status) == "MFJ"
             rng = phase_in_range if phase_in_range is not None \
                 else _qbi_phase_in_range(tax_year, is_mfj)
             form_8995a = compute_form_8995a(

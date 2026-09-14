@@ -299,3 +299,136 @@ reachable and correct, and it had pinned the wrong one — so the flat schedule
 was not merely untested, it was **certified as intended**. That is why nothing
 went red when X6 found the same figure wrong in the skill text: the engine's own
 absence test agreed with the error.
+
+## X8 — value-validate the filing status across the whole engine
+
+Q9 converted `state/ny.py` and pinned the two depth modules. Sweeping the
+siblings found the same defect class in three more, and a finding's scope is
+where the defect lives rather than where it was spotted.
+
+### Two reproduced defects, both silent
+
+`ptet._salt_cap(2026, "Married Filing Separately")` returned **$40,400** where
+`"MFS"` returns $20,200 — DOUBLE a separate return's cap. The test was
+`(filing_status or "").upper() == "MFS"`, a type check wearing a value check's
+clothes: the spelled-out status is not `"MFS"`, so it took the joint branch. An
+over-stated cap over-states SALT headroom, which under-states the modeled PTET
+benefit; the reverse spelling error over-states it. Either way, a plausible
+number with nothing downstream able to notice.
+
+`retirement_dashboard` read the `single_covered` IRA phase-out window for the
+same spelling where `"MFJ"` reads `mfj_covered` — a narrower band than the
+taxpayer is entitled to, across both the traditional-IRA and Roth fractions.
+
+### Two that refused the CANONICAL spelling
+
+Neither mis-branched, so neither is a defect; both were a fifth and sixth
+spelling of one rule, and each rejected the engine's own output.
+`check_form_8938_required` carried a private lowercase-only set, so `"MFJ"` —
+exactly what `_normalize_filing_status` returns — raised. `state_brackets_for_
+status`, the accessor kept from the NY bracket crash, looked a raw argument up
+in a lowercase-keyed cache and reported the miss as a missing SCHEDULE, which
+reads as "re-run /tax-setup" about a cache that is complete. That message is now
+left to a canonical status the cache genuinely lacks, which is the fetchable
+case.
+
+### The sweep, and why its roster is derived and its classification declared
+
+The hand-built list that opened X8 had **ten** entries. The derived roster has
+**twenty-nine** — the first sweep only counted unconditional top-level
+validation, so nineteen functions that do validate were invisible to it, and a
+twentieth that did not could have hidden among them just as easily. That is the
+same shape as the figure lint before #155: a list nobody has finished reads
+exactly like a list with nothing left on it.
+
+Two questions, and only one is answerable from the tree. WHICH functions must
+be accounted for is a fact about the source. HOW each one is accounted for is
+not: four validators live in four modules, and two functions validate by
+DELEGATING, which no predicate over a single function body can see. So the tree
+supplies the roster and `VALIDATION` supplies the classification, and a function
+in neither fails.
+
+Each half is then held to what it can actually prove. A `"direct"` claim is
+checked against the tree. A `"delegates: X"` claim is checked in both halves —
+the caller provably hands `filing_status` to the named callee, and the callee
+provably refuses a status that does not exist. `_salt_cap` is deliberately NOT
+in the validator set even though it validates internally, because listing it
+would let `ptet.analyze` read as direct when it is delegating.
+
+**The first delegation probe was a false green.** It called the two functions
+with `filing_status` alone and accepted `"positional argument"` in the error —
+which the resulting `TypeError` satisfies without reaching any validator, so it
+would have stayed green with every validator deleted. Calling them properly is
+not cheap either: both validate other arguments long before the status, so an
+end-to-end probe needs a whole return as a fixture. Splitting the claim into the
+half the tree can answer and the half a call can answer is what made it
+checkable at all.
+
+The hand-walk sweep from #152 also fired during this change: `_entry_points`
+enumerated `agents/lib` itself instead of asking `tests/engine_tree.py`. It
+takes `engine_files()` now.
+
+### What the review found — the sweep was certifying a falsehood
+
+**`"direct"` proved presence, not execution.** The first version checked the
+claim with `ast.walk` over the whole function body, so a validating call in an
+untaken branch satisfied it. Wrapping a real normalisation in `if False:` left
+the class green while the function accepted an invalid status — and
+`compute_qbi_deduction` was a standing counterexample the entire time, returning
+`total_deduction=200.0` for `"Married Filing Separately"` while declared
+`"direct"`, because its validation sits on the above-threshold path.
+
+This is the same defect twice: the `state/` sweep in #156 had it, it was fixed
+there with a probe, and the engine-wide sweep written days later reintroduced
+it. The predicate is now the strict one — an unconditional top-level statement —
+and the classification is THREE-way rather than two, because four functions
+legitimately validate only where the status can change the answer. Those are
+`"conditional:"` now, each carrying the reason the unvalidated path is safe, and
+the QBI one is probed by calling it: below the §199A threshold the deduction is
+20% for every status, so the path that never validates cannot disagree with the
+path that does. A category that certifies what it cannot check is worse than no
+category.
+
+**A flat bracket list skipped the check.** `state_brackets_for_status` returns
+early for a state whose `brackets` is a plain list, and the validation had been
+put beside the SCHEDULE lookup two branches down — so the module that had just
+been converted still had an arm returning bands for a status that does not
+exist. The status is what the caller is asking about; refusing a bad one cannot
+depend on how one state happens to key its table.
+
+### The second review pass, and the live defect it found
+
+**§199A halved a deduction for a missing status.** Above the threshold
+`compute_qbi_deduction` read `is_mfj = _normalize_filing_status(filing_status)
+== "MFJ" if filing_status is not None else False` — so a `None` status silently
+took the non-MFJ branch, and MFJ's phase-in range is DOUBLE every other
+status's. Reproduced: `total_deduction` of **$6,666.67** where an MFJ filer is
+owed **$13,333.33**, with `form_8995a_applied` reporting True and no warning.
+That under-states a deduction on a FILED return, so under §2 as amended by Q8 it
+STOPS. Below the threshold the deduction is 20% for every status and the branch
+is not reached, so nothing is refused where nothing can differ — the same gate
+shape as the CA phase-out and the PTET banner.
+
+The `"conditional:"` reason written for it in the first pass was TRUE and
+INCOMPLETE: it described the below-threshold path correctly and said nothing
+about the above-threshold one, which is where the number was wrong. A reason
+that only covers the safe half is how a real gap gets a justification written
+for it.
+
+**The predicate was wrong in both directions at once.** It certified validation
+that never runs — `x = False and _validate(filing_status)` is a top-level
+assignment whose call short-circuits away, and an early `if filing_status is
+None: return ...` sits above the validator and skips it. And it rejected
+validation that always runs: a bare `return _validate(filing_status)`, and every
+function with an ordinary guard clause before the status check, which is five of
+them.
+
+It scans the PROLOGUE in order now, stopping at the first statement that can
+divert control, with three things declared transparent because they cannot: a
+nested `def`; a `try` that coerces and re-raises without returning; and an `if`
+whose every branch terminates — a raise-guard always, an early `return` only
+when that branch never reads the status, since an early exit that builds its
+answer from an unvalidated status is the whole thing being looked for. Eight
+shapes are probed directly, four that must fail and four that must pass,
+because the engine contains none of them — which is exactly when a broken
+predicate looks fine.

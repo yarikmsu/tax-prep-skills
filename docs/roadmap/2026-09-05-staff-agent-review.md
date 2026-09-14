@@ -45,6 +45,8 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | X3 | #88 | — |
 | X4 | #110, #142 | — |
 | X5 | #143, #144 | — |
+| X6 | #154 | 2027-2029 SALT figures are computed from the statute's 101% step, not published; the IRS figure wins through the cache |
+| X8 | #159 | `return_builder.build` and `withholding.build_ca_true_up` validate one frame down — declared, and probed at both ends |
 | Y4 | #112 | — |
 | Y5 | #113 | — |
 | Y6 | #114, #119 | — |
@@ -85,7 +87,7 @@ beside it is open. **Bold** in this section means
 the item is in this list; the backticks above are references to the table.
 
 **W3**, **W7**, **W8**, **W9**,
-**X6** (= T3), **X7** (= U1), **Y1** (postponed until the owner asks), **Y2** (gated on
+**X7** (= U1), **Y1** (postponed until the owner asks), **Y2** (gated on
 TY2026 figures publishing), **Y3** (an owner ruling is open), **Z4**, **Z5**, **Z6**,
 **Z8**.
 
@@ -635,13 +637,19 @@ they run ahead of the orchestrator rather than waiting behind it.
   the 25C/25D/30D/25E caps were replaced by an instruction to confirm AVAILABILITY as
   well as amount, because OBBBA moved several of their end dates and a credit claimed
   after termination is disallowed rather than merely mis-sized.
-- **X6 (P3, S):** Annual statutory re-verification — **= T3** in the 08-12 backlog.
+- **X6 — DONE (#154) (P3, S):** Annual statutory re-verification — **= T3** in the
+  08-12 backlog. All six hardcoded constants held against primary authority; the
+  four figures that were wrong were all in skill PROSE. The verification table,
+  with each constant's authority and the date, is in the season-open runbook.
+  It shipped 2026-09-13 and was never marked here until X8 added its table row —
+  the V11 shape again, caught by `TestTheBacklogSaysWhatIsOpen` rather than by a
+  reader.
 - **X7 (P3, S):** The O3 planning-tool carry-forwards — **= U1** in the 08-12 backlog:
   deduction-only marginal probe for `_est_marginal_fed`; scenario-keystone
   §63(f)/SE-tips threading; `/tax-harvest` §1091 basis-shift modeling. The first two
   are absorbed by V1 if the orchestrator exposes a deduction knob on
   `compute_scenario`; sequence them after it rather than as separate work.
-- **X8 (P1, S):** Value-validate `filing_status` in the three engine modules that
+- **X8 — DONE (#159) (P1, S):** Value-validate `filing_status` in the three engine modules that
   still upper-case it without checking the result. Found by sweeping the siblings
   after Q9 converted `state/ny.py` — the finding's scope was never one module. Two
   are REPRODUCED, not read: `ptet._salt_cap(2026, "Married Filing Separately")`

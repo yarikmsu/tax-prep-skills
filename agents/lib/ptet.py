@@ -51,6 +51,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.projection import (  # noqa: E402
     ProjectionError,
+    _canonical_status,
     _money,
     _read_json,
 )
@@ -463,7 +464,14 @@ def _salt_cap(tax_year: int, filing_status: str, cfg: "dict | None" = None,
     It also keeps an MFS reversion year at $5,000, the figure this module has
     always returned.
     """
-    mfs = (filing_status or "").upper() == "MFS"
+    # X8: this was `(filing_status or "").upper() == "MFS"`, which is a TYPE
+    # check wearing a value check's clothes. "Married Filing Separately" — the
+    # spelling a profile or a prompt produces as readily as the code — is not
+    # "MFS", so it took the joint branch and returned DOUBLE the separate
+    # return's cap. An over-stated cap over-states headroom and so under-states
+    # the benefit; the reverse spelling error over-states it. Either way the
+    # wrong-but-plausible branch AGENTS.md §8 exists to stop.
+    mfs = _canonical_status(filing_status, "SALT cap") == "MFS"
     base = None
     if isinstance(cfg, dict):
         val = cfg.get("mfs_amount" if mfs else "amount")
@@ -873,7 +881,7 @@ def analyze(
         # now, and a caveat describing a limitation the code no longer has is
         # the lying kind — it teaches a reader to discount the figure that is
         # actually right. What it says depends on what was actually done.
-        mfs = (filing_status or "").upper() == "MFS"
+        mfs = _canonical_status(filing_status, "SALT cap") == "MFS"
         threshold = _salt_magi_threshold(tax_year, mfs)
         floor = _SALT_PHASEDOWN_FLOOR / 2 if mfs else _SALT_PHASEDOWN_FLOOR
         if modified_agi is not None:

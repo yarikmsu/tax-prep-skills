@@ -1285,8 +1285,25 @@ class TestCheckForm8938Required:
 
     def test_invalid_filing_status_raises(self):
         """Invalid filing status raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid filing_status"):
+        with pytest.raises(ValueError, match="must be one of"):
             check_form_8938_required([], "married", False, self.THRESHOLDS)
+
+    def test_the_canonical_spelling_is_accepted_here_too(self):
+        """X8. This carried its own lowercase-only set, so it REFUSED the very
+        string `_normalize_filing_status` returns — a fifth spelling of one
+        rule, and the one that rejected the engine's own output. It always
+        validated, so nothing mis-branched; the fix is that both spellings now
+        reach the same threshold row."""
+        for spelling in ("mfj", "MFJ"):
+            out = check_form_8938_required([], spelling, False, self.THRESHOLDS)
+            assert out["required"] is False
+        # QSS reaches the Single threshold row, like every non-MFJ status.
+        # Compared on the THRESHOLDS, not the whole dict: the result echoes the
+        # status back, so a whole-dict equality can only ever fail.
+        qss = check_form_8938_required([], "QSS", False, self.THRESHOLDS)
+        single = check_form_8938_required([], "single", False, self.THRESHOLDS)
+        shared = [k for k in qss if k != "filing_status"]
+        assert {k: qss[k] for k in shared} == {k: single[k] for k in shared}
 
     def test_none_accounts_raises(self):
         """None accounts raises ValueError."""
@@ -6320,11 +6337,34 @@ def test_state_brackets_per_schedule_without_its_map_refuses():
 
 
 def test_state_brackets_unknown_status_refuses_and_names_the_known_ones():
-    with pytest.raises(ValueError, match="hoh"):
+    """Two refusals, and X8 separated them.
+
+    `"married_filing_jointly"` is not a filing status at all and is now refused
+    as one, by value, before any cache lookup. It used to be reported as a
+    missing SCHEDULE and listed the keys the cache had — which reads as "the
+    cache is incomplete, re-run /tax-setup" about a cache that is complete. The
+    schedule message is left to a CANONICAL status the cache genuinely lacks,
+    which is the fetchable case.
+    """
+    cfg = {"brackets": _NY_BRACKETS,
+           "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS}
+    with pytest.raises(ValueError, match="must be one of"):
+        state_brackets_for_status(cfg, "married_filing_jointly")
+    with pytest.raises(ValueError, match="no state rate schedule"):
         state_brackets_for_status(
-            {"brackets": _NY_BRACKETS,
-             "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS},
-            "married_filing_jointly")
+            {**cfg, "bracket_schedule_by_status":
+             {k: v for k, v in _NY_SCHEDULE_BY_STATUS.items() if k != "hoh"}},
+            "hoh")
+
+
+def test_state_brackets_takes_the_canonical_spelling():
+    """The accessor kept from the NY crash read a LOWERCASE-keyed cache with
+    the raw argument, so the canonical `"MFJ"` the engine's own normaliser
+    returns missed every key (X8)."""
+    cfg = {"brackets": _NY_BRACKETS,
+           "bracket_schedule_by_status": _NY_SCHEDULE_BY_STATUS}
+    assert state_brackets_for_status(cfg, "MFJ") == \
+        state_brackets_for_status(cfg, "mfj")
 
 
 def test_state_brackets_unreadable_shape_raises_rather_than_degrading():
@@ -6820,3 +6860,435 @@ class TestEveryStateEntryPointValidatesItsFilingStatus:
                 if isinstance(n, ast.FunctionDef)][0]
         assert self._normalises_its_own_status(good), (
             "the sweep rejects the shape both state modules actually use")
+
+
+class TestEveryEngineEntryPointValidatesItsFilingStatus:
+    """X8: the `state/` sweep's question, asked of the WHOLE engine.
+
+    Q9 converted `state/ny.py`; sweeping the siblings found the same class in
+    three more modules, two reproduced: `ptet._salt_cap(2026, "Married Filing
+    Separately")` returned $40,400 where `"MFS"` returns $20,200 — DOUBLE a
+    separate return's cap — and `retirement_dashboard` read the
+    `single_covered` IRA phase-out window for that spelling where `"MFJ"` reads
+    `mfj_covered`.
+
+    The roster is DERIVED and the classification DECLARED, because only the
+    first is a fact about the source. The hand-built list that opened X8 had
+    ten entries; the derived roster has twenty-nine.
+
+    THE CLASSIFICATION IS THREE-WAY, and that is the review's doing. It began
+    as "direct" versus "delegates", with "direct" checked by `ast.walk` over
+    the whole body — which proves PRESENCE, not execution. Wrapping a real
+    normalisation in `if False:` left this class green while the function
+    accepted an invalid status, and `compute_qbi_deduction` was a standing
+    counterexample the whole time: it returns `total_deduction=200.0` for
+    `"Married Filing Separately"` because its validation sits on the
+    above-threshold path. A category that certifies what it cannot check is
+    worse than no category, so the conditional ones are now named as such and
+    made to carry the reason they are safe.
+    """
+
+    VALIDATORS = {"_normalize_filing_status", "_ny_status", "_canonical_status",
+                  "_full_status_key", "_status"}
+    # Delegation targets: they validate, but they are not validators — listing
+    # `_salt_cap` among the validators above would let `ptet.analyze` read as
+    # "direct" when the check is a frame down.
+    DELEGATES = {"_salt_cap", "_context", "compute_ca_safe_harbor"}
+
+    # "direct"      — hands `filing_status` to a validator in an UNCONDITIONAL
+    #                 top-level statement. Checked against the tree.
+    # "delegates: X"— hands it unconditionally to X, which validates. Checked
+    #                 at both ends: the caller hands over, the callee refuses.
+    # "conditional: why" — validates only on the path where the status can
+    #                 change the answer. The reason is required, and a probe
+    #                 below shows the unvalidated path ignores the status.
+    VALIDATION = {
+        "projection/__init__.py::capital_gains_limits": "direct",
+        "projection/__init__.py::compute_ca_safe_harbor": "direct",
+        "projection/__init__.py::project_state_tax": "direct",
+        "retirement_dashboard.py::compute_ira_traditional_deductible_fraction": "direct",
+        "retirement_dashboard.py::compute_roth_contribution_fraction": "direct",
+        "tax_computations/__init__.py::state_brackets_for_status": "direct",
+        "tax_computations/__init__.py::compute_taxable_ss": "direct",
+        "tax_computations/__init__.py::compute_form_2441": "direct",
+        "tax_computations/__init__.py::compute_schedule_a": "direct",
+        "tax_computations/__init__.py::compute_schedule_1a": "direct",
+        "tax_computations/__init__.py::compute_charitable_non_itemizer": "direct",
+        "tax_computations/__init__.py::compute_education_credits": "direct",
+        "tax_computations/federal/amt.py::compute_form_6251": "direct",
+        "tax_computations/federal/international.py::check_form_8938_required": "direct",
+        "tax_computations/federal/penalties.py::compute_form_2210": "direct",
+        "tax_computations/state/ca.py::compute_ca_schedule_p": "direct",
+        "tax_computations/state/ny.py::compute_ny_agi": "direct",
+        "tax_computations/state/ny.py::compute_ny_tax": "direct",
+        "tax_computations/state/ny.py::compute_ny_household_credit": "direct",
+        "tax_computations/state/ny.py::compute_nyc_taxable_income": "direct",
+        "tax_computations/state/ny.py::compute_ny_required_annual_payment": "direct",
+        "tax_computations/state/ny.py::compute_ny_itemized": "direct",
+        "withholding.py::build_ny_true_up": "direct",
+
+        "ptet.py::analyze": "delegates: _salt_cap",
+        "return_builder.py::build": "delegates: _context",
+        "withholding.py::build_ca_true_up": "delegates: compute_ca_safe_harbor",
+
+        "projection/__init__.py::compute_safe_harbor": (
+            "conditional: the status picks the 110% factor on the PRIOR-YEAR "
+            "prong only; the 90%-of-current-year prong never reads it, and the "
+            "function says so in its own comment"),
+        "scenario.py::resolve_base": (
+            "conditional: the status is compared only when the base scenario "
+            "carries one of its own, which is the only case it can disagree with"),
+        "tax_computations/__init__.py::compute_qbi_deduction": (
+            "conditional: the status is read only ABOVE the §199A threshold, "
+            "where it now REFUSES a missing one; below it the deduction is 20% "
+            "for every status, so nothing is refused where nothing can differ "
+            "— both sides probed below"),
+    }
+
+    def _entry_points(self):
+        # `engine_files()`, not a hand-rolled walk: every such walk re-derives
+        # the __pycache__ exclusion, the POSIX spelling and a package's module
+        # name, and three were wrong three different ways in one week (#152).
+        for path in engine_files():
+            for node in ast.parse(path.read_text()).body:
+                if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
+                    continue
+                names = [a.arg for a in node.args.args + node.args.kwonlyargs]
+                if "filing_status" in names:
+                    yield f"{engine_relpath(path)}::{node.name}", node
+
+    @staticmethod
+    def _hands_over_unconditionally(node, callees):
+        """A call handing over the parameter that ALWAYS runs when the function
+        does — established by scanning the PROLOGUE, not by finding the call.
+
+        Two rounds of review broke the earlier attempts, in both directions:
+
+        - `ast.walk` over the whole body proved PRESENCE, not execution. A call
+          in an untaken branch satisfied it, and `compute_qbi_deduction` was a
+          standing counterexample.
+        - Restricting to top-level simple statements was still not enough. An
+          early `if filing_status is None: return ...` sits ABOVE the validator
+          and skips it, and `x = False and _validate(filing_status)` is a
+          top-level assignment whose call short-circuits away entirely. It also
+          rejected `return _validate(filing_status)`, which is a bare `Return`
+          and perfectly unconditional.
+
+        So: walk the statements IN ORDER and stop at the first one that can
+        divert control — any compound statement, or a `return`/`raise` that is
+        not itself the validating call. Whatever precedes that point runs
+        unconditionally. Within it, a call nested under `and`/`or`/a ternary is
+        rejected, because those are conditions wearing an expression's clothes.
+
+        Still deliberately CONSERVATIVE: validation inside `with` or
+        `try`/`finally` always executes and is rejected anyway. Supporting them
+        would complicate this for forms nothing here uses, and the cost of the
+        false alarm is a clearer rewrite or an honest "conditional:" entry. The
+        cost of the opposite error is certifying a function that never
+        validates, which is what this class was written after.
+        """
+        def handed_over(tree):
+            for call in ast.walk(tree):
+                if not isinstance(call, ast.Call):
+                    continue
+                name = (getattr(call.func, "id", None)
+                        or getattr(call.func, "attr", None))
+                if name not in callees:
+                    continue
+                # A call under `and` / `or` / `x if c else y` may never run.
+                if any(isinstance(p, (ast.BoolOp, ast.IfExp))
+                       for p in ast.walk(tree)
+                       if isinstance(p, (ast.BoolOp, ast.IfExp))
+                       and call in list(ast.walk(p))):
+                    continue
+                handed = list(call.args) + [k.value for k in call.keywords]
+                if any(isinstance(a, ast.Name) and a.id == "filing_status"
+                       for a in handed):
+                    return name
+            return None
+
+        def transparent(stmt):
+            """Does control reaching PAST this statement still run everything
+            after it, without the status having been used on the way?
+
+            Real functions do two things before validating a status, and
+            treating both as opaque rejected five that validate perfectly well.
+            A false alarm here is how a safe function gets pushed into
+            "conditional:" with a reason invented for it.
+
+            - A GUARD — `if accounts is None: raise ...`, or an early exit like
+              `if not brackets: return []` when the state has no bands at all.
+              Every branch TERMINATES, so getting past it means everything
+              after it runs. Allowed only when no branch mentions
+              `filing_status`: a branch that both exits early AND reads the
+              status is a path that uses an unvalidated one, which is the whole
+              thing being looked for.
+            - A nested `def`. Defining a function diverts nothing.
+            """
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                return True
+            if isinstance(stmt, ast.Try):
+                # A `try` around coercion — `compute_taxable_ss` wraps six
+                # `_coerce_numeric` calls and re-raises a clearer error. Nothing
+                # in it RETURNS, so control that gets past it runs everything
+                # after; a handler that raises produces no answer at all. Only
+                # an early `return` from inside would divert.
+                blocks = [stmt.body, stmt.orelse, stmt.finalbody]
+                blocks += [h.body for h in stmt.handlers]
+                if any(isinstance(inner, ast.Return)
+                       for block in blocks for inner in ast.walk(
+                           ast.Module(body=block, type_ignores=[]))):
+                    return False
+                return True
+            if not isinstance(stmt, ast.If):
+                return False
+            for branch in (stmt.body, stmt.orelse):
+                if not branch:
+                    continue        # no `else` — falls through, which is fine
+                if isinstance(branch[-1], ast.Raise):
+                    continue        # produces no answer at all, so it cannot
+                                    # produce one from an unvalidated status
+                if not isinstance(branch[-1], ast.Return):
+                    return False
+                if any(isinstance(n, ast.Name) and n.id == "filing_status"
+                       for inner in branch for n in ast.walk(inner)):
+                    return False    # an early RETURN that reads the status is
+                                    # an answer built from an unvalidated one
+            return bool(stmt.body)
+
+        for stmt in node.body:
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr,
+                                 ast.Return, ast.Raise)):
+                found = handed_over(stmt)
+                if found:
+                    return found
+                if isinstance(stmt, (ast.Return, ast.Raise)):
+                    return None      # control leaves before any later call
+                continue
+            if transparent(stmt):
+                continue             # a guard or a nested def: control that
+                                     # gets past it runs everything after
+            return None              # any other compound statement: what
+                                     # follows is reachable only on some paths
+
+    def test_every_engine_entry_point_is_accounted_for(self):
+        found = {name for name, _ in self._entry_points()}
+        assert found, "the sweep found no entry points — its subject is gone"
+        missing = sorted(found - set(self.VALIDATION))
+        assert not missing, (
+            f"{missing} take a filing_status and are in no column. A "
+            "type-valid, out-of-domain status falls through to whichever "
+            "branch the comparisons happen to leave — AGENTS.md §8's "
+            "wrong-but-plausible default. Validate it unconditionally and say "
+            "'direct', name the callee that does, or say 'conditional:' and "
+            "why the unvalidated path cannot return a different number.")
+        stale = sorted(set(self.VALIDATION) - found)
+        assert not stale, (
+            f"{stale} are declared and no longer exist — an entry that "
+            "outlives its function excuses whatever later takes the name")
+
+    def test_the_direct_ones_validate_unconditionally(self):
+        offenders = [
+            name for name, node in self._entry_points()
+            if self.VALIDATION.get(name) == "direct"
+            and not self._hands_over_unconditionally(node, self.VALIDATORS)]
+        assert not offenders, (
+            f"{offenders} are declared 'direct' and do not hand `filing_status` "
+            "to a validator in an unconditional statement. Either fix them, or "
+            "reclassify as 'conditional:' with the reason the unvalidated path "
+            "is safe — a 'direct' that only sometimes runs is the false green "
+            "this class was caught certifying")
+
+    def test_the_delegating_ones_hand_over_what_they_claim_to(self):
+        """Checked at both ends, because neither half is worth much alone."""
+        import agents.lib.ptet as ptet_mod
+        import agents.lib.return_builder as rb
+        import agents.lib.withholding as wh
+
+        declared = {n: d.split("delegates:", 1)[1].strip()
+                    for n, d in self.VALIDATION.items() if d.startswith("delegates:")}
+        assert declared, "no delegating entries — this test has lost its subject"
+        for name, node in self._entry_points():
+            callee = declared.get(name)
+            if callee is None:
+                continue
+            assert self._hands_over_unconditionally(node, {callee}) == callee, (
+                f"{name} is declared to delegate to {callee!r} and does not "
+                "hand it `filing_status` unconditionally")
+
+        # ...and the callees refuse. Called with every other argument supplied:
+        # an earlier draft passed the status alone and accepted a TypeError
+        # about the missing ones, which no validator has to run to produce.
+        with pytest.raises(Exception, match="Single/MFJ/MFS/HoH/QSS"):
+            ptet_mod._salt_cap(2026, "Married Filing Separately")
+        with pytest.raises(Exception, match="Single/MFJ/MFS/HoH/QSS"):
+            rb._context({"form_1040": {}}, {}, "Married Filing Jointly")
+        with pytest.raises(Exception, match="Single/MFJ/MFS/HoH/QSS"):
+            wh.compute_ca_safe_harbor(0.0, None, None, 0.0,
+                                      "Married Filing Jointly", 0.0, 0.0)
+
+    def test_the_conditional_ones_say_why_and_the_qbi_one_is_probed(self):
+        """A 'conditional' entry is a claim that the unvalidated path cannot
+        return a different number. The reason is required in the declaration,
+        and the one a reviewer reproduced is checked by CALLING it."""
+        for name, decl in self.VALIDATION.items():
+            if not decl.startswith("conditional:"):
+                continue
+            assert len(decl.split("conditional:", 1)[1].strip()) > 40, (
+                f"{name}'s 'conditional' says nothing about why the "
+                "unvalidated path is safe")
+
+        # BELOW the §199A threshold: 20% for every status, so the path that
+        # never validates cannot disagree with the path that does. Refusing
+        # here would be a STOP on a question nobody asked.
+        garbage = compute_qbi_deduction(1000, 0, filing_status="Married Filing Separately")
+        for status in ("MFJ", "Single", "MFS"):
+            assert (compute_qbi_deduction(1000, 0, filing_status=status)["total_deduction"]
+                    == garbage["total_deduction"] == 200.0)
+
+        # ABOVE it the status decides the answer, and the first draft's reason
+        # covered only the half above. MFJ's phase-in range is DOUBLE every
+        # other status's, so a missing status silently took the narrower band:
+        # $6,666.67 where an MFJ filer is owed $13,333.33, `form_8995a_applied`
+        # reporting True and nothing said. That under-states a deduction on a
+        # filed return, so it STOPS (AGENTS.md §2 as amended by Q8).
+        above = dict(taxable_income_before_qbi=250000, threshold=200000,
+                     tax_year=2026, w2_wages=0, ubia=0, is_sstb=False)
+        with pytest.raises(ValueError, match="§199A threshold"):
+            compute_qbi_deduction(100000, 0, filing_status=None, **above)
+        assert compute_qbi_deduction(
+            100000, 0, filing_status="MFJ", **above)["total_deduction"] == 13333.33
+        assert compute_qbi_deduction(
+            100000, 0, filing_status="Single", **above)["total_deduction"] == 6666.67
+
+    def test_the_predicate_itself(self):
+        """The predicate is the thing two review rounds broke, so it is probed
+        directly rather than only through the engine — the engine happens to
+        contain none of these shapes, which is exactly when a broken predicate
+        looks fine."""
+        def node(lines):
+            src = "\n".join(lines)
+            return [n for n in ast.parse(src).body
+                    if isinstance(n, ast.FunctionDef)][0]
+
+        must_fail = {
+            "short-circuit: the call never runs": [
+                "def f(filing_status=None):",
+                "    x = False and _normalize_filing_status(filing_status)",
+                "    return 200.0"],
+            "an early return that BUILDS its answer from the status": [
+                "def f(filing_status=None):",
+                "    if filing_status != 'MFJ':",
+                "        return {'single': 1.0}.get(filing_status, 2.0)",
+                "    filing_status = _normalize_filing_status(filing_status)",
+                "    return 1"],
+            "a try that RETURNS early, skipping the validator": [
+                "def f(filing_status=None, x=None):",
+                "    try:",
+                "        return float(x)",
+                "    except TypeError:",
+                "        pass",
+                "    filing_status = _normalize_filing_status(filing_status)",
+                "    return 1"],
+            "validation in an if BODY": [
+                "def f(filing_status=None, strict=False):",
+                "    if strict:",
+                "        filing_status = _normalize_filing_status(filing_status)",
+                "    return 1"],
+        }
+        for label, lines in must_fail.items():
+            assert not self._hands_over_unconditionally(node(lines), self.VALIDATORS), (
+                f"the predicate accepts validation that never has to run: {label}")
+
+        must_pass = {
+            "a bare return of the validator": [
+                "def f(filing_status):",
+                "    return _normalize_filing_status(filing_status)"],
+            "a raise-guard that names the status, above the validator": [
+                "def f(filing_status=None):",
+                "    if filing_status is None:",
+                "        raise ValueError('required')",
+                "    filing_status = _normalize_filing_status(filing_status)",
+                "    return 1"],
+            "an early exit that never reads the status": [
+                "def f(brackets, filing_status=None):",
+                "    if not brackets:",
+                "        return []",
+                "    filing_status = _normalize_filing_status(filing_status)",
+                "    return 1"],
+            "a try that only coerces, then validates": [
+                "def f(filing_status=None, x=None):",
+                "    try:",
+                "        x = float(x)",
+                "    except TypeError:",
+                "        raise ValueError('numeric')",
+                "    filing_status = _normalize_filing_status(filing_status)",
+                "    return 1"],
+            "the ordinary unconditional assignment": [
+                "def f(filing_status='single'):",
+                "    filing_status = _status(filing_status)",
+                "    return 1"],
+            "a docstring before it": [
+                "def f(filing_status='single'):",
+                "    'doc.'",
+                "    filing_status = _status(filing_status)",
+                "    return 1"],
+        }
+        for label, lines in must_pass.items():
+            assert self._hands_over_unconditionally(node(lines), self.VALIDATORS), (
+                f"the predicate rejects unconditional validation: {label} — a "
+                "false alarm pushes a safe function into 'conditional:', which "
+                "is how a real gap would get a reason written for it")
+
+    def test_the_local_wrappers_really_delegate(self):
+        """`_status` and `_ny_status` are in VALIDATORS by NAME. A name spelled
+        like a guard is not a guard — the probe the state sweep also keeps."""
+        import agents.lib.retirement_dashboard as rd
+        from agents.lib.tax_computations.state import ny
+        for wrapper, expected in ((rd._status, "MFJ"), (ny._ny_status, "mfj")):
+            assert wrapper("MFJ") == expected
+            assert wrapper("mfj") == expected
+            for rejected in ("Married Filing Jointly", "", None):
+                with pytest.raises((ValueError, TypeError, AttributeError)):
+                    wrapper(rejected)
+
+    def test_the_two_reproduced_defects_stay_fixed(self):
+        """Behavioural, with the figures, because these are what X8 opened
+        for — both returned a plausible wrong number."""
+        import agents.lib.ptet as ptet_mod
+        import agents.lib.retirement_dashboard as rd
+
+        assert ptet_mod._salt_cap(2026, "MFS") == 20200.0
+        assert ptet_mod._salt_cap(2026, "mfs") == 20200.0
+        with pytest.raises(Exception):
+            ptet_mod._salt_cap(2026, "Married Filing Separately")
+
+        assert rd._binary_status_key("MFJ") == "mfj"
+        assert rd._binary_status_key("mfj") == "mfj"
+        with pytest.raises(ValueError):
+            rd._binary_status_key("Married Filing Jointly")
+
+    def test_a_flat_bracket_list_does_not_skip_the_check(self):
+        """The arm a review found still taking anything: `state_brackets_for_
+        status` returned a FLAT list's bands before reaching the validation,
+        so the module that had just been converted still had a path that
+        accepted a status which does not exist."""
+        flat = {"brackets": [{"min": 0, "max": None, "rate": 0.1}]}
+        with pytest.raises(ValueError, match="must be one of"):
+            state_brackets_for_status(flat, "Married Filing Separately")
+        assert state_brackets_for_status(flat, "MFS") == flat["brackets"]
+
+    def test_a_state_with_no_bands_never_asks_about_the_status(self):
+        """...and the other side of it, which the first fix got wrong.
+
+        The check went in ABOVE the empty-brackets return, so a `type: "none"`
+        state — or a cache not fetched yet — began refusing a `None` status
+        that the signature declares valid and that no band depends on. The
+        question "which bands for this status" only exists once there ARE
+        bands; refusing before that is a STOP on a question nobody asked, and
+        it is the cry-wolf half of the same rule.
+        """
+        for cfg in ({}, {"brackets": None}, {"brackets": []}, None):
+            assert state_brackets_for_status(cfg, None) == []
+            assert state_brackets_for_status(cfg, "Married Filing Separately") == []
