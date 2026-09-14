@@ -1351,7 +1351,7 @@ apply_red_checks
 #   agent-definition edit           48 tests      1.0 - 1.8s          6
 #   skill .md edit                1031 tests     19.7 - 23.4s         3
 #   cold pass, all seven modules  1267 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4861 tests    228.4 - 243.4s        2
+#   (for scale) `pytest tests/`   4870 tests    228.4 - 243.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 246 and runs 244; and
@@ -1361,7 +1361,7 @@ apply_red_checks
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4868 and runs 4861 for the same skips — and that row
+# `pytest tests/` collects 4877 and runs 4870 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1540,7 +1540,7 @@ apply_red_checks
 # the branch settles.
 #
 # Against the counts the seconds were taken at, the suite has gained eight
-# hundred and eighty-eight tests (3973 to 4861), and the gap was ZERO when the sitting ended: it took the
+# hundred and ninety-seven tests (3973 to 4870), and the gap was ZERO when the sitting ended: it took the
 # counts and the seconds TOGETHER and took them LAST, after every edit on that
 # branch was final. Since then a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
@@ -1748,7 +1748,7 @@ apply_red_checks
 # tests/engine_tree.py and pinned the helper's arms by DERIVING which watched
 # modules import it, which is the case that found test_claude_agents.py reading
 # tests/skill_text.py with no arm selecting it. Of the eight hundred
-# and eighty-eight tests the suite has gained since the sitting, TWENTY-TWO landed in
+# and ninety-three tests the suite has gained since the sitting, TWENTY-TWO landed in
 # tests/test_secure_fs.py — the Windows cases, one case each for
 # V2's, V1's, Y4's and V7's new engine modules, and W2's ten further engine
 # files, that module's roster being parametrised per file — SIXTY-FIVE landed in
@@ -1781,7 +1781,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to one hundred and seventy; the remaining seven hundred and eighteen are modules this
+# They sum to one hundred and seventy; the remaining seven hundred and twenty-seven are modules this
 # hook does not select, which is the reconciliation this sentence exists to state.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`

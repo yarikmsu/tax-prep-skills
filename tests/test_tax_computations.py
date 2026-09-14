@@ -2383,15 +2383,44 @@ class TestCaItemized:
     def test_the_refusal_does_not_fire_where_nothing_can_be_overstated(self):
         """Cry-wolf, and it matters more for a refusal than it did for a note.
 
-        Two cases where §17077 can reduce nothing at any published threshold:
-        a return with no itemized deductions at all, and one made entirely of
-        the two categories the FTB worksheet exempts. A STOP on correct data is
-        what teaches an agent to route around the one that is real.
+        Returns where the missing §17077 threshold cannot change the figure
+        that reaches the return, each found by a separate review round: no
+        itemized deductions at all; a return made entirely of the two
+        categories the FTB worksheet exempts; a zero or negative AGI; float
+        residue below a cent; and the standard deduction already winning.
+
+        The last of those is the one that is NOT "§17077 reduces nothing" —
+        it reduces $800, and the ELECTION is what the threshold cannot move,
+        so the standard deduction is taken at every threshold and the same
+        figure is filed. The distinction is why the gate compares what reaches
+        the return rather than what the phase-out does. A STOP on correct data
+        is what teaches an agent to route around the one that is real.
         """
         nothing = compute_ca_itemized(
             federal_agi=45000, ca_agi=45000, tax_year=2025,
             ca_standard_deduction=5809)
         assert nothing["itemized_total"] == 0.0
+
+        # A zero or negative AGI: the reduction is 6% of AGI OVER a published
+        # (positive) threshold, so it is zero at any of them and the missing
+        # figure cannot change the answer. Found by a review of the merged
+        # change, one round after the `subject > 0` half of the same shape.
+        for agi in (0, -5000):
+            flat = compute_ca_itemized(
+                federal_agi=agi, ca_agi=agi, tax_year=2026,
+                real_estate_taxes=12000, ca_standard_deduction=6000)
+            assert flat["phaseout_reduction"] == 0.0
+            assert flat["itemized_total"] == 12000.0
+
+        # ...and where the CA standard deduction already exceeds the itemized
+        # subtotal, no threshold can change the ELECTION — the phase-out only
+        # reduces the losing side. Refusing there is a STOP on a return the
+        # missing figure cannot affect (fifth review round).
+        std_wins = compute_ca_itemized(
+            federal_agi=500000, ca_agi=500000, tax_year=2026,
+            real_estate_taxes=1000, ca_standard_deduction=6000)
+        assert std_wins["use_itemized"] is False
+        assert std_wins["itemized_total"] == 1000.0
 
         exempt_only = compute_ca_itemized(
             federal_agi=400000, ca_agi=400000, tax_year=2025,
@@ -2417,6 +2446,216 @@ class TestCaItemized:
             ca_standard_deduction=6000)
         assert cents["itemized_total"] == 300.30
         assert cents["phaseout_reduction"] == 0.0
+
+    def test_deductions_that_overflow_to_infinity_are_refused(self):
+        """Each component finite, their SUM not — and infinity defeats the
+        endpoint comparison the way NaN defeats a range check.
+
+        `_amount` rejects NaN and infinity at the boundary, so every input
+        here is valid. Two amounts near the float maximum sum to `inf`, both
+        ends of the threshold range then return `inf`, they compare EQUAL, and
+        the refusal passes a return whose itemized total is `inf`. The
+        enumerated guard refused this by accident through `subject > 0`;
+        losing that accident is the cost of deriving, so the finiteness of the
+        sum is now checked on purpose.
+        """
+        with pytest.raises(ValueError, match="non-finite"):
+            compute_ca_itemized(
+                federal_agi=100000, ca_agi=100000, tax_year=2025,
+                real_estate_taxes=1e308, personal_property_taxes=1e308,
+                ca_standard_deduction=5706)
+
+        # ...and with a threshold supplied, where the endpoint comparison is
+        # not involved at all — the total still must not reach a return.
+        with pytest.raises(ValueError, match="non-finite"):
+            compute_ca_itemized(
+                federal_agi=100000, ca_agi=100000, tax_year=2025,
+                real_estate_taxes=1e308, personal_property_taxes=1e308,
+                ca_standard_deduction=5706, phaseout_threshold=244000)
+
+        # A large-but-finite sum is a valid return and must still compute.
+        big = compute_ca_itemized(
+            federal_agi=100000, ca_agi=100000, tax_year=2025,
+            real_estate_taxes=1e30, ca_standard_deduction=5706,
+            phaseout_threshold=244000)
+        assert big["use_itemized"] is True
+
+    def test_the_derived_gate_matches_the_conditions_it_replaced(self):
+        """The refusal stopped enumerating and started pricing both ends.
+
+        Five rounds each added one hand-proved exemption — no subject
+        deductions, no positive AGI, sub-cent residue, the standard deduction
+        already winning — and the fifth was wrong. The gate now evaluates what
+        reaches the return at a zero threshold and at an infinite one, and
+        refuses only where they differ.
+
+        That is a claim about every return, so it is checked as one, against
+        the REAL `compute_ca_itemized` and not against a second copy of its
+        formula — a probe that re-implements the thing it is probing agrees
+        with itself while the shipped code does something else.
+
+        `enumerated` below is those conditions AS CORRECTED — it carries the
+        `not coupled` the shipped version lacked, which is the defect this
+        round fixed. So this compares the derived gate against the guard as it
+        was MEANT to be, not as it was: against what shipped, the derived gate
+        adds 116 stops, and all of them are that defect. Said plainly because
+        "adds no STOP" is true of one comparison and false of the other.
+
+        The two verdicts must never disagree in the direction that ADDS a
+        stop: a STOP on correct data is what teaches an agent to read past the
+        real one. They are allowed to disagree the other way, and do — only
+        where 6% of AGI rounds to $0.00 at every threshold, which the
+        enumeration refused and the derived gate correctly passes.
+        """
+        def enumerated(subject, fed_agi, subtotal, std, coupled):
+            """The four conditions as they stood before this round."""
+            std_wins = (not coupled) and std >= subtotal
+            return subject > 0 and fed_agi > 0 and not std_wins
+
+        def shipped(subject, fed_agi, subtotal, std, coupled):
+            """Does the engine actually refuse this return?"""
+            try:
+                compute_ca_itemized(
+                    federal_agi=fed_agi, ca_agi=fed_agi, tax_year=2025,
+                    real_estate_taxes=subject,
+                    # Exempt from §17077 and carrying no AGI floor, so it
+                    # moves the subtotal without moving the subject amount.
+                    investment_interest=round(subtotal - subject, 2),
+                    ca_standard_deduction=std,
+                    married_filing_separately=coupled,
+                    mfs_spouse_itemizes=coupled)
+                return False
+            except ValueError as exc:
+                assert "§17077" in str(exc), exc
+                return True
+
+        added_stops, relaxed, compared = [], 0, 0
+        for fed_agi in (-50000, -0.01, 0, 0.01, 1, 100, 5000, 100000,
+                        500000, 2_000_000):
+            for subtotal in (0, 0.01, 1, 1000, 5706, 12000, 60000):
+                for subject in (0, 0.01, 1, 1000, 12000, 60000):
+                    if subject > subtotal:
+                        continue  # subject is a subset of the subtotal
+                    for std in (0, 5706, 11420, 60000):
+                        for coupled in (False, True):
+                            args = (subject, fed_agi, subtotal, std, coupled)
+                            compared += 1
+                            was, now = enumerated(*args), shipped(*args)
+                            if now and not was:
+                                added_stops.append(args)
+                            elif was and not now:
+                                relaxed += 1
+        assert compared > 1500, compared
+        assert not added_stops, (
+            "the derived gate REFUSES returns the enumerated conditions let "
+            f"through, which is a STOP on correct data: {added_stops[:5]}")
+        # The relaxations are real and are the cry-wolf direction, so they are
+        # pinned too — a change that silently stopped relaxing would be putting
+        # back STOPs five rounds were spent removing.
+        assert relaxed > 0
+
+    def test_passing_the_gate_means_no_threshold_changes_the_return(self):
+        """The gate's actual claim, checked as a claim about every threshold.
+
+        It prices two ends and concludes about a whole range. That inference
+        rests on the reduction being monotone in the threshold — true of
+        `min(6% x (AGI - thr), 80% x subject)`, but each end rounds to cents
+        independently, and the election reads the rounded total. Two endpoints
+        agreeing while some threshold BETWEEN them files a different figure
+        would be a silent wrong number on a return, which is the failure this
+        whole sequence of rounds has been about.
+
+        So: for every return the gate lets through, sweep thresholds across
+        the range — zero, sub-cent, the published tiers, the $486,666.67
+        breakpoint where the 80% cap stops binding, and far above any AGI —
+        and require the filed figure AND the election to be identical at all
+        of them. `test_the_derived_gate_matches_the_conditions_it_replaced`
+        checks the gate against what it replaced; this checks it against what
+        it means.
+        """
+        def filed(thr, **kw):
+            r = compute_ca_itemized(tax_year=2025, **kw) if thr is None else \
+                compute_ca_itemized(tax_year=2025, phaseout_threshold=thr, **kw)
+            std = kw["ca_standard_deduction"]
+            return (r["itemized_total"] if r["use_itemized"] else std,
+                    r["use_itemized"])
+
+        thresholds = (0, 0.01, 1000, 244000, 252203, 400000, 486000,
+                      486666.67, 486667, 495000, 500000, 5_000_000)
+        passed = 0
+        for fed_agi in (-50000, 0, 0.01, 100, 5000, 100000, 500000, 2_000_000):
+            for subtotal in (0, 0.01, 1000, 5706, 12000, 60000):
+                for subject in (0, 0.01, 1000, 12000, 60000):
+                    if subject > subtotal:
+                        continue
+                    for std in (0, 5706, 60000):
+                        for coupled in (False, True):
+                            kw = dict(
+                                federal_agi=fed_agi, ca_agi=fed_agi,
+                                real_estate_taxes=subject,
+                                # Exempt from §17077 and carrying no AGI
+                                # floor: moves the subtotal, not the subject.
+                                investment_interest=round(subtotal - subject, 2),
+                                ca_standard_deduction=std,
+                                married_filing_separately=coupled,
+                                mfs_spouse_itemizes=coupled)
+                            try:
+                                filed(None, **kw)
+                            except ValueError:
+                                continue  # refused; it makes no claim here
+                            passed += 1
+                            seen = {filed(t, **kw) for t in thresholds}
+                            assert len(seen) == 1, (
+                                f"the gate passed {kw} but the filed figure "
+                                f"depends on the threshold: {sorted(seen)}")
+        assert passed > 500, passed
+
+    def test_the_standard_deduction_exemption_needs_a_standard_deduction(self):
+        """An MFS filer with no standard deduction to fall back on.
+
+        The refusal used to be waived whenever the CA standard deduction
+        already exceeded the itemized subtotal — "it wins at every threshold,
+        so the missing figure cannot change the answer". That presumes the
+        filer HAS one, and §63(c)(6)(A) takes it away from an MFS filer whose
+        spouse itemizes: `compute_ca_itemized` FORCES `use_itemized` for
+        exactly that filer, so the itemized total reaches the return and the
+        phase-out does change it. $1,000 of deduction rather than $200 — an
+        $800 OVER-statement on a filed CA return, AGENTS.md §2's hard-error
+        direction.
+
+        The fix was not a sixth exemption. The gate prices both ends of the
+        range the missing threshold spans and refuses where they differ, so
+        this filer is covered by the same rule as every other one rather than
+        by a clause naming them. Kept as a test because the enumeration was
+        plausible and wrong, and the derived gate has to keep getting this
+        case right for a reason it does not state.
+        """
+        with pytest.raises(ValueError, match="§17077"):
+            compute_ca_itemized(
+                federal_agi=500000, ca_agi=500000, tax_year=2025,
+                real_estate_taxes=1000, ca_standard_deduction=5706,
+                married_filing_separately=True, mfs_spouse_itemizes=True)
+
+        # Given the threshold, that filer does take the phase-out — so the
+        # figure the refusal protects is real, and it is not $1,000.
+        coupled = compute_ca_itemized(
+            federal_agi=500000, ca_agi=500000, tax_year=2025,
+            real_estate_taxes=1000, ca_standard_deduction=5706,
+            phaseout_threshold=244000,
+            married_filing_separately=True, mfs_spouse_itemizes=True)
+        assert coupled["use_itemized"] is True
+        assert coupled["phaseout_reduction"] == 800.0
+        assert coupled["itemized_total"] == 200.0
+
+        # The uncoupled MFS filer keeps the exemption: they have a standard
+        # deduction, it wins, and refusing there would be the cry-wolf STOP
+        # the exemption exists to prevent.
+        alone = compute_ca_itemized(
+            federal_agi=500000, ca_agi=500000, tax_year=2025,
+            real_estate_taxes=1000, ca_standard_deduction=5706,
+            married_filing_separately=True)
+        assert alone["use_itemized"] is False
+        assert alone["itemized_total"] == 1000.0
 
     def test_the_election_cannot_be_skipped(self):
         """Q7, ruled 2026-09-13: the standard deduction is REQUIRED.

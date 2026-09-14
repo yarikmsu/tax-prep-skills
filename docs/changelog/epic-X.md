@@ -432,3 +432,132 @@ answer from an unvalidated status is the whole thing being looked for. Eight
 shapes are probed directly, four that must fail and four that must pass,
 because the engine contains none of them — which is exactly when a broken
 predicate looks fine.
+
+## Q8 + Q10 follow-up — what the re-review of the MERGED change found
+
+PR #158 was reviewed once, its findings were fixed, and the FIX COMMIT was never
+reviewed before merging — about 180 lines of `ptet.py`, more new engine code
+than the original review saw. Re-reviewing the merged result found three more,
+all reproduced, and all the same family: a caveat or a refusal firing where the
+figure it names cannot change the answer.
+
+The arithmetic core was recorded as clean on that second reading — the statutory
+steps and the distributed MFS halving both held. That verdict was wrong, and the
+next round found why: see the floor below. A second reading that clears an area
+is evidence about the cases it tried, not a certificate over the area.
+
+- **The CA refusal fired at a zero or negative AGI.** §17077 reduces by 6% of
+  AGI OVER a published threshold, and every published tier is positive, so at
+  AGI ≤ 0 the phase-out reduces nothing at any of them. Refusing there is a STOP
+  on a return the missing figure cannot affect. The `subject > 0` half of the
+  same shape was fixed one round earlier — the gate needed both.
+- **The degrade banner quoted a flat 30% to an MFS filer**, who is reduced at
+  15%: §164(b)(6)(B)'s halving distributed through the reduction. The note
+  overstated their exposure twofold, and a caveat that misreports the rule it is
+  warning about is the lying kind. It quotes the rate it would actually apply.
+- **The degrade banner fired where headroom was already zero.** The phasedown
+  can only LOWER the cap, so where other state and local taxes already exhaust
+  the un-reduced one there is no headroom at any MAGI and the benefit is
+  identical either way. That gate needs `salt_room`, so it now sits after it
+  rather than before.
+
+Three conditions had already been put on that banner and a fourth was still
+missing. The lesson is not about this banner: a gate written from the cases
+someone thought of covers the cases someone thought of, and the only way the
+fourth arrives is somebody trying inputs the author did not.
+
+## The fifth round — and the arithmetic defect the fourth introduced
+
+That follow-up was itself reviewed before merging, which is how the rest of
+this was found. **The floor was raising caps.** §164(b)(7)(B)(iii) floors the
+RESULT OF THE REDUCTION, and a floor on a reduction cannot raise the thing it
+reduces — but written as a bare `max(floor, base - rate * excess)` it did. A
+cache carrying a cap below $10,000 came back RAISED to it the moment a MAGI was
+supplied, so passing `--magi` INCREASED the modeled headroom. `git log -S` puts its origin in
+#158's per-status rewrite, and it SHIPPED: the bare `max(floor, …)` is on `main`
+at `ptet.py:490` as this is written. It was not caught before landing — it was
+caught ON `main`, by a round that re-read merged code, which is the only reason
+this correction can be made at all.
+
+**The banner's fourth condition was still the wrong question.** "Is there
+headroom" is not what decides the answer: what a PTET election rescues is
+`min(salt_room, total_ptet)`, so headroom that is large at BOTH ends of the
+range a missing MAGI spans changes nothing even though the headroom itself
+changes a lot. Both ends are priced now — the un-reduced cap and
+§164(b)(7)(B)(iii)'s floor — and the banner fires only when the CREDITED amount
+differs between them.
+
+**The cap is reported whether or not the benefit depends on it.** Gating the
+banner on the benefit left the un-reduced figure printed flatly as "your
+$40,400 SALT cap" on a return whose real cap could be $10,000. The benefit
+banner stays gated on the benefit; the FIGURE carries its own qualification.
+
+**And the CA refusal had a third condition missing**: the phase-out only
+reduces the itemized total, so when that total is already below the CA standard
+deduction no threshold can change the ELECTION, and the number on the return is
+the same at every one of them.
+
+Five rounds on one area, and each round's fix needed the next round. The pattern
+worth keeping is not the individual gates: **a gate is a claim about which
+inputs cannot matter, and that claim is only ever as complete as the inputs
+somebody tried.** The rounds stopped finding new conditions when the gate
+started comparing the OUTCOME at both ends of the unknown range instead of
+enumerating the cases where the unknown was thought not to matter.
+
+### Sixth round: the exemption that assumed a standard deduction exists
+
+The CA third condition above shipped with a defect of exactly the shape it was
+written to prevent. "The standard deduction wins at every threshold, so the
+missing figure cannot change the answer" presumes the filer HAS a standard
+deduction — and §63(c)(6)(A) takes it away from an MFS filer whose spouse
+itemizes. `compute_ca_itemized` FORCES `use_itemized` for that filer further
+down the same function, so the itemized total is what reaches the return and
+the phase-out does change it. A $500,000-AGI separate filer with $1,000 of real
+estate tax got a $1,000 CA deduction where the phase-out gives $200 — an $800
+OVER-statement on a filed return, the direction AGENTS.md §2 makes a hard error.
+The reduction is capped at 80% of the subject deductions, so $200 is the answer
+at every threshold up to about $486,667 on this return, and $1,000 at a
+threshold of $500,000 or more. The figure is therefore undetermined without the
+cache, and a gate is right to refuse rather than compute it. Two earlier drafts
+of this paragraph were wrong in opposite directions: the first called the figure
+*knowable*, contradicting the gate shipping beside it; the second said the
+breakpoint sits above "every published §17077 tier", which is a claim about
+tiers this paragraph never fetched and is false for the joint one. The
+breakpoint is a property of THIS return's numbers, not of the schedule. The exemption and the forcing each read correctly alone, which is why the
+round that wrote the first did not re-read the second.
+
+**So the enumeration was replaced rather than extended.** Adding
+`not mfs_spouse_itemizes` would have been a sixth hand-proof of "this input
+cannot matter", and five of those had already produced one wrong answer. The
+refusal now prices BOTH ENDS of the range the missing threshold spans — the
+reduction is monotone in the threshold and reaches the return through a single
+expression, so a zero-threshold evaluation and an infinite-threshold evaluation
+settle it, and it refuses only where those two differ. `thr >= 0` is the only
+fact about §17077 it needs, and that is not an indexed figure. The election it
+compares against is the one the function actually makes, called rather than
+restated, which is the coupling whose absence caused this round. Checked against
+the four enumerated conditions over a grid of AGI, subject, subtotal, standard
+deduction and the coupling flag: measured against those conditions AS CORRECTED
+no verdict differs where a phase-out is possible, and it adds no STOP — it
+removes the sub-cent ones where 6% of AGI rounds to $0.00 at every threshold.
+Measured against what actually SHIPPED it adds 116 stops over that grid, every
+one an MFS filer whose spouse itemizes. Both numbers are stated because "adds
+no STOP" is true of one comparison and false of the other, and only the second
+shows the defect being fixed. `ptet.analyze` and `loss_harvest` already
+derived instead of enumerating; this was the last site that did not.
+
+**And the bias direction was still recorded backwards in two test docstrings.**
+The PTET benefit moves OPPOSITE to the SALT cap — what an election rescues is
+the state tax the cap blocks, so more cap means less to rescue: $5,580 of
+modeled savings at a $10,000 cap against $0 at $60,000 on the same fixture.
+Both docstrings said an over-stated cap "inflates" the benefit. One of them used
+that to argue the §2 degrade path was CLOSED when it was open; the other used it
+to certify the MFS reading taken as the one that "cannot over-state", when in
+fact the taken reading advertises the LARGER benefit and therefore rests on
+§164(b)(7)(B)(i)'s text alone. A correct statement of the same direction sat
+a few tests away in the same file the whole time.
+
+The direction is now asserted rather than argued: the modeled benefit is pinned
+NON-INCREASING in the cap across four caps. A claim about bias direction that
+lives only in prose has now been written backwards three times in this epic and
+caught three times by someone running the number.

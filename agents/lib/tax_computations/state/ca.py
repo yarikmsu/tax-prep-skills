@@ -286,7 +286,34 @@ def compute_ca_itemized(
     # the phase-out" on a return made entirely of the two categories the FTB
     # worksheet exempts. That residue is > 0, so it armed the refusal below and
     # then printed "$0.00" as the amount at stake.
+    # Each component is finite — `_amount` rejects NaN and infinity at the
+    # boundary — and their SUM need not be. Two deductions near the float
+    # maximum overflow to infinity here, and infinity defeats the endpoint
+    # comparison below the same way NaN defeats a range check: both ends
+    # return `inf`, they compare EQUAL, and the refusal passes a return whose
+    # itemized total is `inf`. The enumerated guard refused it by accident,
+    # through `subject > 0`; this says so on purpose.
+    if not math.isfinite(subtotal):
+        raise ValueError(
+            "CA itemized deductions sum to a non-finite total — the "
+            "individual amounts are each valid but their sum overflows. "
+            "Check the source figures; no return has deductions this large.")
     subject = round(max(0.0, subtotal - medical_deductible - inv_int), 2)
+    std = _amount(ca_standard_deduction, "ca_standard_deduction")
+    # What actually reaches the return, given a phase-out reduction. ONE
+    # expression, used both by the refusal below and by the election further
+    # down — §63(c)(6)(A) takes the CA standard deduction away from an MFS
+    # filer whose spouse itemizes, so for them the itemized total is the
+    # answer whether or not it wins. The refusal used to restate this rule
+    # instead of reading it, and the two drifted in the OVER-stating
+    # direction: that is the whole reason for this round.
+    def elects_itemized(total: float) -> bool:
+        return mfs_spouse_itemizes or total > std
+
+    def reaches_the_return(reduction: float) -> float:
+        total = round(subtotal - reduction, 2)
+        return total if elects_itemized(total) else std
+
     phaseout = 0.0
     if phaseout_threshold is None:
         # Q8, ruled 2026-09-13 and now AGENTS.md §2: a fallback may DEGRADE
@@ -295,21 +322,43 @@ def compute_ca_itemized(
         # the deduction, so it STOPS. It was a banner, which is what the
         # under-statement direction is owed and not this one.
         #
-        # The gate the banner already had is kept, and matters more for a
-        # refusal than it did for a note: only where there is something to
-        # overstate. §17077 leaves medical and investment interest alone, so a
-        # return of nothing but those has deductions and still nothing the
-        # phase-out can touch — refusing there would be a STOP on correct
-        # data, which is how an agent learns to route around the one that is
-        # real.
-        if subject > 0:
+        # WHEN it stops is derived, not enumerated. Five review rounds each
+        # added one more hand-proved exemption — "at a zero subject amount no
+        # threshold matters", "at a zero AGI none matters", "when the standard
+        # deduction already wins none matters" — and the fifth of them was
+        # wrong, because it open-coded one branch of an election computed forty
+        # lines below. A gate is a claim about which inputs cannot matter, and
+        # a hand-written claim is only ever as complete as the cases somebody
+        # thought of.
+        #
+        # So price BOTH ENDS of the range the missing threshold spans instead.
+        # The reduction is monotone non-increasing in the threshold and reaches
+        # the return through one expression, so two evaluations settle it:
+        # zero at a threshold at or above this AGI, and its largest value at a
+        # threshold of zero. `thr >= 0` is not a tax figure — it is "a dollar
+        # threshold is not negative" — so nothing indexed is hardcoded here.
+        # If the same figure reaches the return at both ends, no threshold in
+        # between can change it.
+        #
+        # `test_the_derived_gate_matches_the_conditions_it_replaced` holds this
+        # to those conditions AS CORRECTED — with the `not mfs_spouse_itemizes`
+        # the shipped version lacked — and against that it adds no STOP. Say it
+        # that way round: measured against what actually SHIPPED it adds 116
+        # stops over a grid, every one of them an MFS filer whose spouse
+        # itemizes, which is the defect. "Adds no STOP" about the shipped
+        # guard would be false and would hide the fix.
+        largest = round(min(_CA_ITEMIZED_PHASEOUT_RATE * max(0.0, fed_agi),
+                            _CA_ITEMIZED_PHASEOUT_MAX * subject), 2)
+        if reaches_the_return(0.0) != reaches_the_return(largest):
             raise ValueError(
                 f"CA itemized phase-out threshold (R&TC §17077, indexed) is "
                 f"not in the tax_law cache, and this return has "
                 f"${subject:,.2f} of deductions subject to it at a federal AGI "
-                f"of ${fed_agi:,.2f}. Computing without it OVER-states the CA "
-                f"deduction. Run /tax-setup to fetch state.itemized_phaseout, "
-                f"or pass phaseout_threshold explicitly.")
+                f"of ${fed_agi:,.2f} — up to ${largest:,.2f} of reduction "
+                f"turns on the missing figure. Computing without it OVER-states "
+                f"the CA deduction. Run /tax-setup to fetch "
+                f"state.itemized_phaseout, or pass phaseout_threshold "
+                f"explicitly.")
     else:
         thr = _amount(phaseout_threshold, "phaseout_threshold")
         if fed_agi > thr:
@@ -328,14 +377,11 @@ def compute_ca_itemized(
     # the deduction and over-stating the tax. A banner was what that direction
     # was owed, and it was added; requiring the figure is what stops there
     # being an election to warn about.
-    std = _amount(ca_standard_deduction, "ca_standard_deduction")
+    use_itemized = elects_itemized(itemized_total)
     if mfs_spouse_itemizes:
-        use_itemized = True
         notes.append(
             "MFS/RDP-separate with an itemizing spouse MUST itemize for "
             "CA too — the CA standard deduction is unavailable")
-    else:
-        use_itemized = itemized_total > std
     if use_itemized and itemized_total > std:
         notes.append(
             "CA itemizes even when the federal return takes the "
