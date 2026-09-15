@@ -561,3 +561,111 @@ The direction is now asserted rather than argued: the modeled benefit is pinned
 NON-INCREASING in the cap across four caps. A claim about bias direction that
 lives only in prose has now been written backwards three times in this epic and
 caught three times by someone running the number.
+
+### Seventh round: the sibling that was cited as precedent
+
+`compute_ca_itemized` enforced half of California's separate-return rule. FTB
+Form 540 requires that separate spouses "either both itemize your deductions
+(even if the itemized deductions of one spouse/RDP are less than the standard
+deduction) or both take the standard deduction" — it binds in BOTH directions,
+and only the spouse-ITEMIZES half was implemented. A separate filer whose spouse
+took the STANDARD deduction still itemized whenever itemizing was larger:
+**$12,000 of CA deduction against the $5,706 allowed on the reproduced case,
+$6,294 OVER-stated on a filed return**, which is AGENTS.md §2's hard-error
+direction.
+
+**It was the sibling of a defect already fixed.** #156 found the same defect in
+the OPPOSITE half of `compute_ny_itemized` — New York was missing the
+spouse-itemizes forcing, California the reverse — and fixed both halves there. The comment it left behind said
+`compute_ca_itemized` "has forced the mirror-image federal §63(c)(6)(A) case
+since it was written" — true of the half being looked at, and false as a claim
+about the function. A finding's scope is where the defect LIVES, not where it
+was spotted, and here the sweep stopped because the sibling had been inspected
+closely enough to be cited as precedent.
+
+Two framings helped it hide. The skill said CA "mirrors the federal
+forced-itemize rule", and it does not — §63(c)(6)(A) denies the standard
+deduction when the spouse itemizes and says nothing about the other direction,
+while CA and NY both state "both or neither" outright. And `mfs_spouse_itemizes`
+was meaningful WITHOUT `married_filing_separately`, because the old forcing keyed
+on the flag alone. Now that the coupling keys on the status, the flag alone
+would silently restore the ordinary comparison — the standard deduction while
+the spouse itemizes, the same over-statement by a different route — so that
+combination is refused rather than ignored. One test in the suite carried it and
+had been green on it.
+
+The election is one expression, read by the phase-out refusal and by the
+election itself, so both halves arrived in both places at once. That structure
+came out of the sixth round; this is the first defect it has carried correctly.
+
+**Then four reviews found that the fix had introduced two more.** Worth
+recording, because both were the same mistake in different clothes.
+
+`married_filing_separately` defaulted to False and the intake step records only
+the OTHER flag, so a caller doing exactly what the skill said produced the
+original $6,294 over-statement one omitted keyword away. And once the coupling
+bound both ways, `mfs_spouse_itemizes=False` stopped being NEUTRAL — it had
+meant "run the ordinary comparison" and now asserted something about the
+spouse's return — so an omitted answer asserted it silently, barring a filer
+from itemizing whose spouse in fact itemizes. That direction over-states by up
+to the whole standard deduction on the commonest separate-return shape: one
+spouse holding the mortgage and property tax, the other holding almost nothing.
+Both are refused now, and the flag is tri-state so that UNKNOWN is not "no".
+
+The same structure that carried the fix correctly also carried a regression:
+with the election constant, both endpoints of the phase-out gate returned the
+standard deduction, so the §17077 refusal could never fire for that filer and
+`itemized_total` came back un-reduced. Refusing there would be a STOP on a
+return the missing figure cannot change, so the counterfactual is LABELLED
+instead — it used to print "itemizing would have been $12,000" to a preparer
+deciding whether the spouse should itemize, over-stated by the whole uncomputed
+reduction.
+
+**And the prose was wrong in five more places than the two the fix named.** The
+skill still told the agent line 18 was the "larger of" the two figures, which
+defeats `use_itemized` in BOTH directions and re-creates the defect one step
+downstream. The function's own docstring, the question put to the TAXPAYER, and
+the intake bullet all still carried the one-directional framing. `epic-W.md`
+still asserted the strongest form of the refuted claim. Three new references
+named `compute_ny_it196`, a function that has never existed. And the timeline
+was wrong twice: #156's citation stood for one DAY, not a month, while the half
+it cited had been missing since #33 on 2026-07-13 — two months.
+
+**And a fifth review found the §2 reasoning itself was wrong.** The draft above
+argued that a spouse who is CONSIDERED UNMARRIED and files as head of household
+is outside the coupling, that the engine cannot see it, and that a banner
+covered it because barring them merely UNDER-states. §2 does not say that. It
+allows a banner instead of a stop only when the output is ADVISORY *and*
+under-states, and line 18 of a filed CA return is not advisory. An
+under-statement is not a safe harbour on a return — $12,000 against $5,706 is
+the same $6,294, pointing the other way.
+
+So the exception is modelled rather than narrated.
+`mfs_spouse_is_a_separate_filer` says whether the spouse files their own
+separate return or is considered unmarried, and the function REFUSES without it
+— but only where the two answers give different numbers, which is the same
+both-ends discipline the §17077 gate uses. Most returns can leave it unknown;
+the return where $6,294 turns on it cannot proceed without it. The interview
+asks after every "no" regardless, because a question costs nothing there and a
+refusal arrives mid-computation.
+
+The exception is also ONE-DIRECTIONAL, and the first draft of it was symmetric.
+§63(c)(6)(A) zeroes the standard deduction of "a married individual filing a
+separate return where EITHER spouse itemizes", and this filer is such an
+individual whatever their spouse's filing status — so a spouse who itemizes
+still forces itemizing here even when they are considered unmarried. Written
+symmetrically it handed that filer `max(total, std)` and a standard deduction
+they do not have. The same round also added the parameter to the positional
+block, which shifted `married_filing_separately` by one for every caller that
+passed it by position, and gave the exception a result without giving it a
+note — so it selected $12,000 and then said the standard deduction had been
+taken, contradicting itself by the whole margin.
+
+**The interview was also collecting one federal answer for three
+jurisdictions.** The elections are independent — this function's own note says
+CA itemizes even when the federal return takes the standard deduction — so a
+spouse may take the federal standard deduction and itemize for California.
+Feeding the federal boolean to `compute_ca_itemized` barred this filer from
+itemizing on a CA return where the spouse had in fact itemized: $6,294 again,
+a third time, in the third direction. The question now asks per return, and
+asks the follow-up that the coupling turns on.

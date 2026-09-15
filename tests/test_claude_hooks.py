@@ -5587,6 +5587,20 @@ class TestHookRegistration:
         assert _words_to_int(summed.group(1)) == sum(deltas.values()), (
             f"the paragraph says the six sum to {summed.group(1)!r}; they sum "
             f"to {sum(deltas.values())}")
+        # The SAME remainder is stated twice in that paragraph — once in the
+        # reconciling sentence and once in the prose list of unselected
+        # modules — and only the first was read. They diverged by thirty-eight
+        # and three successive rounds stepped past it, because the half
+        # nothing reads is the half that drifts. Both are read now.
+        prose_remainder = re.search(r"the other ([a-z -]+?) in test_", flat)
+        assert prose_remainder, (
+            "the paragraph no longer says `the other <words> in test_...` — "
+            "that phrase is the second statement of the remainder, and it is "
+            "read here so it cannot drift from the reconciling sentence")
+        assert _words_to_int(prose_remainder.group(1)) == \
+            _words_to_int(remaining.group(1)), (
+            f"the paragraph states the remainder twice and they disagree: "
+            f"{prose_remainder.group(1)!r} against {remaining.group(1)!r}")
         assert _words_to_int(remaining.group(1)) == gained - sum(deltas.values()), (
             f"the paragraph leaves {remaining.group(1)!r} to the modules this "
             f"hook does not select; the arithmetic leaves "

@@ -262,8 +262,20 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
     RequiredAnswer(
         id="mfs_spouse_itemizes",
         kind=FACT,
-        question="Does your spouse itemize? Under §63(c)(6)(A) an MFS filer "
-                 "whose spouse itemizes must itemize too, whatever the total.",
+        question="Does your spouse itemize ON EACH RETURN they file — "
+                 "federal, and California or New York if either applies? The "
+                 "elections are INDEPENDENT (a spouse can take the federal "
+                 "standard deduction and itemize for CA), so record the state "
+                 "answer separately where it differs and pass each one to its "
+                 "own function. It binds this return BOTH ways: §63(c)(6) "
+                 "zeroes the standard deduction of both spouses once either "
+                 "itemizes, so a yes forces itemizing whatever the total, and "
+                 "a no bars it even when it is worth more. A no is an ANSWER, "
+                 "not an absence — the engine refuses to guess it. If the "
+                 "answer is no, also record whether the spouse files their "
+                 "own SEPARATE return or is considered unmarried and files as "
+                 "head of household: the coupling does not bind the second, "
+                 "and the two answers differ by the whole margin.",
         asked_by="tax-compute income-and-agi.md",
         required_when="the filing status is married filing separately",
         when=_filing_separately,

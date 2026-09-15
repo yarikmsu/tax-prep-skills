@@ -1444,7 +1444,7 @@ def compute_ny_itemized(
     college_tuition_deduction: float = 0.0,
     *,
     standard_deduction: float,
-    mfs_spouse_itemizes: bool = False,
+    mfs_spouse_itemizes: bool | None = None,
 ) -> dict:
     """Form IT-196 lines 46 through 49 — the §615 adjustment and the election.
 
@@ -1596,9 +1596,25 @@ def compute_ny_itemized(
     # BOTH directions. Only the first was implemented: a filer whose spouse
     # itemizes still took the standard deduction whenever it was larger, which
     # is the election the instruction forbids and OVER-states the deduction.
-    # `compute_ca_itemized` has forced the mirror-image federal §63(c)(6)(A)
-    # case since it was written; New York's half was missing.
+    # `compute_ca_itemized` had forced only the spouse-ITEMIZES half, which
+    # is what this comment used to cite as precedent — and citing the half
+    # that was there is how CA's missing half went unswept until 2026-09-14.
+    # Both functions bind both directions now.
     if filing_status == "mfs":
+        # UNKNOWN is not "no", and the same reasoning as `compute_ca_itemized`
+        # applies here for the same reason: once the coupling binds both ways,
+        # a default False asserts something about the SPOUSE's return. Omitted,
+        # it bars this filer from itemizing when their spouse in fact itemizes
+        # — over-stating the deduction by up to the whole standard deduction on
+        # the commonest separate-return shape. CA was found first; a finding's
+        # scope is where the defect lives.
+        if mfs_spouse_itemizes is None:
+            raise ValueError(
+                "a New York return filed separately needs "
+                "mfs_spouse_itemizes — BOTH spouses must itemize or NEITHER "
+                "may, so the spouse's election decides this one and "
+                "defaulting it silently picks a side. tax-setup records the "
+                "answer; pass True or False.")
         if mfs_spouse_itemizes and not use_itemized:
             notes.append(
                 "Married filing separately: the New York standard deduction "

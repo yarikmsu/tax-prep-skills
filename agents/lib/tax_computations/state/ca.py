@@ -157,7 +157,7 @@ def compute_ca_itemized(
     federal_agi: float,
     ca_agi: float,
     tax_year: int,
-    mfs_spouse_itemizes: bool = False,
+    mfs_spouse_itemizes: bool | None = None,
     married_filing_separately: bool = False,
     medical_expenses: float = 0.0,
     state_local_income_taxes: float = 0.0,
@@ -171,6 +171,11 @@ def compute_ca_itemized(
     charitable_noncash: float = 0.0,
     misc_2pct_expenses: float = 0.0,
     *,
+    # KEYWORD-ONLY, and added here rather than beside its siblings: inserted
+    # into the positional block it shifted `married_filing_separately` by one
+    # for every caller that passed it by position, turning a $1,000 deduction
+    # into a ValueError.
+    mfs_spouse_is_a_separate_filer: bool | None = None,
     ca_standard_deduction: float,
     phaseout_threshold: float | None = None,
 ) -> dict:
@@ -203,9 +208,16 @@ def compute_ca_itemized(
     overstate a retiree's medical deduction (CA subtracts Social Security,
     so CA AGI < federal AGI).
 
-    mfs_spouse_itemizes: CA mirrors the federal §63(c)(6)(A) coupling — an
-    MFS/RDP-separate filer whose spouse itemizes cannot take the CA
-    standard deduction.
+    mfs_spouse_itemizes: the spouse's election, which binds this return in
+    BOTH directions — a yes forces itemizing (their itemizing zeroes this
+    filer's standard deduction under §63(c)(6)(A), incorporated by R&TC
+    §17073.5), and a no bars it (FTB: "both itemize ... or both take the
+    standard deduction"). REQUIRED whenever married_filing_separately is
+    set, and the two are refused apart: unknown is not "no", and a default
+    would assert something about a return nobody asked about. The engine
+    cannot see whether the spouse is CONSIDERED UNMARRIED and filing as head
+    of household, in which case the coupling does not bind at all; the note
+    it emits says so.
 
     ca_standard_deduction is REQUIRED and keyword-only (Q7, ruled
     2026-09-13). It was optional, and without it this returned
@@ -219,10 +231,40 @@ def compute_ca_itemized(
         if isinstance(v, bool) or not isinstance(v, (int, float)) \
                 or not math.isfinite(float(v)):
             raise ValueError(f"{name} must be a finite number, got {v!r}")
-    for fname, flag in (("mfs_spouse_itemizes", mfs_spouse_itemizes),
-                        ("married_filing_separately", married_filing_separately)):
-        if not isinstance(flag, bool):
-            raise ValueError(f"{fname} must be a boolean, got {flag!r}")
+    if not isinstance(married_filing_separately, bool):
+        raise ValueError("married_filing_separately must be a boolean, got "
+                         f"{married_filing_separately!r}")
+    if mfs_spouse_itemizes is not None \
+            and not isinstance(mfs_spouse_itemizes, bool):
+        raise ValueError("mfs_spouse_itemizes must be a boolean or None, got "
+                         f"{mfs_spouse_itemizes!r}")
+    # UNKNOWN is not "no". The flag used to default False and False used to be
+    # NEUTRAL — it meant "run the ordinary comparison". Now that the coupling
+    # binds both ways, False is an assertion about the SPOUSE's return, and a
+    # caller who simply did not ask would have that assertion made for them:
+    # the standard deduction taken while the spouse itemizes, over-stating by
+    # up to the whole standard deduction on the commonest separate-return
+    # shape — one spouse holding the mortgage and property tax, the other
+    # holding almost nothing. The tax-setup interview records this answer, so
+    # a run that has it can pass it; a run that cannot is a run that must not
+    # guess. One symbol stopped meaning two things.
+    if married_filing_separately and mfs_spouse_itemizes is None:
+        raise ValueError(
+            "married_filing_separately=True needs mfs_spouse_itemizes — the "
+            "CA election is the spouse's to make as much as this filer's, and "
+            "defaulting it silently picks one. Ask whether the spouse "
+            "itemizes (tax-setup records it) and pass True or False.")
+    if mfs_spouse_itemizes is not None and not married_filing_separately:
+        raise ValueError(
+            "mfs_spouse_itemizes needs married_filing_separately=True — a "
+            "spouse's election only binds this return when it is filed "
+            "separately, and IGNORING the flag would restore the ordinary "
+            "itemized-vs-standard comparison for a filer the coupling "
+            "governs.")
+    if mfs_spouse_is_a_separate_filer is not None \
+            and not isinstance(mfs_spouse_is_a_separate_filer, bool):
+        raise ValueError("mfs_spouse_is_a_separate_filer must be a boolean or "
+                         f"None, got {mfs_spouse_is_a_separate_filer!r}")
     fed_agi = float(federal_agi)     # unfloored §17077 trigger
     # FTB anchors the medical/charitable/misc floors on FEDERAL AGI
     # (Schedule CA Part II references 1040 line 11) — floored for the same
@@ -302,15 +344,73 @@ def compute_ca_itemized(
     std = _amount(ca_standard_deduction, "ca_standard_deduction")
     # What actually reaches the return, given a phase-out reduction. ONE
     # expression, used both by the refusal below and by the election further
-    # down — §63(c)(6)(A) takes the CA standard deduction away from an MFS
-    # filer whose spouse itemizes, so for them the itemized total is the
-    # answer whether or not it wins. The refusal used to restate this rule
-    # instead of reading it, and the two drifted in the OVER-stating
-    # direction: that is the whole reason for this round.
+    # down. The refusal used to restate this rule instead of reading it, and
+    # the two drifted in the OVER-stating direction.
+    #
+    # FTB Form 540, married/RDP filing separately (verified 2026-09-14): "you
+    # and your spouse/RDP must either both itemize your deductions (even if
+    # the itemized deductions of one spouse/RDP are less than the standard
+    # deduction) or both take the standard deduction." The coupling binds in
+    # BOTH directions and it is not an election either spouse makes alone, so
+    # for a separate filer the spouse's choice decides it outright and the
+    # comparison never runs.
+    #
+    # Only the spouse-ITEMIZES half was implemented. A separate filer whose
+    # spouse took the STANDARD deduction still itemized whenever itemizing was
+    # larger — $12,000 against the $5,706 allowed on the case in the test,
+    # $6,294 OVER-stated on a filed return, which is §2's hard-error
+    # direction. `compute_ny_itemized` has forced both halves since #156, and its
+    # comment said this function "has forced the mirror-image federal
+    # §63(c)(6)(A) case since it was written" — true of the half it was
+    # looking at. The citation stood for ONE DAY — #156 landed 2026-09-13 and
+    # this 2026-09-14 — while the half it cited had been missing since #33 on
+    # 2026-07-13, two months. Inspecting a sibling closely enough to quote it
+    # is not the same as sweeping it.
     def elects_itemized(total: float) -> bool:
-        return mfs_spouse_itemizes or total > std
+        if (married_filing_separately and mfs_spouse_itemizes is False
+                and mfs_spouse_is_a_separate_filer is False):
+            # The spouse is considered unmarried, files as head of household
+            # and does NOT itemize. They do file their own return — what they
+            # are not is a MARRIED individual filing SEPARATELY, which is the
+            # status §63(c)(6)(A) and FTB's both-or-neither both key on. So
+            # the coupling does not bar this filer and the ordinary
+            # comparison governs.
+            #
+            # ONE DIRECTION ONLY. §63(c)(6)(A) zeroes the standard deduction
+            # of "a married individual filing a separate return where EITHER
+            # spouse itemizes" — THIS filer is such an individual whatever
+            # their spouse's own filing status, so a spouse who itemizes still
+            # forces itemizing here. Written symmetrically it handed that
+            # filer `max(total, std)`, which takes a standard deduction
+            # §63(c)(6)(A) has already zeroed for them whenever their own
+            # itemized total is the smaller — "may not have" understated it:
+            # they do not have one at all.
+            return total > std
+        if married_filing_separately:
+            # `is True`, not a bare return: None is refused above, but that
+            # guard narrows for a READER and not for mypy, which still sees
+            # `bool | None` here. A guard a person can follow and the checker
+            # cannot is exactly how a float-minus-None shipped two rounds ago,
+            # so the narrowing is spelled where the value is used.
+            return mfs_spouse_itemizes is True
+        return total > std
 
     def reaches_the_return(reduction: float) -> float:
+        """The figure that reaches the return, given a phase-out reduction.
+
+        The ELECTED figure, and deliberately not also the published
+        `itemized_total`. For a separate filer whose spouse takes the standard
+        deduction the election is constant, so no threshold can change what is
+        filed and refusing would be a STOP on a return the missing figure
+        cannot affect — the cry-wolf case five rounds were spent removing.
+
+        `itemized_total` and `election_margin` DO still move with the
+        threshold for that filer, and come back un-reduced. They are not
+        filed; they are the counterfactual a preparer reads when advising the
+        couple whether the spouse should itemize. So they are LABELLED rather
+        than refused: see the note below, which says the figure is before an
+        uncomputed §17077 reduction instead of printing it as an alternative.
+        """
         total = round(subtotal - reduction, 2)
         return total if elects_itemized(total) else std
 
@@ -377,11 +477,83 @@ def compute_ca_itemized(
     # the deduction and over-stating the tax. A banner was what that direction
     # was owed, and it was added; requiring the figure is what stops there
     # being an election to warn about.
+    # The coupling bars itemizing only when the spouse is an ordinary separate
+    # filer. A spouse who is CONSIDERED UNMARRIED and files as head of
+    # household is not a MARRIED individual filing SEPARATELY — they file
+    # their own return under a different status — so §63(c)(6) never reaches
+    # them and FTB's both-or-neither does not bind this filer either —
+    # they may itemize. Barring them anyway UNDER-states line 18 by the whole
+    # margin: $12,000 against $5,706 on the case in the test.
+    #
+    # This STOPS rather than degrading, and the earlier draft of this change
+    # got that wrong. AGENTS.md §2 allows a banner INSTEAD of a stop only when
+    # the output is ADVISORY as well as under-stating, and line 18 is filed.
+    # An under-statement is not a safe harbour on a return.
+    #
+    # It asks only where the answer changes the number: the question is moot
+    # unless the coupling would actually bar a larger itemized total. That is
+    # NOT "only an unusual return sees it" — an ordinary separate-filing
+    # couple with itemized deductions worth more than the standard reaches it
+    # every time, and should, because that is precisely where the two answers
+    # differ. What it spares is the return where they do not. Both ends of the
+    # unknown are priced, the same shape the §17077 gate above uses.
+    if (married_filing_separately and mfs_spouse_itemizes is False
+            and itemized_total > std
+            and mfs_spouse_is_a_separate_filer is None):
+        # Asked only on the NO branch, and only when itemizing wins: those are
+        # exactly the returns where the spouse's status changes the figure.
+        raise ValueError(
+            f"This filer's ${itemized_total:,.2f} of CA itemized deductions "
+            f"beat their ${std:,.2f} standard deduction, and whether they may "
+            f"take them turns on the SPOUSE. If the spouse files their own "
+            f"separate return, FTB's both-or-neither rule bars itemizing here "
+            f"and the answer is ${std:,.2f}; if the spouse is CONSIDERED "
+            f"UNMARRIED and files as head of household, they are not a "
+            f"separate filer, the coupling does not bind, and the answer is "
+            f"${itemized_total:,.2f}. Pass mfs_spouse_is_a_separate_filer. "
+            f"The two differ by ${itemized_total - std:,.2f} on a filed "
+            f"return, so this is not a figure to default.")
+
     use_itemized = elects_itemized(itemized_total)
-    if mfs_spouse_itemizes:
+    if married_filing_separately and mfs_spouse_itemizes:
         notes.append(
             "MFS/RDP-separate with an itemizing spouse MUST itemize for "
-            "CA too — the CA standard deduction is unavailable")
+            "CA too — the CA standard deduction is unavailable"
+            + (f", and the itemized deduction is the SMALLER of the two: "
+               f"${itemized_total:,.2f} against a ${std:,.2f} standard "
+               f"deduction this filer may not take"
+               if itemized_total < std else ""))
+    elif married_filing_separately and mfs_spouse_is_a_separate_filer is False:
+        notes.append(
+            "MFS/RDP-separate, but the spouse is CONSIDERED UNMARRIED and "
+            "files as head of household — they file their own return, but "
+            "not as a married person filing separately, which is the status "
+            "FTB's both-or-neither rule keys on. It does not bind this filer, "
+            "so the ordinary itemized-vs-standard comparison governs.")
+    elif married_filing_separately:
+        # The counterfactual is only printed when it was actually COMPUTED.
+        # Without the threshold the phase-out never ran for this filer — the
+        # election does not depend on it, so nothing refused — and the
+        # itemized total is un-reduced by up to 80% of the subject amount.
+        # Printing it as "itemizing would have been $X" put an over-stated
+        # alternative in front of a preparer deciding whether the spouse
+        # should itemize instead. Said as what it is, or not said.
+        alternative = ""
+        if itemized_total > std and phaseout_threshold is not None:
+            alternative = (f", though itemizing would have been "
+                           f"${itemized_total:,.2f}")
+        elif itemized_total > std:
+            alternative = (
+                f", and itemizing would have been ${itemized_total:,.2f} "
+                f"BEFORE an §17077 phase-out that could not be computed — "
+                f"fetch state.itemized_phaseout before acting on that figure")
+        notes.append(
+            "MFS/RDP-separate: BOTH spouses must itemize or NEITHER may (FTB "
+            "Form 540), and the spouse is NOT itemizing — the CA standard "
+            "deduction is taken here" + alternative
+            + ". If the spouse is CONSIDERED UNMARRIED and files as head of "
+            "household, they are not an MFS filer and this coupling does not "
+            "bind: say so and re-run, because this filer may then itemize.")
     if use_itemized and itemized_total > std:
         notes.append(
             "CA itemizes even when the federal return takes the "

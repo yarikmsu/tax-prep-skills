@@ -231,7 +231,15 @@ spouse does NOT itemize. A filer whose spouse WAS itemizing still took the
 standard deduction whenever it was the larger: the election the instruction
 forbids, and it OVER-states the deduction. `compute_ca_itemized` has forced the
 mirror-image federal §63(c)(6)(A) case since it was written, so this was New
-York missing a rule its sibling already had. Both directions are pinned now,
+York missing a rule its sibling already had.
+
+> **Corrected 2026-09-14.** That last clause was false as a claim about the
+> sibling. `compute_ca_itemized` had forced ONLY the half being looked at, and
+> was missing the reverse — California's own "both or neither" — from #33
+> (2026-07-13) until epic X's seventh round the day after this was written.
+> Left in place because the reasoning above is the record of what was believed
+> at the time, and because this is the sentence that made the sibling look
+> swept. A sibling inspected closely enough to cite is not a sibling checked. Both directions are pinned now,
 including the case where the spouses happen to agree and no coupling note is
 owed.
 

@@ -26,97 +26,6 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
-### US Accounts
-
-| Institution | Account | Type | Key Docs |
-|---|---|---|---|
-| | | | |
-
-### Foreign Accounts (if applicable)
-
-| Institution | Country | Account | Key Docs |
-|---|---|---|---|
-| | | | |
-
----
-
-## Tax Figures
-
-### Income Summary
-
-| Source | Amount | Form |
-|---|---|---|
-| | | |
-| **Total income** | **$0** | |
-
-### Deductions & Credits
-
-| Item | Amount | Notes |
-|---|---|---|
-| Standard deduction | | |
-| | | |
-
-### Tax Result
-
-| Item | Amount |
-|---|---|
-| Federal tax | |
-| Federal payments | |
-| **Federal refund/(owed)** | |
-| State tax | |
-| State payments | |
-| **State refund/(owed)** | |
-
-_(State rows: for no-income-tax states, replace with one row "State: none — no individual income tax".)_
-
----
-
-## Resolved Questions
-
-1. _(Questions answered during document parsing go here)_
-
----
-
-## Confirmed Assumptions
-<!-- Updated by each skill after asking questions -->
-| Assumption | Source | Skill | Date |
-|------------|--------|-------|------|
-<!-- Source: "User confirmed", "Defaulted (LOW impact)", "Prior year return", "Document" -->
-| | | | |
-
----
-
-## Verification Results
-<!-- Updated by /tax-verify after cross-referencing against tax software output -->
-
-| Software | Date Verified | Result | Discrepancies | Notes |
-|----------|--------------|--------|---------------|-------|
-| | | | | |
-
----
-
-## Open Items
-
-1. _(Items needing taxpayer input or further research)_
-
----
-
-## Required answers
-
-**This section is a CONTRACT, not a checklist.** Each line is one question a
-headless run stops on, and the `[id]` is how it is recorded — put the answer
-after the marker, on the same line, or on indented lines directly under it. An
-id with a blank body counts as unanswered, which is what lets this section ship
-pre-filled with the questions.
-
-`sh agents/lib/run.sh -m agents.lib.answers --workspace . --check-required`
-lists the ones THIS workspace owes, before a run starts, instead of stopping
-mid-compute one question at a time. It exits 2 while any is missing; `--for
-<skill>` narrows it to one skill's questions.
-
-Not every question below applies to every return — the check works out which do
-from the profile, the tax-law cache and the parsed result.
-
 ### Is the document set complete — is every W-2, 1099 and statement for the year in documents/?
 
 *Asked by tax-parse Step 2.5; required when always, before parsing.*
@@ -147,7 +56,7 @@ from the profile, the tax-law cache and the parsed result.
 
 - **[charitable_gifts]**
 
-### Does your spouse itemize? Under §63(c)(6)(A) an MFS filer whose spouse itemizes must itemize too, whatever the total.
+### Does your spouse itemize ON EACH RETURN they file — federal, and California or New York if either applies? The elections are INDEPENDENT (a spouse can take the federal standard deduction and itemize for CA), so record the state answer separately where it differs and pass each one to its own function. It binds this return BOTH ways: §63(c)(6) zeroes the standard deduction of both spouses once either itemizes, so a yes forces itemizing whatever the total, and a no bars it even when it is worth more. A no is an ANSWER, not an absence — the engine refuses to guess it. If the answer is no, also record whether the spouse files their own SEPARATE return or is considered unmarried and files as head of household: the coupling does not bind the second, and the two answers differ by the whole margin.
 
 *Asked by tax-compute income-and-agi.md; required when the filing status is married filing separately.*
 

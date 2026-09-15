@@ -651,9 +651,29 @@ persona SALT usually exceeds the OBBBA cap by itself):
   STANDARD deduction — cash gifts feed the §170(p) line-13c deduction, and
   unasked it is silently zero. Surface the carryforward figure for
   /tax-rollover if nonzero.
-- MFS: ask whether the spouse itemizes (`mfs_spouse_itemizes` forces
-  itemizing per §63(c)(6)(A)); record it as
-  `- **[mfs_spouse_itemizes]** the answer`.
+- MFS: ask whether the spouse itemizes; record it as
+  `- **[mfs_spouse_itemizes]** the answer`. The answer binds BOTH ways —
+  §63(c)(6)(A) zeroes the standard deduction of both spouses once either
+  itemizes, so a YES forces itemizing whatever the total and a NO bars
+  itemizing even when it is worth more (CA and NY state this as "both or
+  neither"). **Pass it to the state functions along with the separate-filing
+  status, and pass it even when the answer is NO** — `compute_ca_itemized`
+  treats an omitted answer as unknown and REFUSES rather than guessing, and
+  the two facts are only meaningful together.
+- **The state answer is not the federal answer.** The elections are
+  INDEPENDENT — a spouse may take the federal standard deduction and itemize
+  for CA, which is why `compute_ca_itemized` emits "the elections are
+  independent" — so passing the federal boolean to it bars this filer from
+  itemizing on a CA return where the spouse did itemize. Ask per return and
+  record the state answer where it differs.
+- **When the answer is NO, ask one more question**: does the spouse file their
+  own SEPARATE return, or are they considered unmarried and filing as head of
+  household? A considered-unmarried spouse is not a separate filer, §63(c)(6)
+  never reaches them, and this filer may itemize. `compute_ca_itemized` takes
+  it as `mfs_spouse_is_a_separate_filer` and REFUSES without it — but only
+  where the two answers give different numbers, so most returns can pass it
+  as unknown. Ask the question anyway when the answer is no: the interview is
+  cheap and the refusal arrives mid-computation.
 - **TY2026+ §70111 haircut:** the OBBBA top-bracket reduction (2/37 of the
   lesser of itemized total or 37%-bracket income) is circular with the
   deduction — compute taxable income PROVISIONALLY with the un-haircut

@@ -55,8 +55,21 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    when the return has deductions subject to the phase-out, so fetch it). All AGI-anchored floors use
    FEDERAL AGI (the function handles this — pass both AGIs). Pass
    `mfs_spouse_itemizes` AND `married_filing_separately` for MFS/RDP-
-   separate (CA mirrors the federal forced-itemize rule, and the CA
-   mortgage limit halves to $500K). **`ca_standard_deduction` is REQUIRED and
+   separate — BOTH, or the call is refused, and `mfs_spouse_itemizes` must
+   be the ANSWER rather than omitted: unknown is not "no". FTB states the
+   rule as separate spouses "either both itemize your deductions (even if
+   the itemized deductions of one spouse/RDP are less than the standard
+   deduction) or both take the standard deduction", so the spouse's choice
+   decides this return in BOTH directions and the itemized-vs-standard
+   comparison never runs. This is not a CA-only rule — R&TC §17073.5
+   incorporates §63(c)(6), which zeroes the standard deduction of BOTH
+   spouses once either itemizes; FTB simply states the consequence as an
+   instruction to the couple. **Exception:** a spouse who is CONSIDERED
+   UNMARRIED and files as head of household is not an MFS filer, so the
+   coupling does not bind and this filer may itemize — pass
+   `mfs_spouse_is_a_separate_filer`, which the engine REFUSES to default
+   wherever the two answers differ. `mfs_spouse_itemizes` here means the
+   spouse's CALIFORNIA election, which may differ from their federal one. (The CA mortgage limit also halves to $500K.) **`ca_standard_deduction` is REQUIRED and
    keyword-only** — it used to be optional, and omitting it returned
    `use_itemized: None` with no `election_margin`, which reads as "do not
    itemize" to a caller testing it and under-states the deduction for any
@@ -66,8 +79,13 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    federal one** — with CA's small standard deduction, itemizing CA-only
    is the norm for the persona. Write the `schedule_ca_itemized` section
    when itemizing.
-5. CA taxable income = CA AGI - CA deduction (line 18 = larger of CA
-   itemized or CA standard)
+5. CA taxable income = CA AGI - CA deduction. **Line 18 is
+   `use_itemized` — NEVER `max(itemized_total, ca_standard_deduction)`.**
+   `compute_ca_itemized` returns no `deduction` key, so the caller picks, and
+   "larger of" is wrong in both directions for a separate filer: it takes the
+   itemized total where the coupling bars it (over-stating), and the standard
+   deduction where the coupling forces itemizing (the election FTB forbids).
+   Use `itemized_total if use_itemized else ca_standard_deduction`.
 6. CA tax from FTB tables (use brackets from tax_law JSON)
 7. CA exemption credits (personal + dependent, amounts from tax_law JSON)
 8. CA tax after credits — **floored at zero**. The exemption credit is

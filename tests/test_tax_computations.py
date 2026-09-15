@@ -2523,7 +2523,7 @@ class TestCaItemized:
                     investment_interest=round(subtotal - subject, 2),
                     ca_standard_deduction=std,
                     married_filing_separately=coupled,
-                    mfs_spouse_itemizes=coupled)
+                    mfs_spouse_itemizes=coupled or None)
                 return False
             except ValueError as exc:
                 assert "§17077" in str(exc), exc
@@ -2598,7 +2598,7 @@ class TestCaItemized:
                                 investment_interest=round(subtotal - subject, 2),
                                 ca_standard_deduction=std,
                                 married_filing_separately=coupled,
-                                mfs_spouse_itemizes=coupled)
+                                mfs_spouse_itemizes=coupled or None)
                             try:
                                 filed(None, **kw)
                             except ValueError:
@@ -2653,9 +2653,166 @@ class TestCaItemized:
         alone = compute_ca_itemized(
             federal_agi=500000, ca_agi=500000, tax_year=2025,
             real_estate_taxes=1000, ca_standard_deduction=5706,
-            married_filing_separately=True)
+            married_filing_separately=True, mfs_spouse_itemizes=False)
         assert alone["use_itemized"] is False
         assert alone["itemized_total"] == 1000.0
+
+    def test_both_separate_spouses_must_elect_the_same_way(self):
+        """FTB Form 540, married/RDP filing separately (verified 2026-09-14).
+
+        "you and your spouse/RDP must either both itemize your deductions
+        (even if the itemized deductions of one spouse/RDP are less than the
+        standard deduction) or both take the standard deduction."
+
+        The coupling binds in BOTH directions and only one was implemented.
+        The spouse-itemizes half has been forced since this function was
+        written; the other half was missing, so a separate filer whose spouse
+        takes the STANDARD deduction still itemized whenever itemizing was
+        larger — the election the instruction forbids, and it OVER-states the
+        deduction, which is AGENTS.md §2's hard-error direction.
+
+        `compute_ny_itemized` has forced both halves since #156, and the comment
+        there said CA "has forced the mirror-image federal §63(c)(6)(A) case
+        since it was written" — true of the half it was looking at, and the
+        reason nobody swept the other. A finding's scope is where the defect
+        lives, not where it was spotted.
+        """
+        common = dict(federal_agi=100000, ca_agi=100000, tax_year=2025,
+                      real_estate_taxes=12000, ca_standard_deduction=5706,
+                      phaseout_threshold=252203)
+
+        # The spouse takes the standard deduction, so this filer must too —
+        # even though itemizing is worth more than twice as much. The spouse's
+        # posture is stated: an ordinary separate filer, which is what makes
+        # the coupling bind.
+        coupled_standard = compute_ca_itemized(
+            married_filing_separately=True, mfs_spouse_itemizes=False,
+            mfs_spouse_is_a_separate_filer=True, **common)
+        assert coupled_standard["use_itemized"] is False, (
+            "a separate filer whose spouse takes the standard deduction may "
+            "not itemize — this was $12,000 of deduction against the $5,706 "
+            "allowed, $6,294 over-stated on a filed CA return")
+        assert any("BOTH" in n and "standard" in n
+                   for n in coupled_standard["notes"]), \
+            coupled_standard["notes"]
+
+        # The half that already worked: the spouse itemizes, so this filer
+        # itemizes even though the standard deduction is larger.
+        small = dict(common, real_estate_taxes=1000)
+        coupled_itemized = compute_ca_itemized(
+            married_filing_separately=True, mfs_spouse_itemizes=True, **small)
+        assert coupled_itemized["use_itemized"] is True
+        assert coupled_itemized["itemized_total"] < 5706
+
+        # ...and an unmarried filer is untouched by any of it.
+        single = compute_ca_itemized(**common)
+        assert single["use_itemized"] is True
+        assert single["itemized_total"] == 12000.0
+
+        # The exception, which a banner could not carry. A spouse who is
+        # CONSIDERED UNMARRIED and files as head of household is not filing a
+        # separate return, so §63(c)(6) never reaches them and FTB's
+        # both-or-neither does not bind this filer: they may itemize. Barring
+        # them anyway under-stated line 18 by $6,294 — and an under-statement
+        # is not a safe harbour on a FILED figure, which is where an earlier
+        # draft of this change misread §2's degrade path.
+        hoh_spouse = compute_ca_itemized(
+            married_filing_separately=True, mfs_spouse_itemizes=False,
+            mfs_spouse_is_a_separate_filer=False, **common)
+        assert hoh_spouse["use_itemized"] is True
+        assert hoh_spouse["itemized_total"] == 12000.0
+
+        # ...and with the spouse's posture unstated, the engine refuses rather
+        # than picking one of two answers $6,294 apart.
+        with pytest.raises(ValueError, match="mfs_spouse_is_a_separate_filer"):
+            compute_ca_itemized(
+                married_filing_separately=True, mfs_spouse_itemizes=False,
+                **common)
+
+        # It asks ONLY where the answer changes the number. The same return
+        # with the standard deduction already winning never sees the question.
+        moot = compute_ca_itemized(
+            married_filing_separately=True, mfs_spouse_itemizes=False,
+            **dict(common, real_estate_taxes=1000))
+        assert moot["use_itemized"] is False
+
+        # The exception is ONE-DIRECTIONAL, and writing it symmetrically was a
+        # defect of its own. §63(c)(6)(A) zeroes the standard deduction of "a
+        # married individual filing a separate return where EITHER spouse
+        # itemizes" — THIS filer is such an individual whatever their spouse's
+        # filing status, so a spouse who itemizes still forces itemizing here.
+        # Symmetric, it handed this filer `max(total, std)` and let them take
+        # a standard deduction they do not have.
+        hoh_but_itemizing = compute_ca_itemized(
+            married_filing_separately=True, mfs_spouse_itemizes=True,
+            mfs_spouse_is_a_separate_filer=False,
+            **dict(common, real_estate_taxes=1000))
+        assert hoh_but_itemizing["use_itemized"] is True
+        assert hoh_but_itemizing["itemized_total"] == 1000.0
+
+        # Each branch's note agrees with the figure shipped beside it. The
+        # exception's first draft selected $12,000 and then said the standard
+        # deduction had been taken — a note contradicting its own result by
+        # the whole $6,294.
+        assert any("CONSIDERED UNMARRIED" in n for n in hoh_spouse["notes"])
+        assert not any("standard deduction is taken" in n
+                       for n in hoh_spouse["notes"]), hoh_spouse["notes"]
+
+        # And the parameter is KEYWORD-ONLY. Added into the positional block
+        # it shifted `married_filing_separately` by one for every caller that
+        # passed it by position, turning a real deduction into a ValueError.
+        # Asserted on the signature rather than by a positional call, because
+        # a mis-placed argument lands on whatever parameter now occupies the
+        # slot and raises for that reason instead — which is exactly how the
+        # shift would have gone unnoticed.
+        import inspect
+        params = inspect.signature(compute_ca_itemized).parameters
+        assert params["mfs_spouse_is_a_separate_filer"].kind is \
+            inspect.Parameter.KEYWORD_ONLY
+        positional = [n for n, prm in params.items()
+                      if prm.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD]
+        assert positional[:5] == [
+            "federal_agi", "ca_agi", "tax_year", "mfs_spouse_itemizes",
+            "married_filing_separately"], positional[:5]
+
+    def test_the_spouse_flag_needs_the_separate_status(self):
+        """`mfs_spouse_itemizes` without `married_filing_separately` is a
+        caller defect, and the question is only whether it reaches a return.
+
+        The forcing used to key on the flag ALONE, so the pair meant something
+        apart. Now that the coupling binds both ways it keys on the status,
+        and honouring the flag by itself would hand this filer the ordinary
+        comparison — the CA standard deduction while their spouse itemizes,
+        which is the election FTB forbids and the OVER-stating direction. One
+        test in this file carried the combination and passed for exactly that
+        reason.
+        """
+        # A spouse's election without the separate status.
+        with pytest.raises(ValueError, match="married_filing_separately"):
+            compute_ca_itemized(
+                federal_agi=80000, ca_agi=80000, tax_year=2025,
+                real_estate_taxes=2000, ca_standard_deduction=5809,
+                phaseout_threshold=244000, mfs_spouse_itemizes=True)
+
+        # ...and the separate status without the spouse's election, which is
+        # the half that matters more: UNKNOWN is not "no". It used to default
+        # to False, False used to be neutral, and the change that made the
+        # coupling bind both ways turned that default into an assertion about
+        # a return nobody had asked about.
+        with pytest.raises(ValueError, match="mfs_spouse_itemizes"):
+            compute_ca_itemized(
+                federal_agi=80000, ca_agi=80000, tax_year=2025,
+                real_estate_taxes=2000, ca_standard_deduction=5809,
+                phaseout_threshold=244000, married_filing_separately=True)
+
+        # Only the three complete states are real returns.
+        for separate, spouse in ((False, None), (True, False), (True, True)):
+            compute_ca_itemized(
+                federal_agi=80000, ca_agi=80000, tax_year=2025,
+                real_estate_taxes=2000, ca_standard_deduction=5809,
+                phaseout_threshold=244000,
+                married_filing_separately=separate,
+                mfs_spouse_itemizes=spouse)
 
     def test_the_election_cannot_be_skipped(self):
         """Q7, ruled 2026-09-13: the standard deduction is REQUIRED.
@@ -2755,12 +2912,15 @@ class TestCaItemized:
         assert cap["charitable_deductible"] == 50000.00  # 50% of FEDERAL AGI
 
     def test_ca_mfs_spouse_itemizes_forces_itemizing(self):
-        """Review P2: CA mirrors §63(c)(6)(A) — MFS/RDP-separate with an
-        itemizing spouse cannot take the CA standard deduction."""
+        """Review P2: an MFS/RDP-separate filer whose spouse itemizes cannot
+        take the CA standard deduction — §63(c)(6)(A) zeroes it, and FTB
+        states the consequence as both-or-neither. This is the half that
+        always worked; the reverse was added 2026-09-14."""
         r = compute_ca_itemized(
             federal_agi=80000, ca_agi=80000, tax_year=2025,
             real_estate_taxes=2000, ca_standard_deduction=5809,
-            phaseout_threshold=244000, mfs_spouse_itemizes=True)
+            phaseout_threshold=244000, married_filing_separately=True,
+            mfs_spouse_itemizes=True)
         assert r["use_itemized"] is True
         assert r["election_margin"] == 2000.00 - 5809.00
 
@@ -2809,8 +2969,14 @@ class TestCaItemized:
         r = compute_ca_itemized(
             federal_agi=200000, ca_agi=200000, tax_year=2025,
             mortgage_interest=32000, average_mortgage_balance=800000,
-            married_filing_separately=True, phaseout_threshold=244000, ca_standard_deduction=5809)
+            married_filing_separately=True, mfs_spouse_itemizes=True,
+            phaseout_threshold=244000, ca_standard_deduction=5809)
         assert r["mortgage_deductible"] == 20000.00
+        # The ELECTION as well as the limit. This case asserted the mortgage
+        # figure alone, so when the separate-return coupling landed its
+        # `use_itemized` flipped True -> False and nothing went red — a test
+        # that pins one output of a call is blind to every other one.
+        assert r["use_itemized"] is True
 
     def test_obbba_70111_haircut(self):
         """Codex P2 — H.R.1 §70111 (TY2026+): itemized reduced by 2/37 of
@@ -5704,8 +5870,10 @@ def test_ny_itemized_mfs_coupling_binds_in_both_directions():
     The missing half: a filer whose spouse IS itemizing, whose own standard
     deduction is the larger, took the standard anyway — the election the
     instruction forbids, and it OVER-states the deduction. `compute_ca_itemized`
-    has forced the mirror-image federal §63(c)(6)(A) case since it was written.
-    Found reviewing Q7 (2026-09-13), in the election this change rewrote.
+    had forced only the spouse-ITEMIZES half — cited here as precedent while
+    its own other half was missing, which is why CA's went unswept until
+    2026-09-14. Found reviewing Q7 (2026-09-13), in the election this change
+    rewrote.
     """
     # Spouse itemizes, our itemized total is SMALLER — we must still itemize.
     forced = _item(line_45=1000.0, charitable=0.0, nyagi=60000.0, status="mfs",
@@ -5870,13 +6038,20 @@ def test_ny_itemized_mfs_cannot_itemize_alone():
     the standard deduction unless BOTH of you elect to itemize." One spouse's
     choice is not their own to make, and taking the larger figure regardless
     would produce a return New York rejects."""
-    alone = _item(status="mfs", standard_deduction=8000)
+    alone = _item(status="mfs", standard_deduction=8000,
+                  mfs_spouse_itemizes=False)
     assert alone["use_itemized"] is False
     assert alone["deduction"] == 8000
     assert any("BOTH spouses" in n for n in alone["notes"])
     together = _item(status="mfs", standard_deduction=8000,
                      mfs_spouse_itemizes=True)
     assert together["use_itemized"] is True
+
+    # ...and the answer is REQUIRED, because once the coupling binds both ways
+    # an omitted flag asserts something about the spouse's return. This case
+    # used to omit it and read as "the spouse does not itemize".
+    with pytest.raises(ValueError, match="mfs_spouse_itemizes"):
+        _item(status="mfs", standard_deduction=8000)
 
 
 def test_ny_itemized_refuses_a_malformed_figure():
