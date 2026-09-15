@@ -19,7 +19,7 @@
 This table is the STATUS, and every Part 4 entry it names carries `— DONE` to match. It
 replaces a single run-on paragraph that had grown past reading: V11 was recorded as
 shipped there, was never marked DONE below, and was very nearly re-implemented from the
-Part 4 list a month later. A test holds the two halves together in both directions.
+Part 4 list four days later. A test holds the two halves together in both directions.
 
 | Item | PRs | What is NOT done |
 |---|---|---|
@@ -36,7 +36,7 @@ Part 4 list a month later. A test holds the two halves together in both directio
 | V10 | #93, #102, #139, #140 | — |
 | V11 | #95 | — |
 | W1 | #90 | — |
-| W2 | #149, #150, #151, #152 | THREE tax-contract questions need an owner ruling, listed in the Part 4 entry. Everything else in it has shipped: the engine sweeps go through `tests/engine_tree.py`, and a package directory normalises to its own `__init__.py` rather than needing an arm |
+| W2 | #149, #150, #151, #152 | Complete. The three tax-contract questions it raised were ruled 2026-09-13 and shipped: Q7 and Q9 in #156, Q8 and Q10 in #158. The engine sweeps go through `tests/engine_tree.py`, and a package directory normalises to its own `__init__.py` rather than needing an arm |
 | W4 | #90, #118 | the MEASURED COSTS *seconds* sitting is OWED — it needs an otherwise-idle machine, and three attempts were killed for host memory |
 | W5 | #90 | — |
 | W6 | #105 | — |
@@ -86,10 +86,22 @@ row to use that third column for real: the monoliths ARE split, and the tail nam
 beside it is open. **Bold** in this section means
 the item is in this list; the backticks above are references to the table.
 
-**W3**, **W7**, **W8**, **W9**,
+**W3** (unblocked — Q12 ruled the bootstrap shim), **W7**, **W8**, **W9**,
 **X7** (= U1), **Y1** (postponed until the owner asks), **Y2** (gated on
-TY2026 figures publishing), **Y3** (an owner ruling is open), **Z4**, **Z5**, **Z6**,
+TY2026 figures publishing), **Y3** (RULED 2026-09-13 at Q11: NOT DOING IT, with a
+re-open trigger), **Z4**, **Z5**, **Z6**,
 **Z8**.
+
+A parenthesised RULING says the owner has decided, and says which way: Q11
+DECLINED Y3, Q12 UNBLOCKED W3. Both are listed here because neither has shipped, and Y3
+stays declined unless its re-open trigger is met. Y3 read "an owner ruling is open" for the rest of the day its
+ruling landed, which is the V11 shape arriving through the annotation rather
+than through a missing marker: a decided item that scans as work.
+`test_a_ruled_question_leaves_nothing_reading_as_open` derives the pairing from
+Part 5 so the two cannot drift again. An earlier draft of this paragraph said a
+ruling CLOSES an item, which was written while looking at Y3 and is wrong about
+W3 twenty lines below it — the test rejected the correct annotation before the
+sentence was fixed.
 
 > This backlog sits beside
 > `2026-08-12-product-owner-review.md`, which remains the active product backlog (Epics
@@ -522,8 +534,19 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   5,200 lines of Python is the wrong language boundary; the stamp and red-carry-forward
   logic is a state machine bash makes hard to read. Python also lets the hook share
   `secure_fs`. Contracts first, extracted incrementally, exit codes and output
-  preserved; a wholesale rewrite is not the acceptance criterion, and the bootstrap
-  (a hook that must run before the venv exists) needs a stated answer.
+  preserved; a wholesale rewrite is not the acceptance criterion.
+
+  **RULED 2026-09-13 at Q12: a bash shim of a few lines, and W3 proceeds.** The
+  bootstrap — a hook that must run on a checkout with no `.venv` — is already
+  answered in production: `skill-invariants.sh` reads `[ -x .venv/bin/python ] ||
+  exit 0` before any stamp write, and because the change boundary is NOT advanced,
+  the first run after the venv exists checks everything since. That is
+  fail-DEFERRED, not fail-open. A Python hook inherits it through a shim making the
+  same check, holding the boundary the same way, then `exec`ing
+  `.venv/bin/python -m <hook module>`; the Python lives OUTSIDE `agents/lib/` so it
+  never meets the import guard. This sentence used to end "the bootstrap needs a
+  stated answer", which told an implementer the item was blocked the day after it
+  was unblocked.
 - **W4 — DONE (#90, #118) (P2, S): Suite speed.** A `slow` marker on the hook and preflight modules
   first, then trial pytest-xdist only after checking the shared subprocess, git and
   stamp-file resources the hook tests touch. The suite is I/O-bound at 38% CPU, which
@@ -674,10 +697,32 @@ they run ahead of the orchestrator rather than waiting behind it.
   else in Epic R is done; this is the only owner-blocked item.
 - **Y2 (P1, S): Season-open runbook when TY2026 figures publish — = T1**, after
   re-running the subagent replay.
+
+  **RULED at Q5: write the procedure, touch nothing.** Both reviewer definitions
+  and `docs/ops/review-subagent-acceptance.md` stay exactly as they are —
+  certified, with their digest pins matching — and the season-open runbook
+  carries one ordered procedure for the whole thing. Nothing is left formally
+  uncertified in the meantime, which is the state the digest pin exists to make
+  visible rather than silent. Y2 is still OPEN: what gates it is the TY2026 figures
+  being published, and then the owner's fetch and fresh-session replay —
+  neither of which is a decision.
+
+  Recorded here only after a review widened the check below — Q5 names its item
+  in prose rather than as `Q5 — Y2:`, so the first version of that test could
+  not see this entry at all, and it is the entry immediately above the one the test was
+  written for.
 - **Y3 (P2, M): Package `agents/lib`** as an installable distribution with console
   entry points. `tax-engine preflight` replaces `sh agents/lib/run.sh
   agents/lib/preflight.py`, and most of preflight's 2,700 lines exist to compensate for
   not being a package.
+
+  **RULED 2026-09-13 at Q11: no, with a re-open trigger.** The repository is not
+  public (Y1), so there is no consumer to install a distribution — the largest
+  contract change in the backlog against zero demand signal, and it defeats the
+  venv-refusal guard by design. **Re-open when a second consumer of the engine
+  exists outside a clone.** Recorded here, and not only in Part 5, because the
+  entry here is what an implementer reads before starting, and it sits in
+  Part 3 — Part 4 is the sequencing.
 - **Y4 — DONE (#112) (P2, S): Workspace outside the clone.** A `TAX_WORKSPACE` root every skill and
   CLI honors, so the dev checkout and the live return stop sharing a directory. The
   08-12 review accepted that risk as permanent (R2's standing controls); a
@@ -1105,30 +1150,50 @@ Revised on folding in the second review: contain the exposure and fix the confir
 defects before any infrastructure, because they are small and they do not depend on
 the harness.
 
-1. **V0 with the E2 wording fix** before the next real document is parsed — the only
+**Each step opens with its status, and five of the nine are marked DONE.** They
+read in the imperative — "V0 before the next real document is parsed", "do not
+build V1 around the Markdown summaries" — and of the thirty ids they name,
+twenty-four are in the shipped table. That count is the one
+`_sequencing_steps` derives, ranges expanded; two earlier drafts of this
+sentence gave different figures because each counted ids a different way, which
+is the same defect as the one the section has, one level down. That is the V11 shape spread across a whole
+section rather than sitting on one item, and it is why fixing Y3's step by hand
+was not enough. `test_a_finished_sequencing_step_says_so` requires every step to
+carry a marker and holds a DONE one to the shipped table, ranges expanded. It
+does NOT derive the marker: the table records whether any of an item has
+shipped, not whether it is finished — W4 has a row and still owes the MEASURED
+COSTS sitting — so which marker a step carries stays a judgement made against
+the table AND the remainders.
+
+1. **DONE.** **V0 with the E2 wording fix** before the next real document is parsed — the only
    P0. **X2** is the next small PR after it; neither waits for an orchestrator or an
    eval harness.
-2. **Y1 and V4** — publishing is the owner's action; V4 with per-block provenance is
+2. **OPEN: Y1 only.** **Y1 and V4** — publishing is the owner's action; V4 with per-block provenance is
    what the next season's cache can trust.
-3. **X1 and X3** — the remaining confirmed directional defects, scoped against the
+3. **DONE.** **X1 and X3** — the remaining confirmed directional defects, scoped against the
    year's instructions.
-4. **V3's first CA golden together with V2's document contract**, then **V1 in
+4. **DONE.** **V3's first CA golden together with V2's document contract**, then **V1 in
    slices** on the CA + federal return, each slice behind its own golden. Do not build
    V1 around the Markdown summaries and migrate inputs twice.
-5. **V6, V8 and Y2 before the first real TY2026 return** — the remaining P1s: the
+5. **OPEN: Y2 only.** **V6, V8 and Y2 before the first real TY2026 return** — the remaining P1s: the
    enforced parse boundary, the validation receipt, and the season-open runbook after
-   the subagent replay. V7 rides with V6.
-6. **V9** — a filing package is not complete until validation and generation consume
+   the subagent replay. V7 rides with V6. Q5 ruled Y2's approach — write the
+   procedure and touch neither reviewer definition — so what is left of Y2 waits
+   on the TY2026 figures publishing, which is an owner action, not a decision.
+6. **DONE.** **V9** — a filing package is not complete until validation and generation consume
    the same input generation; the first V1 slice can land before V8, but the workflow
    is not whole until V8 and V9 do.
-7. **Z7 then Z1-Z3 as one delivery (P2)** — the residency guardrails are prose and
+7. **DONE.** **Z7 then Z1-Z3 as one delivery (P2)** — the residency guardrails are prose and
    serve CA/FL/NY movers; NY/NYC builds on the orchestrator once it has landed, and
    the bar is parity with CA, not an unblock. Any FL follow-up sits at the same tier.
-8. **Z4 and Z5 (P3)** when those users appear; Z4 is small enough to be a first
+8. **OPEN.** **Z4 and Z5 (P3)** when those users appear; Z4 is small enough to be a first
    outside contribution.
-9. **W1, W4, W5** as a single hygiene PR at any point — W5 is one file AGENTS.md §7
-   already asks for. **V5, V10, V11, W6, Y3, Y4** at any point after step 5; W3 only
-   with its bootstrap answered.
+9. **OPEN: W3 only.** **W1, W4, W5** as a single hygiene PR at any point — W5 is one file AGENTS.md §7
+   already asks for. **V5, V10, V11, W6, Y4** at any point after step 5. **Y3 is
+   not in this sequence** — Q11 ruled against it. **W3**'s bootstrap was the one
+   thing gating it and Q12 answered it, so it is schedulable now; it is also the
+   largest refactor here, and the backlog asks for contracts first and an
+   incremental extraction, not a wholesale rewrite.
 
 ---
 

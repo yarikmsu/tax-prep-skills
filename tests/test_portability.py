@@ -5943,13 +5943,13 @@ class TestACaveatMatchesTheSchemaItDescribes:
 
 
 class TestTheBacklogSaysWhatIsOpen:
-    """The 09-05 backlog is the artifact every PR is cut from, and its Part 4
-    list is what a reader works down.
+    """The 09-05 backlog is the artifact every PR is cut from, and its Part 3
+    entry list is what a reader works down.
 
     Its status lived in ONE run-on paragraph, and the Part 4 entries carried no
     markers at all. V11 was recorded as shipped in the paragraph, was never
-    marked DONE in the list, and was very nearly re-implemented from the list a
-    month later — the whole of `parse_utils`'s budget machinery already
+    marked DONE in the list, and was very nearly re-implemented from the list
+    four days later — the whole of `parse_utils`'s budget machinery already
     existed. The two halves are now a TABLE and a set of `— DONE` markers, and
     this holds them together in BOTH directions: a table row with no marker is
     the defect that happened, and a marker with no row is a claim nothing
@@ -5975,10 +5975,25 @@ class TestTheBacklogSaysWhatIsOpen:
         return {m.group(1): m.group(2).strip()
                 for m in self.ROW.finditer(text[shipped:end])}
 
+    def _not_started_section(self):
+        """The not-started list, by its two boundary literals in ONE place.
+
+        Two tests slice this region. Spelled twice, a reader repairing one
+        after a reword can pick a different terminator — `> **Second review
+        folded in` is the next plausible one — and leave the two disagreeing
+        about what the list contains, both green.
+        """
+        text = self._text()
+        return text[text.index("### Not started"):
+                    text.index("> This backlog sits beside")]
+
     def _entries(self):
-        """The Part 4 item entries, keyed by id. The `- **W1 — DONE**, and
-        **W5 — DONE**` summary line names two ids and is not an entry for
-        either, so entries are keyed LAST-wins: the real ones come after it."""
+        """The backlog item entries, keyed by id — one LINE each, which is
+        where a DONE marker lives. `_entry_blocks` is the whole-body read.
+
+        The `- **W1 — DONE**, and **W5 — DONE**` summary line names two ids
+        and is not an entry for either, so entries are keyed LAST-wins: the
+        real ones come after it."""
         out = {}
         for m in self.ENTRY.finditer(self._text()):
             out[m.group(1)] = m.group(0)
@@ -5996,13 +6011,13 @@ class TestTheBacklogSaysWhatIsOpen:
         missing = []
         for item in sorted(self._table()):
             entry = entries.get(item)
-            assert entry, f"{item} is in the shipped table but has no Part 4 entry"
+            assert entry, f"{item} is in the shipped table but has no backlog entry"
             if "DONE" not in entry:
                 missing.append(item)
         assert not missing, (
             f"{missing} are recorded as shipped in the status table and read as "
             "OPEN WORK in the Part 4 list. That is how V11 came to be nearly "
-            "re-implemented a month after it merged.")
+            "re-implemented four days after it merged.")
 
     def test_every_done_marker_has_a_row_recording_its_prs(self):
         """The other direction. A marker with no row is a claim with no PR "
@@ -6035,10 +6050,286 @@ class TestTheBacklogSaysWhatIsOpen:
         for item, prs in sorted(self._table().items()):
             assert re.search(r"#\d+", prs), f"{item}'s row names no PR: {prs!r}"
 
-    def test_the_not_started_list_and_the_table_do_not_overlap(self):
+    # Every Part 5 question header, item-naming or not. Slicing on the
+    # item-naming ones ALONE gave each matched question the bodies of every
+    # unmatched question after it — Q4's ran 11,004 characters through Q10 and
+    # carried six other rulings, so V6 read as ruled on somebody else's
+    # decision, and an unruled question followed by a ruled one demanded a
+    # ruling that did not exist. Slice on ALL of them, then filter for an id.
+    QUESTION = re.compile(r"^\*\*Q(\d+) — (.*?)\*\*", re.M | re.S)
+
+    def _entry_blocks(self):
+        """Each backlog entry with its FULL body, not just its first line.
+
+        `_entries` is line-scoped because the DONE marker lives on the bullet
+        itself. A ruling does not — it is a paragraph under the entry
+        explaining what was decided and what would re-open it — so a
+        line-scoped read would report every ruled entry as unrecorded.
+
+        BOUNDED AT THE SECTION, not merely at the next bullet. The last entry
+        has no next bullet, so ending it at the end of the FILE handed the
+        final item every later section as its own body: Z8's block ran to EOF
+        and swallowed the whole of Part 5, whose rulings and DONE markers
+        belong to other items. A ruling for Z8 would then have been satisfied
+        by somebody else's, and the exposure moves to whichever item is
+        appended last. Reproduced at 23,873 characters before this bound.
+        """
         text = self._text()
-        start = text.index("### Not started")
-        section = text[start:text.index("> This backlog sits beside")]
+        start = text.index("## Part 3 — Backlog")
+        # Searched FORWARD from Part 3. `text.index("## Part 4")` from the
+        # file start would find an introductory MENTION of the heading and cut
+        # the section off before it began.
+        end = text.index("\n## Part 4", start)
+        section = text[start:end]
+        marks = list(self.ENTRY.finditer(section))
+        assert marks, (
+            "no backlog entries parse out of Part 3 — every check built on "
+            "this helper would be vacuously green")
+        out = {}
+        for i, m in enumerate(marks):
+            stop = marks[i + 1].start() if i + 1 < len(marks) else len(section)
+            out[m.group(1)] = section[m.start():stop]
+        return out
+
+    # "A decision is still outstanding", in the spellings this list has
+    # actually used. NOT a positive "the annotation must name the ruling": a
+    # correct annotation may say nothing about the ruling at all, because a
+    # ruling does not always decide whether an item is open. Q5 ruled HOW Y2
+    # is done while an owner ACTION still gates WHETHER, and "(gated on TY2026
+    # figures publishing)" is the right thing to say — demanding "ruled" there
+    # is a STOP on correct data, which is how a gate gets read past.
+    #
+    # An enumeration, then, and the repo's lesson about those applies: forbid
+    # the ALTERNATIVES, not the one spelling that broke. The original defect
+    # was "an owner ruling is open"; "awaiting an owner decision" and
+    # "undecided" mean the same and passed a ban on the first.
+    _PENDING = (
+        r"ruling is (open|pending|outstanding)",
+        r"(awaiting|pending|needs|wants|requires) (an? )?(owner )?(ruling|decision)",
+        r"\bundecided\b",
+        r"owner'?s call",
+        r"not (yet )?(been )?(ruled|decided)",
+    )
+
+    def _claims_a_decision_is_pending(self, text):
+        return [p for p in self._PENDING if re.search(p, text, re.I)]
+
+    def test_the_pending_phrasings_each_match_something(self):
+        """The enumeration above, checked against its own examples.
+
+        A list of regexes that match nothing reads exactly like a list of
+        regexes that found nothing, and the gate built on it is then green for
+        the wrong reason. Each pattern carries the wording it was written for.
+        """
+        examples = {
+            r"ruling is (open|pending|outstanding)": "an owner ruling is open",
+            r"(awaiting|pending|needs|wants|requires) (an? )?(owner )?(ruling|decision)":
+                "awaiting an owner decision",
+            r"\bundecided\b": "undecided",
+            r"owner'?s call": "owner's call",
+            r"not (yet )?(been )?(ruled|decided)": "not yet ruled",
+        }
+        assert set(examples) == set(self._PENDING), (
+            "an entry was added to _PENDING without an example, or removed "
+            "without its example going too — the two are checked as a SET so "
+            "neither can drift")
+        for pattern, sample in examples.items():
+            assert self._claims_a_decision_is_pending(sample) == [pattern], (
+                f"{pattern!r} does not match its own example {sample!r}")
+        # ...and the correct annotations must NOT match, or the gate cries
+        # wolf on every item whose blocker is an owner action.
+        for fine in ("gated on TY2026 figures publishing",
+                     "postponed until the owner asks",
+                     "unblocked — Q12 ruled the bootstrap shim",
+                     "RULED 2026-09-13 at Q11: NOT DOING IT"):
+            assert not self._claims_a_decision_is_pending(fine), fine
+
+    def _ruled_questions(self):
+        """Items named by a Part 5 question that has since been ruled.
+
+        Derived from the file, both halves. A hand-written list of "items with
+        a ruling" reads identically to nothing to declare.
+
+        The id comes from the BOLD TITLE and every id in it, not from a fixed
+        `Q<n> — <ID>:` shape. Only three of the twelve headers are written that
+        way; `**Q5 — Y2 needs a fresh session...**` names its item in prose and
+        was invisible, which hid a live instance — Q5 ruled Y2 and Y2's entry
+        recorded nothing. Taking the title also excludes the trailing
+        *(gated step 4...)* note, so it does not over-match.
+        """
+        text = self._text()
+        part5 = text[text.index("## Part 5"):]
+        heads = list(self.QUESTION.finditer(part5))
+
+        # IDENTITY, not a count. `len(ruled) >= N` is a floor against TOTAL
+        # parse loss and blind to partial: rewording one header to a hyphen
+        # dropped an item out of coverage and left the floor satisfied by the
+        # others. Contiguous numbering from Q1 says every header still parses.
+        seen = [int(m.group(1)) for m in heads]
+        assert seen == list(range(1, len(seen) + 1)), (
+            f"Part 5 question headers parse as {seen} — a gap means a header "
+            "was reworded past this regex and its item left coverage silently")
+
+        ruled = {}
+        for i, m in enumerate(heads):
+            stop = heads[i + 1].start() if i + 1 < len(heads) else len(part5)
+            nxt = part5.find("\n### ", m.start())
+            if nxt != -1:
+                stop = min(stop, nxt)
+            if "**RULED" not in part5[m.start():stop]:
+                continue
+            for item in re.findall(r"\b([VWXYZ]\d+)\b", m.group(2)):
+                ruled[item] = m.group(1)
+        return ruled
+
+    def test_a_ruled_question_leaves_nothing_reading_as_open(self):
+        """Y3 was ruled at Q11 and three other places still read as awaiting it.
+
+        The not-started list annotated it "an owner ruling is open", the
+        sequencing step scheduled it as ordinary work, and its backlog entry
+        described the job with no sign it had been declined. That is the V11
+        shape — a decided item that scans as work, which nearly got V11
+        re-implemented four days after it merged — arriving through an
+        ANNOTATION rather than a missing DONE marker, so neither existing
+        direction could see it.
+
+        The entry is what an implementer reads before starting, so that is
+        where the ruling has to be, and not only in Part 5.
+        """
+        ruled = self._ruled_questions()
+        assert len(ruled) >= 4, f"Part 5 parses as {ruled}"
+
+        section = self._not_started_section()
+        blocks = self._entry_blocks()
+        lines = self._entries()
+
+        for item, q in sorted(ruled.items()):
+            block = blocks.get(item, "")
+            assert block, f"{item} is ruled at Q{q} but has no backlog entry"
+            assert "RULED" in block or "DONE" in lines[item], (
+                f"{item} was ruled at Q{q} and its backlog entry records "
+                f"neither the ruling nor a DONE marker, so an implementer "
+                f"reading it starts work the owner already decided")
+
+            # Scoped to the ANNOTATION, not the section — the section quotes
+            # the old wording while explaining the defect, and a section-wide
+            # check reads its own explanation as the thing it forbids.
+            note = re.search(rf"\*\*{item}\*\*\s*(\([^)]*\))?", section)
+            if note and note.group(1):
+                pending = self._claims_a_decision_is_pending(note.group(1))
+                assert not pending, (
+                    f"{item}'s not-started annotation is {note.group(1)!r}, "
+                    f"which says a decision is outstanding — Q{q} ruled it. "
+                    f"Matched: {pending}")
+
+            # NOT CHECKED HERE: whether Part 4 mentions the item beside its
+            # ruling. Four formulations were tried and each was wrong in one
+            # of the two directions. A +/-250-character window spanned a whole
+            # step, so re-adding Y3 to the schedulable list at its start was
+            # satisfied by the "Q11 ruled against it" at its end — the exact
+            # mutation the check existed for, passing. Tightening to the
+            # SENTENCE then refused step 5, which names Y2 in its first
+            # sentence and cites Q5 in its third, and refused the `**OPEN: W3
+            # only.**` marker that exists to say W3 is open.
+            #
+            # What actually separates the defect from the correct text is
+            # whether the id sits in a bold RUN of schedulable ids or in
+            # prose about it, and that is a judgement about English. A gate
+            # that cries wolf on a document is one this repo has paid for
+            # before, and `test_a_finished_sequencing_step_says_so` covers the
+            # substantive risk — a step cannot go on instructing once its work
+            # has shipped. Left out deliberately, with the reasoning, rather
+            # than shipped at the fourth attempt.
+
+
+    STEP = re.compile(r"^(\d+)\. \*\*(DONE|OPEN[^*]*)\.\*\*", re.M)
+
+    def _sequencing_steps(self):
+        """Part 4's numbered steps, each with its status marker and its ids.
+
+        Ranges are expanded — step 7 says "Z1-Z3", and a reader of the shipped
+        table sees three rows. Counting only the left end of a range is how a
+        finished step goes on reading as work.
+        """
+        text = self._text()
+        part4 = text[text.index("## Part 4"):text.index("## Part 5")]
+        out = []
+        starts = [m.start() for m in re.finditer(r"^\d+\. ", part4, re.M)]
+        for i, start in enumerate(starts):
+            stop = starts[i + 1] if i + 1 < len(starts) else len(part4)
+            body = part4[start:stop]
+            ids = set()
+            for a, lo, hi in re.findall(
+                    r"\b([VWXYZ])(\d+)\s*[-–—]\s*(?:[VWXYZ])?(\d+)\b", body):
+                ids |= {f"{a}{n}" for n in range(int(lo), int(hi) + 1)}
+            ids |= set(re.findall(r"\b([VWXYZ]\d+)\b", body))
+            marker = self.STEP.match(body)
+            out.append((body.split(".")[0], marker.group(2) if marker else None,
+                        ids))
+        return out
+
+    def test_a_finished_sequencing_step_says_so(self):
+        """Part 4 is a to-do list and five of its nine steps are finished.
+
+        Fixing Y3's step by hand was the shallow half of this. The section is
+        written in the imperative — "V0 before the next real document is
+        parsed", "do not build V1 around the Markdown summaries" — and most of
+        the ids it instructs about are in the shipped table. That is the V11
+        shape spread across a whole section instead of sitting on one item,
+        and nothing checked it while three checks watched the item list.
+
+        Derived both ways, so neither a step that quietly finishes nor a
+        marker put on unfinished work can pass.
+        """
+        steps = self._sequencing_steps()
+        assert len(steps) >= 5, f"Part 4 parses as {len(steps)} steps"
+        shipped = set(self._table())
+
+        unmarked = [n for n, marker, _ in steps if marker is None]
+        assert not unmarked, (
+            f"sequencing steps {unmarked} carry no status marker — each step "
+            "opens **DONE.** or **OPEN...** so a reader can see at a glance "
+            "what is left")
+
+        for n, marker, ids in steps:
+            assert ids, f"step {n} names no backlog id"
+            # The ONE inference the document supports. A step marked DONE
+            # names only work that has at least shipped; an id absent from the
+            # table has definitively not. This direction has no false
+            # positive — it does not claim table membership means finished,
+            # only that absence from the table means unfinished.
+            if marker == "DONE":
+                left = sorted(ids - shipped)
+                assert not left, (
+                    f"step {n} is marked DONE but {left} have not shipped")
+
+        # NOTHING ELSE IS CHECKED HERE, and three attempts went the other way
+        # before this one stuck.
+        #
+        # The tempting check is "a step whose ids have all shipped must be
+        # marked DONE". It is unsound: the shipped table deliberately holds
+        # PARTIALLY shipped items, and its third column mixes real remainders
+        # (X1's wrong keying note, W4's owed seconds sitting) with deliberate
+        # scope limits (Z7's domicile gate). Membership does not mean finished.
+        #
+        # The replacement — "an `OPEN: W3 only` marker's named ids must not be
+        # in the shipped table" — is the SAME unsound implication pointed the
+        # other way, and it cries wolf on a case that exists today: W4 has a
+        # table row AND owes the MEASURED COSTS sitting, so `OPEN: W4 only`
+        # would be correct and would be rejected. It also failed an informative
+        # `OPEN: W3 only; W1 shipped`, and the `any(...)` pair beside it
+        # rejected the legitimate end state where every step is done.
+        #
+        # What all three wanted is "is this item FINISHED", and the document
+        # does not record it — the table answers "has any of it shipped". A
+        # gate cannot derive a fact its input does not contain, and inventing
+        # one from the nearest available field is how the two unsound versions
+        # got written. The markers stay a judgement, made once by hand against
+        # the table AND the remainders; only their PRESENCE and the DONE
+        # direction above are mechanical.
+
+    def test_the_not_started_list_and_the_table_do_not_overlap(self):
+        section = self._not_started_section()
         listed = set(re.findall(r"\*\*([VWXYZ]\d+)\*\*", section))
         assert listed, "the not-started list parses as empty"
         both = sorted(listed & set(self._table()))
