@@ -23,6 +23,7 @@ import ast
 import json
 import math
 import os
+import fnmatch
 import re
 import resource
 import shutil
@@ -675,6 +676,365 @@ class TestAPackageDirectoryReadsAsItsInitialiser:
 
 
 @needs_jq
+class TestTheShellSelectionHasAPythonContract:
+    """W3 slice 1: `select_modules_for` in Python, held to the shell by test.
+
+    The backlog asks for contracts first and an incremental extraction, not a
+    wholesale rewrite. So the Python lands BEFORE it is wired in: the shell is
+    still what runs, and this is the contract the flip will later be made
+    against. A port that changes behaviour on the day it lands cannot be told
+    apart from a port that changes behaviour by mistake.
+
+    EVERYTHING DERIVED FROM THE SCRIPT, nothing transcribed. The first version
+    of this class hand-wrote the eight flag names in two places and stripped
+    bash comments with a regex to work out which helpers the probe had to
+    define. Both were wrong: a ninth module added to the hook was invisible to
+    all three tests, and the comment stripper fired on a `;;#` with no space
+    before it while missing a `#` inside quotes. The flags come out of their
+    DECLARATIONS now, and what actually exists in the shell afterwards is
+    asked of bash rather than scanned for. The oracle is checked against a
+    known answer before it is trusted, because a shell side that reports
+    "nothing" reads exactly like a port that is wrong everywhere.
+    """
+
+    def _python(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "hook_selection", HOOKS_DIR / "lib" / "hook_selection.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _flags(self):
+        """The RUN_ flags, from their DECLARATIONS at the top of the script.
+
+        Not from `select_every_module`, which was the first attempt: that
+        function sets every flag, so it looked like the roster — but a module
+        added to an ARM and not to it is invisible there, and the probe then
+        never prints the flag the shell just set. The declarations are where a
+        new module has to appear for `set -u` to survive one, which makes them
+        the definition; `test_the_module_roster_is_the_scripts_own` closes the
+        loop by requiring every flag SET anywhere to be one of them.
+        """
+        flags = re.findall(r"^(RUN_[A-Z0-9_]+)=0$",
+                           SKILL_HOOK.read_text(encoding="utf-8"), re.M)
+        assert len(flags) > 5, flags
+        assert len(set(flags)) == len(flags), f"duplicate flags: {flags}"
+        return flags
+
+    def _probe(self, flags):
+        """Built from the derived flags, so a ninth module cannot go unread.
+
+        Output is NUL-delimited: a tracked filename containing a NEWLINE would
+        otherwise split a record in half and crash the reader with an unpacking
+        error rather than saying what happened.
+        """
+        reset = "; ".join(f"{f}=0" for f in flags)
+        fmt = "%s\\t" + "%s" * len(flags) + "\\0"
+        args = " ".join(f'"${f}"' for f in flags)
+        return f'''
+set -u
+eval "$(awk '/^select_modules_for\\(\\)/,/^}}/' "$1")"
+eval "$(awk '/^select_every_module\\(\\)/,/^}}/' "$1")"
+shift
+for p in "$@"; do
+  {reset}
+  select_modules_for "$p"
+  printf '{fmt}' "$p" {args}
+done
+'''
+
+    def _shell_flag_names(self, flags):
+        """Every RUN_ variable that EXISTS after the arms have run.
+
+        The probe runs the whole corpus through the selector and then asks
+        the shell itself, so a flag set under any spelling shows up — which a
+        regex over the script text does not guarantee and cannot, because the
+        same text also contains comments. "One path" is what this said while
+        it ran only `CLAUDE.md`, and a flag set by any other arm was invisible.
+        """
+        # EVERY path, not one. The first version ran `CLAUDE.md` alone, so its
+        # census held the two flags that arm sets and nothing else: a flag set
+        # by the `agents/lib/ptet.py` arm was never set during the census and
+        # stayed invisible. A variable that exists only after the arm that
+        # sets it has run has to have that arm run.
+        census = self._probe(flags) + (
+            "compgen -v | grep '^RUN_' | sort | tr '\\n' ' '\n")
+        out = subprocess.run(
+            ["bash", "-c", census, "probe", str(SKILL_HOOK),
+             *[p for p in self._corpus() if p]],
+            cwd=REPO, capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr[-400:]
+        return out.stdout.split("\0")[-1].split()
+
+    def _tracked(self):
+        """NUL-delimited, because `.split()` splits on WHITESPACE.
+
+        No tracked path carries a space today, so the corpus looks complete —
+        and the day one does, `docs/contributing/a b.md` enters as two
+        fragments that match no arm, both implementations answer nothing for
+        both, and the equality guard accepts it. The real path goes unchecked
+        while the count still looks right.
+        """
+        out = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=REPO, capture_output=True,
+            text=True, check=True).stdout
+        return [p for p in out.split("\0") if p]
+
+    # Patterns no corpus path reaches, each with the reason. Empty today, and
+    # the test asserts that BOTH ways so an exemption cannot outlive its cause.
+    #
+    # "Reached" here means a corpus path MATCHES the pattern, not that the
+    # pattern decides that path's answer — `agents/lib/tax_computations` is
+    # matched but never decides, because the package rewrite turns it into its
+    # own `__init__.py` and the same arm's `/*` pattern claims it first. The
+    # weaker property is the one worth asserting: it is what catches a pattern
+    # nothing in the repository resembles, which is how `.agents/skills` went
+    # uncovered.
+    UNREACHABLE: dict = {}
+
+    def _corpus(self):
+        tracked = self._tracked()
+        # EVERY ancestor, not the immediate parent. `Path(p).parent` left
+        # `.agents/skills` out of the corpus — a WATCHED ROOT with its own arm
+        # selecting five modules — because nothing is tracked directly inside
+        # it. Deleting that arm from the port passed every test here.
+        dirs = sorted({str(a) for p in tracked for a in Path(p).parents
+                       if str(a) != "."})
+        adversarial = [
+            # The prologue's three, UNDER A MATCHING PREFIX. Written as
+            # `a/../b` they select nothing whether or not the guard exists, so
+            # all three passed with it deleted: an adversarial case that cannot
+            # distinguish the code from its absence is decoration.
+            ".agents/skills/../x", ".agents/skills/./x", ".agents/skills//x",
+            "a/../b", "a/./b", "a//b",
+            "agents/lib/__pycache__/x.pyc",
+            ".claude/hooks/lib/__pycache__/hook_selection.pyc",
+            "agents/lib", "agents/lib/state", "agents/lib/tax_computations",
+            "tests", "docs/ops",                  # ids with TWO arms each
+            # Patterns no TRACKED path reaches. The hook is fed `find` output,
+            # which includes untracked and gitignored paths, so "nothing
+            # tracked matches it" is not "nothing reaches it".
+            "scripts/new.py", "agents/top.py", "agents/top.sh",
+            "docs/ops/brand-new.md", "tests/sub/x.py", "agents/lib/has.dot",
+            "requirements.in", ".github/ISSUE_TEMPLATE",
+            "no/such/path.py", "",
+        ]
+        return tracked + dirs + adversarial
+
+    def _shell(self, corpus, flags):
+        out = subprocess.run(
+            ["bash", "-c", self._probe(flags), "probe", str(SKILL_HOOK),
+             *corpus],
+            cwd=REPO, capture_output=True, text=True)
+        # STDERR, not just the exit code. An eval the probe forgot leaves the
+        # function undefined: bash writes "command not found", returns 0 from
+        # the loop, and every flag stays 0 — so the shell side reports "no
+        # modules" for that arm and the mismatch reads as a PYTHON defect. That
+        # is what happened on the first run, with `select_every_module`. Asking
+        # bash answers it directly; the first version of this class tried to
+        # work it out by scanning the function body for call sites, which meant
+        # stripping comments, which was wrong in both directions.
+        assert not out.stderr, (
+            "the shell probe wrote to stderr, so its answers are not the "
+            f"hook's: {out.stderr.strip()[:400]}")
+        assert out.returncode == 0, out.returncode
+        got = {}
+        for record in out.stdout.split("\0"):
+            if not record:
+                continue
+            path, bits = record.rsplit("\t", 1)
+            got[path] = frozenset(
+                f[4:] for f, bit in zip(flags, bits) if bit == "1")
+        return got
+
+    def test_the_module_roster_is_the_scripts_own(self):
+        """A ninth module must not be invisible.
+
+        `MODULES` used to be a hand-written copy in the port and again in the
+        probe. Adding `RUN_NEWMODULE=1` to an arm passed every test in this
+        class: the new flag was set by the shell, read by nothing, and the
+        contract silently stopped covering it. This module already had the
+        drift once — a seven-name list elsewhere omits `RUN_HOOKSDEPS`.
+        """
+        declared = self._flags()
+        assert [f"RUN_{m}" for m in self._python().MODULES] == declared
+
+        # ...and the other direction: a flag SET by an arm but never declared,
+        # asked of BASH rather than scanned for. A text scan for `RUN_X=1` is
+        # the comment-versus-code problem again, and it also missed
+        # `RUN_NEW_MODULE` (the name regex excluded underscores) and
+        # `RUN_X="1"`. `compgen -v` after the arms have run lists what actually
+        # exists in the shell, whatever it is spelled.
+        live = self._shell_flag_names(declared)
+        undeclared = sorted(set(live) - set(declared))
+        assert not undeclared, (
+            f"{undeclared} exist in the shell after the arms run and are "
+            "declared nowhere, so they are outside this contract entirely — "
+            "declare them beside the others and add them to the port's "
+            "MODULES")
+
+    def _shell_patterns(self):
+        """Every case pattern in the shell arms, joined across `|\\` breaks.
+
+        Taken from the SHELL, not from the port's `_ARMS`. Derived from the
+        port, the obligation disappears with the thing it is meant to protect:
+        deleting `agents/*.py` from the port deleted its coverage requirement
+        too, and both tests stayed green while that path selected nothing.
+        """
+        body = re.search(r"^select_modules_for\(\)\s*\{(.*?)^\}",
+                         SKILL_HOOK.read_text(encoding="utf-8"), re.M | re.S)
+        assert body, "select_modules_for no longer parses out of the hook"
+        joined = body.group(1).replace("|\\\n", "|")
+        patterns = []
+        for line in joined.splitlines():
+            line = line.strip()
+            if line.startswith("#") or not line.endswith(")"):
+                continue
+            # `case "$path" in` does not end in `)`, so the line above already
+            # skips it. The suffix test that used to sit here — treating a
+            # line ending `in)` as a case header — discarded the real arm
+            # `scripts/new.bin)`, which then carried no coverage obligation at
+            # all. A heuristic standing in for a check the previous line
+            # already makes can only cost.
+            if line.startswith(("case ", "esac")):
+                continue
+            patterns.extend(
+                p.strip() for p in line[:-1].split("|") if p.strip())
+        # Drop the prologue's own `case` labels, which are matched against the
+        # wrapped `/path/` form rather than the path.
+        patterns = [p for p in patterns if not p.startswith("*/")
+                    and not p.startswith("/agents/lib/") and p != "*//*"]
+        assert len(patterns) > 40, patterns
+        return patterns
+
+    def test_every_arm_pattern_is_reached_by_the_corpus(self):
+        """Per-PATTERN coverage, derived — not a count of paths.
+
+        The vacuity guards that stood here counted the corpus and the paths
+        selecting anything, and both were satisfied by the tracked list alone:
+        deleting every ancestor directory AND the whole adversarial list left
+        them green. What they could not see is a PATTERN nothing exercises,
+        which is the thing that actually goes unverified — `.agents/skills`
+        was one, and deleting it from the port passed everything.
+
+        Anything genuinely unreachable is named in `UNREACHABLE` with its
+        reason, so the exemption is a statement rather than a silence.
+        """
+        py = self._python()
+        corpus = [p for p in self._corpus() if p]
+
+        def decides(pattern):
+            """Is this pattern the FIRST match for some corpus path?
+
+            Merely matching is not enough: `agents/*.py` matches plenty of
+            engine files that an earlier arm claims, so a pattern shadowed
+            everywhere counted as covered while nothing exercised it.
+            """
+            for path in corpus:
+                for patterns, _ in py._ARMS:
+                    hit = next((q for q in patterns
+                                if fnmatch.fnmatchcase(path, q)), None)
+                    if hit is not None:
+                        if hit == pattern:
+                            return True
+                        break
+            return False
+
+        unreached = [q for q in self._shell_patterns() if not decides(q)]
+        assert set(unreached) <= set(self.UNREACHABLE), (
+            f"{sorted(set(unreached) - set(self.UNREACHABLE))} are matched by "
+            "no path in the corpus, so the differential does not verify them "
+            "— add a path that reaches each, or name it in UNREACHABLE with "
+            "the reason it cannot be reached")
+        assert set(unreached) == set(self.UNREACHABLE), (
+            f"{sorted(set(self.UNREACHABLE) - set(unreached))} are exempted as "
+            "unreachable but the corpus now reaches them — drop the exemption")
+
+    def test_the_package_rewrite_changes_no_arm(self):
+        """Why the differential cannot catch dropping the directory rewrite.
+
+        The prologue rewrites a package DIRECTORY under `agents/lib/` to its
+        own `__init__.py` before matching. Deleting that from the port leaves
+        the differential green, because no path reaches a different ARM either
+        way — the rewrite changes the string and not the answer.
+
+        Asserted over the ARM DATA, never by calling the port. The first
+        version called `select_modules_for` twice with `isdir` flipped, which
+        compares the port against ITSELF: delete the rewrite and the sentinel
+        stops being a sentinel, silently, exactly when it is needed. Reading
+        the patterns keeps the claim true whether or not the rewrite exists.
+        """
+        py = self._python()
+        # STRICTLY under `agents/lib/`. The rewrite cannot fire for
+        # `agents/lib` itself — the prologue's `/agents/lib/*/` needs a
+        # component after it — and that directory legitimately has its own arm
+        # that its `__init__.py` does not share, so including it asserted a
+        # difference the rewrite never causes.
+        packages = sorted({str(Path(p).parent) for p in self._tracked()
+                           if p.startswith("agents/lib/")}
+                          | {"agents/lib/state", "agents/lib/nosuchpackage"})
+        packages = [p for p in packages if p != "agents/lib"]
+        assert len(packages) > 3, packages
+        def decided_modules(path):
+            """The FIRST arm that matches, which is the only one that decides.
+
+            Comparing every arm was too strong: `agents/*.py` matches
+            `agents/lib/state/__init__.py` and not `agents/lib/state`, because
+            `*` crosses `/` — but an earlier arm claims both, so that
+            difference never reaches an answer.
+            """
+            for patterns, modules in py._ARMS:
+                if any(fnmatch.fnmatchcase(path, p) for p in patterns):
+                    return modules
+            return frozenset()
+
+        for pkg in packages:
+            # The MODULE SET, not the arm's index. Two arms can answer
+            # identically, and a new exact arm returning the same set is not a
+            # change to any answer — comparing indices called that a defect.
+            assert decided_modules(pkg) == decided_modules(f"{pkg}/__init__.py"), (
+                f"{pkg!r} selects {sorted(decided_modules(pkg))} and "
+                f"{pkg}/__init__.py selects "
+                f"{sorted(decided_modules(f'{pkg}/__init__.py'))}, so the "
+                "package rewrite now changes an answer — the differential "
+                "must exercise it and this test should be replaced by a "
+                "corpus path that does")
+
+    def test_the_python_selection_matches_the_shell(self):
+        """Both implementations, every derived path, identical answers."""
+        py = self._python()
+        flags = self._flags()
+        corpus = self._corpus()
+        shell = self._shell(corpus, flags)
+        # THE ORACLE, checked against a known answer before it is trusted.
+        # `tests/conftest.py` reaches `select_every_module` and must come back
+        # with all eight. Empty stderr does not prove the probe defined that
+        # helper — `select_every_module 2>/dev/null` is silent, exits 0, and
+        # leaves every flag at 0 — and a shell side that answers "nothing" is
+        # indistinguishable from a port that is wrong everywhere.
+        assert shell.get("tests/conftest.py") == frozenset(
+            f[4:] for f in flags), (
+            "the shell oracle does not select every module for "
+            f"tests/conftest.py — it answered {shell.get('tests/conftest.py')}, "
+            "so the probe is not running the hook's own logic and every "
+            "comparison below is against a broken reference")
+        assert set(shell) == set(corpus), (
+            f"the probe answered for {len(shell)} of {len(set(corpus))} "
+            "distinct paths — a comparison over a corpus the shell did not "
+            "actually see is green for the wrong reason")
+
+        # `isdir` bound to REPO, because the probe runs with `cwd=REPO` and
+        # the default resolves against pytest's cwd.
+        def mine(path):
+            return py.select_modules_for(
+                path, isdir=lambda rel: (REPO / rel).is_dir())
+
+        differ = {p: (sorted(shell[p]), sorted(mine(p)))
+                  for p in corpus if shell[p] != mine(p)}
+        assert not differ, dict(list(differ.items())[:8])
+
+
 class TestSkillInvariantsHook:
     def test_a_bash_call_runs_the_focused_invariants(self, tmp_path):
         """Opaque shell helpers can rewrite covered prose without file_path.
