@@ -140,10 +140,13 @@ def _mode(p: Path) -> int:
     return stat.S_IMODE(p.stat().st_mode)
 
 
-def _run_skill_hook(project_dir: Path, edited: str, path=None):
+def _run_skill_hook(project_dir: Path, edited: str, path=None, env_extra=None):
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir))
     if path is not None:
         env["PATH"] = path
+    # For the inherited-environment tests: the hook has to survive whatever a
+    # contributor's profile leaves lying around, which it was not doing.
+    env.update(env_extra or {})
     return subprocess.run(
         ["bash", str(SKILL_HOOK)],
         input=json.dumps({"tool_input": {"file_path": edited}}),
@@ -1159,6 +1162,163 @@ class TestSkillInvariantsHook:
                             str(tmp_path / ".agents/skills/tax-setup/SKILL.md"))
         assert r.returncode == 0
         assert r.stderr.strip() == ""
+
+    @pytest.mark.parametrize("name,value", [
+        # pytest APPENDS this to every invocation it makes. An exported
+        # `--collect-only` makes the suite exit 0 having executed no assertion
+        # at all — reproduced against the real interpreter — and `-k` narrows
+        # it to whatever the pattern keeps.
+        ("PYTEST_ADDOPTS", "--collect-only"),
+        # ...and this one deletes `assert` outright. pytest rewrites the
+        # assertions in the tests it collects, so the suite is covered — but
+        # several of these modules launch engine modules as SUBPROCESSES and
+        # read an exit status, and nothing rewrites those. Reproduced: a
+        # module whose self-test asserts something false exits 1 normally and
+        # 0 under this.
+        ("PYTHONOPTIMIZE", "1"),
+    ])
+    def test_an_inherited_pytest_variable_cannot_reach_the_suite(
+            self, tmp_path, name, value):
+        """Two variables that turn this gate into a rubber stamp.
+
+        Either way the hook reads exit 0, ADVANCES the change boundary and
+        CLEARS the red carry-forward: a pass that measured nothing, recorded
+        as a pass that measured everything. That is the worst outcome this
+        file has.
+
+        Asserted through the shim's own view of its environment rather than
+        through a real pytest run, because the property is that the variable
+        is gone by the time any interpreter starts.
+        """
+        (tmp_path / ".claude").mkdir()
+        _fake_venv(tmp_path, exit_code=1,
+                   lines=["$*", f"SEEN=[${{{name}-unset}}]"])
+        r = _run_skill_hook(
+            tmp_path, str(tmp_path / ".agents/skills/tax-setup/SKILL.md"),
+            env_extra={name: value})
+        assert "SEEN=[unset]" in r.stderr, (
+            f"{name} reached the suite this gate runs, so an exported "
+            f"{value!r} would make a pass report success having measured "
+            f"nothing: {r.stderr[-300:]}")
+
+    def test_an_inherited_errexit_does_not_swallow_the_verdict(self, tmp_path):
+        """`set -u` does not turn errexit OFF, and bash imports it.
+
+        An exported `SHELLOPTS` containing `errexit` reaches this script, and
+        the whole verdict rests on `out=$(run_focused_modules)` RETURNING so
+        its `$?` can be read. Under errexit a red suite kills the script at
+        that line instead: exit 1 with an empty stderr, which this script's
+        own interface defines as "a signal killed the pass" — so a genuine
+        failure is reported as no verdict and the tool call is not blocked.
+        """
+        (tmp_path / ".claude").mkdir()
+        _fake_venv(tmp_path, exit_code=1, lines=["1 failed"])
+        r = _run_skill_hook(
+            tmp_path, str(tmp_path / ".agents/skills/tax-setup/SKILL.md"),
+            env_extra={"SHELLOPTS": "errexit"})
+        assert r.returncode == 2, (
+            "a red suite under an inherited errexit did not block the tool "
+            f"call (rc={r.returncode}, stderr={r.stderr[-200:]!r})")
+        assert "FAILED" in r.stderr, r.stderr[-300:]
+
+    def test_an_inherited_xtrace_does_not_bury_the_failure(self, tmp_path):
+        """Noise rather than a wrong verdict, and it still matters here.
+
+        `xtrace` arrives from the same exported SHELLOPTS. It changes no
+        answer, but exit 2 feeds stderr back to the agent and a trace of the
+        whole script buries the failing tail underneath it — 535 traced lines
+        against the thirty the report itself is. A gate whose output cannot be
+        read is one that gets reasoned past, which this file ranks above
+        almost everything.
+        """
+        (tmp_path / ".claude").mkdir()
+        _fake_venv(tmp_path, exit_code=1, lines=["1 failed"])
+        r = _run_skill_hook(
+            tmp_path, str(tmp_path / ".agents/skills/tax-setup/SKILL.md"),
+            env_extra={"SHELLOPTS": "xtrace"})
+        traced = [ln for ln in r.stderr.splitlines() if ln.startswith("+")]
+        # ONE, not none: bash traces the very command that turns tracing off,
+        # and nothing inside the script can get ahead of that. Asserting zero
+        # would be asking for something unobtainable, which is how a correct
+        # script comes to look broken. What the assertion is really saying is
+        # that the trace stops at the clearing statement — so it names it.
+        assert traced == ["+ set +exP -uo pipefail"], (
+            f"{len(traced)} traced lines reached the agent's stderr, where "
+            f"the failure report is: {traced[:3]}")
+
+    def test_an_inherited_physical_does_not_drop_a_symlinked_edit(self, tmp_path):
+        """`set -P` makes `cd` resolve symlinks, and the payload does not.
+
+        The hook decides whether an edit is inside the project by comparing
+        `file_path` against `"$PWD"/*`. Under `physical` the `cd` rewrites
+        `$PWD` to the REAL path while the payload still carries the logical
+        one, the prefix stops matching, `relative` comes back empty and the
+        edit is dropped as "outside the project" — silently, exit 0, over a
+        watched file. Reproduced before fixing: `/tmp` resolving to
+        `/private/tmp` was enough.
+
+        A symlinked checkout is ordinary (`/tmp` is one on macOS), and `set -P`
+        in a shell profile is a thing people do, which is what puts this inside
+        the threat model the script states rather than outside it with
+        `noexec`.
+        """
+        real = tmp_path / "realproj"
+        (real / ".claude").mkdir(parents=True)
+        (real / "AGENTS.md").write_text("# watched\n")
+        _fake_venv(real, exit_code=1, lines=["$*"])
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+
+        r = subprocess.run(
+            ["bash", str(SKILL_HOOK)],
+            input=json.dumps({"tool_input": {
+                "file_path": str(link / "AGENTS.md")}}),
+            text=True, capture_output=True,
+            env=dict(os.environ, CLAUDE_PROJECT_DIR=str(link),
+                     SHELLOPTS="physical"))
+        assert r.returncode == 2, (
+            "an edit reached through a symlinked project path was dropped as "
+            f"outside the project (rc={r.returncode})")
+        assert _selects(PORTABILITY, _selected_modules(r)), sorted(
+            _selected_modules(r))
+
+    def test_an_inherited_cdpath_cannot_redirect_the_hook_to_another_clone(
+            self, tmp_path):
+        """CDPATH is searched BEFORE the relative path.
+
+        So `cd "$CLAUDE_PROJECT_DIR"` with a RELATIVE value can land in a
+        different directory entirely — after which this script reads another
+        repository's files, writes its stamp there, and reports a verdict
+        about a tree nobody edited.
+
+        The project directory has to be RELATIVE for this to reach anything:
+        bash never consults CDPATH for an absolute path, and every other test
+        here passes one. That is why this case needs its own workspace rather
+        than an extra assertion on an existing test.
+        """
+        decoy, real = tmp_path / "decoy", tmp_path / "real"
+        for root in (decoy, real):
+            (root / "proj" / ".claude").mkdir(parents=True)
+            (root / "proj" / "AGENTS.md").write_text("# watched\n")
+            _fake_venv(root / "proj", exit_code=0, lines=["1 passed"])
+
+        r = subprocess.run(
+            ["bash", str(SKILL_HOOK)],
+            input=json.dumps({"tool_name": "Bash",
+                              "tool_input": {"command": "ls"}}),
+            text=True, capture_output=True, cwd=str(real),
+            env=dict(os.environ, CLAUDE_PROJECT_DIR="proj",
+                     CDPATH=str(decoy)))
+        assert r.returncode == 0, r.stderr[-300:]
+        # The STAMP says which tree the hook actually inspected. It is the
+        # only artefact the pass leaves behind, and it lands wherever `cd`
+        # went.
+        assert (real / "proj" / SKILL_STAMP).is_file(), (
+            "the hook wrote no stamp under the project it was pointed at")
+        assert not (decoy / "proj" / SKILL_STAMP).exists(), (
+            "an inherited CDPATH sent the hook into a different clone: it "
+            "read that tree, wrote its stamp there, and would report a "
+            "verdict about files nobody edited")
 
     def test_a_missing_jq_degrades_to_silence(self, tmp_path):
         """With no jq the hook cannot read which file was edited. Guessing
@@ -5538,9 +5698,34 @@ class TestHookRegistration:
         half the block calls exact and the half that caught the last drift.
         """
         block = SKILL_HOOK.read_text()
-        start = block.index("MEASURED COSTS")
+        # The block's own HEADER, not the first mention of its name. `index`
+        # on "MEASURED COSTS" alone landed a thousand lines above it, on a
+        # paragraph that CITES the block — so "inside the block" included most
+        # of the script, and a figure planted there answered for one in the
+        # table. The name is cited by design, repeatedly; the header sentence
+        # is the thing that occurs once.
+        header = "MEASURED COSTS. This block is the ONE owner"
+        assert block.count(header) == 1, (
+            f"the MEASURED COSTS header matches {block.count(header)} times — "
+            "every derivation here is scoped by it, and at zero this test "
+            "silently checks the wrong span of the file")
+        start = block.index(header)
         end = block.index("Running the union of every changed path")
+        assert end > start, (
+            "the string this test slices the block's END at appears BEFORE "
+            "its header, so the block reads as empty and every derivation "
+            "below reports a missing table rather than the real cause — move "
+            "the quotation or give the end a longer anchor")
         costs = block[start:end]
+        # Where the live half ends. Below this the block quotes its own
+        # superseded figures on purpose, so a check that reads past it reads a
+        # figure a reader is explicitly told is stale as a current one.
+        marker = "EVERYTHING FROM HERE TO THE END OF THIS BLOCK IS HISTORY"
+        assert costs.count(marker) == 1, (
+            f"the history banner appears {costs.count(marker)} times in the "
+            "block; it is where the live half ends, and these derivations "
+            "cannot be scoped without exactly one of it")
+        live_costs = costs[:costs.index(marker)]
 
         # ONE collection, attributed per file from the node ids. This test runs
         # inside the module MEASURED COSTS calls the dominant share of a cold
@@ -5591,12 +5776,120 @@ class TestHookRegistration:
             f"hooks modules no longer parse (found {sorted(stated_collects)}) "
             "— widen the pattern; a sentence this test cannot read is a "
             "figure nothing checks")
-        # The per-module decomposition rows: "tests/test_x.py   N tests".
-        rows = {p: int(n) for p, n in
-                re.findall(r"(tests/test_\w+\.py)\s+(\d+) tests", costs)}
-        assert len(rows) == 7, (
-            f"the decomposition names {sorted(rows)} — seven module rows are "
-            "what the derived rows below are summed from")
+        # The per-module decomposition rows, parsed ONCE into all three of
+        # their fields: "tests/test_x.py   N tests   A - Bs". The counts and
+        # the seconds used to be two passes over the same table, which is two
+        # patterns to keep matching one table. A dict keeps the LAST of two
+        # matches, so a duplicate row silently replaces the first here and in
+        # every figure derived from it — rejected outright rather than
+        # tolerated, in the live half only.
+        # THE TWO TABLES, PARSED ONCE, AS TABLES. Every earlier draft found a
+        # row by searching the block's TEXT for what it hoped a row said, and
+        # five review rounds found five ways for a row to stop saying it while
+        # a "Superseded, do not use" copy nearby answered in its place: an en
+        # dash, doubled spaces, backticks around the path, a changed indent, a
+        # respelled label. Each fix taught the pattern one more spelling, which
+        # is a game with no last move.
+        #
+        # A table is not a set of sentences that happen to match. It is a
+        # CONTIGUOUS RUN OF LINES, and the live half holds exactly two of them
+        # — the trigger table's five rows and the decomposition's seven. Found
+        # that way, a quotation is outside both BY CONSTRUCTION however it is
+        # spelled, and a row that stops parsing shortens the run it was in
+        # instead of quietly leaving it. Every figure below is read from these
+        # records and nothing searches the block for a row again.
+        TABLE_ROW = re.compile(
+            r"^#   (\S.*?)\s\s+(\d+) tests\s+"
+            r"(\d+(?:\.\d+)?) - (\d+(?:\.\d+)?)s\s+\d+\s*$")
+        # The fast path runs no pytest, so it states no count. It is a row of
+        # the trigger table all the same, and leaving it out of the run would
+        # put a hole in the middle of one.
+        FAST_ROW = re.compile(
+            r"^#   (\S.*?)\s\s+no pytest\s+"
+            r"(\d+(?:\.\d+)?) - (\d+(?:\.\d+)?)s\s+\d+\s*$")
+        # WHERE THE TABLES ARE, decided by text that is NOT a row. Discovering
+        # them as "the runs of lines that parse" was still the same mistake in
+        # its last costume: reindent all five trigger rows by one space and the
+        # table stops being a run at all, leaving a quoted copy to be found
+        # instead. A row cannot be identified by its own willingness to parse.
+        #
+        # Each table sits between two blank comment lines, under a heading that
+        # is prose. Those are the boundaries — found without looking at a row —
+        # and every line between them is then REQUIRED to parse. A reindented
+        # row is still inside the region and fails; a quotation is outside both
+        # regions and is not read at all.
+        def _rows_under(anchor, what, blank_between):
+            assert live_costs.count(anchor) == 1, (
+                f"the {what} is located by {anchor!r}, which appears "
+                f"{live_costs.count(anchor)} times above the history banner")
+            at = live_costs.index(anchor)
+            # The trigger table's rows begin on the line after its rule; the
+            # decomposition's begin after the blank line that closes the
+            # paragraph introducing it. Both END at the next blank line.
+            start = (live_costs.index("\n#\n", at) + len("\n#\n")
+                     if blank_between
+                     else live_costs.index("\n", at) + 1)
+            end = live_costs.index("\n#\n", start)
+            return live_costs[start:end].split("\n")
+
+        trigger_lines = _rows_under(
+            "#   ------------------------", "trigger table", False)
+        decomposition_lines = _rows_under(
+            "survives a change of machine.", "decomposition", True)
+        assert [len(trigger_lines), len(decomposition_lines)] == [5, 7], (
+            f"the trigger table holds {len(trigger_lines)} lines and the "
+            f"decomposition {len(decomposition_lines)}; they hold five and "
+            "seven. A line spliced into either — a quotation, a note, a "
+            "heading — is a line this test will then require to be a row:\n"
+            + "\n".join(trigger_lines + decomposition_lines))
+        table_runs = [trigger_lines, decomposition_lines]
+
+        triggers: dict = {}
+        for ln in table_runs[0]:
+            counted = TABLE_ROW.match(ln)
+            if counted:
+                triggers[counted.group(1)] = (
+                    int(counted.group(2)),
+                    (float(counted.group(3)), float(counted.group(4))))
+            else:
+                fast = FAST_ROW.match(ln)
+                triggers[fast.group(1)] = (
+                    None, (float(fast.group(2)), float(fast.group(3))))
+        # The labels are asserted as a SET, because looking one up by name is
+        # how a renamed row becomes a row nothing reads. Renaming one is a
+        # change to the block's shape and belongs with a sitting, not with a
+        # round that happens to reword a line.
+        countless = sorted(k for k, (n, _) in triggers.items() if n is None)
+        assert countless == ["nothing watched changed"], (
+            f"{countless} state no count. The fast-path row is the only row in "
+            "either table that may — it runs no pytest — and a counted row "
+            "that stops stating its count stops being checked against a "
+            "collection")
+        assert set(triggers) == {
+            "nothing watched changed", "agent-definition edit",
+            "skill .md edit", "cold pass, all seven modules",
+            "(for scale) `pytest tests/`"}, (
+            f"the trigger table's rows are {sorted(triggers)} — every figure "
+            "derived below is looked up by those labels, and a renamed one is "
+            "a row nothing checks")
+
+        rows: dict = {}
+        secs: dict = {}
+        for ln in table_runs[1]:
+            row = TABLE_ROW.match(ln)
+            assert row, (
+                f"a decomposition row states no count: {ln.strip()!r} — the "
+                "fast-path row is the only row in this block that may, and it "
+                "is in the other table")
+            path = row.group(1)
+            assert re.fullmatch(r"tests/test_\w+\.py", path), (
+                f"the decomposition names {path!r}, which is not a test module "
+                "path — every row here is a module the hook can select, and a "
+                "label that is not one is a row keyed to nothing")
+            assert path not in rows, (
+                f"{path} has two decomposition rows")
+            rows[path] = int(row.group(2))
+            secs[path] = (float(row.group(3)), float(row.group(4)))
 
         # Portability's gap is the hook's own --deselect flags: derivable, so
         # it is derived rather than trusted from the prose.
@@ -5652,11 +5945,10 @@ class TestHookRegistration:
         skill_edit = sum(rows[p] for p in rows
                          if p not in ADDED_BY_A_COLD_PASS)
         cold = sum(rows.values())
-        stated_skill = int(re.search(r"skill \.md edit\s+(\d+) tests", costs).group(1))
-        stated_cold = int(re.search(r"cold pass, all seven modules\s+(\d+) tests",
-                                    costs).group(1))
+        stated_skill = triggers["skill .md edit"][0]
+        stated_cold = triggers["cold pass, all seven modules"][0]
         assert stated_skill == skill_edit, (
-            f"the skill-edit row reads {stated_skill}; its four parts sum to "
+            f"the skill-edit row reads {stated_skill}; its five parts sum to "
             f"{skill_edit}")
         assert stated_cold == cold, (
             f"the cold-pass row reads {stated_cold}; its seven parts sum to "
@@ -5678,7 +5970,8 @@ class TestHookRegistration:
                          r"([\d +]+?) = (\d+) for a cold pass", flat)
         assert sums, (
             "the block no longer states its derived rows as `EXACT: a + b + c "
-            "+ d = <skill edit> for a skill edit, plus e + f = <cold pass> for "
+            "+ d + e = <skill edit> for a skill edit, plus f + g = <cold pass> "
+            "for "
             "a cold pass` — reword around that shape rather than through it, "
             "or this sentence goes back to being prose nothing reads")
         four = sorted(int(n) for n in sums.group(1).split("+"))
@@ -5686,10 +5979,10 @@ class TestHookRegistration:
         by_a_skill_edit = sorted(rows[p] for p in rows
                                  if p not in ADDED_BY_A_COLD_PASS)
         assert four == by_a_skill_edit, (
-            f"the arithmetic sentence adds {four}; the four rows a skill edit "
+            f"the arithmetic sentence adds {four}; the five rows a skill edit "
             f"selects are {by_a_skill_edit}")
         assert added == sorted(rows[p] for p in ADDED_BY_A_COLD_PASS), (
-            f"the arithmetic sentence adds {added} for the three a cold pass "
+            f"the arithmetic sentence adds {added} for the two a cold pass "
             f"adds; their rows are "
             f"{sorted(rows[p] for p in ADDED_BY_A_COLD_PASS)}")
         assert int(sums.group(2)) == skill_edit, (
@@ -5699,7 +5992,7 @@ class TestHookRegistration:
             f"the arithmetic sentence totals the cold pass at {sums.group(4)}; "
             f"its own parts sum to {cold}")
 
-        stated_suite = int(re.search(r"`pytest tests/`\s+(\d+) tests", costs).group(1))
+        stated_suite = triggers["(for scale) `pytest tests/`"][0]
         # THE HOOKS ROW, which is the one row no collection can reach and was
         # therefore the one nothing checked. Every other row is pinned to a live
         # count; this module's RUN figure is its collection minus platform skips,
@@ -6014,6 +6307,192 @@ class TestHookRegistration:
                 assert int(pct) == derived, (
                     f"a sentence states the hooks share as {pct}% against the "
                     f"block's derived {derived}%: {sentence.strip()[:160]!r}")
+
+        # THE TWO FIGURES THAT DERIVATION READS ARE THEMSELVES PROSE, which is
+        # the hole the paragraph above left open: `others` and `floor_s` are
+        # parsed out of sentences, so the share stayed internally consistent
+        # while both of its inputs described a sitting that had been replaced.
+        # A re-taken sitting moved every row and left "at most 31.2s" over a
+        # table summing to 33.0 and "never measured below 148.9s" over a cold
+        # pass whose floor was 158.6 — and the percentage they produce happened
+        # to round the same, so nothing here went red. Both are derived from
+        # the rows now, and the seconds column is parsed once for this and for
+        # the ARITHMETIC sentence below it.
+        #
+        # THE AGENT-DEFINITION ROW IS THE AGENTS ROW, both halves of it. The
+        # block says so — "the SAME invocation, stated with the same range on
+        # purpose. Two figures for one measurement is how this block started
+        # drifting from itself the first time" — so the COUNT is as much a
+        # second statement as the seconds are, and checking only the seconds
+        # left the count free to take any value the allowed set already held:
+        # 48 to 94 passed, because 94 is the host guard's.
+        assert triggers["agent-definition edit"] == \
+            (rows["tests/test_claude_agents.py"],
+             secs["tests/test_claude_agents.py"]), (
+            f"the agent-definition trigger row reads "
+            f"{triggers['agent-definition edit']} against the agents module's "
+            f"{(rows['tests/test_claude_agents.py'], secs['tests/test_claude_agents.py'])}"
+            " — one invocation measured once, stated twice, and the two have "
+            "drifted")
+
+        # WHICH SECONDS ARE DERIVED AND WHICH ARE MEASURED, since the
+        # difference decides what can be asserted about them at all. Every
+        # figure in these tables is a MEASUREMENT; nothing here re-measures.
+        # What can be checked is a figure stated TWICE — a row against its own
+        # restatement, or against another row the block says is the same
+        # invocation — and that covers the cold pass, the agents row and the
+        # skill-edit row's prose copy below.
+        #
+        # Three sets of seconds are stated once and are therefore held to
+        # nothing: the fast path's, the scale row's, and the skill-edit row's
+        # own. The last of those cannot be derived even in principle — five
+        # modules in one invocation is BOUNDED by the sum of their rows and
+        # equal to nothing, and a bound that loose is a check that cannot fail
+        # rather than one that does not — which is why its prose restatement
+        # below is worth pinning: two copies of an unheld figure drift exactly
+        # as readily as two copies of a held one.
+        cold_lo, cold_hi = triggers["cold pass, all seven modules"][1]
+
+        six = round(sum(hi for p, (_, hi) in secs.items()
+                        if p != "tests/test_claude_hooks.py"), 1)
+        assert others == six, (
+            f"the share sentence says the other six are at most {others}s; "
+            f"the rows above it sum to {six}s")
+        assert floor_s == cold_lo, (
+            f"the share sentence reads a cold-pass floor of {floor_s}s; the "
+            f"cold-pass row says {cold_lo}s")
+
+        # THE SKILL-EDIT ROW IS RESTATED IN PROSE further down, which is the
+        # only thing holding those seconds to anything: the restatement read
+        # 17.0-21.7s against 131.5-133.1s while its row read 26.6-27.5s against
+        # 158.6-169.6s, two sittings apart.
+        #
+        # ANCHORED, not searched. Counting matches let the real sentence be
+        # respelled out of the pattern while a quotation elsewhere kept the
+        # count at one — the same substitution this block has now produced in
+        # six different places. The anchor phrase must occur ONCE, and the
+        # figures are read from that occurrence or nowhere.
+        anchor = "a skill edit skips that module"
+        assert flat.count(anchor) == 1, (
+            f"{anchor!r} appears {flat.count(anchor)} times in the block; the "
+            "skill-edit row's prose restatement is read from that phrase, and "
+            "a second copy is a second place to read it from")
+        restatement = re.match(
+            r"a skill edit skips that module and costs [a-z- ]+ of a cold pass "
+            r"\((\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s against "
+            r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s\)",
+            flat[flat.index(anchor):])
+        assert restatement, (
+            "the skill-edit row's prose restatement no longer parses where it "
+            "is anchored — widen the pattern rather than leaving the only "
+            "check on a figure nothing else holds unread:\n"
+            + flat[flat.index(anchor):][:200])
+        restated = [restatement.groups()]
+        assert (float(restated[0][0]), float(restated[0][1])) == \
+            triggers["skill .md edit"][1], (
+            f"the prose says a skill edit costs "
+            f"{restated[0][0]}-{restated[0][1]}s; its row says "
+            f"{triggers['skill .md edit'][1]}")
+        assert (float(restated[0][2]), float(restated[0][3])) == \
+            (cold_lo, cold_hi), (
+            f"the prose states the cold pass as {restated[0][2]}-"
+            f"{restated[0][3]}s; its row says {cold_lo}-{cold_hi}s")
+
+        # THE ARITHMETIC SENTENCE, the one place a reader can check the two
+        # tables against each other. (The block's own "EXACT" is about the
+        # COUNT arithmetic beside it, which is exact; this half is seconds and
+        # can only ever agree to within their noise.) It stated the previous
+        # sitting's sums against the previous sitting's cold pass, under a
+        # table holding neither, for the same reason every other figure here
+        # has drifted: a sum a person re-does by hand is a sum nobody re-does.
+        # Both halves are re-derived, from the live table only — quoting the
+        # right sentence in the history below a wrong one satisfied the first
+        # draft of this check.
+        parts_lo = round(sum(lo for lo, _ in secs.values()), 1)
+        parts_hi = round(sum(hi for _, hi in secs.values()), 1)
+        # THE PARAGRAPH, not the live half. Scoping to everything above the
+        # banner was still too wide: reword the real sentence past the pattern
+        # and quote the correct one anywhere above, labelled "superseded, do
+        # not use", and this read the label's own contents as the derivation.
+        # A quotation is not a statement, and the only way to tell them apart
+        # here is WHERE it sits.
+        # SLICED, because the paragraph has an end now — a blank comment line
+        # was added under it with this change, for exactly this reason. Three
+        # drafts tried to define its extent from the text as it stood: the
+        # whole live half, a thirty-five-line window reaching past the COUNT
+        # arithmetic, then a punctuation rule standing in for a sentence
+        # boundary. The last of those both admitted "Those seven total 100s!
+        # Superseded, do not use: they sum to 158.9s" and REFUSED "Those seven,
+        # i.e. the modules above, sum to", which is the same failure pointing
+        # both ways. Punctuation is not structure. A blank line is.
+        #
+        # The second half is what makes the slice worth anything: the phrase
+        # this derivation is written in must appear NOWHERE ELSE in the live
+        # half, so a quotation cannot sit outside the paragraph and answer for
+        # a sentence inside it that has been reworded past the pattern.
+        def _flat(text):
+            return re.sub(r"\s+", " ", re.sub(r"^#[ \t]?", "", text, flags=re.M))
+
+        head = "# ARITHMETIC, stated because"
+        assert live_costs.count(head) == 1, (
+            f"the ARITHMETIC paragraph opens {live_costs.count(head)} times "
+            "above the history banner — the derivation is read out of that "
+            "paragraph, and a second opening is a second place to read it")
+        para_start = live_costs.index(head)
+        para_end = live_costs.find("\n#\n", para_start)
+        assert para_end != -1, (
+            "the ARITHMETIC paragraph no longer ends at a blank comment line "
+            "before the history banner — that blank line is what gives this "
+            "derivation an extent, and without it the slice runs on into "
+            "whatever follows")
+        ariths = re.findall(
+            r"sum to (\d+(?:\.\d+)?)s at their minima and "
+            r"(\d+(?:\.\d+)?)s at their maxima, against "
+            r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s measured",
+            _flat(live_costs[para_start:para_end]))
+        assert len(ariths) == 1, (
+            f"the ARITHMETIC sentence parses {len(ariths)} times inside its "
+            "own paragraph — at zero, widen the pattern rather than leaving "
+            "the block's only parts-against-whole check unread; above one, two "
+            "copies of it are two things to keep true")
+
+        # AND NO OTHER SECONDS IN THE PARAGRAPH. The slice above says where the
+        # derivation lives; this says nothing else lives beside it. "Those
+        # seven total 100s! Superseded, do not use: they sum to 158.9s …"
+        # satisfies every check up to here — one matching sentence, inside the
+        # paragraph, correct — while the sentence a reader believes is the
+        # false one in front of it. No pattern can tell which sentence is meant,
+        # so the paragraph is required to state ONLY the four figures it
+        # derives. It is a paragraph about one arithmetic; a fifth number in
+        # seconds is either a second arithmetic or a superseded one.
+        # A LIST, not a set, and every spelling of the unit. "Those seven
+        # total 169.6s! Superseded, do not use: they sum to …" adds no new
+        # VALUE, so a set saw nothing; "100 seconds" and "100 s" were not seen
+        # at all. Four figures, four occurrences, however the unit is written.
+        para_figures = []
+        for lo, hi in re.findall(
+                r"(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?\s*(?:s\b|secs?\b"
+                r"|seconds\b)", _flat(live_costs[para_start:para_end])):
+            para_figures.append(float(lo))
+            if hi:
+                para_figures.append(float(hi))
+        assert sorted(para_figures) == sorted(
+                [parts_lo, parts_hi, cold_lo, cold_hi]), (
+            f"the ARITHMETIC paragraph states {sorted(para_figures)} in "
+            f"seconds; it derives {sorted([parts_lo, parts_hi, cold_lo, cold_hi])}"
+            " and may state those and nothing else, each once — a percentage "
+            "is not a figure in seconds and is unaffected")
+        arith = ariths[0]
+        assert (float(arith[0]), float(arith[1])) == \
+            (parts_lo, parts_hi), (
+            f"the ARITHMETIC sentence sums the seven to "
+            f"{arith[0]}-{arith[1]}s; the rows sum to "
+            f"{parts_lo}-{parts_hi}s")
+        assert (float(arith[2]), float(arith[3])) == \
+            (cold_lo, cold_hi), (
+            f"the ARITHMETIC sentence states the whole as "
+            f"{arith[2]}-{arith[3]}s against a cold-pass row "
+            f"reading {cold_lo}-{cold_hi}s")
 
     # Every SECOND about this hook lives in ONE place: the MEASURED COSTS block
     # in .claude/hooks/skill-invariants.sh. Read the cold pass, the per-module

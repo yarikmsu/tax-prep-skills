@@ -51,8 +51,81 @@
 #      so it says nothing and must not block the tool call
 #   2  the checks failed, or could not produce a verdict; stderr is fed back to
 #      the agent for a same-turn fix
-set -uo pipefail
+# `+exP` FIRST, in the very first statement, because all three arrive from an
+# exported SHELLOPTS and all three matter before another line runs. See "A GATE
+# INHERITS ITS ENVIRONMENT" below for what each one does to this hook.
+set +exP -uo pipefail
 umask 077
+
+# ---------------------------------------------------------------------------
+# A GATE INHERITS ITS ENVIRONMENT. Y6 found this class in the PII gate, where a
+# variable turned its verdict into a no-op (PR #119); this is the same class in
+# the hook that guards every other change. Each one below was REPRODUCED before
+# it was fixed, and each has a test that goes red when its guard is removed.
+#
+#   - PYTEST_ADDOPTS, which is the one that turns this gate into a rubber
+#     stamp. pytest appends it to every invocation, so an exported
+#     `--collect-only` makes the suite exit 0 having executed no assertion at
+#     all, and `-k` narrows it to whatever the pattern keeps. The hook reads
+#     exit 0, ADVANCES the change boundary and CLEARS the red carry-forward,
+#     which is the worst outcome this file has: a pass that measured nothing,
+#     recorded as a pass that measured everything.
+#   - PYTHONOPTIMIZE, which deletes `assert` statements outright. pytest
+#     rewrites the assertions in the tests it collects, so the suite itself is
+#     covered — but several of these modules launch engine modules as
+#     SUBPROCESSES and read an exit status, and nothing rewrites those. A
+#     self-test whose assertion has been compiled away exits 0 and the check
+#     reports a pass. Reproduced: a module asserting something false exits 1
+#     normally and 0 under `PYTHONOPTIMIZE=1`.
+#   - `errexit`, which bash imports from an exported SHELLOPTS and which
+#     `set -u` does not turn off. The whole verdict rests on
+#     `out=$(run_focused_modules)` returning so its `$?` can be read; under
+#     errexit a red suite kills the script at that line instead — exit 1 with
+#     an empty stderr, which this script's own interface defines as "a signal
+#     killed the pass", so a genuine failure is reported as no verdict and the
+#     tool call is not blocked. Reproduced.
+#   - `physical`, which makes `cd` resolve symlinks. `$PWD` becomes the real
+#     path while the payload's `file_path` is still the logical one, the
+#     `"$PWD"/*` prefix below stops matching, and the edit is dropped as
+#     "outside the project" — silently, exit 0, over a watched file. `/tmp`
+#     resolving to `/private/tmp` was enough to reproduce it, and a symlinked
+#     checkout is ordinary.
+#   - `xtrace`, imported the same way, which is NOISE rather than a wrong
+#     verdict and is turned off for the reason this file ranks above most
+#     others: exit 2 feeds stderr back to the agent, and a trace of the whole
+#     script buries the failing tail underneath it — 535 traced lines against
+#     the thirty the report itself is, counted as lines beginning `+` so the
+#     report is not counted twice. A gate whose output cannot be read is one
+#     that gets reasoned past. Cleared in the first statement because bash
+#     traces every line up to whatever turns it off; the one line it cannot
+#     avoid is that statement, which is what the test names.
+#   - CDPATH, and two different failures from it. `cd` PRINTS the directory it
+#     landed in whenever CDPATH found it, so any `$(cd … && pwd)` comes back as
+#     TWO lines. Worse, CDPATH is searched BEFORE the relative path, so
+#     `cd "$CLAUDE_PROJECT_DIR"` with a RELATIVE value can land in a different
+#     clone entirely — measured, `CDPATH=/tmp/x` sends `cd sub` to
+#     `/tmp/x/sub` — after which this script reads another repository's files,
+#     writes its stamp there, and reports a verdict about a tree nobody edited.
+#     (A bare `.` is safe; bash special-cases it. A relative name is not.)
+#
+# NOT A COMPLETE SWEEP, and the stopping rule matters more than the list. The
+# environment is unbounded the way bash grammar is: every round of review finds
+# one more variable, so "enumerate them all" has no end and a list that reads as
+# complete is worse than one that says it is not. The threat model is AN
+# ENVIRONMENT A CONTRIBUTOR'S SHELL PLAUSIBLY HAS — `set -P` in a profile,
+# PYTEST_ADDOPTS exported for a debugging session, a stray RUN_ variable. A
+# finding outside that is refuted by citation rather than fixed.
+#
+# REFUTED under it, and recorded so it is not re-found: `SHELLOPTS=noexec` makes
+# bash parse this script and execute none of it, so the hook exits 0 having done
+# nothing — and NO `set` here can repair that, because the repair would itself
+# not execute. It is also not a state anything survives: it makes every script
+# on the machine a no-op. `PYTHONPATH`, and a `pytest.ini` on a parent path, are
+# likewise outside the list; they are plausible but neither has been reproduced
+# as a silent PASS, which is the bar for adding one here.
+# ---------------------------------------------------------------------------
+CDPATH=''
+unset PYTEST_ADDOPTS PYTHONOPTIMIZE
 
 # No jq means no way to read the hook payload. A hook that cannot identify its
 # target must not guess, and silence beats a broken session.
@@ -1280,10 +1353,10 @@ apply_red_checks
 # BOTH directions at once, every count landing short (100 where 116 run, 288
 # where 289 run, 2936 where 2956 collect) while its module rows summed to about
 # 136s against a cold pass it stated as 121-124s. Parts exceeding the whole was
-# its signature; this sitting has them exceeding by about 6% for an entirely
-# different reason, and the ARITHMETIC paragraph below separates the two rather
-# than leaving a reader to guess which they are looking at. So: no row here is
-# edited alone. Either the whole block is re-measured in one sitting or it is
+# its signature; this sitting has the parts INSIDE the whole at both ends by
+# 0.2%, and the ARITHMETIC paragraph below separates that case from the patched
+# one rather than leaving a reader to guess which they are looking at. So: no
+# row here is edited alone. Either the whole block is re-measured in one sitting or it is
 # left as it stands, stale and legibly so.
 #
 # MEASURING THE FAST-PATH ROW HAS A TRAP, stated because it cost two full passes
@@ -1314,10 +1387,14 @@ apply_red_checks
 # the hook's own pytest underneath the measurement. Run-to-run spread is ±5% on
 # the slow lines here, and the spread BETWEEN sittings is far larger: readings of
 # `pytest tests/` on this same host have returned 139-155s, 175-209s, 179-191s,
-# 184-190s, 199-204s, 248.7-250.5s and now 228.4-243.4s — the first reading in
-# seven to come DOWN while the suite GREW, by sixty-nine tests, which is the point
-# about weather made by the data. The portability module moved further — 7.5-10.2s
-# one day, 12.7-13.4s the next, with no code between the two — which is why the
+# 184-190s, 199-204s, 248.7-250.5s, 228.4-243.4s and now 330.0-333.8s — a jump
+# of 37% comparing the ceilings and 44% comparing the floors, on a suite that
+# gained SIX tests, which is the largest move this row has ever recorded
+# between sittings and has no cause anyone should name. The reading before it
+# was the first in seven to come DOWN while the suite GREW; the pair together
+# is the point about weather made by the data, and the reason nothing here is
+# quoted to three significant figures. The portability module moved further —
+# 7.5-10.2s one day, 12.7-13.4s the next, with no code between the two — which is why the
 # ratios below are stated as "roughly" and why a figure lifted from here to three significant
 # figures would be wrong by the next reading. Every line is a RANGE with a run
 # count.
@@ -1337,31 +1414,34 @@ apply_red_checks
 # calls that classify a failure to read it, and the fixture repository that
 # controls those — after a much older reading was taken, and the note here said
 # only that its place among the rows was unknown rather than guessing at one.
-# Measured with the set it came back 1.0s flat, and this sitting 1.1-1.2s: five
-# times the row it replaced, no longer the smallest of the seven, and sitting
-# just below capabilities rather than well below it. Two independent sittings
-# agreeing to a tenth is the strongest thing this block can say about any row,
-# and it is worth more than either reading alone. The fixed-overhead sentence
+# Measured with the set it came back 1.0s flat, the sitting after that 1.0-1.8s,
+# and this sitting 1.2-1.4s: five times the row it replaced, and no longer the
+# smallest of the seven. Where it sits against capabilities cannot be read off
+# these rows in either direction — 1.2-1.4s against 1.0-1.3s OVERLAPS, as
+# 1.0-1.8s against 0.8-3.1s did before it, and the prose here asserted an
+# ordering both times anyway. Three sittings all landing inside 1.0-1.8s is the
+# strongest thing this block can say about any row, and it is worth more than
+# any single reading. The fixed-overhead sentence
 # above under-explains this row for the same reason it always did — the git
 # calls are most of what it costs, not the interpreter start.
 #
 #   what triggers it               what runs     observed range    runs
 #   ---------------------------------------------------------------------
-#   nothing watched changed        no pytest    0.08 - 0.11s         6
-#   agent-definition edit           48 tests      1.0 - 1.8s          6
-#   skill .md edit                1034 tests     19.7 - 23.4s         3
-#   cold pass, all seven modules  1274 tests    137.6 - 150.1s        3
-#   (for scale) `pytest tests/`   4879 tests    228.4 - 243.4s        2
+#   nothing watched changed        no pytest    0.05 - 0.06s         6
+#   agent-definition edit           48 tests      1.2 - 1.4s          6
+#   skill .md edit                1034 tests     26.6 - 27.5s         3
+#   cold pass, all seven modules  1280 tests    158.6 - 169.6s        3
+#   (for scale) `pytest tests/`   4885 tests    330.0 - 333.8s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 249 and runs 247; and
-# the hooks module holds two platform skips, so it collects 148 and runs 146.
+# the hooks module holds two platform skips, so it collects 154 and runs 152.
 # THE SUITE holds seven skips, not two: those two plus the five Windows-only
 # DACL cases W6 added, which are skipped everywhere but on the windows job.
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4886 and runs 4879 for the same skips — and that row
+# `pytest tests/` collects 4892 and runs 4885 for the same skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1379,13 +1459,13 @@ apply_red_checks
 # deselections run_focused_modules passes. This is the durable half: WHICH
 # module dominates, and by how much, survives a change of machine.
 #
-#   tests/test_claude_hooks.py     146 tests    114.7 - 130.0s       4
-#   tests/test_portability.py      247 tests     11.1 - 13.1s        6
-#   tests/test_capabilities.py     175 tests      0.8 - 3.1s         6
-#   tests/test_claude_agents.py     48 tests      1.0 - 1.8s         6
-#   tests/test_secure_fs.py        182 tests      1.4 - 2.1s         6
-#   tests/test_preflight.py        382 tests      5.6 - 7.2s         6
-#   tests/test_host_guard.py        94 tests      1.4 - 1.8s         6
+#   tests/test_claude_hooks.py     152 tests    131.4 - 136.2s       3
+#   tests/test_portability.py      247 tests     14.5 - 16.3s        6
+#   tests/test_capabilities.py     175 tests      1.0 - 1.3s         6
+#   tests/test_claude_agents.py     48 tests      1.2 - 1.4s         6
+#   tests/test_secure_fs.py        182 tests      1.7 - 1.9s         6
+#   tests/test_preflight.py        382 tests      7.6 - 10.4s        6
+#   tests/test_host_guard.py        94 tests      1.5 - 1.7s         6
 #
 # The agent-definition row above and the agents row here are the SAME
 # invocation — that trigger selects that module alone — and are stated with the
@@ -1394,18 +1474,18 @@ apply_red_checks
 #
 # Read the preflight line as a RATIO, which is the half that survives a change
 # of machine: it sits between the agents module and portability, and is
-# somewhere between a sixteenth and a twenty-third of the hooks module that
-# dominates every total here. That same ratio read a sixteenth-to-a-seventeenth
-# one sitting ago, a twentieth-to-a-twenty-second the sitting before that, and a
-# thirteenth-to-a-twenty-third before THAT, on a module that has gained fifteen
-# tests across the four and lost none — it moves because the SPREAD moves, not
-# because the work does, which is itself the reason to distrust any single
-# reading of the seconds any of them comes from. This sitting is the clearest
-# case yet: the same module, measured twice with nothing touched between, gave
-# 6.3-7.2s and then 5.6-6.4s. A skill
-# edit
-# selects it alongside portability, capabilities and secure_fs, which is where
-# its cost actually lands. It has grown against its neighbours four times: the
+# somewhere between a thirteenth and an eighteenth of the hooks module that
+# dominates every total here. That same ratio read a sixteenth-to-a-twenty-third
+# one sitting ago, a sixteenth-to-a-seventeenth the sitting before that, a
+# twentieth-to-a-twenty-second before THAT, and a thirteenth-to-a-twenty-third
+# before THAT, on a module that has gained fifteen tests across the five and
+# lost none — it moves because the SPREAD moves, not because the work does,
+# which is itself the reason to distrust any single reading of the seconds any
+# of them comes from. The clearest case is the sitting before this one: the
+# same module, measured twice with nothing touched between, gave 6.3-7.2s and
+# then 5.6-6.4s. A skill edit selects it alongside portability, capabilities,
+# secure_fs and the agents module — FIVE, which is what the EXACT sum below
+# adds — and that is where its cost actually lands. It has grown against its neighbours four times: the
 # launcher tests EXECUTE `run.sh` in a subprocess rather than asserting against
 # its text — the trade that bought a test able to catch a hang — and the
 # installed-versus-locked comparison added a class that reads the lock and
@@ -1419,36 +1499,62 @@ apply_red_checks
 # THE TRIGGER WITH NO ROW is a test-module edit, and this is where its cost
 # lives: this block owns a trigger's cost whether or not the trigger has a row,
 # and this one has none because what it runs is not a module. It selects the
-# edited module, the host-guard module, and the three node ids in
-# `HOOKS_DEPENDENTS`, never the hooks module those ids sit in — the log entry below that records `RUN_HOOKS=1` on
+# edited module, the host-guard module, and the four node ids in
+# `HOOKS_DEPENDENTS` — TWO modules and the ids, and THREE when the edited
+# module is the host guard itself, whose arm adds portability because
+# `TestTheEngineDirectoryIsFlat` reads that module's roster by name. Never the
+# hooks module those ids sit in — the log entry below that records `RUN_HOOKS=1` on
 # those arms was narrowed fourteen rounds later, and read as current it
 # describes a policy that has not been in force since.
 #
-# What the three ids cost was stated NOWHERE, and every comment beside them
+# What those ids cost was stated NOWHERE, and every comment beside them
 # implied it was nothing by quoting the preflight-to-hooks ratio — a ratio about
 # the module the narrowing SPARES, which says nothing at all about what replaced
 # it. Measured WITH this sitting, against the preflight row, back to back: the
-# three ids cost 12.2-12.9s over three runs, between one and three quarters and
-# two and a third of that module. Two of them drive the real hook once per watched
-# path, a subprocess each, and that is where all of it goes; the third is an
-# `ast.parse` worth nothing measurable. The ratio was one and a half to one and
-# two thirds a sitting ago, one and three quarters to two and a quarter the one
-# before, and TWO to two and a half before THAT. It rose back this sitting with
-# nothing about the ids changing: the preflight row they are stated against came
-# DOWN, which is the whole hazard of expressing one cost as a ratio to another
-# that is itself weather.
+# ids cost 12.8-15.6s over three runs, between one and a quarter and two of that
+# module. TWO of them drive the real hook once per watched
+# path, a subprocess each, and that is where all of it goes; the other two read
+# source and parse it, worth nothing measurable between them.
+#
+# THE COUNT IN THIS PARAGRAPH WAS STALE, and it is worth naming because the
+# staleness is the shape this whole block exists to catch. `HOOKS_DEPENDENTS`
+# holds FOUR ids; every sentence here said three, including the one measuring
+# them, because the fourth was appended with a comment ending "added with it"
+# and nothing re-read the prose. Its own list is what the seconds above were
+# taken from, which is why they are right and the words around them were not.
+#
+# THE RATIO IS ONE AND A QUARTER TO TWO this sitting, and it FELL with nothing
+# about the ids changing: the preflight row it is stated against went UP,
+# 5.6-7.2s to 7.6-10.4s, which is the whole hazard of expressing one cost as a
+# ratio to another that is itself weather. A sitting ago it was one and seven
+# tenths to two and three tenths, 12.2-12.9s over 5.6-7.2s. The list of four
+# earlier readings that stood here is GONE rather than extended: it ran "one and
+# a half to one and two thirds a sitting ago, one and three quarters to two and
+# a quarter the one before", and the tables it claimed to summarise give 1.69 to
+# 2.30 for the sitting it called the first of those. Every entry was off by a
+# position, so none of them said what it claimed about the sitting it named, and
+# a history nobody can re-derive is worth less than the two readings that can
+# be.
 #
 # THE HOST-GUARD MODULE RIDES ON EVERY ONE of them, and on the forty-odd test
 # modules that have no arm at all, where it is the whole of what the trigger
 # runs. `TestNoTestSpawnsABareInterpreter` sweeps `tests/*.py` whole, so every
-# module in that directory is source behind it; the price is the smallest row in
-# the decomposition above, paid on a save of any Python file there.
+# module in that directory is source behind it; the price is one of the three
+# cheapest rows in the decomposition above, capabilities and the agents module
+# being the other two — paid on a save of any Python file there.
 #
-# So a save of tests/test_preflight.py pays about three of its own module, and a
-# save of tests/test_host_guard.py — the cheapest of the seven — pays many times
-# its own. Against the hooks module they stand in for, the three ids are between
-# a ninth and an eleventh — 12.9 against 114.7 at one end and 12.2 against 130.0
-# at the other. Two sittings ago it read "a tenth to a twelfth" over rows giving a
+# So a save of tests/test_preflight.py pays between two and three and a half of
+# its own module, and a save of tests/test_host_guard.py — one of the three
+# cheapest of the seven — pays SEVENTEEN to twenty-two times its own. That
+# second figure read eight to twelve until a review round read the arm rather
+# than the sentence: the host-guard arm also sets `RUN_PORTABILITY=1`, because
+# `TestTheEngineDirectoryIsFlat` reads that module's roster BY NAME, and
+# portability is 14.5-16.3s. One of the three cheapest rows in the
+# decomposition is attached to the second most expensive one, which is the
+# whole reason this paragraph states a trigger's cost rather than a module's. Against the hooks
+# module they stand in for, the four ids are between an eighth and an eleventh —
+# 15.6 against 131.4 at one end and 12.8 against 136.2 at the other. THREE
+# sittings ago it read "a tenth to a twelfth" over rows giving a
 # NINTH at the top (11.7 against 112.2), which is a figure wrong in the direction
 # that flatters the narrowing, and the fourth time one in this block has been: it still buys the order of magnitude it was made for, but it is not
 # the rounding error the earlier wording made it, and the next narrowing has to
@@ -1456,32 +1562,32 @@ apply_red_checks
 #
 # Still no row in the TABLE, and now for a reason that is not staleness: the
 # seconds above were taken with this sitting, but the table's second column is a
-# module count and what this trigger runs is one module plus three node ids — a
+# module count and what this trigger runs is two modules plus four node ids,
+# three for the one arm named above — a
 # row would have to state a count that is no module's, which is how the `allowed`
 # set keeping every "N tests" in this block honest would come to have an
 # exception in it. The figure lives in this paragraph instead, measured on the
 # same terms as every row above it.
 #
 # ARITHMETIC, stated because a block whose parts do not add up is a block a
-# reader stops believing. Those seven sum to 136.0s at their minima and 159.1s at
-# their maxima, against 137.6-150.1s measured for the seven run together — so this
-# sitting the parts BRACKET the whole rather than sitting one side of it: 1% below
-# at the bottom, 6% above at the top. Seven sittings have now put them above by
-# 6%, inside it, above by 3-4%, above by 4-5%, above by 1-2%, above by 2-3% and
-# now straddling, on a decomposition whose membership did not change: the term
-# that moves is the per-module spread, which the paragraph below says is the only
-# accuracy parts and whole can ever have between them. The straddle is that
-# paragraph's own point arriving as a measurement — the cheap rows were taken
-# TWICE this sitting, once at its start and once near its end, and every one of
-# them came back 20-40% lower the second time on an idle machine with nothing
-# touched between (capabilities 1.4-3.1s then 0.8-0.9s; preflight 6.3-7.2s then
-# 5.6-6.4s). Both passes are in the ranges above, which is why they are wider
-# than any previous sitting's and why the sum straddles. A row here is a RANGE
-# and reading its floor as the figure is what the width is warning against.
+# reader stops believing. Those seven sum to 158.9s at their minima and 169.2s at
+# their maxima, against 158.6-169.6s measured for the seven run together — so
+# this sitting the parts sit INSIDE the whole at both ends, by 0.2% at each.
+# Eight sittings have now put them above by 6%, inside it, above by 3-4%, above
+# by 4-5%, above by 1-2%, above by 2-3%, straddling, and now inside by a fifth of
+# a percent, on a decomposition whose membership did not change: the term that
+# moves is the per-module spread, which the paragraph below says is the only
+# accuracy parts and whole can ever have between them. THIS IS THE CLOSEST THE
+# TWO HALVES HAVE COME AND IT IS WORTH NO MORE THAN THE OTHERS — 0.2% is well
+# inside the run-to-run noise named above, so read it as the halves failing to
+# disagree rather than as a measurement of anything, and do not treat it as a
+# floor a future sitting has to beat. A row here is a RANGE and reading its floor
+# as the figure is what the width is warning against.
+#
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 175 + 182 + 247 + 382 = 1034 for a skill edit, plus 94 + 146 = 1274 for a
+# 48 + 175 + 182 + 247 + 382 = 1034 for a skill edit, plus 94 + 152 = 1280 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1489,7 +1595,7 @@ apply_red_checks
 # "322 ... 753 ... 36 ... 913" against a table already reading 343 and 37, under
 # the very clause claiming it moves with the table — because "it moves with the
 # table" was a promise a person keeps, not a check. It is checked now: the same
-# test reads this sentence, requires its four parts to be the four module rows
+# test reads this sentence, requires its five parts to be the five module rows
 # and its two sums to be the two derived rows, so the three ways this block has
 # stated one quantity are one figure or a red suite. A decomposition
 # error shows up there first, because counts do not drift — and it now shows up
@@ -1500,34 +1606,40 @@ apply_red_checks
 # revision claimed that and had the parts exceeding the whole because a count
 # column had been hand-patched.
 #
-# EVERY SECOND above was measured together, most recently 2026-09-08, on an idle
+# EVERY SECOND above was measured together, most recently 2026-09-15, on an idle
 # machine, and re-measured END TO END rather than patched where a count moved:
 # V5 added ONE case to secure_fs, which moves that row, the skill-edit row and
 # the cold pass at once, and patching one row over stale neighbours is what left
 # the derived rows wrong four revisions ago.
 #
-# THIS SITTING SAYS ONE THING LOUDER THAN ANY ROW. The cheap modules were
-# measured TWICE, at its start and near its end, with nothing touched between,
-# and every one came back 20-40% LOWER the second time: capabilities 1.4-3.1s
-# then 0.8-0.9s, preflight 6.3-7.2s then 5.6-6.4s, portability 12.5-13.1s then
+# ONE SITTING SAID SOMETHING LOUDER THAN ANY ROW, and it was the PREVIOUS one,
+# not this one — the figures in this paragraph are that sitting's rows and none
+# of them appears in the table above any more. Its cheap modules were measured
+# TWICE, at its start and near its end, with nothing touched between, and every
+# one came back LOWER the second time, by between about 5% and 70% depending on
+# the module and on which end of its range is read — capabilities most,
+# portability's ceiling least, and NOT the flat 20-40% this sentence claimed
+# over the same five examples: capabilities 1.4-3.1s then
+# 0.8-0.9s, preflight 6.3-7.2s then 5.6-6.4s, portability 12.5-13.1s then
 # 11.1-12.4s, secure_fs 1.8-2.1s then 1.4-1.5s, the host guard 1.6-1.8s then
 # 1.4-1.5s. Same host, same idle machine, same commands, half an hour apart. The
-# ranges above are the UNION of both passes, which is why they are wider than any
-# previous sitting's, and the reason to publish the union rather than the tidier
-# second pass is that a reader comparing a future row against a floor taken while
-# the machine was warm would read weather as a regression. Whatever the effect is
-# — filesystem cache, thermal, the full-suite runs earlier in the sitting — it is
+# ranges it published were the UNION of both passes, and the reason to publish
+# the union rather than the tidier second pass is that a reader comparing a
+# future row against a floor taken while the machine was warm would read
+# weather as a regression. Whatever the effect is — filesystem cache, thermal, the full-suite runs earlier in the sitting — it is
 # LARGER than most of the between-round differences previous sittings narrated as
 # causes, and it is the strongest argument in this block for reading ratios.
 #
-# Against the previous end-to-end sitting every row came down: the hooks module
-# 114.7-130.0s against 121.8-124.4s (wider, and straddling it), the cold pass
-# 137.6-150.1s against 136.4-143.5s at the floor but reaching further, the
-# skill-edit row 19.7-23.4s against 24.5-26.6s, and `pytest tests/` 228.4-243.4s
-# against 248.7-250.5s — on a suite sixty-nine tests LARGER. None of that has a
-# cause anyone should name: one case was added to one selected module and nothing
-# was made faster. Read it as the same weather the double-measurement above
-# demonstrates inside a single sitting, and read the ratios, not the seconds.
+# Against the previous end-to-end sitting every expensive row went UP, and
+# every row in the decomposition narrowed but ONE — preflight, which rose and
+# widened at once, 5.6-7.2s to 7.6-10.4s: the hooks module 131.4-136.2s against 114.7-130.0s, the
+# cold pass 158.6-169.6s against 137.6-150.1s, the skill-edit row 26.6-27.5s
+# against 19.7-23.4s, and `pytest tests/` 330.0-333.8s against 228.4-243.4s — on
+# a suite six tests larger. The fast path went the other way, 0.05-0.06s against
+# 0.08-0.11s. None of that has a cause anyone should name: six cases were added
+# to one selected module and nothing was made slower. Read it as the same
+# weather the double-measurement above demonstrates inside a single sitting,
+# and read the ratios, not the seconds.
 #
 # THE COUNTS ARE AHEAD OF THE SECONDS whenever a round adds tests without
 # re-measuring, and this is the note that says by how much — the gap stated
@@ -1539,10 +1651,21 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained
-# nine hundred and six tests (3973 to 4879), and the gap was ZERO when the sitting ended: it took the
-# counts and the seconds TOGETHER and took them LAST, after every edit on that
-# branch was final. Since then a review round landed fourteen cases in
+# Against the counts the seconds were taken at, the suite has gained zero tests
+# (4885 to 4885). THE SITTING WAS RE-TAKEN, on the branch that stopped this hook
+# trusting its inherited environment, so the gap is back to ZERO: counts and
+# seconds TOGETHER and LAST, after every edit on that branch was final. It is
+# the first sitting since V5's, and the debt the paragraphs below track is paid.
+#
+# EVERYTHING FROM HERE TO THE END OF THIS BLOCK IS HISTORY, and should be read
+# as the ledger that debt accrued in rather than as anything a row above is
+# derived from. It is kept because it is the record of what those tests were
+# FOR, and because two abandoned sittings are recorded in it with the
+# preconditions they taught. But every figure it steps through is the count of a
+# tree that no longer exists, and "since the sitting" in it means since V5's,
+# not since this one. Retiring it is its own change.
+#
+# The V5 ledger, from here down. Since THAT sitting a review round landed fourteen cases in
 # tests/test_answers.py, W6 added forty-seven in a new tests/test_ci_workflow.py
 # plus two in tests/test_pii_content_scan.py, and V1 added ninety-five in a new
 # tests/test_return_builder.py — none of them a module this hook has
@@ -1734,9 +1857,12 @@ apply_red_checks
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained seventy (177 to 247), preflight has gained seven (375 to 382), the
-# agents module none (48 to 48), secure_fs has gained twenty-two (160 to 182), the hooks module
-# has gained eighteen (128 to 146), capabilities has gained fifty-nine (116 to 175) and the host guard has gained one (93 to 94). EVERY pair is measured from the SITTING and not from the round
+# portability has gained zero (247 to 247), preflight has gained zero (382 to 382), the
+# agents module none (48 to 48), secure_fs has gained zero (182 to 182), the hooks module
+# has gained zero (152 to 152), capabilities has gained zero (175 to 175) and the host guard has gained zero (94 to 94). Seven zeros are what a
+# re-taken sitting looks like, and the pairs are kept rather than deleted
+# because their job is to say whether the seconds can still be trusted — an
+# empty ledger is an answer, not a missing one. EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
 # them were last-round deltas spliced into a sentence whose stated baseline is
 # the seconds, so the six could not be reconciled against the total by anyone
@@ -1747,42 +1873,29 @@ apply_red_checks
 # newest of the six: the W2 tail moved the last hand-rolled engine walks onto
 # tests/engine_tree.py and pinned the helper's arms by DERIVING which watched
 # modules import it, which is the case that found test_claude_agents.py reading
-# tests/skill_text.py with no arm selecting it. Of the eight hundred
-# and ninety-three tests the suite has gained since the sitting, TWENTY-TWO landed in
-# tests/test_secure_fs.py — the Windows cases, one case each for
-# V2's, V1's, Y4's and V7's new engine modules, and W2's ten further engine
-# files, that module's roster being parametrised per file — SIXTY-FIVE landed in
-# tests/test_portability.py, which is Y5, the Z1 skill-text checks, the
-# backlog-status pair, X5's figure lint, W2's packaged-engine guard and the
-# shared engine enumerator's own five, the backlog table's ordering pin, the
-# caveat-matches-the-schema pair, the hand-walk guard's three, X6's three pins
-# on the skills the figure registry did not cover, and the seventeen the
-# registry's DERIVED scope added — one per triaged skill, plus the two that
-# refuse an untriaged or unexplained one, and
-# is a row moving on its OWN account
-# rather than by parametrisation, SEVEN landed in tests/test_preflight.py, which
-# is W2's package entry-point check in both directions and the two that pin the
-# unified dispatch rule, FIFTY-NINE landed in
-# tests/test_capabilities.py, which is Z7's residency registry and Z1's depth
-# note, and is the third
-# such row, EIGHTEEN in tests/test_claude_hooks.py — the derived helper-arm
-# check and its three cry-wolf probes, the package-directory class's nine,
-# and W2's — and ONE in
-# tests/test_host_guard.py, and
-# the other seven hundred and twenty-nine in test_answers, test_ci_workflow,
-# test_pii_content_scan, test_evals, test_eval_run, test_parse_records,
-# test_return_builder, test_receipt, test_filing_package, test_pdf_render,
-# test_workspace, test_tie_out, test_yoy_diff, test_tax_calendar,
-# test_withholding, test_tax_computations, test_projection and
-# test_loss_harvest, none
-# of which this hook has an arm for. That last group is the ordinary case and the reason the pairs
+# tests/skill_text.py with no arm selecting it.
+#
+# Of the zero tests the suite has gained since the sitting, zero landed in
+# tests/test_secure_fs.py, zero in tests/test_portability.py, zero in
+# tests/test_preflight.py, zero in tests/test_capabilities.py, zero in
+# tests/test_claude_hooks.py, zero in tests/test_host_guard.py, and
+# the other zero in test_answers and in every other module this hook has no arm
+# for. That reads as a formality, and the shape is the point: the breakdown
+# that stood here named every round between V5's sitting and this one, module
+# by module, and it was correct prose about a tree that no longer exists. What
+# the sentence is FOR is reconciling the seven pairs against the suite gap, and
+# it does that whether the numbers are large or zero. That last group is the ordinary case and the reason the pairs
 # exist — a round that adds tests OUTSIDE the seven costs the block a sentence,
 # not another half-hour sitting. The seconds are re-taken when the DECOMPOSITION
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to one hundred and seventy-seven; the remaining seven hundred and twenty-nine are modules this
-# hook does not select, which is the reconciliation this sentence exists to state.
+# They sum to zero; the remaining zero are modules this
+# hook does not select, which is the reconciliation this sentence exists to
+# state — and which a re-taken sitting makes trivially true on both sides. It is
+# kept in that state rather than deleted because the sentence is the SET check:
+# deleted, the seven pairs go back to being checkable one at a time, which is
+# how two of them once carried last-round deltas on a sitting-relative baseline.
 #
 # Both halves are CHECKED — `test_the_measured_costs_counts_match_live_collection`
 # reads every `(A to B)` pair in this paragraph, requires each B to be a figure
@@ -2193,9 +2306,11 @@ apply_red_checks
 # two (3254 to 3256). The cold pass and the scale row have now agreed twice
 # running, which is not a rule and must not be read as one — they agree exactly
 # when every test a round adds lands inside the six, and three rounds back the
-# scale row moved ALONE. What is structural is the other gap: an agents test
-# never reaches the skill row, so the skill row trails the cold pass by the
-# agents delta every time, one here and one last round.
+# scale row moved ALONE. The other gap was called STRUCTURAL here — "an agents
+# test never reaches the skill row" — and it is not, and was not: the skill row
+# is 48 + 175 + 182 + 247 + 382 and the first of those five IS the agents
+# module. What the skill row does not carry is the hooks module and the host
+# guard, which is the gap that actually never closes.
 #
 # Both findings were fail-open, and the scanner one is the same habit a third
 # round running — a construct read at the wrong granularity. A command
@@ -2434,10 +2549,30 @@ apply_red_checks
 # second and there is no excuse for a stale one; seconds are not, which is why
 # they carry run counts and why the note about ratios above still governs.
 #
-# The hooks module dominates both the parts and the total — it alone swings
-# several seconds between runs, more than every other module added together — so
-# parts and whole can only ever agree to within ITS noise. A future reading where
-# they disagree by more than that is a reading where something real changed.
+# The hooks module dominates the total, but it no longer dominates the NOISE,
+# which is what parts and whole can agree to. Its own spread is 4.8s this
+# sitting against 5.5s for the other six added together — most of that
+# preflight's 2.8s and portability's 1.8s — where it was 15.3s against 7.8s the
+# sitting before, when this sentence said it swung more than every other module
+# combined and that was true. The SUM of the per-module spreads is 10.3s here —
+# hooks 4.8, preflight 2.8, portability 1.8, and nine tenths between the other
+# four — and that figure is NOT a threshold, which is what this paragraph used
+# to make it. Both halves are RANGES: the parts run 158.9-169.2s and the whole
+# 158.6-169.6s, so a disagreement of 10.7s is consistent with both without
+# anything having changed, and the cold-pass row spans 11.0s on its own. An
+# endpoint difference smaller than that says nothing at all.
+#
+# WHAT A FUTURE READING CAN SAY IS LESS THAN THIS PARAGRAPH HAS TWICE CLAIMED.
+# Three or six readings are sampled extrema, not bounds, and this block's own
+# ledger settles it: capabilities went 1.4-3.1s then 0.8-0.9s inside ONE
+# sitting with nothing touched between — DISJOINT ranges from weather alone. So
+# non-overlap does not establish that anything changed, and overlap does not
+# establish that nothing did. Both are reasons to look, and neither is a
+# verdict. This sitting the two halves almost coincide, 0.3s apart at the
+# bottom and 0.4s at the top, both ends stated because one of them alone is the
+# half that flatters the agreement — which is why the ARITHMETIC paragraph
+# reads it as the halves failing to disagree rather than as a measurement of
+# anything.
 #
 # SPREAD is what justifies filtering at all: more than three orders of magnitude
 # from the fast path to the cold pass, both in the first table. The previous behaviour
@@ -2446,21 +2581,21 @@ apply_red_checks
 #
 # WHERE THE COST IS is one module, and the bound is arithmetic rather than
 # approximate: portability, capabilities, agents, secure_fs, preflight and the
-# host guard together are at most 31.2s even taking each at its slowest, so of a
-# cold pass that never measured below 148.9s, at least 79% is
+# host guard together are at most 33.0s even taking each at its slowest, so of a
+# cold pass that never measured below 158.6s, at least 79% is
 # tests/test_claude_hooks.py. A hook can only be tested by running it — that
-# module spawns bash processes across its 146 tests, more than one per case
+# module spawns bash processes across its 152 tests, more than one per case
 # (205 spawns over 105 cases when last counted with a `bash` shim on PATH;
 # the RATIO is what carries forward, not the absolute) and holds deliberate
 # sleeps — five tests at about 4.5s each. Selecting a subset is therefore the
-# whole win: a skill edit skips that module and costs between a sixth and an
-# eighth of a cold pass (17.0-21.7s against 131.5-133.1s), an agent-definition
-# edit roughly a hundred-and-twentieth. When this gets tight the lever
+# whole win: a skill edit skips that module and costs about a sixth of a cold
+# pass (26.6-27.5s against 158.6-169.6s), an agent-definition edit roughly a
+# hundred-and-twentieth. When this gets tight the lever
 # is that module's own runtime, not this list and not the timeout.
 #
 # HEADROOM is the cold pass against the timeout registered for this hook in
 # .claude/settings.json. That timeout is 480s and the worst observed cold pass
-# is 150.7s, so the margin is 3.2x. Plan against the WORST — the run that overruns
+# is 169.6s, so the margin is 2.8x. Plan against the WORST — the run that overruns
 # is by definition the slow one. It was 2.2x at the 300s this branch started on,
 # having narrowed from 2.5x the sitting before that, and it was RAISED here rather
 # than measured again: the floor `test_the_skill_hook_has_headroom_over_its_measured_
@@ -2478,10 +2613,15 @@ apply_red_checks
 # the correction and the concession both belong here.
 #
 # What it bought is measurable without a stopwatch, because the floor is a
-# function of the COLLECTED count: at 0.35s per collected test the gate re-fires
-# only after roughly another two-thirds of the current selection is added — call
-# it many rounds, not one. The thirty-tests figure was true against the 300s the
-# branch started on and is what the raise removed.
+# function of the COLLECTED count: at 0.35s per collected test, 480s permits
+# 1371 collected tests and the seven selected modules now collect 1284, so the
+# margin is EIGHTY-SEVEN — about 7% of the current selection, not the two-thirds
+# this paragraph claimed. That claim is the shape this block keeps finding in
+# itself: a figure true when written, against a smaller selection, left reading
+# as current while the selection grew past it. Eighty-seven is a few rounds, not
+# many, and the lever below has to be pulled before the next raise rather than
+# after it. The thirty-tests figure was true against the 300s the branch started
+# on and is what the raise removed.
 #
 # The concession stands anyway: the runtime was NOT reduced, and the module that
 # dominates it cannot be made cheap without giving up what it tests. Its slowest
@@ -2532,7 +2672,7 @@ apply_red_checks
 # protect, and a gate that slow on routine work is one that gets switched off,
 # which is the outcome no assertion constrains.
 #
-# What the three ids cost INSTEAD is not nothing, and this paragraph used to
+# What those ids cost INSTEAD is not nothing, and this paragraph used to
 # imply it was by quoting the preflight-to-hooks ratio — which is about the
 # module the narrowing spares. The figure is THE TRIGGER WITH NO ROW, above,
 # stated once and not restated here.

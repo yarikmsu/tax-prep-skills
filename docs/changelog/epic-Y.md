@@ -253,3 +253,76 @@ raised inside the helper. A containment refusal came back as a traceback instead
 of the line it used to print. The helper re-raises as `WorkspaceError` now:
 every caller already handles that, and none of them can be sure which identity
 of `RolloverError` it is holding.
+
+## Y6 residue — the OTHER gate inherits its environment too
+
+Y6 found this class in the PII scan: a variable a contributor's shell exported
+turned the gate's verdict into a no-op, and the scan reported a file as checked
+having read none of its added lines (PR #119). This is the same class in
+`skill-invariants.sh` — the hook that decides which invariants run after every
+tool call, and therefore the gate standing behind every other change.
+
+**Found while reviewing something else.** A W3 slice was flipping the hook's
+module selection to Python; the review round that looked at one `${!name+set}`
+check turned into a sweep, and none of what it found was introduced by that
+slice. Six variables, each REPRODUCED before it was fixed, each with a test
+that goes red when its guard is removed:
+
+- **`PYTEST_ADDOPTS` is the one that turns the gate into a rubber stamp.**
+  pytest appends it to every invocation, so an exported `--collect-only` makes
+  the suite exit 0 having executed **no assertion at all**, and `-k` narrows it
+  to whatever the pattern keeps. The hook reads exit 0, advances the change
+  boundary **and clears the red carry-forward** — a pass that measured nothing,
+  recorded as a pass that measured everything.
+- **`PYTHONOPTIMIZE` deletes `assert` outright.** pytest rewrites the
+  assertions in the tests it collects, so the suite is covered — but several of
+  these modules launch engine modules as SUBPROCESSES and read an exit status,
+  and nothing rewrites those. A module asserting something false exits 1
+  normally and 0 under it.
+- **Inherited `errexit`**, which `set -u` does not turn off and bash imports
+  from an exported `SHELLOPTS`. The whole verdict rests on
+  `out=$(run_focused_modules)` RETURNING so its `$?` can be read; under errexit
+  a red suite kills the script at that line — exit 1, empty stderr, which this
+  script's own interface defines as "a signal killed the pass". A real failure
+  reported as no verdict, and the tool call not blocked.
+- **`physical` drops a symlinked edit.** `set -P` makes `cd` resolve symlinks,
+  so `$PWD` becomes the real path while the payload's `file_path` is still the
+  logical one; the `"$PWD"/*` prefix stops matching and the edit reads as
+  outside the project. `/tmp` resolving to `/private/tmp` was enough, and a
+  symlinked checkout is ordinary.
+- **`xtrace`**, which is noise rather than a wrong verdict and still matters:
+  exit 2 feeds stderr to the agent, and 535 traced lines bury the thirty the
+  failure report is. Cleared in the script's FIRST statement, since bash traces
+  everything up to whatever turns it off — the one line it cannot avoid is the
+  clearing statement, and the test names that line rather than demanding a zero
+  it could never reach.
+- **`CDPATH`, two ways.** `cd` prints where it landed when CDPATH found it, so
+  any `$(cd … && pwd)` comes back as two lines. Worse, CDPATH is searched
+  BEFORE the relative path, so `cd "$CLAUDE_PROJECT_DIR"` with a relative value
+  can land in a different clone — measured: `CDPATH=/tmp/x` sends `cd sub` to
+  `/tmp/x/sub`, after which the hook reads another repository, writes its stamp
+  there, and reports a verdict about a tree nobody edited.
+
+### The stopping rule, which matters more than the list
+
+Y6's own note said it: *"pinning variables by name is an enumeration with no
+stopping rule."* Six review rounds each found one more, which is the shape
+`review-loop-stopping-rule` describes for bash grammar. So the script states a
+threat model — **an environment a contributor's shell plausibly has** — and a
+finding outside it is refuted by citation rather than fixed.
+
+**One is refuted on the record.** `SHELLOPTS=noexec` makes bash parse the script
+and execute none of it, so the hook exits 0 having done nothing — and no `set`
+inside it can repair that, because the repair would not execute either. It is
+also not a state anything survives: it makes every script on the machine a
+no-op. `PYTHONPATH` and a `pytest.ini` on a parent path are plausible but
+neither has been reproduced as a silent PASS, which is the bar for the list.
+
+### One test had to be written twice
+
+The first CDPATH test drove the hook with an ABSOLUTE project directory — where
+bash never consults CDPATH at all — so removing the guard left it green and
+only removing an unrelated redirection as well turned it red. A test that
+cannot detect its own fix is the shape this repository keeps finding. The
+replacement uses a RELATIVE `CLAUDE_PROJECT_DIR` and a decoy tree, and asserts
+which clone the stamp landed in.
