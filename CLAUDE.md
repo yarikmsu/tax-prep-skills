@@ -26,9 +26,11 @@ are what cover other agents. Mechanism, exit codes and the reasoning behind each
 below: `docs/contributing/claude-automation.md`.
 
 - `skill-invariants.sh` (`Write|Edit|Bash`) runs only the checks the changed paths can
-  turn red. **A new source file behind an assertion ALWAYS goes in `select_modules_for`**
-  — or editing it selects nothing and the hook reports a silent green over an unchecked
-  edit — and in `WATCHED_ROOTS` only where no entry already contains it.
+  turn red. That decision is `_ARMS` in `.claude/hooks/lib/hook_selection.py`, which
+  the script runs and which fails CLOSED — if it cannot answer, every module runs.
+  **A new source file behind an assertion ALWAYS goes in `_ARMS`** — or editing it
+  selects nothing and the hook reports a silent green over an unchecked edit — and in
+  `WATCHED_ROOTS` only where no entry already contains it.
 - `harden-runtime-perms.sh` (`Write|Edit|NotebookEdit|Bash`) re-asserts AGENTS.md §1's
   file and directory modes. It exits 1 to surface a failure and **never the blocking 2**.
 

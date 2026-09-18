@@ -35,9 +35,13 @@ It then runs only the CHECKS the changed paths can turn red: seven test modules,
 node-id subset of one of them. Two tables decide that, and CLAUDE.md states the rule for
 adding to them; what the rule is protecting:
 
-- `select_modules_for` is a `case` over the changed path, so it is per-PATH and never
-  per-directory-that-feels-related. The arms are ordered and the FIRST match wins,
-  which is why a file with its own arm does not fall through to its directory's.
+- `_ARMS`, in `.claude/hooks/lib/hook_selection.py`, maps the changed path to modules,
+  so it is per-PATH and never per-directory-that-feels-related. The arms are ordered and
+  the FIRST match wins, which is why a file with its own arm does not fall through to
+  its directory's. The script hands the whole scan to that port in one process and
+  fails CLOSED on any answer it cannot use — a missing selector, a dead interpreter, or
+  a module name the script does not declare all run EVERY module rather than none.
+  It was 218 lines of `case` in the script itself until W3 slice 2.
 - `WATCHED_ROOTS` is where the `find` sweep starts, and entries are ROOTS rather than
   paths — `agents` already reaches `agents/lib`, so adding the deeper path buys a second
   traversal and nothing else. The bare directory matters on its own: it is what a

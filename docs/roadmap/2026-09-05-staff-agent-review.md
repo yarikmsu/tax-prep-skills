@@ -530,11 +530,27 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   read as one subject and was three. It also needed nine shared helpers where New York
   needed one, so `_shared.py` becomes what its name says — the primitives with no form
   of their own — and its docstring now states the rule for what may join it.
-- **W3 (P3, L): Move the hook state machine to Python.** 3,800 lines of bash tested by
+- **W3 (P3, L): Move the hook state machine to Python.** *Selection shipped in
+  #163 and #164; the stamp state machine is still open.* 3,800 lines of bash tested by
   5,200 lines of Python is the wrong language boundary; the stamp and red-carry-forward
   logic is a state machine bash makes hard to read. Python also lets the hook share
   `secure_fs`. Contracts first, extracted incrementally, exit codes and output
   preserved; a wholesale rewrite is not the acceptance criterion.
+
+  **Slices 1 and 2 shipped 2026-09-15.** `select_modules_for` — the largest single
+  decision, 218 lines of `case` and 648 with its reasoning — is now
+  `.claude/hooks/lib/hook_selection.py`, landed first as a contract held to the
+  bash by a differential over every tracked path (#163), then wired in and the
+  bash deleted (#164). The script hands the whole scan to it in ONE process and
+  fails closed on any answer it cannot use.
+
+  **What is left is what the item's first sentence actually names**: the stamp
+  trust cascade and the red carry-forward. That was examined before slice 2 was
+  chosen and DEFERRED on evidence rather than by preference — mutating
+  `read_red_checks` to drop one token turned two tests red, so the round trip
+  already has coverage, and a port of it would add a second implementation of
+  well-pinned logic rather than close a gap. It is worth doing for the READING,
+  which is the item's argument, and it is not urgent.
 
   **RULED 2026-09-13 at Q12: a bash shim of a few lines, and W3 proceeds.** The
   bootstrap — a hook that must run on a checkout with no `.venv` — is already
@@ -1188,7 +1204,8 @@ the table AND the remainders.
    the bar is parity with CA, not an unblock. Any FL follow-up sits at the same tier.
 8. **OPEN.** **Z4 and Z5 (P3)** when those users appear; Z4 is small enough to be a first
    outside contribution.
-9. **OPEN: W3 only.** **W1, W4, W5** as a single hygiene PR at any point — W5 is one file AGENTS.md §7
+9. **OPEN: W3's stamp state machine only.** Its selection half shipped in #163 and
+   #164. **W1, W4, W5** as a single hygiene PR at any point — W5 is one file AGENTS.md §7
    already asks for. **V5, V10, V11, W6, Y4** at any point after step 5. **Y3 is
    not in this sequence** — Q11 ruled against it. **W3**'s bootstrap was the one
    thing gating it and Q12 answered it, so it is schedulable now; it is also the

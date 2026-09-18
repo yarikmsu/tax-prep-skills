@@ -1,24 +1,22 @@
 """Which test modules an edited path can turn red.
 
-W3 slice 1. `select_modules_for` in `skill-invariants.sh` is the hook's
-largest single decision — 218 lines of `case` arms mapping a repository path
-to the modules an edit to it can break — and this is that decision in Python.
+W3, slices 1 and 2. This is the hook's largest single decision — which test
+modules an edit to a repository path can turn red — and `skill-invariants.sh`
+runs it. It was 218 lines of `case` arms there until slice 2; slice 1 landed
+this file beside them, held to them by a differential over every tracked path
+in the repository, and slice 2 spent that differential and deleted the bash.
 
-**The bash is still what runs.** Nothing here is wired into the hook yet, and
-that is the point of doing it this way: a port that changes behaviour on the
-day it lands cannot be told apart from a port that changes behaviour by
-mistake. What lands first is the CONTRACT, executable, with
-`test_the_python_selection_matches_the_shell` running both implementations over
-every tracked path in the repository and requiring identical answers. The flip
-comes later, against a contract that has already been green for a while.
-
-TWO PROPERTIES OF `case` THAT A PORT GETS WRONG IF IT IS NOT LOOKING:
+A `case` is still what these arms ARE, and two of its properties are wrong in
+any port that is not looking for them:
 
 - **First match wins, and the order is load-bearing.** `docs/ops` appears
   twice, once early selecting three modules and once late selecting one; so
   does `tests`. An implementation that collected every matching arm, or that
   stored the arms in a dict, would quietly take the wrong one. The arms are a
-  LIST here for that reason, in source order.
+  LIST here for that reason, in source order — and `_ARMS` being DATA rather
+  than text is what retired a whole class of test: a scan over `case` arms
+  cannot tell an arm's prose from its code, and it counted
+  `# RUN_SECUREFS=1  (temporarily off)` as a selection.
 - **`*` crosses `/`.** In a `case` pattern — unlike filename globbing — `*`
   matches slashes, so `agents/lib/*` really does reach `agents/lib/a/b.py`.
   `fnmatch` has the same semantics, which is why it is the right primitive
@@ -29,6 +27,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import sys
 
 # The eight flags, in the order `skill-invariants.sh` declares them. Named
 # here so a comparison harness can render a stable vector.
@@ -36,6 +35,19 @@ MODULES = ("PORTABILITY", "CAPABILITIES", "AGENTS", "HOOKS", "HOOKSDEPS",
            "PREFLIGHT", "SECUREFS", "HOSTGUARD")
 
 _EVERY = frozenset(MODULES)
+
+# The first line `main` writes, and the shell refuses an answer without it.
+#
+# A SELECTOR THAT CANNOT ANSWER MUST NOT BE ABLE TO ANSWER "NOTHING", and an
+# exit status alone does not buy that: an EMPTY file is valid Python, runs
+# clean and prints nothing, which the shell would read as "no module can break
+# that path" and report as a silent green. That is not a hypothetical shape —
+# the hook fires on every Write, this file included, so the reachable case is a
+# save that leaves it truncated while someone is editing the selector itself.
+# The sentinel makes "the port ran" a POSITIVE claim rather than the absence of
+# a complaint. `test_the_shell_and_the_port_agree_on_the_protocol_line` reads
+# it from here and from the script, so the two cannot drift.
+PROTOCOL = "SELECTION1"
 
 # (patterns, modules) in SOURCE ORDER. First match wins, exactly as `case`.
 _ARMS: tuple[tuple[tuple[str, ...], frozenset], ...] = (
@@ -119,6 +131,14 @@ _ARMS: tuple[tuple[tuple[str, ...], frozenset], ...] = (
     (("CONTRIBUTING.md", "README.md"), frozenset({"PORTABILITY", "PREFLIGHT"})),
     (("agents/install.sh",), frozenset({"PORTABILITY", "SECUREFS"})),
     (("CLAUDE.md",), frozenset({"PORTABILITY", "AGENTS"})),
+    # pyproject.toml, for a reason that is not ruff or mypy config. Its
+    # `[tool.pytest.ini_options]` section is what stops pytest's rootdir search
+    # before it reaches an ancestor directory's `pytest.ini` — and an ancestor
+    # holding `addopts = --collect-only` makes this gate report a suite that
+    # ran nothing. `test_the_project_inifile_stops_an_ancestor_pytest_ini`
+    # asserts that section is there, so an edit to this file has to be able to
+    # turn the module holding it red.
+    (("pyproject.toml",), frozenset({"HOOKS"})),
     (("AGENTS.md",), frozenset({"PORTABILITY", "PREFLIGHT"})),
     ((".github/ISSUE_TEMPLATE", ".github/ISSUE_TEMPLATE/bug_report.yml"),
      frozenset({"PREFLIGHT"})),
@@ -140,11 +160,12 @@ _ARMS: tuple[tuple[tuple[str, ...], frozenset], ...] = (
 def select_modules_for(path: str, *, isdir=os.path.isdir) -> frozenset:
     """The modules an edit to `path` can turn red. Empty means none.
 
-    PER PATH. The shell calls its version in a loop and the RUN_ globals
-    ACCUMULATE across every changed path, so the flip must union these sets —
-    a caller that takes the last path's answer would silently narrow the pass
-    to whatever was scanned last, which is the shape of a green hook over an
-    unchecked edit.
+    PER PATH, and the accumulation across a scan is `union_for`, not this.
+    The shell used to call its own version in a loop and let the RUN_ globals
+    accumulate; that loop is gone, so a caller reaching for this function
+    directly over many paths has to union the answers itself. Taking the last
+    path's answer would narrow a whole scan to whatever `find` printed last,
+    which is the shape of a green hook over an unchecked edit.
 
     `isdir` is injected so the package-directory arm can be exercised without
     a filesystem: it is the one place this decision is not pure, and hiding
@@ -172,3 +193,57 @@ def select_modules_for(path: str, *, isdir=os.path.isdir) -> frozenset:
         if any(fnmatch.fnmatchcase(path, p) for p in patterns):
             return modules
     return frozenset()
+
+
+def union_for(paths) -> frozenset:
+    """The union across every changed path — never the last one's answer.
+
+    The shell accumulated into its `RUN_` globals across a loop; this is where
+    that accumulation lives now. A caller taking one path's answer would
+    narrow the pass to whatever `find` printed last, which is the shape of a
+    green hook over an unchecked edit.
+    """
+    return frozenset().union(*(select_modules_for(p) for p in paths),
+                             frozenset())
+
+
+def main() -> int:
+    """NUL-delimited paths in, one selected flag suffix per line out.
+
+    ONE PROCESS PER SCAN, not one per path — and per SCAN rather than per
+    pass, which is not the same thing and was written as if it were. A Write
+    with a changed list behind it enters this twice: once for the payload's
+    own path, once for the scan. Instrumented, two interpreter starts. `case`
+    was a shell function call costing nothing measurable and an interpreter
+    start is not, so the loop had to move inside the process: a scan that
+    hands over a thousand changed paths must not pay that start a thousand
+    times, which is the claim that holds.
+
+    NUL-delimited because `find -print0` is what the scan already produces and
+    because a repository path may contain a newline. Reading it as lines would
+    split one such path into two fragments, each matching no arm — and two
+    nothings is indistinguishable from one, so the miss would be silent.
+
+    TWO WAYS OF NOT ANSWERING, and the shell refuses on both. A raise exits
+    CPython non-zero, which the command substitution's `|| return 1` catches —
+    there is no `try` here, because a `try` adds nothing the exit status does
+    not already say and the traceback goes to a stderr the hook discards.
+    `PROTOCOL` closes the half the exit status cannot reach; see its comment.
+    """
+    raw = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
+    # The sentinel goes first, and the reason is that the shell can refuse on
+    # it before reading anything else — not that writing it last would be
+    # weaker. Last would in fact be marginally stronger, proving the loop ran
+    # to the end; the exit status already proves that, since anything killing
+    # this process leaves it non-zero. An earlier version of this comment said
+    # a trailing sentinel would make an empty selection indistinguishable from
+    # a crash, which is simply false: sentinel plus exit 0 is one, a missing
+    # sentinel is the other.
+    print(PROTOCOL)
+    for module in union_for(p for p in raw.split("\0") if p):
+        print(module)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

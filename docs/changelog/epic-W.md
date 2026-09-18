@@ -266,3 +266,169 @@ same spelling where `"MFJ"` reads `mfj_covered`. Both are the wrong-but-plausibl
 branch. They are a separate contract change in three more modules, so they are
 X8 in the backlog with the reproductions attached, not silent scope on an
 engine-contract PR.
+
+## W3 — The hook's largest decision moves to Python — PRs #163, #164
+
+The backlog's framing: *"3,800 lines of bash tested by 5,200 lines of Python is
+the wrong language boundary."* Its acceptance criterion is the opposite of a
+rewrite — *"contracts first, extracted incrementally, exit codes and output
+preserved"* — and two slices is what that bought.
+
+**Slice 1 (#163) landed the port beside the bash it copied**, wired into
+nothing, held to `select_modules_for` by a differential running both
+implementations over every tracked path in the repository plus an adversarial
+list. A port that changes behaviour on the day it lands cannot be told apart
+from a port that changes behaviour by mistake; landing the CONTRACT first is
+what separates them.
+
+**Slice 2 (#164) spent that differential and deleted the `case`.** 218 lines of
+arms, 678 lines from the function's declaration to its closing brace, replaced
+by an EIGHTEEN-line shell function — eighty-one with its own reasoning — that pipes the scan to
+`.claude/hooks/lib/hook_selection.py` and sets the flags it names. The reasoning
+did NOT travel with the arms: the deleted function carried 456 comment lines
+and `_ARMS` carries 19, which is the trade turning arms into data makes and is
+recorded here rather than counted as a formatting change. The differential could not survive the flip and was never meant to:
+with one implementation left there is no second answer to compare against, and
+keeping it would have pinned the port to a shell revision that can never grow
+the next arm. What replaced it runs the REAL HOOK and reads the pytest argv,
+which covers the wiring the differential structurally could not see.
+
+**Three things the flip had to get right, each of which fails silently:**
+
+- **A pipe would have lost every flag.** `printf ... | select_modules_from`
+  runs the function in a SUBSHELL, where the eight `RUN_` assignments die with
+  it and the branch reads back the zeros it started with — a green hook over an
+  edit that had just selected five modules. A process substitution does not.
+- **One process, not one per path.** `case` was a shell function call costing
+  nothing measurable; an interpreter start is not. The loop moved INSIDE the
+  process, so a scan handing over a thousand changed paths pays that start
+  once. `union_for` is where the accumulation the shell did in globals now
+  lives, and a port returning the LAST path's answer would pass every per-path
+  test while narrowing a whole scan to whatever `find` printed last.
+- **Fail CLOSED, in all four directions.** A missing selector, a dead
+  interpreter, a raise, or a module name the script does not declare all run
+  EVERY module. A selector that cannot answer must never be able to answer
+  "nothing". The undeclared-flag case is the one that needed saying out loud:
+  `eval "RUN_$m=1"` on a name nothing declares would CREATE it, nothing
+  downstream would read it, and the pass would go quiet over a real
+  disagreement between the two files — so each name is checked against the
+  script's own declarations rather than against a seventh copy of the roster.
+
+**The port is located beside the SCRIPT, not by CWD**, which is the rest of the
+file's convention. The port is part of the hook rather than part of the
+repository it inspects, and the test harness drives the script against
+synthetic workspaces that hold neither — by CWD every one of them would have
+answered "cannot answer" for every path, and a hook that selects everything
+satisfies nothing that file asserts.
+
+**What the flip retired, beyond the bash.** One cry-wolf test went with the
+text parser it was validating, and ONE of the two failure modes went with it: a
+scan over `case` arms cannot tell an arm's prose from its code, and it counted
+`# RUN_SECUREFS=1  (temporarily off)` as a selection. `_ARMS` is DATA — a tuple
+of pattern tuples and frozensets — so prose cannot be read as code there.
+
+The OTHER mode survived, and this paragraph claimed it had not. Reading a
+multi-pattern arm is still a question that can be asked wrongly: matching the
+arm's first pattern, or the whole tuple, reproduces the `a|b)` failure exactly,
+over data instead of over text. Review caught it because the replacement test
+asked about a path sitting in a ONE-pattern arm and so passed under both
+mutations; it derives the multi-pattern arms from the table now.
+
+**What it cost, stated rather than left to be found.** The per-pattern coverage
+guard used to read its obligation out of the SHELL, so deleting an arm from the
+port left that obligation standing and the test went red. There is no second
+copy now, and an arm deleted from `_ARMS` takes its own obligation with it.
+What still holds the arms to something outside themselves is
+`test_the_watched_set_still_covers_what_the_modules_read`, which DERIVES what
+each test module reads and requires an arm to select it — the assertion that
+caught the real misses. This paragraph credited
+`test_every_watched_source_path_reaches_its_module` instead, which iterates the
+hand-written `WATCHED_SOURCE_PATHS` and derives nothing; naming the wrong one
+would have left a reader trusting a transcription for the guarantee only the
+derivation gives. The narrower guard keeps the job it can still do honestly: no
+arm in the table is unreachable prose.
+
+**The fast path spawns no interpreter at all**, which took a review round to
+get right — and which is a defect this slice REPAIRED IN ITSELF rather than an
+improvement it delivered. The first draft ran the port unconditionally,
+including on the two hottest no-op paths: a Bash call where `find` printed
+nothing, and a Write to a file outside the project. An empty list selects
+nothing whoever is asked, so both say so directly now and the interpreter is
+never started.
+
+The row itself is UNCHANGED by this slice, and the branch claimed otherwise
+until the rebase disproved it. Both readings behind that claim — 0.08-0.10s and
+0.05-0.06s — are drafts of this slice. The tree without it settles the
+question: the sitting taken for the environment-hardening change, with no port
+on the fast path and the `case` still in place, reads that row at 0.05-0.06s
+too. The fast path returns before any selection happens by either
+implementation. Seconds are in MEASURED COSTS and nowhere else.
+
+### The review round, because most of it landed on this commit's own prose
+
+Four review angles plus a local adversarial pass. The port itself came back
+clean — and it was re-derived AGAIN after the rebase, against the trunk's bash
+rather than the one this branch was written against, with no mapping
+differences. The corpus is 404 paths: every tracked file, every ancestor
+directory of one, and the twenty-three adversarial cases slice 1 defined. This
+paragraph said 532, a figure that does not come out of that corpus on any
+revision of this branch — the repository has held 301 tracked files throughout
+— so it is replaced by one a reader can re-derive. Almost every finding was in
+the wiring or in a sentence about it.
+
+**Two of the comments were false, and both flattered the change:**
+
+- `SELECTOR="$(dirname "$0")/lib/..."` carried a comment saying the value was
+  captured "before the `cd` moves away from the frame `$0` is relative to".
+  Assigning a RELATIVE string ahead of a `cd` pins nothing — invoked by a
+  relative path with `CLAUDE_PROJECT_DIR` elsewhere, it resolves against the
+  project afterwards, to a different file or none. `pwd` is what pins it, and
+  it does now. The same comment sold script-relative resolution as a design
+  property when the honest reason is the test harness, which drives the real
+  script against workspaces holding no `lib/`; in production the two
+  resolutions coincide, and where they diverge script-relative is the WORSE
+  answer. Recorded as a harness debt rather than dressed up.
+- `union_for`'s test claimed to cover the subshell defect. It never invokes
+  the hook. That defect is covered — rewriting either call site as a pipe
+  turns thirty tests in this module red, measured — but not by that test, and
+  a test claiming coverage it does not have is worse than one claiming none.
+
+**And one paragraph got the residual backwards.** The per-pattern coverage
+guard now reads its obligation out of `_ARMS`, so a deleted arm deletes its
+own requirement. The first attempt at saying so claimed the affected arms
+were "read by no module" and their loss "coverage rather than correctness" —
+both wrong: `test_secure_fs.py` sweeps `agents/**/*.py` and
+`test_portability.py` globs `docs/ops/*.md`, so those arms guard real reads.
+The derived anchor misses them because it finds path LITERALS and these are
+globs.
+
+**`_ARM_SNAPSHOT` is the repair**, and it is what the flip actually cost.
+Until now the arms existed twice and a differential required them to agree, so
+changing one meant editing two files. The arms are pinned as data now — in
+source order, since first match wins and two patterns appear in two arms
+each — so a deletion or a narrowing still takes a deliberate second edit.
+A second copy of the DATA, not a second implementation: it cannot catch a
+wrong answer the table itself states, and it is not trying to.
+
+**Three fail-closed holes, none of which the exit status could reach:**
+
+- An EMPTY selector file is valid Python: it runs clean, prints nothing, exits
+  0, and the shell read that as "no module can break this path". Reachable
+  rather than exotic — the hook fires on every Write, the selector included.
+  A `SELECTION1` protocol line makes "the port ran" a positive claim.
+- `printf -v` was assigning a flag and its status was ignored. An exported
+  shell function named `printf` forwarding to `/usr/bin/printf` shadows the
+  builtin and rejects `-v`: reproduced on bash 3.2, assignment refused, flag
+  left at zero, the function returning success over it. `builtin printf`, and
+  the flag read back afterwards rather than the status trusted.
+- The loop was `for module in $out`, which does pathname expansion as well as
+  word splitting — with the CWD inside a directory that can hold `documents/`
+  and `summaries/`. It failed closed on the charset check, but that is the
+  validator carrying a hazard the loop should not create. `while IFS= read`
+  does neither.
+
+**Paths go in on STDIN, and that is a privacy property with a test now.** argv
+is world-readable through `ps`, and the path being classified can name a
+taxpayer's document — the same exposure the hook's generic message label
+exists to prevent. Nothing in the code said so, so the obvious simplification
+(pass it as an argument) would have been made without objection.

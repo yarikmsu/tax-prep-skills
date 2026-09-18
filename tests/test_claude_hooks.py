@@ -20,10 +20,12 @@ failure branch never runs and a red suite passes silently. Mutating the script
 back to that form turns two assertions below red.
 """
 import ast
+import fnmatch
+import functools
+import importlib.util
 import json
 import math
 import os
-import fnmatch
 import re
 import resource
 import shutil
@@ -46,6 +48,11 @@ HOOKS_DIR = REPO / ".claude" / "hooks"
 SETTINGS = REPO / ".claude" / "settings.json"
 SKILL_HOOK = HOOKS_DIR / "skill-invariants.sh"
 PERMS_HOOK = HOOKS_DIR / "harden-runtime-perms.sh"
+# The port the script runs its selection through, since W3 slice 2. The
+# shell builds this path a third time from `$0` — it must resolve beside the
+# script rather than against the repository — but the Python side reads it
+# here and nowhere else.
+SELECTION_PORT = HOOKS_DIR / "lib" / "hook_selection.py"
 SKILL_STAMP = Path(".claude") / ".skill-invariants-stamp"
 
 
@@ -95,10 +102,12 @@ PREFLIGHT = "tests/test_preflight.py"
 SECUREFS = "tests/test_secure_fs.py"
 HOSTGUARD = "tests/test_host_guard.py"
 
-# The same seven, paired with the shell variable each arm sets. Written out
-# once so a test can read an arm's BODY and say which modules it selects, which
-# is the only way to assert a claim about an arm that has no path literal to
-# match on.
+# The same seven, paired with the shell variable each one sets. The `RUN_`/`=1`
+# decoration is what it is because a deleted text scanner searched an arm's
+# BODY for that exact line; nothing reads an arm body now — `_ARMS` is data —
+# and `_PORT_NAME` below strips both ends back off. Kept in this shape because
+# the DECORATED form is still what the script declares and what
+# `test_the_check_name_lists_agree` matches on; the strip is stated once.
 _RUN_FLAG = {
     PORTABILITY: "RUN_PORTABILITY=1",
     CAPABILITIES: "RUN_CAPABILITIES=1",
@@ -109,6 +118,122 @@ _RUN_FLAG = {
     HOSTGUARD: "RUN_HOSTGUARD=1",
 }
 ALL_MODULES = tuple(_RUN_FLAG)
+
+# ...and the same seven under the names the PORT uses, which are the shell
+# flag suffixes. Stated once: the conversion is a slice off both ends of a
+# `_RUN_FLAG` value, and written inline it is an undocumented `[4:-2]` at every
+# site. It also DROPS `HOOKSDEPS`, which the port has and this map does not,
+# because that flag selects node ids rather than a module file — one stated
+# omission instead of one silent one per copy.
+_PORT_NAME = {m: flag[4:-2] for m, flag in _RUN_FLAG.items()}
+
+
+def _module_paths(port_modules) -> set:
+    """The test files a set of the port's module names stands for."""
+    return {m for m in ALL_MODULES if _PORT_NAME[m] in port_modules}
+
+# THE ARMS, PINNED. A second deliberate statement of `hook_selection._ARMS`,
+# in source order, each arm's modules sorted.
+#
+# This is what the flip cost and what gets it back. Until W3 slice 2 the arms
+# existed twice — once in bash, once in the port — and a differential required
+# them to agree, so deleting or narrowing one meant editing two files. With one
+# implementation left, an arm deleted from `_ARMS` takes its own coverage
+# obligation with it and every test here stays green. The obligation lives
+# here now.
+#
+# A second COPY OF THE DATA, not a second implementation: it cannot catch a
+# wrong answer the table itself states, and it is not trying to. It catches the
+# edit nobody meant to make, which is the half the differential was actually
+# earning its keep on.
+#
+# ORDER IS LOAD-BearING and so it is a sequence, not a mapping: `docs/ops` and
+# `tests` each appear in TWO arms with different answers, and first match wins.
+# Keyed by pattern, the second of each pair would overwrite the first and the
+# pin would assert the wrong one.
+#
+# A DICT OR A NESTED SEQUENCE, never a flat list of path strings. Every
+# repository path written as an element of a flat module-level tuple or list is
+# recovered by `_path_constants` and read as a file THIS module opens, which
+# would then demand that each of these patterns select the hooks module. Nested
+# one level deeper it is invisible to that locator — checked, not assumed.
+_ARM_SNAPSHOT = (
+    (('.agents/skills', '.agents/skills/*', '.claude/skills',
+      '.claude/skills/*',),
+     ('AGENTS', 'CAPABILITIES', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('.claude/agents', '.claude/agents/*.md',), ('AGENTS',)),
+    (('docs/ops/review-subagent-acceptance.md',),
+     ('AGENTS', 'PORTABILITY', 'PREFLIGHT',)),
+    (('docs/contributing/residency-guardrails.md',), ('CAPABILITIES',)),
+    (('docs/contributing/parse-boundary.md',), ('AGENTS',)),
+    (('docs/ops/season-open-runbook.md',),
+     ('AGENTS', 'PORTABILITY', 'PREFLIGHT',)),
+    (('docs/ops',), ('AGENTS', 'PORTABILITY', 'PREFLIGHT',)),
+    (('.claude/hooks', '.claude/hooks/*', '.claude/settings.json',),
+     ('HOOKS',)),
+    (('tests/test_claude_hooks.py',), ('HOOKS', 'HOSTGUARD',)),
+    (('scripts/pre-commit-pii-scan.sh',),
+     ('HOOKS', 'PORTABILITY', 'SECUREFS',)),
+    (('agents/lib/capabilities.py', 'agents/lib/rollover.py',),
+     ('AGENTS', 'CAPABILITIES', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT',
+      'SECUREFS',)),
+    (('agents/lib/tax_law_fetcher.py',),
+     ('AGENTS', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('agents/lib/ptet.py',),
+     ('AGENTS', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('agents/lib/tax_computations', 'agents/lib/tax_computations/*',),
+     ('AGENTS', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('tests/test_claude_agents.py',), ('AGENTS', 'HOOKSDEPS', 'HOSTGUARD',)),
+    (('agents/lib/secure_fs.py',),
+     ('AGENTS', 'CAPABILITIES', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT',
+      'SECUREFS',)),
+    (('agents', 'scripts',), ('SECUREFS',)),
+    (('agents/lib',),
+     ('AGENTS', 'CAPABILITIES', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT',
+      'SECUREFS',)),
+    (('requirements.in', 'requirements.txt',), ('PREFLIGHT',)),
+    (('agents/lib/*.sh',), ('PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('agents/lib/*',),
+     ('HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('tests/conftest.py',),
+     ('AGENTS', 'CAPABILITIES', 'HOOKS', 'HOOKSDEPS', 'HOSTGUARD',
+      'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('tests/test_preflight.py',), ('HOOKSDEPS', 'HOSTGUARD', 'PREFLIGHT',)),
+    (('tests/test_secure_fs.py',), ('HOOKSDEPS', 'HOSTGUARD', 'SECUREFS',)),
+    (('tests/test_host_guard.py',),
+     ('HOOKSDEPS', 'HOSTGUARD', 'PORTABILITY',)),
+    (('agents/templates/taxpayer_profile_template.json',), ('CAPABILITIES',)),
+    (('tests/test_capabilities.py',),
+     ('CAPABILITIES', 'HOOKSDEPS', 'HOSTGUARD',)),
+    (('agents/templates/result_template.json',
+      'agents/templates/projection_inputs_template.json',),
+     ('PORTABILITY',)),
+    (('tests/skill_text.py',),
+     ('AGENTS', 'CAPABILITIES', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT',)),
+    (('tests/engine_tree.py',),
+     ('HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+    (('docs/QUICKSTART.md', 'docs/contributing/agents-compat.md',),
+     ('PORTABILITY', 'PREFLIGHT',)),
+    (('CONTRIBUTING.md', 'README.md',), ('PORTABILITY', 'PREFLIGHT',)),
+    (('agents/install.sh',), ('PORTABILITY', 'SECUREFS',)),
+    (('CLAUDE.md',), ('AGENTS', 'PORTABILITY',)),
+    (('pyproject.toml',), ('HOOKS',)),
+    (('AGENTS.md',), ('PORTABILITY', 'PREFLIGHT',)),
+    (('.github/ISSUE_TEMPLATE', '.github/ISSUE_TEMPLATE/bug_report.yml',),
+     ('PREFLIGHT',)),
+    (('.github/workflows/ci.yml',), ('AGENTS',)),
+    (('LICENSE', '.gitignore', '.pii-allowlist',
+      '.vscode/settings.json', 'docs/contributing',
+      'docs/contributing/*.md', 'docs/ops', 'docs/ops/*.md',
+      'docs/roadmap', 'docs/roadmap/*.md',),
+     ('PORTABILITY',)),
+    (('tests/test_portability.py',),
+     ('HOOKSDEPS', 'HOSTGUARD', 'PORTABILITY',)),
+    (('tests',), ('HOSTGUARD', 'PORTABILITY',)),
+    (('agents/*.py', 'agents/*.sh', 'scripts/*.py', 'scripts/*.sh',),
+     ('SECUREFS',)),
+    (('tests', 'tests/*.py',), ('HOSTGUARD',)),
+)
 
 # The stamp is deliberately backdated one second, so a file written in the same
 # coarse filesystem tick as the pass start still reads as newer than it. A test
@@ -140,7 +265,18 @@ def _mode(p: Path) -> int:
     return stat.S_IMODE(p.stat().st_mode)
 
 
-def _run_skill_hook(project_dir: Path, edited: str, path=None, env_extra=None):
+def _run_skill_hook(project_dir: Path, edited: str, path=None,
+                    env_extra=None, script=None):
+    """`script` drives a COPY of the hook, which the fail-closed tests need.
+
+    They replace the selector beside the script — the only way to do that
+    without touching the one the rest of this module runs — and everything
+    else about the call is identical, so the payload shape and the env
+    contract stay stated once rather than transcribed per test.
+
+    `env_extra` is the other half of that: the inherited-environment tests
+    need a contributor's profile in the call rather than a second copy of it.
+    """
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir))
     if path is not None:
         env["PATH"] = path
@@ -148,7 +284,7 @@ def _run_skill_hook(project_dir: Path, edited: str, path=None, env_extra=None):
     # contributor's profile leaves lying around, which it was not doing.
     env.update(env_extra or {})
     return subprocess.run(
-        ["bash", str(SKILL_HOOK)],
+        ["bash", str(script or SKILL_HOOK)],
         input=json.dumps({"tool_input": {"file_path": edited}}),
         text=True, capture_output=True, env=env)
 
@@ -215,54 +351,66 @@ def _shared_test_helpers() -> list:
                   and p.name not in ("__init__.py", "conftest.py"))
 
 
-def _case_arm_body(script: str, arm: str):
-    """The body of the `case` arm whose pattern list contains `arm`, or None.
+@functools.cache
+def _selection_port():
+    """`.claude/hooks/lib/hook_selection.py`, loaded once by PATH.
 
-    Not a regex over `^\\s{8}<arm>\\)$`. That was the first version and it
-    cry-wolfed: the dominant arm shape in this script is `a|b)` — fifteen of
-    them — plus five spread over continuation lines, so merging two arms, or
-    adding one alternative to an existing one, made a CORRECT script read as
-    unparseable. The pattern LIST is what an arm is; membership in it is the
-    question.
-
-    Returns None rather than asserting, so a caller can tell "this helper has
-    no arm at all" (which is a finding about coverage) from "the arm is there
-    and selects too little" (which is a different finding).
+    By path and not by import: `.claude` is not an identifier, so the
+    directory holding the hook's Python has no dotted name to import it under.
     """
-    lines = script.splitlines()
-    i = 0
-    while i < len(lines):
-        line, start = lines[i], i
-        while line.endswith("|\\") and i + 1 < len(lines):
-            i += 1
-            line = line[:-1] + lines[i].strip()
-        if (line.startswith(" " * 8) and not line.startswith(" " * 9)
-                and line.rstrip().endswith(")")):
-            patterns = [x.strip() for x in line.strip()[:-1].split("|")]
-            if arm in patterns:
-                body = []
-                for follow in lines[start + 1:]:
-                    if follow.strip() == ";;":
-                        return "\n".join(body)
-                    body.append(follow)
-                return None
-        i += 1
+    spec = importlib.util.spec_from_file_location(
+        "hook_selection", SELECTION_PORT)
+    port = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(port)
+    return port
+
+
+def _first_arm(path: str):
+    """The `(pattern, modules)` of the FIRST arm matching `path`, or None.
+
+    First match wins, and `hook_selection`'s own docstring calls that order
+    load-bearing — so it is encoded once here rather than walked separately by
+    every test that needs it. Reading `_ARMS` rather than calling
+    `select_modules_for` is deliberate where a caller is checking the ARMS: a
+    test that calls the port to check the port compares it against itself.
+    """
+    for patterns, modules in _selection_port()._ARMS:
+        hit = next((q for q in patterns if fnmatch.fnmatchcase(path, q)), None)
+        if hit is not None:
+            return hit, modules
     return None
 
 
-def _modules_selected_by(body: str) -> set:
-    """Which of the seven a `case` arm body turns on, from its RUN_ flags.
+def _arm_selecting(pattern: str):
+    """The modules of the arm whose PATTERN LIST contains `pattern`, or None.
 
-    ANCHORED to a whole line of code, not a substring of the body. A substring
-    test reads the arm's COMMENTS too, and these arms are mostly comment — the
-    `tests/skill_text.py` one runs seven lines of prose to five of code. Both
-    `# RUN_SECUREFS=1  (temporarily disabled)` and `# deliberately NOT
-    RUN_SECUREFS=1 here` were verified to leave the check GREEN over a hook
-    that had stopped selecting the module: a sweep that sees nothing reporting
-    green, reintroduced inside the test written to end it.
+    W3 slice 2 deleted the `case` this used to parse out of the shell. Two
+    cry-wolf tests stood here because a text scan over `case` arms cannot tell
+    prose from code: `# RUN_SECUREFS=1  (temporarily off)` counted as a
+    selection, and an arm written `a|b)` rather than `a)` read as an
+    unparseable script. `_ARMS` is DATA — a tuple of pattern tuples and
+    frozensets — so the PROSE half of that cannot happen any more, and the
+    test that pinned it went with the parser it validated.
+
+    THE OTHER HALF DID NOT GO AWAY, and this docstring said it had. Reading a
+    multi-pattern arm is still a question that can be asked wrongly: matching
+    the arm's FIRST pattern, or the whole tuple, reproduces the `a|b)` failure
+    exactly, over data instead of over text. Both mutations were run and both
+    are caught — by a test that had to be repaired first, because it asked
+    about a path sitting in a ONE-pattern arm and passed either way.
+
+    Membership in the pattern LIST, not equality, is still the question: the
+    dominant arm shape groups several patterns that select the same modules,
+    and an arm gaining one more alternative must not read as a missing arm.
+
+    Returns None rather than asserting, so a caller can tell "this path has no
+    arm at all" — a finding about coverage — from "the arm is there and
+    selects too little", which is a different finding.
     """
-    return {m for m in ALL_MODULES
-            if re.search(rf"(?m)^\s*{re.escape(_RUN_FLAG[m])}\s*$", body)}
+    for patterns, modules in _selection_port()._ARMS:
+        if pattern in patterns:
+            return _module_paths(modules)
+    return None
 
 
 def _imports(path, helper: str) -> bool:
@@ -400,11 +548,36 @@ def _fake_venv(root: Path, exit_code: int, lines=()):
     `lines=["$*"]` turns it into an argv echo, which is how `_selected_modules`
     reads back WHICH modules a given edit chose — the shim is inside a `sh`
     script, so the line is expanded rather than printed literally.
+
+    SELECTION IS FORWARDED TO A REAL INTERPRETER, and the split is what keeps
+    the shim honest now that the hook runs `.venv/bin/python` for two unlike
+    reasons. Shimming pytest is the whole point — it makes the failure path
+    deterministic and fast — but shimming the SELECTOR would mean every
+    workspace here answered every path with the fail-closed "cannot answer",
+    and a hook that selects everything satisfies nothing this file asserts.
+    THE DISPATCH IS A PINNED ARGV SHAPE, and saying otherwise was wrong. An
+    earlier version of this docstring claimed it dispatched "on the script
+    being run rather than on a flag" so that no argv shape was pinned — but
+    matching the selector at all IS matching argv. So it matches ANY argument
+    rather than the first: `python -X faulthandler "$SELECTOR"` would
+    otherwise reach the pytest branch, `out` would come back `288 passed`, the
+    charset guard would refuse it, every module would run, and the
+    silence-asserting tests would stay green over a hook whose selection never
+    ran at all.
+
+    One thing it cannot exercise: the shim execs THIS interpreter, so "the
+    selector runs under the workspace venv" is asserted nowhere here.
     """
     bindir = root / ".venv" / "bin"
     bindir.mkdir(parents=True, exist_ok=True)
     python = bindir / "python"
-    body = ["#!/bin/sh"] + [f'echo "{line}"' for line in lines] + [f"exit {exit_code}"]
+    body = ["#!/bin/sh",
+            "for a in \"$@\"; do",
+            "  case \"$a\" in",
+            f"    *hook_selection.py) exec {sys.executable} \"$@\" ;;",
+            "  esac",
+            "done"]
+    body += [f'echo "{line}"' for line in lines] + [f"exit {exit_code}"]
     python.write_text("\n".join(body) + "\n")
     python.chmod(0o755)
     return python
@@ -679,45 +852,58 @@ class TestAPackageDirectoryReadsAsItsInitialiser:
 
 
 @needs_jq
-class TestTheShellSelectionHasAPythonContract:
-    """W3 slice 1: `select_modules_for` in Python, held to the shell by test.
+class TestTheSelectionPortIsTheHooksOwnDecision:
+    """W3 slice 2: the port is wired in, and the bash `case` is gone.
 
-    The backlog asks for contracts first and an incremental extraction, not a
-    wholesale rewrite. So the Python lands BEFORE it is wired in: the shell is
-    still what runs, and this is the contract the flip will later be made
-    against. A port that changes behaviour on the day it lands cannot be told
-    apart from a port that changes behaviour by mistake.
+    Slice 1 landed `.claude/hooks/lib/hook_selection.py` beside a 218-line
+    `case` that was still what ran, held to it by a differential over every
+    tracked path in the repository. That differential was a MIGRATION PROOF
+    and this commit spends it: with one implementation left there is no second
+    answer to compare against, and keeping it would have meant pinning the
+    port to a shell revision that can never grow the next arm.
 
-    EVERYTHING DERIVED FROM THE SCRIPT, nothing transcribed. The first version
-    of this class hand-wrote the eight flag names in two places and stripped
-    bash comments with a regex to work out which helpers the probe had to
-    define. Both were wrong: a ninth module added to the hook was invisible to
-    all three tests, and the comment stripper fired on a `;;#` with no space
-    before it while missing a `#` inside quotes. The flags come out of their
-    DECLARATIONS now, and what actually exists in the shell afterwards is
-    asked of bash rather than scanned for. The oracle is checked against a
-    known answer before it is trusted, because a shell side that reports
-    "nothing" reads exactly like a port that is wrong everywhere.
+    What replaces it is not weaker in the direction that matters. The
+    differential compared two functions; these tests run the REAL HOOK and
+    read the pytest argv it produces, so they cover the wiring the
+    differential could not see — the process substitution that would have lost
+    every flag to a subshell, the union across a scan of many paths, and the
+    direction a selector that cannot answer fails in.
+
+    WHAT REPLACES IT, precisely, because two drafts of this paragraph claimed
+    more than the tests below do. The differential compared two
+    implementations over every path. Nothing here does that, and nothing can.
+    What is here instead:
+
+    - `_ARM_SNAPSHOT` pins the arms as DATA, so deleting or narrowing one
+      still takes a deliberate second edit. That is the property the
+      differential was really earning its keep on, and it is the only one of
+      these that replaces it rather than adding something new.
+    - Four tests drive the REAL HOOK and read the pytest argv it produces —
+      the three fail-closed directions, and the argv rule. Those cover wiring
+      the differential could not see.
+    - One drives the CLI alone, for the union, because there is no per-path
+      loop left in the shell for that defect to live in.
+
+    The SUBSHELL defect is not in this list, and an earlier draft put it
+    there. It is covered — rewriting either call site as a pipe turns thirty
+    tests in this module red, measured — by the tests that already drive the
+    hook, not by anything written for the flip.
+
+    WHAT IS DERIVED, and what is not. The flag roster comes from the script's
+    own declarations and the corpus from `git ls-files` plus every ancestor
+    directory. The per-pattern coverage obligation is NOT derived from
+    anything outside the table any more; that is what `_ARM_SNAPSHOT` is for,
+    and `test_every_arm_pattern_is_reached_by_the_corpus` says so at length.
     """
-
-    def _python(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "hook_selection", HOOKS_DIR / "lib" / "hook_selection.py")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
 
     def _flags(self):
         """The RUN_ flags, from their DECLARATIONS at the top of the script.
 
-        Not from `select_every_module`, which was the first attempt: that
-        function sets every flag, so it looked like the roster — but a module
-        added to an ARM and not to it is invisible there, and the probe then
-        never prints the flag the shell just set. The declarations are where a
-        new module has to appear for `set -u` to survive one, which makes them
-        the definition; `test_the_module_roster_is_the_scripts_own` closes the
-        loop by requiring every flag SET anywhere to be one of them.
+        The declarations are where a new module has to appear for `set -u` to
+        survive one, which makes them the definition. They are also what
+        `select_modules_from` validates the port's output against, so a flag
+        the port names and this script does not declare is refused there
+        rather than silently `eval`ed into existence.
         """
         flags = re.findall(r"^(RUN_[A-Z0-9_]+)=0$",
                            SKILL_HOOK.read_text(encoding="utf-8"), re.M)
@@ -725,59 +911,14 @@ class TestTheShellSelectionHasAPythonContract:
         assert len(set(flags)) == len(flags), f"duplicate flags: {flags}"
         return flags
 
-    def _probe(self, flags):
-        """Built from the derived flags, so a ninth module cannot go unread.
-
-        Output is NUL-delimited: a tracked filename containing a NEWLINE would
-        otherwise split a record in half and crash the reader with an unpacking
-        error rather than saying what happened.
-        """
-        reset = "; ".join(f"{f}=0" for f in flags)
-        fmt = "%s\\t" + "%s" * len(flags) + "\\0"
-        args = " ".join(f'"${f}"' for f in flags)
-        return f'''
-set -u
-eval "$(awk '/^select_modules_for\\(\\)/,/^}}/' "$1")"
-eval "$(awk '/^select_every_module\\(\\)/,/^}}/' "$1")"
-shift
-for p in "$@"; do
-  {reset}
-  select_modules_for "$p"
-  printf '{fmt}' "$p" {args}
-done
-'''
-
-    def _shell_flag_names(self, flags):
-        """Every RUN_ variable that EXISTS after the arms have run.
-
-        The probe runs the whole corpus through the selector and then asks
-        the shell itself, so a flag set under any spelling shows up — which a
-        regex over the script text does not guarantee and cannot, because the
-        same text also contains comments. "One path" is what this said while
-        it ran only `CLAUDE.md`, and a flag set by any other arm was invisible.
-        """
-        # EVERY path, not one. The first version ran `CLAUDE.md` alone, so its
-        # census held the two flags that arm sets and nothing else: a flag set
-        # by the `agents/lib/ptet.py` arm was never set during the census and
-        # stayed invisible. A variable that exists only after the arm that
-        # sets it has run has to have that arm run.
-        census = self._probe(flags) + (
-            "compgen -v | grep '^RUN_' | sort | tr '\\n' ' '\n")
-        out = subprocess.run(
-            ["bash", "-c", census, "probe", str(SKILL_HOOK),
-             *[p for p in self._corpus() if p]],
-            cwd=REPO, capture_output=True, text=True)
-        assert out.returncode == 0, out.stderr[-400:]
-        return out.stdout.split("\0")[-1].split()
-
     def _tracked(self):
         """NUL-delimited, because `.split()` splits on WHITESPACE.
 
         No tracked path carries a space today, so the corpus looks complete —
         and the day one does, `docs/contributing/a b.md` enters as two
-        fragments that match no arm, both implementations answer nothing for
-        both, and the equality guard accepts it. The real path goes unchecked
-        while the count still looks right.
+        fragments that match no arm, both answers are nothing, and a guard
+        comparing them accepts it. The real path goes unchecked while the
+        count still looks right.
         """
         out = subprocess.run(
             ["git", "ls-files", "-z"], cwd=REPO, capture_output=True,
@@ -786,14 +927,6 @@ done
 
     # Patterns no corpus path reaches, each with the reason. Empty today, and
     # the test asserts that BOTH ways so an exemption cannot outlive its cause.
-    #
-    # "Reached" here means a corpus path MATCHES the pattern, not that the
-    # pattern decides that path's answer — `agents/lib/tax_computations` is
-    # matched but never decides, because the package rewrite turns it into its
-    # own `__init__.py` and the same arm's `/*` pattern claims it first. The
-    # weaker property is the one worth asserting: it is what catches a pattern
-    # nothing in the repository resembles, which is how `.agents/skills` went
-    # uncovered.
     UNREACHABLE: dict = {}
 
     def _corpus(self):
@@ -825,94 +958,26 @@ done
         ]
         return tracked + dirs + adversarial
 
-    def _shell(self, corpus, flags):
-        out = subprocess.run(
-            ["bash", "-c", self._probe(flags), "probe", str(SKILL_HOOK),
-             *corpus],
-            cwd=REPO, capture_output=True, text=True)
-        # STDERR, not just the exit code. An eval the probe forgot leaves the
-        # function undefined: bash writes "command not found", returns 0 from
-        # the loop, and every flag stays 0 — so the shell side reports "no
-        # modules" for that arm and the mismatch reads as a PYTHON defect. That
-        # is what happened on the first run, with `select_every_module`. Asking
-        # bash answers it directly; the first version of this class tried to
-        # work it out by scanning the function body for call sites, which meant
-        # stripping comments, which was wrong in both directions.
-        assert not out.stderr, (
-            "the shell probe wrote to stderr, so its answers are not the "
-            f"hook's: {out.stderr.strip()[:400]}")
-        assert out.returncode == 0, out.returncode
-        got = {}
-        for record in out.stdout.split("\0"):
-            if not record:
-                continue
-            path, bits = record.rsplit("\t", 1)
-            got[path] = frozenset(
-                f[4:] for f, bit in zip(flags, bits) if bit == "1")
-        return got
-
     def test_the_module_roster_is_the_scripts_own(self):
         """A ninth module must not be invisible.
 
-        `MODULES` used to be a hand-written copy in the port and again in the
-        probe. Adding `RUN_NEWMODULE=1` to an arm passed every test in this
-        class: the new flag was set by the shell, read by nothing, and the
-        contract silently stopped covering it. This module already had the
-        drift once — a seven-name list elsewhere omits `RUN_HOOKSDEPS`.
+        `MODULES` used to be a hand-written copy in the port and again in a
+        shell probe. Adding `RUN_NEWMODULE=1` to an arm passed every test in
+        this class: the new flag was set by the shell, read by nothing, and
+        the contract silently stopped covering it.
+
+        BOTH DIRECTIONS, and since the flip they are the same assertion: the
+        script declares the flags, the port names the modules, and
+        `select_modules_from` refuses any name that is in one and not the
+        other. A module the port knows and the script does not declare now
+        makes the hook select EVERYTHING rather than go quiet — checked
+        directly by `test_a_selector_naming_an_undeclared_flag_runs_everything`
+        — but it is still a defect, and this is where it is named.
         """
-        declared = self._flags()
-        assert [f"RUN_{m}" for m in self._python().MODULES] == declared
-
-        # ...and the other direction: a flag SET by an arm but never declared,
-        # asked of BASH rather than scanned for. A text scan for `RUN_X=1` is
-        # the comment-versus-code problem again, and it also missed
-        # `RUN_NEW_MODULE` (the name regex excluded underscores) and
-        # `RUN_X="1"`. `compgen -v` after the arms have run lists what actually
-        # exists in the shell, whatever it is spelled.
-        live = self._shell_flag_names(declared)
-        undeclared = sorted(set(live) - set(declared))
-        assert not undeclared, (
-            f"{undeclared} exist in the shell after the arms run and are "
-            "declared nowhere, so they are outside this contract entirely — "
-            "declare them beside the others and add them to the port's "
-            "MODULES")
-
-    def _shell_patterns(self):
-        """Every case pattern in the shell arms, joined across `|\\` breaks.
-
-        Taken from the SHELL, not from the port's `_ARMS`. Derived from the
-        port, the obligation disappears with the thing it is meant to protect:
-        deleting `agents/*.py` from the port deleted its coverage requirement
-        too, and both tests stayed green while that path selected nothing.
-        """
-        body = re.search(r"^select_modules_for\(\)\s*\{(.*?)^\}",
-                         SKILL_HOOK.read_text(encoding="utf-8"), re.M | re.S)
-        assert body, "select_modules_for no longer parses out of the hook"
-        joined = body.group(1).replace("|\\\n", "|")
-        patterns = []
-        for line in joined.splitlines():
-            line = line.strip()
-            if line.startswith("#") or not line.endswith(")"):
-                continue
-            # `case "$path" in` does not end in `)`, so the line above already
-            # skips it. The suffix test that used to sit here — treating a
-            # line ending `in)` as a case header — discarded the real arm
-            # `scripts/new.bin)`, which then carried no coverage obligation at
-            # all. A heuristic standing in for a check the previous line
-            # already makes can only cost.
-            if line.startswith(("case ", "esac")):
-                continue
-            patterns.extend(
-                p.strip() for p in line[:-1].split("|") if p.strip())
-        # Drop the prologue's own `case` labels, which are matched against the
-        # wrapped `/path/` form rather than the path.
-        patterns = [p for p in patterns if not p.startswith("*/")
-                    and not p.startswith("/agents/lib/") and p != "*//*"]
-        assert len(patterns) > 40, patterns
-        return patterns
+        assert [f"RUN_{m}" for m in _selection_port().MODULES] == self._flags()
 
     def test_every_arm_pattern_is_reached_by_the_corpus(self):
-        """Per-PATTERN coverage, derived — not a count of paths.
+        """Per-PATTERN coverage — not a count of paths.
 
         The vacuity guards that stood here counted the corpus and the paths
         selecting anything, and both were satisfied by the tracked list alone:
@@ -921,11 +986,48 @@ done
         which is the thing that actually goes unverified — `.agents/skills`
         was one, and deleting it from the port passed everything.
 
+        WHAT THE FLIP COST, stated rather than left to be discovered. The
+        patterns used to be read out of the SHELL, so deleting one from the
+        port left its obligation standing and this test went red. There is no
+        second copy to read now, and an arm deleted from `_ARMS` takes its own
+        obligation with it. This test keeps the narrower job it can still do
+        honestly: no arm in the table is unreachable prose.
+
+        WHAT STILL HOLDS THE ARMS TO SOMETHING OUTSIDE THEMSELVES is
+        `test_the_watched_set_still_covers_what_the_modules_read`, which
+        RECOVERS the path literals each of the seven modules reads and
+        requires an arm to select it. Naming the right one matters here: an
+        earlier draft of this paragraph credited
+        `test_every_watched_source_path_reaches_its_module`, whose table is a
+        hand-written literal — and that module's own docstring says of hand
+        lists that one "only compensates for what somebody remembers to add to
+        it, and nobody did". Selling a hand table as the derived anchor is the
+        defect this file exists to catch, one level up.
+
+        AND IT IS PARTIAL, because the derived anchor discovers a dependency
+        by finding a PATH LITERAL and several real ones are globs. Two
+        examples, both checked rather than assumed: `test_secure_fs.py`
+        rglobs every Python file under the agents directory and
+        `test_portability.py` globs the ops docs for the AGENTS.md §9 index,
+        so `agents/*.py` and
+        `docs/ops/*.md` are arms protecting real reads that the locator cannot
+        see. A draft of this paragraph called those arms "read by no module"
+        and their loss "coverage rather than correctness" — both wrong, and
+        wrong in the flattering direction.
+
+        `_ARM_SNAPSHOT` is what covers them, and covers every other arm the
+        locator misses: the arms pinned as data, so deleting or narrowing one
+        takes a deliberate second edit. That is the property the differential
+        was really earning its keep on, and it survives the bash it was
+        written against.
+
         Anything genuinely unreachable is named in `UNREACHABLE` with its
         reason, so the exemption is a statement rather than a silence.
         """
-        py = self._python()
+        py = _selection_port()
         corpus = [p for p in self._corpus() if p]
+        patterns = [q for qs, _ in py._ARMS for q in qs]
+        assert len(patterns) > 40, patterns
 
         def decides(pattern):
             """Is this pattern the FIRST match for some corpus path?
@@ -935,8 +1037,8 @@ done
             everywhere counted as covered while nothing exercised it.
             """
             for path in corpus:
-                for patterns, _ in py._ARMS:
-                    hit = next((q for q in patterns
+                for qs, _ in py._ARMS:
+                    hit = next((q for q in qs
                                 if fnmatch.fnmatchcase(path, q)), None)
                     if hit is not None:
                         if hit == pattern:
@@ -944,23 +1046,48 @@ done
                         break
             return False
 
-        unreached = [q for q in self._shell_patterns() if not decides(q)]
+        unreached = [q for q in patterns if not decides(q)]
         assert set(unreached) <= set(self.UNREACHABLE), (
             f"{sorted(set(unreached) - set(self.UNREACHABLE))} are matched by "
-            "no path in the corpus, so the differential does not verify them "
-            "— add a path that reaches each, or name it in UNREACHABLE with "
-            "the reason it cannot be reached")
+            "no path in the corpus, so nothing verifies them — add a path "
+            "that reaches each, or name it in UNREACHABLE with the reason it "
+            "cannot be reached")
         assert set(unreached) == set(self.UNREACHABLE), (
             f"{sorted(set(self.UNREACHABLE) - set(unreached))} are exempted as "
             "unreachable but the corpus now reaches them — drop the exemption")
 
+    def test_the_arm_table_is_the_one_that_was_pinned(self):
+        """The arms, against their pin — in both directions and in ORDER.
+
+        `_ARM_SNAPSHOT` exists because the differential could not survive the
+        flip: with the bash gone there is no second answer to compare against,
+        and an arm deleted from `_ARMS` deletes its own obligation. This
+        restores the one property that mattered — changing an arm takes a
+        deliberate second edit — for the price of a table rather than a second
+        implementation.
+
+        Compared as a SEQUENCE, so a reordering is a finding. First match
+        wins, `docs/ops` and `tests` each have two arms, and a set comparison
+        would call swapping them no change at all.
+        """
+        live = tuple((tuple(patterns), tuple(sorted(modules)))
+                     for patterns, modules in _selection_port()._ARMS)
+        assert live == _ARM_SNAPSHOT, (
+            "the selection arms no longer match their pin. If you MEANT to "
+            "change them, update `_ARM_SNAPSHOT` in the same commit and say "
+            "why in the message — that second edit is the whole point of it. "
+            "If you did not, an arm has been deleted or narrowed, and the "
+            "paths it covered now select nothing:\n  pinned: "
+            f"{[a for a in _ARM_SNAPSHOT if a not in live]}\n  live:   "
+            f"{[a for a in live if a not in _ARM_SNAPSHOT]}")
+
     def test_the_package_rewrite_changes_no_arm(self):
-        """Why the differential cannot catch dropping the directory rewrite.
+        """Why no differential could have caught dropping the rewrite.
 
         The prologue rewrites a package DIRECTORY under `agents/lib/` to its
-        own `__init__.py` before matching. Deleting that from the port leaves
-        the differential green, because no path reaches a different ARM either
-        way — the rewrite changes the string and not the answer.
+        own `__init__.py` before matching. Deleting that leaves every
+        path-by-path comparison green, because no path reaches a different ARM
+        either way — the rewrite changes the string and not the answer.
 
         Asserted over the ARM DATA, never by calling the port. The first
         version called `select_modules_for` twice with `isdir` flipped, which
@@ -968,7 +1095,7 @@ done
         stops being a sentinel, silently, exactly when it is needed. Reading
         the patterns keeps the claim true whether or not the rewrite exists.
         """
-        py = self._python()
+        py = _selection_port()
         # STRICTLY under `agents/lib/`. The rewrite cannot fire for
         # `agents/lib` itself — the prologue's `/agents/lib/*/` needs a
         # component after it — and that directory legitimately has its own arm
@@ -979,6 +1106,7 @@ done
                           | {"agents/lib/state", "agents/lib/nosuchpackage"})
         packages = [p for p in packages if p != "agents/lib"]
         assert len(packages) > 3, packages
+
         def decided_modules(path):
             """The FIRST arm that matches, which is the only one that decides.
 
@@ -987,8 +1115,8 @@ done
             `*` crosses `/` — but an earlier arm claims both, so that
             difference never reaches an answer.
             """
-            for patterns, modules in py._ARMS:
-                if any(fnmatch.fnmatchcase(path, p) for p in patterns):
+            for qs, modules in py._ARMS:
+                if any(fnmatch.fnmatchcase(path, q) for q in qs):
                     return modules
             return frozenset()
 
@@ -1000,42 +1128,334 @@ done
                 f"{pkg!r} selects {sorted(decided_modules(pkg))} and "
                 f"{pkg}/__init__.py selects "
                 f"{sorted(decided_modules(f'{pkg}/__init__.py'))}, so the "
-                "package rewrite now changes an answer — the differential "
-                "must exercise it and this test should be replaced by a "
-                "corpus path that does")
+                "package rewrite now changes an answer — a path that reaches "
+                "it must be added to the corpus and this test replaced")
 
-    def test_the_python_selection_matches_the_shell(self):
-        """Both implementations, every derived path, identical answers."""
-        py = self._python()
-        flags = self._flags()
-        corpus = self._corpus()
-        shell = self._shell(corpus, flags)
-        # THE ORACLE, checked against a known answer before it is trusted.
-        # `tests/conftest.py` reaches `select_every_module` and must come back
-        # with all eight. Empty stderr does not prove the probe defined that
-        # helper — `select_every_module 2>/dev/null` is silent, exits 0, and
-        # leaves every flag at 0 — and a shell side that answers "nothing" is
-        # indistinguishable from a port that is wrong everywhere.
-        assert shell.get("tests/conftest.py") == frozenset(
-            f[4:] for f in flags), (
-            "the shell oracle does not select every module for "
-            f"tests/conftest.py — it answered {shell.get('tests/conftest.py')}, "
-            "so the probe is not running the hook's own logic and every "
-            "comparison below is against a broken reference")
-        assert set(shell) == set(corpus), (
-            f"the probe answered for {len(shell)} of {len(set(corpus))} "
-            "distinct paths — a comparison over a corpus the shell did not "
-            "actually see is green for the wrong reason")
+    def test_the_union_is_across_every_changed_path(self):
+        """The scan hands over MANY paths, and the answer is their union.
 
-        # `isdir` bound to REPO, because the probe runs with `cwd=REPO` and
-        # the default resolves against pytest's cwd.
-        def mine(path):
-            return py.select_modules_for(
-                path, isdir=lambda rel: (REPO / rel).is_dir())
+        The shell accumulated into globals across a loop; the port is one
+        process reading them all, and `union_for` is where that accumulation
+        went. A port returning the LAST path's answer passes every per-path
+        test in this class and narrows a whole scan to whatever `find` printed
+        last — a green hook over an unchecked edit, which is the failure this
+        file exists to prevent. There is no per-path loop left in the shell,
+        so `union_for` is the only place that defect can now live, and the CLI
+        is the right altitude to ask at.
 
-        differ = {p: (sorted(shell[p]), sorted(mine(p)))
-                  for p in corpus if shell[p] != mine(p)}
-        assert not differ, dict(list(differ.items())[:8])
+        IT DOES NOT COVER THE SUBSHELL DEFECT, which an earlier draft of this
+        docstring claimed it did — it never invokes the hook. That defect is
+        covered, and heavily: rewriting either call site as `x |
+        select_modules_from` turns THIRTY tests in this module red, measured.
+        A test that claims coverage it does not have is worse than one that
+        claims none.
+        """
+        py = _selection_port()
+        # DERIVED, and for two reasons. A hand-picked trio goes stale the day
+        # an arm's module set changes, and — the one that actually bit — a
+        # repository path written as a literal in THIS module reads to
+        # `test_the_watched_set_still_covers_what_the_modules_read` as a file
+        # the hooks module opens, which then demands that path's arm select
+        # the hooks module. It is an input here, not a read, and the locator
+        # cannot tell those apart; not writing the literal is the honest fix.
+        many: list = []
+        for cand in [q for qs, _ in py._ARMS for q in qs
+                     if "*" not in q and (REPO / q).is_file()]:
+            if all(not (py.select_modules_for(cand) <= py.select_modules_for(q)
+                        or py.select_modules_for(q)
+                        <= py.select_modules_for(cand)) for q in many):
+                many.append(cand)
+            if len(many) == 3:
+                break
+        assert len(many) == 3, (
+            f"no three arms with pairwise unlike answers: {many}")
+
+        out = subprocess.run(
+            [sys.executable, str(SELECTION_PORT)],
+            input="\0".join(many).encode() + b"\0",
+            capture_output=True)
+        assert out.returncode == 0, out.stderr[-400:]
+        lines = out.stdout.decode().split()
+        assert lines and lines[0] == py.PROTOCOL, (
+            f"the port's first line is {lines[:1]}, not its protocol line")
+        got = set(lines[1:])
+        expected = set().union(*(py.select_modules_for(p) for p in many))
+        assert got == expected, (got, expected)
+        # ...and it is a genuine union, not one path's answer. Each of the
+        # three contributes a module the other two do not, so any "last one
+        # wins" implementation loses at least two.
+        for one in many:
+            assert py.select_modules_for(one) < expected, (
+                f"{one} alone already selects everything the three do "
+                "together, so this test cannot tell a union from a last-write")
+
+    def test_the_selector_is_launched_with_no_paths_on_argv(self, tmp_path):
+        """A taxpayer's document name must not reach `ps`.
+
+        This hook runs with its CWD inside a directory that may hold
+        `documents/`, `summaries/` and a taxpayer profile, and the path it
+        classifies can name one of them. argv is world-readable through `ps`
+        on this platform, so `python "$SELECTOR" "$relative"` would publish
+        that filename to every user on the machine — the same exposure the
+        hook's generic `display_target` label exists to prevent, and the same
+        one `test_an_unknown_red_token_never_reaches_the_pytest_argv` pins one
+        layer up.
+
+        Nothing in the code says so: a reviewer simplifying the redirect into
+        an argument would be making the obvious change. This is the assertion
+        that objects. It RECORDS the argv rather than reasoning about the
+        source, so a second path reaching argv by any route is caught.
+        """
+        log = tmp_path / "argv.log"
+        port = ("import sys, pathlib\n"
+                f"pathlib.Path({str(log)!r}).write_text(repr(sys.argv))\n"
+                f"print({_selection_port().PROTOCOL!r})\n"
+                "sys.stdin.buffer.read()\n")
+        secret = tmp_path / "summaries" / "a-1099.md"
+        secret.parent.mkdir()
+        secret.write_text("x\n")
+        _run_skill_hook(tmp_path, str(secret),
+                        script=self._orphan_hook(tmp_path, port))
+
+        argv = ast.literal_eval(log.read_text())
+        assert len(argv) == 1, (
+            f"the selector was launched with {argv[1:]} on its argv — paths "
+            "go in on STDIN, because argv is world-readable through `ps` and "
+            "the hook classifies paths that can name a taxpayer's documents")
+        assert not any(secret.name in str(a) for a in argv), argv
+
+    def test_a_missing_selector_runs_everything(self, tmp_path):
+        """FAIL CLOSED. A selector that cannot answer must not answer nothing.
+
+        The hook resolves the port beside its own file, so this drives a COPY
+        of the script with no `lib/` next to it. Every other way of not
+        knowing — no interpreter, an import error, a raised exception — leaves
+        the same non-zero status on the same command substitution, so this is
+        the shape of all of them.
+        """
+        orphan = self._orphan_hook(tmp_path, None)
+        assert not (orphan.parent / "lib").exists()
+        r = self._drive(orphan, tmp_path)
+        assert r.returncode == 2, (
+            "a hook that cannot select exited quietly — the one direction a "
+            f"missing decision must never take (rc={r.returncode})")
+        assert set(_selected_modules(r)) == set(ALL_MODULES), sorted(
+            _selected_modules(r))
+
+    def test_a_selector_that_raises_after_answering_runs_everything(
+            self, tmp_path):
+        """The EXIT STATUS path, which nothing else here reaches.
+
+        `test_a_missing_selector_runs_everything` claims to stand for every
+        way of not knowing — no interpreter, an import error, a raised
+        exception — because all of them leave the same non-zero status on the
+        same command substitution. It does not: removing `|| return 1` from
+        that substitution leaves it GREEN, because a missing selector prints
+        nothing and the PROTOCOL guard refuses that first. Two guards, one
+        test, and the weaker one was answering.
+
+        A selector that prints its protocol line, names a real module, and
+        THEN dies is what separates them: the protocol guard is satisfied, the
+        output is well formed, and only the status says anything is wrong.
+
+        QUIESCENT FIRST, and that is not setup noise — it is what the first
+        draft of this test got wrong. Without a trusted stamp every pass is a
+        FULL pass, so a selector that answered wrongly and one that could not
+        answer both end in all seven modules, and the assertion below holds
+        either way. Settling the stamp is what makes the answer readable: with
+        the status guard removed this then runs `tests/test_portability.py`
+        alone, which is a different set and a red test.
+        """
+        port = (f"import sys\nprint({_selection_port().PROTOCOL!r})\n"
+                "print('PORTABILITY')\nsys.stdout.flush()\n"
+                "raise SystemExit(3)\n")
+        script = self._orphan_hook(tmp_path, port)
+        edited = tmp_path / "CLAUDE.md"
+        edited.write_text("# watched\n")
+
+        # A trusted stamp, written through the REAL hook on a Bash payload —
+        # the one path that settles the workspace without going through the
+        # selector this test is about.
+        _fake_venv(tmp_path, exit_code=0, lines=["1 passed"])
+        time.sleep(STAMP_OVERLAP_SECONDS)
+        assert _run_skill_hook_bash(tmp_path).returncode == 0
+        assert (tmp_path / SKILL_STAMP).is_file(), (
+            "no stamp was written, so the pass below is a COLD one and this "
+            "test cannot tell a wrong answer from no answer")
+
+        _fake_venv(tmp_path, exit_code=1, lines=["$*"])
+        r = _run_skill_hook(tmp_path, str(edited), script=script)
+        assert r.returncode == 2, (
+            "a selector that answered and then died was read as an answer — "
+            f"the status is the only thing that says otherwise (rc={r.returncode})")
+        assert set(_selected_modules(r)) == set(ALL_MODULES), (
+            "the hook took the dead selector's answer instead of failing "
+            f"closed: {sorted(_selected_modules(r))}")
+
+
+    def _orphan_hook(self, tmp_path, port: str | None):
+        """A copy of the script, with `port` as the source of its `lib/` — or
+        no `lib/` at all when it is None.
+
+        A COPY, because the hook resolves the selector beside its own file:
+        that is what lets these two tests replace the decision without
+        touching the one the rest of the suite runs.
+        """
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / "AGENTS.md").write_text("# a watched root\n")
+        _fake_venv(tmp_path, exit_code=1, lines=["$*"])
+        hooks = tmp_path / "hooks"
+        hooks.mkdir()
+        (hooks / "skill-invariants.sh").write_text(
+            SKILL_HOOK.read_text(encoding="utf-8"), encoding="utf-8")
+        if port is not None:
+            (hooks / "lib").mkdir()
+            (hooks / "lib" / "hook_selection.py").write_text(port)
+        return hooks / "skill-invariants.sh"
+
+    def _drive(self, script, tmp_path):
+        # `docs/changelog/` has no arm, so a WORKING selector answers nothing
+        # here and the hook exits 0 in silence. Every module instead is the
+        # only reading that says the failure was noticed.
+        return _run_skill_hook(
+            tmp_path, str(tmp_path / "docs" / "changelog" / "x.md"),
+            script=script)
+
+    def test_the_shell_and_the_port_agree_on_the_protocol_line(self):
+        """One protocol, read from BOTH files.
+
+        The port writes it and the script refuses an answer without it, so it
+        is inherently stated twice — and a constant in two files is the shape
+        this repository has watched drift more than once. Both sides are read
+        here rather than compared against a literal written a third time.
+        """
+        # ANCHORED, and not because anchoring is tidier. `re.search` for the
+        # guard's text found it inside a comment: commenting the guard OUT
+        # left this green, which is this repository's recorded "gate that
+        # reads its own comments" in its smallest form. A line whose first
+        # non-blank character is `#` is prose, whatever it says.
+        shell = re.search(r'^[ \t]*\[ "\$module" = (\w+) \] \|\| return 1',
+                          SKILL_HOOK.read_text(encoding="utf-8"), re.M)
+        assert shell, (
+            "`select_modules_from` no longer checks a protocol line — without "
+            "it an EMPTY selector file exits 0 saying nothing and the hook "
+            "reads that as `no module can break this path`. A commented-out "
+            "guard reaches this message too, which is the point of the anchor")
+        assert shell.group(1) == _selection_port().PROTOCOL, (
+            f"the script accepts {shell.group(1)!r} and the port writes "
+            f"{_selection_port().PROTOCOL!r} — one of them has moved")
+
+    def test_a_selector_that_says_nothing_at_all_runs_everything(self, tmp_path):
+        """An EMPTY selector is valid Python: it runs clean and prints nothing.
+
+        Exit status alone cannot tell that apart from a path no module can
+        break, which is why the protocol line exists. Reachable rather than
+        exotic: this hook fires on every Write, the selector included, so a
+        truncated save while someone edits it lands here.
+        """
+        r = self._drive(self._orphan_hook(tmp_path, ""), tmp_path)
+        assert r.returncode == 2, (
+            "an empty selector left the hook silent — the one direction a "
+            f"selector that cannot answer must never take (rc={r.returncode})")
+        assert set(_selected_modules(r)) == set(ALL_MODULES), sorted(
+            _selected_modules(r))
+
+    def test_an_inherited_run_flag_is_not_a_declaration(self, tmp_path):
+        """A GATE INHERITS ITS ENVIRONMENT — the Y6 lesson, one layer over.
+
+        `select_modules_from` accepts a module name by asking whether this
+        script declares a flag for it, and `${!name+set}` answers "is that
+        variable set". An EXPORTED `RUN_NEWMODULE=0` answers yes: the port
+        names `NEWMODULE`, the check passes, the assignment lands on a
+        variable nothing reads, and the function returns 0 having set no real
+        flag — `nothing_selected` exits 0 and the pass goes quiet over an edit
+        that should have run five modules.
+
+        The script unsets every inherited `RUN_*` before its own declarations,
+        which is what makes "is it set" mean "did this script declare it"
+        without a second copy of the roster to keep in step.
+        """
+        port = (f"import sys\nprint({_selection_port().PROTOCOL!r})\n"
+                "print('NEWMODULE')\nsys.stdin.buffer.read()\n")
+        script = self._orphan_hook(tmp_path, port)
+        r = _run_skill_hook(
+            tmp_path, str(tmp_path / "docs" / "changelog" / "x.md"),
+            script=script, env_extra={"RUN_NEWMODULE": "0"})
+        assert r.returncode == 2, (
+            "an inherited variable made an undeclared module name look "
+            f"declared, and the pass went quiet (rc={r.returncode})")
+        assert set(_selected_modules(r)) == set(ALL_MODULES), sorted(
+            _selected_modules(r))
+
+    def test_an_inherited_cdpath_does_not_break_the_selector(self, tmp_path):
+        """`cd` PRINTS where it landed when CDPATH found it for it.
+
+        So `$(cd -- "$(dirname -- "$0")" && pwd)` comes back as TWO lines and
+        `$SELECTOR` names nothing — reproduced, and the hook then ran every
+        module on every watched edit. Only reachable through a RELATIVE
+        invocation, because bash consults CDPATH for nothing else, which is
+        why this test invokes the script by a relative path where every other
+        test passes an absolute one.
+
+        IT PINS THE OUTCOME, NOT EITHER GUARD. Two things produce it — the
+        `>/dev/null` on that `cd`, and `CDPATH=''` above — so removing one
+        leaves this green and only removing both turns it red. Checked by
+        mutation, both ways. The test above is what pins the clearing on its
+        own; nothing pins the redirection alone, and nothing needs to, because
+        the property is that the answer does not change.
+        """
+        # QUIESCENT FIRST, and that is not setup noise. Without a trusted
+        # stamp every pass is a full pass, so a broken selector and a working
+        # one both end in all seven modules and the test cannot tell them
+        # apart. Settling the stamp is what makes the answer readable.
+        (tmp_path / ".claude").mkdir()
+        edited = tmp_path / "CLAUDE.md"
+        edited.write_text("# watched\n")
+        _fake_venv(tmp_path, exit_code=0, lines=["1 passed"])
+        time.sleep(STAMP_OVERLAP_SECONDS)
+        assert _run_skill_hook_bash(tmp_path).returncode == 0
+        assert (tmp_path / SKILL_STAMP).is_file()
+
+        _fake_venv(tmp_path, exit_code=1, lines=["$*"])
+        r = subprocess.run(
+            ["bash", str(SKILL_HOOK.relative_to(REPO))],
+            input=json.dumps({"tool_input": {"file_path": str(edited)}}),
+            text=True, capture_output=True, cwd=REPO,
+            env=dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path), CDPATH="."))
+        # CLAUDE.md's arm, exactly — not every module, which is what a
+        # selector the script could not find would have produced.
+        assert set(_selected_modules(r)) == _module_paths(
+            _selection_port().select_modules_for("CLAUDE.md")), (
+            "an inherited CDPATH changed which modules ran: "
+            f"{sorted(_selected_modules(r))}")
+
+    def test_a_selector_naming_an_undeclared_flag_runs_everything(self, tmp_path):
+        """The other half: the port and the script disagree about the roster.
+
+        `select_modules_from` checks each name against the script's own
+        declarations instead of against a list of its own, so this is the
+        seventh copy of the roster that does not exist. A name nothing
+        declares means the two files have drifted, and the hook treats that
+        as not knowing rather than as a flag to invent — `eval "RUN_$m=1"` on
+        an undeclared name would otherwise create it, and nothing downstream
+        reads it, so the pass would go quiet over a real disagreement.
+
+        THE UNKNOWN NAME IS ALONE IN THE ANSWER, and it has to be. The first
+        version of this printed `PORTABILITY` before it, and with the guard
+        DELETED it still passed: a real module got past the empty-selection
+        exit and the fixture reached every module by another road, so the
+        assertion held either way. A test that cannot detect its own fix is
+        the shape this repository keeps finding; mutation-checked both ways
+        now.
+        """
+        port = (f"import sys\nprint({_selection_port().PROTOCOL!r})\n"
+                "print('NEWMODULE')\n"
+                "sys.stdin.buffer.read()\n")
+        r = self._drive(self._orphan_hook(tmp_path, port), tmp_path)
+        assert r.returncode == 2
+        assert set(_selected_modules(r)) == set(ALL_MODULES), (
+            "a flag the script does not declare was accepted, or the refusal "
+            f"went quiet: {sorted(_selected_modules(r))}")
 
 
 class TestSkillInvariantsHook:
@@ -1176,6 +1596,13 @@ class TestSkillInvariantsHook:
         # module whose self-test asserts something false exits 1 normally and
         # 0 under this.
         ("PYTHONOPTIMIZE", "1"),
+        # ...and this one loads arbitrary code into the collection hooks. A
+        # plugin implementing `pytest_collection_modifyitems` drops whatever
+        # it likes before anything runs: reproduced with a four-line module,
+        # `1 failed, 1 passed` became `1 passed` and the status went to 0.
+        # Found in review of the slice that flipped selection to Python, and
+        # present in the hook before that slice too.
+        ("PYTEST_PLUGINS", "dropred"),
     ])
     def test_an_inherited_pytest_variable_cannot_reach_the_suite(
             self, tmp_path, name, value):
@@ -1200,6 +1627,59 @@ class TestSkillInvariantsHook:
             f"{name} reached the suite this gate runs, so an exported "
             f"{value!r} would make a pass report success having measured "
             f"nothing: {r.stderr[-300:]}")
+
+    def test_the_project_inifile_stops_an_ancestor_pytest_ini(self, tmp_path):
+        """The one rubber-stamp this hook cannot unset, and why it misses.
+
+        Every other way of turning this gate green comes through the
+        environment, and the script clears those. A `pytest.ini` is a FILE:
+        `addopts = --collect-only` in one makes a failing suite report `N
+        tests collected` and exit 0, and no `unset` reaches it.
+
+        It misses because pytest's rootdir search stops at the FIRST inifile
+        it finds, and this repository has one — `[tool.pytest.ini_options]` in
+        pyproject.toml. That section is there to hold a `markers` list. Nobody
+        moving the markers elsewhere would know they were deleting a guard,
+        which is what this test is for: the protection was accidental until
+        something asserted it.
+
+        BOTH DIRECTIONS, because a pin that cannot fail proves nothing about
+        the mechanism it claims. The ancestor file is read when the project
+        has no inifile of its own, and not read when it has one.
+        """
+        assert "[tool.pytest.ini_options]" in (REPO / "pyproject.toml").read_text(), (
+            "pyproject.toml no longer declares [tool.pytest.ini_options]. "
+            "That section stops pytest's rootdir search before it reaches an "
+            "ancestor directory's pytest.ini, and an ancestor holding "
+            "`addopts = --collect-only` makes this gate report a green suite "
+            "that ran nothing. Keep the section even if its contents move")
+
+        (tmp_path / "pytest.ini").write_text(
+            "[pytest]\naddopts = --collect-only\n")
+        project = tmp_path / "project"
+        (project / "tests").mkdir(parents=True)
+        (project / "tests" / "test_red.py").write_text(
+            "def test_fails(): assert False\n")
+
+        def run():
+            return subprocess.run(
+                [sys.executable, "-m", "pytest", "tests/test_red.py", "-q",
+                 "-p", "no:cacheprovider"],
+                cwd=project, capture_output=True, text=True)
+
+        exposed = run()
+        assert "collected" in exposed.stdout and exposed.returncode == 0, (
+            "an ancestor pytest.ini did NOT reach a project without an "
+            "inifile of its own, so this test is not exercising the mechanism "
+            f"it pins: {exposed.stdout[-300:]}")
+
+        (project / "pyproject.toml").write_text(
+            "[tool.pytest.ini_options]\nmarkers = []\n")
+        defended = run()
+        assert defended.returncode != 0, (
+            "a project declaring [tool.pytest.ini_options] still read the "
+            "ancestor's pytest.ini — the guard this repository relies on has "
+            f"changed shape: {defended.stdout[-300:]}")
 
     def test_an_inherited_errexit_does_not_swallow_the_verdict(self, tmp_path):
         """`set -u` does not turn errexit OFF, and bash imports it.
@@ -1607,7 +2087,6 @@ class TestSkillInvariantsHook:
         read a helper too and are not among them, so CI is their only signal;
         that is a cost of the hook's scope, not a gap here.
         """
-        script = SKILL_HOOK.read_text()
         helpers = _shared_test_helpers()
         assert helpers, "no shared helpers under tests/ — the derivation broke"
 
@@ -1620,11 +2099,11 @@ class TestSkillInvariantsHook:
                 # would be demanding cost for no coverage.
                 continue
             read_by_a_watched_module.append(helper)
-            arm = _case_arm_body(script, helper)
+            arm = _arm_selecting(helper)
             if arm is None:
                 missing_arm.append(f"{helper} (read by {sorted(importers)})")
                 continue
-            short = sorted(importers - _modules_selected_by(arm))
+            short = sorted(importers - arm)
             if short:
                 selects_too_little.append(f"{helper} -> {short}")
 
@@ -1642,41 +2121,57 @@ class TestSkillInvariantsHook:
             "ones asking it what the engine CONTAINS would have a roster "
             "narrowed silently — the defect the helper exists to end.")
 
-    def test_the_helper_arm_reader_survives_a_multi_pattern_arm(self):
-        """Cry-wolf validation for `_case_arm_body`.
+    def test_the_arm_reader_survives_a_multi_pattern_arm(self):
+        """Cry-wolf validation for `_arm_selecting`.
 
-        Its first version required the helper to be an arm's SOLE pattern, and
-        fifteen arms in this script are written `a|b)` with five more spread
-        over continuation lines. Merging the two helper arms — correct,
-        behaviour-preserving shell, and the obvious next refactor now that
-        their selections overlap — made the test report a clean script as
-        unparseable.
+        The question an arm answers is membership in its pattern LIST, and the
+        dominant shape here groups several patterns under one module set.
+        Merging two arms — correct, behaviour-preserving, and the obvious next
+        move whenever their selections converge — must not make a correct
+        table read as a missing arm. The bash version of this reader failed
+        exactly that way over `a|b)`.
         """
-        script = ("case $x in\n"
-                  "        tests/engine_tree.py|tests/other.py)\n"
-                  "            RUN_PORTABILITY=1\n"
-                  "            ;;\n"
-                  "esac\n")
-        assert _case_arm_body(script, "tests/engine_tree.py") is not None, (
-            "an arm listing the helper alongside another pattern must still "
-            "be found — it selects the helper just as much")
-        assert _case_arm_body(script, "tests/absent.py") is None, (
-            "a helper with no arm must read as ABSENT, not as an arm that "
+        # DERIVED from the table rather than named, and NOT FIRST in its arm,
+        # which is the whole question. The version that stood here asserted
+        # about `tests/engine_tree.py`, which sits in a ONE-pattern arm — so
+        # `patterns == (pattern,)` passed it, and the multi-pattern shape the
+        # docstring is about was never exercised. The bash reader's `a|b)`
+        # failure would have gone unnoticed by its replacement.
+        multi = [(pats, mods) for pats, mods in _selection_port()._ARMS
+                 if len(pats) > 1]
+        assert multi, (
+            "no arm lists more than one pattern any more, so the membership "
+            "question this reader answers is not one the table asks — delete "
+            "this test WITH the claim in `_arm_selecting`, or neither")
+        for patterns, modules in multi:
+            for pattern in patterns[1:]:
+                assert _arm_selecting(pattern) is not None, (
+                    f"{pattern!r} is listed in an arm and reads as having no "
+                    "arm at all — the reader is matching the arm's FIRST "
+                    "pattern, or the whole tuple, rather than membership in "
+                    "it, which makes every 'no arm' finding it reports suspect")
+        assert _arm_selecting("tests/absent.py") is None, (
+            "a path with no arm must read as ABSENT, not as an arm that "
             "failed to parse: the two are different findings")
 
-    def test_a_commented_out_flag_does_not_count_as_selected(self):
-        """The other cry-wolf direction, and this one was a FALSE GREEN.
+    def test_the_arm_reader_names_the_same_modules_the_port_selects(self):
+        """...and the reader agrees with the DECISION, not just the table.
 
-        `RUN_X=1 in body` read the arm's comments, and these arms are mostly
-        comment. Both spellings below were verified to leave the check green
-        over a hook that had genuinely stopped selecting the module.
+        `_arm_selecting` reads `_ARMS` directly, which is the same data
+        `select_modules_for` walks — but only for an arm no EARLIER arm
+        shadows. Every caller below hands it a path it expects to decide, so
+        the two must agree there, and the day one stops deciding its own path
+        the callers are asserting about an arm nothing reaches.
         """
-        for disabled in ("            # RUN_SECUREFS=1  (temporarily off)",
-                         "            # deliberately NOT RUN_SECUREFS=1 here"):
-            body = f"            RUN_PORTABILITY=1\n{disabled}"
-            assert _modules_selected_by(body) == {PORTABILITY}, (
-                f"{disabled!r} counted as a selection — a flag inside a "
-                "comment is prose, and the hook does not run it")
+        port = _selection_port()
+        for path in ("tests/engine_tree.py", "tests/skill_text.py",
+                     "agents/lib/secure_fs.py", "agents/lib/ptet.py"):
+            decided = _module_paths(port.select_modules_for(path))
+            assert _arm_selecting(path) == decided, (
+                f"{path} has an arm selecting {sorted(_arm_selecting(path))} "
+                f"and the port decides {sorted(decided)} — an earlier arm now "
+                "shadows it, so every assertion made through this reader is "
+                "about an arm that never runs")
 
     def test_the_path_locator_does_not_read_a_comment_as_a_read(self):
         """Cry-wolf validation for `_code_only`, which the locator now uses.
@@ -1755,16 +2250,19 @@ class TestSkillInvariantsHook:
         exited 0. Reported by review against PR #82. A half-derived comparison
         is the same failure this test's first paragraph records, one level up.
         """
-        script = SKILL_HOOK.read_text()
-        arms = re.findall(r"^\s{8}((?:agents/lib/\w+\.py\|?)+)\)$",
-                          script, re.MULTILINE)
-        paths = sorted({p for arm in arms for p in arm.split("|")})
+        # From `_ARMS`, which is where the arms live since W3 slice 2. The
+        # shape being looked for is unchanged: a pattern naming ONE engine
+        # module, which first-match-wins hands its own arm instead of the
+        # generic one below it.
+        paths = sorted({q for patterns, _ in _selection_port()._ARMS
+                        for q in patterns
+                        if q.startswith("agents/lib/") and q.endswith(".py")
+                        and "*" not in q})
         assert len(paths) >= 3, (
-            f"no per-file engine arms found — the pattern stopped matching the "
-            f"script, so this test now asserts nothing (found {paths})")
+            f"no per-file engine arms found — the shape stopped matching the "
+            f"table, so this test now asserts nothing (found {paths})")
 
-        generic = _modules_selected_by(
-            _case_arm_body(script, "agents/lib/*"))
+        generic = _arm_selecting("agents/lib/*")
         assert generic >= {PREFLIGHT, SECUREFS, PORTABILITY, HOSTGUARD}, (
             f"the generic engine arm selects only {sorted(generic)} — the "
             "derivation lost a flag, or the arm did")
