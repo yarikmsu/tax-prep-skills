@@ -267,6 +267,151 @@ branch. They are a separate contract change in three more modules, so they are
 X8 in the backlog with the reproductions attached, not silent scope on an
 engine-contract PR.
 
+## W5 re-opened — the interpreter floor becomes one number, and a mechanism
+
+**Defect:** W5 was marked DONE and what it shipped was a `.python-version` file.
+That is a pin no reader is obliged to consult and nothing compares anything
+against — prose in a different font. The gap it left was wider than the
+version-skew nuisance AGENTS.md §7 describes:
+
+| what | said | who reads it |
+|---|---|---|
+| `MIN_PYTHON` in `preflight.py` | refuse below **3.10** | a taxpayer, mid-return |
+| README, QUICKSTART, AGENTS.md §7 | "Python **3.10**+" | a contributor, before cloning |
+| `.python-version`, three lock headers, `pyproject.toml` | **3.12** | uv, ruff, mypy |
+| CI's matrix | **3.12** and **3.14** | the only evidence anyone had |
+| the only interpreter on the development machine | **3.14** | every local suite run |
+
+Nothing was broken. **3.10 and 3.11 were SUPPORTED and had never been run** — not
+by a job, not by a machine, not once. CI has been unable to run since 2026-09-13
+(Actions minutes; the last green run was 18:01 UTC and the first zero-step
+failure 18:29, so the boundary lies between them), and **ten pull requests
+merged after it** — #155, #156, #158 through #165 — on evidence from 3.14 alone: an interpreter the matrix
+did name, and that `.python-version`, the locks and `pyproject.toml` did not.
+
+That is the same shape as every other finding this epic: a claim whose only
+support is that nobody checked it.
+
+**Ruled by the owner:** raise the floor rather than install 3.12. Both close the
+gap; this one closes it by deleting the untested claim instead of acquiring a
+second interpreter to keep it alive.
+
+**And it goes one release past the evidence, on purpose.** Only 3.10 and 3.11
+were untested — 3.12 was a CI leg and the locks' target throughout. Unifying at
+3.12 would have satisfied the same test with no lock recompile and no retired
+leg. The extra step has one real cost: 3.12 is the default `python3` on Ubuntu
+24.04 LTS, and the engine now refuses it. Mitigating facts, both checked: the
+CURRENT LTS is 26.04, which ships 3.14 and clears the floor, and the remedy
+leads with `uv python install` rather than a distro package. Recorded here so
+the cost is a decision on the record and not a discovery.
+
+**Shipped:**
+- **The floor is 3.13, and it is CI's oldest leg.** `MIN_PYTHON`,
+  `.python-version`, `pyproject.toml`'s ruff and mypy targets, the three `.in`
+  recipes, the three generated lock headers, the matrix's lower leg, the three
+  single-version jobs and the step conditions that select the coverage leg all
+  state it. README, CONTRIBUTING, QUICKSTART and AGENTS.md §7 claim it. **The
+  step conditions are the ones review added**, and they fail SILENT: left behind
+  at the next floor move, `!= '3.13'` is true on both legs so pytest runs twice
+  and `== '3.13'` is true on neither, so the coverage run and its artifact upload
+  never execute under a green tick.
+- **`TestTheInterpreterFloorIsOneNumber`** (`tests/test_ci_workflow.py`) holds
+  that set — each site checked against `.python-version` as the source. Thirty
+  mutations, one site at a time, each confirmed red on its own assertion.
+
+**THE FIRST DRAFT OF THAT CLASS WAS GREEN UNDER SEVEN SILENT BYPASSES**, all
+found by review, and they are worth listing because every one is a spelling a
+contributor could reach for innocently:
+
+| what was changed | why it passed |
+|---|---|
+| `python-version: 3.12` (bare) | the matcher required quotes |
+| `python-version: '3.12'` | the matcher required DOUBLE quotes |
+| an unquoted `3.12` added to the matrix | the leg parser read quoted entries only |
+| `matrix.python-version=='3.12'` | the matcher required spaces around `==` |
+| old matrix left as a COMMENT, live one changed | `re.search` found the comment first |
+| `target-version` commented out, a new one added | a substring check saw the comment |
+| `--python-version=3.12` in the recipe | the matcher required a SPACE after the flag |
+
+The repair is not a longer list of regexes. Comments are stripped before
+anything in `ci.yml` is matched — quote-aware, because this repository has
+already paid for a gate that reads its own comments — `pyproject.toml` is PARSED
+with `tomllib` so the assertion is about the effective value rather than a line
+of text, and every matcher takes each spelling YAML actually permits. Review also
+found three sites the class did not reach at all: the regeneration recipes in
+`CONTRIBUTING.md` and `ci-and-locks.md`, and the interpreter hint in the
+bug-report template, which is the copy a REPORTER reads.
+- **Plus the claim nobody was making: the interpreter RUNNING the suite is one CI
+  runs.** The first draft asserted it was at or above the floor, and review
+  killed that: before this change `.python-version` said 3.12 and the machine was
+  3.14, so `(3,14) >= (3,12)` was green for the whole period the defect describes.
+  It would have detected nothing. The finding was about MEMBERSHIP, so that is
+  what is asserted.
+- **The locks are compiled for 3.13 and no pinned version moved.** Verified
+  rather than asserted: compiling each `.in` at 3.12 and at 3.13 while holding
+  the existing tree as constraints produces the same resolution both times. The
+  entire effect of the floor change on all three locks is one annotation —
+  `typing-extensions` is no longer reachable through `cyclonedx-python-lib`,
+  whose requirement on it is conditional on `python_version < "3.13"`. The recipe
+  for changing a compile flag WITHOUT turning it into a dependency bump is now in
+  `docs/contributing/ci-and-locks.md`.
+- **The matrix keeps two legs, and the original reason for them is still
+  live.** This bullet said the old justification —
+  `Popen.communicate()` raising on a stdin the caller closed — stopped
+  separating the legs the moment 3.12 left. It does not. The boundary is
+  3.13/3.14, not 3.12/3.13: `except ValueError` sits beside the
+  `BrokenPipeError` arm in 3.14's `_communicate` and is absent from v3.13.9's,
+  checked against CPython's own source. So raising the floor moved that split
+  onto the FLOOR leg rather than out of the matrix, and the rationale that was
+  being retired as stale was the one piece of evidence that needed no
+  replacing. Two further 3.13-vs-3.14 differences sit beside it: 3.14 gave t-strings their own token TYPES, where 3.13 lexes
+  `t"..."` as a NAME plus a STRING, and that split IS exercised here; and 3.14
+  converts every `OSError` from `Path.is_symlink()` to `False`, which the
+  ENGINE fails closed around by not calling it — `tests/` does call it, so the
+  scope word is `agents/lib/` and not the repository — a hazard avoided, not a
+  verdict any test produces. The draft claimed both were reproduced. Review
+  caught it, and which way the error pointed is worth recording: toward making
+  the rationale look stronger. The general form is the honest one — **each leg
+  is the only place its own interpreter runs** — and the old reason is kept as
+  history, marked as history.
+
+**Two claims that were true and quietly stopped being true.** `sys.orig_argv`
+arrived in 3.10, and `agents/lib/__init__.py` said so twice as "below
+MIN_PYTHON there is no `sys.orig_argv`" — an identity, not a coincidence, while
+MIN_PYTHON was 3.10. At a floor of 3.13 the attribute is present on every
+supported interpreter and the fallback covers the SUB-FLOOR range instead, which
+is precisely the range preflight exists to diagnose and therefore the range its
+remedy has to work in. The code is unchanged; the reasoning printed beside it
+was wrong until corrected.
+
+**What this does not fix.** A green local suite is still not a green CI: 3.13
+itself is not installed on this machine, and nothing here changes that. What
+changed is narrower than the draft said: 3.14 was ALREADY a matrix leg and
+already inside "Python 3.10+", so it was never unsupported. What ends is the
+pinned dev version naming something nothing here runs.
+`test_this_suite_is_running_on_an_interpreter_ci_runs` does not detect the
+historical defect either — 3.14 was in the old matrix too, so it would have been
+green throughout. It stops the NEXT one, where a contributor's interpreter drifts
+off the matrix unnoticed.
+
+**Two things to check the day CI can run again** (Actions minutes are exhausted
+until 2026-10-01, so neither is verifiable now and both are stated rather than
+assumed):
+
+1. **`test_the_real_cause_reaches_the_reader_on_an_old_interpreter`
+   (`test_preflight.py`) may execute on the Linux runner for the first time.** It
+   drives `/usr/bin/python3` and skips when that interpreter is at or above
+   `MIN_PYTHON`. At a floor of 3.10 it skipped on every runner; at 3.13 it
+   depends on the image — Ubuntu 24.04 ships 3.12 and would RUN it, 26.04 ships
+   3.14 and would still skip. Its assertions are the ones preflight should
+   satisfy on a sub-floor host, but they have only ever run on this machine.
+2. **`actions/setup-python` accepts `python-version-file: .python-version`.**
+   That would delete the three single-version job pins outright and make
+   `.python-version` load-bearing in CI rather than something CI is compared
+   against — the one place in this set where generating from one source beats
+   asserting that hand-copies agree. It is not taken here for the reason above:
+   a change whose only verifier is CI should not land while CI cannot run.
+
 ## W3 — The hook's largest decision moves to Python — PRs #163, #164
 
 The backlog's framing: *"3,800 lines of bash tested by 5,200 lines of Python is

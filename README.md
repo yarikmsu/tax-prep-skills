@@ -26,7 +26,7 @@ Works for any filing status and any tax year. **State support is California-firs
 
 - One of: OpenAI Codex, Cursor, Kimi Code, GitHub Copilot, or [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — see [per-agent notes](docs/contributing/agents-compat.md)
 - **Live web access from your agent** — tax figures change annually, and a cached result silently produces a wrong return. Codex in particular defaults to `web_search = "cached"`; set it to `"live"`.
-- Python 3.10+ with `pip`
+- Python 3.13+ with `pip`
 - **Git 2.20 or newer** — the PII scan reads added lines via
   `git diff --output-indicator-new`, which older git does not have. The scan
   fails closed without it, so an older git blocks every commit rather than

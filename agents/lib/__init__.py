@@ -144,11 +144,14 @@ def _preflight_is_the_program(main_file, argv, orig_argv, preflight_path) -> boo
     nothing is searched for.
 
     One spelling is knowingly unexempted, fail-CLOSED and with a working remedy
-    in the message: below MIN_PYTHON there is no `sys.orig_argv`, so
-    `-m agents.lib.preflight` on such an interpreter gets the refusal rather
-    than preflight's own verdict. The script-path form needs no `orig_argv` at
-    all and is exempt on every version — which is the form all twenty-five
-    shipped invocations use, and the one the refusal names.
+    in the message: `sys.orig_argv` arrived in 3.10, so on an interpreter older
+    than that `-m agents.lib.preflight` gets the refusal rather than preflight's
+    own verdict. That boundary is BELOW MIN_PYTHON and no longer tracks it —
+    every supported interpreter has the attribute, and the gap is the sub-floor
+    range preflight exists to diagnose, which is why the remedy has to work
+    there. The script-path form needs no `orig_argv` at all and is exempt on
+    every version — which is the form all twenty-five shipped invocations use,
+    and the one the refusal names.
     """
     if main_file is not None:
         return _is_this_preflight(main_file, preflight_path)
@@ -188,10 +191,10 @@ def host_interpreter_defect(root=None, prefix=None, base_prefix=None,
     if argv is _UNSET:
         argv = sys.argv
     if orig_argv is _UNSET:
-        # `sys.orig_argv` is 3.10+, which is MIN_PYTHON. Absent, the `-m` form
-        # cannot be identified at all — see `_preflight_is_the_program`, which
-        # records that as a decision rather than a surprise. The script form
-        # does not consult it.
+        # `sys.orig_argv` is 3.10+ — below MIN_PYTHON, not equal to it. Absent,
+        # the `-m` form cannot be identified at all — see
+        # `_preflight_is_the_program`, which records that as a decision rather
+        # than a surprise. The script form does not consult it.
         orig_argv = getattr(sys, "orig_argv", None)
     if _preflight_is_the_program(main_file, argv, orig_argv, preflight_path):
         return ""

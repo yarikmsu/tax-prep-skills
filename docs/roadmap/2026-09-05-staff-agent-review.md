@@ -178,7 +178,7 @@ size. The weak spots are on the agent-engineering side, and they are structural:
 | `preflight.py` | 2,732 lines | an engine-presence check |
 | Hooks (bash) | 2,330 + 1,473 lines | tested by 5,201 lines of Python |
 | AGENTS.md + CLAUDE.md | 39 KB | loaded into every Claude Code session before any skill |
-| Local venv | Python 3.14 | lock compiled for 3.12 |
+| Local venv | Python 3.14 | CLOSED: the floor is 3.13 and 3.14 is a supported, CI-run interpreter |
 | Lint findings | 12 pyflakes | 7 unused imports, 1 unused local, 4 placeholder-less f-strings; re-run before W1, the count moves |
 
 ## Part 2b — State coverage against the named next users
@@ -329,8 +329,10 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
 
 ### EPIC W — Engineering hygiene and maintainability — **P2**
 
-- **W1 — DONE**, and **W5 — DONE**: `pyproject.toml` configures ruff and mypy and CI
-  runs both; `.python-version` pins 3.12. W4 is what remains of that group.
+- **W1 — DONE**, and **W5 — DONE (re-opened and closed properly)**: `pyproject.toml`
+  configures ruff and mypy and CI runs both; the interpreter floor is 3.13 and is now a
+  MECHANISM rather than a `.python-version` file nothing compares against. W4 is what
+  remains of that group.
 - **W1 — DONE (#90) (P2, S): `pyproject.toml` with ruff and mypy** (gradual, untyped defs off), both
   in CI. Baseline the existing findings and enforce on changed modules and new
   contracts first; clear the current pyflakes baseline (12 at `9f3bdb7`) in the same
@@ -568,9 +570,41 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   stamp-file resources the hook tests touch. The suite is I/O-bound at 38% CPU, which
   suggests xdist could roughly halve wall time; demonstrate it on the same host rather
   than promise it. An engine-only run should finish well under a minute.
-- **W5 — DONE (#90) (P2, S): Pin the dev interpreter.** `.python-version` (3.12) and a `uv sync`
-  recipe. The local venv is 3.14 while the lock targets 3.12, which AGENTS.md §7
-  itself warns about.
+- **W5 — DONE (#90), RE-OPENED and DONE AGAIN (P2, S): Pin the dev interpreter.**
+  #90 shipped `.python-version` (3.12) and a `uv sync` recipe, and that was a pin no
+  reader is obliged to consult and nothing compares anything against — prose, not a
+  mechanism. The gap it left was wider than a version-skew nuisance: `MIN_PYTHON`
+  claimed 3.10 while CI's lowest leg was 3.12 and the only interpreter on this machine
+  was 3.14, so 3.10 and 3.11 were SUPPORTED in README, QUICKSTART and AGENTS.md §7
+  with no job and no machine ever having run either, and ten pull requests (#155,
+  #156, #158-#165) merged after CI died on 2026-09-13 on evidence from 3.14 alone.
+  Closed by raising the floor to 3.13 — one number, equal to CI's oldest leg — and
+  holding every file that states it as a SET by test. A local run was always on a supported interpreter — 3.14 has been a
+  matrix leg throughout — so what closed is the BOTTOM of the claim and not the
+  top: the range that was supported in prose and run nowhere.
+
+  **W5a (P3, S): generate three of the copies instead of asserting about them.**
+  The floor is stated in roughly two dozen places and #166 compares them all.
+  Comparison is the right answer for PROSE, which nothing generates. It is one
+  level too low for three machine-readable clusters, and a review of #166
+  recorded them rather than taking them mid-branch:
+  - `actions/setup-python` accepts `python-version-file: .python-version`,
+    deleting the three single-version job pins. DEFERRED ON PURPOSE and the
+    reasoning still holds — setup-python's resolution of `3.13` to a patch
+    release is observable only on a runner, so nothing local can tell
+    "installed the floor" from "installed something else". Revisit when
+    Actions minutes return 2026-10-01.
+  - the three step conditions (`matrix.python-version == '3.13'` twice, `!=`
+    once) become data if the matrix carries `include:` entries with a
+    `coverage:` boolean. NOT blocked by the outage — it is verifiable by
+    parsing, which the guard already does — and it would collapse `LEG_STEPS`
+    to one question: exactly one matrix entry sets `coverage`, and it is the
+    floor leg.
+  - `--python-version 3.13` is hand-typed in five files. A
+    `scripts/recompile-locks.sh` reading `.python-version` deletes all five and
+    makes the recipe runnable. It does NOT retire the recipe parser: the three
+    `.txt` headers are echoed BY uv and are a fact about how each lock was
+    made, which is the thing worth reading.
 - **W6 — DONE (#105) (P2, S): CI gaps.** A scheduled weekly run, a push-to-main run, coverage upload,
   and a `windows-latest` job for `secure_fs` and `run.sh` — Windows behavior is claimed
   in 27 places and exercised nowhere. Each trigger gets its own PII-scan range (the

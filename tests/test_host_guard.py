@@ -338,8 +338,9 @@ class TestTheExemption:
     def test_the_pre_3_10_dash_m_form_is_knowingly_not_exempt(self, tmp_path):
         """Recorded as a decision, not discovered as a surprise.
 
-        Recovering the module name needs `orig_argv`, and below MIN_PYTHON
-        there is none — `sys.argv` holds only `-m` while this package imports.
+        Recovering the module name needs `orig_argv`, which arrived in 3.10 —
+        below the floor, not at it — so on an older host there is none and
+        `sys.argv` holds only `-m` while this package imports.
         So `-m agents.lib.preflight` on a 3.9 host gets the guard rather than
         preflight's own verdict. Fail-CLOSED, and the message names
         `sh agents/lib/run.sh agents/lib/preflight.py`; the script-path form

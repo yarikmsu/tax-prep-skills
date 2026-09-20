@@ -7,9 +7,18 @@
 # are pinned in .github/workflows/ci.yml; W6 folds them into a hashed dev lock.
 
 [tool.ruff]
-# The interpreter requirements.txt is compiled for, and what .python-version
-# names — never the 3.14 a contributor's `python3 -m venv` happens to give.
-target-version = "py312"
+# THE FLOOR, not whatever `python3 -m venv` gave this contributor, and it is
+# load-bearing TODAY rather than only once the rule selection widens. F821 —
+# which `select = ["F"]` enables — resolves BUILTINS against this version:
+# `raise PythonFinalizationError` is an undefined name at `py312` and clean at
+# `py313`, reproduced with the pinned ruff 0.16.6 and `--select F` alone. Set
+# above the floor it would accept names the oldest supported interpreter does
+# not have. It gates SYNTAX too, which an earlier note here denied: at `py310`
+# ruff rejects `type Alias = int` with "Cannot use `type` alias statement on
+# Python 3.10", under `--select F` alone and not suppressible by rule selection.
+# Both effects point the same way. Moving it means moving the floor —
+# `tests/test_ci_workflow.py::TestTheInterpreterFloorIsOneNumber` holds the set.
+target-version = "py313"
 line-length = 100
 extend-exclude = [".venv", "generate_tax_pdf.py"]
 
@@ -24,7 +33,10 @@ extend-exclude = [".venv", "generate_tax_pdf.py"]
 select = ["F"]
 
 [tool.mypy]
-python_version = "3.12"
+# The floor, for the reason above. mypy's version is load-bearing in its own
+# way: it decides which `sys.version_info` branches are analysed and which
+# stdlib signatures apply.
+python_version = "3.13"
 # Gradual, per W1: annotated code is checked, unannotated code is not, so the
 # engine's 61-function modules do not have to be typed before the gate can run.
 disallow_untyped_defs = false

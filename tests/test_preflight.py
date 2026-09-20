@@ -51,6 +51,13 @@ from tests.skill_text import (  # noqa: E402
     CONTRIBUTOR_SKILLS, ENGINE_FREE_SKILLS, skill_text)
 from tests.engine_tree import engine_top_level_names  # noqa: E402
 
+# A version a PASSING report can actually carry. `check` sets
+# `python_ok = sys.version_info[:2] >= MIN_PYTHON`, so a fixture pairing
+# `python_ok=True` with a hardcoded old release describes a state the engine
+# cannot produce — harmless while nothing reads the string, and a trap for
+# whoever first derives one of those fields from the other.
+SUPPORTED_VERSION = f"{P.MIN_PYTHON_STR}.0"
+
 # W4: this module EXECUTES `run.sh` and the package initialiser in subprocesses
 # rather than asserting against their text — the trade that bought a test able
 # to catch a hang — and it fabricates environments on disk to do it. That is why
@@ -102,7 +109,7 @@ GATE_ONLY_SKILLS: set[str] = set()
 # `sh agents/lib/run.sh -c "`, so a pattern that knew only `python3 -c`
 # matched ZERO units the moment the launcher landed — and the test that
 # uses it, which exists because tax-fbar shipped an indented `-c` body
-# that raises IndentationError below 3.13, went silently vacuous.
+# that raises IndentationError below 3.14, went silently vacuous.
 #
 # The interpreter may carry its VERSION. `python3.12 -c "` is how a document
 # names the exact interpreter a venv installed, and `python3? +` required a
@@ -1175,10 +1182,12 @@ def _blank_python(body):
     # than either answer.
     #
     # 3.14's t-string is the same token split arriving a second time, and it is
-    # the version-dependent verdict this comment was already about: on 3.12
+    # the version-dependent verdict this comment was already about: below 3.14
     # `t"..."` lexes as NAME + STRING and the mask covers it, on 3.14 it lexes as
     # TSTRING_MIDDLE and the mask did not — so the same document was clean on one
-    # CI leg and an offender on the other, and this suite runs both. Named as a
+    # CI leg and an offender on the other, and this suite still runs both. This
+    # split is now the LIVE reason the matrix has two legs; the one it replaced
+    # (`Popen.communicate`, 3.12 versus 3.13+) sits below the floor. Named as a
     # LIST rather than one lookup because the next split will arrive the same
     # way, and a `getattr` per name is what keeps a module that has neither from
     # raising.
@@ -2874,7 +2883,7 @@ print("self-test OK", file=sys.stdout)
             "agents.lib.tie_out", "the tie-out gate",
             "FileNotFoundError: no tie_out.py beside preflight.py", False, True)
         rendered = P.render_markdown(
-            P.PreflightReport("3.12.0", True, (failure,), "", 21))
+            P.PreflightReport(SUPPORTED_VERSION, True, (failure,), "", 21))
         assert "git clone" in rendered
         assert "files are present but at least one" not in rendered
 
@@ -3073,7 +3082,7 @@ class TestInterpreter:
         reader who has already tried that, and inverting the two would answer a
         forgotten `source` with `rm -rf`.
         """
-        report = P.PreflightReport("3.12.0", True, (), "", 20,
+        report = P.PreflightReport(SUPPORTED_VERSION, True, (), "", 20,
                                    "`.venv` exists but this check is running "
                                    "under no virtualenv")
         rendered = P.render_markdown(report)
@@ -3092,7 +3101,7 @@ class TestInterpreter:
         same gate. The condition is one they can check and this check cannot,
         so it is spelled out rather than left to be inferred.
         """
-        report = P.PreflightReport("3.12.0", True, (), "", 20,
+        report = P.PreflightReport(SUPPORTED_VERSION, True, (), "", 20,
                                    "`.venv` exists but this check is running "
                                    "under no virtualenv")
         rendered = P.render_markdown(report)
@@ -3288,6 +3297,52 @@ class TestRelocatedVenv:
 
 
 class TestPythonVersionRemedy:
+    def test_every_version_remedy_prints_the_same_install_line(self):
+        """Three branches, one line — it used to be three copies of it.
+
+        Each branch printed its own `brew install` / `apt install` pair, which
+        was harmless while the version in them was right. Raising the floor made
+        it wrong in a way THREE copies hide better than one: Ubuntu 24.04 LTS
+        carries no `python3.13` package, so the bare apt line exits with "Unable
+        to locate package" on the likeliest Linux a reader is on, and the caveat
+        that says so has to reach every branch or the branch missing it prints a
+        command that fails.
+
+        Pinned as SAMENESS rather than as text. Asserting the sentence would put
+        a fourth copy in this file, which is the thing being prevented.
+        """
+        rendered = [P.python_remedy(), P.python_remedy(defer_to="clone"),
+                    P.python_remedy(defer_to="inspect")]
+        for remedy in rendered:
+            assert P.INSTALL_HINT in remedy, (
+                "a version remedy no longer prints the shared install line — a "
+                "branch with its own copy is a branch that keeps a wrong "
+                "version after the floor moves")
+        # ...and every ROUTE in it names the floor. Three spellings, and the
+        # first draft matched only two: `python@3.13` and `python3.13` were
+        # covered while `uv python install 3.13` — the route this hint LEADS
+        # with — was not, so the preferred line was the one thing unguarded.
+        # Counted as well as compared: a fourth route added later without a
+        # matcher would otherwise pass on its siblings.
+        routes = re.findall(
+            r"python@(\d+\.\d+)|python(\d+\.\d+)\b|python install (\d+\.\d+)",
+            P.INSTALL_HINT)
+        named = {v for match in routes for v in match if v}
+        assert named == {P.MIN_PYTHON_STR}, (
+            f"the install line offers {sorted(named)} and the floor is "
+            f"{P.MIN_PYTHON_STR}")
+        # FOUR, enumerated so the number is a fact rather than a guess: the uv
+        # route, the brew formula, apt's interpreter and apt's separate `-venv`
+        # package. It was five while a line named the releases carrying no such
+        # package; naming a release and interpolating the floor into it renders
+        # a command that ERRORS at the next floor move, so the Linux line now
+        # states the failure instead and carries no fifth version. A route
+        # added later without a matcher would otherwise pass on its siblings'.
+        assert len(routes) == 4, (
+            f"the install line has {len(routes)} recognised version mentions "
+            "rather than four; a route this pattern cannot read is a route "
+            "nothing checks")
+
     def test_the_remedy_changes_the_interpreter_rather_than_reusing_it(self):
         """A remedy that cannot resolve what was reported is worse than none.
 
@@ -3299,7 +3354,7 @@ class TestPythonVersionRemedy:
         rendered = P.render_markdown(report)
         assert P.MIN_PYTHON_STR in rendered
         assert "inherits the version" in rendered
-        assert "python3.12 -m venv" in rendered
+        assert f"python{P.MIN_PYTHON_STR} -m venv" in rendered
 
     def test_an_old_python_does_not_get_the_reclone_remedy_at_all(self):
         """3.9 fails the engine's own imports — ten modules use PEP 604 — so an
@@ -3325,7 +3380,7 @@ class TestPythonVersionRemedy:
             "agents.lib.tie_out", "the tie-out gate",
             "FileNotFoundError: no tie_out.py beside preflight.py", False, True)
         rendered = P.render_markdown(
-            P.PreflightReport("3.12.0", True, (failure,), "", 20))
+            P.PreflightReport(SUPPORTED_VERSION, True, (failure,), "", 20))
         assert "git clone" in rendered
         assert "separated from the code it runs" in rendered
         # And NOT the interpreter caveat: the files are gone, which no version
@@ -3361,7 +3416,7 @@ class TestCLI:
         it started covering `preflight.py` the day this branch added it.
         """
         report = P.PreflightReport(
-            "3.12.0", True, (), "", 21,
+            SUPPORTED_VERSION, True, (), "", 21,
             venv_error="`/w/W2_000-00-0000/.venv` exists but this check is "
                        "running under no virtualenv")
         out = P.render_markdown(report)
@@ -3380,7 +3435,7 @@ class TestCLI:
         told nothing cannot act on the refusal.
         """
         report = P.PreflightReport(
-            "3.12.0", True,
+            SUPPORTED_VERSION, True,
             (P.ModuleFailure("agents.lib.tie_out", "the tie-out gate",
                              "ModuleNotFoundError: agents.lib.tie_out"),),
             "", 21)
@@ -3945,12 +4000,38 @@ class TestSkillGate:
     def test_an_inline_python_body_is_not_indented(self, skill):
         """`python3 -c "` inside an indented list item is a real IndentationError.
 
-        Only 3.13+ auto-dedents the `-c` body. On 3.12 — the version the lock is
-        compiled for and CI runs, and one the new preflight certifies as valid —
-        an indented continuation line exits 1 with `IndentationError: unexpected
-        indent`, so the whole step silently never runs. tax-fbar's foreign-payer
-        cross-check shipped that way: a payer in `parse_ledger.json` and absent
-        from the FBAR account table would never have been surfaced.
+        Only 3.14+ auto-dedents the `-c` body (`Doc/using/cmdline.rst`,
+        "Changed in version 3.14"). Below that an indented continuation line
+        exits 1 with `IndentationError: unexpected indent`, so the whole step
+        silently never runs. THE BOUNDARY IS 3.14, and the sentence here said
+        3.13 for as long as it existed — reproduced both ways: 3.14.7 runs an
+        indented body, 3.9.6 raises. Raising the floor to 3.13 therefore does
+        not even put the hazard below it. tax-fbar's foreign-payer cross-check
+        shipped that way: a payer in `parse_ledger.json` and absent from the FBAR
+        account table would never have been surfaced.
+
+        WHY IT SURVIVES THE FLOOR RAISE is simpler than the reason this
+        docstring used to give, and the reason it used to give is narrowed ten
+        lines below by this test's own comment. It said the interpreter a
+        skill's `python3 -c` lands on is whatever `python3` a host resolves, so
+        no floor could retire the rule. Every inline call in every skill is
+        `sh agents/lib/run.sh -c` now — the launcher, which selects the
+        workspace venv, which `preflight.py` has already refused unless it is at
+        or above the floor. The interpreter is a supported one WHENEVER A VENV
+        EXISTS. With no `.venv` at all every branch of `run.sh` is false and it
+        reaches `exec "${TAXPY:-python3}"` — a PATH lookup, so whatever
+        `python3` the host resolves. (A `.venv` present but WITHOUT an activate
+        script exits 2 instead; the fall-through needs no venv at all.) The old
+        justification still stands for that one state, so it is narrowed rather
+        than refuted — and it is not the hazard an earlier draft of this
+        paragraph claimed, which named `/usr/bin/python3`'s 3.9.6. Nothing on
+        this path reaches that; `python3` here resolves to 3.14.7.
+
+        So the rule survives for the plain reason: the floor is 3.13 and the
+        dedent arrived in 3.14, which puts every supported interpreter at the
+        floor on the raising side. It would go moot for these calls the day the
+        floor reaches 3.14, and that is the condition to revisit it on rather
+        than a claim it can never retire.
         """
         offenders = []
         for path, n, unit, _ in _units(skill):
@@ -3966,7 +4047,7 @@ class TestSkillGate:
             # EVERY body line, not just the first. The `break` used to be
             # unconditional, so a block whose first line was flush and whose
             # second was indented passed the audit and still raised
-            # IndentationError below 3.13 — the same tax-fbar failure this test
+            # IndentationError below 3.14 — the same tax-fbar failure this test
             # describes, one line further down.
             #
             # There is NO fence bound here, and removing the one that stood was
@@ -3989,7 +4070,7 @@ class TestSkillGate:
                     break
         assert not offenders, (
             f"inline python bodies are indented and raise IndentationError "
-            f"below 3.13: {offenders}")
+            f"below 3.14: {offenders}")
 
     @pytest.mark.parametrize("skill", sorted(_engine_calling_skills_cached()))
     def test_no_skill_names_an_interpreter_itself(self, skill):
@@ -4145,7 +4226,7 @@ class TestRemediesCannotDestroyTheFix:
         """The destructive ordering, and the reason it is destructive.
 
         On a stock macOS the host `python3` is 3.9, so a workspace holding a
-        perfectly good 3.12 `.venv` that simply was not activated reports
+        perfectly good supported `.venv` that simply was not activated reports
         python_ok=False AND every PEP 604 module missing. The version remedy
         LEADS WITH `rm -rf .venv` — the reader deletes the one interpreter that
         would have fixed the failure.
@@ -4217,7 +4298,7 @@ class TestRemediesCannotDestroyTheFix:
                                       "SyntaxError: invalid syntax"),),
             workspace=str(tmp_path)))
         how = out.index("## How to proceed")
-        assert "python3.12 -m venv" in out[how:]
+        assert f"python{P.MIN_PYTHON_STR} -m venv" in out[how:]
         assert "Fix the version and re-run" in out
 
     def test_a_windows_layout_venv_is_told_to_source_the_script_it_has(
@@ -4232,7 +4313,7 @@ class TestRemediesCannotDestroyTheFix:
         (scripts / "python.exe").write_text("")
         assert P._venv_layout(tmp_path / ".venv") == "Scripts"
         out = P.render_markdown(self._report(
-            python_ok=True, python_version="3.12.0",
+            python_ok=True, python_version=SUPPORTED_VERSION,
             venv_error="`.venv` exists but this check is running under no "
                        "virtualenv",
             workspace=str(tmp_path)))
@@ -4439,7 +4520,7 @@ class TestTheDependencyCheck:
         path while markdown warned and exited 0.
         """
         report = P.PreflightReport(
-            "3.12.0", True, (), "", 21,
+            SUPPORTED_VERSION, True, (), "", 21,
             missing_dependencies=(("reportlab", "PDF generation",
                                    ("/tax-generate",)),))
         d = P._report_to_dict(report)
@@ -4558,7 +4639,7 @@ class TestTheDependencyCheck:
         `venv_error` alone, and the probe was still paid for on every report
         that blocked for one of the other reasons.
         """
-        fields = dict(python_version="3.12.0", python_ok=True, failures=(),
+        fields = dict(python_version=SUPPORTED_VERSION, python_ok=True, failures=(),
                       probe_error="", modules_checked=21,
                       missing_dependencies=(("pdfplumber", "PDF parsing",
                                              ("/tax-parse",)),))
@@ -4790,9 +4871,9 @@ class TestTheDiagnosisSurvivesAnOldInterpreter:
     def test_the_real_cause_reaches_the_reader_on_an_old_interpreter(self):
         """Not a proxy for the above — the actual binary, actually run.
 
-        Skipped rather than failed where no second interpreter exists: CI runs
-        3.12 and 3.14 only, and a machine without /usr/bin/python3 cannot show
-        this either way.
+        Skipped rather than failed where no second interpreter exists: CI
+        runs the floor and the newest interpreter only, and a machine without
+        /usr/bin/python3 cannot show this either way.
         """
         # Parsed as INTEGERS. Comparing the printed tuple as a string reads
         # "(3, 9)" >= "(3, 10)" as True — '9' sorts after '1' — which skipped
@@ -5279,7 +5360,7 @@ class TestEveryRemedyRunsWhereTheVenvIs:
         monkeypatch.chdir(sub)
         monkeypatch.setattr(P.sys, "base_prefix", str(tmp_path / "base"))
         return P.PreflightReport(
-            python_version="3.12.0", python_ok=True, failures=(),
+            python_version=SUPPORTED_VERSION, python_ok=True, failures=(),
             probe_error="", modules_checked=21, workspace=str(tmp_path),
             **venv)
 
@@ -5316,7 +5397,7 @@ class TestEveryRemedyRunsWhereTheVenvIs:
         (tmp_path / ".venv" / "bin").mkdir(parents=True)
         self._remote(tmp_path, monkeypatch)   # stand in `summaries/`
         report = P.PreflightReport(
-            python_version="3.12.0", python_ok=True, failures=(),
+            python_version=SUPPORTED_VERSION, python_ok=True, failures=(),
             probe_error="", modules_checked=21, workspace=str(tmp_path),
             missing_dependencies=(("pdfplumber", "PDF parsing",
                                    ("/tax-parse",)),))
@@ -5357,7 +5438,7 @@ class TestEveryRemedyRunsWhereTheVenvIs:
         suppressed for on the version path.
         """
         report = P.PreflightReport(
-            python_version="3.12.0", python_ok=True,
+            python_version=SUPPORTED_VERSION, python_ok=True,
             failures=(P.ModuleFailure("agents.lib.tie_out", "the tie-out gate",
                                       "no tie_out.py beside preflight.py",
                                       needs_redaction=False, file_missing=True),),
@@ -5526,8 +5607,8 @@ class TestTheFlagshipVerdictLeadsWithWhatWorks:
     def test_an_old_interpreter_is_named_even_when_the_clone_leads(
             self, tmp_path, monkeypatch):
         """`clone_remedy` builds with a supported interpreter silently. A reader
-        on 3.9 who is not told why sees `python3.12` and uses their own
-        `python3`, rebuilding the identical failure."""
+        on 3.9 who is not told why sees a version they do not have and uses
+        their own `python3`, rebuilding the identical failure."""
         monkeypatch.setattr(P.sys, "version_info", (3, 9, 6))
         report = self._flagship(tmp_path, monkeypatch)
         assert not report.python_ok
@@ -8240,10 +8321,13 @@ class TestTheLauncherRuleReachesBeyondTheSkills:
         """A version-dependent verdict is worse than either answer, and this
         suite runs on two interpreters.
 
-        3.12 gave f-strings their own token type and 3.14 gave t-strings one, so
-        `t"from agents.lib import ptet"` was masked on 3.12 — where it lexes as a
-        NAME and a STRING — and read as executed code on 3.14. The same document,
-        clean on one CI leg and an offender on the other.
+        3.12 gave f-strings their own token type and 3.14 gave t-strings their
+        own, so `t"from agents.lib import ptet"` was masked below 3.14 — where it
+        lexes as a NAME and a STRING — and read as executed code on 3.14. The
+        same document, clean on one CI leg and an offender on the other.
+
+        This is the ONLY thing that exercises the `TSTRING_*` path at all, and
+        it can only do so on the 3.14 leg — which is what that leg is for.
         """
         for literal in ('"from agents.lib import ptet"',
                         'f"from agents.lib import ptet"',
@@ -9358,8 +9442,10 @@ class TestTheLockIsMoreThanImportable:
 
         Written against THIS interpreter's minor rather than a fixed 3.12: the
         constant made the test's meaning depend on which supported Python ran
-        it, and on 3.10 or 3.11 (`MIN_PYTHON` is 3.10) it asserted the opposite
-        of what it says.
+        it, and on the 3.10 and 3.11 `MIN_PYTHON` admitted at the time it
+        asserted the opposite of what it says. The floor is past both now, so
+        the inversion is unreachable — the derivation stays because what it
+        guards against is a CONSTANT, not those two releases.
         """
         here = "%d.%d" % sys.version_info[:2]
         (tmp_path / "requirements.txt").write_text(
@@ -9571,7 +9657,7 @@ class TestALockedPackageThatIsSimplyNotThere:
         (record,), _error = P._drifted_dependencies()
         assert record[1] is None
         out = P.render_markdown(P.PreflightReport(
-            python_version="3.12.0", python_ok=True, failures=(),
+            python_version=SUPPORTED_VERSION, python_ok=True, failures=(),
             probe_error="", drifted_dependencies=(record,)))
         assert "NOT INSTALLED" in out and "None" not in out, (
             "the markdown channel printed the sentinel at the reader")
@@ -9609,8 +9695,8 @@ class TestALockedPackageThatIsSimplyNotThere:
 
         The comparison that decides whether a pin applies is a version
         comparison, and every interpreter this suite runs on has a minor of 10
-        or more (AGENTS.md §7 pins CI to 3.12 and 3.14, and `MIN_PYTHON` is
-        3.10) — so a string compare is not merely imprecise here, it inverts.
+        or more — `MIN_PYTHON` is the floor and the floor is past 3.10 — so a
+        string compare is not merely imprecise here, it inverts.
         """
         assert sys.version_info[1] >= 10, (
             "this test discriminates only on an interpreter whose minor sorts "

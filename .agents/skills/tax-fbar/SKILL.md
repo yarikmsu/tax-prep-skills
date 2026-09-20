@@ -117,7 +117,7 @@ The completeness probe above relies on the user's memory; this check is
 mechanical. When `parse_ledger.json` exists (written by `/tax-parse` step 6.5):
 
 1. Collect foreign payers from the ledger. The block is at column 0, fence and
-   all: the `-c` body cannot be indented (Python below 3.13 raises
+   all: the `-c` body cannot be indented (Python below 3.14 raises
    IndentationError) and a fenced block indented INSIDE a list item, with a
    flush-left body, ends the item at the first body line and leaves the closing
    fence opening a new one. `tax-parse` has the same shape, also unindented.

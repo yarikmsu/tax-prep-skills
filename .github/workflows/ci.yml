@@ -43,13 +43,23 @@ jobs:
       # version-specific break look like a plain break.
       fail-fast: false
       matrix:
-        # 3.12 is what requirements.txt is compiled for and what the project
-        # ships against. 3.14 is what `python3 -m venv` gives a contributor on a
-        # current macOS today, and a local green there said nothing about this
-        # job until it ran here too: `Popen.communicate()` re-flushes a stdin the
-        # caller already closed, which raises on 3.12 and not on 3.13+, so a test
-        # passed locally and failed in CI on the interpreter alone.
-        python-version: ["3.12", "3.14"]
+        # THE FLOOR AND THE CEILING, and nothing between them: 3.13 is what
+        # .python-version names, what the locks are compiled for and the oldest
+        # interpreter this toolkit claims; 3.14 is what `python3 -m venv` gives a
+        # contributor on a current macOS today. TWO LEGS BECAUSE EACH IS THE
+        # ONLY PLACE ITS OWN INTERPRETER RUNS — not because the suite reports
+        # different verdicts on them, which it is written not to. The
+        # interpreter changes ANSWERS, not just availability: 3.14 gave
+        # t-strings their own token TYPE (`TSTRING_START/MIDDLE/END`), where
+        # 3.13 lexes `t"..."` as a NAME plus a STRING, and
+        # `test_preflight.py::test_the_body_mask_covers_a_literal_on_every_interpreter`
+        # exists to make the verdict agree across that split — so the 3.14 leg
+        # is the only thing that exercises the TSTRING path at all, and the
+        # floor leg the only thing that exercises the floor. 3.14 also converts
+        # every `OSError` from `Path.is_symlink()` into False, which the repo
+        # fails closed around rather than inheriting. A suite green on one is
+        # not evidence about the other, and neither version is the "real" one.
+        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,13 +86,14 @@ jobs:
       # Every document test went red in CI on a dependency of the AUDITOR.
       - name: Install test tooling
         run: pip install -r requirements-test.txt
-      # Coverage on 3.12 only — the interpreter the lock is compiled for. Two
-      # runs would produce two reports and no decision about which is the one.
+      # Coverage on the FLOOR leg only — the interpreter the locks are compiled
+      # for. Two runs would produce two reports and no decision about which is
+      # the one.
       - name: Run tests
-        if: matrix.python-version != '3.12'
+        if: matrix.python-version != '3.13'
         run: python -m pytest tests/ -v
       - name: Run tests with coverage
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         run: |
           python -m coverage run -m pytest tests/ -v
           python -m coverage xml
@@ -94,7 +105,7 @@ jobs:
       # convenience. The number is on the job summary and the XML is here for
       # anyone who wants to open it.
       - name: Upload coverage
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
@@ -120,7 +131,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Install test tooling
@@ -135,9 +146,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          # The interpreter .python-version names and requirements.txt is
-          # compiled for. A linter run on another one reports another language.
-          python-version: "3.12"
+          # The FLOOR — but not for the obvious reason, which is wrong:
+          # NEITHER tool reports about the interpreter it runs on. ruff is a
+          # static binary taking its target from `pyproject.toml`, and mypy
+          # takes `python_version` from there too. The pin is for
+          # REPRODUCIBILITY — one interpreter, so a lint result repeats — and it
+          # is the floor rather than an arbitrary version so nothing here has to
+          # be revisited separately when the floor moves.
+          python-version: "3.13"
       # From the hashed dev lock, which pins ruff and mypy by version in its own
       # `.in` as well: a linter is the one dependency whose new release adds
       # FINDINGS, so an unpinned one turns an unrelated pull request red on a
@@ -207,7 +223,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Install dev tooling
         run: pip install -r requirements-dev.txt
       # BOTH locks. The dev lock installs the test runner and the linters, and a

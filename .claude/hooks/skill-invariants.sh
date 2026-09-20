@@ -971,23 +971,28 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.07 - 0.10s        12
 #   agent-definition edit           48 tests      0.9 - 1.2s          6
-#   skill .md edit                1034 tests     21.9 - 23.4s         3
-#   cold pass, all seven modules  1291 tests    155.4 - 159.3s        3
-#   (for scale) `pytest tests/`   4895 tests    316.8 - 324.4s        2
+#   skill .md edit                1035 tests     21.9 - 23.4s         3
+#   cold pass, all seven modules  1292 tests    155.4 - 159.3s        3
+#   (for scale) `pytest tests/`   4911 tests    316.8 - 324.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 249 and runs 247; and
 # the hooks module holds two platform skips, so it collects 165 and runs 163.
-# THE SUITE holds eight skips, not two: those two, the five Windows-only DACL
-# cases W6 added, and one more that depends on the CHECKOUT rather than the
-# platform — tests/test_pdf_toolchain.py skips when `generate_tax_pdf.py` is
-# absent, which it is in a fresh clone, in CI, and in the worktree this
-# sitting was taken in. A developer checkout that has that untracked artifact
-# runs it and sees seven. The row below is the tree the seconds came from.
+# THE SUITE holds seven skips, not two: those two and the five Windows-only DACL
+# cases W6 added. An eighth depends on the CHECKOUT rather than the platform —
+# tests/test_pdf_toolchain.py skips when `generate_tax_pdf.py` is absent, which
+# it is in a fresh clone and in CI. THIS refresh was taken in a developer
+# checkout that HAS that untracked artifact, so it runs and the count is seven
+# where the sitting the seconds came from recorded eight. Nothing about the
+# suite changed; the tree did. SO THE ROW BELOW IS TWO TREES — this one's
+# counts beside the previous one's seconds — which is what the paragraph on the
+# owed sitting, further down, exists to say. An earlier draft of this sentence
+# called the row "the tree the seconds came from": true while both halves were
+# taken together, and false the moment the sitting was discarded.
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4903 and runs 4895 for the same skips — and that row
+# `pytest tests/` collects 4918 and runs 4911 for those skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1030,7 +1035,7 @@ apply_red_checks
 #   tests/test_capabilities.py     175 tests      0.8 - 1.2s         6
 #   tests/test_claude_agents.py     48 tests      0.9 - 1.2s         6
 #   tests/test_secure_fs.py        182 tests      1.5 - 1.7s         6
-#   tests/test_preflight.py        382 tests      6.7 - 11.0s        6
+#   tests/test_preflight.py        383 tests      6.7 - 11.0s        6
 #   tests/test_host_guard.py        94 tests      1.4 - 2.5s         6
 #
 # The agent-definition row above and the agents row here are the SAME
@@ -1157,7 +1162,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 175 + 182 + 247 + 382 = 1034 for a skill edit, plus 94 + 163 = 1291 for a
+# 48 + 175 + 182 + 247 + 383 = 1035 for a skill edit, plus 94 + 163 = 1292 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1225,11 +1230,52 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained zero tests
-# (4895 to 4895). THE SITTING WAS RE-TAKEN, on the branch that flipped this hook's
-# trusting its inherited environment, so the gap is back to ZERO: counts and
-# seconds TOGETHER and LAST, after every edit on that branch was final. It is
-# the first sitting since V5's, and the debt the paragraphs below track is paid.
+# Against the counts the seconds were taken at, the suite has gained sixteen
+# tests (4895 to 4911). THE SECONDS ARE OWED AND THE COUNTS ARE NOT, which is a
+# state this block has been in before and has a shape for: the counts are
+# refreshed here and the seconds are the previous sitting's, left standing and
+# said to be standing rather than quietly re-used as though they were fresh.
+#
+# THE SITTING WAS ATTEMPTED ON THIS BRANCH AND DISCARDED. Every reading, not the
+# implausible ones — the whole set or none is the rule this block opens with,
+# and cherry-picking the believable rows is how a block comes to read precise
+# and be fiction. What it produced: a FAST-PATH reading of 122.3s, on the row
+# that is the hook deciding not to run pytest at all and has never, across
+# eight sittings, been read above a tenth of a second; the hooks module at 119.2/129.6/150.6, a thirty-one-second spread
+# against three and a half the sitting before; and a cold pass at 175.9 against
+# a 155.4-159.3 range. The machine was not idle and the sitting was measuring
+# that: load average 3.6 climbing to 6.9, with an endpoint scanner and XProtect
+# together holding more than a core. It is a FEEDBACK LOOP rather than bad luck
+# — a pytest pass opens thousands of files, which is the event the scanner
+# exists to wake for — so this host cannot produce a trustworthy sitting while
+# that is running, and no amount of patience at the same time of day changes it.
+# The precondition in the header is "an otherwise-idle machine" and it was
+# already corrected once, from "an untouched repository", by a sitting abandoned
+# for the same reason (PR #118, readings of 119.4/111.0/2261.2/134.3s).
+#
+# COUNTS WENT IN AHEAD OF THE SECONDS, which is the order this block prescribes
+# and here was also a precondition for measuring anything. A red module is
+# CARRIED FORWARD into the next run, so while this block was stale the assertion
+# that reads it was red and every hook invocation re-ran the hooks module on top
+# of whatever the trigger selected. A skill edit selects the five modules whose
+# row says 1035; carrying the hooks module in on top of them is that plus the
+# 163 of its own row — most of a cold pass, for a trigger that should cost a
+# fifth of one.
+#
+# AN EARLIER DRAFT PUT A MEASURED FIGURE HERE and it was wrong twice over. It
+# read "observed running 1295", which is not the size of that selection nor of
+# any other this hook makes: it is what the seven modules COLLECTED on the tree
+# before this branch, quoted in a block whose next paragraph says counts are
+# what RUNS. And it stayed green only because the numeral and the word `tests`
+# fell either side of a line break, so the guard that rejects a stray
+# `<n> tests` never saw it. Both halves are one mistake — a number recalled
+# into a sentence rather than derived from the rows above it. A trigger-row measurement taken in that state is
+# the trigger's cost plus the module that dominates every total here. Counts are
+# derivable in a second and nothing about the host can contaminate them.
+#
+# So read every SECOND below as belonging to the tree of the previous sitting
+# and every COUNT as belonging to this one. The ratios are the half that
+# survives that gap, and the paragraphs below say so for their own reasons.
 #
 # EVERYTHING FROM HERE TO THE END OF THIS BLOCK IS HISTORY, and should be read
 # as the ledger that debt accrued in rather than as anything a row above is
@@ -1431,10 +1477,12 @@ apply_red_checks
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained zero (247 to 247), preflight has gained zero (382 to 382), the
+# portability has gained zero (247 to 247), preflight has gained one (382 to 383), the
 # agents module none (48 to 48), secure_fs has gained zero (182 to 182), the hooks module
-# has gained zero (163 to 163), capabilities has gained zero (175 to 175) and the host guard has gained zero (94 to 94). Seven zeros are what a
-# re-taken sitting looks like, and the pairs are kept rather than deleted
+# has gained zero (163 to 163), capabilities has gained zero (175 to 175) and the host guard has gained zero (94 to 94). Six zeros and a one are
+# what an OWED sitting looks like when almost everything it would re-measure
+# has stood still: the one module that moved is the one this branch added a
+# test to, and it moved by a test. The pairs are kept rather than deleted
 # because their job is to say whether the seconds can still be trusted — an
 # empty ledger is an answer, not a missing one. EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
@@ -1449,12 +1497,17 @@ apply_red_checks
 # modules import it, which is the case that found test_claude_agents.py reading
 # tests/skill_text.py with no arm selecting it.
 #
-# Of the zero tests the suite has gained since the sitting, zero landed in
-# tests/test_secure_fs.py, zero in tests/test_portability.py, zero in
+# Of the sixteen tests the suite has gained since the sitting, zero landed in
+# tests/test_secure_fs.py, zero in tests/test_portability.py, one in
 # tests/test_preflight.py, zero in tests/test_capabilities.py, zero in
 # tests/test_claude_hooks.py, zero in tests/test_host_guard.py, and
-# the other zero in test_answers and in every other module this hook has no arm
-# for. That reads as a formality, and the shape is the point: the breakdown
+# the other fifteen in test_ci_workflow and in every other module this
+# hook has no arm for — fourteen of them in that module, which is where the
+# floor guard lives, and the fifteenth not a new test at all: it is
+# tests/test_pdf_toolchain.py, which stopped SKIPPING because this tree has the
+# untracked artifact it needs. Fifteen tests were written and sixteen more
+# run, and that one-test difference between the two sentences is the tree
+# rather than the suite. That reads as a formality, and the shape is the point: the breakdown
 # that stood here named every round between V5's sitting and this one, module
 # by module, and it was correct prose about a tree that no longer exists. What
 # the sentence is FOR is reconciling the seven pairs against the suite gap, and
@@ -1464,7 +1517,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to zero; the remaining zero are modules this
+# They sum to one; the remaining fifteen are modules this
 # hook does not select, which is the reconciliation this sentence exists to
 # state — and which a re-taken sitting makes trivially true on both sides. It is
 # kept in that state rather than deleted because the sentence is the SET check:

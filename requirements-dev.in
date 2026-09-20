@@ -6,7 +6,7 @@
 # the SAME flags AGENTS.md §7 gives for the runtime lock, and commit both:
 #
 #   uv pip compile requirements-dev.in --generate-hashes --universal \
-#       --python-version 3.12 -o requirements-dev.txt
+#       --python-version 3.13 -o requirements-dev.txt
 #
 # ruff and mypy are PINNED here as well as in the lock. A linter is the one
 # dependency whose new release adds FINDINGS, so an unpinned one turns an

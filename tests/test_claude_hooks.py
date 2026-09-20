@@ -3115,11 +3115,18 @@ class TestSkillInvariantsHook:
                                         "tool_input": {"command": "ls"}}))
         process.stdin.close()
         # communicate() below re-flushes self.stdin, and flushing a stream this
-        # test has already closed raises ValueError on Python 3.12 — the version
-        # CI pins and requirements.txt is compiled for. It does NOT raise on
-        # 3.13+, so a contributor venv on a newer interpreter sees this test
-        # pass and learns nothing. Dropping the reference is what the sibling
-        # test at the slow-full-walk case already does.
+        # test has already closed raises ValueError up to and including 3.13 —
+        # 3.14 is where `except ValueError` was added beside the BrokenPipeError
+        # arm. Checked against CPython's own source at v3.13.9, which catches
+        # BrokenPipeError alone, and against the 3.14 running here, which
+        # catches both.
+        #
+        # 3.13 IS THE FLOOR, so the raising half is the floor leg of CI, not
+        # history. An earlier version of this comment put the split at 3.12/3.13
+        # and called this "a defence with no current attacker" — it has one, on
+        # the interpreter this project's lower leg runs. Dropping the reference
+        # is what keeps the test from failing there for a reason unrelated to
+        # what it asserts.
         process.stdin = None
 
         candidates = []
@@ -3830,9 +3837,11 @@ class TestRuntimePermissionsHook:
         process.stdin.write(json.dumps(payload))
         process.stdin.close()
         # communicate() re-flushes self.stdin, and flushing an already-closed
-        # stream raises ValueError on Python 3.12 — the version CI pins and
-        # requirements.txt is compiled for — but not on 3.13+. Dropping the
-        # reference keeps the test honest on both.
+        # stream raises ValueError up to and including 3.13, 3.14 being where
+        # `except ValueError` was added. The floor is 3.13, so the raising half
+        # is a leg CI runs rather than a version below it. Dropping the
+        # reference keeps the test honest on any interpreter rather than only on
+        # the newest one.
         process.stdin = None
         deadline = time.time() + 10
         while time.time() < deadline and not marker.exists():

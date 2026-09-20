@@ -253,7 +253,7 @@ Windows venv is the host interpreter. A wrapper makes that unrepresentable.
 **Per call, not once at the top of a block.** Some agents open a fresh shell per
 command (AGENTS.md §7), so an activation stated once does not reach the next
 one, and the preflight would then certify one interpreter while the computation
-ran on another — on a stock macOS, a 3.12 virtualenv certified while
+ran on another — on a stock macOS, a supported virtualenv certified while
 `python3 -m agents.lib.projection` runs under /usr/bin/python3, a 3.9 this
 toolkit does not support. `preflight.py` enforces the other half: it BLOCKS when
 a workspace `.venv` exists that it is not running in.

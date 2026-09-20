@@ -70,8 +70,50 @@ _HERE = Path(__file__).resolve().parent
 _ENGINE_ROOT = _HERE.parent.parent
 sys.path.insert(0, str(_ENGINE_ROOT))
 
-MIN_PYTHON = (3, 10)
+# THE FLOOR: the oldest interpreter this toolkit claims, and — deliberately —
+# the oldest one CI runs. They were two numbers (3.10 here, 3.12 in CI) and the
+# gap was a claim nothing tested: no job, and no machine in this project, ever
+# ran 3.10 or 3.11. Every place that states this number is held as one set by
+# `tests/test_ci_workflow.py::TestTheInterpreterFloorIsOneNumber`.
+MIN_PYTHON = (3, 13)
 MIN_PYTHON_STR = ".".join(str(p) for p in MIN_PYTHON)
+
+# The install line all three version remedies print. A FRAGMENT, not a rendered
+# remedy — the module-level snapshot this file bans elsewhere is a whole remedy
+# pinned by a test, and this is the opposite: one source for a line that was
+# copied three times.
+#
+# LEADS WITH `uv`, and that is the whole design of it. The first draft was a
+# distro table, and a distro table in engine code rots in the one direction
+# nobody notices: it keeps rendering. That draft asserted "Ubuntu 24.04 LTS, the
+# current LTS" four months after 26.04 LTS shipped, and it was wrong in the
+# reader's FAVOUR — 26.04 carries 3.14, which clears this floor, so the reader
+# it described most confidently is the one who never sees this message.
+#
+# `uv python install` needs no package to exist for the version, works the same
+# on macOS, Linux and Windows, and is already what CONTRIBUTING.md recommends —
+# so it is one line that cannot go stale per platform.
+#
+# AND NO RELEASE IS NAMED BENEATH IT, which is the second time this was got
+# wrong. Naming one and interpolating MIN_PYTHON_STR into it reads correct at
+# today's floor and rots WORSE than the original table did: at the next move it
+# renders `apt install python3.N` for a release that packages no such thing, so
+# the remedy prints a command that errors — the exact failure the paragraph
+# above exists to prevent — and it does it plausibly, in a line a reader has no
+# reason to doubt. Whether a distro packages a given minor is a fact about the
+# RELEASE, and no amount of interpolation makes a claim about one track a
+# version. So the Linux line names the failure instead, which is true at every
+# floor, and `uv` above it needs no package to exist at all.
+INSTALL_HINT = (
+    f"    # any platform:  uv python install {MIN_PYTHON_STR}\n"
+    f"    # macOS:         brew install python@{MIN_PYTHON_STR}\n"
+    f"    # Linux:         apt install python{MIN_PYTHON_STR} "
+    f"python{MIN_PYTHON_STR}-venv — only if your release\n"
+    f"    #                packages it. Several current LTS releases do not; "
+    f"\"Unable to locate\n"
+    f"    #                package\" means yours is one, and the first line "
+    f"works anyway.\n"
+)
 
 # The gate-bearing modules: the four whose silent absence produces a return that
 # looks complete and is not. They are listed apart from the rest because the
@@ -359,10 +401,11 @@ def python_remedy(layout: str = "bin", defer_to: str = "",
             f"supports, and `python3 -m venv` inherits the version of the "
             f"`python3` that runs it, so building the fresh clone's environment "
             f"with THIS one recreates the same failure:\n\n"
-            f"    # macOS: brew install python@3.12 · Debian/Ubuntu: apt install python3.12\n\n"
-            f"The clone steps already name `python3.12` for that reason. Any "
-            f"{MIN_PYTHON_STR}+ interpreter works; 3.12 is named because CI "
-            f"runs it."
+            f"{INSTALL_HINT}\n"
+            f"The clone steps already name `python{MIN_PYTHON_STR}` for that "
+            f"reason. Any {MIN_PYTHON_STR}+ interpreter works — a NEWER one is "
+            f"fine and nobody should downgrade to reach this line; "
+            f"{MIN_PYTHON_STR} is named because it is the oldest CI runs."
         )
     if defer_to == "inspect":
         # The rebuild below opens with `rm -rf .venv`, and on an uncomparable
@@ -376,20 +419,22 @@ def python_remedy(layout: str = "bin", defer_to: str = "",
             f"Install or select Python {MIN_PYTHON_STR}+ — this interpreter is "
             f"older than the toolkit supports, and `python3 -m venv` inherits "
             f"the version of the `python3` that runs it:\n\n"
-            f"    # macOS: brew install python@3.12 · Debian/Ubuntu: apt install python3.12\n\n"
+            f"{INSTALL_HINT}\n"
             f"Then settle the virtualenv question below BEFORE rebuilding with "
             f"it — the rebuild starts by deleting `.venv`, which this check has "
-            f"no evidence to justify. Any {MIN_PYTHON_STR}+ interpreter works; "
-            f"3.12 is named because CI runs it."
+            f"no evidence to justify. Any {MIN_PYTHON_STR}+ interpreter works — "
+            f"a NEWER one is fine; {MIN_PYTHON_STR} is named because it is the "
+            f"oldest CI runs."
         )
     return (
         f"Install or select Python {MIN_PYTHON_STR}+ and rebuild the environment "
         f"WITH it. `python3 -m venv` inherits the version of the `python3` that "
         f"runs it, so recreating `.venv` with the interpreter that just failed "
         f"this check leaves it failing — the version has to change first:\n\n"
-        f"    # macOS: brew install python@3.12 · Debian/Ubuntu: apt install python3.12\n"
-        f"{_rebuild_steps('python3.12', layout, workspace=workspace)}\n\n"
-        f"Any {MIN_PYTHON_STR}+ interpreter works; 3.12 is named because CI runs it."
+        f"{INSTALL_HINT}"
+        f"{_rebuild_steps(f'python{MIN_PYTHON_STR}', layout, workspace=workspace)}\n\n"
+        f"Any {MIN_PYTHON_STR}+ interpreter works — a NEWER one is fine; "
+        f"{MIN_PYTHON_STR} is named because it is the oldest CI runs."
     )
 
 
@@ -637,7 +682,7 @@ def _rebuild_interpreter(report) -> str:
     rebuild instruction issued to a reader on 3.9 has to name something else or
     it rebuilds the same failure.
     """
-    return "python3" if report.python_ok else "python3.12"
+    return "python3" if report.python_ok else f"python{MIN_PYTHON_STR}"
 
 
 def venv_remedy(layout: str = "bin", python: str = "python3",
@@ -1245,9 +1290,10 @@ def _as_a_dash_c_invocation():
     finally:
         sys.argv = saved_argv
         if saved_orig is absent:
-            # Below MIN_PYTHON there was no attribute to begin with, and
-            # leaving a synthetic one behind would silently switch the guard's
-            # own fallback branch off for the rest of this process.
+            # Below 3.10 — which is below MIN_PYTHON, not equal to it — there
+            # was no attribute to begin with, and leaving a synthetic one behind
+            # would silently switch the guard's own fallback branch off for the
+            # rest of this process.
             del sys.orig_argv
         else:
             sys.orig_argv = saved_orig
@@ -2370,7 +2416,7 @@ def _remedy_text(report: PreflightReport) -> str:
     #
     # AN UNACTIVATED WORKSPACE VENV OUTRANKS THE VERSION, and getting that order
     # wrong was destructive rather than merely unhelpful. On a stock macOS the
-    # host `python3` is 3.9, so a workspace holding a perfectly good 3.12 `.venv`
+    # host `python3` is 3.9, so a workspace holding a perfectly good supported `.venv`
     # that simply was not activated reports python_ok=False plus every PEP 604
     # module missing — and the version remedy LEADS WITH `rm -rf .venv`. The
     # reader deletes the one interpreter that would have fixed the failure, and
@@ -2385,7 +2431,7 @@ def _remedy_text(report: PreflightReport) -> str:
         # Reordering alone was a half-fix: `rm -rf .venv` still printed in this
         # exact case, under a sentence — "recreating `.venv` with the
         # interpreter that just failed leaves it failing" — that is FALSE here,
-        # because the `.venv` is the 3.12 nobody activated. A reader who skims
+        # because the `.venv` is the supported one nobody activated. A reader who skims
         # to the second shell block deletes the interpreter that would have
         # fixed the run.
         #
@@ -2413,7 +2459,7 @@ def _remedy_text(report: PreflightReport) -> str:
         # proceed" was a launcher that exits 127 in that tree, above the one
         # remedy that would work. The interpreter has to be named there too:
         # `clone_remedy` builds with `_rebuild_interpreter` silently, so a reader
-        # on a stock macOS 3.9 who is not told why sees `python3.12` twice, uses
+        # on a stock macOS 3.9 who is not told why sees the named interpreter twice, uses
         # their own `python3`, and rebuilds the identical failure — the loop
         # `defer_to="clone"` exists to break, which this branch never reached.
         if report.files_missing:
@@ -2464,7 +2510,7 @@ def _remedy_text(report: PreflightReport) -> str:
         # the environment inside the fresh checkout. Naming only the venv pair
         # left the flagship verdict — a skill copied away from the engine on a
         # stock macOS 3.9, which is both conditions at once — printing
-        # `python3.12 -m venv .venv` and the pip line twice with an `rm -rf`
+        # `python<floor> -m venv .venv` and the pip line twice with an `rm -rf`
         # wedged between them. Two of the three pairs that can collide were
         # checked; this is the third.
         rebuild_follows = (bool(report.venv_error)

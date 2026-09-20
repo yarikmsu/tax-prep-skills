@@ -77,7 +77,7 @@ body:
     id: python
     attributes:
       label: Python version
-      description: "Output of `python3 --version`. CI runs 3.12 and 3.14."
+      description: "Output of `python3 --version`. CI runs 3.13 and 3.14."
     validations:
       required: true
 

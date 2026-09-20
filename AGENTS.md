@@ -299,14 +299,14 @@ never the code. One read site: `workspace.resolve_workspace`.
 
 ## 7. Tooling and tests
 
-Python 3.10+. Use a venv — never `pip install --break-system-packages`:
+Python 3.13+. Use a venv — never `pip install --break-system-packages`:
 
 ```bash
 python3 -m venv .venv && sh agents/lib/run.sh -m pip install -r requirements.txt
 ```
 
 **A green local suite is not a green CI.** That `venv` follows whatever `python3`
-is, while the lock is compiled for 3.12, and the interpreter alone decides some
+is, while the locks are compiled for the FLOOR, and the interpreter alone decides some
 results. Reinstall from the lock rather than letting the venv drift off it: an
 installed version that is not the pinned one tests what nobody ships. Which results,
 and why CI reports two Pythons: `docs/contributing/ci-and-locks.md`.
@@ -380,7 +380,7 @@ a parser version the lock does not pin.
   assertion, update its worksheet comment. Add tests for new behavior.
 - What each block of the suite pins down: `docs/contributing/test-invariants.md`.
 
-**CI (GitHub Actions)** must pass: pytest (3.12, 3.14, and `windows-latest` for
+**CI (GitHub Actions)** must pass: pytest (the floor, the newest, and `windows-latest` for
 `secure_fs`), ruff + mypy, the PII scan over a PER-TRIGGER range, and pip-audit
 over all three locks; Dependabot opens dependency PRs weekly. Its four triggers and
 the two Windows defects the Windows job found: `docs/contributing/ci-and-locks.md`.

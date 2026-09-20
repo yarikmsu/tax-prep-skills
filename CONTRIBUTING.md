@@ -48,15 +48,16 @@ outside this clone, useful only if you want the skills available in *other* dire
 under Claude Code, and inert under anything else. On a Windows clone without developer
 mode, where symlinks fail, that global install needs `--copy`.
 
-**Use Python 3.12.** `.python-version` names it, the lock is compiled for it, and CI's
-linters run on it. A bare `python3 -m venv` follows whatever `python3` happens to be —
-on a current macOS that is 3.14, and the interpreter alone decides some results, which
-is why CI runs both. With [uv](https://docs.astral.sh/uv/) installed, the pinned
+**Python 3.13+ is required, and 3.13 is the one to build with.** It is the FLOOR:
+`.python-version` names it, the locks are compiled for it, CI's linters run on it and
+CI's oldest test leg is it. A bare `python3 -m venv` follows whatever `python3` happens
+to be — on a current macOS that is 3.14, which is supported and is CI's other leg, but
+the interpreter alone decides some results, which is why CI runs both. With [uv](https://docs.astral.sh/uv/) installed, the pinned
 interpreter and the locked tree come from two commands that read `.python-version` and
 `requirements.txt` themselves:
 
 ```bash
-uv venv                                # 3.12, per .python-version
+uv venv                                # 3.13, per .python-version
 uv pip sync requirements.txt           # exactly the lock, hashes verified
 uv pip install pytest                  # AFTER the sync: `sync` makes the
                                        # environment exactly the lock, which is
@@ -76,8 +77,8 @@ source .venv/bin/activate && python3 -m pytest tests/ -q
 - **Add tests for new behavior.** Expected values are hand-computed from IRS
   worksheets — when you change an assertion, update its worksheet comment to match.
 - **A green local suite is not a green CI.** Your virtual environment follows whatever
-  `python3` is; the lock is compiled for 3.12 and CI runs **3.12 and 3.14**, because the
-  interpreter alone decides some results.
+  `python3` is; the locks are compiled for the floor and CI runs **3.13 and 3.14** — the
+  floor and the newest release — because the interpreter alone decides some results.
 - `docs/contributing/test-invariants.md` records what each block of the suite pins down
   and which rule breaks if an assertion is weakened. Read the relevant entry before
   changing a test that looks redundant — several of them are load-bearing in
@@ -98,7 +99,7 @@ ruff check .          # the pyflakes-equivalent set, and it is green
 mypy -p agents        # annotated code, against a named per-module baseline
 ```
 
-Both are configured in `pyproject.toml` and run in CI on 3.12, with the versions pinned
+Both are configured in `pyproject.toml` and run in CI on the floor, with the versions pinned
 there — a linter is the one dependency whose new release adds findings. `ruff`'s rule
 selection is deliberately narrow (`F`): the default set reports about nine hundred
 findings here, nearly all of them style opinions nobody has ruled on, and a gate that
@@ -116,11 +117,12 @@ both files:
 
 ```bash
 uv pip compile requirements.in --generate-hashes --universal \
-    --python-version 3.12 -o requirements.txt
+    --python-version 3.13 -o requirements.txt
 ```
 
 Changing `--python-version` or dropping `--universal` silently changes what the lock
-covers.
+covers, and `--python-version` is the floor — moving it means moving the floor
+everywhere, which `docs/contributing/ci-and-locks.md` walks through.
 
 ## The PII gate
 
@@ -148,7 +150,7 @@ The gates' `validation_receipt.json` is a runtime artifact like the rest — git
   hook — it is the same flag that skips the commit-time scan, spelled the same way, so
   reach for it deliberately in either place.
 - Write commit messages that explain *why*, not just what.
-- Open a pull request against `main`. CI runs pytest on 3.12 and 3.14, the PII scan, and
+- Open a pull request against `main`. CI runs pytest on 3.13 and 3.14, the PII scan, and
   `pip-audit`; all three must pass.
 - **Automated PR review is off** (2026-09-07). A maintainer reviews the diff by hand;
   driving a change to a clean pass is still part of opening it.

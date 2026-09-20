@@ -54,18 +54,78 @@ The shallow-checkout guard asks git (`rev-parse --is-shallow-repository`) rather
 than whether the root LOOKS like a sha, because a grafted boundary looks exactly
 like one and the check could never have fired.
 
-## Two Python versions, because the interpreter decides some results
+## The floor is 3.13, and it is the same number everywhere
 
 Relocated out of AGENTS.md §7 by Y5 (PR #113), which keeps the rule — a green
 local suite is not a green CI, so reinstall from the lock rather than letting the
 venv drift off it — and points here for the evidence.
 
-The local `.venv` follows whatever `python3` is, while the lock is compiled for
-3.12. That alone would only be a version-skew nuisance. What makes CI run **3.12
-and 3.14 and report both** is that the interpreter changes ANSWERS, not just
-availability: `Popen.communicate()` re-flushes a stdin the caller already closed,
-which RAISES on 3.12 and does not on 3.13+. A suite green on one is not evidence
-about the other, and neither version is the "real" one.
+**There used to be two numbers.** `MIN_PYTHON` in `preflight.py` said 3.10 and
+refused anything older; `.python-version`, the three lock headers and CI's lower
+matrix leg said 3.12. The gap between them — 3.10 and 3.11 — was a support claim
+in README, QUICKSTART and AGENTS.md §7 that no job and no machine in this project
+had ever run. Nothing was wrong with the code; the claim was simply untested, and
+a toolkit that computes real returns should not carry one.
+
+So the floor is now ONE number, 3.13, and it is the oldest interpreter CI runs.
+Every file that states it is held as a set by
+`tests/test_ci_workflow.py::TestTheInterpreterFloorIsOneNumber` — `.python-version`,
+both `pyproject.toml` tool targets, the three `.in` recipes, the three generated
+lock headers, `MIN_PYTHON`, the matrix's lower leg, the three single-version job
+pins, the step conditions that select the coverage leg, and the requirement
+sentence in AGENTS.md, README, CONTRIBUTING and QUICKSTART. A prose pin drifts;
+this one goes red.
+
+**3.12 WOULD ALSO HAVE CLOSED THE GAP, and cheaper.** It was a CI leg and the
+locks' target, so it was never the untested part — only 3.10 and 3.11 were. The
+owner chose 3.13 anyway, and the cost of that extra step is worth naming rather
+than leaving a later reader to rediscover: 3.12 is the default `python3` on
+Ubuntu 24.04 LTS, which the engine now refuses. The current LTS, 26.04, ships
+3.14 and clears the floor; 24.04 and Debian 12 package no 3.13 at all, which is
+why `preflight.py`'s remedy leads with `uv python install` rather than a distro
+package.
+
+What this does NOT do is newly bless 3.14. It was already a matrix leg and
+already inside "Python 3.10+", so a local run was always on a claimed version.
+What changed is narrower, and worth stating exactly rather than generously: the
+pin no longer names a version nothing here runs. The interpreter a contributor
+gets from `python3 -m venv` is still ABOVE it — on a current macOS that is 3.14,
+a release up — which is exactly why a green local suite is not a green CI and
+why the matrix keeps a second leg.
+The untested range is gone from the BOTTOM of the claim. The top of it — every
+release after 3.14 — is open by construction and always will be; QUICKSTART is
+the only one of the four documents that says so.
+
+### Why two legs, then, and not one
+
+Because the interpreter changes ANSWERS, not just availability, and 3.13 and 3.14
+differ in ways this suite can already see:
+
+- **t-strings.** 3.14 gave them their own token TYPES —
+  `TSTRING_START`/`MIDDLE`/`END` — where 3.13 lexes `t"..."` as a NAME plus a
+  STRING. `test_preflight.py::test_the_body_mask_covers_a_literal_on_every_interpreter`
+  exists to make the verdict AGREE across that split, so the 3.14 leg is the
+  only thing in this repository that exercises the `TSTRING_*` path at all.
+- **`Path.is_symlink()`.** 3.14 converts every `OSError` to `False`, which would
+  turn access-denied into a false safety certificate. The repository fails closed
+  around it rather than inheriting the newer behaviour — by NOT calling it, so
+  unlike the split above no test here produces a different outcome per leg.
+
+Which is the honest general form: **each leg is the only place its own
+interpreter runs.** The suite is written so the two agree, and that is the point
+— a verdict that differed per leg would be the defect, not the justification.
+
+The difference that first made the point is STILL LIVE, and this paragraph said
+it was history until the boundary was checked. `Popen.communicate()` re-flushes
+a stdin the caller already closed, which raises `ValueError` up to and including
+**3.13** and does not on 3.14: `except ValueError` sits beside the
+`BrokenPipeError` arm in 3.14's `_communicate` and not in v3.13.9's. A test
+passed locally and failed in CI on the interpreter alone.
+
+Raising the floor to 3.13 did NOT retire that split, which is what the earlier
+wording assumed when it put the boundary at 3.12/3.13 — it moved the raising
+half from a leg being dropped onto the leg that is now the floor. Three
+differences separate the legs, not two.
 
 ## Three locks, and why the split is structural
 
@@ -106,13 +166,33 @@ the SAME flags and commit both files:
 
 ```bash
 uv pip compile requirements.in --generate-hashes --universal \
-    --python-version 3.12 -o requirements.txt
+    --python-version 3.13 -o requirements.txt
 ```
 
-`--python-version 3.12` matches the CI runner and `--universal` keeps the
+`--python-version 3.13` is the FLOOR (above) and `--universal` keeps the
 resolution valid on macOS and on the Windows job; changing either silently
 changes what the lock covers. A Dependabot PR bumps the lock — mirror the
 version into the `.in` in the same PR, or the next regeneration reverts it.
+
+**Changing a compile FLAG is not a dependency bump, and uv already keeps it
+from becoming one** — provided `-o` names the lock that already exists. uv
+preserves the pins it finds in the output file and re-resolves only what it must,
+so moving `--python-version` produces the flag's effect and nothing else. Use
+`--upgrade` when a refresh is what you actually want; the two are separate
+changes and belong in separate commits.
+
+Do not reach for a hand-built constraints file to force this. The obvious recipe
+— grep the `name==version` lines out of the lock and pass them back with `-c` —
+drops the environment MARKERS, and a `--universal` lock legitimately pins one
+name twice under opposite markers. Those return as two unconditional constraints
+that cannot both hold.
+
+Raising the floor from 3.12 to 3.13 moved no pinned version at all: all three
+committed locks are byte-identical to a plain in-place regeneration at 3.13,
+apart from the `-o` path uv echoes into the header. The flag's entire effect was
+one annotation — `typing-extensions` is no longer reachable through
+`cyclonedx-python-lib`, whose requirement on it is conditional on
+`python_version < "3.13"` — and the package is still pinned, via mypy.
 
 ## Coverage: read the caveat before the number
 

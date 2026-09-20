@@ -15,8 +15,11 @@ If you are evaluating whether this project is worth your time, this is the page 
 
 ## 1. Requirements
 
-Python 3.10 or newer. CI runs the suite on **3.12 and 3.14**, so those are the two
-versions known to be green.
+Python 3.13 or newer. CI runs the suite on **3.13 and 3.14** — the floor and the
+newest release — and those are the only two it runs. 3.14 is what this project is
+developed on day to day. Neither leg has run since 2026-09-13: Actions minutes
+are exhausted until 2026-10-01, so treat "green" as a claim about the last run
+before that, not about today.
 
 ## 2. Install
 

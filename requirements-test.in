@@ -12,6 +12,16 @@
 # nothing here shares a dependency with the runtime tree, and a test pins that.
 #
 #   uv pip compile requirements-test.in --generate-hashes --universal \
-#       --python-version 3.12 -o requirements-test.txt
+#       --python-version 3.13 -o requirements-test.txt
 pytest
 coverage
+# The CI workflow is YAML and the floor guard has to ask STRUCTURAL questions of
+# it — which job binds `python-version` to the matrix, whether the matrix has an
+# `exclude`, which step carries which condition. Nine spellings of "3.12" slipped
+# past the regexes that stood here, every one of them valid YAML: flow style, a
+# folded scalar, `${{ '3.12' }}`, an exclusion that deletes the floor leg
+# entirely. A parser cannot be fooled by a spelling.
+#
+# It shares nothing with the runtime tree — PyYAML has no dependencies at all —
+# which is the property `test_the_two_locks_share_no_dependency` exists to keep.
+pyyaml

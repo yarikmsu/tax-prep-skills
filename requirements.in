@@ -9,9 +9,9 @@
 #
 # After editing this file, regenerate with the SAME flags (see AGENTS.md §7):
 #   uv pip compile requirements.in --generate-hashes --universal \
-#       --python-version 3.12 -o requirements.txt
+#       --python-version 3.13 -o requirements.txt
 #
-# --python-version 3.12 matches the CI runner; --universal keeps the resolution
+# --python-version 3.13 matches the CI runner; --universal keeps the resolution
 # valid on contributor macOS as well as CI Linux.
 
 pdfplumber==0.11.10
