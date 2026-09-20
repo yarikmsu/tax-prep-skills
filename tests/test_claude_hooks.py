@@ -311,7 +311,7 @@ def _chmod_logging_shim(root: Path):
 
 
 def _run_skill_hook_bash(project_dir: Path, command="python helper.py",
-                         indent=None):
+                         indent=None, env=None):
     """Drive the hook with a Bash payload — the branch with no file_path.
 
     A Bash payload is a command string, so nothing in it says which files the
@@ -324,7 +324,8 @@ def _run_skill_hook_bash(project_dir: Path, command="python helper.py",
         input=json.dumps({"tool_name": "Bash",
                           "tool_input": {"command": command}}, indent=indent),
         text=True, capture_output=True,
-        env=dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir)))
+        env=dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir),
+                 **(env or {})))
 
 
 def _shared_test_helpers() -> list:
@@ -2704,6 +2705,104 @@ class TestSkillInvariantsHook:
         failed = _run_skill_hook(tmp_path, skill)
         assert failed.returncode == 2
         assert "Skill invariants FAILED" in failed.stderr
+
+    def test_a_symlinked_dot_claude_is_refused_and_nothing_is_written_through_it(
+            self, tmp_path):
+        """The branch above the one below it, and the only one that can write
+        OUTSIDE THE CLONE.
+
+        The cascade opens `[ -L .claude ] || [ ! -d .claude ]`, and the two
+        halves are not the same test: a symlink POINTING AT A DIRECTORY
+        satisfies `-d`, so the `-L` is the whole of what catches it. The
+        sibling test above covers a symlinked STAMP inside a real `.claude`;
+        this covers the directory itself, which is the half with somewhere to
+        write to. It had no test at all — the two symlinked-`.claude` tests in
+        this file belong to the PERMISSIONS hook, and reading a name rather
+        than a class makes this look covered.
+
+        THIS PINS THE PROPERTY, NOT EITHER BRANCH, and the distinction is
+        measured rather than assumed. The refusal is made twice: once here, and
+        again inside `advance_stamp`, which re-validates immediately before its
+        write because the pass between them is tens of seconds long and
+        `.claude` can be replaced during it. Deleting the `-L` from EITHER site
+        alone leaves this test green — the other still refuses — and deleting
+        both turns it red. So what is asserted is the property both exist to
+        hold, which is the right thing for a test to own: either check may be
+        restructured, and neither may be dropped without the other noticing.
+        """
+        outside = tmp_path.parent / f"outside-{tmp_path.name}-dot-claude"
+        outside.mkdir()
+        (tmp_path / ".claude").symlink_to(outside)
+        (tmp_path / "AGENTS.md").write_text("# a watched root\n")
+        _fake_venv(tmp_path, exit_code=1, lines=["$*"])
+
+        r = _run_skill_hook_bash(tmp_path)
+
+        assert r.returncode == 2, r.stderr
+        assert _selected_modules(r) == [PORTABILITY, CAPABILITIES, AGENTS,
+                                        HOOKS, PREFLIGHT, SECUREFS,
+                                        HOSTGUARD], (
+            "a `.claude` the hook will not write to must force the full pass")
+        assert list(outside.iterdir()) == [], (
+            "the hook wrote through a symlinked .claude, outside the clone")
+        assert (tmp_path / ".claude").is_symlink(), (
+            "the link was replaced rather than refused — the hook must never "
+            "CREATE .claude either, which in a taxpayer workspace is "
+            "infrastructure it has no business inventing")
+
+        # The control, on the sibling test's pattern: the refusal has to COST
+        # something, or every assertion above holds against a hook that never
+        # writes a stamp at all and runs everything every time.
+        (tmp_path / ".claude").unlink()
+        (tmp_path / ".claude").mkdir()
+        _fake_venv(tmp_path, exit_code=0, lines=["288 passed"])
+        time.sleep(STAMP_OVERLAP_SECONDS)
+        assert _run_skill_hook_bash(tmp_path).returncode == 0
+        assert (tmp_path / SKILL_STAMP).is_file(), (
+            "no stamp is ever written, so the refusal above costs nothing and "
+            "this test is measuring a hook that has no stamp")
+        assert _run_skill_hook_bash(tmp_path).returncode == 0
+
+    def test_a_run_marker_that_cannot_be_created_forces_the_full_pass(
+            self, tmp_path):
+        """The third branch, and the one with no visible symptom.
+
+        The marker is what the stamp's mtime is compared against, and it is
+        made under `$TMPDIR`. If `mktemp -d` fails the hook holds no marker,
+        and it must then treat the stamp as unusable — because without the
+        marker it cannot tell a stamp written by this pass from one written
+        during it, which is the whole reason the marker is backdated.
+
+        UNTESTED UNTIL NOW, and invisible in the direction that matters: with
+        this branch removed the hook would go on passing every other test in
+        this file, because `$TMPDIR` is writable on every machine that runs
+        them. The failure only appears on a host where it is not.
+        """
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / "AGENTS.md").write_text("# a watched root\n")
+        _fake_venv(tmp_path, exit_code=1, lines=["$*"])
+
+        r = _run_skill_hook_bash(
+            tmp_path, env={"TMPDIR": str(tmp_path / "no-such-tmpdir")})
+
+        assert r.returncode == 2, r.stderr
+        assert _selected_modules(r) == [PORTABILITY, CAPABILITIES, AGENTS,
+                                        HOOKS, PREFLIGHT, SECUREFS,
+                                        HOSTGUARD], (
+            "without a run marker the stamp cannot be trusted, so every "
+            "module has to run")
+        assert not (tmp_path / SKILL_STAMP).exists(), (
+            "a pass that could not make its marker must not advance the "
+            "change boundary — an edit landing during it would then be older "
+            "than the boundary and never checked again")
+
+        # The control: the same workspace with a usable TMPDIR writes a stamp.
+        _fake_venv(tmp_path, exit_code=0, lines=["288 passed"])
+        time.sleep(STAMP_OVERLAP_SECONDS)
+        assert _run_skill_hook_bash(tmp_path).returncode == 0
+        assert (tmp_path / SKILL_STAMP).is_file(), (
+            "the stamp is never written here regardless, so the refusal above "
+            "costs nothing and this test measures nothing")
 
     def test_a_symlinked_skill_invariant_stamp_is_rejected_without_external_write(
             self, tmp_path):

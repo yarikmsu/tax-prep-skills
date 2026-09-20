@@ -554,6 +554,44 @@ season opens; **P2** next quarter; **P3** opportunistic. Size: XS / S / M / L.
   well-pinned logic rather than close a gap. It is worth doing for the READING,
   which is the item's argument, and it is not urgent.
 
+  **SLICE 3 WAS ATTEMPTED AND ABANDONED 2026-09-19, and the deferral above was
+  right.** A port of the round trip was written, landed beside the bash under a
+  differential on slices 1 and 2's pattern, reviewed, and discarded. What the
+  review established, so the next attempt does not re-derive it:
+
+  - **The proportion is nothing like slice 1's.** That replaced 218 lines of
+    `case`; the round trip is EIGHTEEN lines of bash — `read_red_checks` is ten
+    and `write_stamp_body` is eight. The port was 104 lines plus 135 of
+    differential plus 22 tests in the module that is four fifths of a cold
+    pass, to buy no reading benefit until a following slice deleted the bash.
+  - **A `case` port has semantic traps worth a differential; a token whitelist
+    does not.** The one trap that does exist was missed BY the differential:
+    `$(sed …)` is a command substitution and discards NUL bytes, so bash reads
+    `preflight\0` as `preflight` and CARRIES THE CHECK FORWARD, while a port
+    that keeps the byte drops it — a red check forgotten, which is the exact
+    defect the port was written about.
+  - **Python's `open()` translates newlines and bash does not.** On the read
+    that is the safe direction; at the TRUST CASCADE it inverts — `sed -n '1p'`
+    on a CRLF stamp yields `2\r`, which is not the version and forces a full
+    pass, where `open()` yields `2` and TRUSTS it. Any future port must open
+    with `newline=""`, and this is the reason.
+  - **A differential that ignores the subprocess exit status is half vacuous.**
+    Replacing the lifted bash function with a no-op left 12 of 22 tests green,
+    because eleven cases legitimately expect empty output.
+  - **The vocabulary would go from three owners to two, not one.**
+    `apply_red_checks` and `remember_red_checks` cannot move until the `RUN_*`
+    flags do.
+  - **A naive wiring puts an interpreter start on the fast path.**
+    `read_red_checks` runs BEFORE `nothing_selected && exit 0`, which is the
+    cheapest and most frequent row in MEASURED COSTS. It can be deferred below
+    it — the only consumer runs later — and a port that does not is a
+    regression on the row that block exists to protect.
+
+  **What the attempt DID close, and shipped instead:** two branches of the
+  trust cascade had no test at all — a symlinked `.claude`, which is the only
+  one with somewhere outside the clone to write to, and a run marker that
+  cannot be created. Both now have one.
+
   **RULED 2026-09-13 at Q12: a bash shim of a few lines, and W3 proceeds.** The
   bootstrap — a hook that must run on a checkout with no `.venv` — is already
   answered in production: `skill-invariants.sh` reads `[ -x .venv/bin/python ] ||
