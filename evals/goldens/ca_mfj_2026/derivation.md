@@ -194,6 +194,7 @@ the agent.
 Named so that nobody reads a pass here as more than it is: no dependents or CTC,
 no Schedule C or SE tax, no itemising, no AMT, no foreign accounts, no
 retirement distributions, no state other than California, and no document that
-arrives late or wrong. The backlog's V3 entry lists the cases still to come — a
+arrives late or wrong. V3's entry, now in `docs/changelog/epic-V.md`, lists the
+cases still to come — a
 missing and a corrected document, hostile document text, a stale cache, a context
 interruption, and a valid zero-income return. Each is its own golden.

@@ -252,7 +252,7 @@ agents/
 docs/
 ├── contributing/                # One file per topic; §9 is the index
 ├── changelog/                   # Per-epic implementation history
-├── roadmap/                     # Product backlogs
+├── roadmap/                     # BACKLOG.md — the one backlog
 └── superpowers/                 # Feature specs + implementation plans
 scripts/                         # pre-commit-pii-scan.sh
 tests/                           # pytest suite
@@ -432,9 +432,8 @@ in full, so a new file in either goes in this table.
 | Per-epic implementation history | `docs/changelog/` |
 | Feature specs and implementation plans | `docs/superpowers/` |
 
-**Roadmap status** (`docs/roadmap/` holds several backlogs — which is
-which): in progress is `2026-09-05-staff-agent-review.md` (Epics V-Z);
-`2026-08-12-product-owner-review.md` (R-U) waits on publishing; I-Q shipped
-bar O3, carried there as U1. State-support context is
-`2026-07-12-three-perspective-review.md` and `2026-state-support-ny-fl-wa.md`,
-portability `2026-multi-agent-portability.md`.
+**Roadmap status** — `docs/roadmap/BACKLOG.md` is the ONE backlog; a second
+file there is a second place for an item's status. It holds what is open, who
+each blocked item waits on, what was declined and why, and an index of what
+shipped. A shipped item's narrative LEAVES it for `docs/changelog/`, indexed in
+that directory's own README.

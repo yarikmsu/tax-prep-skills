@@ -1,6 +1,7 @@
 # Epic V — Agent reliability and determinism
 
-Backlog: `docs/roadmap/2026-09-05-staff-agent-review.md` (adopted 2026-09-05).
+Backlog: `docs/roadmap/BACKLOG.md`. Epic V was adopted 2026-09-05 as part of
+the staff agent-developer review.
 One task per PR; each entry records what shipped and the review findings folded
 in, so the decisions are not re-litigated.
 
@@ -544,9 +545,10 @@ carrying a parameter that passes either way.
 
 ## The six open questions, ruled — 2026-09-07
 
-Part 5 of `docs/roadmap/2026-09-05-staff-agent-review.md` recorded six questions rather
-than guessing at them. All six are now ruled, and the roadmap keeps each ruling beside its
-question so the trade is visible rather than inherited:
+Part 5 of the staff agent review recorded six questions rather
+than guessing at them. All six are now ruled. `docs/roadmap/BACKLOG.md` keeps a one-line
+ruling per row; the question each answered, and what the other answer would have
+cost, is here and in git history:
 
 - **V3's first golden** is a SYNTHETIC CA + federal MFJ return, hand-computed from the
   worksheets — buildable in the open, and it unblocks step 4.
@@ -833,7 +835,7 @@ with a wrong number in it. `AGENT_FAILED` and `TIMEOUT` are not scored at all: a
 failed agent has made no claim about the return, and scoring whatever it left
 behind reports a half-written file as a wrong one.
 
-**What is recorded.** The roadmap's V3 entry asks for the agent version, the
+**What is recorded.** V3's backlog entry asked for the agent version, the
 instruction revision, the repeat count and the cost, and the reason is that an
 eval number is a claim about a PAIR — this model, these instructions — which is
 unattributable a month later without both. The instruction revision is a DIGEST

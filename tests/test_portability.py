@@ -12,6 +12,7 @@ import inspect
 import json
 import os
 import re
+import subprocess
 import textwrap
 import sys
 import types
@@ -5943,399 +5944,234 @@ class TestACaveatMatchesTheSchemaItDescribes:
 
 
 class TestTheBacklogSaysWhatIsOpen:
-    """The 09-05 backlog is the artifact every PR is cut from, and its Part 3
-    entry list is what a reader works down.
+    """`docs/roadmap/BACKLOG.md` is the artifact every PR is cut from.
 
-    Its status lived in ONE run-on paragraph, and the Part 4 entries carried no
-    markers at all. V11 was recorded as shipped in the paragraph, was never
-    marked DONE in the list, and was very nearly re-implemented from the list
-    four days later — the whole of `parse_utils`'s budget machinery already
-    existed. The two halves are now a TABLE and a set of `— DONE` markers, and
-    this holds them together in BOTH directions: a table row with no marker is
-    the defect that happened, and a marker with no row is a claim nothing
-    records the PR for.
+    This class used to be 396 lines and nine tests over
+    `2026-09-05-staff-agent-review.md`, and every one of them held two hand-kept
+    copies of a STATUS against each other: a shipped table against a `— DONE`
+    marker on the item entry, against a sequencing step's marker, against a
+    not-started list, against a ruling annotation. Five statements of one fact,
+    and the tests were the mirror's maintenance cost. They were earned — V11 was
+    recorded as shipped in a paragraph, never marked DONE in the list, and was
+    very nearly re-implemented four days later — but the answer to a mirror in
+    this repository is to have ONE copy (AGENTS.md §1 on the PII gate rules,
+    CLAUDE.md on the `.claude/` three-way mirror), not to test the copies against
+    each other.
+
+    So the file states status once: an id is in the Open section or in the
+    shipped index, never both. Two things are still worth asserting, and the
+    later ones are STRONGER than anything the nine did — nothing previously
+    checked that a PR a row claims credit for was ever merged, and nothing
+    related the Open list to the plan or to the declined items.
+
+    Not every one of the nine was a mirror check: three read a single table
+    (non-vacuity, epic ordering, and whether a row named any PR at all). Those
+    are kept below rather than dropped, because a single-source file makes a
+    STATUS unambiguous and says nothing about a table's contents.
     """
 
-    # Spelled as a REPO chain on purpose: `test_the_watched_set_still_covers_
-    # what_the_modules_read` locates a module's reads by that spelling, and a
-    # path it cannot see leaves this module looking covered while the hook arm
-    # behind it is unverified. Reproduced — the first version used
-    # `Path(__file__).parents[1]` and the arm's deletion stayed green.
-    BACKLOG = REPO / "docs" / "roadmap" / "2026-09-05-staff-agent-review.md"
-    ROW = re.compile(r"^\| ([VWXYZ]\d+) \| (#[^|]+) \|", re.M)
-    ENTRY = re.compile(r"^- \*\*([VWXYZ]\d+)\b(.*)$", re.M)
+    BACKLOG = REPO / "docs" / "roadmap" / "BACKLOG.md"
+    # An open item's entry, and a shipped row. Ids are `V1`-style, plus the
+    # `AA1` series the 2026-09-20 review added.
+    #
+    # THE TRAILING LETTER IS PART OF THE ID, and leaving it off was a real hole
+    # in the first draft: `W5a` is an open item, `W5` is a shipped row, and
+    # `\d+\b` matched NEITHER on the entry — the boundary fails between `5` and
+    # `a`, so the whole open item was invisible here and to both set operations
+    # below. Written `[a-z]?` it is matched, and matched as `W5a`, which is a
+    # different id from `W5` and so does not collide with the shipped row.
+    _ID = r"(?:[VWXYZ]|AA|Q)\d+[a-z]?"
+    ENTRY = re.compile(rf"^- \*\*({_ID})\b", re.M)
+    ROW = re.compile(
+        rf"^\| ({_ID})(?: \([^)]*\))? \| ([^|]*) \| ([^|]*) \|", re.M)
+    # EVERY row of the shipped table, whatever its first cell says, because the
+    # PR claims are what this file is believed on and not every row is an item:
+    # the rulings ship as `Q7`/`Q10`, and four hygiene PRs belong to no backlog
+    # id at all. Keyed on `#` in the middle cell rather than on the left one, an
+    # id-matched sweep silently skipped six PR numbers — three of them the
+    # engine changes the Status section calls out by number.
+    ANY_ROW = re.compile(r"^\| ([^|]+?) \| ([^|]*) \| ([^|]*) \|$", re.M)
+    PR = re.compile(r"#(\d+)")
 
     def _text(self):
         return self.BACKLOG.read_text(encoding="utf-8")
 
-    def _table(self):
-        text = self._text()
-        shipped = text.index("### Shipped")
-        end = text.index("### Not started")
-        return {m.group(1): m.group(2).strip()
-                for m in self.ROW.finditer(text[shipped:end])}
+    def _open_section(self):
+        """The Open section, by its two boundary literals in ONE place.
 
-    def _not_started_section(self):
-        """The not-started list, by its two boundary literals in ONE place.
-
-        Two tests slice this region. Spelled twice, a reader repairing one
-        after a reword can pick a different terminator — `> **Second review
-        folded in` is the next plausible one — and leave the two disagreeing
-        about what the list contains, both green.
+        Spelled twice, a reader repairing one after a reword can pick a
+        different terminator and leave the two halves disagreeing about what the
+        list contains, both green.
         """
         text = self._text()
-        return text[text.index("### Not started"):
-                    text.index("> This backlog sits beside")]
+        return text[text.index("\n## Open\n"):
+                    text.index("\n## Blocked on an owner ACTION")]
 
-    def _entries(self):
-        """The backlog item entries, keyed by id — one LINE each, which is
-        where a DONE marker lives. `_entry_blocks` is the whole-body read.
+    def _shipped_section(self):
+        text = self._text()
+        return text[text.index("\n## Shipped\n"):]
 
-        The `- **W1 — DONE**, and **W5 — DONE**` summary line names two ids
-        and is not an entry for either, so entries are keyed LAST-wins: the
-        real ones come after it."""
-        out = {}
-        for m in self.ENTRY.finditer(self._text()):
-            out[m.group(1)] = m.group(0)
-        return out
+    def test_there_is_exactly_one_roadmap_file(self):
+        """The whole point of the 2026-09-20 collapse. Eight files, four of them
+        stale reviews still asserting figures that had moved, is what made a
+        reader unable to say which was current."""
+        # rglob, not glob: `docs/roadmap/archive/2026-09-05-staff-agent-review.md`
+        # is the likeliest way a second roadmap file comes back, and one level
+        # of globbing cannot see it.
+        found = sorted(p.name for p in (REPO / "docs" / "roadmap").rglob("*.md"))
+        assert found == ["BACKLOG.md"], (
+            f"docs/roadmap/ holds {found} — a second file there is a second "
+            "place for an item's status to be stated, which is the mirror this "
+            "file was collapsed to remove")
 
-    def test_the_table_is_not_empty(self):
-        table = self._table()
-        assert len(table) >= 20, (
-            f"the shipped table parses as {sorted(table)} — this test can no "
-            "longer read it, so both directions below are vacuous")
-        assert "V11" in table and "Z1" in table
+    def test_the_two_sections_parse(self):
+        """Non-vacuity. Every test below is a set operation, and an empty set
+        agrees with everything — a reword that stops matching would otherwise
+        report a clean pass over nothing. The later tests carry their own
+        guards too; this one covers the two slices they share."""
+        opened = set(self.ENTRY.findall(self._open_section()))
+        shipped = set(self.ROW.findall(self._shipped_section()))
+        assert len(opened) >= 8, f"the Open section parses as {sorted(opened)}"
+        assert len(shipped) >= 20, (
+            f"the shipped index parses as {sorted(i for i, _, _ in shipped)}")
 
-    def test_every_shipped_item_is_marked_done_in_part_four(self):
-        entries = self._entries()
-        missing = []
-        for item in sorted(self._table()):
-            entry = entries.get(item)
-            assert entry, f"{item} is in the shipped table but has no backlog entry"
-            if "DONE" not in entry:
-                missing.append(item)
+    def test_an_item_in_both_places_says_which_half_is_open(self):
+        """The V11 defect, stated as the property that replaces five markers.
+
+        V11 shipped in #95, was recorded in a status paragraph, was never marked
+        done in the item list, and the whole of `parse_utils`'s budget machinery
+        was nearly written a second time from that list. The rule is that an id
+        lives in the Open section or in the shipped index — with ONE exception,
+        because a real item can genuinely be half shipped: W3's selection landed
+        in #163-#165 and its stamp state machine has not.
+
+        A blanket exemption for that case re-opens the V11 hole, so the
+        exception is not "an id may appear twice" but "an id that appears twice
+        must SAY so in the shipped row's third column". A reader scanning the
+        index for W3 is told there that the row is not the whole story; the
+        first draft of this file had the row and the entry agreeing about
+        nothing, which is how the same id reads as two separate pieces of work.
+        """
+        opened = set(self.ENTRY.findall(self._open_section()))
+        rows = {i: done for i, _, done in self.ROW.findall(self._shipped_section())}
+        # `OPEN:` with the colon, anchored at the start of the cell. A bare
+        # substring test let the word through in any sense: with `"OPEN" not
+        # in`, a row reading "the OPEN question of where budgets belong"
+        # exempted itself, which is the V11 defect waved through by prose — the
+        # repo's own "a gate that reads its own comments" shape, in a gate
+        # written to replace five markers.
+        silent = sorted(i for i in opened & set(rows)
+                        if not rows[i].strip().startswith("OPEN:"))
+        assert not silent, (
+            f"{silent} are in BOTH the Open section and the shipped index, and "
+            "the shipped row does not say which half is still open — a reader "
+            "cannot tell which is true, and the one who works down the open "
+            "list re-implements what already shipped")
+
+    def test_every_shipped_row_names_a_pull_request_that_really_merged(self):
+        """The check the nine it replaces never made.
+
+        A row's PR numbers were previously asserted to EXIST as text. Whether
+        any of them named a commit was nobody's question, so a typo, an id from
+        another repository, or a PR that was closed rather than merged all read
+        as a shipped item. The squash-merge convention puts `(#N)` at the end of
+        the subject, which is what makes this answerable from the clone.
+        """
+        subjects = subprocess.run(
+            ["git", "log", "--pretty=%s"], cwd=REPO, capture_output=True,
+            text=True, check=True).stdout
+        merged = set(re.findall(r"\(#(\d+)\)$", subjects, re.M))
+        assert len(merged) >= 100, (
+            f"only {len(merged)} merge subjects parsed — this clone is shallow "
+            "or the convention changed, and the assertion below would pass on "
+            "an empty set")
+
+        rows = [(i, prs) for i, prs, _ in self.ANY_ROW.findall(
+            self._shipped_section()) if not set(i) <= set("-| ")
+            and i.strip() not in {"Item", "Epic"}]
+        assert len(rows) >= 20, f"the shipped table parses as {rows}"
+
+        # A row that names NOTHING passes the set difference below — the empty
+        # set has no unmerged member. That half was a separate assertion among
+        # the nine and is not subsumed by the stronger check, so it is kept.
+        silent = sorted(i for i, prs in rows if not self.PR.search(prs))
+        assert not silent, (
+            f"{silent} are in the shipped index and name no pull request at "
+            "all — the row is the only record of where the work landed")
+
+        missing = {}
+        for item, prs in rows:
+            unmerged = sorted(set(self.PR.findall(prs)) - merged, key=int)
+            if unmerged:
+                missing[item] = unmerged
         assert not missing, (
-            f"{missing} are recorded as shipped in the status table and read as "
-            "OPEN WORK in the Part 4 list. That is how V11 came to be nearly "
-            "re-implemented four days after it merged.")
+            f"{missing} name pull requests with no merge commit in this "
+            "repository — a shipped row is a claim that something landed")
 
-    def test_every_done_marker_has_a_row_recording_its_prs(self):
-        """The other direction. A marker with no row is a claim with no PR "
-        behind it, and the table is where a reader goes to find the change."""
-        table = self._table()
-        orphans = [item for item, entry in self._entries().items()
-                   if "DONE" in entry and item not in table]
-        assert not orphans, (
-            f"{orphans} are marked DONE in Part 4 but have no row in the "
-            "shipped table, so nothing records which PR did the work")
+    def test_the_open_list_agrees_with_the_plan_and_the_declined_list(self):
+        """Rule 2 says an id is in Open or in the shipped index. The file has
+        TWO more places that state a status, and the single-source design does
+        not make either impossible — it only removes the DONE marker.
 
-    def test_the_table_reads_in_epic_order(self):
-        """A row appended to the bottom instead of filed under its epic.
-
-        Not cosmetic: this table is what a reader scans to answer "did W2
-        ship", and an id parked between the Z rows is one they scroll past.
-        It happened on the W2 row within a minute of it being written, and
-        nothing said so — the two directions above both passed, because a row
-        in the wrong PLACE is still a row.
-        """
-        order = [(m.group(1)[0], int(m.group(1)[1:]))
-                 for m in self.ROW.finditer(
-                     self._text()[self._text().index("### Shipped"):
-                                  self._text().index("### Not started")])]
-        assert order, "the table parses as empty"
-        assert order == sorted(order, key=lambda k: ("VWXYZ".index(k[0]), k[1])), (
-            f"the shipped table is out of epic order: {order}")
-
-    def test_every_row_names_at_least_one_pull_request(self):
-        for item, prs in sorted(self._table().items()):
-            assert re.search(r"#\d+", prs), f"{item}'s row names no PR: {prs!r}"
-
-    # Every Part 5 question header, item-naming or not. Slicing on the
-    # item-naming ones ALONE gave each matched question the bodies of every
-    # unmatched question after it — Q4's ran 11,004 characters through Q10 and
-    # carried six other rulings, so V6 read as ruled on somebody else's
-    # decision, and an unruled question followed by a ruled one demanded a
-    # ruling that did not exist. Slice on ALL of them, then filter for an id.
-    QUESTION = re.compile(r"^\*\*Q(\d+) — (.*?)\*\*", re.M | re.S)
-
-    def _entry_blocks(self):
-        """Each backlog entry with its FULL body, not just its first line.
-
-        `_entries` is line-scoped because the DONE marker lives on the bullet
-        itself. A ruling does not — it is a paragraph under the entry
-        explaining what was decided and what would re-open it — so a
-        line-scoped read would report every ruled entry as unrecorded.
-
-        BOUNDED AT THE SECTION, not merely at the next bullet. The last entry
-        has no next bullet, so ending it at the end of the FILE handed the
-        final item every later section as its own body: Z8's block ran to EOF
-        and swallowed the whole of Part 5, whose rulings and DONE markers
-        belong to other items. A ruling for Z8 would then have been satisfied
-        by somebody else's, and the exposure moves to whichever item is
-        appended last. Reproduced at 23,873 characters before this bound.
+        Both were reproduced as holes before this test existed: a shipped item
+        could be re-added to the plan table as work to do (which is what the
+        old `test_a_finished_sequencing_step_says_so` covered, the V11 shape
+        spread across a table instead of an item), and a DECLINED item could
+        sit in Open at the same time (which is what the old
+        `test_a_ruled_question_leaves_nothing_reading_as_open` covered — Y3 was
+        declined at Q11 and re-adding it to Open stayed green).
         """
         text = self._text()
-        start = text.index("## Part 3 — Backlog")
-        # Searched FORWARD from Part 3. `text.index("## Part 4")` from the
-        # file start would find an introductory MENTION of the heading and cut
-        # the section off before it began.
-        end = text.index("\n## Part 4", start)
-        section = text[start:end]
-        marks = list(self.ENTRY.finditer(section))
-        assert marks, (
-            "no backlog entries parse out of Part 3 — every check built on "
-            "this helper would be vacuously green")
-        out = {}
-        for i, m in enumerate(marks):
-            stop = marks[i + 1].start() if i + 1 < len(marks) else len(section)
-            out[m.group(1)] = section[m.start():stop]
-        return out
+        opened = set(self.ENTRY.findall(self._open_section()))
+        plan = text[text.index("\n## The plan, in order\n"):text.index("\n## Open\n")]
+        declined = text[text.index("\n## Declined,"):text.index("\n## Rulings\n")]
 
-    # "A decision is still outstanding", in the spellings this list has
-    # actually used. NOT a positive "the annotation must name the ruling": a
-    # correct annotation may say nothing about the ruling at all, because a
-    # ruling does not always decide whether an item is open. Q5 ruled HOW Y2
-    # is done while an owner ACTION still gates WHETHER, and "(gated on TY2026
-    # figures publishing)" is the right thing to say — demanding "ruled" there
-    # is a STOP on correct data, which is how a gate gets read past.
-    #
-    # An enumeration, then, and the repo's lesson about those applies: forbid
-    # the ALTERNATIVES, not the one spelling that broke. The original defect
-    # was "an owner ruling is open"; "awaiting an owner decision" and
-    # "undecided" mean the same and passed a ban on the first.
-    _PENDING = (
-        r"ruling is (open|pending|outstanding)",
-        r"(awaiting|pending|needs|wants|requires) (an? )?(owner )?(ruling|decision)",
-        r"\bundecided\b",
-        r"owner'?s call",
-        r"not (yet )?(been )?(ruled|decided)",
-    )
+        scheduled = set(re.findall(rf"\*\*({self._ID})\*\*", plan))
+        assert len(scheduled) >= 4, (
+            f"the plan table names {sorted(scheduled)} — it is read by id and "
+            "a reword that stops matching checks nothing")
+        stale = sorted(scheduled - opened)
+        assert not stale, (
+            f"{stale} are scheduled in the plan and are not open items — the "
+            "plan is what a reader works down, so an id there that has already "
+            "shipped is work someone does twice")
 
-    def _claims_a_decision_is_pending(self, text):
-        return [p for p in self._PENDING if re.search(p, text, re.I)]
-
-    def test_the_pending_phrasings_each_match_something(self):
-        """The enumeration above, checked against its own examples.
-
-        A list of regexes that match nothing reads exactly like a list of
-        regexes that found nothing, and the gate built on it is then green for
-        the wrong reason. Each pattern carries the wording it was written for.
-        """
-        examples = {
-            r"ruling is (open|pending|outstanding)": "an owner ruling is open",
-            r"(awaiting|pending|needs|wants|requires) (an? )?(owner )?(ruling|decision)":
-                "awaiting an owner decision",
-            r"\bundecided\b": "undecided",
-            r"owner'?s call": "owner's call",
-            r"not (yet )?(been )?(ruled|decided)": "not yet ruled",
-        }
-        assert set(examples) == set(self._PENDING), (
-            "an entry was added to _PENDING without an example, or removed "
-            "without its example going too — the two are checked as a SET so "
-            "neither can drift")
-        for pattern, sample in examples.items():
-            assert self._claims_a_decision_is_pending(sample) == [pattern], (
-                f"{pattern!r} does not match its own example {sample!r}")
-        # ...and the correct annotations must NOT match, or the gate cries
-        # wolf on every item whose blocker is an owner action.
-        for fine in ("gated on TY2026 figures publishing",
-                     "postponed until the owner asks",
-                     "unblocked — Q12 ruled the bootstrap shim",
-                     "RULED 2026-09-13 at Q11: NOT DOING IT"):
-            assert not self._claims_a_decision_is_pending(fine), fine
-
-    def _ruled_questions(self):
-        """Items named by a Part 5 question that has since been ruled.
-
-        Derived from the file, both halves. A hand-written list of "items with
-        a ruling" reads identically to nothing to declare.
-
-        The id comes from the BOLD TITLE and every id in it, not from a fixed
-        `Q<n> — <ID>:` shape. Only three of the twelve headers are written that
-        way; `**Q5 — Y2 needs a fresh session...**` names its item in prose and
-        was invisible, which hid a live instance — Q5 ruled Y2 and Y2's entry
-        recorded nothing. Taking the title also excludes the trailing
-        *(gated step 4...)* note, so it does not over-match.
-        """
-        text = self._text()
-        part5 = text[text.index("## Part 5"):]
-        heads = list(self.QUESTION.finditer(part5))
-
-        # IDENTITY, not a count. `len(ruled) >= N` is a floor against TOTAL
-        # parse loss and blind to partial: rewording one header to a hyphen
-        # dropped an item out of coverage and left the floor satisfied by the
-        # others. Contiguous numbering from Q1 says every header still parses.
-        seen = [int(m.group(1)) for m in heads]
-        assert seen == list(range(1, len(seen) + 1)), (
-            f"Part 5 question headers parse as {seen} — a gap means a header "
-            "was reworded past this regex and its item left coverage silently")
-
-        ruled = {}
-        for i, m in enumerate(heads):
-            stop = heads[i + 1].start() if i + 1 < len(heads) else len(part5)
-            nxt = part5.find("\n### ", m.start())
-            if nxt != -1:
-                stop = min(stop, nxt)
-            if "**RULED" not in part5[m.start():stop]:
-                continue
-            for item in re.findall(r"\b([VWXYZ]\d+)\b", m.group(2)):
-                ruled[item] = m.group(1)
-        return ruled
-
-    def test_a_ruled_question_leaves_nothing_reading_as_open(self):
-        """Y3 was ruled at Q11 and three other places still read as awaiting it.
-
-        The not-started list annotated it "an owner ruling is open", the
-        sequencing step scheduled it as ordinary work, and its backlog entry
-        described the job with no sign it had been declined. That is the V11
-        shape — a decided item that scans as work, which nearly got V11
-        re-implemented four days after it merged — arriving through an
-        ANNOTATION rather than a missing DONE marker, so neither existing
-        direction could see it.
-
-        The entry is what an implementer reads before starting, so that is
-        where the ruling has to be, and not only in Part 5.
-        """
-        ruled = self._ruled_questions()
-        assert len(ruled) >= 4, f"Part 5 parses as {ruled}"
-
-        section = self._not_started_section()
-        blocks = self._entry_blocks()
-        lines = self._entries()
-
-        for item, q in sorted(ruled.items()):
-            block = blocks.get(item, "")
-            assert block, f"{item} is ruled at Q{q} but has no backlog entry"
-            assert "RULED" in block or "DONE" in lines[item], (
-                f"{item} was ruled at Q{q} and its backlog entry records "
-                f"neither the ruling nor a DONE marker, so an implementer "
-                f"reading it starts work the owner already decided")
-
-            # Scoped to the ANNOTATION, not the section — the section quotes
-            # the old wording while explaining the defect, and a section-wide
-            # check reads its own explanation as the thing it forbids.
-            note = re.search(rf"\*\*{item}\*\*\s*(\([^)]*\))?", section)
-            if note and note.group(1):
-                pending = self._claims_a_decision_is_pending(note.group(1))
-                assert not pending, (
-                    f"{item}'s not-started annotation is {note.group(1)!r}, "
-                    f"which says a decision is outstanding — Q{q} ruled it. "
-                    f"Matched: {pending}")
-
-            # NOT CHECKED HERE: whether Part 4 mentions the item beside its
-            # ruling. Four formulations were tried and each was wrong in one
-            # of the two directions. A +/-250-character window spanned a whole
-            # step, so re-adding Y3 to the schedulable list at its start was
-            # satisfied by the "Q11 ruled against it" at its end — the exact
-            # mutation the check existed for, passing. Tightening to the
-            # SENTENCE then refused step 5, which names Y2 in its first
-            # sentence and cites Q5 in its third, and refused the `**OPEN: W3
-            # only.**` marker that exists to say W3 is open.
-            #
-            # What actually separates the defect from the correct text is
-            # whether the id sits in a bold RUN of schedulable ids or in
-            # prose about it, and that is a judgement about English. A gate
-            # that cries wolf on a document is one this repo has paid for
-            # before, and `test_a_finished_sequencing_step_says_so` covers the
-            # substantive risk — a step cannot go on instructing once its work
-            # has shipped. Left out deliberately, with the reasoning, rather
-            # than shipped at the fourth attempt.
-
-
-    STEP = re.compile(r"^(\d+)\. \*\*(DONE|OPEN[^*]*)\.\*\*", re.M)
-
-    def _sequencing_steps(self):
-        """Part 4's numbered steps, each with its status marker and its ids.
-
-        Ranges are expanded — step 7 says "Z1-Z3", and a reader of the shipped
-        table sees three rows. Counting only the left end of a range is how a
-        finished step goes on reading as work.
-        """
-        text = self._text()
-        part4 = text[text.index("## Part 4"):text.index("## Part 5")]
-        out = []
-        starts = [m.start() for m in re.finditer(r"^\d+\. ", part4, re.M)]
-        for i, start in enumerate(starts):
-            stop = starts[i + 1] if i + 1 < len(starts) else len(part4)
-            body = part4[start:stop]
-            ids = set()
-            for a, lo, hi in re.findall(
-                    r"\b([VWXYZ])(\d+)\s*[-–—]\s*(?:[VWXYZ])?(\d+)\b", body):
-                ids |= {f"{a}{n}" for n in range(int(lo), int(hi) + 1)}
-            ids |= set(re.findall(r"\b([VWXYZ]\d+)\b", body))
-            marker = self.STEP.match(body)
-            out.append((body.split(".")[0], marker.group(2) if marker else None,
-                        ids))
-        return out
-
-    def test_a_finished_sequencing_step_says_so(self):
-        """Part 4 is a to-do list and five of its nine steps are finished.
-
-        Fixing Y3's step by hand was the shallow half of this. The section is
-        written in the imperative — "V0 before the next real document is
-        parsed", "do not build V1 around the Markdown summaries" — and most of
-        the ids it instructs about are in the shipped table. That is the V11
-        shape spread across a whole section instead of sitting on one item,
-        and nothing checked it while three checks watched the item list.
-
-        Derived both ways, so neither a step that quietly finishes nor a
-        marker put on unfinished work can pass.
-        """
-        steps = self._sequencing_steps()
-        assert len(steps) >= 5, f"Part 4 parses as {len(steps)} steps"
-        shipped = set(self._table())
-
-        unmarked = [n for n, marker, _ in steps if marker is None]
-        assert not unmarked, (
-            f"sequencing steps {unmarked} carry no status marker — each step "
-            "opens **DONE.** or **OPEN...** so a reader can see at a glance "
-            "what is left")
-
-        for n, marker, ids in steps:
-            assert ids, f"step {n} names no backlog id"
-            # The ONE inference the document supports. A step marked DONE
-            # names only work that has at least shipped; an id absent from the
-            # table has definitively not. This direction has no false
-            # positive — it does not claim table membership means finished,
-            # only that absence from the table means unfinished.
-            if marker == "DONE":
-                left = sorted(ids - shipped)
-                assert not left, (
-                    f"step {n} is marked DONE but {left} have not shipped")
-
-        # NOTHING ELSE IS CHECKED HERE, and three attempts went the other way
-        # before this one stuck.
-        #
-        # The tempting check is "a step whose ids have all shipped must be
-        # marked DONE". It is unsound: the shipped table deliberately holds
-        # PARTIALLY shipped items, and its third column mixes real remainders
-        # (X1's wrong keying note, W4's owed seconds sitting) with deliberate
-        # scope limits (Z7's domicile gate). Membership does not mean finished.
-        #
-        # The replacement — "an `OPEN: W3 only` marker's named ids must not be
-        # in the shipped table" — is the SAME unsound implication pointed the
-        # other way, and it cries wolf on a case that exists today: W4 has a
-        # table row AND owes the MEASURED COSTS sitting, so `OPEN: W4 only`
-        # would be correct and would be rejected. It also failed an informative
-        # `OPEN: W3 only; W1 shipped`, and the `any(...)` pair beside it
-        # rejected the legitimate end state where every step is done.
-        #
-        # What all three wanted is "is this item FINISHED", and the document
-        # does not record it — the table answers "has any of it shipped". A
-        # gate cannot derive a fact its input does not contain, and inventing
-        # one from the nearest available field is how the two unsound versions
-        # got written. The markers stay a judgement, made once by hand against
-        # the table AND the remainders; only their PRESENCE and the DONE
-        # direction above are mechanical.
-
-    def test_the_not_started_list_and_the_table_do_not_overlap(self):
-        section = self._not_started_section()
-        listed = set(re.findall(r"\*\*([VWXYZ]\d+)\*\*", section))
-        assert listed, "the not-started list parses as empty"
-        both = sorted(listed & set(self._table()))
+        refused = set(re.findall(rf"^- \*\*({self._ID})\b", declined, re.M))
+        assert refused, "the declined list parses as empty"
+        both = sorted(refused & opened)
         assert not both, (
-            f"{both} are in BOTH the shipped table and the not-started list — "
-            "a reader cannot tell which is true")
+            f"{both} are DECLINED and OPEN at once — a ruling that leaves its "
+            "item reading as available work is the defect the rulings section "
+            "exists to prevent")
+
+    def test_the_shipped_index_reads_in_epic_order(self):
+        """Kept from the nine. A W2 row was once appended to the bottom of the
+        table within a minute of being written, and ordering is not status, so
+        nothing about a single-source file makes that impossible. Rulings and
+        the hygiene row sit after the items on purpose and are not ordered."""
+        letters = [i[0] for i, _, _ in self.ROW.findall(self._shipped_section())
+                   if i[0] in "VWXYZ"]
+        assert len(letters) >= 20, f"parsed {letters}"
+        assert letters == sorted(letters), (
+            "the shipped index is out of epic order: "
+            f"{''.join(letters)} — a row appended to the bottom reads as the "
+            "newest work when it is the oldest")
+
+    def test_every_blocked_item_has_an_open_entry(self):
+        """The blocked table is written as a TABLE deliberately: an
+        `- **ID — text**` bullet is the shape an entry uses, and repeating an id
+        in that shape makes one item read as two pieces of work. The table still
+        has to name something real."""
+        text = self._text()
+        blocked = text[text.index("\n## Blocked on an owner ACTION"):
+                       text.index("\n## Declined,")]
+        named = set(re.findall(rf"^\| \*\*({self._ID})\*\* \|", blocked, re.M))
+        assert named, "the blocked-on-owner table parses as empty"
+        opened = set(self.ENTRY.findall(self._open_section()))
+        orphans = sorted(named - opened)
+        assert not orphans, (
+            f"{orphans} are blocked on the owner but have no entry in Open — "
+            "the table says an item is waiting and nothing says what it is")
 
 
 # The shared enumerator's entry points. A function that calls one of these has

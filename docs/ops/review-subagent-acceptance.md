@@ -10,7 +10,7 @@ This file is the record of that replay. It exists so the next run compares again
 known result rather than re-litigating the question — the same reason the 08-12
 backlog records R1's one benign PII finding instead of just declaring the audit clean.
 
-Backlog item: **T2** of [`docs/roadmap/2026-08-12-product-owner-review.md`](../roadmap/2026-08-12-product-owner-review.md),
+Backlog item: **T2**, recorded in [`docs/changelog/epic-R-U.md`](../changelog/epic-R-U.md),
 which was still on an unmerged branch when this record landed and is merged now. T2
 gates T1, the season-open runbook leaning on the freshness auditor.
 

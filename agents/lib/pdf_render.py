@@ -193,8 +193,8 @@ def _label(key: str, section: str = "") -> str:
 # face rather than relying on the viewer's Helvetica. Its coverage is Latin and
 # Greek: a Cyrillic or CJK name still prints as empty boxes, and the only fix
 # for that is a font this repository would have to ship — a decision with a
-# licence and a repository-size to it, recorded as Q6 in
-# docs/roadmap/2026-09-05-staff-agent-review.md rather than taken here.
+# licence and a repository-size to it, ruled as Q6 in
+# docs/roadmap/BACKLOG.md rather than taken here.
 #
 # What is NOT acceptable is losing a name in silence, so every character the
 # face cannot draw is counted and declared in the page-1 box. AGENTS.md §4: a

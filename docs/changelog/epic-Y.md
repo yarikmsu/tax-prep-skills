@@ -1,6 +1,7 @@
 # Epic Y — Distribution and operations
 
-Backlog: `docs/roadmap/2026-09-05-staff-agent-review.md` (adopted 2026-09-05).
+Backlog: `docs/roadmap/BACKLOG.md`. Epic Y was adopted 2026-09-05 as part of
+the staff agent-developer review.
 Step 9 of that file's sequencing: takeable at any point after step 5.
 
 ## Y5 — The instruction files carry the alarms, not the answers — PR #113
@@ -326,3 +327,53 @@ only removing an unrelated redirection as well turned it red. A test that
 cannot detect its own fix is the shape this repository keeps finding. The
 replacement uses a RELATIVE `CLAUDE_PROJECT_DIR` and a decoy tree, and asserts
 which clone the stamp landed in.
+
+## Y7 — the PII gate proves it READ what it reports as checked — PR #120
+
+Moved here 2026-09-20 from the backlog. Y7 shipped on 2026-09-10 and its entry
+never left the item list, so the only account of what three positive assertions
+replaced — and of the two cry-wolf findings validating them turned up — was a
+backlog bullet.
+
+**Make the gate prove it READ what it reports as checked.**
+Y6's third adversarial pass found the gate's verdict depended on variables it
+inherited from the calling shell, and pinning each by name was an ENUMERATION WITH NO
+STOPPING RULE — three of the script's documented defects were the same shape. Three
+positive assertions are now the first line of defence; the pins stay behind them.
+1. **The per-file diff must agree with the file list that produced the path.** Two
+   halves covering two classes, neither subsuming the other: `--numstat` must yield
+   exactly ONE row (the file list carries no pathspec and the per-file diff does, so
+   this is what catches an emptied restriction), and the patch must yield exactly as
+   many added lines as the row counts (this shares the pathspec, so what it catches is
+   a patch REWRITTEN rather than emptied — an external driver, textconv,
+   `diff.submodule=log`). Both taken at `-U0 --no-patch`, which is what makes it an
+   equality: at different context widths the two are not one edit script. With the
+   pathspec pin REMOVED, `GIT_LITERAL_PATHSPECS=1` now blocks on the missing row.
+2. **Every recorded parent of a scanned commit must be inspected or excluded** — read
+   from the commit object. With the graft pin REMOVED, a grafted-away commit now
+   blocks, including one hidden behind a merge's SECOND parent. It does not retire
+   `GIT_NO_REPLACE_OBJECTS`: `git cat-file commit` honours a replacement mapping too,
+   so that pin is what makes the object read authoritative.
+3. **The work tree must belong to the repository the scan was asked about** — the
+   absolute git directory, read before the `cd` to the root and again after it, with a
+   caller-set `GIT_DIR` re-exported absolute first. This closes the `GIT_WORK_TREE`
+   redirection, and the earlier note here overstated that hole: it reproduces against
+   a DIRECT invocation and NOT against `git commit`, which exports `GIT_DIR` to its
+   hooks. Staged mode now states its coverage and the pre-commit hook matches it
+   against its own enumeration of the index — captured, so a clean commit stays
+   silent. That is the backstop, not the fix.
+
+Every assertion was validated against the cry-wolf direction before being trusted, and
+the review found two that were real: `diff.submodule=log` (numstat counts a line the
+patch does not carry — fixed by pinning `--submodule=short`, a display preference
+disabling a security gate for the third time) and a relative `GIT_DIR` seen across the
+`cd`. Clean over the repository's whole history: 127 commits, 1,472 files, and the two
+diffs agreed on all 1,445 (commit, file) pairs.
+
+Also discharged: the test binding the hook's env-pin set and the coverage-line format
+against the scanner's, so the hand-mirrored copies cannot drift.
+`GIT_SHALLOW_FILE=/dev/null` is still NOT a safe pin — it would make a legitimately
+shallow CI clone walk into missing objects — and assertion 2 covers it without one.
+STILL OPEN: the Windows CI job runs only `test_secure_fs.py` and `test_host_guard.py`,
+so none of this has Windows coverage.
+

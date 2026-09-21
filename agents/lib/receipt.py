@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The validation receipt: what the gates saw, bound to the inputs they saw it on.
 
-V8 of `docs/roadmap/2026-09-05-staff-agent-review.md`. The capability gate
+V8 of the backlog; shipped in PR #91, recorded in
+`docs/changelog/epic-V.md`. The capability gate
 (/tax-compute Step 0.7) and the tie-out gate (Step 12.7) each PASS against the
 workspace as it stood when they ran. Nothing then bound that pass to those
 inputs: a document could arrive, a figure could be edited, the law could be

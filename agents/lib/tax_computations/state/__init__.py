@@ -16,7 +16,7 @@ from, and California settled it: they stay where they are. Pulling them back
 out of an aggregating `state/__init__.py` needs either a star import, which
 under `select = ["F"]` reports every unresolved name in a 5,100-line file, or a
 second explicit list, which is worse than one. The reasoning is recorded
-against W2 in `docs/roadmap/2026-09-05-staff-agent-review.md`.
+against W2 in `docs/changelog/epic-W.md`.
 
 WHAT A NEW STATE LOOKS LIKE, from the two that are here: one file named by the
 postal code, every indexed figure an argument, anything inline statutory and

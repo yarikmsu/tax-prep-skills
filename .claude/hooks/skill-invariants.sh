@@ -971,12 +971,12 @@ apply_red_checks
 #   ---------------------------------------------------------------------
 #   nothing watched changed        no pytest    0.07 - 0.10s        12
 #   agent-definition edit           48 tests      0.9 - 1.2s          6
-#   skill .md edit                1035 tests     21.9 - 23.4s         3
-#   cold pass, all seven modules  1294 tests    155.4 - 159.3s        3
-#   (for scale) `pytest tests/`   4913 tests    316.8 - 324.4s        2
+#   skill .md edit                1033 tests     21.9 - 23.4s         3
+#   cold pass, all seven modules  1292 tests    155.4 - 159.3s        3
+#   (for scale) `pytest tests/`   4911 tests    316.8 - 324.4s        2
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
-# passes two `--deselect` flags, so portability collects 249 and runs 247; and
+# passes two `--deselect` flags, so portability collects 247 and runs 245; and
 # the hooks module holds two platform skips, so it collects 167 and runs 165.
 # THE SUITE holds seven skips, not two: those two and the five Windows-only DACL
 # cases W6 added. An eighth depends on the CHECKOUT rather than the platform —
@@ -992,7 +992,7 @@ apply_red_checks
 # One figure used to cover both, on the assumption that the hooks module was
 # the only place a test could be skipped — an assumption nothing stated and
 # the first conditional test outside that module broke.
-# `pytest tests/` collects 4920 and runs 4913 for those skips — and that row
+# `pytest tests/` collects 4918 and runs 4911 for those skips — and that row
 # is the PLAIN invocation, WITHOUT the two deselections, which is the other way
 # to state a count the measured command did not actually run. A first attempt at
 # it passed the deselections through and measured 3000. Reporting any
@@ -1031,7 +1031,7 @@ apply_red_checks
 # module dominates, and by how much, survives a change of machine.
 #
 #   tests/test_claude_hooks.py     165 tests    132.1 - 135.6s       3
-#   tests/test_portability.py      247 tests     12.8 - 13.5s        6
+#   tests/test_portability.py      245 tests     12.8 - 13.5s        6
 #   tests/test_capabilities.py     175 tests      0.8 - 1.2s         6
 #   tests/test_claude_agents.py     48 tests      0.9 - 1.2s         6
 #   tests/test_secure_fs.py        182 tests      1.5 - 1.7s         6
@@ -1162,7 +1162,7 @@ apply_red_checks
 # Seven separate invocations each paying an interpreter start pushes the parts
 # up and is worth well under a second of it. What separates this from the
 # count-column patch the header forbids is the other half, which is EXACT:
-# 48 + 175 + 182 + 247 + 383 = 1035 for a skill edit, plus 94 + 165 = 1294 for a
+# 48 + 175 + 182 + 245 + 383 = 1033 for a skill edit, plus 94 + 165 = 1292 for a
 # cold pass, both matching the trigger table above to the test. That sentence
 # itself sat stale for several rounds at "160 + ... = 703 ... 845" — a typo'd
 # part and a superseded sum, green the whole time because the mechanical check
@@ -1230,8 +1230,8 @@ apply_red_checks
 # cost half an hour of an otherwise-idle machine and are re-read as a SET when
 # the branch settles.
 #
-# Against the counts the seconds were taken at, the suite has gained eighteen
-# tests (4895 to 4913). THE SECONDS ARE OWED AND THE COUNTS ARE NOT, which is a
+# Against the counts the seconds were taken at, the suite has gained sixteen
+# tests (4895 to 4911). THE SECONDS ARE OWED AND THE COUNTS ARE NOT, which is a
 # state this block has been in before and has a shape for: the counts are
 # refreshed here and the seconds are the previous sitting's, left standing and
 # said to be standing rather than quietly re-used as though they were fresh.
@@ -1477,13 +1477,17 @@ apply_red_checks
 # `pytest tests/` came back inside the stated range — and the row keeps the
 # sitting's figure so that it is not two readings from two trees. Of the seven
 # modules this hook selects,
-# portability has gained zero (247 to 247), preflight has gained one (382 to 383), the
+# portability has lost two (247 to 245), preflight has gained one (382 to 383), the
 # agents module none (48 to 48), secure_fs has gained zero (182 to 182), the hooks module
-# has gained two (163 to 165), capabilities has gained zero (175 to 175) and the host guard has gained zero (94 to 94). Five zeros, a one and a two are
-# what an owed sitting looks like when almost everything it would re-measure
-# has stood still. Two modules have moved: preflight by the test the floor
-# branch added, and the hooks module by the two this one adds for the two trust
-# cascade branches that had no test at all. The pairs are kept rather than deleted
+# has gained two (163 to 165), capabilities has gained zero (175 to 175) and the host guard has gained zero (94 to 94). Four zeros, a one, a two and a
+# minus two are what an owed sitting looks like when almost everything it
+# would re-measure has stood still. Three modules have moved: preflight by the
+# test the floor branch added, the hooks module by the two added for the trust
+# cascade branches that had no test at all, and portability DOWNWARD, by the
+# roadmap collapse trading nine assertions over five hand-kept copies of an
+# item's status for seven over a file that states it once. A module can shrink,
+# and the seconds it is measured against are no less trustworthy for it —
+# 245 of the same tests run where 247 did. The pairs are kept rather than deleted
 # because their job is to say whether the seconds can still be trusted — an
 # empty ledger is an answer, not a missing one. EVERY pair is measured from the SITTING and not from the round
 # before it, which is the other half of what shipped wrong here once: two of
@@ -1498,12 +1502,16 @@ apply_red_checks
 # modules import it, which is the case that found test_claude_agents.py reading
 # tests/skill_text.py with no arm selecting it.
 #
-# Of the eighteen tests the suite has gained since the sitting, zero landed in
-# tests/test_secure_fs.py, zero in tests/test_portability.py, one in
+# Of the sixteen tests the suite has gained since the sitting, zero landed in
+# tests/test_secure_fs.py, MINUS TWO in tests/test_portability.py, one in
 # tests/test_preflight.py, zero in tests/test_capabilities.py, two in
 # tests/test_claude_hooks.py, zero in tests/test_host_guard.py, and
 # the other fifteen in test_ci_workflow and in every other module this
-# hook has no arm for — fourteen of them in that module, which is where the
+# hook has no arm for. The portability module is the first to go DOWN across a
+# refresh: the 2026-09-20 roadmap collapse replaced nine assertions that held
+# five hand-kept copies of an item's status against each other with seven over
+# a file that states it once. A count falling is the ordinary consequence of
+# deleting a mirror, and the arithmetic below has to carry it like any other — fourteen of them in that module, which is where the
 # floor guard lives, and the fifteenth not a new test at all: it is
 # tests/test_pdf_toolchain.py, which stopped SKIPPING because this tree has the
 # untracked artifact it needs. Seventeen tests were written and eighteen more
@@ -1518,7 +1526,7 @@ apply_red_checks
 # moves by more than the one case a new engine module puts in secure_fs, and it
 # now HAS: the sitting is owed, and the paragraph above this table says why it is
 # owed LAST rather than now.
-# They sum to three; the remaining fifteen are modules this
+# They sum to one; the remaining fifteen are modules this
 # hook does not select, which is the reconciliation this sentence exists to
 # state — and which a re-taken sitting makes trivially true on both sides. It is
 # kept in that state rather than deleted because the sentence is the SET check:

@@ -3,7 +3,8 @@
 # (AGENTS.md §5), and `agents/lib/__init__.py` refuses to import outside the
 # workspace virtualenv, which a wheel installed elsewhere would defeat.
 #
-# W1 of docs/roadmap/2026-09-05-staff-agent-review.md. The versions CI installs
+# W1 of the staff agent review; shipped in PR #90, narrated in
+# docs/changelog/epic-W.md. The versions CI installs
 # are pinned in .github/workflows/ci.yml; W6 folds them into a hashed dev lock.
 
 [tool.ruff]

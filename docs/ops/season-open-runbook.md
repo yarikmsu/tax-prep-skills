@@ -104,7 +104,7 @@ citation in PROSE, where nothing computes against it:
   TY2025–2029". §164(b)(7) steps it: $40,000 TY2025, **$40,400 TY2026**, then
   101% a year through TY2029. Under-stating the cap makes the PTET election look
   BETTER than it is — the over-statement direction, in the current filing year.
-- `2026-state-support-ny-fl-wa.md` cited §164(b)(6) for the OBBBA cap. (b)(6) is
+- The state-support roadmap cited §164(b)(6) for the OBBBA cap. (b)(6) is
   the superseded 2018–2025 limitation; the cap lives in (b)(7).
 
 **The lint did not and could not catch any of them**, for two separate reasons

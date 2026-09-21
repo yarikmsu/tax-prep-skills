@@ -315,7 +315,7 @@ docs/
 ├── contributing/     # agents-compat, skill-catalog, test-invariants,
 │                     # tax-gotchas, state-module-playbook
 ├── changelog/        # Per-epic implementation history
-├── roadmap/          # Product backlogs
+├── roadmap/          # BACKLOG.md — the one backlog
 └── superpowers/      # Feature specs and implementation plans
 scripts/
 └── pre-commit-pii-scan.sh   # File-type blocker + content scanner

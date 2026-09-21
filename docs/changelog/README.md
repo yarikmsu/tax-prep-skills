@@ -11,10 +11,12 @@ One file per epic, newest first, plus the pre-epic base engine:
 
 | File | Scope |
 |------|-------|
+| [`epic-Z.md`](epic-Z.md) | State coverage for the named next users (New York IT-201, NYC and Yonkers, the NY credit tier, residency guardrails) |
 | [`epic-Y.md`](epic-Y.md) | Distribution and operations (`TAX_WORKSPACE`, the workspace root outside the checkout) |
 | [`epic-W.md`](epic-W.md) | Engineering hygiene (ruff and mypy in CI, the `slow` marker, the pinned dev interpreter) |
 | [`epic-X.md`](epic-X.md) | Tax correctness, known and unfixed (capital-gains breakpoints fail closed) |
 | [`epic-V.md`](epic-V.md) | Agent reliability and determinism (SSN/ITIN masking at the extraction boundary) |
+| [`epic-R-U.md`](epic-R-U.md) | Publish and survive being public, the seasonal advisory wedge (`tax-safe-harbor`), season operations, carry-forwards |
 | [`epic-P.md`](epic-P.md) | Florida state module (`type: "none"` regime discriminator, sales-tax election, property calendar, no-income-tax review step) |
 | [`epic-O.md`](epic-O.md) | Hygiene (changelog refactor, README refresh, planning-tool carry-forwards) |
 | [`epic-N.md`](epic-N.md) | In-persona coverage tier 2 (CA Schedule P, Form 8995-A, Form 8889, Form 2441) |
@@ -24,6 +26,8 @@ One file per epic, newest first, plus the pre-epic base engine:
 | [`epic-J.md`](epic-J.md) | Equity-comp basis correction (Form 8949 code-B, `compute_espp_disposition`) |
 | [`epic-I.md`](epic-I.md) | OBBBA TY2026 readiness (Schedule 1-A, §170(p), §70105 QBI minimum, AMT rate) |
 | [`pre-epic.md`](pre-epic.md) | Base computation engine + all planning skills (scenario/roth/harvest/ptet/retirement) |
+
+This rule stopped being applied around PR #120 and the backlog absorbed the job: Epic Z's sixteen PRs, W2's package split, Y7 and Z7 all landed their narrative in `docs/roadmap/` instead. It was moved back on 2026-09-20, and `docs/roadmap/BACKLOG.md` now carries the standing rule that a shipped item leaves it for this directory.
 
 **When resolving where a fact belongs:** a durable rule that governs a
 computation (a bias direction, a fetched-vs-fallback behavior, a statutory

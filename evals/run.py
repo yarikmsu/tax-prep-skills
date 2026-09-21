@@ -14,7 +14,7 @@ repository's secrets, and `.github/workflows/model-eval.yml` is therefore writte
 and left un-runnable, as the shape a future decision would start from rather than
 a job anybody can trigger today.
 
-WHAT IS RECORDED, and why each field is not optional. The roadmap's V3 entry asks
+WHAT IS RECORDED, and why each field is not optional. V3's backlog entry asks
 for the agent version, the instruction revision, the repeat count and the cost,
 and the reason is that an eval result is a claim about a PAIR — this model, these
 instructions — and a number recorded without both is unattributable a month later.
@@ -360,7 +360,7 @@ def run_once(spec: dict, case: str, workspace: Path, *, tolerance: float,
 
 def record(attempts: list, *, case: str, agent: str, version: str,
            instructions: str, engine: str) -> dict:
-    """The run record. Every field the roadmap's V3 entry asks for, plus the two
+    """The run record. Every field V3's backlog entry asks for, plus the two
     digests that say WHICH engine and WHICH instructions were measured.
 
     Every identifying field is passed in rather than read here, and read BEFORE

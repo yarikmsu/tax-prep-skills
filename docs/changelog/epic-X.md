@@ -1,6 +1,7 @@
 # Epic X — Tax correctness, known and unfixed
 
-Backlog: `docs/roadmap/2026-09-05-staff-agent-review.md` (adopted 2026-09-05). X1-X3
+Backlog: `docs/roadmap/BACKLOG.md`. Epic X was adopted 2026-09-05 as part of
+the staff agent-developer review. X1-X3
 are the confirmed directional defects the 08-12 and 09-05 reviews carried; they run
 ahead of the orchestrator because they are small and touch CA filers.
 

@@ -1,6 +1,7 @@
 # Epic W — Engineering hygiene and maintainability
 
-Backlog: `docs/roadmap/2026-09-05-staff-agent-review.md` (adopted 2026-09-05).
+Backlog: `docs/roadmap/BACKLOG.md`. Epic W was adopted 2026-09-05 as part of
+the staff agent-developer review.
 Step 9 of that file's sequencing: W1, W4 and W5 as a single hygiene PR, takeable
 at any point. Taken ahead of step 4, which is blocked on the Part 5 rulings.
 
@@ -577,3 +578,271 @@ is world-readable through `ps`, and the path being classified can name a
 taxpayer's document — the same exposure the hook's generic message label
 exists to prevent. Nothing in the code said so, so the obvious simplification
 (pass it as an argument) would have been made without objection.
+
+## W2 — the monoliths become packages — PRs #148, #149, #150, #151, #152
+
+Moved here 2026-09-20 from the backlog's W2 entry, where the whole of this
+narrative had accumulated. It is the record of what five pull requests changed
+and what each review round found, which is this directory's subject and not a
+backlog's.
+
+**Split the monoliths.** `tax_computations.py` into a `federal/` package
+by form and a `state/` package by state; `projection.py` likewise. ~~Pure moves, tests
+unchanged.~~ **"Tests unchanged" is exactly what would go wrong, and #145 made that
+loud**: ELEVEN flat `glob("*.py")` sweeps across nine test modules enumerate the engine,
+`glob` does not descend, and every one would keep passing while covering strictly less —
+the host-interpreter roster, preflight's module set, the workspace-refusal sweep,
+secure_fs's roster and the state-brackets single-reader sweep, all narrowing silently
+together. `TestTheEngineDirectoryIsFlat` now asserts the flatness and names what a move
+has to carry with it. `receipt.tree_digest` already descends, so the validation
+receipt's engine binding is the one mechanism that survives untouched.
+
+**OWNER RULING 2026-09-12 on AGENTS.md §5**: "every module exposes a `_main` CLI entry
+point" is NARROWED to "every module a SKILL invokes is runnable through the launcher";
+a module nothing invokes needs no entry point, which is what lets `federal/` and
+`state/` hold pure-function submodules. Shipped in #148 — and the old sentence was
+already FALSE when it was narrowed: seven modules have no `def _main`, including
+`tax_computations`, the one §5 names first. The narrowed rule is DERIVED from the
+skills' own `run.sh` commands and enforced, which the old one never was.
+
+**SLICE 2 SHIPPED**: `tax_computations.py` is a PACKAGE — `__init__.py` (federal),
+`_shared.py`, `state/ny.py`. All eleven sweeps descend, `TestTheEngineDirectoryIsFlat`
+retired into `TestNoSweepOverTheEngineIsFlat`, and preflight resolves a module OR a
+package, including the entry point a package announces differently. Four things were
+found by review and DEFERRED rather than folded in, because each is its own task:
+
+- ~~**One generic rule in the hook for a package directory.**~~ **SHIPPED.**
+  `find` prints `agents/lib/<pkg>` when a file is added to or deleted from a
+  package, and that matched no arm — `agents/lib/*.py` reaches modules at any
+  depth but not the directory — so each package carried a hand-written arm
+  repeating the generic selections, and the one that gets forgotten selects
+  nothing while looking identical to a clean path.
+
+  **The direction recorded here was backwards.** It proposed
+  `agents/lib/<pkg>/…` → `agents/lib/<pkg>`, which maps every module edit
+  onto the directory and throws away the per-file arms that give
+  `tax_law_fetcher.py` and `ptet.py` the agents module. It is the other way:
+  `agents/lib/<pkg>` → `agents/lib/<pkg>/__init__.py`, so a package reaches
+  the arms that ALREADY exist and adds no selections of its own.
+
+  The `__pycache__` exclusion stays explicit, as recorded — widening to a
+  bare `agents/lib/*` swallows the bytecode every engine run rewrites, which
+  is what killed the first attempt. Two more judgements the note did not
+  reach: the rewrite is NOT conditional on the initialiser existing, because
+  a package that has just lost its `__init__.py` is the change preflight and
+  the host guard exist to report; and `agents/lib` ITSELF is excluded,
+  because the engine root's arm means "a module was added to or removed from
+  the engine" and names two modules the generic arm does not.
+
+  No package needs an entry anywhere again — `agents/lib/projection)` is
+  deleted and the bare alternative on the `tax_computations` arm with it.
+  Pinned by a workspace that really holds packages: an empty one would
+  measure the absence of the directory and report it as the rule working.
+
+- ~~**A shared engine enumerator for `tests/`.**~~ **SHIPPED** as
+  `tests/engine_tree.py`, after the same defect arrived a third and fourth time.
+  It answers the walk once: `__pycache__` excluded, paths `.as_posix()` (a
+  `str(Path)` key fails on Windows against a forward-slash literal — Codex caught
+  that one), and a file's MODULE NAME is its package directory for an
+  `__init__.py`, never `__init__`. Two live holes were closed with it: the
+  host-guard coverage assertion exempted `"__init__.py"` BY NAME and so excused
+  five files where it meant one — `federal/__init__.py` and `state/__init__.py`
+  had never passed a check they were silently exempt from — and the
+  receipt-writer sweep keyed by `p.stem`, which would have reported a packaged
+  gate as `__init__`. The flat-glob detector now counts a call to the helper as
+  accounting for packages, so using it is the cheap path.
+
+  ~~STILL OPEN: about a dozen path-keyed `rglob` sweeps are correct as written and
+  were left alone.~~ **SHIPPED.** Nine sites across six modules now ask the helper.
+  It was not the mechanical no-op it was filed as — two of the sweeps were
+  keyed in a way that made them partly BLIND, and one gap was outside the
+  engine entirely:
+
+  - `test_workspace`'s receipt-writer sweep keyed a DICT by `p.stem`, so the
+    five package initialisers collapsed to one entry holding whichever the
+    walk yielded last. A `hold_workspace()` taken in any of the other four
+    was read by neither direction of the class. Reproduced: the call added to
+    `projection/__init__.py` is invisible to the old keying and named by the
+    new one.
+  - Three sweeps reported an offender as `p.name`, which prints
+    `__init__.py` for a packaged module — a name that opens nothing and
+    collides with the next package's initialiser.
+  - Pinning the helper's hook arm by DERIVING which watched modules import it
+    — rather than listing them — found that `test_claude_agents.py` has read
+    `tests/skill_text.py` since #101 with no arm selecting it. Dropping that
+    helper's `references/*.md` fold turns three of its parse-boundary
+    assertions red; the hook ran four modules, passed them and exited 0.
+    Fixed in the same change.
+
+  Two sites were deliberately LEFT hand-rolled: both independently re-derive
+  what `engine_tree.py` claims, and converting them would be a probe
+  validating a copy of the detector.
+
+  The conversion alone would not have held. Review found THREE hand-rolled
+  `rglob` walks still standing after it — one in a file the change had
+  already converted, four thousand lines from the site it touched — because
+  the flatness lint only asks whether a sweep DESCENDS and answers yes for
+  any `rglob`. So the rule is now the stronger one this entry asked for:
+  `TestNoSweepWalksTheEngineByHand` refuses any function that NAMES the
+  engine and walks it, keyed on the function rather than the receiver
+  (`package = self.LIB / "projection"` names it on one line and walks it on
+  the next), with the two controls exempt by (module, function) pair. A
+  wider root is not its business — `test_secure_fs` sweeps `agents/` on
+  purpose, and narrowing that to the engine would DROP a module added beside
+  `lib/`.
+
+  Three defects in the new hook-arm check itself, each reproduced by a
+  reviewer before it was believed, and each the same family as the bug the
+  check exists to catch:
+
+  - **False green.** Membership was a substring test over the arm's body,
+    and these arms are mostly comment. Both `# RUN_SECUREFS=1 (temporarily
+    off)` and `# deliberately NOT RUN_SECUREFS=1 here` left the check green
+    over a hook that had genuinely stopped selecting the module. Anchored to
+    a whole line of code now.
+  - **False negative.** The import reader knew only `from tests.x import y`,
+    while `tests/` is on `sys.path` for part of the suite and the bare form
+    is live in two modules. A watched module rewritten to it would have read
+    as not depending on the helper at all.
+  - **Cry-wolf.** The arm reader required the helper to be an arm's SOLE
+    pattern; fifteen arms are written `a|b)`. Merging the two helper arms —
+    correct shell, and the obvious next refactor — made a clean script read
+    as unparseable.
+
+  One more found on the way: the watched-set locator is a regex over source
+  TEXT, so it read a comment warning against a spelling as a use of it and
+  demanded an arm putting the 115-second hooks module behind every edit under
+  `tests/`. Comments are stripped by token now.
+- ~~**One dispatch checker in `preflight`, not two.**~~ **SHIPPED.** `_MAIN_DISPATCH`
+  is gone and both shapes are asked one question — does running this file CALL
+  anything: at the top level for a package, anywhere inside the guard for a module.
+  The regex could only ask whether the LINE was present, so a guard truncated to
+  `pass` satisfied it and the file ran, did nothing and exited 0, which Step 12.7
+  reads as TIED OUT. The rule is keyed on a CALL and not on a statement kind because
+  the twenty-seven shipped guards spread their bodies across `Expr`, `Raise`, `Try`,
+  `With`, `For`, `Assign` and `If` — `ptet.py` dispatches through a `raise`, and a
+  kind-keyed rule would refuse it.
+- ~~**`_engine_file` should resolve from `importlib.util.find_spec`.**~~ **DECLINED,
+  and reproduced before deciding.** `find_spec` imports the PARENT packages in order
+  to locate a submodule, so on a package whose `__init__.py` does not compile it
+  RAISES where `os.stat` answers cleanly — verified against a fixture. This module's
+  whole subject is a broken engine; resolving its paths through the import machinery
+  means the resolver fails on exactly the installations the gate exists to report.
+  The three filesystem branches stay, and this is the reason, so it is not proposed
+  a third time.
+- ~~**Where the state aggregation seam belongs.**~~ **SETTLED in slice 3, and the
+  answer is "where it is."** With California beside New York the block is seventeen
+  import lines, explicit and greppable, growing linearly and slowly. Aggregating in
+  `state/__init__.py` needs the parent to pull the names back out, which is either a
+  star import — `select = ["F"]` turns that into an F405 finding on every unresolved
+  name in a 5,100-line file, the flood that cost slice 2 a cleanup — or a SECOND
+  explicit list, which is strictly worse than one. A module `__getattr__` removes the
+  list entirely and takes every name out of mypy's and a reader's reach with it, for
+  ten importers under `agents/lib/` alone. Revisit only if a state arrives whose
+  public surface is much larger than New York's fourteen names.
+
+**Three questions slice 3's review raised and did NOT settle**, each its own
+task because each changes a shipped contract rather than where code lives:
+
+- **Three sibling forms, three contracts for one election.** The federal
+  `compute_schedule_a` REQUIRES `standard_deduction`. `compute_ca_itemized`
+  makes it optional and returns `use_itemized: None`. `compute_ny_itemized`
+  makes it optional and sets `deduction` to the itemized total anyway, which
+  reads as elected. Slice 3 gave the two silent paths a banner, which is what
+  the under-statement direction is owed; making the parameter required on all
+  three is the fix and breaks callers.
+- **An unfetched R&TC §17077 threshold DEGRADES where AGENTS.md §2 says
+  STOP.** `compute_ca_itemized(phaseout_threshold=None)` skips the phase-out
+  and notes it, which OVER-states the CA deduction — the hard-error direction
+  — and the skill text already documents the degrade. Slice 3 gated the note
+  so it stops firing where nothing can be overstated and made it quantify
+  itself (on the subtotal; #155 moved both to the amount §17077 can touch); whether an indexed figure that changes a return may degrade at all
+  is the owner's call.
+- **`state/ny.py` does not VALUE-validate filing status.** It compares
+  lowercase literals and never calls `_normalize_filing_status`, so the
+  canonical uppercase code that function returns takes the wrong branch there
+  rather than raising. The playbook now says CA is the example and NY is not
+  yet converted. Converting it is mechanical and is a behaviour change at
+  every NY entry point. `_ny_amount` is a third copy of `_shared._amount`
+  with an NY-specific sentence, and folds into the same task.
+
+**SLICES 4-5 SHIPPED**: `projection` is a package — `render.py` (the eighteen
+prose constants, the note-builders and `render_markdown`), `types.py` (the
+records both sides read), `__main__.py`, and 3,564 lines of compute. And
+`tax_computations/federal/` holds `penalties.py` (Form 2210, §6651, §6601),
+`international.py` (§988, PFIC §1291, Form 8938, §904 FTC) and `amt.py`
+(Forms 6251 and 8801). The engine `__init__.py` is 3,235 lines, down from
+7,359. `qdcg_worksheet_applies` joined `_shared.py` — the spine and a form
+both ask it, which is what puts it in neither.
+
+**SLICE 3 SHIPPED**: California is `state/ca.py` — Schedule CA itemized, Schedule P
+(540) AMT and the excess SDI/VPDI credit. Unlike New York this was NOT one contiguous
+block: each of the three sat beside the FEDERAL form it mirrors, which is why the file
+read as one subject and was three. It also needed nine shared helpers where New York
+needed one, so `_shared.py` becomes what its name says — the primitives with no form
+of their own — and its docstring now states the rule for what may join it.
+
+## W3 slice 3 — attempted, abandoned, and what it shipped instead — PRs #166, #167
+
+The stamp round trip was ported to Python beside the bash, reviewed, and
+discarded; W3's remaining half stays OPEN in the backlog. This is the record of
+why, kept so the next attempt does not re-derive it.
+
+**SLICE 3 WAS ATTEMPTED AND ABANDONED 2026-09-19, and the deferral above was
+right.** A port of the round trip was written, landed beside the bash under a
+differential on slices 1 and 2's pattern, reviewed, and discarded. What the
+review established, so the next attempt does not re-derive it:
+
+- **The proportion is nothing like slice 1's.** That replaced 218 lines of
+`case`; the round trip is EIGHTEEN lines of bash — `read_red_checks` is ten
+and `write_stamp_body` is eight. The port was 104 lines plus 135 of
+differential plus 22 tests in the module that is four fifths of a cold
+pass, to buy no reading benefit until a following slice deleted the bash.
+- **A `case` port has semantic traps worth a differential; a token whitelist
+does not.** The one trap that does exist was missed BY the differential:
+`$(sed …)` is a command substitution and discards NUL bytes, so bash reads
+`preflight\0` as `preflight` and CARRIES THE CHECK FORWARD, while a port
+that keeps the byte drops it — a red check forgotten, which is the exact
+defect the port was written about.
+- **Python's `open()` translates newlines and bash does not.** On the read
+that is the safe direction; at the TRUST CASCADE it inverts — `sed -n '1p'`
+on a CRLF stamp yields `2\r`, which is not the version and forces a full
+pass, where `open()` yields `2` and TRUSTS it. Any future port must open
+with `newline=""`, and this is the reason.
+- **A differential that ignores the subprocess exit status is half vacuous.**
+Replacing the lifted bash function with a no-op left 12 of 22 tests green,
+because eleven cases legitimately expect empty output.
+- **The vocabulary would go from three owners to two, not one.**
+`apply_red_checks` and `remember_red_checks` cannot move until the `RUN_*`
+flags do.
+- **A naive wiring puts an interpreter start on the fast path.**
+`read_red_checks` runs BEFORE `nothing_selected && exit 0`, which is the
+cheapest and most frequent row in MEASURED COSTS. It can be deferred below
+it — the only consumer runs later — and a port that does not is a
+regression on the row that block exists to protect.
+
+**What the attempt DID close, and shipped instead:** two branches of the
+trust cascade had no test at all — a symlinked `.claude`, which is the only
+one with somewhere outside the clone to write to, and a run marker that
+cannot be created. Both now have one.
+
+
+**PR #165 — the hook stops trusting its environment.** Landed on this branch's
+neighbourhood but it is Y6's defect class, not W3's, and the backlog credits it
+to Y6: a variable a contributor's shell exported turned the PII scan's verdict
+into a no-op (#119), and this is the same class in the hook that decides which
+invariants run. Recorded here because it is where a reader of the hook's
+history looks; `docs/changelog/epic-Y.md` is where Y6 lives.
+
+**PR #166 — the interpreter floor becomes one number and a mechanism.** Recorded
+in full under "W5 re-opened" above; #166 is the PR that landed it, and W5a — the
+three machine-readable clusters a comparison is one level too low for — is the
+open remainder, in the backlog.
+
+**PR #167 — the two trust-cascade branches nothing exercised.** A symlinked
+`.claude`, the only branch with somewhere outside the clone to write to, and a run
+marker that cannot be created. Both were pinned by the abandoned port's review and
+kept when the port was dropped. The symlink test pins the PROPERTY, not either
+branch: removing `-L` from the cascade or from `advance_stamp` alone leaves it
+green, and only removing both turns it red — the defence is in two places and a
+test can pin what they jointly guarantee, not either one.
