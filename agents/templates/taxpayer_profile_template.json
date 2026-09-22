@@ -75,6 +75,8 @@
     "has_educator_expenses": false,
     "has_education_expenses": false,
     "has_dependent_care": false,
+    "may_qualify_for_eic": false,
+    "_comment_eic": "Screening flag for the Earned Income Credit — a DISCLOSURE switch, not a computation switch. Nothing in agents/lib computes the EIC: Form 1040 line 27, IT-201 line 65 (Form IT-215), line 66 (Form IT-209, noncustodial parent) and line 70 (the NYC EIC) are all INPUTS that default to 0 and flow into the payments totals, so an eligible filer's refund is short by the whole credit with every gate green — and the tie-out cannot see it, because a credit produces no source document to ledger. Each of the four has its own form and its own eligibility test; never copy one line's figure onto another. Setting this true puts the gap on meta.limitations (capability rule `earned_income_credit`) and makes the tie-out advise loudly while any of those lines is still 0. Set it TRUE whenever the answer is MAYBE: a false positive costs one manifest line, a false negative costs the credit. The eligibility figures are deliberately not recorded here — the amounts and the disqualified-income cap are indexed, the childless age band is statutory and has moved, and all of them belong to the covered year's Form 1040 instructions (EIC worksheet / Pub 596). ABSENT is not a no: the tie-out advises on an unanswered flag, so a profile predating this question is told it was never asked rather than being read as having said no.",
     "has_charitable_giving": false,
     "has_energy_credits": false,
     "has_ev_purchase": false,

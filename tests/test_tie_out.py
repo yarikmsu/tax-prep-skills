@@ -2429,3 +2429,276 @@ def test_write_report_translates_an_uninspectable_summaries_path(tmp_path, monke
     monkeypatch.setattr("agents.lib.tie_out.is_reparse_point", raising)
     with pytest.raises(T.TieOutError, match="could not be inspected"):
         T.write_report(tmp_path, "# tie-out\n")
+
+
+
+
+# --------------------------------------------------------------------------
+# The Earned Income Credit — the one dropped figure no check here can reach
+# --------------------------------------------------------------------------
+#
+# Every other check in this module works by comparing the ledger to the
+# return. A credit issues no source document, so a dropped EIC is invisible to
+# all of them; these pin the advisory that carries the gap instead, and pin it
+# as an ADVISORY — an under-statement degrades loudly under AGENTS.md §4, and
+# a worksheet that legitimately comes out at $0 is a correct return this gate
+# must never refuse.
+
+def _eic_report(*, screening=True, nyc=False, **lines):
+    result = _result(**{k: v for k, v in lines.items() if k.startswith("line_")})
+    if "ny" in lines:
+        result["new_york_it201"] = {
+            "refundable_credits_and_payments": lines["ny"]}
+        if nyc:
+            result["new_york_it201"]["nyc"] = {"line_47_nyc_taxable_income": 0}
+    return T.evaluate(_ledger(_record()), result, ["documents/W2_Acme.pdf"],
+                      eic_screening=screening)
+
+
+def _eic_advisories(report):
+    return [a for a in report.advisories if "Earned Income Credit" in a]
+
+
+def test_eic_advisory_fires_on_a_zero_federal_line():
+    report = _eic_report(line_27_eic=0)
+    assert not report.failed
+    assert len(_eic_advisories(report)) == 1
+    assert "Form 1040 line 27" in _eic_advisories(report)[0]
+
+
+def test_eic_advisory_is_silent_when_the_taxpayer_screened_negative():
+    """The flag is the taxpayer's own answer, and a `no` ends it. A gate that
+    fired on every return regardless would be the cry-wolf shape: the reader
+    learns to skip the advisory block, and the PFIC and second-read warnings
+    that share it go with it."""
+    assert _eic_advisories(_eic_report(screening=False, line_27_eic=0)) == []
+
+
+def test_eic_advisory_fires_when_the_screening_question_is_unanswered():
+    """Absence is not a `no` — nobody was asked. A profile predating the flag
+    would otherwise get the silence this whole change exists to end, and there
+    is no assertion there to defer to. `unanswered_pfic_event` in
+    capabilities.py is the same shape at blocking level; this stays an advisory
+    because the direction is an under-statement."""
+    text = _eic_advisories(_eic_report(screening=None, line_27_eic=0))[0]
+    assert "UNANSWERED" in text and "not a 'no'" in text
+
+
+def test_eic_advisory_is_silent_once_a_figure_is_on_the_line():
+    assert _eic_advisories(_eic_report(line_27_eic=3_400.0)) == []
+
+
+def test_eic_advisory_never_fails_the_gate():
+    """The whole point of the level. A worksheet that comes out at $0 for a
+    filer whose investment income is over the cap is a CORRECT return, and a
+    gate that refused it would teach the agent to route around the one warning
+    that carries a thousands-of-dollars under-statement."""
+    report = _eic_report(line_27_eic=0, nyc=True,
+                         ny={"line_65_earned_income": 0,
+                             "line_66_noncustodial_parent_eic": 0,
+                             "line_70_nyc_earned_income": 0})
+    assert not report.failed
+    assert len(_eic_advisories(report)) == 1
+
+
+def test_eic_advisory_names_all_four_lines_on_a_new_york_city_return():
+    """FOUR, not three. An earlier draft named 65 and 70 and called the set
+    complete, while `_NY_REFUNDABLE_CREDIT_LINES`' own comment names the pair
+    that gets missed as the noncustodial parent EIC and the NYC EIC — this had
+    picked up one of the two."""
+    text = _eic_advisories(_eic_report(
+        line_27_eic=0, nyc=True,
+        ny={"line_65_earned_income": 0, "line_66_noncustodial_parent_eic": 0,
+            "line_70_nyc_earned_income": 0}))[0]
+    assert "Form 1040 line 27" in text
+    assert "line 65" in text and "IT-215" in text
+    assert "line 66" in text and "IT-209" in text
+    assert "line 70" in text and "NYC" in text
+
+
+def test_eic_advisory_omits_the_city_line_for_a_new_york_filer_outside_the_city():
+    """`refundable_credits_and_payments` carries no `_include_if`; only the
+    sibling `nyc` block is gated on flags.nyc_resident. Without the gate every
+    New York filer was told to work a New York City credit — the cry-wolf
+    shape, on the module whose advisory block also carries the PFIC and
+    second-read warnings."""
+    text = _eic_advisories(_eic_report(
+        line_27_eic=0,
+        ny={"line_65_earned_income": 0, "line_66_noncustodial_parent_eic": 0,
+            "line_70_nyc_earned_income": 0}))[0]
+    assert "line 65" in text and "line 66" in text
+    assert "line 70" not in text and "NYC" not in text
+
+
+def test_eic_advisory_omits_new_york_lines_on_a_return_that_has_none():
+    """A return with no `new_york_it201` block is not a New York return, and
+    naming IT-215 there sends the reader after a form they do not file.
+
+    The REMEDY half is asserted too, and it is the half a mutation found
+    unguarded: the authority clause says "each IT-201 line from the form named
+    beside it", which contains neither IT-215 nor IT-209, so checking only the
+    line list left the clause free to appear on a federal-only return."""
+    text = _eic_advisories(_eic_report(line_27_eic=0))[0]
+    assert "IT-215" not in text and "IT-209" not in text
+    assert "IT-201" not in text
+    # "not for New York" DOES belong here: it is the statement of what the
+    # toolkit computes, true on every return, and not an instruction to go
+    # anywhere. Only the remedy is scoped.
+
+
+def test_eic_advisory_names_only_the_line_still_at_zero():
+    text = _eic_advisories(_eic_report(
+        line_27_eic=1_200.0,
+        ny={"line_65_earned_income": 800.0,
+            "line_66_noncustodial_parent_eic": 0}))[0]
+    assert "Form 1040 line 27" not in text and "line 65" not in text
+    assert "line 66" in text
+
+
+def test_eic_each_line_is_sent_to_its_own_form_not_to_pub_596():
+    """The over-statement this advisory could cause. A single federal remedy
+    over a list that includes the New York lines invites the federal figure
+    onto three New York lines — and the New York and City credits are not the
+    federal credit. §4 calls an over-statement a hard error."""
+    text = _eic_advisories(_eic_report(
+        line_27_eic=0, nyc=True,
+        ny={"line_65_earned_income": 0, "line_66_noncustodial_parent_eic": 0,
+            "line_70_nyc_earned_income": 0}))[0]
+    assert "OWN form" in text
+    assert "Do NOT copy one line's figure onto another" in text
+    assert "Form 1040 line 27 from the covered year's EIC worksheet" in text
+
+
+def test_eic_a_null_on_the_line_counts_as_zero():
+    """A null is not a figure anybody entered. Reading it as "something is on
+    the line" is the direction that loses the credit."""
+    assert len(_eic_advisories(_eic_report(line_27_eic=None))) == 1
+
+
+def test_eic_a_non_finite_figure_counts_as_zero():
+    """`json.loads` accepts NaN and Infinity, both pass isinstance, and every
+    comparison with NaN is False (AGENTS.md §8) — so `value <= 0` alone would
+    read a NaN line as a figure that is present."""
+    for bad in (float("nan"), float("inf"), True):
+        assert len(_eic_advisories(_eic_report(line_27_eic=bad))) == 1, bad
+
+
+def test_eic_a_negative_figure_counts_as_zero():
+    """An EIC is a credit and is never negative, so a minus sign is a sign
+    error or a hand-edit, not a figure. `value == 0` let it silence the
+    advisory. The federal line is refused upstream by
+    return_builder._check_components; the three New York lines are not."""
+    assert len(_eic_advisories(_eic_report(line_27_eic=-500.0))) == 1
+
+
+def test_eic_an_absent_field_in_a_present_section_is_still_reported():
+    """The opposite of what an earlier draft did, and `_result_total` one
+    screen up settles the same question the same way: a present section always
+    yields a number. Form 1040 always HAS a line 27 — only the JSON key is
+    missing — and `return_builder.build` reads it as `working.get(field, 0)`,
+    so it contributes a real $0 to line 33 either way."""
+    report = T.evaluate(_ledger(_record()), {"form_1040": {}},
+                        ["documents/W2_Acme.pdf"], eic_screening=True)
+    assert len(_eic_advisories(report)) == 1
+
+
+def test_eic_advisory_says_it_is_uncomputed_and_untieable():
+    """The two facts a reader needs and cannot get anywhere else: nothing
+    computes it, and nothing downstream will notice its absence."""
+    text = _eic_advisories(_eic_report(line_27_eic=0))[0]
+    assert "no source document" in text
+    assert "may_qualify_for_eic" in text
+
+
+def test_eic_lines_are_real_paths_in_the_result_template():
+    """A path that resolves to nothing reports nothing for ever, and every
+    fixture in this file is hand-built, so the constant and the fixtures could
+    drift from the template together. Same check `_EIC_LINES`' neighbours get
+    in `test_category_targets_fields_exist_in_result_template`."""
+    template = json.loads(
+        (REPO / "agents/templates/result_template.json").read_text())
+    for label, path, gate in T._EIC_LINES:
+        node = template
+        for key in path[:-1]:
+            assert isinstance(node, dict) and key in node, (label, key)
+            node = node[key]
+        assert path[-1] in node, (label, path[-1])
+        if gate is not None:
+            g = template
+            for key in gate:
+                assert isinstance(g, dict) and key in g, (label, key)
+                g = g[key]
+
+
+def test_every_eic_line_in_the_new_york_credit_block_is_covered():
+    """DERIVED, not listed — a mutation over `_EIC_LINES` probes the members
+    present and can never find the member absent, which is exactly how line 66
+    was missed. Every refundable New York line whose NAME says it is an earned
+    income credit must have an entry; New York adding one goes red here."""
+    template = json.loads(
+        (REPO / "agents/templates/result_template.json").read_text())
+    block = template["new_york_it201"]["refundable_credits_and_payments"]
+    named = {k for k in block
+             if not k.startswith("_") and ("earned_income" in k or "eic" in k)}
+    assert named, "the template's New York credit block named no EIC line"
+    covered = {path[-1] for _, path, _ in T._EIC_LINES}
+    assert named <= covered, (
+        f"{sorted(named - covered)} are earned-income-credit lines in "
+        "result_template.json's New York refundable block with no _EIC_LINES "
+        "entry — an uncomputed input defaulting to 0 that this gate cannot "
+        "see")
+
+
+def test_the_tie_out_reads_the_flag_the_capability_rule_is_keyed_on():
+    """Two modules spell one flag and nothing linked them: renaming it in the
+    template and the rule left the suite green while this gate read a key that
+    no longer existed — the disclosure half silently stopping, in the
+    under-statement direction, with the capability half still passing."""
+    from agents.lib import capabilities as C
+    flag = C._RULES_BY_ID["earned_income_credit"].flag
+    source = (REPO / "agents" / "lib" / "tie_out.py").read_text()
+    assert f'flags.get("{flag}")' in source, (
+        f"tie_out.py does not read flags.{flag}, which is what the "
+        "`earned_income_credit` capability rule is keyed on")
+
+
+def test_eic_cli_reads_the_screening_flag_from_the_profile(tmp_path):
+    """The flag reaches the gate through the profile, like every other
+    profile-derived input here — a parameter nothing in _main sets is a
+    feature that works only in tests."""
+    (tmp_path / "parse_ledger.json").write_text(json.dumps(
+        {"records": [_record()]}))
+    (tmp_path / "result.json").write_text(json.dumps(_result(line_27_eic=0)))
+    (tmp_path / "documents").mkdir()
+    (tmp_path / "documents" / "W2_Acme.pdf").write_bytes(b"%PDF-1.4\n")
+    profile = tmp_path / "taxpayer_profile.json"
+
+    def run():
+        return subprocess.run(
+            [sys.executable, str(REPO / "agents/lib/tie_out.py"),
+             "--workspace", str(tmp_path)], capture_output=True, text=True)
+
+    profile.write_text(json.dumps({"flags": {"may_qualify_for_eic": True}}))
+    out = run()
+    assert out.returncode == 0 and "screens POSITIVE" in out.stdout
+
+    profile.write_text(json.dumps({"flags": {"may_qualify_for_eic": False}}))
+    out = run()
+    assert out.returncode == 0 and "Earned Income Credit" not in out.stdout
+
+    # A profile that predates the question is UNANSWERED, not a no.
+    profile.write_text(json.dumps({"flags": {}}))
+    out = run()
+    assert out.returncode == 0 and "UNANSWERED" in out.stdout
+
+
+def test_eic_a_deleted_new_york_credit_block_is_still_reported():
+    """An EMPTIED credit block already warned; a DELETED one went silent, which
+    made deleting the block the quieter way to lose all three New York lines.
+    Scoped by the return's top-level section instead."""
+    report = T.evaluate(
+        _ledger(_record()),
+        {**_result(line_27_eic=500.0), "new_york_it201": {}},
+        ["documents/W2_Acme.pdf"], eic_screening=True)
+    text = _eic_advisories(report)[0]
+    assert "line 65" in text and "line 66" in text

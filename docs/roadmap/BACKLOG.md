@@ -76,7 +76,7 @@ executed anywhere**; Windows has not run since 2026-09-13.
 | When | What | Why |
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **Now** | **AA1** — EIC disclosure. | The only silent under-statement left in the federal return. |
+| **Now** | **AA1** — EIC disclosure. | BUILT, awaiting merge. It was the only silent under-statement left in the federal return. |
 | **Now** | **AA3** — rule on MEASURED COSTS. | Unblocks a permanently blocked item at zero engineering cost. |
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Twelve commits, four engine, one interpreter, a never-executed floor. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
@@ -92,32 +92,45 @@ executed anywhere**; Windows has not run since 2026-09-13.
 ### AA — from the 2026-09-20 product-owner review
 
 - **AA1 (P1, S): Disclose the EIC instead of defaulting it to zero.**
-  `line_27_eic` is the one Form 1040 line with a field, no computation, no
-  capability rule and no interview question. Everything else out of scope either
-  BLOCKS (rental, kiddie tax, marketplace insurance, part-year) or is flagged
-  MANUAL (2441, 5695, education, ISO). The EIC does neither: it defaults to 0 and
-  flows into line 33, so an eligible filer's refund is short by up to the full
-  credit with every gate green and the tie-out satisfied — the ledger has nothing
-  to compare it against. That is an UNDER-statement, which AGENTS.md §4 says
-  degrades with a loud banner; what it has instead is a `_comment` in
-  `result_template.json` and a sentence in a compute reference, both read by an
-  AGENT and neither by a taxpayer. `meta.limitations`, which exists for exactly
-  this, says nothing. Deliverable is the disclosure, NOT the computation: an
-  interview question, a MANUAL capability rule naming the EIC worksheet, and a
-  `meta.limitations` entry whenever the flag is set and the line is 0. New York
-  line 65 and NYC line 70 are inputs for the same reason and are exposed the same
-  way; the rule covers all three or it is a third partial answer.
+  **The disclosure is BUILT and is carried by the pull request that also wrote
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.** It stays here until then because a shipped row is a claim that
+  something landed, and a test reads `git log` to hold it to that — naming an
+  unmerged pull request there would be the claim without the landing.
 
-  **The EIC being uncomputed is a RULING, not an oversight, and AA1 does not
-  re-open it.** The 2026-07-12 review sharpened the persona to a CA resident with
-  W-2 plus equity comp, investments and foreign accounts, and dropped the EITC to
-  P3 as out of persona in the same breath that promoted AMT to P1. That decision
-  stands. What it does not license is the current silence: the guiding principle
-  stated in the paragraph immediately after it is that **this toolkit's
-  differentiator is that it never silently understates**, and where a gap cannot
-  be built the requirement is to *refuse or loudly degrade*. A field defaulting to
-  zero with no gate, no question and no manifest line is neither. AA1 is the
-  degrade the ruling already asked for, not the computation it declined.
+  What shipped: `flags.may_qualify_for_eic`, asked by the `/tax-setup`
+  interview; the MANUAL capability rule `earned_income_credit`, covering Form
+  1040 line 27 and all THREE New York lines — 65 (IT-215), 66 (IT-209's
+  noncustodial parent credit) and 70 (NYC) — whose manifest line reaches page 1
+  of the PDF; and a tie-out advisory naming which of those lines still records
+  0. The rule is MANUAL and not UNSUPPORTED because the direction is an
+  UNDER-statement, which AGENTS.md §4 degrades loudly rather than blocking, and
+  a worksheet that legitimately comes out at $0 is a correct return no gate may
+  refuse. Reasoning, and why the conditional half had to live in the tie-out
+  rather than in the gate that writes the manifest, are in
+  `docs/changelog/epic-AA.md` — as is what three reviewers found in the first
+  draft, which was an over-statement path in the advisory's own remedy, a
+  fourth New York line asserted away, and four false claims about how uniquely
+  bad the prior state had been.
+
+  **The legacy-profile residue is CLOSED, not accepted.** An earlier draft of
+  this entry recorded it as an accepted gap: a profile predating the flag reads
+  absent-as-False and gets silence. Review was right that this is not deference
+  to the taxpayer's answer, because there is no answer — so the advisory is
+  TRI-STATE, and an unanswered flag now says so rather than being read as a no.
+  The flag stays out of `_REQUIRED_GATE_FLAGS`: that blocker cannot be
+  acknowledged away, and a hard stop on every existing profile to disclose a
+  credit is the cry-wolf shape.
+
+  **The EIC being uncomputed is a RULING, not an oversight, and AA1 did not
+  re-open it.** The 2026-07-12 review sharpened the persona to a CA resident
+  with W-2 plus equity comp, investments and foreign accounts, and dropped the
+  EITC to P3 as out of persona in the same breath that promoted AMT to P1. That
+  decision stands. What it did not license was the silence: the guiding
+  principle stated in the paragraph immediately after it is that **this
+  toolkit's differentiator is that it never silently understates**, and where a
+  gap cannot be built the requirement is to *refuse or loudly degrade*. AA1 is
+  the degrade the ruling already asked for, not the computation it declined.
 
 - **AA2 (P1, XS): Run the full matrix on `main` the day CI returns.**
   Before any new work on 2026-10-01. A red 3.13 leg or a red Windows job is then

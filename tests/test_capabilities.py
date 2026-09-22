@@ -1357,3 +1357,148 @@ class TestTheNewYorkModuleIsDone:
         body = skill_text("tax-verify")
         assert "never read the null as agreement" in body
 
+
+
+# --------------------------------------------------------------------------
+# The Earned Income Credit disclosure (AA1)
+# --------------------------------------------------------------------------
+
+def _eic_rule():
+    return C._RULES_BY_ID["earned_income_credit"]
+
+
+def test_the_eic_is_disclosed_and_does_not_block():
+    """MANUAL, not UNSUPPORTED, and the level is the whole decision: the gap
+    UNDER-states, which AGENTS.md §4 degrades loudly rather than blocking, and
+    a worksheet that legitimately comes out at $0 is a correct return."""
+    r = C.evaluate(_profile({"may_qualify_for_eic": True}))
+    assert r.blocking == ()
+    assert [f.rule_id for f in r.manual] == ["earned_income_credit"]
+
+
+def test_the_eic_reaches_the_limitations_manifest():
+    """The manifest is what /tax-generate prints on page 1. Before this rule
+    the only statements of the gap were a `_comment` in result_template.json
+    and a sentence in a compute reference — read by an agent, not a taxpayer."""
+    r = C.evaluate(_profile({"may_qualify_for_eic": True}))
+    hits = [line for line in r.limitations if "Earned Income Credit" in line]
+    assert len(hits) == 1
+    assert hits[0].startswith("MANUAL WORKSHEET:")
+
+
+def test_the_eic_is_silent_when_the_taxpayer_screened_negative():
+    r = C.evaluate(_profile({"may_qualify_for_eic": False}))
+    assert not [line for line in r.limitations if "Earned Income Credit" in line]
+
+
+def test_an_absent_eic_flag_does_not_block_a_legacy_profile():
+    """Deliberately NOT in _REQUIRED_GATE_FLAGS. The migration blocker cannot
+    be acknowledged away, and turning a disclosure into a hard stop for every
+    profile that predates the flag is the cry-wolf shape — the remedy for a
+    legacy profile is re-running the interview, not a gate it cannot clear."""
+    profile = _profile()
+    profile["flags"].pop("may_qualify_for_eic", None)
+    r = C.evaluate(profile)
+    assert r.blocking == ()
+    assert not [line for line in r.limitations if "Earned Income Credit" in line]
+
+
+def test_the_eic_rule_names_every_line_the_tie_out_watches():
+    """DERIVED from `tie_out._EIC_LINES`, not listed again. The first draft
+    listed three and called the set complete, and a hand-written list in a
+    second module is how the two come to disagree about which lines carry the
+    credit — which is the defect, not a formatting choice."""
+    from agents.lib import tie_out as T
+    text = _eic_rule().form + " " + _eic_rule().note
+    for _, path, _ in T._EIC_LINES:
+        line_no = path[-1].split("_")[1]
+        assert f"line {line_no}" in text, (
+            f"the rule names no line {line_no}, which the tie-out watches")
+    assert "IT-215" in text and "IT-209" in text and "NYC" in text
+
+
+def test_the_eic_rule_sends_each_line_to_its_own_form():
+    """The over-statement a single federal remedy would invite: the New York
+    and City credits are not the federal credit, so 'work Pub 596 and write the
+    figure to the lines' puts a federal figure on three New York lines."""
+    note = _eic_rule().note
+    assert "OWN FORM AND ITS OWN ELIGIBILITY TEST" in note
+    assert "none of them is a copy of another" in note
+
+
+def test_the_eic_text_states_no_year_specific_figure():
+    """AGENTS.md §2. The credit amounts and the disqualified-income cap index
+    annually; the childless age band does not but has moved by statute. Either
+    way a figure written into this text reads as current while belonging to
+    whatever year it was typed in — and this rule is a DISCLOSURE, not a step
+    towards the computation that was ruled out.
+
+    Covers the tie-out advisory and both JSON notes as well as the rule, since
+    all four state the same gap and only one of them was guarded."""
+    from agents.lib import tie_out as T
+    text = " ".join([
+        _eic_rule().situation, _eic_rule().form, _eic_rule().note,
+        _eic_advisory_text(),
+        json.loads((REPO / "agents/templates/taxpayer_profile_template.json")
+                   .read_text())["flags"]["_comment_eic"],
+        json.loads((REPO / "agents/templates/result_template.json")
+                   .read_text())["form_1040"]["_note_line_27"],
+    ])
+    assert T  # the advisory text above comes from it
+    # `$0` is exempt and nothing else is: a zero is not a figure that indexes,
+    # so it cannot go stale, and the rule needs it to say that a worked $0 is
+    # an answer rather than a skipped line. Any other dollar amount here would
+    # read as current while belonging to whatever year it was typed in.
+    amounts = [m for m in re.findall(r"\$\s?[\d,]*\d", text) if m != "$0"]
+    assert amounts == [], amounts
+    assert not re.search(r"\bage[sd]?\s+\d", text), text
+    # A rate and an age BAND are the two spellings that dodge a dollar sign.
+    assert not re.search(r"\d\s?%", text), text
+    assert not re.search(r"\b\d{2}\s*(?:to|through|-|—|–)\s*\d{2}\b", text), text
+
+
+def _eic_advisory_text() -> str:
+    """The advisory string itself, produced rather than re-typed — a lint over
+    a copy of the text is the defect it exists to catch."""
+    from agents.lib import tie_out as T
+    report = T.evaluate(
+        [], {"form_1040": {"line_27_eic": 0},
+             "new_york_it201": {
+                 "refundable_credits_and_payments": {
+                     "line_65_earned_income": 0,
+                     "line_66_noncustodial_parent_eic": 0,
+                     "line_70_nyc_earned_income": 0},
+                 "nyc": {}}},
+        [], eic_screening=True)
+    hits = [a for a in report.advisories if "Earned Income Credit" in a]
+    assert len(hits) == 1, report.advisories
+    return hits[0]
+
+
+def test_the_eic_rule_says_nothing_downstream_can_catch_it():
+    """The fact that makes this rule load-bearing rather than decorative: the
+    tie-out gate compares source documents to the return, and a credit has no
+    source document, so the one check built to see a dropped figure cannot see
+    this one."""
+    assert "source document" in _eic_rule().note
+
+
+def test_the_eic_screen_covers_the_noncustodial_parent_credit():
+    """Form IT-209's eligibility is not the federal EIC's, so a flag worded as
+    a purely federal screen would let a federal NO silence line 66. The
+    interview and the rule both have to say the flag covers it."""
+    assert "noncustodial parent" in _eic_rule().situation
+    assert "noncustodial parent paying court-ordered child support" in \
+        skill_text("tax-setup")
+
+
+def test_the_eic_screen_does_not_make_the_half_year_home_rule_universal():
+    """The filer's own more-than-half-year US home is the test WITHOUT a
+    qualifying child; with one, the CHILD's residence with the filer is the
+    test, with a birth-or-death exception. Stated as universal, it lets an
+    agent screen an eligible filer who arrived mid-year to NO — and a NO
+    silences both disclosures."""
+    text = skill_text("tax-setup")
+    assert "a US abode for more than half the year" not in text
+    assert "WITHOUT a qualifying child" in text
+    assert "born or who died during the year still counts" in text

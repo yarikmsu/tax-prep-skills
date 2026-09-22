@@ -356,11 +356,16 @@ Line 25c: Other withholding (Additional Medicare over-withholding from Form
           8959) — yours
 Line 25d: DERIVED — total withholding = 25a + 25b + 25c
 Line 26: Estimated tax payments (1040-ES) + prior-year overpayment applied
-Line 27: EIC — NOT COMPUTED by this toolkit. Nothing in agents/lib calculates
-         it, the capability gate does not flag it, and there is no interview
-         question for it. If the taxpayer is eligible, take the figure from the
-         EIC worksheet in the 1040 instructions or from tax software and write
-         it to `line_27_eic`; leaving it 0 understates the refund. NEVER guess.
+Line 27: EIC — NOT COMPUTED by this toolkit, federally or for New York.
+         Nothing in agents/lib calculates it. The capability gate DISCLOSES it
+         (`earned_income_credit`, on flags.may_qualify_for_eic) and the tie-out
+         advises while the line is still 0 — neither computes it. If the
+         taxpayer is eligible, take the figure from the EIC worksheet in the
+         1040 instructions or from tax software and write it to `line_27_eic`;
+         leaving it 0 understates the refund, and no check downstream can see
+         that, because a credit has no source document to tie against. NEVER
+         guess. A worked $0 goes in answers.md so the next reader knows the
+         line was worked and not skipped.
 Line 28: `compute_child_tax_credit()`'s `refundable_actc` — write it to
          `line_28_refundable_actc`. Step 7 computes it; this is where it lands.
 Line 29: refundable AOTC (Form 8863 line 8)

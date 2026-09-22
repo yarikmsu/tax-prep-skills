@@ -259,8 +259,15 @@ Prove every parsed document landed on the return — the CP2000 killer:
 2. Act on the exit code:
    - **0:** Tied out. If the report lists ⚠ unverifiable categories or ⚠
      advisory items (a possibly-taxable state refund, a personal-item 1099-K,
-     a recomputed 1099-R box 2a, a net-negative SSA-1099), surface them to the
-     user — they passed the gate but need a manual look before filing.
+     a recomputed 1099-R box 2a, a net-negative SSA-1099, **an EIC line still
+     at 0**), surface them to the user — they passed the gate but need a
+     manual look before filing. The EIC one carries the largest dollars of
+     the set and is the only one no other check can raise: nothing here
+     computes the credit and it has no source document to tie against, so a 0
+     left on Form 1040 line 27 or on IT-201 lines 65, 66 or 70 is a refund
+     short by the whole credit with every gate green. Work each line from its
+     OWN form — never copy one onto another — or record the worked $0 in
+     `answers.md`.
    - **2 (FAILED): STOP — the return is NOT complete.** The report
      (`summaries/_tie_out.md`) names the exact failure: a document with no
      ledger record, a ledger record pointing at a missing file, or a category

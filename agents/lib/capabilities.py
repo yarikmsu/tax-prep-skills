@@ -198,6 +198,78 @@ RULES: "tuple[Rule, ...]" = (
          "residency), the work-related-expense rule (both spouses working / "
          "looking / full-time students), and provider name/TIN due diligence — "
          "collected by the /tax-setup interview into `dependent_care_detail`."),
+    # The EIC, and the reason it needed a rule of its own: it had NO rule at
+    # all. That is the whole of what was distinctive about it — an earlier
+    # draft of this comment claimed it was "the one MANUAL rule over a figure
+    # the engine computes nothing of", which is false four lines from where
+    # `energy_credits` says the 25C/25D credits are hand-computed, and false
+    # again for `ev_credit`, `adoption_credit`, `feie`, `foreign_asset_
+    # reporting` and `unreported_allocated_tips`. Every one of those is
+    # uncomputed and every one of them already had a rule. The EIC did not.
+    #
+    # `line_27_eic` is an input that defaults to 0 and flows into line 33
+    # (`return_builder._LINE_33_TERMS`), so an eligible filer's refund is short
+    # by the whole credit with every gate green — and the tie-out, which is
+    # what catches a dropped figure, structurally cannot see this one: a credit
+    # produces no source document to ledger against. The direction is the one
+    # AGENTS.md §4 says degrades with a loud banner.
+    #
+    # WHAT THE GAP DID HAVE, stated accurately because an earlier draft
+    # undercounted it in the direction that flattered this change: five prose
+    # sites said the EIC was uncomputed — `result_template.json`'s
+    # `_note_line_27`, the tax-and-credits compute reference,
+    # `docs/contributing/tax-gotchas.md`, `return_builder`'s module docstring
+    # and `projection`'s. What none of them was, is a manifest line: every one
+    # is read by an AGENT and none reaches a taxpayer. New York is the
+    # exception worth naming — `state-return-ny.md` already told the agent to
+    # put each refundable credit's AMOUNT, IT-215 included, on
+    # `meta.limitations` verbatim. That is an INSTRUCTION an agent may skip;
+    # this rule is a line the gate emits whether anyone remembers or not.
+    #
+    # NOT a computation, and deliberately not a step towards one. The credit
+    # amounts and the disqualified-income cap are indexed (§32(j)), so
+    # AGENTS.md §2 forbids naming them. The childless age band is NOT indexed —
+    # it is fixed statutory text in §32(c)(1)(A)(ii)(II) — and is still not
+    # written here, because it has moved by statute once already and belongs to
+    # the covered year's instructions with the rest. The rule names the
+    # worksheet and stops.
+    #
+    # FOUR lines, which took a review to get right. New York's IT-215 credit
+    # (IT-201 line 65), the IT-209 noncustodial parent EIC (line 66) and the
+    # New York City EIC (line 70) are inputs on exactly the same terms as the
+    # federal line and land in the same refundable block. An earlier draft
+    # carried 65 and 70 and called the set complete, while
+    # `tax_computations/state/ny.py` names the pair that gets missed as the
+    # noncustodial parent EIC and the City EIC — it had picked up one of two.
+    #
+    # NOT registered in `answers.REQUIRED_ANSWERS`, and that is a decision
+    # rather than an omission. A registered answer BLOCKS (`answers._main`
+    # returns 2 while one is owed), and the interview tells the taxpayer to set
+    # this flag TRUE on a MAYBE. Coupling a maybe to a hard stop makes the
+    # liberal answer the expensive one and teaches people to answer no, which
+    # destroys the screen this rule depends on.
+    Rule("earned_income_credit", "may_qualify_for_eic", MANUAL,
+         "May qualify for the Earned Income Credit (federal, New York, "
+         "New York City, or New York's noncustodial parent credit)",
+         "EIC worksheet, Form 1040 instructions (Form 1040 line 27); "
+         "Form IT-215 (NY IT-201 line 65); Form IT-209 (NY IT-201 line 66); "
+         "NYC EIC (NY IT-201 line 70)",
+         "The EIC is NOT COMPUTED anywhere in this toolkit — not federally, "
+         "not for New York, not for New York City. All four lines are INPUTS "
+         "that default to 0 and flow into the payments total, so leaving them "
+         "0 for an eligible filer UNDERSTATES the refund by the whole of the "
+         "credit while every gate passes: the tie-out compares source "
+         "documents against the return and a credit produces no source "
+         "document, so nothing downstream can notice. EACH LINE HAS ITS OWN "
+         "FORM AND ITS OWN ELIGIBILITY TEST, and none of them is a copy of "
+         "another: take line 27 from the covered year's EIC worksheet in the "
+         "Form 1040 instructions (Pub 596), and each New York line from the "
+         "form named above beside it. Work the ones that apply. NEVER guess "
+         "one — the amounts and the disqualified-income cap are indexed, the "
+         "childless age band is statutory and has moved, and all of them "
+         "belong to the covered year. If a worksheet comes out at $0, that is "
+         "an answer: record it in answers.md so the next reader knows the line "
+         "was worked and not skipped."),
     Rule("energy_credits", "has_energy_credits", MANUAL,
          "Residential energy improvements", "Form 5695",
          "The 25C/25D credits are hand-computed. **OBBBA termination (both "

@@ -1063,8 +1063,10 @@ def compute_safe_harbor(projected_tax: float, prior_tax: float | None, prior_agi
     line 4, which is what §6654 actually measures: `compute_form_2210` in
     `tax_computations` states that contract on its own argument, and neither
     caller here can meet it, because the projection models the CTC only as a
-    nonrefundable credit and result.json carries no field for the EIC or the
-    ACTC at all. Line 4 can only be LOWER than what arrives here, so both the
+    nonrefundable credit and models neither the EIC nor the ACTC. (The
+    FIELDS exist — V1's second slice added `line_27_eic` and
+    `line_28_refundable_actc`; this sentence claimed they did not, for
+    long enough to outlive the change that added them.) Line 4 can only be LOWER than what arrives here, so both the
     90% prong and the floor test come out too high and the shortfall shown is
     the OVER-stating direction. `current_tax_unnetted` flags exactly the runs
     where that reaches a figure the taxpayer would act on; see the field.

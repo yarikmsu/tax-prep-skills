@@ -662,6 +662,35 @@ own state of residence)**:**
   provider's name and TIN (required — due diligence)? If MFS, did you live apart
   from your spouse the last 6 months (the §21(e)(2) exception — otherwise MFS
   gets no credit)? The credit is now COMPUTED from these facts.
+- **Earned income this year, and income possibly low enough for the Earned
+  Income Credit?** → sets `may_qualify_for_eic`. **Set it TRUE on a MAYBE.**
+  A false positive costs one manifest line; a false negative costs the whole
+  credit, because NOTHING in this toolkit computes the EIC — Form 1040 line 27,
+  IT-201 line 65 (Form IT-215), line 66 (Form IT-209, the noncustodial parent
+  credit) and line 70 (the NYC EIC) are four inputs that default to 0, flow
+  into the payments totals, and produce no source document for the tie-out to
+  miss. Each has its OWN form; never copy one line's figure onto another. The
+  flag is what puts the gap on `meta.limitations`. **Leaving it unanswered is
+  not a no** — the tie-out says so — but answering it here is what makes the
+  manifest line appear at all. **On a New York return, also answer YES for a
+  noncustodial parent paying court-ordered child support** — Form IT-209 has
+  its own eligibility test, not the federal one, so a federal NO does not
+  rule it out. Screen on SHAPE, not on figures: earned income
+  from work or self-employment; a qualifying child, or the taxpayer (on MFJ, at
+  least one spouse) in the childless age band; SSNs valid for employment;
+  filing status other than MFS unless the separated-spouse rules are met;
+  investment income under the year's cap. **That list is a prompt, not the
+  test** — §32 also requires US citizenship or resident-alien status all year,
+  no Form 2555, and that the filer is not another taxpayer's qualifying child.
+  The US-home test depends on the case: WITHOUT a qualifying child, the filer's
+  own main home must be in the US for more than half the year; WITH one, it is
+  the CHILD who must have lived with the filer in the US for more than half the
+  year, and a child born or who died during the year still counts. None of this
+  is a reason to answer NO — every omission from the prompt biases toward a
+  YES, which is the direction this question wants. The amounts
+  and the cap index annually and the age band is statutory but has moved — take
+  all of them from the covered year's Form 1040 instructions (Pub 596) when the
+  credit is actually worked, never from memory and never from here.
 - Charitable giving? (approximate amount, cash vs property donations) → sets `has_charitable_giving`
 - Energy-efficient home improvements? (heat pump, solar, insulation — 25C/25D) → sets `has_energy_credits`
 - EV purchase or lease this year? (30D/25E) → sets `has_ev_purchase`

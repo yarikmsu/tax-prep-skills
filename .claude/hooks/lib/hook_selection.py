@@ -118,8 +118,14 @@ _ARMS: tuple[tuple[tuple[str, ...], frozenset], ...] = (
      frozenset({"CAPABILITIES"})),
     (("tests/test_capabilities.py",),
      frozenset({"CAPABILITIES", "HOOKSDEPS", "HOSTGUARD"})),
-    (("agents/templates/result_template.json",
-      "agents/templates/projection_inputs_template.json"),
+    # result_template.json gained CAPABILITIES with the EIC disclosure:
+    # test_capabilities.py reads the template to prove the rule's text carries
+    # no year-specific figure and to derive the EIC lines rather than list them
+    # again. An arm that stayed PORTABILITY-only would report a silent green
+    # over an edit that can turn the capability module red.
+    (("agents/templates/result_template.json",),
+     frozenset({"PORTABILITY", "CAPABILITIES"})),
+    (("agents/templates/projection_inputs_template.json",),
      frozenset({"PORTABILITY"})),
     (("tests/skill_text.py",),
      frozenset({"PORTABILITY", "CAPABILITIES", "PREFLIGHT", "HOSTGUARD",

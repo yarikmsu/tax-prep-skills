@@ -65,6 +65,33 @@ life-event set — marriage or divorce year, §121 home sale with its 1099-S rul
 inheritance basis step-up, pre-2019-decree alimony (post-2018 decrees carry the CA
 nonconformity: CA still taxes and deducts via Schedule CA), and Form 8839 adoption.
 
+**The Earned Income Credit needed a rule because it had none**, and that — not
+being uncomputed — is what was distinctive about it. Half the manual-worksheet
+items above are uncomputed too (5695, 8936, 8839, 2555, gambling losses, Form
+4137, Form 8938); every one of them already had a rule, and the EIC did not, so
+its gap reached no manifest and no taxpayer. `earned_income_credit` fires on
+`flags.may_qualify_for_eic` and covers FOUR lines — Form 1040 line 27, IT-201
+line 65 (Form IT-215), line 66 (Form IT-209, the noncustodial parent credit) and
+line 70 (the NYC EIC). Each has its OWN form and its own eligibility test, and
+the rule says so: none of them is a copy of another, and a single federal remedy
+over the four would put a federal figure on three New York lines, which is the
+over-statement §4 calls a hard error.
+
+MANUAL and not UNSUPPORTED is the severity decision: the direction is an
+UNDER-statement, which AGENTS.md §4 degrades loudly rather than blocking, and a
+worksheet that legitimately comes out at $0 is a correct return no gate may
+refuse. For the same reason it is NOT registered in `answers.REQUIRED_ANSWERS` —
+a registered answer blocks, and the interview asks for a TRUE on a MAYBE, so
+coupling the two would make the liberal answer the expensive one.
+
+The manifest line is the disclosure; the SECOND half lives in the tie-out gate,
+which is the only place that can see whether the lines are still 0, since
+`capabilities.py` deliberately does not read `result.json` (it runs before that
+file exists, and its receipt input set is the profile alone — a gate that read
+the result would go stale on every compute write). The tie-out's advisory names
+only the lines that apply, gates the City line on the `nyc` block's presence,
+fires on an UNANSWERED flag as well as a yes, and never fails the gate.
+
 **Form 8958 is the exception, and getting it backwards drops the line entirely: it is
 STATUS+STATE-driven, not flag-driven.** Every MFS filer domiciled in a
 community-property state gets the manifest line with no flag involved —

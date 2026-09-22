@@ -11,6 +11,7 @@ One file per epic, newest first, plus the pre-epic base engine:
 
 | File | Scope |
 |------|-------|
+| [`epic-AA.md`](epic-AA.md) | The 2026-09-20 product-owner review (the Earned Income Credit disclosed instead of defaulting to zero) |
 | [`epic-Z.md`](epic-Z.md) | State coverage for the named next users (New York IT-201, NYC and Yonkers, the NY credit tier, residency guardrails) |
 | [`epic-Y.md`](epic-Y.md) | Distribution and operations (`TAX_WORKSPACE`, the workspace root outside the checkout) |
 | [`epic-W.md`](epic-W.md) | Engineering hygiene (ruff and mypy in CI, the `slow` marker, the pinned dev interpreter) |

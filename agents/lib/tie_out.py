@@ -235,6 +235,93 @@ _SECOND_READ_THRESHOLD = 10000.0
 
 _SECOND_READ_VALUES = {"match", "mismatch_resolved"}
 
+# The Earned Income Credit lines, and the ONE thing every other dropped figure
+# on this return has that they do not: a source document. Checks A-D all work
+# by comparing the ledger to the result, so a credit — which no payer issues a
+# form for — is invisible to every one of them. These lines are inputs that
+# default to 0 and flow into the payments totals (`_LINE_33_TERMS` federally,
+# `_NY_REFUNDABLE_CREDIT_LINES` for New York), so an eligible filer's refund is
+# short by the whole credit with this gate green and the tie-out satisfied.
+#
+# FOUR, not three. An earlier draft of this carried lines 65 and 70 and called
+# the set complete; `tax_computations/state/ny.py` names the pair that gets
+# missed in its own comment — "the noncustodial parent EIC and the New York
+# City EIC" — and this had picked up one of the two. Line 66 is an uncomputed
+# input on identical terms.
+#
+# THE THIRD ELEMENT IS A GATE SECTION, and line 70 needs one. The NYC EIC sits
+# in `refundable_credits_and_payments`, which carries no `_include_if`; only
+# the sibling `nyc` block is gated on `flags.nyc_resident`. Without this, every
+# New York filer — City resident or not — was told to work a New York City
+# credit, which is the cry-wolf shape this repository has a recorded lesson
+# about. The gate reads the result rather than the profile because /tax-setup
+# removes inapplicable sections (AGENTS.md §8), so the block's PRESENCE is the
+# return's own statement that it is a City return. A setup that did not prune
+# over-reports, which is the loud direction.
+_EIC_LINES = (
+    ("Form 1040 line 27", ("form_1040", "line_27_eic"), None),
+    ("NY IT-201 line 65 (Form IT-215)",
+     ("new_york_it201", "refundable_credits_and_payments",
+      "line_65_earned_income"), None),
+    ("NY IT-201 line 66 (Form IT-209, noncustodial parent)",
+     ("new_york_it201", "refundable_credits_and_payments",
+      "line_66_noncustodial_parent_eic"), None),
+    ("NY IT-201 line 70 (NYC EIC)",
+     ("new_york_it201", "refundable_credits_and_payments",
+      "line_70_nyc_earned_income"), ("new_york_it201", "nyc")),
+)
+
+
+def _section(result: dict, path) -> "dict | None":
+    """Walk `path` and return the dict it names, or None if any step is not one."""
+    node = result
+    for key in path:
+        node = node.get(key) if isinstance(node, dict) else None
+    return node if isinstance(node, dict) else None
+
+
+def _eic_lines_still_zero(result: dict) -> "tuple[str, ...]":
+    """Which EIC lines this return records as zero or worse, in form order.
+
+    A line whose SECTION is absent is not reported: a return with no
+    `new_york_it201` block is not a New York return, and naming its lines would
+    send the reader to look for a form they do not file.
+
+    Everything INSIDE a present section is reported, and that is the opposite
+    of what an earlier draft did. `_result_total` one screen up settles the same
+    question: "a present section always yields a number: absent/non-numeric
+    mapped fields count as 0". An absent `line_27_eic` key is not a line that
+    does not exist — Form 1040 always has one — and `return_builder.build`
+    reads it as `working.get(field, 0)`, so it contributes a real $0 to line 33
+    either way. Skipping it here would make the one check that can say so
+    silent about the case where the key was dropped.
+
+    ZERO OR NEGATIVE. An EIC is a credit and is never negative, so a minus sign
+    on one of these lines is a sign error or a hand-edit, not a figure — and
+    `value == 0` let it silence the advisory, which is the direction that loses
+    the credit. The federal line is already refused upstream by
+    `return_builder._check_components` (it is a COMPONENT_FIELD and not in
+    MAY_BE_NEGATIVE); the three New York lines are not, and this gate also runs
+    standalone.
+    """
+    out = []
+    for label, path, gate in _EIC_LINES:
+        if gate is not None and _section(result, gate) is None:
+            continue
+        # Scoped by the TOP-LEVEL section, which is what says whether this is
+        # a New York return at all. A missing intermediate block inside it is
+        # the same case as a missing field: an emptied credit block already
+        # warned, and a deleted one must not be the quieter way to lose it.
+        if _section(result, path[:1]) is None:
+            continue
+        node = _section(result, path[:-1]) or {}
+        value = node.get(path[-1])
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(value) or value <= 0:
+            out.append(label)
+    return tuple(out)
+
+
 _ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL
 
 
@@ -1134,7 +1221,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              pfic_disposition_positive_ids: "set | None" = None,
              pfic_holding_mismatch_ids: "set | None" = None,
              pfic_multiyear_disposition_ids: "set | None" = None,
-             pfic_recompute_failures: "list | None" = None) -> TieOutReport:
+             pfic_recompute_failures: "list | None" = None,
+             eic_screening: "bool | None" = False) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
     source files that exist under documents/."""
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) \
@@ -1214,6 +1302,69 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                 f"{_SECOND_READ_THRESHOLD:,.0f}) has NO second-read "
                 "verification — re-extract the key boxes independently "
                 "(/tax-parse step 6.7) before trusting the sums")
+
+    # The EIC, which no check above can reach — see _EIC_LINES.
+    #
+    # TRI-STATE, and the third state is the point. `True` is the taxpayer's own
+    # yes; `False` is their no and ends it, because firing on every return
+    # regardless would bleed the advisory block dry for the PFIC and second-read
+    # warnings that share it. `None` is a profile that predates the screening
+    # question, and silence there is not deference to an assertion — there is
+    # no assertion. `unanswered_pfic_event` in capabilities.py is the same
+    # shape at blocking level; this stays an ADVISORY because the direction is
+    # an UNDER-statement, which AGENTS.md §4 degrades rather than stops.
+    #
+    # The PARAMETER defaults to False and `_main`'s variable to None, and the
+    # two differ on purpose: every other default here is the inert value, while
+    # a CLI run that consulted a workspace and found no answer HAS established
+    # that nobody was asked. A caller passing nothing has established nothing.
+    if eic_screening is not False:
+        zero_lines = _eic_lines_still_zero(result)
+        if zero_lines:
+            named = ", ".join(zero_lines)
+            plural = "record" if len(zero_lines) > 1 else "records"
+            if eic_screening is None:
+                opening = (
+                    "Earned Income Credit: the screening question "
+                    f"(flags.may_qualify_for_eic) is UNANSWERED and {named} "
+                    f"still {plural} 0. Absence is not a 'no' — nobody was "
+                    "asked. Answer it in /tax-setup, or work the lines below.")
+            else:
+                opening = (
+                    "Earned Income Credit: the profile screens POSITIVE "
+                    f"(flags.may_qualify_for_eic) and {named} still {plural} 0.")
+            # EACH LINE CARRIES ITS OWN AUTHORITY, and an earlier draft sent
+            # every one of them to Pub 596. The New York and New York City
+            # credits are not the federal credit and are not copied from it, so
+            # a single federal remedy over a list that includes lines 65, 66 and
+            # 70 invites the federal figure onto three New York lines — an
+            # OVER-statement of the New York refund, which AGENTS.md §4 calls a
+            # hard error. The comment that stood here claimed the per-line
+            # scoping the code did not implement.
+            # The authority table is built from the lines that are actually
+            # in the list, for the same reason the list is: an authority named
+            # for a line this return does not need is a form the reader goes
+            # looking for, and the remedy is the half of an advisory a reader
+            # acts on.
+            where = []
+            if any(line.startswith("Form 1040") for line in zero_lines):
+                where.append(
+                    "Form 1040 line 27 from the covered year's EIC worksheet "
+                    "(the 1040 instructions / Pub 596)")
+            if any(line.startswith("NY ") for line in zero_lines):
+                where.append(
+                    "each IT-201 line from the form named beside it above")
+            advisories.append(
+                opening + " Nothing in this toolkit computes the EIC — not "
+                "federally, not for New York, not for New York City — and no "
+                "source document exists for this gate to tie it to, so a 0 "
+                "left there is a refund short by the whole credit that every "
+                "check passes. Each line named above has its OWN form and its "
+                "own eligibility test: take " + "; ".join(where) + ". Do NOT "
+                "copy one line's figure onto another. Work the ones that "
+                "apply, and record a worked $0 in answers.md so the next "
+                "reader knows the line was worked and not skipped. Never "
+                "guess one.")
 
     # PFIC §1291 completeness (machine-checked, not just the tax-compute doc): a
     # §1291 result that computed but returned complete=False (short distribution
@@ -1833,12 +1984,20 @@ def _main(argv: list) -> int:
         pfic_holding_mismatch_ids: set = set()
         pfic_multiyear_disposition_ids: set = set()
         pfic_recompute_failures: list = []
+        eic_screening: "bool | None" = None
         profile_path = (workspace / "taxpayer_profile.json").resolve()
         if profile_path.exists():
             prof = _read_json(_validate_subpath(profile_path, workspace),
                               "taxpayer_profile.json")
             flags = prof.get("flags") if isinstance(prof.get("flags"), dict) else {}
             pfic_event_expected = flags.get("has_pfic_taxable_event") is True
+            # Absent and null both stay None — see the tri-state note in
+            # `evaluate`. Any present non-bool reads as unanswered rather
+            # than as a no: capabilities._flag_value refuses it by name at
+            # Step 0.7, so this gate is never reached with one in the
+            # pipeline, and the loud direction is the safe one if it is.
+            _eic_flag = flags.get("may_qualify_for_eic")
+            eic_screening = _eic_flag if isinstance(_eic_flag, bool) else None
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None
@@ -1880,7 +2039,8 @@ def _main(argv: list) -> int:
                           pfic_disposition_positive_ids=pfic_disposition_positive_ids,
                           pfic_holding_mismatch_ids=pfic_holding_mismatch_ids,
                           pfic_multiyear_disposition_ids=pfic_multiyear_disposition_ids,
-                          pfic_recompute_failures=pfic_recompute_failures)
+                          pfic_recompute_failures=pfic_recompute_failures,
+                          eic_screening=eic_screening)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)

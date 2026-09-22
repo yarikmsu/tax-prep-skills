@@ -294,6 +294,15 @@ Each of these goes on `meta.limitations` verbatim — a named gap, never silence
 - **The AMOUNT of each refundable credit.** IT-213, IT-216, IT-215, IT-214 and
   IT-272 each carry their own worksheet; the settlement takes the figures and
   settles the return around them. Where each one LANDS is settled; what each
-  one IS, is not.
+  one IS, is not. **The three earned-income credits — IT-215 (line 65),
+  IT-209's noncustodial parent credit (line 66) and the NYC credit (line 70) —
+  are singled out** by the capability gate's `earned_income_credit` rule and by
+  a tie-out advisory, because they are the state half of the one federal line
+  — line 27 — that nothing computes either, and a filer told about the federal
+  gap alone is told the wrong size of it. This paragraph already asked YOU to
+  put each credit's amount on `meta.limitations`; the rule is what puts the
+  earned-income ones there whether anyone remembers or not. Each of the three
+  has its own form and its own eligibility test: **never copy one line's figure
+  onto another, and never copy the federal figure onto any of them.**
 - **Sales or use tax on line 59** where the taxpayer cannot state one.
 - **Estates and trusts**, which §601(c) also covers. An IT-201 never is one.

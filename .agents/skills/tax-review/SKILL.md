@@ -181,6 +181,12 @@ Simulate an IRS officer reviewing this return. Check:
   - NOTE: the toolkit does NOT compute EITC (community-track D7) — if the
     checks suggest eligibility, say so loudly and direct the taxpayer to
     software/a preparer rather than silently dropping a refundable credit.
+  - Two runtime signals already carry this, and their ABSENCE is itself a
+    finding: `meta.limitations` holds the capability gate's
+    `earned_income_credit` line whenever `flags.may_qualify_for_eic` is set,
+    and the tie-out advises by line while Form 1040 line 27 / IT-201 lines 65
+    and 70 still record 0. If your checks suggest eligibility and the flag is
+    false, the screening question was answered wrong — say so.
 
 **Audit Trigger Assessment:**
 Searching the web, check current year IRS audit statistics:
