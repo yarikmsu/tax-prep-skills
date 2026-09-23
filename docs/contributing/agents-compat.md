@@ -169,10 +169,11 @@ taxpayer's documents.
 - Works unchanged. Either run `bash agents/install.sh` for a global install, or
   rely on the tracked `.claude/skills/` symlinks for project-local discovery.
 - `CLAUDE.md` imports `AGENTS.md`, so the shared project truth loads first.
-- **Bash calls default to a 120-second timeout and the full suite takes three
-  to four minutes** (173-229s observed across five runs). Pass an explicit
-  `timeout` — the ceiling is 600s, comfortably above the suite — or run it in
-  the background; the default kills the run partway with no verdict.
+- **Bash calls default to a 120-second timeout, and the full suite outlasts
+  it** — the scale row of `skill-invariants.sh` MEASURED COSTS puts the suite
+  at about twice a cold pass of that hook. Pass an explicit `timeout` (the
+  ceiling is 600s) or run it in the background; the default kills the run
+  partway with no verdict.
 
 ## Windows clones
 

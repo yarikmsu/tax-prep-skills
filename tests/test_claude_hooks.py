@@ -345,8 +345,9 @@ def _shared_test_helpers() -> list:
     # `Path(__file__).parent`, not `REPO / "tests"`: the watched-set locator
     # recovers `REPO / "<literal>"` chains out of this module's source and
     # would read that spelling as this module depending on the whole `tests`
-    # directory — which would put the 115-second hooks module on every test
-    # edit in the repository. The helpers live beside this file; say so.
+    # directory — which would put the hooks module, the dominant row of
+    # MEASURED COSTS, on every test edit in the repository. The helpers live
+    # beside this file; say so.
     here = Path(__file__).resolve().parent
     return sorted(f"tests/{p.name}" for p in here.glob("*.py")
                   if not p.name.startswith("test_")
@@ -465,12 +466,12 @@ def _selects(module, selected) -> bool:
 
     The hook selects tests/test_claude_hooks.py two ways. A path that module
     ASSERTS about gets the module; a path it merely READS or NAMES — the other
-    five test modules, whose source it parses and whose deselected ids it
-    resolves — gets the three assertions that do the reading, because the module
-    dominates every total in MEASURED COSTS and a save of a test file was paying
-    all of it for three checks. A node id under a module is that module's
-    assertions running, so the lower-bound tests are asked this rather than an
-    exact string match.
+    test modules, whose source it parses and whose deselected ids it resolves —
+    gets only the assertions that do the reading (`HOOKS_DEPENDENTS`), because
+    the module dominates every total in MEASURED COSTS and a save of a test file
+    was paying all of it for a handful of checks. A node id under a module is
+    that module's assertions running, so the lower-bound tests are asked this
+    rather than an exact string match.
     """
     return any(word == module or word.startswith(module + "::")
                for word in selected)
@@ -505,12 +506,12 @@ HOOKS_DEPENDENTS = {
 # NOT in it, and the absence is a decision rather than an oversight — see the
 # HOOKS_DEPENDENTS comment in the hook, which states it at length.
 # `test_the_measured_costs_counts_match_live_collection` goes red the instant a
-# test is ADDED to one of the five and stays red until a six-place hand refresh
-# of the MEASURED COSTS block, which can only be made coherently once a round's
-# tests are final. Selected on those arms it blocked every tool call in between,
-# on correct in-progress work — the gates-that-cry-wolf pattern reached through
-# a check that is factually right. CI, the review, and every `RUN_HOOKS` edit
-# still run it.
+# test is ADDED anywhere in the suite and stays red until a several-place hand
+# refresh of the MEASURED COSTS block, which can only be made coherently once a
+# round's tests are final. Selected on those arms it blocked every tool call in
+# between, on correct in-progress work — the gates-that-cry-wolf pattern
+# reached through a check that is factually right. CI, the review, and every
+# `RUN_HOOKS` edit still run it.
 HOOKS_DEPENDENTS_EXCLUDED = \
     "TestHookRegistration::test_the_measured_costs_counts_match_live_collection"
 
@@ -1490,8 +1491,8 @@ class TestSkillInvariantsHook:
 
         The shim here would fail if it were ever reached, so a green result
         proves the filter short-circuited rather than that the checks passed.
-        Without that ordering every Python edit in the repo would pay 10
-        seconds, and a hook that slow on unrelated work gets removed.
+        Without that ordering every Python edit in the repo would pay a pytest
+        pass, and a hook that slow on unrelated work gets removed.
         """
         _fake_venv(tmp_path, exit_code=1, lines=["should never run"])
         # NOT `agents/lib/x.py` any more: the engine directory became watched
@@ -1886,12 +1887,12 @@ class TestSkillInvariantsHook:
         one, because a hook can only be tested by running it and every assertion
         below spawns bash — and a skill edit cannot break a single one of its
         assertions. Selecting the union of what the changed paths can turn red
-        puts a skill edit at roughly a tenth of a cold pass and an
-        agent-definition edit at roughly a five-hundredth. Those RATIOS are the
-        durable half; the seconds behind them live in exactly one place, the
-        MEASURED COSTS block in `.claude/hooks/skill-invariants.sh`. Read them
-        there rather than from a copy here — a copy is how one quantity comes to
-        have three values, which is the state this comment used to be in.
+        is what puts a skill edit and an agent-definition edit at a small
+        fraction of a cold pass. Which fraction is stated in exactly one place,
+        the trigger table in the MEASURED COSTS block of
+        `.claude/hooks/skill-invariants.sh`. Read it there rather than from a
+        copy here — a copy is how one quantity comes to have three values, which
+        is the state this comment has now been in twice.
 
         Each edit is preceded by a clear of the stamp's red set, because the
         subject here is what ONE PATH selects and the hook deliberately adds to
@@ -2321,7 +2322,7 @@ class TestSkillInvariantsHook:
         """An arm that selects too much is silent, and pays in seconds forever.
 
         Nothing else in this class can see it. `WATCHED_SOURCE_PATHS` asserts
-        one module per path and is satisfied by an arm selecting all six; the
+        one module per path and is satisfied by an arm selecting every one; the
         per-file-arm test asserts a per-file arm selects no LESS than the
         generic one. Both are lower bounds, and the failure here is an upper one
         — which is why it shipped in the round that added RUN_HOOKS to the six
@@ -2331,8 +2332,8 @@ class TestSkillInvariantsHook:
         expected set: the exact set is what the two lower-bound tests already
         own, and duplicating it here would make every legitimate arm change fail
         in two places. What this adds is the one module whose selection dominates
-        every total in MEASURED COSTS — on the decomposition there it is larger
-        than the other five rows put together.
+        every total in MEASURED COSTS — the row its decomposition calls the
+        dominant one.
         """
         _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
         coupled = []
@@ -2372,17 +2373,16 @@ class TestSkillInvariantsHook:
         Five of the six test-module arms carried `RUN_HOOKS=1`, so every save of
         `tests/test_preflight.py` — the file this branch grows fastest — ran the
         module that dominates every total in MEASURED COSTS. The dependency it
-        was paying for is three assertions: the watched-set locator, the paired
-        lower bound beside it, and the deselect pin, which resolves both
-        `--deselect` ids against tests/test_portability.py's own source.
-        Everything else in this module reads the SCRIPT and the two hooks, not
-        the test modules.
+        was paying for is the handful of assertions in `HOOKS_DEPENDENTS`: the
+        watched-set locator, the paired lower bound beside it, the deselect pin,
+        which resolves both `--deselect` ids against tests/test_portability.py's
+        own source, and the shared-helper arm check. Everything else in this
+        module reads the SCRIPT and the two hooks, not the test modules.
 
-        This is the UPPER bound and not a claim that the three are cheap — what
-        they cost is in MEASURED COSTS under THE TRIGGER WITH NO ROW, and it is
-        about three preflight modules for a preflight save. The bound that
-        matters is the one an arm can regress through: back to `RUN_HOOKS` and
-        the trigger pays the dominant row again.
+        This is the UPPER bound and not a claim that those are cheap — what they
+        cost is in MEASURED COSTS under THE TRIGGER WITH NO ROW, stated there
+        and only there. The bound that matters is the one an arm can regress
+        through: back to `RUN_HOOKS` and the trigger pays the dominant row again.
 
         Nothing else here can see this. Both coverage tests are lower bounds and
         `_selects` satisfies them from a node id, which is the whole point —
@@ -2412,7 +2412,8 @@ class TestSkillInvariantsHook:
         assert not widened, (
             f"editing these test modules runs the whole hooks module: {widened}. "
             "It is the slowest in the suite (MEASURED COSTS) and the dependency "
-            "is three assertions — check whether an arm went back to RUN_HOOKS")
+            "is the few assertions in HOOKS_DEPENDENTS — check whether an arm "
+            "went back to RUN_HOOKS")
 
     def test_an_unarmed_test_module_pays_the_host_guard_and_no_more(
             self, quiescent_workspace):
@@ -2420,7 +2421,7 @@ class TestSkillInvariantsHook:
 
         `tests/test_scenario.py` has no arm of its own and no module here reads
         it, so the only thing its edit can turn red is the bare-interpreter
-        sweep — the cheapest row in MEASURED COSTS. Widening the arm to
+        sweep — one of the cheap rows in MEASURED COSTS. Widening the arm to
         `select_every_module`, or to the hooks module, would satisfy the
         coverage row above just as well and put a cold pass behind every save
         in a directory of forty-odd files. The lower bound cannot see that;
@@ -2509,7 +2510,7 @@ class TestSkillInvariantsHook:
         assert HOOKS_DEPENDENTS_EXCLUDED not in found, (
             f"{HOOKS_DEPENDENTS_EXCLUDED} is selected by the six test-module "
             "arms again. It goes red the moment a test is ADDED to one of them "
-            "and stays red until MEASURED COSTS is refreshed in six places, so "
+            "and stays red until MEASURED COSTS is refreshed by hand, so "
             "it blocks every tool call of the round that makes the refresh "
             "possible — the gates-that-cry-wolf pattern")
 
@@ -2724,7 +2725,7 @@ class TestSkillInvariantsHook:
         THIS PINS THE PROPERTY, NOT EITHER BRANCH, and the distinction is
         measured rather than assumed. The refusal is made twice: once here, and
         again inside `advance_stamp`, which re-validates immediately before its
-        write because the pass between them is tens of seconds long and
+        write because the pass between them is a whole pytest run and
         `.claude` can be replaced during it. Deleting the `-L` from EITHER site
         alone leaves this test green — the other still refuses — and deleting
         both turns it red. So what is asserted is the property both exist to
@@ -2854,7 +2855,7 @@ class TestSkillInvariantsHook:
 
     def test_the_stamp_boundary_precedes_writes_concurrent_with_the_pass(
             self, tmp_path):
-        """The pass is a pytest run lasting tens of seconds, so a file written
+        """The pass is a whole pytest run, so a file written
         while it is going is routine, not exotic. The stamp therefore carries
         the pass START; an end-time stamp would make that write look older than
         the boundary.
@@ -3179,7 +3180,7 @@ class TestSkillInvariantsHook:
         which is exactly what puts it beyond the scratch directory's removal.
 
         The registered hook timeout TERMINATES a slow pass, and for a pytest
-        run lasting tens of seconds that is the routine outcome rather than the
+        run of the whole selection that is the routine outcome rather than the
         exotic one. The `touch` shim holds the pass open at the one moment a
         candidate exists and has not yet been renamed; the real window is
         microseconds wide, so without the shim this would go green against a
@@ -5879,21 +5880,89 @@ class TestRuntimePermissionsHook:
         assert r.returncode == 0
 
 
-# The number vocabulary MEASURED COSTS writes its deltas in. Spelled out rather
-# than in digits because the block's own prose rule forbids a bare `N tests`
-# that is not one of its derived figures, and a delta is not one — so the
-# paragraph carries words and this reads them back.
-#
-# It was closed at 999, on the ground that 999 was every figure that paragraph
-# had ever held, and a vocabulary closed at what a corpus happens to contain is
-# a guard that blocks the first honest refresh past it. Words are the ONLY
-# accepted spelling here — the pair patterns take `[a-z -]` and nothing else —
-# so a delta of a thousand or more had no writable form at all, in words or in
-# digits, and the exit would have been to edit this test. That is the same
-# gate-blocks-the-refresh shape `has lost` and the hundreds probe already
-# record, and this is its third instance. It is not hypothetical either: the
-# suite pair stands in the low hundreds, and the feature branch immediately
-# before this one moved that row by nearly EIGHT hundred on its own.
+def _measured_costs_span(script: str) -> tuple[int, int]:
+    """Where MEASURED COSTS starts and ends inside the hook script.
+
+    Anchored on the block's own HEADER, not the first mention of its name: the
+    name is cited by design, repeatedly, and `index` on it alone landed on a
+    paragraph that CITES the block, a thousand lines above it. The END marker
+    must be unique too: quoted inside the block, it would end the span at the
+    quotation and hand everything below it to the looser outside rule.
+    """
+    header = "MEASURED COSTS. This block is the ONE owner"
+    footer = "Running the union of every changed path"
+    for anchor in (header, footer):
+        assert script.count(anchor) == 1, (
+            f"{anchor!r} matches {script.count(anchor)} times — the MEASURED "
+            "COSTS span is sliced at it, and at any count but one this test "
+            "silently checks the wrong span of the file")
+    start, end = script.index(header), script.index(footer)
+    assert end > start, (
+        "the string this test slices the block's END at appears BEFORE "
+        "its header, so the block reads as empty and every derivation "
+        "below reports a missing table rather than the real cause")
+    return start, end
+
+
+# The `collects N and runs M` sentences the counts test reads. Shared with the
+# timing test, whose numeral allowlist may trust only a sentence that is read.
+_MODULE_PAIR = r"(portability|hooks)\b[^.]*?collects (\d+) and runs (\d+)"
+_SUITE_PAIR = r"`pytest tests/` collects (\d+) and runs (\d+)"
+
+
+def _the_one_statement(pattern: str, text: str):
+    """The first match of `pattern`, once every other match says the same.
+
+    A reader that keeps the first copy of a restated figure compares that copy
+    alone, and a second, stale one reads as the block's word too: one quantity
+    with two values, and nothing red.
+    """
+    matches = list(re.finditer(pattern, text))
+    said = sorted({m.groups() for m in matches})
+    assert len(said) <= 1, (
+        f"the block states one figure {len(said)} ways, {said} — refresh "
+        "every copy, or delete the ones that only restate it")
+    return matches[0] if matches else None
+
+
+def _comment_prose(lines: list[str]) -> str:
+    """The COMMENT lines of a shell span, markers stripped and flattened, so
+    a sentence wrapped mid-phrase reads as one. Code lines are dropped."""
+    return re.sub(r"\s+", " ", " ".join(
+        re.sub(r"^\s*#[ \t]?", "", line) for line in lines
+        if line.lstrip().startswith("#")))
+
+
+# What a duration is written in, as a WORD, long or short after any prefix
+# (`millisecond`, `millisec`, `msec`). `µs` twice: the micro sign and the Greek
+# mu are different characters that render the same. Not `us`, which is
+# English, and not the bare letters `s`, `m` and `h`, which are units only
+# directly after a number.
+_DURATION_UNIT = (r"(?:(?:milli|micro|nano)?sec(?:ond)?s?|millis|"
+                  r"[mµμun]secs?|[mµμn]s|minutes?|mins?|hours?|hrs?)")
+# A NUMBER in front of one: glued or one separator apart (`150sec`, `2min`,
+# `150 ms`, `150-second`), one word apart (`150 wall-clock seconds`), or before
+# a bare letter (`150s`, `2m30s`) or a glued `us` (`150us`). A leading-dot
+# decimal (`.5s`) is a number too. The lookbehinds keep `V5`, the `13` of
+# `3.13`, a PR's `#172`, `$1M` and a form's `W-2s` from starting one; a bare
+# form number's plural (`1099s`) cannot be told from a glued unit, so a comment
+# writes `1099 forms`.
+_TIMED_FIGURE = re.compile(
+    rf"(?<![\w.#$])(?<![A-Za-z]-)(?:\d+(?:\.\d+)?|\.\d+)"
+    rf"(?:[\s-]?{_DURATION_UNIT}(?![A-Za-z])"
+    rf"|[\s-][\w-]+[\s-]{_DURATION_UNIT}(?![A-Za-z])"
+    rf"|\s?[smh](?![A-Za-z])|us(?![A-Za-z]))", re.I)
+# The unit WORD, however the number before it is spelled: `a dozen seconds`,
+# `a couple of minutes`, `half a second`. A unit GLUED to its number has no
+# word boundary in front of it, which is `_TIMED_FIGURE`'s case.
+_DURATION_WORD = re.compile(rf"\b{_DURATION_UNIT}(?![A-Za-z])", re.I)
+
+
+# The number vocabulary MEASURED COSTS writes its skip counts in. Spelled out
+# rather than in digits because the block's own prose rule forbids a bare
+# `N tests` that is not one of its derived figures — so the block carries words
+# and this reads them back. Not closed at what the block happens to hold: a
+# vocabulary closed at its corpus blocks the first honest refresh past it.
 _NUMBER_WORDS = {w: i for i, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve "
     "thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split())}
@@ -5948,44 +6017,17 @@ def _words_to_int(text: str):
     return sign * (total + current) if seen else None
 
 
-# The counts-ahead paragraph's per-module sentence, as ONE pattern. The control
-# below drives it over a spelling the live block does not currently contain, and
-# a control carrying its own copy of a regex passes against the copy while the
-# audit runs on something else — this suite's most-repeated finding.
-#
-# `lost` beside `gained`, because the pattern could express only NON-NEGATIVE
-# deltas while the assertion beside it demands `moved == now - sitting`. Delete
-# three tests from a module and there is no accepted spelling: `has lost three`
-# did not parse, and a bare `three (212 to 209)` parsed to +3 against a pair
-# giving -3. The guard blocked the honest refresh in the one direction it had
-# never seen, and the only exit was to edit the test.
-#
-# The DIRECTION word carries the sign and the digits carry the truth, so a pair
-# whose words and brackets disagree is red either way — which is what keeps the
-# new arm from being a second way to write a stale figure.
-MODULE_PAIR = (r"{name} (?:has (?P<dir>gained|lost) )?(?P<words>[a-z -]+?) "
-               r"\((?P<was>\d+) to (?P<now>\d+)\)")
-
-
-def _pair_delta(match):
-    """The signed delta a MODULE_PAIR-shaped match states, or None."""
-    moved = _words_to_int(match.group("words"))
-    if moved is None:
-        return None
-    return -moved if match.group("dir") == "lost" else moved
-
-
 def _code_only(source: str) -> str:
     """`source` with its COMMENTS removed, line numbering preserved.
 
     The chain locator below is a regex over text, so it reads prose as though
     it were code. It fired on a comment in this very module — one explaining
     which spelling of the tests directory NOT to use, and therefore quoting it
-    — and demanded a hook arm that would put the 115-second hooks module
-    behind every edit anywhere under the suite. A gate firing on correct code
-    gets reasoned past, and this one had an exact fix sitting one function
-    away: the sibling rule for the hook's own `RUN_` flags had just been
-    anchored for the same reason.
+    — and demanded a hook arm that would put the hooks module, the dominant
+    row of MEASURED COSTS, behind every edit anywhere under the suite. A gate
+    firing on correct code gets reasoned past, and this one had an exact fix
+    sitting one function away: the sibling rule for the hook's own `RUN_`
+    flags had just been anchored for the same reason.
 
     Comments only. A docstring is a string token and stays, because a path
     named in one may be a real constant; the rule is narrow on purpose.
@@ -6287,13 +6329,72 @@ class TestHookRegistration:
                 f"{path}::{cls} has no {func} — the --deselect matches nothing "
                 "and pytest ignores it in silence")
 
+    def test_the_hook_states_no_absolute_timing(self):
+        """Ruling Q13, enforced. MEASURED COSTS records counts, ratios and
+        ordering, and it is the ONE owner of every runtime figure about this
+        hook, so a timing anywhere else in the script is the copy CLAUDE.md
+        forbids.
+
+        RULES, NOT A LIST OF SPELLINGS. Four reviews running each found a
+        way of writing a duration that the pattern before them missed —
+        `150-second`, `thirteen seconds`, `half a second`, `2m30s` — so the
+        block may not use the WORDS of duration at all, however its number is
+        spelled, and the ordinal `second` goes with them: that costs a rephrase
+        and leaves a short list of units rather than a long one of spellings.
+        The figure rule runs inside the block too, because a unit glued to its
+        number (`150sec`) has no word boundary for the word rule to find — which
+        is what the fifth review found. The sixth and seventh found spellings
+        the unit list lacked (`2:35`, `millisec`), and a list of units fails the
+        way the list of spellings did. So inside the block every NUMERAL must
+        also be one of its counts, which refuses a timing for what its number
+        is not rather than for how its unit is written.
+        Outside the block the same words are ordinary prose (`a second pass`),
+        so the rule there is the narrower one: no number in front of a unit, in
+        a comment. Code is exempt, because `touch -d '1 second ago'` is
+        behaviour and not a reading.
+        """
+        script = SKILL_HOOK.read_text()
+        start, end = _measured_costs_span(script)
+        lines = script.splitlines()
+        first, last = script.count("\n", 0, start), script.count("\n", 0, end)
+        inside = _comment_prose(lines[first:last])
+        outside = _comment_prose(lines[:first] + lines[last:])
+
+        stated = _DURATION_WORD.findall(inside) + _TIMED_FIGURE.findall(inside)
+        assert not stated, (
+            f"MEASURED COSTS uses the vocabulary of duration: {stated}. Ruling "
+            "Q13 keeps it to counts, ratios and ordering, and the block holds "
+            "none of the words so that how a number is spelled cannot matter "
+            "— rephrase it, state a ratio to another row, or put a one-off "
+            "reading in the change's description")
+        # Every NUMERAL inside is a count: one in the `N tests` position or in
+        # one of the `collects N and runs M` sentences the counts test reads,
+        # both held to a live collection. Any other such sentence is read by
+        # nothing, so its numbers are not trusted either. A date is a label, and
+        # a digit after a letter or `#` (`Q13`, `V5`, a PR number) is a name.
+        labelled = re.sub(r"\b\d{4}-\d\d-\d\d\b", "", inside)
+        counts = set(re.findall(r"(\d+) tests\b", labelled))
+        counts |= {n for m in re.findall(_MODULE_PAIR, labelled) for n in m[1:]}
+        counts |= {n for m in re.findall(_SUITE_PAIR, labelled) for n in m}
+        foreign = sorted(set(re.findall(
+            r"(?<![\w.#])(?:\d+(?:\.\d+)?|\.\d+)", labelled)) - counts)
+        assert not foreign, (
+            f"MEASURED COSTS carries {foreign}, which are none of its counts. "
+            "Under ruling Q13 its only numerals are counts, which the counts "
+            "test holds to a live collection; any other is a figure nothing "
+            "checks, and a timing however its unit is spelled — write a small "
+            "number in words, or state a ratio")
+        copied = _TIMED_FIGURE.findall(outside)
+        assert not copied, (
+            f"skill-invariants.sh states {copied} outside MEASURED COSTS, "
+            "which owns every runtime figure about this hook — cite the block "
+            "and quote a ratio from it instead")
+
     def test_the_measured_costs_counts_match_live_collection(self):
         """The block's own rule, enforced instead of asked for.
 
-        MEASURED COSTS says counts "are derivable in a second and there is no
-        excuse for a stale one", and refreshing them by hand has failed at
-        least four times — most recently on the branch that made the block the
-        SOLE copy by deleting the figure from test-invariants.md, where it
+        Refreshing MEASURED COSTS by hand failed at least four times — most
+        recently on the branch that made the block the SOLE copy, where it
         shipped a portability row five tests light and a suite row twenty. A
         reader following the pointer got a wrong figure with nothing to flag
         it, because nothing related the prose to the suite.
@@ -6301,47 +6402,19 @@ class TestHookRegistration:
         COLLECTED, not run: collection is deterministic across machines while
         the run count subtracts platform skips that are not. The block states
         both, so its collected figures are what can be checked here — and the
-        DERIVED rows are checked as arithmetic over the parts, which is the
-        half the block calls exact and the half that caught the last drift.
+        DERIVED rows are checked as arithmetic over the parts.
         """
         block = SKILL_HOOK.read_text()
-        # The block's own HEADER, not the first mention of its name. `index`
-        # on "MEASURED COSTS" alone landed a thousand lines above it, on a
-        # paragraph that CITES the block — so "inside the block" included most
-        # of the script, and a figure planted there answered for one in the
-        # table. The name is cited by design, repeatedly; the header sentence
-        # is the thing that occurs once.
-        header = "MEASURED COSTS. This block is the ONE owner"
-        assert block.count(header) == 1, (
-            f"the MEASURED COSTS header matches {block.count(header)} times — "
-            "every derivation here is scoped by it, and at zero this test "
-            "silently checks the wrong span of the file")
-        start = block.index(header)
-        end = block.index("Running the union of every changed path")
-        assert end > start, (
-            "the string this test slices the block's END at appears BEFORE "
-            "its header, so the block reads as empty and every derivation "
-            "below reports a missing table rather than the real cause — move "
-            "the quotation or give the end a longer anchor")
+        start, end = _measured_costs_span(block)
         costs = block[start:end]
-        # Where the live half ends. Below this the block quotes its own
-        # superseded figures on purpose, so a check that reads past it reads a
-        # figure a reader is explicitly told is stale as a current one.
-        marker = "EVERYTHING FROM HERE TO THE END OF THIS BLOCK IS HISTORY"
-        assert costs.count(marker) == 1, (
-            f"the history banner appears {costs.count(marker)} times in the "
-            "block; it is where the live half ends, and these derivations "
-            "cannot be scoped without exactly one of it")
-        live_costs = costs[:costs.index(marker)]
+        # Comment markers stripped BEFORE flattening, so a sentence wrapped
+        # mid-phrase still reads as one; `[^.]*?` in the patterns below keeps a
+        # match inside one sentence.
+        flat = re.sub(r"\s+", " ", re.sub(r"^#[ \t]?", "", costs, flags=re.M))
 
         # ONE collection, attributed per file from the node ids. This test runs
-        # inside the module MEASURED COSTS calls the dominant share of a cold
-        # pass,
-        # and it used to shell out seven times — six per-module collections
-        # plus a whole-suite one — adding that to every cold pass of the hook
-        # it measures. The block names this module's runtime as the lever when
-        # the budget gets tight; a test enforcing the block should not be
-        # spending it.
+        # inside the module that dominates a cold pass, and it used to shell
+        # out seven times.
         out = subprocess.run(
             [sys.executable, "-m", "pytest", "tests/", "--collect-only",
              "-q", "-p", "no:cacheprovider"],
@@ -6362,82 +6435,42 @@ class TestHookRegistration:
             f"reported {suite_collects} — the per-module figures below would "
             "be derived from an incomplete listing")
 
-        # "collects N and runs M" — the block's own reconciliation sentences.
-        # Whitespace is flattened first so a REWRAPPED sentence still matches:
-        # `.` does not cross newlines, and the fallback that used to cover that
-        # built a str->str dict, so `stated_collects["hooks"] == live[...]`
-        # compared "125" to 125 and could never hold — a red suite reporting
-        # two identical numbers as a mismatch. `[^.]*?` keeps each match inside
-        # one sentence so the two modules cannot be paired with each other's
-        # figure.
-        # Comment markers stripped BEFORE flattening: `\s+ -> " "` alone
-        # leaves the per-line "#", so a sentence wrapped mid-phrase flattens to
-        # "a cold # pass" and no phrase regex can match across the wrap.
-        flat = re.sub(r"\s+", " ", re.sub(r"^#[ \t]?", "", costs, flags=re.M))
+        # BOTH halves of each sentence, and EVERY copy of it: the run half
+        # restates a table row, and a restatement nothing compares is one
+        # quantity with two values.
         stated_collects: dict = {}
-        for mod, n in re.findall(r"(portability|hooks)\b[^.]*?collects (\d+)",
-                                 flat):
-            stated_collects.setdefault(mod, int(n))
+        stated_runs: dict = {}
+        for mod, n, ran in re.findall(_MODULE_PAIR, flat):
+            said = (stated_collects.setdefault(mod, int(n)),
+                    stated_runs.setdefault(mod, int(ran)))
+            assert said == (int(n), int(ran)), (
+                f"the block says the {mod} module collects {said[0]} and runs "
+                f"{said[1]}, and elsewhere {n} and {ran} — one quantity, two "
+                "values, and only the first was being compared")
         assert set(stated_collects) == {"portability", "hooks"}, (
             "the block's reconciliation sentences for the portability and "
-            f"hooks modules no longer parse (found {sorted(stated_collects)}) "
-            "— widen the pattern; a sentence this test cannot read is a "
-            "figure nothing checks")
-        # The per-module decomposition rows, parsed ONCE into all three of
-        # their fields: "tests/test_x.py   N tests   A - Bs". The counts and
-        # the seconds used to be two passes over the same table, which is two
-        # patterns to keep matching one table. A dict keeps the LAST of two
-        # matches, so a duplicate row silently replaces the first here and in
-        # every figure derived from it — rejected outright rather than
-        # tolerated, in the live half only.
-        # THE TWO TABLES, PARSED ONCE, AS TABLES. Every earlier draft found a
-        # row by searching the block's TEXT for what it hoped a row said, and
-        # five review rounds found five ways for a row to stop saying it while
-        # a "Superseded, do not use" copy nearby answered in its place: an en
-        # dash, doubled spaces, backticks around the path, a changed indent, a
-        # respelled label. Each fix taught the pattern one more spelling, which
-        # is a game with no last move.
-        #
-        # A table is not a set of sentences that happen to match. It is a
-        # CONTIGUOUS RUN OF LINES, and the live half holds exactly two of them
-        # — the trigger table's five rows and the decomposition's seven. Found
-        # that way, a quotation is outside both BY CONSTRUCTION however it is
-        # spelled, and a row that stops parsing shortens the run it was in
-        # instead of quietly leaving it. Every figure below is read from these
-        # records and nothing searches the block for a row again.
-        TABLE_ROW = re.compile(
-            r"^#   (\S.*?)\s\s+(\d+) tests\s+"
-            r"(\d+(?:\.\d+)?) - (\d+(?:\.\d+)?)s\s+\d+\s*$")
-        # The fast path runs no pytest, so it states no count. It is a row of
-        # the trigger table all the same, and leaving it out of the run would
-        # put a hole in the middle of one.
-        FAST_ROW = re.compile(
-            r"^#   (\S.*?)\s\s+no pytest\s+"
-            r"(\d+(?:\.\d+)?) - (\d+(?:\.\d+)?)s\s+\d+\s*$")
-        # WHERE THE TABLES ARE, decided by text that is NOT a row. Discovering
-        # them as "the runs of lines that parse" was still the same mistake in
-        # its last costume: reindent all five trigger rows by one space and the
-        # table stops being a run at all, leaving a quoted copy to be found
-        # instead. A row cannot be identified by its own willingness to parse.
-        #
-        # Each table sits between two blank comment lines, under a heading that
-        # is prose. Those are the boundaries — found without looking at a row —
-        # and every line between them is then REQUIRED to parse. A reindented
-        # row is still inside the region and fails; a quotation is outside both
-        # regions and is not read at all.
+            "hooks modules no longer parse as `collects N and runs M` (found "
+            f"{sorted(stated_collects)}) — widen the pattern; a sentence this "
+            "test cannot read is a figure nothing checks")
+
+        # THE TWO TABLES, found by their boundaries rather than by what a row
+        # hopes to say. Five review rounds found five ways for a row to stop
+        # matching a text search while a quotation elsewhere answered in its
+        # place. A table is a CONTIGUOUS RUN OF LINES between two blank comment
+        # lines, and every line inside that run is REQUIRED to parse — a
+        # reindented row fails, and a quotation outside both is not read.
+        TABLE_ROW = re.compile(r"^#   (\S.*?)\s\s+(\d+) tests\s\s+(\S.*?)\s*$")
+        FAST_ROW = re.compile(r"^#   (\S.*?)\s\s+no pytest\s\s+(\S.*?)\s*$")
+
         def _rows_under(anchor, what, blank_between):
-            assert live_costs.count(anchor) == 1, (
+            assert costs.count(anchor) == 1, (
                 f"the {what} is located by {anchor!r}, which appears "
-                f"{live_costs.count(anchor)} times above the history banner")
-            at = live_costs.index(anchor)
-            # The trigger table's rows begin on the line after its rule; the
-            # decomposition's begin after the blank line that closes the
-            # paragraph introducing it. Both END at the next blank line.
-            start = (live_costs.index("\n#\n", at) + len("\n#\n")
+                f"{costs.count(anchor)} times in the block")
+            at = costs.index(anchor)
+            begin = (costs.index("\n#\n", at) + len("\n#\n")
                      if blank_between
-                     else live_costs.index("\n", at) + 1)
-            end = live_costs.index("\n#\n", start)
-            return live_costs[start:end].split("\n")
+                     else costs.index("\n", at) + 1)
+            return costs[begin:costs.index("\n#\n", begin)].split("\n")
 
         trigger_lines = _rows_under(
             "#   ------------------------", "trigger table", False)
@@ -6446,32 +6479,20 @@ class TestHookRegistration:
         assert [len(trigger_lines), len(decomposition_lines)] == [5, 7], (
             f"the trigger table holds {len(trigger_lines)} lines and the "
             f"decomposition {len(decomposition_lines)}; they hold five and "
-            "seven. A line spliced into either — a quotation, a note, a "
-            "heading — is a line this test will then require to be a row:\n"
+            "seven. A line spliced into either is a line this test will then "
+            "require to be a row:\n"
             + "\n".join(trigger_lines + decomposition_lines))
-        table_runs = [trigger_lines, decomposition_lines]
 
         triggers: dict = {}
-        for ln in table_runs[0]:
+        for ln in trigger_lines:
             counted = TABLE_ROW.match(ln)
-            if counted:
-                triggers[counted.group(1)] = (
-                    int(counted.group(2)),
-                    (float(counted.group(3)), float(counted.group(4))))
-            else:
-                fast = FAST_ROW.match(ln)
-                triggers[fast.group(1)] = (
-                    None, (float(fast.group(2)), float(fast.group(3))))
-        # The labels are asserted as a SET, because looking one up by name is
-        # how a renamed row becomes a row nothing reads. Renaming one is a
-        # change to the block's shape and belongs with a sitting, not with a
-        # round that happens to reword a line.
-        countless = sorted(k for k, (n, _) in triggers.items() if n is None)
-        assert countless == ["nothing watched changed"], (
-            f"{countless} state no count. The fast-path row is the only row in "
-            "either table that may — it runs no pytest — and a counted row "
-            "that stops stating its count stops being checked against a "
-            "collection")
+            fast = None if counted else FAST_ROW.match(ln)
+            assert counted or fast, (
+                f"a trigger-table line does not parse as a row: {ln!r}")
+            triggers[(counted or fast).group(1)] = (
+                int(counted.group(2)) if counted else None)
+        # A SET, because looking a row up by name is how a renamed row becomes
+        # a row nothing reads.
         assert set(triggers) == {
             "nothing watched changed", "agent-definition edit",
             "skill .md edit", "cold pass, all seven modules",
@@ -6479,24 +6500,21 @@ class TestHookRegistration:
             f"the trigger table's rows are {sorted(triggers)} — every figure "
             "derived below is looked up by those labels, and a renamed one is "
             "a row nothing checks")
+        assert triggers["nothing watched changed"] is None, (
+            "the fast-path row states a count; it runs no pytest")
 
         rows: dict = {}
-        secs: dict = {}
-        for ln in table_runs[1]:
+        for ln in decomposition_lines:
             row = TABLE_ROW.match(ln)
             assert row, (
-                f"a decomposition row states no count: {ln.strip()!r} — the "
-                "fast-path row is the only row in this block that may, and it "
-                "is in the other table")
+                f"a decomposition row does not parse: {ln.strip()!r} — every "
+                "row here is a module, a count and a ratio")
             path = row.group(1)
             assert re.fullmatch(r"tests/test_\w+\.py", path), (
                 f"the decomposition names {path!r}, which is not a test module "
-                "path — every row here is a module the hook can select, and a "
-                "label that is not one is a row keyed to nothing")
-            assert path not in rows, (
-                f"{path} has two decomposition rows")
+                "path — every row here is a module the hook can select")
+            assert path not in rows, f"{path} has two decomposition rows"
             rows[path] = int(row.group(2))
-            secs[path] = (float(row.group(3)), float(row.group(4)))
 
         # Portability's gap is the hook's own --deselect flags: derivable, so
         # it is derived rather than trusted from the prose.
@@ -6517,12 +6535,6 @@ class TestHookRegistration:
                 continue   # gaps handled above / platform-dependent below
             assert count == live[path], (
                 f"{path} collects {live[path]}; the block says {count}")
-        # Both reconciliation sentences, not just the one that happened to
-        # parse: `(portability|hooks) module` never matched "portability
-        # collects 150 and runs 148" — it says no "module" — so the guard that
-        # used to sit here (`if "hooks" in stated_collects`) checked one of the
-        # two and silently skipped the other, on top of never being able to
-        # hold at all once the str-valued fallback supplied the value.
         assert stated_collects["hooks"] == live["tests/test_claude_hooks.py"], (
             "the block's stated hooks-module COLLECTED figure is stale: "
             f"{stated_collects['hooks']} against {live['tests/test_claude_hooks.py']}")
@@ -6530,95 +6542,69 @@ class TestHookRegistration:
             "the block's stated portability COLLECTED figure is stale: "
             f"{stated_collects['portability']} against "
             f"{live['tests/test_portability.py']}")
+        for mod, path in (("portability", "tests/test_portability.py"),
+                          ("hooks", "tests/test_claude_hooks.py")):
+            assert stated_runs[mod] == rows[path], (
+                f"the block says {mod} runs {stated_runs[mod]}, and its row in "
+                f"the decomposition reads {rows[path]} — one quantity, two "
+                "values")
+
+        # The agent-definition trigger selects the agents module alone, so its
+        # count is a second statement of that row's.
+        assert triggers["agent-definition edit"] == \
+            rows["tests/test_claude_agents.py"], (
+            f"the agent-definition trigger row reads "
+            f"{triggers['agent-definition edit']} against the agents module's "
+            f"{rows['tests/test_claude_agents.py']} — one invocation, stated "
+            "twice, and the two have drifted")
 
         # The derived rows. A skill edit selects five of the seven; a cold pass
-        # adds the other two. The block calls this half EXACT, and a
-        # decomposition error shows up here first.
-        #
-        # The hooks module and the host guard are what a skill edit does NOT buy:
-        # an `agents/lib/` edit selects the guard, skill prose never does, and no
-        # skill edit can turn a hook assertion red. The agents module was on this
-        # side of the line until V6 put a boundary claim — "this skill names the
-        # enforced worker, and its sequential path says the boundary was NOT
-        # enforced" — into three skills, at which point a skill edit could turn
-        # it red and had to run it.
-        #
-        # This tuple is a hand-kept second copy of `select_modules_for`'s arms,
-        # and it is the reason this assertion caught the change rather than
-        # riding along with it. Keep it that way: derived from the hook, it would
-        # agree with the hook by construction and check nothing.
+        # adds the other two. This tuple is a hand-kept second copy of the
+        # hook's arms on purpose: derived from the hook, it would agree with the
+        # hook by construction and check nothing.
         ADDED_BY_A_COLD_PASS = ("tests/test_claude_hooks.py",
                                 "tests/test_host_guard.py")
         skill_edit = sum(rows[p] for p in rows
                          if p not in ADDED_BY_A_COLD_PASS)
         cold = sum(rows.values())
-        stated_skill = triggers["skill .md edit"][0]
-        stated_cold = triggers["cold pass, all seven modules"][0]
-        assert stated_skill == skill_edit, (
-            f"the skill-edit row reads {stated_skill}; its five parts sum to "
-            f"{skill_edit}")
-        assert stated_cold == cold, (
-            f"the cold-pass row reads {stated_cold}; its seven parts sum to "
-            f"{cold}")
+        assert triggers["skill .md edit"] == skill_edit, (
+            f"the skill-edit row reads {triggers['skill .md edit']}; its five "
+            f"parts sum to {skill_edit}")
+        assert triggers["cold pass, all seven modules"] == cold, (
+            f"the cold-pass row reads {triggers['cold pass, all seven modules']};"
+            f" its seven parts sum to {cold}")
 
-        # The ARITHMETIC sentence, which is the block's own third statement of
-        # these two rows and was the half nothing read. It shipped reading
-        # `177 + 116 + 322 + 138 = 753 ... 124 + 36 = 913` against a table
-        # already saying 350 and 37 — under a clause promising it "moves with
-        # the table now", which is a promise a person keeps rather than a check.
-        # A reader deriving a trigger's cost from the prose was out by twenty-one
-        # tests, and the next refresh would have inherited three values for one
-        # quantity, which is the state this whole block exists to end.
-        #
-        # The PARTS are checked and not only the sums, because a sentence whose
-        # parts are stale and whose total is fresh is the shape that reads
-        # correct: it is what a hand patch of the total produces.
-        sums = re.search(r"EXACT: ([\d +]+?) = (\d+) for a skill edit, plus "
-                         r"([\d +]+?) = (\d+) for a cold pass", flat)
+        # The ARITHMETIC sentence, the block's third statement of those two
+        # rows. The PARTS are checked and not only the sums, because stale parts
+        # under a fresh total is what a hand patch of the total produces.
+        sums = _the_one_statement(
+            r"EXACT: ([\d +]+?) = (\d+) for a skill edit, plus "
+            r"([\d +]+?) = (\d+) for a cold pass", flat)
         assert sums, (
             "the block no longer states its derived rows as `EXACT: a + b + c "
             "+ d + e = <skill edit> for a skill edit, plus f + g = <cold pass> "
-            "for "
-            "a cold pass` — reword around that shape rather than through it, "
-            "or this sentence goes back to being prose nothing reads")
-        four = sorted(int(n) for n in sums.group(1).split("+"))
-        added = sorted(int(n) for n in sums.group(3).split("+"))
-        by_a_skill_edit = sorted(rows[p] for p in rows
-                                 if p not in ADDED_BY_A_COLD_PASS)
-        assert four == by_a_skill_edit, (
-            f"the arithmetic sentence adds {four}; the five rows a skill edit "
-            f"selects are {by_a_skill_edit}")
-        assert added == sorted(rows[p] for p in ADDED_BY_A_COLD_PASS), (
-            f"the arithmetic sentence adds {added} for the two a cold pass "
-            f"adds; their rows are "
-            f"{sorted(rows[p] for p in ADDED_BY_A_COLD_PASS)}")
-        assert int(sums.group(2)) == skill_edit, (
-            f"the arithmetic sentence totals the skill edit at {sums.group(2)}; "
-            f"its own parts sum to {skill_edit}")
-        assert int(sums.group(4)) == cold, (
-            f"the arithmetic sentence totals the cold pass at {sums.group(4)}; "
-            f"its own parts sum to {cold}")
+            "for a cold pass` — reword around that shape rather than through "
+            "it, or this sentence goes back to being prose nothing reads")
+        assert sorted(int(n) for n in sums.group(1).split("+")) == sorted(
+            rows[p] for p in rows if p not in ADDED_BY_A_COLD_PASS), (
+            f"the arithmetic sentence adds {sums.group(1)}; those are not the "
+            "five rows a skill edit selects")
+        assert sorted(int(n) for n in sums.group(3).split("+")) == sorted(
+            rows[p] for p in ADDED_BY_A_COLD_PASS), (
+            f"the arithmetic sentence adds {sums.group(3)} for the two a cold "
+            "pass adds; those are not their rows")
+        assert (int(sums.group(2)), int(sums.group(4))) == (skill_edit, cold), (
+            f"the arithmetic sentence totals {sums.group(2)} and "
+            f"{sums.group(4)}; its own parts sum to {skill_edit} and {cold}")
 
-        stated_suite = triggers["(for scale) `pytest tests/`"][0]
-        # THE HOOKS ROW, which is the one row no collection can reach and was
-        # therefore the one nothing checked. Every other row is pinned to a live
-        # count; this module's RUN figure is its collection minus platform skips,
-        # and skips are conditional — a case-sensitive filesystem takes two of
-        # them and a case-insensitive one takes two others — so only a real run
-        # could measure it, and a real run is what this test exists not to do.
-        #
-        # So it is pinned to the block's own stated skip count instead, from BOTH
-        # sides: the reconciliation sentence must be internally consistent, and
-        # the scale row's gap must be that same number. That replaces a `0 <= gap
-        # <= 4` tolerance whose stated purpose was exactly these skips — a
-        # tolerance for one unknown quietly covering a second thing, which is the
-        # defect the sentence above it already records once.
-        hook_skips = re.search(
+        # THE HOOKS ROW, which no collection can reach: its RUN figure is its
+        # collection minus platform skips, and which skips fire depends on the
+        # filesystem. So it is pinned to the block's own stated skip count.
+        hook_skips = _the_one_statement(
             r"the hooks module holds ([a-z -]+?) platform skips", flat)
         assert hook_skips, (
             "the block no longer states how many platform skips the hooks "
-            "module holds — that figure is what makes its RUN row derivable, "
-            "and without it the row a cold pass is summed from is unchecked")
+            "module holds — that figure is what makes its RUN row derivable")
         skips = _words_to_int(hook_skips.group(1))
         assert skips is not None, (
             f"the stated skip count {hook_skips.group(1)!r} is not a number "
@@ -6629,39 +6615,24 @@ class TestHookRegistration:
             f"block says it collects {stated_collects['hooks']} and holds "
             f"{skips} platform skips, which is "
             f"{stated_collects['hooks'] - skips}")
-        # The SUITE's skips are a different figure from the hooks module's, and
-        # conflating them held only while that module was the only place a test
-        # could be skipped. W6's Windows-only DACL cases are the first outside
-        # it, so the block states both and this reads the one it is asking about.
-        suite_skips_stated = re.search(
+        suite_skips_stated = _the_one_statement(
             r"THE SUITE holds ([a-z -]+?) skips", flat)
         assert suite_skips_stated, (
             "the block no longer states how many tests the SUITE skips — that "
-            "figure is what makes the scale row's RUN count derivable from a "
-            "collection, and the hooks module's own count cannot stand in for "
-            "it once anything else is conditionally skipped")
+            "figure is what makes the scale row's RUN count derivable")
         suite_skips = _words_to_int(suite_skips_stated.group(1))
-        assert suite_skips is not None, (
-            f"the stated suite skip count {suite_skips_stated.group(1)!r} is "
-            "not a number this test can read — spell it in full words")
-        assert suite_skips >= skips, (
-            f"the block says the suite skips {suite_skips} and the hooks module "
-            f"alone skips {skips}; the module's skips are part of the suite's")
-        gap = suite_collects - stated_suite
-        assert gap == suite_skips, (
-            f"`pytest tests/` collects {suite_collects}; the block's scale row "
-            f"reads {stated_suite}, a gap of {gap} against the {suite_skips} "
-            "skips it states — re-derive the whole block, do not patch this row")
+        assert suite_skips is not None and suite_skips >= skips, (
+            f"the suite skip count {suite_skips_stated.group(1)!r} is "
+            "unreadable or smaller than the hooks module's own")
+        stated_suite = triggers["(for scale) `pytest tests/`"]
+        assert suite_collects - stated_suite == suite_skips, (
+            f"`pytest tests/` collects {suite_collects}; the scale row reads "
+            f"{stated_suite}, a gap of {suite_collects - stated_suite} against "
+            f"the {suite_skips} skips the block states")
 
-        # ...and the tripwire under both, because the two assertions above are
-        # over STATED figures and a skip added to an existing test moves neither.
-        # Collection does not change, every count stays green, and the hooks row
-        # and the cold pass summed from it drift — the count drift this block's
-        # own header says has already happened four times, arriving through the
-        # one quantity no collection can see. A skip construct is countable in
-        # the source even though which of them FIRE is not, so the count is the
-        # signal: when it moves, the stated figure has to be re-measured by a
-        # real run rather than carried.
+        # ...and the tripwire under both: a skip added to an EXISTING test
+        # moves no collected count, so the construct count is the signal that
+        # the stated figure has to be re-derived by a real run.
         markers = len(re.findall(r"pytest\s*\.\s*mark\s*\.\s*skipif\s*\(",
                                  (REPO / HOOKS).read_text()))
         calls = len(re.findall(r"pytest\s*\.\s*skip\s*\(",
@@ -6669,454 +6640,47 @@ class TestHookRegistration:
         assert (markers, calls) == (2, 3), (
             f"this module declares {markers} skipif markers and {calls} skip "
             f"calls, against the 2 and 3 the block's stated skip count was "
-            "taken with. Which of them FIRE is platform-dependent and cannot be "
-            "derived here, so re-run this module and re-derive its RUN row, the "
-            "cold pass summed from it and the scale row's gap — a skip added to "
-            "an EXISTING test moves no collected count and nothing else here "
-            "would see it")
-        # The scale row's own reconciliation sentence states the COLLECTED
-        # figure, which is machine-independent and therefore pinned EXACTLY.
-        # The tolerance above exists for the platform skips the RUN figure
-        # subtracts, and it was wide enough to sit green on a row a test out of
-        # date — a tolerance for one unknown quietly covering a second thing.
-        stated_suite_collects = int(re.search(
-            r"`pytest tests/` collects (\d+) and runs (\d+)", flat).group(1))
-        stated_suite_runs = int(re.search(
-            r"`pytest tests/` collects (\d+) and runs (\d+)", flat).group(2))
-        assert stated_suite_collects == suite_collects, (
-            f"the block says `pytest tests/` collects {stated_suite_collects}; "
+            "taken with — re-run this module and re-derive its RUN row, the "
+            "cold pass summed from it and the scale row's gap")
+        suite_pair = _the_one_statement(_SUITE_PAIR, flat)
+        assert suite_pair, (
+            "the block no longer says `pytest tests/` collects <n> and runs <m>")
+        assert int(suite_pair.group(1)) == suite_collects, (
+            f"the block says `pytest tests/` collects {suite_pair.group(1)}; "
             f"it collects {suite_collects}")
-        assert stated_suite_runs == stated_suite, (
+        assert int(suite_pair.group(2)) == stated_suite, (
             f"the scale row reads {stated_suite} tests and the sentence beside "
-            f"it says {stated_suite_runs} run — one quantity, two values")
+            f"it says {suite_pair.group(2)} run — one quantity, two values")
 
-        # PROSE counts too, not only the table. The rows were pinned while a
-        # sentence two paragraphs down said the hooks module "spawns bash
-        # processes across its 122 tests" against a row reading 123 — CLAUDE.md
-        # makes this block the single owner of these figures precisely because
-        # one quantity with two values is what the block was created to end,
-        # and a regex that reads only the table leaves prose stale for ever.
-        # Every "N tests" in the block must be a figure the block itself
-        # derives; a historical aside states its unit some other way ("205
-        # spawns over 105 cases") rather than being exempted here.
+        # PROSE counts too, not only the tables: every "N tests" in the block
+        # must be one of its own derived figures. Read off the JOINED text: a
+        # numeral and its `tests` either side of a line break is how a stale
+        # count once stayed green here.
         allowed = set(rows.values()) | {skill_edit, cold, stated_suite}
-        for stale in {int(n) for n in re.findall(r"(\d+) tests\b", costs)} - allowed:
+        for stale in {int(n) for n in re.findall(r"(\d+) tests\b", flat)} - allowed:
             raise AssertionError(
                 f"the block says \"{stale} tests\" somewhere, which is none of "
                 f"its own derived figures {sorted(allowed)} — a prose count "
                 "left behind by a table refresh")
 
-        # THE COUNTS-AHEAD PARAGRAPH, which is prose and was therefore the half
-        # nothing read. It shipped one quantity with two values — a headline
-        # saying "two hundred and forty-eight tests ahead" over a parenthetical
-        # giving 259 — green throughout, because everything above reads the
-        # TABLE. Two of its per-module pairs were last-round deltas spliced into
-        # a sentence whose stated baseline is the seconds sitting, so the six
-        # could not be reconciled against the total at all. Every figure in it
-        # is derivable from figures this test already has, so it is derived.
-        sitting = "the counts the seconds were taken at"
-        assert sitting in flat, (
-            "the block no longer states its counts against the sitting the "
-            f"seconds were taken at (looked for {sitting!r}) — that paragraph "
-            "is where one quantity came to have two values, and this test "
-            "reads it")
-        suite_pair = re.search(
-            r"the suite has (?P<dir>gained|lost) (?P<words>[a-z -]+?) tests "
-            r"\((?P<was>\d+) to (?P<now>\d+)\)", flat)
-        assert suite_pair, (
-            "the counts-ahead paragraph no longer states the suite gap as "
-            "`gained|lost <words> tests (<sitting> to <now>)` — reword around "
-            "that shape rather than through it")
-        gained, was, now = (_pair_delta(suite_pair),
-                            int(suite_pair.group("was")),
-                            int(suite_pair.group("now")))
-        assert gained is not None, (
-            f"the suite gap {suite_pair.group('words')!r} is not a number this "
-            "test can read — spell it in full words")
-        assert now == stated_suite, (
-            f"the counts-ahead paragraph says the suite now runs {now}; the "
-            f"scale row says {stated_suite}")
-        assert gained == now - was, (
-            f"the paragraph says the suite gained {gained} tests and its own "
-            f"pair gives {now - was} ({was} to {now}) — the headline figure "
-            "left behind by a table refresh, which is exactly what shipped")
-
-        # Every per-module pair, measured from the SITTING. The right-hand side
-        # of each is a row this test already collected, so a refreshed table
-        # with a stale paragraph is red here.
-        by_name = {"portability": "tests/test_portability.py",
-                   "preflight": "tests/test_preflight.py",
-                   "the agents module": "tests/test_claude_agents.py",
-                   "secure_fs": "tests/test_secure_fs.py",
-                   "the hooks module": "tests/test_claude_hooks.py",
-                   "capabilities": "tests/test_capabilities.py",
-                   "the host guard": "tests/test_host_guard.py"}
-        deltas = {}
-        for name, path in by_name.items():
-            pair = re.search(MODULE_PAIR.format(name=name), flat)
-            assert pair, (
-                f"the counts-ahead paragraph states no `{name} <words> "
-                "(<sitting> to <now>)` pair — all seven modules are stated so "
-                "the total can be reconciled against them")
-            moved = _pair_delta(pair)
-            assert moved is not None, (
-                f"{name}'s delta {pair.group('words')!r} is not a number this "
-                "test can read — spell it in full words")
-            assert int(pair.group("now")) == rows[path], (
-                f"the paragraph says {name} now runs {pair.group('now')}; its "
-                f"row says {rows[path]}")
-            assert moved == int(pair.group("now")) - int(pair.group("was")), (
-                f"the paragraph says {name} moved by {moved} and its own pair "
-                f"gives {int(pair.group('now')) - int(pair.group('was'))} — a "
-                "last-round delta on a sitting-relative baseline, which is the "
-                "second thing that shipped wrong here. A module that SHRANK is "
-                "written `has lost <words>`; the bare form reads as a gain")
-            deltas[name] = moved
-
-        # The pair pattern must read a count of a HUNDRED or more, which is
-        # written "one hundred and two" and which `[a-z-]+` — one hyphenated
-        # word — matched no part of. The pair then failed to parse at all and
-        # the assertion above blamed the paragraph for a shape it had written
-        # correctly, on exactly the round where a module moved far enough for it
-        # to matter. The suite-gap pattern beside it has taken spaces since it
-        # was written, so one prose convention had two readings. No module has
-        # moved that far yet, so only a probe can exercise it.
-        probe = re.search(MODULE_PAIR.format(name="preflight"),
-                          "preflight has gained one hundred and two (289 to 391)")
-        assert probe and _pair_delta(probe) == 102, (
-            "the per-module pair pattern cannot read a count of a hundred or "
-            f"more: it read {probe.group('words')!r}" if probe else
-            "the per-module pair pattern did not match a hundreds-spelled count")
-
-        # ...and the other direction, which the pattern could not express at
-        # all. A module that loses tests moved a count DOWN, `has lost` did not
-        # parse, and the bare spelling parsed to a POSITIVE delta against a pair
-        # that gives a negative one — so the refresh had no accepted shape and
-        # the only exit was to edit this test. No module has shrunk yet, so a
-        # probe is the only way to exercise it, and the negative sum below is
-        # the same construct one sentence along.
-        shrunk = re.search(MODULE_PAIR.format(name="portability"),
-                           "portability has lost three (212 to 209)")
-        assert shrunk and _pair_delta(shrunk) == -3, (
-            "the per-module pair pattern cannot express a module that SHRANK: "
-            f"it read {shrunk.group('words')!r}" if shrunk else
-            "the per-module pair pattern did not match `has lost <words>`")
-        assert _words_to_int("minus three") == -3, (
-            "a negative total is unwritable, so a round in which the six lose "
-            "more than they gain cannot be reconciled in any accepted shape")
-
-        # ...and a THOUSAND, which the vocabulary below was closed under and
-        # which no digit spelling could stand in for: both pair patterns take
-        # `[a-z -]` for the delta, so a gap of four figures had no accepted
-        # shape at all and the only exit was to edit this test. The SUITE pair
-        # is where it lands first — the feature branch before this one moved
-        # that row by nearly eight hundred on its own — so it is probed on the
-        # suite shape as well as the module one.
-        big = re.search(
-            r"the suite has (?P<dir>gained|lost) (?P<words>[a-z -]+?) tests "
-            r"\((?P<was>\d+) to (?P<now>\d+)\)",
-            "the suite has gained one thousand and twelve tests (3010 to 4022)")
-        assert big and _pair_delta(big) == 1012 == (
-            int(big.group("now")) - int(big.group("was"))), (
-            "the suite pair cannot read a gap of a thousand or more: "
-            f"{big.group('words')!r} -> {_pair_delta(big)}" if big else
-            "the suite pair pattern did not match a thousands-spelled gap")
-        thousands = re.search(MODULE_PAIR.format(name="preflight"),
-                              "preflight has gained three thousand three "
-                              "hundred and four (289 to 3593)")
-        assert thousands and _pair_delta(thousands) == 3304, (
-            "the per-module pair pattern cannot read a thousands-spelled "
-            f"delta: it read {thousands.group('words')!r} -> "
-            f"{_pair_delta(thousands)}" if thousands else
-            "the per-module pair pattern did not match a thousands-spelled "
-            "delta")
-        assert _words_to_int("minus one thousand and twelve") == -1012, (
-            "a four-figure SHRINK has no accepted spelling either, and the six "
-            "reconcile against the suite gap as a signed sum")
-        assert _words_to_int("thousand and one") is None, (
-            "a bare `thousand` reads as a number, so a phrase that is not one "
-            "would be reported as a stale figure rather than as unreadable")
-
-        summed = re.search(r"They sum to ([a-z -]+?);", flat)
-        remaining = re.search(r"the remaining ([a-z -]+?) are modules", flat)
-        assert summed and remaining, (
-            "the paragraph no longer reconciles its six pairs against the "
-            "suite gap (`They sum to <words>; the remaining <words> are "
-            "modules this hook does not select`) — that sentence is what makes "
-            "the six checkable as a set rather than one at a time")
-        assert _words_to_int(summed.group(1)) == sum(deltas.values()), (
-            f"the paragraph says the six sum to {summed.group(1)!r}; they sum "
-            f"to {sum(deltas.values())}")
-        # The SAME remainder is stated twice in that paragraph — once in the
-        # reconciling sentence and once in the prose list of unselected
-        # modules — and only the first was read. They diverged by thirty-eight
-        # and three successive rounds stepped past it, because the half
-        # nothing reads is the half that drifts. Both are read now.
-        prose_remainder = re.search(r"the other ([a-z -]+?) in test_", flat)
-        assert prose_remainder, (
-            "the paragraph no longer says `the other <words> in test_...` — "
-            "that phrase is the second statement of the remainder, and it is "
-            "read here so it cannot drift from the reconciling sentence")
-        assert _words_to_int(prose_remainder.group(1)) == \
-            _words_to_int(remaining.group(1)), (
-            f"the paragraph states the remainder twice and they disagree: "
-            f"{prose_remainder.group(1)!r} against {remaining.group(1)!r}")
-        assert _words_to_int(remaining.group(1)) == gained - sum(deltas.values()), (
-            f"the paragraph leaves {remaining.group(1)!r} to the modules this "
-            f"hook does not select; the arithmetic leaves "
-            f"{gained - sum(deltas.values())}")
-
-        # The RATIO half, which the count half leaves untouched. The commit
-        # that pinned the counts fixed "roughly nine tenths" against the
-        # block's own "at least 84%" BY HAND, and a hand-fixed figure in this
-        # block has drifted every time. Both halves of that quantity are
-        # derived here from the seconds the block itself states, and every
-        # restatement of it must be the same numeral: the failure mode is not
-        # a wrong percentage, it is TWO of them.
-        others = float(re.search(r"at most (\d+(?:\.\d+)?)s even taking each at "
-                                 r"its slowest", flat).group(1))
-        floor_s = float(re.search(r"cold pass that never measured below "
-                                  r"(\d+(?:\.\d+)?)s", flat).group(1))
-        derived = int(100 * (floor_s - others) / floor_s)
-        # The WHOLE script, not the sliced block: the restatement that
-        # contradicted the derivation sat at line 1032, past
-        # "Running the union of every changed path" and so outside `costs`
-        # entirely — which is exactly why nothing caught it. A quantity's
-        # copies are wherever they are; only its DERIVATION is local.
-        whole = re.sub(r"\s+", " ",
-                       re.sub(r"^#[ \t]?", "", block, flags=re.M))
-        stated_share = {int(n) for n in
-                        re.findall(r"at least (\d+)% ", whole)}
-        assert stated_share == {derived}, (
-            f"the script states the hooks share as {sorted(stated_share)}%; the "
-            f"block's own seconds ({floor_s}s cold pass, at most {others}s for "
-            f"the other six) give at least {derived}%")
-
-        # No SECOND spelling of the same quantity. A sentence that names the
-        # hooks module and a cold pass together may carry the canonical
-        # percentage and nothing else — not a fraction in words, not a
-        # different percentage.
-        fraction = re.compile(
-            r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten)[ -]"
-            r"(?:halves|thirds|quarters|fifths|sixths|sevenths|eighths|"
-            r"ninths|tenths)\b")
-        for sentence in whole.split(". "):
-            if "cold pass" not in sentence:
-                continue
-            if "hooks" not in sentence and "that module" not in sentence:
-                continue
-            assert not fraction.search(sentence), (
-                "a sentence states the hooks module's share of a cold pass as "
-                f"a fraction in words: {sentence.strip()[:160]!r} — quote the "
-                f"block's own 'at least {derived}%' instead. One quantity with "
-                "two spellings is what this block exists to end")
-            for pct in re.findall(r"(\d+)%", sentence):
-                assert int(pct) == derived, (
-                    f"a sentence states the hooks share as {pct}% against the "
-                    f"block's derived {derived}%: {sentence.strip()[:160]!r}")
-
-        # THE TWO FIGURES THAT DERIVATION READS ARE THEMSELVES PROSE, which is
-        # the hole the paragraph above left open: `others` and `floor_s` are
-        # parsed out of sentences, so the share stayed internally consistent
-        # while both of its inputs described a sitting that had been replaced.
-        # A re-taken sitting moved every row and left "at most 31.2s" over a
-        # table summing to 33.0 and "never measured below 148.9s" over a cold
-        # pass whose floor was 158.6 — and the percentage they produce happened
-        # to round the same, so nothing here went red. Both are derived from
-        # the rows now, and the seconds column is parsed once for this and for
-        # the ARITHMETIC sentence below it.
-        #
-        # THE AGENT-DEFINITION ROW IS THE AGENTS ROW, both halves of it. The
-        # block says so — "the SAME invocation, stated with the same range on
-        # purpose. Two figures for one measurement is how this block started
-        # drifting from itself the first time" — so the COUNT is as much a
-        # second statement as the seconds are, and checking only the seconds
-        # left the count free to take any value the allowed set already held:
-        # 48 to 94 passed, because 94 is the host guard's.
-        assert triggers["agent-definition edit"] == \
-            (rows["tests/test_claude_agents.py"],
-             secs["tests/test_claude_agents.py"]), (
-            f"the agent-definition trigger row reads "
-            f"{triggers['agent-definition edit']} against the agents module's "
-            f"{(rows['tests/test_claude_agents.py'], secs['tests/test_claude_agents.py'])}"
-            " — one invocation measured once, stated twice, and the two have "
-            "drifted")
-
-        # WHICH SECONDS ARE DERIVED AND WHICH ARE MEASURED, since the
-        # difference decides what can be asserted about them at all. Every
-        # figure in these tables is a MEASUREMENT; nothing here re-measures.
-        # What can be checked is a figure stated TWICE — a row against its own
-        # restatement, or against another row the block says is the same
-        # invocation — and that covers the cold pass, the agents row and the
-        # skill-edit row's prose copy below.
-        #
-        # Three sets of seconds are stated once and are therefore held to
-        # nothing: the fast path's, the scale row's, and the skill-edit row's
-        # own. The last of those cannot be derived even in principle — five
-        # modules in one invocation is BOUNDED by the sum of their rows and
-        # equal to nothing, and a bound that loose is a check that cannot fail
-        # rather than one that does not — which is why its prose restatement
-        # below is worth pinning: two copies of an unheld figure drift exactly
-        # as readily as two copies of a held one.
-        cold_lo, cold_hi = triggers["cold pass, all seven modules"][1]
-
-        six = round(sum(hi for p, (_, hi) in secs.items()
-                        if p != "tests/test_claude_hooks.py"), 1)
-        assert others == six, (
-            f"the share sentence says the other six are at most {others}s; "
-            f"the rows above it sum to {six}s")
-        assert floor_s == cold_lo, (
-            f"the share sentence reads a cold-pass floor of {floor_s}s; the "
-            f"cold-pass row says {cold_lo}s")
-
-        # THE SKILL-EDIT ROW IS RESTATED IN PROSE further down, which is the
-        # only thing holding those seconds to anything: the restatement read
-        # 17.0-21.7s against 131.5-133.1s while its row read 26.6-27.5s against
-        # 158.6-169.6s, two sittings apart.
-        #
-        # ANCHORED, not searched. Counting matches let the real sentence be
-        # respelled out of the pattern while a quotation elsewhere kept the
-        # count at one — the same substitution this block has now produced in
-        # six different places. The anchor phrase must occur ONCE, and the
-        # figures are read from that occurrence or nowhere.
-        anchor = "a skill edit skips that module"
-        assert flat.count(anchor) == 1, (
-            f"{anchor!r} appears {flat.count(anchor)} times in the block; the "
-            "skill-edit row's prose restatement is read from that phrase, and "
-            "a second copy is a second place to read it from")
-        restatement = re.match(
-            r"a skill edit skips that module and costs [a-z- ]+ of a cold pass "
-            r"\((\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s against "
-            r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s\)",
-            flat[flat.index(anchor):])
-        assert restatement, (
-            "the skill-edit row's prose restatement no longer parses where it "
-            "is anchored — widen the pattern rather than leaving the only "
-            "check on a figure nothing else holds unread:\n"
-            + flat[flat.index(anchor):][:200])
-        restated = [restatement.groups()]
-        assert (float(restated[0][0]), float(restated[0][1])) == \
-            triggers["skill .md edit"][1], (
-            f"the prose says a skill edit costs "
-            f"{restated[0][0]}-{restated[0][1]}s; its row says "
-            f"{triggers['skill .md edit'][1]}")
-        assert (float(restated[0][2]), float(restated[0][3])) == \
-            (cold_lo, cold_hi), (
-            f"the prose states the cold pass as {restated[0][2]}-"
-            f"{restated[0][3]}s; its row says {cold_lo}-{cold_hi}s")
-
-        # THE ARITHMETIC SENTENCE, the one place a reader can check the two
-        # tables against each other. (The block's own "EXACT" is about the
-        # COUNT arithmetic beside it, which is exact; this half is seconds and
-        # can only ever agree to within their noise.) It stated the previous
-        # sitting's sums against the previous sitting's cold pass, under a
-        # table holding neither, for the same reason every other figure here
-        # has drifted: a sum a person re-does by hand is a sum nobody re-does.
-        # Both halves are re-derived, from the live table only — quoting the
-        # right sentence in the history below a wrong one satisfied the first
-        # draft of this check.
-        parts_lo = round(sum(lo for lo, _ in secs.values()), 1)
-        parts_hi = round(sum(hi for _, hi in secs.values()), 1)
-        # THE PARAGRAPH, not the live half. Scoping to everything above the
-        # banner was still too wide: reword the real sentence past the pattern
-        # and quote the correct one anywhere above, labelled "superseded, do
-        # not use", and this read the label's own contents as the derivation.
-        # A quotation is not a statement, and the only way to tell them apart
-        # here is WHERE it sits.
-        # SLICED, because the paragraph has an end now — a blank comment line
-        # was added under it with this change, for exactly this reason. Three
-        # drafts tried to define its extent from the text as it stood: the
-        # whole live half, a thirty-five-line window reaching past the COUNT
-        # arithmetic, then a punctuation rule standing in for a sentence
-        # boundary. The last of those both admitted "Those seven total 100s!
-        # Superseded, do not use: they sum to 158.9s" and REFUSED "Those seven,
-        # i.e. the modules above, sum to", which is the same failure pointing
-        # both ways. Punctuation is not structure. A blank line is.
-        #
-        # The second half is what makes the slice worth anything: the phrase
-        # this derivation is written in must appear NOWHERE ELSE in the live
-        # half, so a quotation cannot sit outside the paragraph and answer for
-        # a sentence inside it that has been reworded past the pattern.
-        def _flat(text):
-            return re.sub(r"\s+", " ", re.sub(r"^#[ \t]?", "", text, flags=re.M))
-
-        head = "# ARITHMETIC, stated because"
-        assert live_costs.count(head) == 1, (
-            f"the ARITHMETIC paragraph opens {live_costs.count(head)} times "
-            "above the history banner — the derivation is read out of that "
-            "paragraph, and a second opening is a second place to read it")
-        para_start = live_costs.index(head)
-        para_end = live_costs.find("\n#\n", para_start)
-        assert para_end != -1, (
-            "the ARITHMETIC paragraph no longer ends at a blank comment line "
-            "before the history banner — that blank line is what gives this "
-            "derivation an extent, and without it the slice runs on into "
-            "whatever follows")
-        ariths = re.findall(
-            r"sum to (\d+(?:\.\d+)?)s at their minima and "
-            r"(\d+(?:\.\d+)?)s at their maxima, against "
-            r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s measured",
-            _flat(live_costs[para_start:para_end]))
-        assert len(ariths) == 1, (
-            f"the ARITHMETIC sentence parses {len(ariths)} times inside its "
-            "own paragraph — at zero, widen the pattern rather than leaving "
-            "the block's only parts-against-whole check unread; above one, two "
-            "copies of it are two things to keep true")
-
-        # AND NO OTHER SECONDS IN THE PARAGRAPH. The slice above says where the
-        # derivation lives; this says nothing else lives beside it. "Those
-        # seven total 100s! Superseded, do not use: they sum to 158.9s …"
-        # satisfies every check up to here — one matching sentence, inside the
-        # paragraph, correct — while the sentence a reader believes is the
-        # false one in front of it. No pattern can tell which sentence is meant,
-        # so the paragraph is required to state ONLY the four figures it
-        # derives. It is a paragraph about one arithmetic; a fifth number in
-        # seconds is either a second arithmetic or a superseded one.
-        # A LIST, not a set, and every spelling of the unit. "Those seven
-        # total 169.6s! Superseded, do not use: they sum to …" adds no new
-        # VALUE, so a set saw nothing; "100 seconds" and "100 s" were not seen
-        # at all. Four figures, four occurrences, however the unit is written.
-        para_figures = []
-        for lo, hi in re.findall(
-                r"(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?\s*(?:s\b|secs?\b"
-                r"|seconds\b)", _flat(live_costs[para_start:para_end])):
-            para_figures.append(float(lo))
-            if hi:
-                para_figures.append(float(hi))
-        assert sorted(para_figures) == sorted(
-                [parts_lo, parts_hi, cold_lo, cold_hi]), (
-            f"the ARITHMETIC paragraph states {sorted(para_figures)} in "
-            f"seconds; it derives {sorted([parts_lo, parts_hi, cold_lo, cold_hi])}"
-            " and may state those and nothing else, each once — a percentage "
-            "is not a figure in seconds and is unaffected")
-        arith = ariths[0]
-        assert (float(arith[0]), float(arith[1])) == \
-            (parts_lo, parts_hi), (
-            f"the ARITHMETIC sentence sums the seven to "
-            f"{arith[0]}-{arith[1]}s; the rows sum to "
-            f"{parts_lo}-{parts_hi}s")
-        assert (float(arith[2]), float(arith[3])) == \
-            (cold_lo, cold_hi), (
-            f"the ARITHMETIC sentence states the whole as "
-            f"{arith[2]}-{arith[3]}s against a cold-pass row "
-            f"reading {cold_lo}-{cold_hi}s")
-
-    # Every SECOND about this hook lives in ONE place: the MEASURED COSTS block
-    # in .claude/hooks/skill-invariants.sh. Read the cold pass, the per-module
-    # decomposition and the headroom ratio there. They are deliberately not
-    # restated here, and that is not fastidiousness: this comment used to carry
-    # its own set, the script a second and CLAUDE.md a third, and the copy that
-    # sat here longest — a cold-pass figure — was later measured and did not
-    # reproduce, while still reading as freshly taken. A quantity kept in three
-    # places is a quantity nobody can check.
+    # Every runtime figure about this hook lives in ONE place: the MEASURED
+    # COSTS block in .claude/hooks/skill-invariants.sh, as counts and ratios
+    # (ruling Q13). Read the trigger costs and the per-module decomposition
+    # there. They are deliberately not restated here, and that is not
+    # fastidiousness: this comment used to carry its own set, the script a
+    # second and CLAUDE.md a third, and the copy that sat here longest — a
+    # cold-pass figure — was later measured and did not reproduce, while still
+    # reading as freshly taken. A quantity kept in three places is a quantity
+    # nobody can check.
     #
     # What survives a change of machine, and so is worth stating here, is the
     # SHAPE. One module dominates the hook's own pass — this one, because a hook
     # can only be tested by running it, and every assertion spawns bash while a
     # handful sleep on purpose. The hook pays that on a hook edit and on nothing
-    # else: a skill edit selects the two prose modules and skips it entirely, an
-    # agent-definition edit is smaller again by more than an order of magnitude.
-    # The block quantifies all three.
+    # else: a skill edit selects the modules its arm names, which the block's
+    # ARITHMETIC sentence adds up, and skips this one entirely; an
+    # agent-definition edit selects the agents module alone. The block
+    # quantifies all three.
     #
     # The floor is expressed PER COLLECTED TEST rather than as a number of
     # seconds, because a bare number goes stale in silence and this one already
@@ -7141,9 +6705,9 @@ class TestHookRegistration:
     # the whole point of the assertion; when it fires, act on it rather than
     # re-deriving the constant that produced it.
     #
-    # The absolute one no longer binds anything: the measured cold pass has
-    # OVERTAKEN it (MEASURED COSTS), and the derived floor passed it long before
-    # that. It stays as the floor for a hypothetical suite of a few very slow
+    # The absolute one no longer binds anything: the derived floor passed it
+    # long ago, and the last cold pass timed before ruling Q13 was already
+    # above it. It stays as the floor for a hypothetical suite of a few very slow
     # tests, which is the shape the per-test budget cannot see — but read it as
     # that, not as a bound on today's runtime, and do not raise it to chase the
     # measurement. Chasing is how a budget becomes a second, staler copy of the
@@ -7156,11 +6720,12 @@ class TestHookRegistration:
         a cancelled check, and a cancelled check reads to the agent exactly like
         a check that passed.
 
-        Collection is the cheap half of a pytest run — a rounding error against
-        the pass itself, per the MEASURED COSTS block in
-        `.claude/hooks/skill-invariants.sh` — and the count it returns is
-        deterministic across machines, so deriving the floor this way does not
-        make this a wall-clock test that flakes on a slow CI runner.
+        The floor is derived from what pytest COLLECTS, a count that is
+        deterministic across machines, so this is not a wall-clock test that
+        flakes on a slow CI runner. The budget it multiplies covers the whole
+        invocation — interpreter start and collection included, which is how
+        the MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` times a
+        row — so the floor does not depend on collection being negligible.
         """
         # The modules the hook APPENDS to its pytest argv, not every
         # `tests/*.py` string in the file: two more are named in the KNOWN GAP
@@ -7193,7 +6758,7 @@ class TestHookRegistration:
             assert t is not None and t >= floor, (
                 f"timeout {t}s leaves no headroom over the hook's own "
                 f"{counted.group(1)}-test pass; {floor}s is the floor that "
-                "suite size implies. For the observed ranges behind that, see "
-                "the MEASURED COSTS block in .claude/hooks/skill-invariants.sh "
-                "— naming it rather than quoting a second is the point: the "
-                "figure this message used to carry was measured wrong twice")
+                "suite size implies — a per-collected-test budget, not a reading. "
+                "Raise the timeout, then re-time ONE cold pass and record it in "
+                "that change's description, per ruling Q13 in the MEASURED "
+                "COSTS block of .claude/hooks/skill-invariants.sh")

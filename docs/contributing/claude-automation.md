@@ -27,9 +27,10 @@ it at all, and nothing here runs for an agent that is not Claude Code.
 
 **It fires on CHANGE, not on state.** A Write/Edit is filtered by its path. A Bash
 payload is opaque — the hook cannot read a command and know what it touched — so it is
-filtered by `.claude/.skill-invariants-stamp` plus one `find -newercm`, and exits 0 in
-milliseconds when nothing watched moved. That fast path is what stops `ls` and
-`git status` from each buying a pytest run.
+filtered by `.claude/.skill-invariants-stamp` plus one `find -newercm`, and exits 0
+without starting pytest when nothing watched moved. That fast path — the first row of
+`skill-invariants.sh` MEASURED COSTS, under a thousandth of a cold pass — is what stops
+`ls` and `git status` from each buying a pytest run.
 
 It then runs only the CHECKS the changed paths can turn red: seven test modules, or a
 node-id subset of one of them. Two tables decide that, and CLAUDE.md states the rule for
@@ -104,8 +105,12 @@ CHOSEN above the measurements and then enforced on them, so it is an input to th
 rather than a copy of it. The test that tells the two apart is direction — if the number
 would change when the machine changes, it is a measurement.
 
-Read the block for HEADROOM as much as for spread. An overrun does not fail the hook; it
-CANCELS it, silently, which is indistinguishable from a pass.
+The block records counts, ratios and ordering, and no absolute seconds (ruling Q13 in
+`docs/roadmap/BACKLOG.md`): the maintainer's host could not reliably meet the idle-machine
+precondition an absolute needs, and nothing that read the block needed one. HEADROOM is
+enforced by a test that derives its floor from the collected count, not by a reading. An
+overrun does not fail the hook; it CANCELS it, silently, which is indistinguishable from a
+pass, so a change to one of the thresholds MEASURED COSTS names re-times one cold pass.
 
 ### Why the `.claude/` artifacts need three lists
 

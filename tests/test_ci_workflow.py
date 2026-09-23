@@ -31,9 +31,9 @@ saying so beats either blanket claim it has carried.
 NOT SELECTED BY THE SKILL-INVARIANTS HOOK, and stated so nobody assumes it is:
 the hook runs seven modules and this is not one of them, the same standing
 `test_pii_content_scan.py` already has. Editing `ci.yml` therefore turns this red
-in CI rather than at tool time. Adding it to the hook would move the cold-pass
-row and cost a MEASURED COSTS sitting, which is not worth it for a file that
-changes a few times a year.
+in CI rather than at tool time. Adding it to the hook would put it on the cold
+pass and give MEASURED COSTS another row to keep, which is not worth it for a
+file that changes a few times a year.
 """
 
 import html
@@ -848,9 +848,9 @@ def test_this_module_is_not_selected_by_the_hook():
     hook ever gains an arm for this module, that arm moves the cold-pass row and
     the claim in the docstring has to go."""
     hook = (REPO / ".claude" / "hooks" / "skill-invariants.sh").read_text(encoding="utf-8")
-    # The MODULE LIST, not the file: the hook's MEASURED COSTS prose names this
-    # module when recording which counts moved, and a bare substring check went
-    # red on that sentence. What matters is whether the hook would RUN it.
+    # The MODULE LIST, not the file: a bare substring check once went red on
+    # hook prose that merely NAMED this module. What matters is whether the
+    # hook would RUN it.
     assert "=tests/test_ci_workflow.py" not in hook
 
 

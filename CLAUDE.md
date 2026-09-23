@@ -44,7 +44,8 @@ again. Advance or hold, NEVER a third state.
 Everywhere else — prose, comment, docstring, assertion message alike — ALLOWED is naming the
 block and quoting a RATIO from it; FORBIDDEN is restating an ABSOLUTE — a second, a test
 count, a per-test rate, a host, a date — which goes stale while still reading as fresh.
-Exempt is a threshold the code COMPARES against, being a budget rather than a copy.
+Exempt is a threshold the code COMPARES against, being a budget rather than a copy, and
+the one cold-pass reading a change to such a threshold records in its own PR (ruling Q13).
 
 **The `.claude/` runtime artifacts are a three-way mirror**: the tracked `.gitignore`,
 `IGNORE_PATTERNS` in `agents/install.sh`, and the `.claude/` case of the PII gate. A

@@ -186,3 +186,149 @@ due-diligence block, which already carried the screening criteria, gains a point
 to the two runtime signals and the note that their ABSENCE is itself a review
 finding: if the H3 checks suggest eligibility and `may_qualify_for_eic` is false,
 the screening question was answered wrong.
+
+---
+
+## AA3 — MEASURED COSTS records ratios, not seconds
+
+### What was wrong
+
+The MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` required every
+absolute timing to be re-measured in ONE sitting on an otherwise-idle machine.
+Three of the sittings on record failed it: one because edits landed mid-sweep,
+one to host memory, and the most recent because an endpoint scanner holds more
+than a core whenever a pytest pass opens thousands of files. That is a feedback
+loop, and no time of day fixes it. This host could not reliably meet the
+precondition, so the contract was the blocker and not the machine. Meanwhile the block had grown to about fourteen hundred
+lines, two thirds of them a ledger of sittings and discarded readings.
+
+Two facts decided it. From one sitting to the next, `pytest tests/` on this host
+read more than a third slower on a suite that had gained six tests, with no code
+change to explain it. And nothing that READ the block needed an absolute: every
+check and decision rests on a ratio or an ordering ("dominates every total",
+"one of the cheap rows"), and the two test comments that did restate a reading
+were stale copies, swept here. The one quantity that matters as a number,
+headroom against the hook's timeout, was never read off the seconds.
+`test_the_skill_hook_has_headroom_over_its_measured_runtime` derives its floor
+from the COLLECTED count times a per-test budget, and collection is
+deterministic.
+
+This section first gave the evidence as the suite's slowest reading ever
+against its fastest, nearly two and a half times apart. The suite had doubled
+between those two readings, so per test the spread was about a fifth and the
+comparison mostly measured growth. A review caught it. The consecutive-sitting
+jump above is what the record supports, and the ruling rests on that and on
+the four failed sittings.
+
+### The ruling (Q13, 2026-09-21)
+
+Option (a): counts, ratios and relative ordering; no absolute seconds. The hook
+timeout and the per-test budget remain as compared thresholds, the exemption
+CLAUDE.md already grants a budget. One cold pass is re-timed only when either
+threshold changes, and that reading goes in the description of the change that
+moves the threshold, not in the block. The per-test budget is two constants, a
+per-test rate and an absolute minimum under it, and a change to either counts:
+CLAUDE.md's exemption already covers any threshold the code compares against.
+
+Option (b), a protocol that records the load each reading was taken under, was
+declined. Annotating weather does not make a reading taken under one load
+comparable with a reading taken under another. It also kept everything that made
+the block expensive: the single sitting, the hand refresh, and the killed runs.
+
+### What shipped
+
+- The block is rewritten as counts, ratios and ordering. The ratios come from the
+  last complete sitting, and each is stated in words ("about a seventh", "under a
+  fiftieth"), because one lifted to three significant figures would be wrong by
+  the next reading. No order is claimed among the four cheapest modules: they
+  regrouped between sittings with nothing touched in between.
+- The sitting ledger, the "two trees" annotation and the counts-ahead paragraph
+  are deleted. Git history holds every sitting and its readings.
+- `test_the_measured_costs_counts_match_live_collection` keeps every count
+  check it carried: both tables, the reconciliation sentences, the EXACT sums,
+  the skip counts and the stray-`N tests` sweep. The seconds cross-checks are
+  gone with the seconds, and so are the counts-ahead word-pair parser and its
+  helpers. It now also compares the RUN half of the portability and hooks
+  reconciliation sentences with their rows, which neither it nor the version on
+  main did. Mutation-checked: a count off by one, a drifted agent-definition
+  row and a stale `runs N` each turn it red.
+- `test_the_hook_states_no_absolute_timing` holds the ruling. It began as a list
+  of timing spellings, and four review rounds each found one the list missed
+  (`150-second`, `thirteen seconds`, `half a second`, `2m30s`). So the block may
+  no longer use the words of duration at all, the ordinal `second` included,
+  and the list is gone. A fifth round found the gap the word rule leaves: a
+  unit glued to its number (`150sec`, `2min`) has no word boundary in front of
+  it, so the figure rule runs inside the block as well, and it now takes any
+  unit word and a leading-dot decimal. Outside the block, where those words
+  are ordinary prose, it rejects a number in front of a unit in any comment of
+  `skill-invariants.sh`. That found a retry cost stated in absolute figures
+  further down the file, now stated against the fast path. Two more copies, in
+  this suite's own comments and outside what the test reads, were swept by
+  hand, along with the comments that still quoted text this change deleted.
+  Five comments further down the script stated the pass's duration in words
+  ("seconds to a minute", "tens of seconds"), understating a cold pass several
+  times over; the rule cannot see a duration in words outside the block, so
+  they were reworded by hand to describe the pass rather than time it.
+  Mutation-checked: `2m30s`, `150sec`, `.5s`, `a dozen seconds`,
+  `150 wall-clock seconds`, `150 µs` and the ordinal inside the block, and a
+  figure above the block and the old retry figure below it, each turn it red;
+  `a second pass` in a comment and a duration in a line of code stay green.
+- A sixth review round found three gaps in the checks and three stale
+  sentences. The stray-`N tests` sweep read the raw block, so a numeral and
+  its `tests` either side of a line break went unchecked; this change had
+  deleted the paragraph recording exactly that, and the sweep now reads the
+  joined text. The span required its header once but not its end marker, so
+  a quotation of the marker inside the block would have handed everything
+  after it to the looser outside rule; both must now appear once. And the
+  count readers kept the first copy of a restated sentence, so a second,
+  stale copy was never compared; every copy must now agree. The timing rule
+  learned `millis`, a glued `us` and, inside the block, clock notation, and
+  stopped reading a tax form's plural (`W-2s`, `$1M`) as a timing; a bare
+  `1099s` still reads as one and is written `1099 forms`. By hand: two more
+  comments that timed a pass as "seconds", the suite's absolute runtime in
+  `agents-compat.md`, and the doc copy of the fast path's "milliseconds" in
+  `claude-automation.md`. The block also said the counts test is not
+  selected by this hook, which is false for every edit that runs the hooks
+  module, and five places said it goes red on a test added to one of six or
+  seven modules, where the suite check makes it any test at all. The block
+  now also says what each row times, which the deleted ledger had carried.
+  Mutation-checked: a count split across a line break, a quoted end marker,
+  a second stale `collects N and runs M` sentence, a second stale suite
+  pair, `150us`, `150 millis` and `2:35` each turn a test red; `W-2s`,
+  `K-1s` and `$1M` stay green, and the range `1.0-1.8s` is still caught.
+- A seventh round found `millisec`, `microsec` and `nanosec` passing both
+  rules, the prefixes having attached only to `seconds`. The unit list now
+  takes the short form after any prefix, and inside the block the chase over
+  spellings ends: every numeral there must be one of the block's counts (an
+  `N tests` row or a `collects N and runs M` sentence, which the counts test
+  holds to a live collection), so a timing is refused for what its number is
+  not, whatever unit follows it. The clock-notation pattern from round six is
+  subsumed and gone. The same round found the block's reason for the ruling
+  overstated (see What was wrong), its re-timing rule stated three ways with
+  three triggers (it now names the three constants, says an added test never
+  triggers one, and `claude-automation.md` points at it rather than restating
+  it), its opening forbidding the ratio quotes CLAUDE.md allows, and
+  `test-invariants.md` describing a ratio check that no longer exists.
+  Mutation-checked: `158000 millisecs` and an unknown unit inside the block,
+  `2:35` in a table row, and `150 millisec` and `150millisec` above it each
+  turn it red; a count the block already states and a PR number stay green.
+- An eighth round found a hole in the seventh's allowlist: it trusted the
+  numbers of any `collects N and runs M` sentence, while the counts test reads
+  only the portability, hooks and whole-suite ones, so a sentence nothing
+  checks could carry a timing. The allowlist now trusts only the sentences the
+  counts test reads, through patterns the two tests share. The round also
+  found the block naming the wrong sitting for its ratios (W3 slice 2, #164,
+  not the V5-era tree), its trigger-with-no-row paragraph true for only the six
+  armed test modules, and the ruling's evidence overstated a second time: the
+  record holds three failed sittings, one of them to host memory, not three to
+  memory alone. The ruling names two re-timing triggers against the block's
+  three; the budget is two constants, and the backlog item and the ruling
+  paragraph now say so, the Q13 row keeping its words. Four docstrings in this
+  suite still timed a pass ("10 seconds", "tens of seconds") and one sentence
+  in `test-invariants.md` still said the block's seconds carry run counts.
+  Mutation-checked: an unread `collects N and runs M` sentence carrying a
+  timing turns the timing test red, where the seventh round's test passed it.
+
+What the rounds left is filed rather than chased: AA8 stops pinning the whole
+suite's count in the hook, AA9 has the hook time itself against its timeout,
+and AA10 collects the small leftovers and the two accepted limits.

@@ -76,13 +76,12 @@ executed anywhere**; Windows has not run since 2026-09-13.
 | When | What | Why |
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **Now** | **AA1** — EIC disclosure. | BUILT, awaiting merge. It was the only silent under-statement left in the federal return. |
-| **Now** | **AA3** — rule on MEASURED COSTS. | Unblocks a permanently blocked item at zero engineering cost. |
+| **Now** | **AA3** — MEASURED COSTS records ratios (ruled Q13). | BUILT, awaiting merge. Retires a debt this host could not pay. |
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Twelve commits, four engine, one interpreter, a never-executed floor. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
 | **Before publish** | **AA6**, **AA7** — size the UNSUPPORTED list; state NYC's real scope. | The first public issue will be someone hitting a block. |
-| **Opportunistic** | **AA4**, **AA5**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -90,47 +89,6 @@ executed anywhere**; Windows has not run since 2026-09-13.
 ## Open
 
 ### AA — from the 2026-09-20 product-owner review
-
-- **AA1 (P1, S): Disclose the EIC instead of defaulting it to zero.**
-  **The disclosure is BUILT and is carried by the pull request that also wrote
-  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
-  that merges.** It stays here until then because a shipped row is a claim that
-  something landed, and a test reads `git log` to hold it to that — naming an
-  unmerged pull request there would be the claim without the landing.
-
-  What shipped: `flags.may_qualify_for_eic`, asked by the `/tax-setup`
-  interview; the MANUAL capability rule `earned_income_credit`, covering Form
-  1040 line 27 and all THREE New York lines — 65 (IT-215), 66 (IT-209's
-  noncustodial parent credit) and 70 (NYC) — whose manifest line reaches page 1
-  of the PDF; and a tie-out advisory naming which of those lines still records
-  0. The rule is MANUAL and not UNSUPPORTED because the direction is an
-  UNDER-statement, which AGENTS.md §4 degrades loudly rather than blocking, and
-  a worksheet that legitimately comes out at $0 is a correct return no gate may
-  refuse. Reasoning, and why the conditional half had to live in the tie-out
-  rather than in the gate that writes the manifest, are in
-  `docs/changelog/epic-AA.md` — as is what three reviewers found in the first
-  draft, which was an over-statement path in the advisory's own remedy, a
-  fourth New York line asserted away, and four false claims about how uniquely
-  bad the prior state had been.
-
-  **The legacy-profile residue is CLOSED, not accepted.** An earlier draft of
-  this entry recorded it as an accepted gap: a profile predating the flag reads
-  absent-as-False and gets silence. Review was right that this is not deference
-  to the taxpayer's answer, because there is no answer — so the advisory is
-  TRI-STATE, and an unanswered flag now says so rather than being read as a no.
-  The flag stays out of `_REQUIRED_GATE_FLAGS`: that blocker cannot be
-  acknowledged away, and a hard stop on every existing profile to disclose a
-  credit is the cry-wolf shape.
-
-  **The EIC being uncomputed is a RULING, not an oversight, and AA1 did not
-  re-open it.** The 2026-07-12 review sharpened the persona to a CA resident
-  with W-2 plus equity comp, investments and foreign accounts, and dropped the
-  EITC to P3 as out of persona in the same breath that promoted AMT to P1. That
-  decision stands. What it did not license was the silence: the guiding
-  principle stated in the paragraph immediately after it is that **this
-  toolkit's differentiator is that it never silently understates**, and where a
-  gap cannot be built the requirement is to *refuse or loudly degrade*. AA1 is
-  the degrade the ruling already asked for, not the computation it declined.
 
 - **AA2 (P1, XS): Run the full matrix on `main` the day CI returns.**
   Before any new work on 2026-10-01. A red 3.13 leg or a red Windows job is then
@@ -140,19 +98,17 @@ executed anywhere**; Windows has not run since 2026-09-13.
   commit (`gh run list --commit "$SHA"`) — `gh pr checks` reads the previous
   commit's runs.
 
-- **AA3 (P1, XS): Rule on what MEASURED COSTS records.** *(owner decision)*
-  The block in `.claude/hooks/skill-invariants.sh` requires absolute seconds
-  re-measured in ONE sitting on an otherwise-idle machine. Four sittings have now
-  been killed — three for host memory, the most recent because endpoint scanning
-  holds more than a core and a pytest pass opening thousands of files is
-  precisely what the scanner wakes for, a feedback loop no time of day fixes.
-  This machine structurally cannot satisfy the precondition, so the contract is
-  the blocker, not the host. Two ways out, both the owner's: **(a)** record
-  ratios and relative ordering — which is what every consumer of the block
-  actually uses — and drop absolute seconds, which also retires the "two trees"
-  annotation; or **(b)** declare a measurement protocol that states the load a
-  reading was taken under and accept it. Leaving it costs one attempt every few
-  weeks and the row stays legibly stale in the meantime.
+- **AA3 (P1, XS): MEASURED COSTS records counts, ratios and ordering.**
+  **Ruled at Q13 (option a) and BUILT by the pull request that also records it
+  in `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.** The block no longer states an absolute second, a test holds it
+  to that, and the sitting debt, the "two trees" annotation and the
+  thousand-line sitting ledger are gone with it. HEADROOM was never read off the
+  seconds — its test derives the floor from the collected count — so nothing
+  that enforced anything moved. The one absolute still taken is a cold pass,
+  re-timed only when the hook timeout or the per-test budget (its rate or its
+  absolute minimum) changes, and recorded in that change's description rather
+  than the block.
 
 - **AA4 (P2, XS): A gate whose verdict depends on machine load.**
   `test_the_permissions_hook_timeout_covers_a_full_archive_walk` failed at load
@@ -188,6 +144,45 @@ executed anywhere**; Windows has not run since 2026-09-13.
   other-state credit is not modeled). Both land on Z8, which is P3 and L. The
   blocking is the correct bias and Z8 is genuinely large — the defect is that
   nothing SAYS so. A reader of the shipped index concludes NYC is finished.
+
+- **AA8 (P2, XS): Stop pinning the whole suite's count in the hook.**
+  `test_the_measured_costs_counts_match_live_collection` holds MEASURED COSTS'
+  scale row and its `pytest tests/` sentence to the exact collected count, so
+  every PR that adds a test ANYWHERE must hand-edit
+  `.claude/hooks/skill-invariants.sh`, and that edit selects the hooks module,
+  the slowest check the hook runs, at tool time. Since ruling Q13 the row's only
+  job is "about twice" a cold pass, which needs no exact count. Drop the count
+  from the scale row, and the suite-wide pair and skip reconciliation with it,
+  leaving the seven hook-selected modules pinned. Raised by AA3's review rounds
+  (#172).
+
+- **AA9 (P2, S): The skill hook times itself against its own timeout.**
+  An overrun of the registered timeout CANCELS the hook, and a cancelled check
+  reads to the agent exactly like a pass. The headroom test guards the half of
+  that the count drives; what it cannot see is a per-test cost that climbs while
+  the count stands still, which MEASURED COSTS names as its one blind spot and
+  ruling Q13 leaves to a cold pass re-timed only when a threshold moves. The
+  hook can close it at runtime: time its own pass and report, without blocking,
+  when a pass uses more than a set fraction of the timeout. That is a comparison
+  against a threshold, not a recorded reading, so it stays inside Q13. Raised by
+  AA3's review rounds (#172).
+
+- **AA10 (P3, XS): Tidy what AA3's review rounds left.**
+  In `tests/test_claude_hooks.py` unless named: `_words_to_int` keeps negative
+  and thousands branches and a docstring for the counts-ahead paragraph AA3
+  deleted; the counts test flattens the block with its own regex beside
+  `_comment_prose`, and re-implements `_the_one_statement` for the portability
+  and hooks sentences; the `HOOKS_DEPENDENTS_EXCLUDED` message still says the
+  counts test reacts to "one of" six modules; the headroom comment cites "the
+  rule that keeps the seconds in one place"; the retry cost below MEASURED COSTS
+  states a timing ratio the block does not hold; and `agents-compat.md` and the
+  `GIT_TIMEOUT` comment in `tests/test_claude_agents.py` argue an absolute from
+  a ratio. One owner question rides along: whether CLAUDE.md's one-owner rule
+  for timings covers `harden-runtime-perms.sh`, which states its own readings in
+  seconds. Accepted and recorded so a review does not re-find them: outside the
+  block the timing test reads whole-line comments only, and catches neither a
+  duration spelled in words nor a number two words from its unit. Fold into the
+  next PR that touches these tests.
 
 ### W — engineering hygiene
 
@@ -405,7 +400,6 @@ executed anywhere**; Windows has not run since 2026-09-13.
 |---|---|
 | **Y1** | The owner publishing the repository and enabling Discussions. Verified still private, Discussions off, 0 stars. |
 | **Y2** | TY2026 figures publishing, AND re-running the review-subagent replay from a FRESH session first. It is also the only route to the auditor's stale keying note. |
-| **AA3** | A ruling on what MEASURED COSTS records. Four sittings killed; the contract, not the host, is the blocker. |
 
 ## Declined, with the reasoning kept so it is not re-proposed
 
@@ -482,6 +476,7 @@ for the PR that carried them.
 | Q10 | May a skill state a figure both statutorily NAMED and FETCHED? | Yes for §164(b)(7): state the two anchors, the 101% rule and the 2030 reversion, name the cache key, pin to an engine constant by test. §2's third enumerated exception. Shipped #158. | 2026-09-13 |
 | Q11 | Y3: package `agents/lib` as a distribution? | No, with a re-open trigger. See Declined above. | 2026-09-13 |
 | Q12 | W3: what runs the hook before the venv exists? | A bash shim of a few lines, and W3 proceeds. Fail-DEFERRED, not fail-open. | 2026-09-13 |
+| Q13 | AA3: what does MEASURED COSTS record, when no sitting on this host can meet its idle-machine precondition? | Counts, ratios and relative ordering; no absolute seconds. The hook timeout and the per-test headroom budget remain as compared thresholds, and one cold pass is re-timed only when either changes. | 2026-09-21 |
 
 ---
 
@@ -530,7 +525,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | W1 | #90 | — |
 | W2 | #148, #149, #150, #151, #152 | — |
 | W3 | #163, #164 | OPEN: the stamp state machine, above |
-| W4 | #90, #118 | the MEASURED COSTS seconds are owed — see AA3 |
+| W4 | #90, #118 | the MEASURED COSTS seconds were retired by Q13 rather than re-measured |
 | W5 | #90, #166 | W5a is a separate open item, above |
 | W6 | #105 | — |
 | X1 | #89 | the auditor's keying note is WRONG, not pending; only the Y2 replay can correct it |
@@ -548,6 +543,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Z2 | #130 | — |
 | Z3 | #131 | — |
 | Z7 | #121 | domicile as a GATE is deliberately not modeled |
+| AA1 | #171 | the EIC is DISCLOSED, not computed — out of persona by the 2026-07-12 ruling |
 | Q7 | #156 | — |
 | Q9 | #156 | — |
 | Q8 | #158 | — |

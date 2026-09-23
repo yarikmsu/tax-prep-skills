@@ -306,7 +306,7 @@ def _pin_unstripped(body: str, digest: str):
     First is the whole of what this adds. `tests/test_pii_content_scan.py`
     already reads the live record and rejects a digest written outside the
     exempt token — the same contract from the gate's side — but that module is
-    not among the six `.claude/hooks/skill-invariants.sh` selects, so its
+    not among the modules `.claude/hooks/skill-invariants.sh` selects, so its
     verdict arrives in CI, after the commit the wrap blocks. This module is
     selected by an edit to the record, so the wrap is reported before the
     renewal is committed rather than by the thing that refuses to commit it.
@@ -1137,10 +1137,10 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
     # `git show` on a blobless clone is a NETWORK fetch: against a remote that
     # is gone it waits on the transport, and a test that waits inside a
     # PostToolUse hook is a hook cancelled at its own limit, which the caller
-    # cannot tell from a pass. Skill-invariants.sh MEASURED COSTS gives this
-    # module's whole row, whose seconds the block itself flags as stale, so a bound
-    # this far above it can only ever be reached by something that is not
-    # answering the question.
+    # cannot tell from a pass. Skill-invariants.sh MEASURED COSTS puts this
+    # whole module among the cheapest rows, a small fraction of a cold pass, so
+    # a bound on ONE git call this far above that can only ever be reached by
+    # something that is not answering the question.
     GIT_TIMEOUT = 60
 
     def _replay_a_body(self):
@@ -1230,10 +1230,8 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         Four `git` calls at most, and only a FAILING read pays for the last
         three — `show`, then `cat-file`, `rev-parse` and one `config` read to
         tell a pin the clone cannot reach from one that is simply wrong. Against
-        skill-invariants.sh MEASURED COSTS this module is one of the cheap rows —
-        but these calls are most of what that row costs now, which is why the
-        block carries a note saying its seconds predate them and declines to say
-        where the row currently sits among the six.
+        skill-invariants.sh MEASURED COSTS this module is one of the four cheap
+        rows, which is why a call is worth counting here at all.
 
         Every call carries a TIMEOUT, because `git show` here is not necessarily
         local. A blobless clone (`--filter=blob:none`) has the commit and not the
@@ -1377,8 +1375,8 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
                      "__file__": str(REPO / path)}
         exec(compile(source, f"<{sha}:{path}>", "exec"), namespace)
         # The source the verdict's INPUT pin is taken over, handed back through
-        # the namespace so the digest costs no second `git show` — this module's
-        # git calls are most of what its MEASURED COSTS row spends. Set AFTER the
+        # the namespace so the digest costs no second `git show` — a subprocess,
+        # in a module that is one of the cheap MEASURED COSTS rows. Set AFTER the
         # exec, so a name the historical module happens to define cannot be what
         # gets hashed. The decode is pinned to UTF-8 for the same digest: the
         # blob carries `§` and a locale-dependent decode would re-encode to
@@ -1959,9 +1957,9 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         Executed in-process rather than through `run.sh` deliberately: the
         launcher spelling is already pinned textually by test_preflight's
         DOCUMENTS check, and a subprocess here would add a whole interpreter
-        start to the module skill-invariants.sh MEASURED COSTS records as the
-        one of the cheap rows of the six — which is exactly what makes this the module a
-        subprocess is most expensive in, relative to what it otherwise costs.
+        start to a module skill-invariants.sh MEASURED COSTS records among its
+        cheap rows — which is exactly what makes this the module a subprocess
+        is most expensive in, relative to what it otherwise costs.
         """
         covered, pre_obbba = self._years_from_the_record()
         body = self._generator_body()
@@ -2392,8 +2390,9 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         Replay A's pinned blob, the two calls that classify a failure to read it,
         and the fixture repository that controls those — and git is the exception
         that states the rule, being required by every workflow here and by CI's
-        own checkout, where `shasum`'s presence is a platform question. What a
-        subprocess costs is recorded in skill-invariants.sh MEASURED COSTS.
+        own checkout, where `shasum`'s presence is a platform question. This
+        module is one of the cheap rows in skill-invariants.sh MEASURED COSTS,
+        which is what makes a subprocess proportionally dear in it.
         """
         flat = re.sub(r"\s+", " ", self.RECORD.read_text())
         assert RENEW_PIN in flat, (
