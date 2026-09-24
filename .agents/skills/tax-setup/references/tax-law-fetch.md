@@ -276,7 +276,11 @@ a figure from a prior year.
     surcharge is a rate on the STATE TAX, not on income. The nonresident
     earnings tax allows an EXCLUSION first, prorated by month for a part-year
     filer — omitting it OVER-states the tax — and is capped at what the
-    resident surcharge would have been.
+    resident surcharge would have been. Record `resident_surcharge_rate` from
+    line n of the IT-201-I Yonkers worksheet, `nonresident_earnings_rate` from
+    Form Y-203 line 6, and `nonresident_exclusion.table` from the TWELVE-month
+    row of Y-203's exclusion table, as `{"over", "not_over", "exclusion"}`
+    rows on line 3b with the top row's `not_over` null.
   - Leave `applies` NULL on either city block when not fetched: null and "no
     city tax" are different answers, exactly as `type` distinguishes them for
     the state.

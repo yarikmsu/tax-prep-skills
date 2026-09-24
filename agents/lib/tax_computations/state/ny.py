@@ -1311,6 +1311,340 @@ def compute_mctmt(
     return {"mctmt": round(total, 2), "lines": lines, "notes": notes}
 
 
+# IT-201-I (2025) p.17, the Yonkers worksheet, lines b through i. Each is read
+# off its OWN credit form, the one the worksheet names, and not off IT-201's
+# credit lines: line 64 carries the City's child care credit beside the
+# State's, where IT-216 line 14 is the State's alone. So these are a closed set
+# keyed by what the worksheet names, not `_NY_REFUNDABLE_CREDIT_LINES`, and the
+# child care key is named for the State's credit so the settlement's line-64
+# amount cannot pass under the same name.
+_YONKERS_WORKSHEET_CREDITS = (
+    ("empire_state_child", "b", "Form IT-213, line 9"),
+    ("real_property_tax", "c", "Form IT-214, line 20"),
+    ("state_child_and_dependent_care", "d", "Form IT-216, line 14"),
+    ("earned_income", "e",
+     "Form IT-215, line 16, or line 17 where IT-215 says to use it"),
+    ("noncustodial_parent_eic", "f",
+     "Form IT-209, line 32, or the larger of lines 32 and 42"),
+    ("college_tuition", "g", "Form IT-272, line 5 or 7"),
+    ("nyc_school_tax", "h", "Form IT-201, lines 69 and 69a together"),
+    ("other_tax_credits", "i", "Form IT-201-ATT, line 13"),
+)
+
+
+def _yonkers_rate(yonkers: "dict | None", key: str) -> float:
+    rate = (yonkers or {}).get(key)
+    if rate is None:
+        raise ValueError(
+            f"state.yonkers_tax.{key} is not fetched, and a Yonkers tax must "
+            "not default to zero. Re-run /tax-setup.")
+    rate = _amount(rate, f"state.yonkers_tax.{key}")
+    if not 0 < rate < 1:
+        raise ValueError(
+            f"state.yonkers_tax.{key} must be a decimal rate between 0 and 1, "
+            f"got {rate!r}")
+    return rate
+
+
+def _yonkers_worksheet(line_46: float, worksheet_credits: "dict | None",
+                       star_reconciliation: "float | None",
+                       yonkers: "dict | None",
+                       college_tuition_deduction_claimed: bool) -> dict:
+    """The worksheet, lines a to o, rounded once to the dollar as line 55
+    enters it, with no residency question asked: Form Y-203 reuses it to cap a
+    NONRESIDENT's tax at what the surcharge would have been.
+
+    Line m can fall below zero when the credits exceed line 46, and a
+    surcharge on a tax is then nothing rather than a negative tax. Line k, the
+    STAR reconciliation amount, is SUBTRACTED from the credits: the worksheet
+    keeps the STAR credit it reconciles from reducing the surcharge's base.
+
+    Both inputs are REQUIRED, on the AA11 pattern: an omitted credit leaves
+    the base too high and over-states the tax, and an omitted STAR amount
+    under-states it with nothing to say so. `{}` and `0` are answers; `None`
+    is not.
+    """
+    rate = _yonkers_rate(yonkers, "resident_surcharge_rate")
+    if not isinstance(worksheet_credits, dict):
+        raise ValueError(
+            "pass worksheet_credits, every credit the Yonkers worksheet lists "
+            "that this return claims, {} when it claims none: an omitted "
+            "credit leaves the base too high and over-states the tax.")
+    if star_reconciliation is None:
+        raise ValueError(
+            "pass star_reconciliation, Form IT-119 line 3, 0 when the return "
+            "has none: the worksheet takes it back out of the credits, and "
+            "omitting it under-states the tax.")
+    credits = worksheet_credits
+    known = {name: source for name, _, source in _YONKERS_WORKSHEET_CREDITS}
+    unknown = sorted(set(credits) - set(known))
+    if unknown:
+        raise ValueError(
+            f"{unknown} are not lines of the Yonkers worksheet. Known, each "
+            "read off the form line the worksheet names: " + "; ".join(
+                f"{name} ({source})" for name, source in known.items()))
+    if college_tuition_deduction_claimed and credits.get("college_tuition"):
+        raise ValueError(
+            "worksheet line g is the college tuition CREDIT, \"if you elected "
+            "to claim\" it, and this return took the IT-196 deduction "
+            "instead. Subtracting the credit as well under-states the tax.")
+    line_a = _amount(line_46, "line_46")
+    lines = {"a_line_46": round(line_a, 2)}
+    total = 0.0
+    for name, letter, _ in _YONKERS_WORKSHEET_CREDITS:
+        value = _amount(credits.get(name, 0.0), f"worksheet line {letter}")
+        lines[f"{letter}_{name}"] = round(value, 2)
+        total += value
+    star = _amount(star_reconciliation, "star_reconciliation")
+    # Line l is j less k with no floor, so a k above j would push line m past
+    # line 46 and charge the surcharge on more than the whole State tax.
+    if star > total:
+        raise ValueError(
+            f"the STAR reconciliation amount ({star:,.2f}, line k) exceeds "
+            f"the credits on lines b to i ({total:,.2f}, line j) it is taken "
+            "back out of. Check both against the forms they come from.")
+    line_m = line_a - (total - star)
+    lines.update({"j_credits": round(total, 2), "k_star_reconciliation":
+                  round(star, 2), "m_base": round(line_m, 2), "n_rate": rate})
+    # "Did you enter an amount that is more than 0 on line 46? If No, go to
+    # line 56." With line k at most line j, line m never exceeds line 46, so
+    # a return with no State tax already owes nothing here.
+    exact = max(line_m, 0.0) * rate
+    return {"exact": exact, "line": _ny_round_half_up(exact), "lines": lines}
+
+
+def _yonkers_residency_guard(filing_status: str,
+                             yonkers_resident_spouses: "int | None",
+                             yonkers_resident_full_year: "bool | None") -> None:
+    """Line 55 is for a WHOLE-year Yonkers resident, on the AA11 pattern.
+
+    A joint return with one Yonkers resident spouse computes the surcharge as
+    if the spouses had filed SEPARATE returns (special condition Y1), which is
+    a second State tax computation this module does not do. A count of zero
+    whole-year spouses on a household with a Yonkers resident is a couple who
+    both lived there part of the year, and a part-year resident files
+    IT-360.1 onto line 57. Assuming the whole year over-states the surcharge.
+    """
+    if filing_status == "mfj":
+        if isinstance(yonkers_resident_spouses, bool) \
+                or yonkers_resident_spouses not in (0, 1, 2):
+            raise ValueError(
+                "a joint return with a Yonkers resident must say how many "
+                "spouses lived in Yonkers for the WHOLE year: pass "
+                "yonkers_resident_spouses (0, 1 or 2) from "
+                f"`flags.yonkers_resident_spouses`, got "
+                f"{yonkers_resident_spouses!r}.")
+        if yonkers_resident_spouses == 1:
+            raise ValueError(
+                "a joint return with only ONE Yonkers resident computes the "
+                "surcharge on that spouse's tax as if they had filed "
+                "separately (special condition Y1), which is not modeled. "
+                "Taxing the joint State tax over-states it.")
+        if yonkers_resident_spouses == 0:
+            raise ValueError(
+                "a joint return reached the Yonkers surcharge with NEITHER "
+                "spouse a Yonkers resident for the whole year. A part-year "
+                "Yonkers return (IT-360.1, IT-201 line 57) is not modeled.")
+        return
+    if not isinstance(yonkers_resident_full_year, bool):
+        raise ValueError(
+            "a return with yonkers_resident must say whether the taxpayer "
+            "lived in Yonkers for the WHOLE year: pass yonkers_resident_full_"
+            "year (True or False) from `flags.yonkers_resident_full_year`, "
+            f"got {yonkers_resident_full_year!r}.")
+    if not yonkers_resident_full_year:
+        raise ValueError(
+            "a Yonkers resident for only part of the year files a part-year "
+            "Yonkers return (IT-360.1, IT-201 line 57), which is not modeled; "
+            "a whole year's surcharge over-states it.")
+
+
+def compute_yonkers_resident_surcharge(
+    line_46: float,
+    filing_status: str,
+    yonkers: "dict | None",
+    worksheet_credits: "dict | None" = None,
+    star_reconciliation: "float | None" = None,
+    yonkers_resident_spouses: "int | None" = None,
+    yonkers_resident_full_year: "bool | None" = None,
+    college_tuition_deduction_claimed: bool = False,
+) -> dict:
+    """IT-201 line 55 — the Yonkers resident income tax surcharge.
+
+    A rate on the STATE TAX, not on income: the worksheet takes line 46, takes
+    away the refundable credits it lists (net of the STAR reconciliation
+    amount) and multiplies by the fetched rate, 16.75% for 2025. Nothing read
+    `state.yonkers_tax` before this, and a Yonkers resident's return carried a
+    surcharge of zero (AA12).
+
+    `worksheet_credits` and `star_reconciliation` are required; see
+    `_yonkers_worksheet`. Rounded once, to the dollar, as the form enters it.
+    """
+    filing_status = _ny_status(filing_status)
+    _yonkers_residency_guard(filing_status, yonkers_resident_spouses,
+                             yonkers_resident_full_year)
+    sheet = _yonkers_worksheet(line_46, worksheet_credits,
+                               star_reconciliation, yonkers,
+                               college_tuition_deduction_claimed)
+    line = sheet["line"]
+    notes = []
+    if sheet["lines"]["m_base"] < 0 < sheet["lines"]["a_line_46"]:
+        notes.append("The worksheet's credits exceed line 46, so the "
+                     "surcharge is zero rather than a negative tax.")
+    return {"tax": line, "tax_exact": round(sheet["exact"], 4),
+            "line_55_yonkers_resident_surcharge": line,
+            "worksheet": sheet["lines"], "notes": notes}
+
+
+def _yonkers_exclusion_rows(table) -> "list[tuple]":
+    """Form Y-203's exclusion table, the twelve-month row: a Yonkers
+    nonresident for the whole year. Omitting it OVER-states the tax.
+
+    Checked as the fetched VALUES they are (AGENTS.md section 8): the rows
+    climb from over 0, each starting where the one below ends, and only the
+    TOP row is open. An open row lower down matches every amount above it and
+    hands a $50,000 earner the largest exclusion, silently."""
+    where = "state.yonkers_tax.nonresident_exclusion.table"
+    if not table or not isinstance(table, list):
+        raise ValueError(
+            f"{where} is not fetched. Form Y-203 allows an exclusion before "
+            "the rate, and taxing without it over-states the tax. Re-run "
+            "/tax-setup.")
+    rows: "list[tuple]" = []
+    edge: "float | None" = 0.0
+    for i, row in enumerate(table):
+        at = f"{where}[{i}]"
+        if not isinstance(row, dict):
+            raise ValueError(
+                f"{at} must be a row of over, not_over and exclusion, got "
+                f"{type(row).__name__}")
+        over = _amount(row.get("over"), f"{at}.over")
+        upper = row.get("not_over")
+        if (upper is None) != (i == len(table) - 1):
+            raise ValueError(
+                f"{at}: only the TOP row is open (not_over null); an open row "
+                "lower down matches every amount above it.")
+        if upper is not None:
+            upper = _amount(upper, f"{at}.not_over")
+        if over != edge or (upper is not None and upper <= over):
+            raise ValueError(
+                f"{at} runs from {over} to {upper}; the rows must climb from "
+                "over 0, each starting where the one below ends.")
+        rows.append((upper, _amount(row.get("exclusion"), f"{at}.exclusion")))
+        edge = upper
+    return rows
+
+
+def _y203_form(earner: dict, rate: float, rows: "list[tuple]") -> dict:
+    """Form Y-203, lines 1 to 6 before the limitation.
+
+    In WHOLE DOLLARS, as the form prints every line, and the exclusion is read
+    off line 3b AS ENTERED: $10,000.40 of wages is 10,000, inside the $3,000
+    row, where the cents would carry it into the $2,000 one."""
+    if not isinstance(earner, dict):
+        raise ValueError(
+            "pass one Form Y-203 as a dict of wages, self_employment and "
+            f"startup_ny_wages, got {type(earner).__name__}")
+    unknown = sorted(set(earner) - {"wages", "self_employment",
+                                    "startup_ny_wages"})
+    if unknown:
+        raise ValueError(
+            f"{unknown} are not Form Y-203 inputs. Pass wages and "
+            "self_employment already ALLOCATED to Yonkers (Schedules A and C) "
+            "and startup_ny_wages.")
+    wages = _ny_round_half_up(_amount(earner.get("wages", 0.0),
+                                      "Y-203 line 1 wages"))
+    # "If a loss, enter 0 on line 2."
+    self_employed = _ny_round_half_up(max(_amount(
+        earner.get("self_employment", 0.0), "Y-203 line 2",
+        allow_negative=True), 0.0))
+    startup = _ny_round_half_up(_amount(earner.get("startup_ny_wages", 0.0),
+                                        "Y-203 line 3a"))
+    if startup > wages:
+        raise ValueError(
+            f"START-UP NY wages of {startup:,} exceed the Yonkers wages of "
+            f"{wages:,} they are part of.")
+    line_3 = wages + self_employed
+    line_3b = line_3 - startup
+    # Rows climb from over 0 with an open top, so the first whose top reaches
+    # line 3b is its row.
+    exclusion = 0.0 if line_3b <= 0 else next(
+        excl for upper, excl in rows if upper is None or line_3b <= upper)
+    line_5 = max(line_3b - exclusion, 0.0)
+    return {"line_1": wages, "line_2": self_employed, "line_3": line_3,
+            "line_3a": startup, "line_3b": line_3b,
+            "line_4": round(exclusion, 2), "line_5": round(line_5, 2),
+            "line_6_before_limit": _ny_round_half_up(line_5 * rate)}
+
+
+def compute_yonkers_nonresident_earnings_tax(
+    earner: dict,
+    filing_status: str,
+    yonkers: "dict | None",
+    line_46: float,
+    worksheet_credits: "dict | None" = None,
+    star_reconciliation: "float | None" = None,
+    yonkers_resident: "bool | None" = None,
+    college_tuition_deduction_claimed: bool = False,
+) -> dict:
+    """IT-201 line 56 — the Yonkers nonresident earnings tax, Form Y-203.
+
+    A rate on wages and self-employment earnings ALLOCATED to Yonkers, after
+    an exclusion that depends on their size.
+
+    **Limited to the resident surcharge**: "As a Yonkers nonresident, you do
+    not have to pay a higher tax than you would if you were a Yonkers
+    resident ... Enter the Yonkers resident income tax surcharge on line 6 of
+    Form Y-203." The limit is the line-55 worksheet on this return, which is
+    why it takes the worksheet's inputs, and line 6 carries the LIMITED tax.
+
+    **Not on a joint return.** Y-203-I figures the limit "as a Yonkers
+    resident" under the IT-201 instructions, and those figure a joint return
+    with one Yonkers spouse "as if you had filed separate federal returns"
+    (special condition Y1). Capping at the joint surcharge can over-state a
+    lower-earning spouse's tax under that reading, and the separate
+    computation is not modeled, so a joint return refuses.
+
+    Only for a household nobody in which lived in Yonkers: a part-year
+    resident prorates the exclusion by month and files IT-360.1 as well.
+    """
+    filing_status = _ny_status(filing_status)
+    if not isinstance(yonkers_resident, bool):
+        raise ValueError(
+            "pass yonkers_resident from `flags.yonkers_resident`: whether "
+            "anyone on this return lived in Yonkers decides whether Form "
+            f"Y-203 applies at all, got {yonkers_resident!r}.")
+    if yonkers_resident:
+        raise ValueError(
+            "this return has a Yonkers resident AND Yonkers nonresident "
+            "earnings: a part-year resident, or a joint return with one "
+            "resident spouse (special condition Y1). Neither is modeled.")
+    if filing_status == "mfj":
+        raise ValueError(
+            "Form Y-203 on a joint return is not modeled: its limitation can "
+            "be read as each spouse's surcharge figured as if they had filed "
+            "separately (special condition Y1), which is not computed, and "
+            "the joint surcharge can over-state it. Name it on "
+            "meta.limitations.")
+    rate = _yonkers_rate(yonkers, "nonresident_earnings_rate")
+    rows = _yonkers_exclusion_rows(
+        ((yonkers or {}).get("nonresident_exclusion") or {}).get("table"))
+    form = _y203_form(earner, rate, rows)
+    limit = _yonkers_worksheet(line_46, worksheet_credits,
+                               star_reconciliation, yonkers,
+                               college_tuition_deduction_claimed)["line"]
+    form["line_6"] = min(form["line_6_before_limit"], limit)
+    notes = []
+    if form["line_6"] < form["line_6_before_limit"]:
+        notes.append(
+            f"Form Y-203's tax of {form['line_6_before_limit']:,} is limited "
+            f"to the resident surcharge of {limit:,}, which goes on line 6; "
+            "submit the calculation with the form as a separate schedule.")
+    return {"tax": form["line_6"],
+            "line_56_yonkers_nonresident_earnings_tax": form["line_6"],
+            "form": form, "resident_limit": limit, "notes": notes}
+
+
 def compute_city_and_yonkers_total(
     nyc_resident_tax: float = 0.0,
     nyc_household_credit: float = 0.0,

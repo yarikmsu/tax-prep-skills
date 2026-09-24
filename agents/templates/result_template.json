@@ -551,7 +551,7 @@
     },
     "yonkers": {
       "_include_if": "a Yonkers resident, or nonresident with Yonkers earnings",
-      "_note": "Yonkers has the same parity with the State residency test that the City has. Lines 50 and 57 are the PART-YEAR city and Yonkers lines and belong to IT-360.1 — a named non-goal for this full-year-resident module.",
+      "_note": "Yonkers has the same parity with the State residency test that the City has. Line 55 comes from compute_yonkers_resident_surcharge (the IT-201-I worksheet on line 46, for a WHOLE-year Yonkers resident), line 56 from compute_yonkers_nonresident_earnings_tax (Form Y-203 on a return that is not joint, line 6 limited to the resident surcharge). Lines 50 and 57 are the PART-YEAR city and Yonkers lines and belong to IT-360.1 — a named non-goal for this full-year-resident module.",
       "line_55_yonkers_resident_surcharge": 0,
       "line_56_yonkers_nonresident_earnings_tax": 0
     },

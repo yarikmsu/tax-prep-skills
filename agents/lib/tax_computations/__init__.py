@@ -3266,5 +3266,7 @@ from agents.lib.tax_computations.state.ny import (  # noqa: E402,F401
     compute_ny_tax,
     compute_nyc_taxable_income,
     compute_nyc_resident_tax,
+    compute_yonkers_nonresident_earnings_tax,
+    compute_yonkers_resident_surcharge,
     _ny_round_half_up,
 )

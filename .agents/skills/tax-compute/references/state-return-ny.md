@@ -1,7 +1,7 @@
 # tax-compute Step 10 — New York (Form IT-201)
 
-New York State and New York City in depth for a **full-year resident**, and
-Yonkers in part — see what this module does NOT compute. Read this instead of
+New York State, New York City and Yonkers in depth for a **full-year
+resident** — see what this module does NOT compute. Read this instead of
 `references/state-return.md`'s California branch when `tax_law.state.code ==
 "NY"`; the cache-vs-taxpayer cross-check at the top of that file runs FIRST and
 is not repeated here.
@@ -229,9 +229,46 @@ for someone who earns in Yonkers while living elsewhere. Both are
 required-present in the capability gate for the same reason `nyc_resident` is:
 absence reads as False and drops a real liability.
 
-**Neither Yonkers amount is computed yet**: no engine function produces line 55
-or 56, and the fetched `state.yonkers_tax` block is read by nothing. Leave both
-out and name the gap on `meta.limitations`.
+**Line 55, the resident surcharge** — when `flags.yonkers_resident`, run
+`compute_yonkers_resident_surcharge(line_46, filing_status,
+state.yonkers_tax, worksheet_credits, star_reconciliation,
+yonkers_resident_spouses, yonkers_resident_full_year,
+college_tuition_deduction_claimed)` and pass its `tax` to
+`compute_city_and_yonkers_total` as `yonkers_resident_surcharge`. `line_46` is
+`compute_ny_state_tax_total`'s `line_46_total_state_tax`. It is the
+IT-201-I worksheet: line 46 less the refundable credits it lists, net of the
+STAR reconciliation amount (Form IT-119 line 3), times the fetched rate.
+`worksheet_credits` is keyed by the worksheet's own lines — `empire_state_child`
+(IT-213 line 9), `real_property_tax` (IT-214 line 20),
+`state_child_and_dependent_care` (IT-216 line 14, the State's credit alone,
+NOT the settlement's line-64 `child_and_dependent_care`), `earned_income`
+(IT-215 line 16, or 17 where IT-215 says so), `noncustodial_parent_eic`
+(IT-209), `college_tuition` (IT-272 line 5 or 7, only where the credit was
+elected), `nyc_school_tax` (lines 69 and 69a together) and `other_tax_credits`
+(IT-201-ATT line 13). **Pass every one the return claims**: an omitted credit
+leaves the base too high and over-states the surcharge. `worksheet_credits`
+and `star_reconciliation` are both REQUIRED, `{}` and `0` where the return has
+none, the STAR amount coming from `answers.md`; pass the same
+`college_tuition_deduction_claimed` the settlement takes. A joint return passes
+`flags.yonkers_resident_spouses`, every other one
+`flags.yonkers_resident_full_year`; one resident spouse (special condition
+Y1), a part-year resident or an unanswered question REFUSES.
+
+**Line 56, the nonresident earnings tax** — when
+`flags.yonkers_nonresident_earnings`, run
+`compute_yonkers_nonresident_earnings_tax(earner, filing_status,
+state.yonkers_tax, line_46, worksheet_credits, star_reconciliation,
+yonkers_resident=flags.yonkers_resident, college_tuition_deduction_claimed)`
+and pass its `tax` as `yonkers_nonresident_earnings_tax`. `earner` is the one
+Form Y-203 — `{"wages", "self_employment", "startup_ny_wages"}`, each already
+allocated to Yonkers — from `answers.md`. The form is in whole dollars, the
+exclusion comes off the fetched table, and line 6 carries the tax LIMITED to
+the resident surcharge this return would owe, which is why it takes the
+worksheet's inputs too; where the limit applies, submit the calculation with
+Form Y-203 as a separate schedule. A household with a Yonkers resident REFUSES
+here (a part-year resident or special condition Y1), and so does a JOINT
+return: its limit can be read as each spouse's surcharge figured as if they
+had filed separately, which is not computed.
 
 Then `compute_city_and_yonkers_total(...)`. **Line 58 adds the MCTMT and both
 Yonkers taxes AFTER the two city credit caps** — the line-45 pattern a second
@@ -308,8 +345,10 @@ a different position you have to resolve.
 Each of these goes on `meta.limitations` verbatim — a named gap, never silence:
 
 - **Part-year and nonresident returns (Form IT-203).**
-- **The Yonkers resident surcharge and nonresident earnings tax, lines 55 and
-  56.** Not computed.
+- **Special condition Y1** — a joint return with one Yonkers resident spouse
+  and one nonresident. Refused.
+- **Form Y-203 on a joint return** — its limit can be read as each spouse's
+  surcharge figured as if they had filed separately. Refused.
 - **Part-year city and Yonkers lines 50 and 57**, which belong to IT-360.1.
 - **City-level day counts** — `residency.days_present_by_state` is keyed by
   STATE, so City residency stays the taxpayer's assertion.

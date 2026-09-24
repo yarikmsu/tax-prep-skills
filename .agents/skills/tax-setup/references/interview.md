@@ -172,6 +172,27 @@ interview never captures is invisible to every downstream check.
   - "Did you EARN wages or self-employment income in Yonkers while living
     somewhere else?" → sets `yonkers_nonresident_earnings` (the nonresident
     earnings tax, line 56)
+  - **If they lived in Yonkers, on a JOINT return** ask how many of you lived
+    in Yonkers for the WHOLE year → sets `yonkers_resident_spouses` (0, 1 or
+    2). With exactly one, the surcharge is figured on that spouse's tax as if
+    you had filed separately (special condition Y1), which this engine does
+    not do, and `/tax-compute` REFUSES; zero refuses too.
+  - **On every other return**, ask whether they lived in Yonkers for the
+    WHOLE year → sets `yonkers_resident_full_year` (true or false). A
+    part-year Yonkers resident files IT-360.1 (line 57), which is not modeled,
+    so false or unanswered refuses. Tell the taxpayer now.
+  - **If either Yonkers answer is yes**, ask whether the return reconciles a
+    STAR credit on Form IT-119, and record its line 3 amount in `answers.md`,
+    0 when there is none. The Yonkers worksheet takes it back out of the
+    credits, and `/tax-compute` refuses without an answer.
+  - **If they earned in Yonkers while living elsewhere**, record in
+    `answers.md` the wages and self-employment earnings earned in Yonkers
+    (Form Y-203 Schedules A and C allocate a job done partly outside it) and
+    any START-UP NY wages. On a JOINT return Form Y-203 is not modeled and
+    `/tax-compute` REFUSES, because its limit can be read as each spouse's
+    surcharge figured as if they had filed separately; tell the taxpayer now.
+    Someone who lived in Yonkers for part of the year and earned there while
+    living elsewhere is a part-year resident, which refuses too.
 
   Both are required-present for the same reason `nyc_resident` is: absence
   reads as False and drops a real liability.

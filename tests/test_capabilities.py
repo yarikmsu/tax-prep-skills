@@ -1305,7 +1305,9 @@ class TestTheNewYorkModuleIsDone:
         note = C.evaluate(_profile(state="NY")).state_note
         for claim in ("IT-201", "recapture", "IT-225", "IT-196", "§615",
                       "household credit", "New York City taxable income",
-                      "New York City resident tax on line 47a", "MCTMT"):
+                      "New York City resident tax on line 47a",
+                      "Yonkers resident surcharge and nonresident earnings "
+                      "tax (lines 55 and 56)", "MCTMT"):
             assert claim in note, claim
 
     def test_the_note_names_what_is_NOT_computed(self):
@@ -1316,19 +1318,21 @@ class TestTheNewYorkModuleIsDone:
 
         The note once claimed "lines 47-58 for New York City, Yonkers and the
         MCTMT", and this test pinned that claim while nothing computed the City
-        resident tax or the Yonkers lines. AA13 computes the City tax; the
-        Yonkers lines 55 and 56 stay named as not computed until AA12."""
+        resident tax or the Yonkers lines. AA13 computes the City tax and AA12
+        the Yonkers lines, so no IT-201 tax line is named as not computed, and
+        the compute step must call both Yonkers functions rather than tell the
+        agent to leave the lines out."""
         note = C.evaluate(_profile(state="NY")).state_note
         assert "IT-213" in note and "not computed" in note
         assert "IT-203" in note and "not modeled" in note
         assert "ASKED" in note and "zero" in note
-        assert "Yonkers lines 55 and 56 are NOT computed" in note
-        assert note.count("NOT computed") == 1, (
-            "only the Yonkers lines are named as not computed; a second "
-            "\"NOT computed\" means the City tax went back on the list")
+        assert "NOT computed" not in note, (
+            "a tax line is back on the not-computed list")
         ny_ref = (self.REPO / ".agents/skills/tax-compute/references"
                   / "state-return-ny.md").read_text()
-        assert "Neither Yonkers amount is computed yet" in ny_ref
+        assert "compute_yonkers_resident_surcharge(" in ny_ref
+        assert "compute_yonkers_nonresident_earnings_tax(" in ny_ref
+        assert "Neither Yonkers amount is computed yet" not in ny_ref
 
     def test_every_form_the_note_names_as_an_input_really_is_one(self):
         """A depth note is only worth having if its list of inputs matches the

@@ -11,8 +11,9 @@ down.
   New York City resident tax with the metropolitan commuter transportation
   mobility tax (lines 47-58). Line 47a reads the City's own tax table below its
   fetched ceiling and the City rate schedule above it (AA13, which found that
-  nothing had computed it before). The Yonkers lines 55 and 56 are summed from
-  arguments that default to zero, not computed (AA12). The `nyc_resident`
+  nothing had computed it before). Line 55 runs the Yonkers worksheet on line
+  46 for a whole-year Yonkers resident, and line 56 runs Form Y-203, limited
+  to that surcharge, on a return that is not joint (AA12). The `nyc_resident`
   capability rule was deleted when the City block landed and the flag became its
   switch, so a City taxpayer sees no gate. The scope is a full-year resident of
   New York alone: a move between states BLOCKS (`part_year_residency`), so does

@@ -29,6 +29,8 @@ from agents.lib.tax_computations import (
     compute_ny_settlement,
     compute_nyc_taxable_income,
     compute_nyc_resident_tax,
+    compute_yonkers_nonresident_earnings_tax,
+    compute_yonkers_resident_surcharge,
     compute_mctmt,
     compute_city_and_yonkers_total,
     compute_ny_ptet_owner,
@@ -6524,6 +6526,243 @@ def test_nyc_resident_tax_refuses_a_non_finite_or_negative_income(bad):
         _nyc(bad, "single")
 
 
+# --- AA12: the Yonkers taxes, IT-201 lines 55 and 56 -------------------------
+#
+# IT-201-I (2025) p.17 prints the resident surcharge rate on the worksheet
+# itself (line n, 16.75%), and Form Y-203 (2025) prints the nonresident rate on
+# line 6 (0.5%) and the exclusion table on its front, whose twelve-month row is
+# below. The engine fetches all three; these are the published figures.
+_YONKERS_2025 = {
+    "resident_surcharge_rate": 0.1675,
+    "nonresident_earnings_rate": 0.005,
+    "nonresident_exclusion": {"table": [
+        {"over": 0, "not_over": 10000, "exclusion": 3000},
+        {"over": 10000, "not_over": 20000, "exclusion": 2000},
+        {"over": 20000, "not_over": 30000, "exclusion": 1000},
+        {"over": 30000, "not_over": None, "exclusion": 0},
+    ]},
+}
+
+
+def _yonkers_res(line_46, status="single", **over):
+    kwargs = {"yonkers": _YONKERS_2025, "yonkers_resident_full_year": True,
+              "worksheet_credits": {}, "star_reconciliation": 0}
+    kwargs.update(over)
+    return compute_yonkers_resident_surcharge(line_46, status, **kwargs)
+
+
+def _y203(earner, status="single", line_46=10000.0, **over):
+    kwargs = {"yonkers": _YONKERS_2025, "line_46": line_46,
+              "yonkers_resident": False, "worksheet_credits": {},
+              "star_reconciliation": 0}
+    kwargs.update(over)
+    return compute_yonkers_nonresident_earnings_tax(earner, status, **kwargs)
+
+
+def test_yonkers_surcharge_runs_the_worksheet():
+    """The Yonkers worksheet, IT-201-I (2025) p.17:
+      a  line 46                                   5,000
+      b  Empire State child credit (IT-213 line 9)   330
+      j  lines b through i                           330
+      k  STAR reconciliation                           0
+      m  a - (j - k)                               4,670
+      o  m x 16.75%                              782.225  -> $782
+    AA12: nothing read `state.yonkers_tax` before this, and a Yonkers
+    resident's return carried a surcharge of zero."""
+    out = _yonkers_res(5000, worksheet_credits={"empire_state_child": 330})
+    assert out["tax_exact"] == round(4670 * 0.1675, 4)
+    assert out["tax"] == 782
+    assert out["line_55_yonkers_resident_surcharge"] == 782
+    assert out["worksheet"]["m_base"] == 4670
+    # 600 x 16.75% = 100.50: half UP, where half-to-even gives 100.
+    assert _yonkers_res(600)["tax"] == 101
+
+
+def test_yonkers_surcharge_keeps_the_star_credit_out_of_the_base():
+    """Line k is SUBTRACTED from the credits: of $500 of credits, $200 is the
+    STAR credit IT-119 reconciles, so only $300 comes off line 46.
+    5,000 - (500 - 200) = 4,700 x 16.75% = 787.25 -> $787."""
+    out = _yonkers_res(5000, worksheet_credits={"other_tax_credits": 500},
+                       star_reconciliation=200)
+    assert out["worksheet"]["m_base"] == 4700
+    assert out["tax"] == 787
+
+
+def test_yonkers_surcharge_refuses_a_star_amount_above_the_credits():
+    """Line l is j - k with no floor, so a STAR amount above the credits it
+    comes out of pushes line m past line 46: 5,000 - (0 - 300) = 5,300, a
+    surcharge on more than the whole State tax. Held to j, line m never
+    exceeds line 46, and a return with no State tax owes no surcharge ("If
+    No, go to line 56")."""
+    with pytest.raises(ValueError, match="STAR reconciliation amount"):
+        _yonkers_res(5000, star_reconciliation=300)
+    assert _yonkers_res(0, worksheet_credits={"other_tax_credits": 100},
+                        star_reconciliation=100)["tax"] == 0
+
+
+def test_yonkers_surcharge_is_zero_not_negative_when_credits_exceed_the_tax():
+    out = _yonkers_res(1000, worksheet_credits={"earned_income": 1500})
+    assert out["tax"] == 0
+    assert "zero rather than a negative tax" in out["notes"][0]
+
+
+def test_yonkers_worksheet_requires_its_inputs():
+    """The AA11 pattern: an omitted credit leaves the base too high and
+    over-states the tax ($5,000 with a $1,500 IT-215 credit is $586, not
+    $838), and an omitted STAR amount under-states it, so neither may
+    default. Line g is the tuition CREDIT "if you elected to claim" it, and
+    the child care key names the State's IT-216 line 14 alone, so the
+    settlement's line-64 key is not one of the worksheet's."""
+    assert _yonkers_res(5000, worksheet_credits={"earned_income": 1500}
+                        )["tax"] == 586   # 3,500 x 16.75% = 586.25
+    with pytest.raises(ValueError, match="pass worksheet_credits"):
+        _yonkers_res(5000, worksheet_credits=None)
+    with pytest.raises(ValueError, match="pass star_reconciliation"):
+        _yonkers_res(5000, star_reconciliation=None)
+    with pytest.raises(ValueError, match="pass worksheet_credits"):
+        _y203({"wages": 20000}, worksheet_credits=None)
+    with pytest.raises(ValueError, match="elected"):
+        _yonkers_res(5000, worksheet_credits={"college_tuition": 400},
+                     college_tuition_deduction_claimed=True)
+    with pytest.raises(ValueError, match="not lines of the Yonkers worksheet"):
+        _yonkers_res(5000, worksheet_credits={"child_and_dependent_care": 1})
+    assert _yonkers_res(5000, worksheet_credits={
+        "state_child_and_dependent_care": 1000})["tax"] == 670  # 4,000 x .1675
+
+
+def test_yonkers_surcharge_refuses_a_part_year_resident():
+    """A part-year Yonkers resident files IT-360.1 onto line 57; a whole
+    year's surcharge over-states it (the AA11 pattern)."""
+    with pytest.raises(ValueError, match="IT-360.1"):
+        _yonkers_res(5000, yonkers_resident_full_year=False)
+    with pytest.raises(ValueError, match="WHOLE year"):
+        _yonkers_res(5000, yonkers_resident_full_year=None)
+    with pytest.raises(ValueError, match="WHOLE year"):
+        _yonkers_res(5000, yonkers_resident_full_year="yes")
+
+
+def test_yonkers_surcharge_refuses_a_joint_return_with_one_resident():
+    """Special condition Y1: the surcharge is on the resident spouse's tax as
+    if the couple had filed separately. A joint count of zero is a couple who
+    both lived in Yonkers part of the year."""
+    with pytest.raises(ValueError, match="Y1"):
+        _yonkers_res(5000, "mfj", yonkers_resident_spouses=1)
+    with pytest.raises(ValueError, match="IT-360.1"):
+        _yonkers_res(5000, "mfj", yonkers_resident_spouses=0)
+    for bad in (None, True, 3, "2"):
+        with pytest.raises(ValueError, match="yonkers_resident_spouses"):
+            _yonkers_res(5000, "mfj", yonkers_resident_spouses=bad)
+    # A joint return answers the spouse count, never the whole-year question.
+    assert _yonkers_res(5000, "mfj", yonkers_resident_spouses=2,
+                        yonkers_resident_full_year=None,
+                        )["tax"] == 838   # 5,000 x 16.75% = 837.50
+
+
+def test_yonkers_surcharge_refuses_an_unfetched_rate_and_unknown_credits():
+    with pytest.raises(ValueError, match="resident_surcharge_rate"):
+        _yonkers_res(5000, yonkers={})
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        _yonkers_res(5000, yonkers={"resident_surcharge_rate": 16.75})
+    with pytest.raises(ValueError, match="not lines of the Yonkers worksheet"):
+        _yonkers_res(5000, worksheet_credits={"household_credit": 75})
+
+
+@pytest.mark.parametrize("wages, exclusion, tax", [
+    (10000, 3000, 35),      # 7,000 x 0.5%
+    (10001, 2000, 40),      # 8,001 x 0.5% = 40.005
+    (20000, 2000, 90),      # 18,000 x 0.5%
+    (30000, 1000, 145),     # 29,000 x 0.5%
+    (30001, 0, 150),        # 30,001 x 0.5% = 150.005
+    (12100, 2000, 51),      # 10,100 x 0.5% = 50.50, half UP, not half-even
+    # WHOLE DOLLARS, the band read off line 3b as entered: 10,000.40 is
+    # entered as 10,000 and keeps the $3,000 row; 10,000.50 is 10,001.
+    (10000.40, 3000, 35),
+    (10000.50, 2000, 40),
+])
+def test_y203_applies_the_exclusion_by_band(wages, exclusion, tax):
+    """Form Y-203 (2025): line 4 is the twelve-month row of the exclusion
+    table, read on line 3b; omitting it over-states the tax."""
+    form = _y203({"wages": wages})["form"]
+    assert form["line_4"] == exclusion
+    assert form["line_6"] == tax
+
+
+def test_y203_enters_a_self_employment_loss_as_zero_and_removes_startup_wages():
+    """"If a loss, enter 0 on line 2", and START-UP NY wages come out on line
+    3a: 18,000 - 4,000 = 14,000; less 2,000 = 12,000 x 0.5% = $60."""
+    form = _y203({"wages": 18000, "self_employment": -5000,
+                  "startup_ny_wages": 4000})["form"]
+    assert form["line_2"] == 0
+    assert form["line_3"] == 18000
+    assert form["line_3b"] == 14000
+    assert form["line_6"] == 60
+    with pytest.raises(ValueError, match="START-UP NY"):
+        _y203({"wages": 1000, "startup_ny_wages": 2000})
+
+
+def test_y203_line_6_carries_the_limited_tax():
+    """"As a Yonkers nonresident, you do not have to pay a higher tax than you
+    would if you were a Yonkers resident ... Enter the Yonkers resident income
+    tax surcharge on line 6 of Form Y-203." Line 46 of $500 makes that
+    surcharge $83.75 -> $84, below the $300 the form computes on $60,000."""
+    out = _y203({"wages": 60000}, line_46=500)
+    assert out["form"]["line_6_before_limit"] == 300
+    assert out["form"]["line_6"] == 84
+    assert out["resident_limit"] == 84
+    assert out["tax"] == out["line_56_yonkers_nonresident_earnings_tax"] == 84
+    assert "separate schedule" in out["notes"][0]
+
+
+def test_y203_refuses_a_joint_return():
+    """Y-203-I figures the limit "as a Yonkers resident" under the IT-201
+    instructions, which figure a couple with one Yonkers spouse "as if you had
+    filed separate federal returns" (special condition Y1). Under that reading
+    a $10,000 spouse of a higher earner is limited well below the $35 the
+    joint surcharge allows, and the separate computation is not modeled."""
+    with pytest.raises(ValueError, match="joint return is not modeled"):
+        _y203({"wages": 10000}, "mfj")
+    assert _y203({"wages": 10000}, "mfs")["tax"] == 35
+
+
+def test_y203_checks_the_fetched_exclusion_table():
+    """AGENTS.md section 8: a fetched table is checked as VALUES. An open row
+    below the top matches everything above it and gives $50,000 of wages the
+    $3,000 exclusion; a string bound would raise a TypeError, not a refusal."""
+    rows = _YONKERS_2025["nonresident_exclusion"]["table"]
+    bad_tables = [
+        ([dict(rows[0], not_over=None), rows[3]], "only the TOP row is open"),
+        (rows[:3], "only the TOP row is open"),
+        ([rows[0], rows[2], rows[3]], "each starting where the one below ends"),
+        ([dict(rows[0], not_over="10000")] + rows[1:], r"table\[0\]\.not_over"),
+        ([dict(rows[0], over=float("nan"))] + rows[1:], r"table\[0\]\.over"),
+        ([rows[0], 5, rows[2], rows[3]], r"table\[1\] must be a row"),
+    ]
+    for table, refusal in bad_tables:
+        law = dict(_YONKERS_2025, nonresident_exclusion={"table": table})
+        with pytest.raises(ValueError, match=refusal):
+            _y203({"wages": 50000}, yonkers=law)
+
+
+def test_y203_refuses_what_it_does_not_model():
+    """A Yonkers resident with Yonkers nonresident earnings is a part-year
+    resident or a split joint household (Y1); both are refused, as is an
+    unanswered flag, a list of forms, and unfetched law."""
+    with pytest.raises(ValueError, match="Neither is modeled"):
+        _y203({"wages": 20000}, yonkers_resident=True)
+    with pytest.raises(ValueError, match="flags.yonkers_resident"):
+        _y203({"wages": 20000}, yonkers_resident=None)
+    with pytest.raises(ValueError, match="one Form Y-203"):
+        _y203([{"wages": 1}])
+    with pytest.raises(ValueError, match="not Form Y-203 inputs"):
+        _y203({"salary": 20000})
+    with pytest.raises(ValueError, match="nonresident_exclusion"):
+        _y203({"wages": 20000}, yonkers={
+            "resident_surcharge_rate": 0.1675,
+            "nonresident_earnings_rate": 0.005})
+    with pytest.raises(ValueError, match="nonresident_earnings_rate"):
+        _y203({"wages": 20000}, yonkers={"resident_surcharge_rate": 0.1675})
+
+
 def test_nyc_taxable_income_is_the_states_in_the_ordinary_case():
     """"If No, enter the line 38 amount on line 47." The worksheet exists for
     one narrow case and is not the general rule."""
@@ -7290,6 +7529,11 @@ class TestWhatTheReviewPassFound:
         assert "nyc_resident_full_year" in template["flags"]
         assert template["flags"]["nyc_resident_full_year"] is None
         assert "nyc_resident_full_year" in setup
+        # AA12's two, for the Yonkers surcharge, for the same two reasons.
+        for field in ("yonkers_resident_spouses", "yonkers_resident_full_year"):
+            assert field in template["flags"], field
+            assert template["flags"][field] is None, field
+            assert field in setup, field
 
 
 class TestEveryStateEntryPointValidatesItsFilingStatus:
@@ -7509,6 +7753,8 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ny.py::compute_ny_household_credit": "direct",
         "tax_computations/state/ny.py::compute_nyc_taxable_income": "direct",
         "tax_computations/state/ny.py::compute_nyc_resident_tax": "direct",
+        "tax_computations/state/ny.py::compute_yonkers_resident_surcharge": "direct",
+        "tax_computations/state/ny.py::compute_yonkers_nonresident_earnings_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_required_annual_payment": "direct",
         "tax_computations/state/ny.py::compute_ny_itemized": "direct",
         "withholding.py::build_ny_true_up": "direct",

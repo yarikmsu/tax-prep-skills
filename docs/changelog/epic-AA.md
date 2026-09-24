@@ -528,3 +528,104 @@ rounding turns seven new tests red.
 The Yonkers lines are AA12. The City school tax credit's rate-reduction amount
 (line 69a) stays a refundable-credit input like the others, from the fetched
 table. A part-year City return (IT-360.1) is refused, not modeled.
+
+---
+
+## AA12 — the Yonkers taxes, for a whole-year resident or nonresident
+
+### What was wrong
+
+Nothing computed IT-201 line 55 or 56. `state.yonkers_tax` fetched the resident
+surcharge rate, the nonresident earnings rate and its exclusion, and nothing
+read them; `compute_city_and_yonkers_total` took both Yonkers amounts as
+arguments defaulting to zero. A Yonkers resident's return carried no
+surcharge, and one who worked in Yonkers while living elsewhere in New York
+carried no earnings tax. AA7 named the gap on the capability note, which made
+it an under-statement with a banner rather than a silent one; the amounts were
+still wrong.
+
+### What shipped
+
+- `compute_yonkers_resident_surcharge` computes line 55 with the IT-201-I
+  Yonkers worksheet: line 46, less the refundable credits the worksheet lists,
+  net of the STAR reconciliation amount, times the fetched rate. The credits
+  are named by the form line the worksheet reads them from, not by IT-201's
+  credit lines, because line 64 carries the City's child care credit beside
+  the State's and the worksheet takes the State's alone. A return with no
+  State tax owes no surcharge, and credits above the tax give zero rather
+  than a negative tax. The credits and the STAR amount are both required.
+- `compute_yonkers_nonresident_earnings_tax` computes line 56 with Form Y-203,
+  in whole dollars as the form prints it: Yonkers wages and self-employment
+  earnings (a loss enters as zero), less START-UP NY wages, less the exclusion
+  from the fetched twelve-month row of Y-203's table, times the fetched rate.
+  Line 6 carries that tax limited to the surcharge the return would owe as a
+  Yonkers resident, which is why the function takes the worksheet's inputs
+  too. A joint return refuses; see below.
+- The AA11 guard, for Yonkers: `yonkers_resident_spouses` on a joint return
+  and `yonkers_resident_full_year` on every other one, both asked by the
+  interview. One resident spouse (special condition Y1, computed as if the
+  couple had filed separately), zero whole-year spouses, a part-year resident
+  and an unanswered question all refuse, and so does line 56 for a household
+  with a Yonkers resident in it, which is one of those two cases.
+- The fetch step records the three figures and the table's row shape; the
+  compute step wires both lines into line 58; the README, the capability note
+  and the playbook say the Yonkers taxes are computed.
+- AA7, AA13 and AA11 move to the shipped index here, with the PRs that
+  shipped them, rather than one bookkeeping PR each.
+
+### Verified against the source
+
+The worksheet is IT-201-I (2025) p.17, read from the PDF: lines a through o,
+the rate printed on line n (16.75%), and the special condition Y1 instruction
+beside it. Form Y-203 (2025) and its instructions: lines 1 through 6, the
+0.5% rate on line 6, the exclusion table on the form's front (3,000, 2,000 and
+1,000 for twelve months, none over $30,000), "if a loss, enter 0 on line 2",
+one form per spouse, and the limitation to the resident surcharge. Form IT-215
+line 17 is the married-filing-separately line the worksheet's line e names.
+Worksheet line g is the tuition credit "if you elected to claim" it. Y-203-I's
+limitation ends "Enter the Yonkers resident income tax surcharge on line 6 of
+Form Y-203", and the form prints ".00" on every line.
+
+### A decision the instructions leave open
+
+Y-203's limitation says a nonresident need not pay more than they would as a
+resident, figured with "the instructions for Form IT-201", and each spouse
+files their own form. On a joint return that can be read three ways: the two
+forms share the joint surcharge as one cap, each carries it, or each spouse's
+cap is the surcharge on their own tax as if they had filed separately, which
+is how IT-201 figures a couple with one Yonkers resident (special condition
+Y1). The first build capped each form at the joint surcharge and refused only
+where the first two readings differed. The review found the third, under which
+a spouse earning $10,000 in Yonkers beside a higher earner is charged about
+$35 where the separate computation gives about $13, and that computation is
+not modeled. So Form Y-203 on a joint return refuses (owner's ruling). Single,
+head-of-household and married-filing-separately returns file one form each,
+and no reading differs for them.
+
+### What the local review caught
+
+- An omitted `worksheet_credits` read as no credits: $5,000 with a $1,500
+  earned income credit gave $838 where the worksheet gives $586. Both it and
+  the STAR amount now refuse when absent, the AA11 pattern.
+- A capped Form Y-203 still showed the uncapped tax on line 6, where the
+  instructions put the surcharge.
+- A STAR amount above the credits it comes out of pushed line m past line 46.
+  It refuses, and with it the separate line-46 condition could no longer
+  change a result.
+- The fetched exclusion rows went unchecked: an open row below the top gave
+  $50,000 of wages the $3,000 exclusion, and a string bound raised a TypeError.
+- The band was read on cents: $10,000.40 took the $2,000 row, where the form's
+  whole-dollar 10,000 takes the $3,000 one.
+- The STAR amount was never asked for; the interview now asks, and the
+  worksheet refuses without it.
+- `child_and_dependent_care` named IT-216 line 14 here and IT-201 line 64 in
+  the settlement; the worksheet's key is now `state_child_and_dependent_care`.
+- Line g took the tuition credit on a return that took the deduction.
+- The tax-law schema said the base was net of the STAR amount, the reverse of
+  line k, and the README's scope sentence did not fit line 56.
+
+### Not done
+
+Part-year Yonkers residents (IT-360.1, line 57), special condition Y1 and
+Form Y-203 on a joint return are refused, not modeled. The wage allocation (Y-203 Schedules A and C) is an input,
+as the MCTMT's zone allocation is.

@@ -727,8 +727,10 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 # A joint return can even have one resident spouse and one
                 # nonresident spouse.
                 "applies": None,
-                # A rate on the NY STATE TAX, not on income — and the base is
-                # net of credits and of the STAR reconciliation amount.
+                # A rate on the NY STATE TAX, not on income: line 46 less the
+                # refundable credits the IT-201-I worksheet lists, with the
+                # STAR reconciliation amount taken back OUT of those credits,
+                # so it does not reduce the base.
                 "resident_surcharge_rate": None,
                 # A rate on WAGES and self-employment earnings allocated to
                 # Yonkers, against which an EXCLUSION is allowed first,
@@ -738,6 +740,10 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 # fetched: the nonresident tax is also CAPPED at what the
                 # resident surcharge would have been.
                 "nonresident_earnings_rate": None,
+                # Form Y-203's exclusion table, the TWELVE-month row: rows of
+                # {"over", "not_over", "exclusion"} on Y-203 line 3b, the top
+                # row's not_over null. The engine models a whole-year
+                # nonresident only, so the prorated rows are not fetched.
                 "nonresident_exclusion": {"table": []},
             },
             # Metropolitan commuter transportation mobility tax, for a
