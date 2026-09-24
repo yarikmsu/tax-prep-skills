@@ -218,7 +218,7 @@ against its fastest, nearly two and a half times apart. The suite had doubled
 between those two readings, so per test the spread was about a fifth and the
 comparison mostly measured growth. A review caught it. The consecutive-sitting
 jump above is what the record supports, and the ruling rests on that and on
-the four failed sittings.
+the three failed sittings on record.
 
 ### The ruling (Q13, 2026-09-21)
 
@@ -314,20 +314,22 @@ the block expensive: the single sitting, the hand refresh, and the killed runs.
   turn it red; a count the block already states and a PR number stay green.
 - An eighth round found a hole in the seventh's allowlist: it trusted the
   numbers of any `collects N and runs M` sentence, while the counts test reads
-  only the portability, hooks and whole-suite ones, so a sentence nothing
-  checks could carry a timing. The allowlist now trusts only the sentences the
-  counts test reads, through patterns the two tests share. The round also
-  found the block naming the wrong sitting for its ratios (W3 slice 2, #164,
-  not the V5-era tree), its trigger-with-no-row paragraph true for only the six
-  armed test modules, and the ruling's evidence overstated a second time: the
-  record holds three failed sittings, one of them to host memory, not three to
-  memory alone. The ruling names two re-timing triggers against the block's
-  three; the budget is two constants, and the backlog item and the ruling
-  paragraph now say so, the Q13 row keeping its words. Four docstrings in this
-  suite still timed a pass ("10 seconds", "tens of seconds") and one sentence
-  in `test-invariants.md` still said the block's seconds carry run counts.
-  Mutation-checked: an unread `collects N and runs M` sentence carrying a
-  timing turns the timing test red, where the seventh round's test passed it.
+  only the portability, hooks and whole-suite ones, so a sentence nothing checks
+  could carry a timing. The allowlist now trusts only the sentences the counts
+  test reads, through patterns the two tests share. The round also found the
+  block naming the wrong sitting for its ratios (W3 slice 2, #164, not the
+  V5-era tree), its trigger-with-no-row paragraph true for only the six armed
+  test modules, and the ruling's evidence overstated a second time: the record
+  holds three failed sittings, one of them to host memory, not three to memory
+  alone. The ruling names two re-timing triggers against the block's three; the
+  budget is two constants, and the backlog item and the ruling paragraph now
+  say so, the Q13 row keeping its words (when AA3 shipped, #173 kept the
+  item's point as a note under the backlog's Rulings table). Four
+  docstrings in this suite still timed a pass ("10 seconds", "tens of seconds")
+  and one sentence in `test-invariants.md` still said the block's seconds carry
+  run counts. Mutation-checked: an unread `collects N and runs M` sentence
+  carrying a timing turns the timing test red, where the seventh round's test
+  passed it.
 
 What the rounds left is filed rather than chased: AA8 stops pinning the whole
 suite's count in the hook, AA9 has the hook time itself against its timeout,

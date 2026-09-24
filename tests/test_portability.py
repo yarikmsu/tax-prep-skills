@@ -5988,8 +5988,8 @@ class TestTheBacklogSaysWhatIsOpen:
     # PR claims are what this file is believed on and not every row is an item:
     # the rulings ship as `Q7`/`Q10`, and four hygiene PRs belong to no backlog
     # id at all. Keyed on `#` in the middle cell rather than on the left one, an
-    # id-matched sweep silently skipped six PR numbers — three of them the
-    # engine changes the Status section calls out by number.
+    # id-matched sweep silently skipped six PR numbers, four of them changes
+    # to the engine.
     ANY_ROW = re.compile(r"^\| ([^|]+?) \| ([^|]*) \| ([^|]*) \|$", re.M)
     PR = re.compile(r"#(\d+)")
 

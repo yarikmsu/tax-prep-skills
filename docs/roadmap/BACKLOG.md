@@ -63,11 +63,15 @@ was collapsed to remove.
 off, and there are zero non-owner users. Every distribution item has been
 waiting on that since 2026-08-12.
 
-**Unverified: twelve commits.** CI minutes were exhausted 2026-09-13 18:29 UTC
-and return 2026-10-01. Twelve commits merged since, four of them touching
-taxpayer numbers (#156, #158, #159, #162), all validated on one local
-interpreter. The declared floor has been 3.13 since #166 and **has never
-executed anywhere**; Windows has not run since 2026-09-13.
+**Unverified: everything from #155 on.** CI minutes were exhausted 2026-09-13
+18:29 UTC and return 2026-10-01. Every merge since was validated on one local
+interpreter. A merge that can change what a return says touches the engine, a
+skill or a template, so after a `git fetch`,
+`git log 70d10b2..origin/main -- agents/lib .agents/skills agents/templates`
+lists every candidate since the last green CI run. It is a superset to triage,
+not a verdict, and a list typed here would go stale at the next such merge. The
+declared floor has been 3.13 since #166 and **has never executed anywhere**;
+Windows has not run since 2026-09-13.
 
 ---
 
@@ -76,8 +80,7 @@ executed anywhere**; Windows has not run since 2026-09-13.
 | When | What | Why |
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **Now** | **AA3** — MEASURED COSTS records ratios (ruled Q13). | BUILT, awaiting merge. Retires a debt this host could not pay. |
-| **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Twelve commits, four engine, one interpreter, a never-executed floor. |
+| **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
 | **Before publish** | **AA6**, **AA7** — size the UNSUPPORTED list; state NYC's real scope. | The first public issue will be someone hitting a block. |
@@ -88,27 +91,15 @@ executed anywhere**; Windows has not run since 2026-09-13.
 
 ## Open
 
-### AA — from the 2026-09-20 product-owner review
+### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
 
 - **AA2 (P1, XS): Run the full matrix on `main` the day CI returns.**
   Before any new work on 2026-10-01. A red 3.13 leg or a red Windows job is then
   the highest-priority defect in the repository, ahead of everything below. The
-  first `windows-latest` run ever taken found two shipped defects; twelve commits
-  of drift since the last one is not a small exposure. Bind the poll to the
-  commit (`gh run list --commit "$SHA"`) — `gh pr checks` reads the previous
-  commit's runs.
-
-- **AA3 (P1, XS): MEASURED COSTS records counts, ratios and ordering.**
-  **Ruled at Q13 (option a) and BUILT by the pull request that also records it
-  in `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
-  that merges.** The block no longer states an absolute second, a test holds it
-  to that, and the sitting debt, the "two trees" annotation and the
-  thousand-line sitting ledger are gone with it. HEADROOM was never read off the
-  seconds — its test derives the floor from the collected count — so nothing
-  that enforced anything moved. The one absolute still taken is a cold pass,
-  re-timed only when the hook timeout or the per-test budget (its rate or its
-  absolute minimum) changes, and recorded in that change's description rather
-  than the block.
+  first `windows-latest` run ever taken found two shipped defects, and every
+  merge from #155 on is drift since the last one, which is not a small exposure.
+  Bind the poll to the commit (`gh run list --commit "$SHA"`) — `gh pr checks`
+  reads the previous commit's runs.
 
 - **AA4 (P2, XS): A gate whose verdict depends on machine load.**
   `test_the_permissions_hook_timeout_covers_a_full_archive_walk` failed at load
@@ -153,8 +144,9 @@ executed anywhere**; Windows has not run since 2026-09-13.
   the slowest check the hook runs, at tool time. Since ruling Q13 the row's only
   job is "about twice" a cold pass, which needs no exact count. Drop the count
   from the scale row, and the suite-wide pair and skip reconciliation with it,
-  leaving the seven hook-selected modules pinned. Raised by AA3's review rounds
-  (#172).
+  leaving the seven hook-selected modules pinned. In the same change, reword the
+  Status sentence saying the suite's size "is stated once, in" MEASURED COSTS:
+  after AA8 nothing states it. Raised by AA3's review rounds (#172).
 
 - **AA9 (P2, S): The skill hook times itself against its own timeout.**
   An overrun of the registered timeout CANCELS the hook, and a cancelled check
@@ -478,6 +470,11 @@ for the PR that carried them.
 | Q12 | W3: what runs the hook before the venv exists? | A bash shim of a few lines, and W3 proceeds. Fail-DEFERRED, not fail-open. | 2026-09-13 |
 | Q13 | AA3: what does MEASURED COSTS record, when no sitting on this host can meet its idle-machine precondition? | Counts, ratios and relative ordering; no absolute seconds. The hook timeout and the per-test headroom budget remain as compared thresholds, and one cold pass is re-timed only when either changes. | 2026-09-21 |
 
+Q13's "per-test headroom budget" is two constants, the per-test rate and the
+absolute minimum under it. Which constants re-time a cold pass when they change
+is stated once, in `skill-invariants.sh`'s MEASURED COSTS block; the row above
+keeps the owner's words.
+
 ---
 
 ## Distribution
@@ -544,11 +541,12 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Z3 | #131 | — |
 | Z7 | #121 | domicile as a GATE is deliberately not modeled |
 | AA1 | #171 | the EIC is DISCLOSED, not computed — out of persona by the 2026-07-12 ruling |
+| AA3 | #172 | the whole-suite count stays pinned (AA8); the hook does not yet time itself (AA9); small leftovers and the timing test's accepted limits (AA10) |
 | Q7 | #156 | — |
 | Q9 | #156 | — |
 | Q8 | #158 | — |
 | Q10 | #158 | — |
-| hygiene | #160, #161, #162, #167 | not backlog items; narrated in `docs/changelog/` |
+| hygiene | #160, #161, #162, #167 | not backlog items, though some change what a return says (the Status section's `git log` range lists the candidates); narrated in `docs/changelog/` |
 
 Epics I through U shipped earlier; see `docs/changelog/README.md` for the
 per-epic index and `epic-R-U.md` for R1's audit baseline.
