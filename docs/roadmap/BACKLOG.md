@@ -83,7 +83,7 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Before publish** | **AA6**, **AA7** — size the UNSUPPORTED list; state NYC's real scope. | The first public issue will be someone hitting a block. |
+| **Before publish** | **AA6**, **AA7**, **AA13**, **AA11**, **AA12** — size the UNSUPPORTED list; state NYC's real scope; compute the City resident tax, with the part-year guard; compute or name the Yonkers taxes. | The first public issue will be someone hitting a block. |
 | **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
@@ -126,15 +126,18 @@ Windows has not run since 2026-09-13.
   blocks. It is analysis, not a feature, and it belongs before Y1 rather than
   after.
 
-- **AA7 (P2, XS): State NYC's real scope.**
-  "Parity with CA for a NYC taxpayer" was the owner's definition of done and
-  Z1-Z3 delivered it — **for a full-year resident with no out-of-state income.**
+- **AA7 (P2, XS): State NYC's real scope.** **BUILT by the pull request that
+  records it in `docs/changelog/epic-AA.md`; this entry moves to the shipped
+  index the day that merges.** "Parity with CA for a NYC taxpayer" was the
+  owner's definition of done and Z1-Z3 delivered most of it — **for a full-year
+  resident of New York alone, and without the City resident tax itself (AA13).**
   For the NYC persona specifically that excludes two of the commonest cases in
   the metro: `part_year_residency` BLOCKS (moved in or out mid-year) and
-  `nonresident_source_income` BLOCKS (the NJ/CT/Westchester commuter; the
-  other-state credit is not modeled). Both land on Z8, which is P3 and L. The
-  blocking is the correct bias and Z8 is genuinely large — the defect is that
-  nothing SAYS so. A reader of the shipped index concludes NYC is finished.
+  `nonresident_source_income` BLOCKS (a City resident working in New Jersey, a
+  New Jersey or Connecticut resident working in the City; the other-state credit
+  is not modeled). Both land on Z8, which is P3 and L. The blocking is the
+  correct bias and Z8 is genuinely large — the defect is that nothing SAYS so. A
+  reader of the shipped index concludes NYC is finished.
 
 - **AA8 (P2, XS): Stop pinning the whole suite's count in the hook.**
   `test_the_measured_costs_counts_match_live_collection` holds MEASURED COSTS'
@@ -175,6 +178,52 @@ Windows has not run since 2026-09-13.
   block the timing test reads whole-line comments only, and catches neither a
   duration spelled in words nor a number two words from its unit. Fold into the
   next PR that touches these tests.
+
+- **AA11 (P1, XS): A part-year City resident can be taxed for the whole year.**
+  A single filer is asked only "are you a New York City resident?", and
+  `residency.days_present_by_state` is keyed by STATE, so City residency is the
+  taxpayer's assertion. One who lived in the City for part of the year and
+  stayed in New York can answer yes and have City taxable income (line 47) taken
+  for the whole year; once AA13 computes the tax on it, that over-states the
+  City tax by the months spent outside the City, the direction §4 calls a hard
+  error. Land it with or before AA13. A joint return is asked how many spouses
+  were residents for the WHOLE year, but `compute_nyc_taxable_income` refuses
+  only a count of one: a couple who both lived in the City for part of the year
+  answer zero with `nyc_resident` true, and are treated as full-year residents
+  the same way. Ask the single filer the whole-year question, and refuse
+  whenever `nyc_resident` is true and nobody was a whole-year resident, until
+  the part-year City line 50 (IT-360.1) is modeled. Found while scoping AA7; the
+  joint case by its review.
+
+- **AA13 (P1, S): The New York City resident tax is never computed.**
+  `state.nyc_tax` is fetched (the three rate schedules and the school tax credit
+  tables) and read by NOTHING in the engine. No function computes IT-201 line
+  47a: `compute_city_and_yonkers_total` takes `nyc_resident_tax` as an argument
+  defaulting to 0.0, and the compute step never said how to produce it. So a
+  City resident's return omits the City tax, the core of the NYC persona, unless
+  the agent improvises bracket math the engine should own. Z2 shipped City
+  taxable income, the City household credit, the MCTMT and the line-58 caps, was
+  recorded as lines 47-58, and the `nyc_resident` block was deleted on the
+  strength of it. Compute line 47a from the fetched schedules by filing status,
+  verified against the instructions, and wire it to line 52; land AA11 with it.
+  Until then the capability note and the compute step name the gap (AA7). Owner
+  question: whether the `nyc_resident` block comes back until this ships. Found
+  by AA7's second review.
+
+- **AA12 (P1, S): The Yonkers taxes are fetched and never computed.**
+  `state.yonkers_tax` is fetched (the resident surcharge rate on the net State
+  tax, the nonresident earnings rate and its exclusion) and the interview sets
+  `yonkers_resident` and `yonkers_nonresident_earnings`, but no engine function
+  computes IT-201 line 55 or 56. `compute_city_and_yonkers_total` takes both
+  amounts as arguments defaulting to 0.0, and the compute step names the flags
+  without a formula, so a Yonkers resident's return omits the surcharge unless
+  the agent improvises one, and until AA7 nothing on `meta.limitations` said so.
+  The capability note now names the gap, which makes it §4's degrade, an
+  under-statement WITH a banner; the amounts are still wrong. Either compute
+  both lines from the fetched block (the fetcher's own note: the nonresident tax
+  is capped at what the resident surcharge would have been) or take them as
+  named inputs on `meta.limitations`, as the refundable credits are. AA7 stopped
+  the README and the capability note claiming Yonkers. Found by AA7's review.
 
 ### W — engineering hygiene
 
@@ -348,8 +397,8 @@ Windows has not run since 2026-09-13.
   assumption in `address.state`. Until then `moved_states_this_year` and
   `has_nonresident_source_income` keep BLOCKING, which is the correct bias — two
   resident states tax the same income and the credit between them is not
-  modeled. See AA7: this is the completion condition for the NYC persona, and
-  nothing currently says so.
+  modeled. It is the completion condition for the NYC persona, which the README,
+  the Z1 row and the state-module playbook now say (AA7).
 
 - **X10 (P3, S): `/tax-retirement`'s three v1.1 deferrals.** Surfaced in PR #20's
   review, intentionally caveated rather than modeled, and homeless since the
@@ -536,8 +585,8 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Y5 | #113 | — |
 | Y6 | #114, #119, #165 | — |
 | Y7 | #120 | no Windows coverage — the Windows job runs two modules |
-| Z1 | #123, #124-#137 | IT-196 lines 1-45, IT-201 lines 44/45, each refundable credit's AMOUNT, line 59's sales/use tax, part-year city lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
-| Z2 | #130 | — |
+| Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states, statutory residency in a second state, or income sourced to another state that taxes it BLOCKS until Z8 (AA7), and neither the City resident tax (line 47a, AA13) nor the Yonkers lines 55-56 (AA12) is computed; within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
+| Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; NOT the City resident tax, line 47a (AA13), nor Yonkers lines 55-56 (AA12) |
 | Z3 | #131 | — |
 | Z7 | #121 | domicile as a GATE is deliberately not modeled |
 | AA1 | #171 | the EIC is DISCLOSED, not computed — out of persona by the 2026-07-12 ruling |

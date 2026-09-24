@@ -1,7 +1,7 @@
 # tax-compute Step 10 — New York (Form IT-201)
 
-New York State, New York City and Yonkers for a **full-year resident**, in
-depth. Read this instead of `references/state-return.md`'s California branch
+New York State in depth for a **full-year resident**, and the New York City
+and Yonkers block of IT-201 in part — see what this module does NOT compute. Read this instead of `references/state-return.md`'s California branch
 when `tax_law.state.code == "NY"`; the cache-vs-taxpayer cross-check at the top
 of that file runs FIRST and is not repeated here.
 
@@ -172,7 +172,7 @@ in `notes`, rather than leaving the section silent.
 
 **New York City** — gated on `flags.nyc_resident`, which is the CITY-TAX
 SWITCH rather than a block: the rule that used to stop the return on it was
-deleted when this branch started computing the city tax. City residency is the
+deleted when this branch took on the City block. City residency is the
 STATE's test applied to the city, so city days are a subset of state days and
 the reverse cannot happen; there is no `days_present_by_city` field, so this
 stays the taxpayer's assertion.
@@ -195,6 +195,12 @@ The NYC household credit REUSES `compute_ny_household_credit` against the
 city's own tables (4/5/6 rather than 1/2/3) — the same function, a different
 table, verified against the instructions rather than assumed.
 
+**The City resident tax itself, line 47a, is NOT computed.** Its schedules are
+fetched into `state.nyc_tax`, and no engine function reads them yet. Do not work
+it out by hand and pass it in: leave `nyc_resident_tax` out, and put the gap on
+`meta.limitations` as the list below says, so the return says the City tax is
+missing rather than presenting zero as the tax owed.
+
 **MCTMT** — `compute_mctmt(zone_1_net_earnings, zone_2_net_earnings, mctmt)`
 with `mctmt = state.mctmt`. **TWO ZONES, which are GEOGRAPHY and not income**,
 carrying DIFFERENT rates, and the threshold is a per-zone **CLIFF**: over it,
@@ -208,6 +214,10 @@ taxpayer can owe either without the other, so they have two flags:
 for someone who earns in Yonkers while living elsewhere. Both are
 required-present in the capability gate for the same reason `nyc_resident` is:
 absence reads as False and drops a real liability.
+
+**Neither Yonkers amount is computed yet**: no engine function produces line 55
+or 56, and the fetched `state.yonkers_tax` block is read by nothing. Leave both
+out and name the gap on `meta.limitations`, as for line 47a.
 
 Then `compute_city_and_yonkers_total(...)`. **Line 58 adds the MCTMT and both
 Yonkers taxes AFTER the two city credit caps** — the line-45 pattern a second
@@ -284,13 +294,17 @@ a different position you have to resolve.
 Each of these goes on `meta.limitations` verbatim — a named gap, never silence:
 
 - **Part-year and nonresident returns (Form IT-203).**
+- **The New York City resident tax, line 47a.** Its schedules are fetched and
+  nothing computes from them yet.
+- **The Yonkers resident surcharge and nonresident earnings tax, lines 55 and
+  56.** Not computed.
 - **Part-year city and Yonkers lines 50 and 57**, which belong to IT-360.1.
 - **City-level day counts** — `residency.days_present_by_state` is keyed by
   STATE, so City residency stays the taxpayer's assertion.
 - **IT-196 lines 1 through 45** — the New York itemized deduction BEFORE the
   §615 adjustment, on pre-TCJA federal rules. Taken as an input.
-- **IT-201 line 44** (the separate tax on a lump-sum distribution, Form IT-230)
-  and **line 45's components** (IT-201-ATT). Taken as inputs.
+- **IT-201 line 45's components** (IT-201-ATT, the IT-230 lump-sum tax among
+  them). Taken as an input.
 - **The AMOUNT of each refundable credit.** IT-213, IT-216, IT-215, IT-214 and
   IT-272 each carry their own worksheet; the settlement takes the figures and
   settles the return around them. Where each one LANDS is settled; what each

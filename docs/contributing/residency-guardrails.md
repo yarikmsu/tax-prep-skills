@@ -41,12 +41,10 @@ honest answer at 180 days. The numbers are what the taxpayer can actually answer
 and the threshold is applied where it is written down rather than in their head.
 
 Keys are STATE codes. New York City and Yonkers apply the state's own test at
-their own level, and the toolkit tracks those through `flags.nyc_resident` rather
-than through a second set of count keys — a gap worth naming, not hiding:
-a taxpayer can meet the state test and not the city one, since city days are a
-subset of state days. The reverse cannot happen.
-
-`flags.statutory_resident_of_another_state` is what the capability gate reads,
+their own level, and the toolkit tracks those through `flags.nyc_resident` and
+`flags.yonkers_resident` rather than through a second set of count keys — a gap
+worth naming, not hiding: a taxpayer can meet the state test and not the city
+one, since city days are a subset of state days. The reverse cannot happen.`flags.statutory_resident_of_another_state` is what the capability gate reads,
 and it is the taxpayer's own conclusion from those numbers — recorded in
 `answers.md` beside the counts that produced it, so a reviewer can re-derive it.
 
@@ -162,15 +160,18 @@ uses, `capabilities._NO_INCOME_TAX_STATES`.
 **BOTH prongs are required.** Days alone, with hotels and no abode, is not
 statutory residency; an abode alone without the days is not either.
 
-It is DISTINCT from the three rules next to it, and all four can fire at once:
+It is DISTINCT from the two rules next to it, and all three can fire at once:
 
 - `part_year_residency` fires on a mid-year MOVE. A taxpayer who never moved and
   simply kept two homes is not caught by it.
 - `nonresident_source_income` fires on income SOURCED elsewhere. Statutory
   residency taxes ALL income, wherever it arose, so the source test misses it
   entirely for a taxpayer whose income is all from their resident state.
-- `nyc_resident` fires on the CITY. Its test is the State's applied to the city,
-  and Yonkers has the same parity with no flag of its own — an open gap.
+
+`nyc_resident` was a fourth rule until the New York module took on the City
+block; it is now the city-tax switch, and `yonkers_resident` is its Yonkers
+twin. Each applies the State's test at its own level, and neither has a day
+count behind it, so City and Yonkers residency stay the taxpayer's assertion.
 
 **What it does NOT catch** is residency by DOMICILE. A mover whose change of
 domicile fails New York's clear-and-convincing burden is a New York resident with

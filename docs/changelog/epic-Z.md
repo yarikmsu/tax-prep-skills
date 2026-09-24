@@ -140,6 +140,8 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   the whole $70,000 in the other. The NYC household credit REUSES the state function —
   tables 4/5/6 to 1/2/3, verified against the instructions rather than assumed. Ten
   mutations, ten reds; one survived until a case used the second of the two caps.
+  **Corrected 2026-09-23 (AA7):** this slice did not compute the City resident tax
+  itself (line 47a) or the Yonkers lines 55 and 56; those are AA13 and AA12.
 
   **SLICE 8 SHIPPED — this is Z3's owner side**: `compute_ny_ptet_owner` and
   `compute_ny_required_annual_payment`. The PTET credit and its IT-225 add-back are an

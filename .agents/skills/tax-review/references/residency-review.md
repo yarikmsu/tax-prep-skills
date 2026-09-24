@@ -95,9 +95,9 @@ findings:
 
 **New York City and Yonkers** apply the State's test at their own level, so city
 days are a subset of state days: a taxpayer can meet the State test and not the
-City one, never the reverse. `flags.nyc_resident` carries the city answer.
-Yonkers has the same parity in New York's own definitions and has no flag here —
-record it as a limitation in `answers.md` rather than assuming it away.
+City one, never the reverse. `flags.nyc_resident` carries the city answer and
+`flags.yonkers_resident` the Yonkers one. Neither has a day count behind it, so
+a part-year City or Yonkers resident is the case to check by hand.
 
 **Domicile is not covered by any gate.** A mover whose change of domicile fails
 New York's clear-and-convincing burden is a New York resident with no day or

@@ -222,9 +222,9 @@ are plain Markdown instructions and are written to be executable that way.
   changes a return.
 
 **Two states are computed in depth**: CA Form 540 and NY Form IT-201, the
-latter for a FULL-YEAR RESIDENT only. FL is a `type: "none"` regime, every
-other state is bracket-estimate only, and part-year / nonresident returns are
-modeled for neither. What each depth module covers, and how to add one:
+latter for a FULL-YEAR RESIDENT only. FL, AK, NV, SD, TX, WY and TN (2021+)
+are `type: "none"`, the rest bracket-estimate only, and part-year /
+nonresident returns are modeled for neither. What each depth module covers, and how to add one:
 `docs/contributing/state-module-playbook.md`, with the spec template at
 `docs/superpowers/specs/TEMPLATE-state-module.md`.
 

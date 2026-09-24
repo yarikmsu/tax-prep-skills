@@ -3,13 +3,14 @@
 
 Declarative map of taxpayer-profile situations → engine support level. The
 pipeline's honesty invariant is "never silently understate": when the interview
-records a situation the engine cannot compute (ISO/AMT, rental Schedule E,
-Form 8962 reconciliation, part-year residency, NYC, kiddie tax, Schedule H),
+records a situation the engine cannot compute (rental Schedule E, Form 8962
+reconciliation, part-year residency, residency in a second state, income
+sourced to another state, kiddie tax, Schedule H, a PFIC taxable event),
 /tax-compute must HARD-STOP with the named form and options rather than produce
 a plausible-looking wrong return. Situations the skills handle with manual
-worksheets (8863, 2441, 5695/8936, gambling, FEIE-vs-FTC) are non-blocking
-limitations that land in result.json meta.limitations (the C2 manifest,
-printed on page 1 of the PDF by /tax-generate).
+worksheets (ISO/AMT, 8863, 2441, 5695/8936, gambling, FEIE-vs-FTC) are
+non-blocking limitations that land in result.json meta.limitations (the C2
+manifest, printed on page 1 of the PDF by /tax-generate).
 
 Pure compute + markdown renderer + CLI, following projection / yoy_diff.py.
 Read-only: never writes any file (the SKILL copies the manifest lines into
@@ -454,7 +455,7 @@ _RULES_BY_ID = {r.rule_id: r for r in RULES}
 # cannot be acknowledged away — the remedy is answering the yes/no questions,
 # not accepting a gap.
 # `nyc_resident` STAYS HERE WITH NO RULE BEHIND IT, and that is the point.
-# It was an UNSUPPORTED rule until the New York module computed the city tax;
+# It was an UNSUPPORTED rule until the New York module took on the City block;
 # the rule is gone and the flag is now the CITY-TAX SWITCH. Its absence
 # therefore matters MORE than it did, not less: a missing answer used to block
 # loudly, and would now silently omit New York City's resident tax from a
@@ -734,24 +735,26 @@ def _state_note(profile: dict) -> str:
         # claims exists. Every clause below names something that computes.
         #
         # What it does NOT claim is as load-bearing as what it does. IT-196
-        # lines 1-45 are an INPUT, line 44's lump-sum tax and line 45's other
-        # taxes are inputs, each refundable credit's AMOUNT is an input, line
+        # lines 1-45 are an INPUT, line 45's other taxes (the IT-230 lump-sum
+        # tax among them) are inputs, each refundable credit's AMOUNT is an input, line
         # 59's sales-or-use tax is asked rather than computed, and IT-203 is
         # not modeled at all. Those are on `meta.limitations` where the return
-        # itself can carry them; this note names the two a reader is most
-        # likely to assume away — the credits and the part-year return.
+        # itself can carry them; this note names the ones a reader is most
+        # likely to assume away — the City tax, the credits and the part-year
+        # return.
         return (
             "State (NY): Form IT-201 computed in depth for a FULL-YEAR "
             "RESIDENT — the §601 rate schedules with the tax-benefit "
-            "recapture, the IT-225 modifications and New York AGI, the IT-196 "
-            "itemized deduction with both §615 reductions, the household "
-            "credit, and lines 47-58 for New York City, Yonkers and the "
-            "MCTMT. The AMOUNT of each refundable credit (IT-213, IT-216, "
-            "IT-215, IT-214, IT-272) is taken as an input from its own "
-            "worksheet, not computed; so are IT-196 lines 1-45 and IT-201 "
-            "lines 44 and 45. Line 59's sales or use tax is ASKED, never "
-            "assumed to be zero. Part-year and nonresident returns (IT-203) "
-            "are not modeled.")
+            "recapture, the IT-225 modifications and New York AGI, the IT-196"
+            " itemized deduction with both §615 reductions, the household "
+            "credit, New York City taxable income and household credit, and "
+            "the MCTMT. The New York City resident tax itself (line 47a) and "
+            "the Yonkers lines 55 and 56 are NOT computed. The AMOUNT of each"
+            " refundable credit (IT-213, IT-216, IT-215, IT-214, IT-272) is "
+            "taken as an input from its own worksheet, not computed; so are "
+            "IT-196 lines 1-45 and IT-201 line 45's other taxes. Line 59's "
+            "sales or use tax is ASKED, never assumed to be zero. Part-year "
+            "and nonresident returns (IT-203) are not modeled.")
     no_tax = code in _NO_INCOME_TAX_STATES and (
         code != "TN" or _tn_hall_repealed(profile)
     )

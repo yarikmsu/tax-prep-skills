@@ -142,7 +142,8 @@ interview never captures is invisible to every downstream check.
   reaches them.
 
   This flag used to BLOCK the return and is now the **city-tax switch** — the
-  New York City resident tax is computed on it (IT-201 lines 47-54). That
+  City block of IT-201 (lines 47-54) runs on it, though the City resident tax
+  itself is not computed yet. That
   makes an unanswered one worse, not better: a missing answer once stopped the
   return loudly and would now omit the city tax from a return that owes it, so
   it must still be answered explicitly, true or false.

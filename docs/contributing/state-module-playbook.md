@@ -7,17 +7,31 @@ down.
 
 - **California, Form 540** — the first, and the one this playbook's examples
   are drawn from.
-- **New York, Form IT-201**, FULL-YEAR RESIDENT only — including New York City,
-  Yonkers and the metropolitan commuter transportation mobility tax (lines
-  47-58), which is why a City taxpayer sees no capability gate: the
-  `nyc_resident` rule was deleted when the city tax began computing, and the
-  flag became the city-tax switch. Part-year and nonresident returns (IT-203)
-  are not modeled, and neither are IT-196 lines 1-45, IT-201 lines 44 and 45,
-  the AMOUNT of each refundable credit, or line 59's sales and use tax — each
-  taken as an input or asked, and each NAMED on `meta.limitations`. The design
-  spec is `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`; the
-  New York keying gotchas a cache reader needs are in
-  `docs/contributing/tax-law-cache.md`. Expectations: steps 0-2 (the
+- **New York, Form IT-201**, FULL-YEAR RESIDENT only. The State tax is computed
+  in depth. The City and Yonkers block (lines 47-58) is computed in part: City
+  taxable income, the City household credit, the metropolitan commuter
+  transportation mobility tax and the line-58 caps are, but the New York City
+  resident tax itself (line 47a, from the fetched `state.nyc_tax` schedules) and
+  the Yonkers lines 55 and 56 are not (AA13, AA12). The `nyc_resident`
+  capability rule was deleted when that block landed and the flag became its
+  switch, so a City taxpayer sees no gate, only the capability note naming the
+  gap. The scope is a full-year resident of New York alone: a move between
+  states BLOCKS (`part_year_residency`), so does statutory residency in a second
+  state (`statutory_residency_second_state`), and so does income sourced to any
+  state outside the no-income-tax list (`nonresident_source_income`), because
+  part-year and nonresident returns (IT-203) and the resident credit for tax
+  paid to another state (IT-112-R) are not modeled — Z8. A City resident for
+  part of the year who stayed in the state is not blocked: the part-year City
+  line 50 (and Yonkers' line 57) is not computed and the return names that gap,
+  and nothing yet refuses a household in which nobody was a whole-year City
+  resident (AA11). Within that scope, IT-196 lines 1-45, IT-201 line 45's other
+  taxes, the AMOUNT of each refundable credit and line 59's sales and use tax
+  are not computed either — each taken as an input or asked, and each NAMED on
+  `meta.limitations`. The design spec is
+  `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`; the New York
+  keying gotchas a cache reader needs are in
+  `docs/contributing/tax-law-cache.md`.
+  Expectations: steps 0-2 (the
 questionnaire, the fetched-law block, the result section) fit a ~90-minute
 Claude Code session; compute functions + hand-computed worksheet tests are
 a further multi-hour session plus at least one adversarial review round —
@@ -65,8 +79,8 @@ state before writing code, and record the answers in your spec:
    the TCJA repeal)? Muni interest from other states?
 3. **Credits**: personal/dependent exemption credits vs deductions?
    Renter's/EITC-piggyback credits?
-4. **Local taxes**: county/city income tax (the NYC precedent: we GATE
-   rather than half-model)?
+4. **Local taxes**: county/city income tax (the NYC precedent: GATED until
+   Z1-Z3 modeled it for a full-year resident, never half-modeled)?
 5. **Surtaxes**: anything like CA's 1% mental-health tax over $1M?
 6. **Estimated payments**: equal quarters or weighted (CA is 30/40/0/30
    with NO September installment)? A high-income safe-harbor override like

@@ -1,10 +1,11 @@
 # Epic AA — the 2026-09-20 product-owner review
 
-Backlog: `docs/roadmap/BACKLOG.md`. Epic AA is the seven items a product-owner
-review raised on 2026-09-20, the day the roadmap was collapsed to one file. They
-are not a feature theme: AA2 and AA3 are process, AA4 and AA5 are test hygiene,
-AA6 and AA7 are copy a first public user would hit, and AA1 is the one tax
-finding.
+Backlog: `docs/roadmap/BACKLOG.md`. Epic AA began as the seven items a
+product-owner review raised on 2026-09-20, the day the roadmap was collapsed to
+one file. They are not a feature theme: AA2 and AA3 are process, AA4 and AA5 are
+test hygiene, AA6 and AA7 are copy a first public user would hit, and AA1 is the
+one tax finding. AA8 to AA10 were filed later from AA3's review rounds, and AA11
+to AA13 from AA7's scoping and its two reviews.
 
 ---
 
@@ -333,4 +334,107 @@ the block expensive: the single sitting, the hand refresh, and the killed runs.
 
 What the rounds left is filed rather than chased: AA8 stops pinning the whole
 suite's count in the hook, AA9 has the hook time itself against its timeout,
-and AA10 collects the small leftovers and the two accepted limits.
+and AA10 collects the small leftovers and the timing test's accepted limits.
+
+---
+
+## AA7 — New York City's scope is stated where readers look
+
+### What was wrong
+
+The owner's definition of done for NYC (2026-09-05) was parity with CA, and
+Z1-Z3 met most of it, for a full-year resident of New York alone. Three
+situations fall outside that and BLOCK at the capability gate: a move between
+states during the year (`part_year_residency`), statutory residency in a second
+state (`statutory_residency_second_state`), and income sourced to a state
+outside the no-income-tax list (`nonresident_source_income`), a City resident
+working in New Jersey and a New Jersey resident working in the City alike. Both
+wait on Z8. Blocking is the right bias; the defect was that nothing said so.
+
+The two places a reader would look disagreed in opposite directions. The
+shipped index read as NYC finished. The README, the first page a public reader
+opens, still said NYC was not modeled and did not mention New York at all,
+after the module had shipped. The AA7 entry itself named "the
+Westchester commuter" among the blocked cases, which is wrong: a Westchester
+resident working in Manhattan is a full-year New York resident with all New
+York income, and the City has not taxed commuters since 1999.
+
+### What shipped
+
+- The README names both depth states, their shared scope (a full-year resident
+  of that state alone) and what stops a return outside it. Florida and the bracket-estimate states follow.
+- The Z1 shipped row, the Z8 entry and the state-module playbook state the
+  same scope, the playbook with the form each block waits on (IT-203, and the
+  IT-112-R resident credit).
+- Three places still said NYC is blocked or gated, from before the City tax
+  computed: the blocking list in `skill-catalog.md`, the capability module's
+  own docstring (which also still called ISO/AMT blocking, when it is a manual
+  limitation), and the state-module skill and playbook's "NYC precedent". Each
+  now says the City is computed.
+
+### What the first review caught
+
+One local Codex pass found seven things, all confirmed against the code.
+
+- The first draft's scope sentence, "a full-year resident whose income is all
+  sourced to that state", was wrong both ways. Income sourced to a state with
+  no income tax does not block, and statutory residency in a second state
+  blocks with no move and no outside income. The scope is now a full-year
+  resident of that state ALONE, with the three blocks named.
+- The README and the capability note claimed Yonkers. No engine function
+  computes IT-201 line 55 or 56: `compute_city_and_yonkers_total` sums two
+  arguments that default to zero, and the compute step gives no formula, so a
+  Yonkers resident's return silently omits the surcharge. Both now say the
+  Yonkers lines are not computed, and the gap is AA12.
+- Line 57 is the part-year Yonkers line, not a City line.
+- "Florida is modeled as a no-income-tax state" left out AK, NV, SD, TN, TX and
+  WY, which the engine treats the same way. AGENTS.md had the same omission.
+- The state-module skill and the playbook said NYC was modeled "in full", with
+  part-year City residence uncomputed.
+- `residency-guardrails.md` and the tax-review residency reference still
+  described `nyc_resident` as a rule and Yonkers as having no flag.
+- The joint-return guard AA11 cited is narrower than it said (below).
+
+### What the second review caught
+
+A second local Codex pass found the largest gap of the three: **nothing computes
+the New York City resident tax**. `state.nyc_tax` fetches the City's three rate
+schedules and the engine never reads them; `compute_city_and_yonkers_total`
+takes line 47a as an argument defaulting to zero, and the compute step never
+said how to produce it. Z2 shipped City taxable income, the City household
+credit, the MCTMT and the line-58 caps, was recorded as "lines 47-58", and the
+`nyc_resident` block was deleted on the strength of it. The first draft of this
+change repeated the claim. The README, the capability note, the compute step,
+the interview, the playbook and the Z1 and Z2 rows now say the City resident tax
+is not computed. The compute step tells the agent to leave it out and name the
+gap on `meta.limitations` rather than improvise it, which makes the omission
+section 4's degrade, an under-statement with a banner. The computation is AA13,
+and the Z2 slice in `epic-Z.md` carries a dated correction rather than a
+rewritten history. A test had pinned the old claim: the note was required to say
+"47-58" and "Yonkers". It now requires the note, and the compute step, to name
+line 47a and the Yonkers lines as NOT computed, and restoring the old note turns
+it red.
+
+The same pass found the note and three documents calling IT-201 line 44 the
+IT-230 lump-sum input, when the engine computes line 44 as tax less credits and
+the lump-sum tax belongs to line 45's IT-201-ATT; "the other no-tax states"
+standing for a list the engine does not have (NH and WA are deliberately left
+out of it), now named as the seven it does have; AA12 claiming no banner when
+this change had just added one; two leftover "all sourced to that state"
+phrasings; and a residency paragraph that still gave the Yonkers answer to the
+City's flag. A stale "NYC (still gated)" in a dated design spec was left as the
+record of its day.
+
+### Found, not fixed
+
+A City resident for part of the year who stayed in New York is not blocked: the
+part-year City line 50 is not computed, and the return names the gap. A single
+filer is asked only whether they are a City resident, so one who lived in the
+City for half the year can answer yes and have City taxable income taken for the
+whole year, which over-states the City tax the moment it is computed. A joint
+return is asked how many spouses were residents for the whole year, but only a
+count of one is refused, so a couple who both lived there part of the year is
+treated the same way. Both are code changes, filed as AA11 (P1), which has to
+land with or before AA13. The City resident tax is AA13 (P1), and the Yonkers
+lines AA12 (P1). Whether the `nyc_resident` block should return until AA13 ships
+is an owner question.
