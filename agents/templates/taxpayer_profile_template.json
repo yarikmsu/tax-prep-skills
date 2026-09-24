@@ -107,6 +107,8 @@
     "nyc_resident": false,
     "nyc_resident_spouses": null,
     "_comment_nyc_resident_spouses": "How many spouses were New York City residents for the WHOLE year: 0, 1 or 2. Only meaningful on a joint return, and REQUIRED there \u2014 IT-201 line 47 is not used at all when exactly one spouse was a city resident (that return goes to line 51, a computation this engine does not do). One household boolean cannot carry it: nyc_resident says whether the household owes city tax, and this says whether BOTH spouses are residents. Assuming two over-states the city tax for a mixed-residence couple by the non-resident spouse's whole share.",
+    "nyc_resident_full_year": null,
+    "_comment_nyc_resident_full_year": "Whether a NON-joint filer with nyc_resident was a New York City resident for the WHOLE year, and REQUIRED then. A City resident for only part of the year figures the City tax on IT-360.1 (IT-201 line 50), which this engine does not do, so it REFUSES rather than taxing the whole year's income; an unanswered one refuses too, because assuming true over-states the City tax for anyone who moved into or out of the City. A joint return answers nyc_resident_spouses instead.",
     "yonkers_resident": false,
     "yonkers_nonresident_earnings": false,
     "statutory_resident_of_another_state": false,

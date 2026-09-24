@@ -740,16 +740,16 @@ def _state_note(profile: dict) -> str:
         # 59's sales-or-use tax is asked rather than computed, and IT-203 is
         # not modeled at all. Those are on `meta.limitations` where the return
         # itself can carry them; this note names the ones a reader is most
-        # likely to assume away — the City tax, the credits and the part-year
-        # return.
+        # likely to assume away — the Yonkers lines, the credits and the
+        # part-year return.
         return (
             "State (NY): Form IT-201 computed in depth for a FULL-YEAR "
             "RESIDENT — the §601 rate schedules with the tax-benefit "
             "recapture, the IT-225 modifications and New York AGI, the IT-196"
             " itemized deduction with both §615 reductions, the household "
-            "credit, New York City taxable income and household credit, and "
-            "the MCTMT. The New York City resident tax itself (line 47a) and "
-            "the Yonkers lines 55 and 56 are NOT computed. The AMOUNT of each"
+            "credit, New York City taxable income, the New York City resident"
+            " tax on line 47a and the City household credit, and the MCTMT. "
+            "The Yonkers lines 55 and 56 are NOT computed. The AMOUNT of each"
             " refundable credit (IT-213, IT-216, IT-215, IT-214, IT-272) is "
             "taken as an input from its own worksheet, not computed; so are "
             "IT-196 lines 1-45 and IT-201 line 45's other taxes. Line 59's "

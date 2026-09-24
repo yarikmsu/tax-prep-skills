@@ -142,8 +142,7 @@ interview never captures is invisible to every downstream check.
   reaches them.
 
   This flag used to BLOCK the return and is now the **city-tax switch** — the
-  City block of IT-201 (lines 47-54) runs on it, though the City resident tax
-  itself is not computed yet. That
+  New York City resident tax is computed on it (IT-201 lines 47-54). That
   makes an unanswered one worse, not better: a missing answer once stopped the
   return loudly and would now omit the city tax from a return that owes it, so
   it must still be answered explicitly, true or false.
@@ -156,6 +155,14 @@ interview never captures is invisible to every downstream check.
   does not do, and it REFUSES rather than taxing the whole household. Leaving
   it unanswered refuses too: assuming two over-states the city tax for a
   Manhattan-and-Connecticut couple by the non-resident spouse's entire share.
+  NEITHER refuses as well: on a return that owes City tax it means both
+  spouses lived in the City for only part of the year.
+- **On every OTHER return, ask instead**: were you a New York City resident for
+  the WHOLE year? → sets `nyc_resident_full_year` (true or false). A City
+  resident for only part of the year figures the City tax on IT-360.1 (IT-201
+  line 50), which this engine does not do, so `/tax-compute` REFUSES rather than
+  taxing the whole year's income, and an unanswered one refuses too. Tell the
+  taxpayer now, not at compute time.
 - Under the same "if NY appears anywhere" condition, ask BOTH Yonkers
   questions. They are two DIFFERENT taxes with two different populations, and
   a taxpayer can owe either without the other, so one question cannot stand

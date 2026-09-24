@@ -283,6 +283,7 @@ including 47-58:
 | 44 | Tax after credits | new_york_it201.line_44_after_credits |
 | 45 | Net other NYS taxes (IT-201-ATT) | new_york_it201.line_45_net_other_taxes |
 | 46 | **Total New York State tax** | new_york_it201.line_46_total_state_tax |
+| 47a | NYC resident tax | new_york_it201.nyc.line_47a_nyc_resident_tax |
 | 52 | NYC tax before credits | new_york_it201.nyc.line_52_city_tax_before_credits |
 | 54 | NYC tax after credits | new_york_it201.nyc.line_54_after_city_credits |
 | 54e | MCTMT | new_york_it201.mctmt.line_54e_total_mctmt |

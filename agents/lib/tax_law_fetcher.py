@@ -696,6 +696,12 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "nyc_tax": {
                 "applies": None,
                 "brackets": {"a": [], "b": [], "c": []},
+                # The City's own TAX TABLE, used while line 47 is under
+                # `max_taxable_income`: the State's midpoint method on the
+                # City's own rows, whose narrow bottom rows are not the
+                # State's. Same shape as `state.tax_table`, and not shared
+                # with it, or a small City return lands in the wrong row.
+                "tax_table": {"max_taxable_income": None, "row_segments": []},
                 # TWO school tax credits, not one: a fixed amount by filing
                 # status under an income ceiling, and a RATE REDUCTION that is
                 # its own per-schedule bracket table. A scalar holds neither.

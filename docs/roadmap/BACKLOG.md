@@ -84,7 +84,7 @@ Windows has not run since 2026-09-13.
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
 | **Before publish** | **AA6**, **AA7**, **AA13**, **AA11**, **AA12** — size the UNSUPPORTED list; state NYC's real scope; compute the City resident tax, with the part-year guard; compute or name the Yonkers taxes. | The first public issue will be someone hitting a block. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -180,6 +180,8 @@ Windows has not run since 2026-09-13.
   next PR that touches these tests.
 
 - **AA11 (P1, XS): A part-year City resident can be taxed for the whole year.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   A single filer is asked only "are you a New York City resident?", and
   `residency.days_present_by_state` is keyed by STATE, so City residency is the
   taxpayer's assertion. One who lived in the City for part of the year and
@@ -196,6 +198,8 @@ Windows has not run since 2026-09-13.
   joint case by its review.
 
 - **AA13 (P1, S): The New York City resident tax is never computed.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   `state.nyc_tax` is fetched (the three rate schedules and the school tax credit
   tables) and read by NOTHING in the engine. No function computes IT-201 line
   47a: `compute_city_and_yonkers_total` takes `nyc_resident_tax` as an argument
@@ -224,6 +228,19 @@ Windows has not run since 2026-09-13.
   is capped at what the resident surcharge would have been) or take them as
   named inputs on `meta.limitations`, as the refundable credits are. AA7 stopped
   the README and the capability note claiming Yonkers. Found by AA7's review.
+
+- **AA14 (P2, S): The State tax table is a dollar low on 22 joint rows.**
+  Every cell of the published 2025 State table, compared with `compute_ny_tax`:
+  the single column agrees on all 1,294 rows, and the joint column differs on
+  22, every one in the $23,600-27,900 band and every one a dollar LOW (the
+  $23,600-23,650 row publishes 978; the engine gives 977). Those rows match the
+  bands summed to that floor, 976.25, and not the published base of 976, which
+  `_ny_schedule_tax` reads by design. The head-of-household column is
+  unchecked, because the test fixture has no schedule b. Find out how New York
+  builds its table, and why the single column does not show the same thing,
+  then pin the joint rows by test. It is an under-statement within the
+  one-dollar acceptance bar, so P2. It is on `main`, not introduced by the
+  AA13 change, whose review found it.
 
 ### W — engineering hygiene
 
@@ -585,8 +602,8 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Y5 | #113 | — |
 | Y6 | #114, #119, #165 | — |
 | Y7 | #120 | no Windows coverage — the Windows job runs two modules |
-| Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states, statutory residency in a second state, or income sourced to another state that taxes it BLOCKS until Z8 (AA7), and neither the City resident tax (line 47a, AA13) nor the Yonkers lines 55-56 (AA12) is computed; within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
-| Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; NOT the City resident tax, line 47a (AA13), nor Yonkers lines 55-56 (AA12) |
+| Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states, statutory residency in a second state, or income sourced to another state that taxes it BLOCKS until Z8 (AA7), the City resident tax (line 47a) came later with AA13, a part-year City resident is refused (AA11), and the Yonkers lines 55-56 are not computed (AA12); within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
+| Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; the City resident tax, line 47a, came later with AA13, and Yonkers lines 55-56 are AA12 |
 | Z3 | #131 | — |
 | Z7 | #121 | domicile as a GATE is deliberately not modeled |
 | AA1 | #171 | the EIC is DISCLOSED, not computed — out of persona by the 2026-07-12 ruling |

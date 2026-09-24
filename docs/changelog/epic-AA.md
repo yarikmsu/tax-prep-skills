@@ -438,3 +438,93 @@ treated the same way. Both are code changes, filed as AA11 (P1), which has to
 land with or before AA13. The City resident tax is AA13 (P1), and the Yonkers
 lines AA12 (P1). Whether the `nyc_resident` block should return until AA13 ships
 is an owner question.
+
+---
+
+## AA13 and AA11 — the New York City resident tax, for whole-year residents
+
+### What was wrong
+
+Nothing computed IT-201 line 47a. `state.nyc_tax` fetched the City's three rate
+schedules and the engine never read them; `compute_city_and_yonkers_total` took
+the City tax as an argument defaulting to zero, and the compute step never said
+where it came from. So a New York City resident's return carried a City tax of
+zero, while Z2 was recorded as shipping lines 47-58 and the `nyc_resident` block
+had been deleted on the strength of it. AA7's second review found it.
+
+The part-year guard had the same hole from the other side. A single filer was
+asked only whether they were a City resident, and a joint return was refused
+only when exactly one spouse was a whole-year resident, so a City resident for
+part of the year had the whole year's income taken as City taxable income. With
+the City tax at zero that over-statement was latent; computing line 47a makes it
+real, which is why AA11 ships with AA13 and not after it.
+
+### What shipped
+
+- `compute_nyc_resident_tax` computes line 47a. Below the fetched ceiling it
+  reads the City TAX TABLE, which is the State's method, the schedule at each
+  row's midpoint rounded half up, on the City's OWN rows; at or above the
+  ceiling, the rate schedule. The City's bottom rows are $0-18 and $18-25 where
+  the State's are $0-13 and $13-25, so reusing the State's rows puts a $15 City
+  return in a row that owes a dollar. There is no New York AGI condition on the
+  City table and no City recapture. An unfetched schedule or table refuses
+  rather than returning zero.
+- `state.nyc_tax.tax_table` joins the fetched schema with its own
+  `max_taxable_income` and `row_segments`, and the fetch step asks for the City
+  table's rows from the City table and for the published base on every band.
+- The compute step wires line 47a into line 52; `line_47a_nyc_resident_tax`
+  joins the result template and the `/tax-verify` map.
+- AA11: `nyc_resident_full_year` is asked of every non-joint City resident and
+  `compute_nyc_taxable_income` refuses a false or absent answer; a joint count
+  of zero whole-year spouses refuses too. Two tests encoded the old behaviour,
+  one accepting a joint zero and one computing a single filer with no answer,
+  and both were rewritten with the reason they were wrong.
+- The README, the capability note, the playbook, the skill catalog and the
+  state-module skill say the City tax is computed, for a whole-year resident,
+  and the Yonkers lines (AA12) stay named as not computed. The note test now
+  requires exactly one "NOT computed", so the City tax cannot drift back onto
+  that list unnoticed.
+
+### Verified against the source
+
+The schedule is IT-201-I (2025) p.40, read from the PDF itself: 3.078%, 3.762%,
+3.819% and 3.876%, with published bases of 665, 1,545 and 3,264 (joint), 369,
+858 and 1,813 (single and separate) and 443, 1,030 and 2,176 (head of
+household). The table rows are the published 2025 NYC table: its own worked
+example (joint, $38,275, $1,292), both $36,000 and $45,000 rows in all three
+columns, and the bottom rows. A summarising fetch reported a $64,950 row of
+$1,939 that the published page does not carry and the schedule contradicts; it
+was not used.
+
+### Mutation checks
+
+Each turned a test red and was restored by hash: always the schedule, always the
+table, the row floor for the midpoint, the State's key named for the City's
+table, a joint zero accepted, a non-joint absent answer assumed whole-year, a
+non-joint part-year answer accepted, an unfetched schedule returning zero, and
+the note listing the City tax as not computed again.
+
+### What the local review caught
+
+A local Codex pass found the schedule rounded twice. `_ny_schedule_tax`
+returned its tax rounded to cents and every caller rounded that to the dollar,
+so a single filer with line 47 of $71,504 (1,813 + 3.876% x 21,504 =
+2,646.49504) got $2,647 where the form gives $2,646. The review named the
+schedule; the table had the same defect, because it evaluates the schedule at
+each row's midpoint, and its $3,500-3,550 row came out 109 against a published
+108. The City's rates run to five decimals, so the cents land in that window
+often, and the error is always upward. The schedule now returns the unrounded
+tax and each path rounds once, to the dollar. The recapture worksheets enter
+the schedule tax as a line in cents, and round it there as before.
+
+Every cell of the published 2025 City table now matches the engine: 3,882 of
+them, 24 of which were a dollar high. The State table's results did not move.
+The same comparison found the State's joint column a dollar LOW on 22 rows, on
+`main` before this change; that is AA14. Mutation-checked: restoring the cents
+rounding turns seven new tests red.
+
+### Not done
+
+The Yonkers lines are AA12. The City school tax credit's rate-reduction amount
+(line 69a) stays a refundable-credit input like the others, from the fetched
+table. A part-year City return (IT-360.1) is refused, not modeled.

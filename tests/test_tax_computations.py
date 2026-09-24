@@ -28,6 +28,7 @@ from agents.lib.tax_computations import (
     compute_ny_state_tax_total,
     compute_ny_settlement,
     compute_nyc_taxable_income,
+    compute_nyc_resident_tax,
     compute_mctmt,
     compute_city_and_yonkers_total,
     compute_ny_ptet_owner,
@@ -6387,11 +6388,146 @@ _NY_2025_MCTMT = {
     "net_earnings_threshold_per_zone": 50000,
 }
 
+# IT-201-I (2025) p.40, "New York City tax rate schedule": the same three
+# groups as the State's schedules (a = joint and surviving spouse, b = head of
+# household, c = single and separate), and the same PUBLISHED-base shape, so
+# `_ny_schedule_tax` reads them. Every base below is the published one; each
+# is within a dollar of the bands beneath it, which that function checks.
+_NYC_2025_SCHEDULES = {
+    "a": [{"min": 0, "max": 21600, "rate": 0.03078, "base": 0},
+          {"min": 21600, "max": 45000, "rate": 0.03762, "base": 665},
+          {"min": 45000, "max": 90000, "rate": 0.03819, "base": 1545},
+          {"min": 90000, "max": None, "rate": 0.03876, "base": 3264}],
+    "b": [{"min": 0, "max": 14400, "rate": 0.03078, "base": 0},
+          {"min": 14400, "max": 30000, "rate": 0.03762, "base": 443},
+          {"min": 30000, "max": 60000, "rate": 0.03819, "base": 1030},
+          {"min": 60000, "max": None, "rate": 0.03876, "base": 2176}],
+    "c": [{"min": 0, "max": 12000, "rate": 0.03078, "base": 0},
+          {"min": 12000, "max": 25000, "rate": 0.03762, "base": 369},
+          {"min": 25000, "max": 50000, "rate": 0.03819, "base": 858},
+          {"min": 50000, "max": None, "rate": 0.03876, "base": 1813}],
+}
+# The 2025 New York City Tax Table (tax.ny.gov/pit/file/tax-tables/
+# it201i-2025.htm), used while line 47 is under $65,000. Its bottom rows are
+# $0-18 and $18-25, NOT the State table's $0-13 and $13-25: each table starts
+# its second row where its own first dollar of tax begins.
+_NYC_2025_TAX_TABLE = {
+    "max_taxable_income": 65000,
+    "row_segments": [
+        {"over": 0, "not_over": 18, "row_width": 18},
+        {"over": 18, "not_over": 25, "row_width": 7},
+        {"over": 25, "not_over": 50, "row_width": 25},
+        {"over": 50, "not_over": 65000, "row_width": 50},
+    ],
+}
+
+
+def _nyc(taxable, status="single", **over):
+    kwargs = {"brackets": _NYC_2025_SCHEDULES,
+              "schedule_by_status": _NY_SCHEDULE_BY_STATUS,
+              "tax_table": _NYC_2025_TAX_TABLE}
+    kwargs.update(over)
+    return compute_nyc_resident_tax(taxable, status, **kwargs)
+
+
+def test_nyc_resident_tax_uses_the_table_below_the_threshold():
+    """IT-201-I (2025) line 47a: "Is line 47 ... less than $65,000? If Yes,
+    find your New York City resident tax using the 2025 New York City Tax
+    Table." The table's own worked example: a joint return with line 47 of
+    $38,275 reads $1,292. AA13 — nothing computed line 47a before this, and a
+    City resident's return carried a City tax of zero."""
+    out = _nyc(38275, "mfj")
+    assert out["regime"] == "table"
+    assert out["tax"] == 1292
+    assert out["line_47a_nyc_resident_tax"] == 1292
+
+
+@pytest.mark.parametrize("taxable, status, published", [
+    (36010, "single", 1279), (36010, "mfj", 1208), (36010, "hoh", 1260),
+    (45020, "single", 1623), (45020, "mfj", 1546), (45020, "hoh", 1604),
+    (3510, "single", 108), (3510, "mfj", 108), (3510, "hoh", 108),
+    (10560, "single", 325), (10560, "mfj", 325), (10560, "hoh", 325),
+])
+def test_nyc_table_rows_match_the_published_table(taxable, status, published):
+    """Rows $36,000-36,050 and $45,000-45,050 of the published 2025 table.
+    The table is the schedule at each row's MIDPOINT, rounded half up; the row
+    floor reads a dollar low in four of these six cells, so the midpoint is
+    the method, not a detail.
+
+    Rows $3,500-3,550 and $10,550-10,600 are two of the eight where the
+    midpoint's tax has cents of .495 to .499: $3,525 x 3.078% = 108.4995.
+    Rounded to cents first and then to the dollar it read 109; the form rounds
+    once and prints 108. Every cell of the published City table (3,882 of
+    them) agreed once the schedule stopped rounding to cents."""
+    assert _nyc(taxable, status)["tax"] == published
+
+
+def test_nyc_schedule_rounds_to_the_dollar_once():
+    """A single filer with line 47 of $71,504 is on the schedule:
+    1,813 + 3.876% x 21,504 = 2,646.49504, which the form enters as $2,646.
+    Rounding to cents first gave 2,646.50 and then $2,647 — an over-statement,
+    and the City's five-decimal rates put the cents in that window often."""
+    out = _nyc(71504, "single")
+    assert out["regime"] == "schedule"
+    assert out["tax_exact"] == round(1813 + 21504 * 0.03876, 4)
+    assert out["tax"] == 2646
+
+
+def test_nyc_table_bottom_rows_are_the_citys_not_the_states():
+    """$15 sits in the City's $0-18 row and owes nothing. Laid out on the
+    State's rows it would sit in $13-25, whose midpoint owes a dollar."""
+    low = _nyc(15, "single")
+    assert low["tax"] == 0
+    assert low["breakdown"][0]["row"] == "0 - 18"
+    assert _nyc(20, "single")["breakdown"][0]["row"] == "18 - 25"
+    assert _nyc(20, "single")["tax"] == 1
+
+
+def test_nyc_resident_tax_uses_the_schedule_at_and_above_the_threshold():
+    """At $65,000 exactly the form switches to the rate schedule."""
+    single = _nyc(65000, "single")
+    assert single["regime"] == "schedule"
+    assert single["tax"] == 2394          # 1,813 + 3.876% x 15,000 = 2,394.40
+    assert _nyc(100000, "mfj")["tax"] == 3652   # 3,264 + 387.60
+    assert _nyc(80000, "hoh")["tax"] == 2951    # 2,176 + 775.20
+    assert _nyc(64999, "single")["regime"] == "table"
+
+
+def test_nyc_resident_tax_refuses_an_unfetched_table_region():
+    """Falling back to the schedule below $65,000 is worth up to a dollar in
+    either direction on every return in the table region, so an unfetched
+    table refuses, naming the City's key rather than the State's."""
+    with pytest.raises(ValueError, match="state.nyc_tax.tax_table"):
+        _nyc(38275, "mfj", tax_table=None)
+    with pytest.raises(ValueError, match="nyc_tax.tax_table.row_segments"):
+        _nyc(38275, "mfj", tax_table={"max_taxable_income": 65000})
+
+
+def test_nyc_resident_tax_refuses_unfetched_schedules():
+    """An empty schedule is a City tax of zero on a City resident, which is
+    the defect AA13 exists to end."""
+    with pytest.raises(ValueError, match="state.nyc_tax.brackets"):
+        _nyc(80000, "single", brackets={"a": [], "b": [], "c": []})
+    with pytest.raises(ValueError, match="state.nyc_tax.brackets"):
+        _nyc(80000, "single", brackets=None)
+
+
+def test_nyc_resident_tax_takes_the_canonical_status_and_refuses_others():
+    assert _nyc(38275, "MFJ")["tax"] == 1292
+    with pytest.raises(ValueError):
+        _nyc(38275, "married, sort of")
+
+
+@pytest.mark.parametrize("bad", [-1.0, float("nan"), float("inf"), None, "10"])
+def test_nyc_resident_tax_refuses_a_non_finite_or_negative_income(bad):
+    with pytest.raises(ValueError):
+        _nyc(bad, "single")
+
 
 def test_nyc_taxable_income_is_the_states_in_the_ordinary_case():
     """"If No, enter the line 38 amount on line 47." The worksheet exists for
     one narrow case and is not the general rule."""
-    out = compute_nyc_taxable_income(85000)
+    out = compute_nyc_taxable_income(85000, nyc_resident_full_year=True)
     assert out["nyc_taxable_income"] == 85000
     assert out["addback"] == 0.0
     assert out["notes"] == []
@@ -6400,7 +6536,8 @@ def test_nyc_taxable_income_is_the_states_in_the_ordinary_case():
 def test_nyc_adds_back_a_charitable_gifts_trust_deduction():
     """The City does not allow it. A caller who has the contribution and never
     learns it matters under-states the city tax by the whole of it."""
-    out = compute_nyc_taxable_income(85000, charitable_gifts_trust_deducted=2000)
+    out = compute_nyc_taxable_income(85000, charitable_gifts_trust_deducted=2000,
+                                     nyc_resident_full_year=True)
     assert out["nyc_taxable_income"] == 87000
     assert any("added back" in n for n in out["notes"])
 
@@ -6922,6 +7059,11 @@ class TestTheNewYorkResultSection:
             "zone_1": {"rate": 0.0011}, "zone_2": {"rate": 0.0034}})["lines"])
         keys |= {k for k in compute_city_and_yonkers_total()
                  if k.startswith("line_")}
+        keys |= {k for k in compute_nyc_resident_tax(
+                     0.0, "single", brackets=_NYC_2025_SCHEDULES,
+                     schedule_by_status=_NY_SCHEDULE_BY_STATUS,
+                     tax_table=_NYC_2025_TAX_TABLE)
+                 if k.startswith("line_")}
         keys |= {k for k in compute_ny_state_tax_total(0.0)
                  if k.startswith("line_")}
         keys |= {k for k in compute_ny_itemized(
@@ -7085,13 +7227,17 @@ class TestWhatTheReviewPassFound:
                                          filing_status="mfj")
         assert out["nyc_taxable_income"] == 300000.0
 
-    def test_zero_resident_spouses_is_accepted_and_computes(self):
-        """A joint return can carry the flag as False for both — the caller
-        simply does not reach the city branch — and the engine must not refuse
-        a figure it was handed."""
-        out = compute_nyc_taxable_income(300000.0, nyc_resident_spouses=0,
-                                         filing_status="mfj")
-        assert out["nyc_taxable_income"] == 300000.0
+    def test_zero_whole_year_spouses_refuses(self):
+        """AA11. This test used to accept zero, on the reasoning that a joint
+        return with no City resident never reaches the City branch. But one
+        that DOES reach it — `nyc_resident` true — with nobody a resident for
+        the whole year is a couple who both lived there part of the year, and
+        taxing the whole year's income over-states the City tax by the months
+        spent outside it. A part-year City return (IT-360.1, line 50) is not
+        modeled, so it refuses."""
+        with pytest.raises(ValueError, match="whole year"):
+            compute_nyc_taxable_income(300000.0, nyc_resident_spouses=0,
+                                       filing_status="mfj")
 
     @pytest.mark.parametrize("bad", [3, -1, True, "two", 1.5])
     def test_an_out_of_domain_answer_refuses(self, bad):
@@ -7099,11 +7245,31 @@ class TestWhatTheReviewPassFound:
             compute_nyc_taxable_income(300000.0, nyc_resident_spouses=bad,
                                        filing_status="mfj")
 
-    def test_a_single_filer_needs_no_answer(self):
-        """A gate firing on a taxpayer who has no spouse is a gate firing on
-        correct data."""
-        out = compute_nyc_taxable_income(85000.0, filing_status="single")
+    def test_a_single_filer_needs_no_spouse_count(self):
+        """A spouse count asked of a taxpayer with no spouse is a gate firing
+        on correct data, so the non-joint answer is a different field."""
+        out = compute_nyc_taxable_income(85000.0, filing_status="single",
+                                         nyc_resident_full_year=True)
         assert out["nyc_taxable_income"] == 85000.0
+
+    def test_a_non_joint_filer_must_say_the_residence_was_for_the_whole_year(
+            self):
+        """AA11. The single filer was asked only "are you a New York City
+        resident?", so one who lived in the City for half the year answered yes
+        and had the whole year's income taken as City taxable income. The
+        absence refuses too, the way the joint count's does: assuming a whole
+        year is the answer that over-states."""
+        with pytest.raises(ValueError, match="must say whether"):
+            compute_nyc_taxable_income(85000.0, filing_status="single")
+        with pytest.raises(ValueError, match="part of the year"):
+            compute_nyc_taxable_income(85000.0, filing_status="hoh",
+                                       nyc_resident_full_year=False)
+
+    @pytest.mark.parametrize("bad", ["yes", 1, 0, "true"])
+    def test_the_whole_year_answer_is_a_boolean(self, bad):
+        with pytest.raises(ValueError, match="True or False"):
+            compute_nyc_taxable_income(85000.0, filing_status="single",
+                                       nyc_resident_full_year=bad)
 
     def test_the_field_exists_and_the_interview_asks_for_it(self):
         """A guard whose precondition is a field nobody collects is not a
@@ -7119,6 +7285,11 @@ class TestWhatTheReviewPassFound:
         setup = skill_text("tax-setup")
         assert "nyc_resident_spouses" in setup
         assert "only one" in setup
+        # AA11's field for everyone else, shipped unanswered for the same
+        # reason: a default of True is the whole-year assumption.
+        assert "nyc_resident_full_year" in template["flags"]
+        assert template["flags"]["nyc_resident_full_year"] is None
+        assert "nyc_resident_full_year" in setup
 
 
 class TestEveryStateEntryPointValidatesItsFilingStatus:
@@ -7337,6 +7508,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ny.py::compute_ny_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_household_credit": "direct",
         "tax_computations/state/ny.py::compute_nyc_taxable_income": "direct",
+        "tax_computations/state/ny.py::compute_nyc_resident_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_required_annual_payment": "direct",
         "tax_computations/state/ny.py::compute_ny_itemized": "direct",
         "withholding.py::build_ny_true_up": "direct",

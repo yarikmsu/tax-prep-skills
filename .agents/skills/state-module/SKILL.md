@@ -30,8 +30,8 @@ Two things get mistaken for one:
   module. Modelling it as "none" silently drops a real tax.
 
 And two things are explicitly out of scope, gated rather than half-modelled:
-city income tax, the one exception being New York City's, built in part as
-its own epic, and part-year or nonresident returns.
+city income tax, the one exception being New York City's full-year resident
+tax, built as its own epics, and part-year or nonresident returns.
 If the request needs either, say so before starting rather than shipping
 something that looks complete.
 

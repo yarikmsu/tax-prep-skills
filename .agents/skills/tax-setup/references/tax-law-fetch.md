@@ -255,7 +255,13 @@ a figure from a prior year.
   - **If the taxpayer is a New York City resident** (`nyc_resident`, or NY in
     the `residency` counts): search
     `"New York City {year} resident income tax rate schedule site:tax.ny.gov"`
-    → `state.nyc_tax.brackets` (same three schedules) and set `applies`. The
+    → `state.nyc_tax.brackets` (same three schedules, each band carrying
+    `{min, max, rate, base}` with the PUBLISHED base, as the State's do) and set
+    `applies`. Then the City's own TAX TABLE → `state.nyc_tax.tax_table`:
+    `max_taxable_income` (the line-47 ceiling below which the table is used) and
+    `row_segments`, recorded from the CITY table itself — its narrow bottom rows
+    are not the State table's, and reusing those puts a small return in the
+    wrong row. `compute_nyc_resident_tax` refuses without either. The
     school tax credit is **TWO** credits: a fixed amount by status under an
     income ceiling, and a rate reduction that is its own bracket schedule.
     Also fetch the NYC household credit — tables 4, 5 and 6, with the SAME

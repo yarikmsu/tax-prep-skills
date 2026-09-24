@@ -57,8 +57,9 @@ exist in `taxpayer_profile_template.json` AND be asked by the `tax-setup` interv
 **Blocking** (exit 2, clearable only by an explicit `acknowledged_limitations` entry
 with the decision recorded in `answers.md`): rental Schedule E, Form 8962, part-year
 residency, residency in a second state, income sourced to another state, kiddie tax,
-Schedule H, and PFIC with a taxable event. New York City is not blocked: its IT-201
-block is computed in part, and the capability note names what is not.
+Schedule H, and PFIC with a taxable event. New York City's full-year resident tax is
+computed, not blocked; a City resident for only part of the year is refused at compute
+time.
 
 **Manual-worksheet items** never block. They join the state-scope note in the
 `meta.limitations` manifest, which is copied VERBATIM into `result.json` and printed on

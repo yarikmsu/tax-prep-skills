@@ -88,7 +88,14 @@ def _ny_schedule_tax(taxable_income: float, table: list,
         if taxable_income > band["min"] and (upper is None
                                              or taxable_income <= upper):
             excess = taxable_income - band["min"]
-            tax = round(band["base"] + excess * band["rate"], 2)
+            # UNROUNDED, because every caller rounds to the dollar and the
+            # form rounds once. Rounding to cents here as well carried the
+            # City schedule's 2,646.49504 to 2,646.50 and then to 2,647, and
+            # its table row $3,500-3,550 to 109 against a published 108. The
+            # City's rates run to five decimals, so its cents land on .495 to
+            # .499 often, and the error is always upward. The recapture
+            # worksheets carry the schedule tax in cents, and round it there.
+            tax = band["base"] + excess * band["rate"]
             return tax, [{
                 "rate": band["rate"],
                 "range": f"{band['min']:,.0f} - "
@@ -96,7 +103,7 @@ def _ny_schedule_tax(taxable_income: float, table: list,
                          else f"{band['min']:,.0f} and over",
                 "base": band["base"],
                 "excess": round(excess, 2),
-                "tax": tax,
+                "tax": round(tax, 2),
             }]
     # Only reachable at exactly zero, or from a table whose first band does not
     # start at zero — a transcription gap rather than a taxpayer.
@@ -455,7 +462,8 @@ def _ny_round_half_up(value: float) -> int:
 
 
 def _ny_table_tax(taxable_income: float, table: list, schedule: str,
-                  tax_table: dict) -> "tuple[float, list]":
+                  tax_table: dict,
+                  source: str = "state.tax_table") -> "tuple[float, list]":
     """New York's TAX TABLE, which is a different method from its schedule.
 
     Below a published taxable income, and at or below the recapture's entry
@@ -476,11 +484,15 @@ def _ny_table_tax(taxable_income: float, table: list, schedule: str,
     bottom of the table uses narrower rows than the $50 it settles into, and a
     single width assumed across the range would be a guess at exactly the
     figure this function exists to get right.
+
+    `source` is the cache path the table came from, for the refusals: the City
+    table is the same method on its own rows (`state.nyc_tax.tax_table`), and a
+    message naming the State's key would send a reader to the wrong block.
     """
     segments = (tax_table or {}).get("row_segments") or []
     if not segments:
         raise ValueError(
-            "state.tax_table.row_segments is not fetched, and this return is "
+            f"{source}.row_segments is not fetched, and this return is "
             "in the TABLE region. The table is the schedule at each row's "
             "midpoint, and its rows are not all the same width — using the "
             "schedule instead is worth up to two dollars in EITHER direction. "
@@ -508,7 +520,7 @@ def _ny_table_tax(taxable_income: float, table: list, schedule: str,
     raise ValueError(
         f"taxable income {taxable_income:,.2f} is in the tax-table region and "
         "no fetched row segment covers it; the segments must span 0 up to "
-        "state.tax_table.max_taxable_income")
+        f"{source}.max_taxable_income")
 
 
 def _ny_result(exact: float, schedule: str, regime: str, recaptured: float,
@@ -675,6 +687,11 @@ def compute_ny_tax(
         return _ny_result(schedule_tax, schedule, "graduated", 0.0,
                           breakdown, notes)
 
+    # Above the entry threshold the tax comes off a WORKSHEET, and the
+    # worksheet enters the schedule tax as a line in dollars and cents
+    # (worksheet 3, line 3: 18,252 + 0.0685 x 1 = 18,252.07). Only the
+    # schedule and the table above are rounded once, to the dollar.
+    schedule_tax = round(schedule_tax, 2)
     # Above the top NYAGI the schedule stops applying altogether.
     top = (recapture.get("full_recapture") or {})
     if top.get("nyagi_over") is None or top.get("rate") is None:
@@ -1051,6 +1068,7 @@ def compute_nyc_taxable_income(
     charitable_gifts_trust_deducted: float = 0.0,
     nyc_resident_spouses: "int | None" = None,
     filing_status: str = "single",
+    nyc_resident_full_year: "bool | None" = None,
 ) -> dict:
     """IT-201 line 47 — New York City taxable income.
 
@@ -1072,6 +1090,16 @@ def compute_nyc_taxable_income(
     2025, do not enter an amount here" — that return goes to line 51 instead,
     on a different computation this function cannot do. It refuses rather than
     taxing the whole household as residents.
+
+    **Nor does a City resident for only PART of the year** (AA11). Line 47 is a
+    whole year's income, and a part-year City resident's tax is figured on
+    IT-360.1 and entered on line 50, which is not modeled. Reaching this
+    function means `nyc_resident` is true, so on a joint return a count of ZERO
+    whole-year spouses is a couple who both lived in the City part of the year,
+    and it refuses like a count of one. Every other filer answers
+    `nyc_resident_full_year`, and an absent answer refuses too: assuming a
+    whole year is the answer that over-states the City tax for anyone who
+    moved into or out of the City.
     """
     filing_status = _ny_status(filing_status)
     taxable = _amount(state_taxable_income, "state_taxable_income")
@@ -1109,6 +1137,32 @@ def compute_nyc_taxable_income(
                 "enter a line 47 amount — it is computed on line 51 instead. "
                 "Taxing the whole household as residents would over-state the "
                 "city tax by the non-resident spouse's whole share.")
+        if nyc_resident_spouses == 0:
+            raise ValueError(
+                "a joint return reached the City tax with NEITHER spouse a New "
+                "York City resident for the whole year, so both lived there for "
+                "part of it. A part-year City return (IT-360.1, IT-201 line 50) "
+                "is not modeled, and taxing the whole year's income as City "
+                "taxable income over-states the City tax by the months spent "
+                "outside the City.")
+    else:
+        if nyc_resident_full_year is None:
+            raise ValueError(
+                "a return with nyc_resident must say whether the taxpayer was a "
+                "New York City resident for the WHOLE year: pass "
+                "nyc_resident_full_year from `flags.nyc_resident_full_year`. "
+                "Assuming the whole year over-states the City tax for anyone "
+                "who moved into or out of the City.")
+        if not isinstance(nyc_resident_full_year, bool):
+            raise ValueError(
+                "nyc_resident_full_year must be True or False, got "
+                f"{nyc_resident_full_year!r}")
+        if not nyc_resident_full_year:
+            raise ValueError(
+                "a New York City resident for only part of the year files a "
+                "part-year City return (IT-360.1, IT-201 line 50), which is not "
+                "modeled; taxing the whole year's income over-states the City "
+                "tax by the months spent outside the City.")
     notes: "list[str]" = []
     if addback:
         notes.append(
@@ -1116,6 +1170,89 @@ def compute_nyc_taxable_income(
             "IT-196 itemized deduction are added back for the city.")
     return {"nyc_taxable_income": round(taxable + addback, 2),
             "addback": round(addback, 2), "notes": notes}
+
+
+def compute_nyc_resident_tax(
+    nyc_taxable_income: float,
+    filing_status: str,
+    brackets: "dict[str, list] | None",
+    schedule_by_status: "dict[str, str]",
+    tax_table: "dict | None",
+) -> dict:
+    """IT-201 line 47a — the New York City resident tax on line 47.
+
+    Nothing computed this line before AA13. `state.nyc_tax` was fetched and
+    read by nothing, `compute_city_and_yonkers_total` took the tax as an
+    argument defaulting to zero, and the compute step never said where it came
+    from — so a City resident's return carried a City tax of zero while the
+    shipped record said lines 47-58 were done.
+
+    TWO METHODS, chosen on line 47 alone: "Is line 47 ... less than $65,000?
+    If Yes, find your New York City resident tax using the 2025 New York City
+    Tax Table ... If No, ... using the New York City tax rate schedule"
+    (IT-201-I, line 47a). Unlike the State's, the City table carries no New
+    York AGI condition, and the City tax has no benefit recapture.
+
+    The table is the State's METHOD — the schedule at each row's midpoint,
+    rounded half up — so `_ny_table_tax` computes it. Its ROWS are the City's
+    own, fetched into `state.nyc_tax.tax_table`: the bottom rows are $0-18 and
+    $18-25 where the State's are $0-13 and $13-25, because each table starts
+    its second row where its own first dollar of tax begins. Laid out on the
+    State's rows, a $15 City return lands in a row that owes a dollar.
+
+    The schedule letters are the State's (`state.bracket_schedule_by_status`):
+    the City groups filers the same three ways, and its schedules carry the
+    same PUBLISHED bases that `_ny_schedule_tax` requires.
+
+    Returns:
+        {"tax", "tax_exact", "line_47a_nyc_resident_tax", "schedule", "regime",
+         "breakdown", "notes"} — `tax` is the WHOLE-DOLLAR line 47a.
+    """
+    filing_status = _ny_status(filing_status)
+    if nyc_taxable_income is None or isinstance(nyc_taxable_income, bool) or \
+            not isinstance(nyc_taxable_income, (int, float)):
+        raise ValueError(
+            f"nyc_taxable_income must be a number, got {nyc_taxable_income!r}")
+    if not math.isfinite(nyc_taxable_income) or nyc_taxable_income < 0:
+        raise ValueError(
+            "nyc_taxable_income must be finite and not negative, got "
+            f"{nyc_taxable_income!r}")
+    schedule = (schedule_by_status or {}).get(filing_status)
+    if schedule is None:
+        raise ValueError(
+            f"no schedule for filing status {filing_status!r} in "
+            "state.bracket_schedule_by_status")
+    table = (brackets or {}).get(schedule) or []
+    if not table:
+        raise ValueError(
+            f"state.nyc_tax.brackets has no schedule {schedule!r}: the City's "
+            "rate schedules were not fetched, and a City resident's tax must "
+            "not default to zero. Re-run /tax-setup.")
+    ceiling = (tax_table or {}).get("max_taxable_income")
+    if ceiling is None:
+        raise ValueError(
+            "state.nyc_tax.tax_table.max_taxable_income is not fetched, so "
+            "whether line 47 is in the TABLE region is unknown; the table and "
+            "the schedule differ by up to a dollar either way. Re-run "
+            "/tax-setup.")
+    if nyc_taxable_income < ceiling:
+        exact, breakdown = _ny_table_tax(
+            nyc_taxable_income, table, schedule, tax_table,
+            source="state.nyc_tax.tax_table")
+        regime = "table"
+    else:
+        exact, breakdown = _ny_schedule_tax(nyc_taxable_income, table, schedule)
+        regime = "schedule"
+    line = _ny_round_half_up(exact)
+    return {
+        "tax": line,
+        "tax_exact": round(exact, 4),
+        "line_47a_nyc_resident_tax": line,
+        "schedule": schedule,
+        "regime": regime,
+        "breakdown": breakdown,
+        "notes": [],
+    }
 
 
 def compute_mctmt(

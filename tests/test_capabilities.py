@@ -1305,7 +1305,7 @@ class TestTheNewYorkModuleIsDone:
         note = C.evaluate(_profile(state="NY")).state_note
         for claim in ("IT-201", "recapture", "IT-225", "IT-196", "§615",
                       "household credit", "New York City taxable income",
-                      "MCTMT"):
+                      "New York City resident tax on line 47a", "MCTMT"):
             assert claim in note, claim
 
     def test_the_note_names_what_is_NOT_computed(self):
@@ -1315,19 +1315,19 @@ class TestTheNewYorkModuleIsDone:
         return.
 
         The note once claimed "lines 47-58 for New York City, Yonkers and the
-        MCTMT", and this test pinned that claim. Nothing computed the City
-        resident tax (line 47a) or the Yonkers lines 55 and 56; the note and
-        the compute step now name both as not computed (AA7), until AA13 and
-        AA12 compute them."""
+        MCTMT", and this test pinned that claim while nothing computed the City
+        resident tax or the Yonkers lines. AA13 computes the City tax; the
+        Yonkers lines 55 and 56 stay named as not computed until AA12."""
         note = C.evaluate(_profile(state="NY")).state_note
         assert "IT-213" in note and "not computed" in note
         assert "IT-203" in note and "not modeled" in note
         assert "ASKED" in note and "zero" in note
-        assert "resident tax itself (line 47a)" in note
         assert "Yonkers lines 55 and 56 are NOT computed" in note
+        assert note.count("NOT computed") == 1, (
+            "only the Yonkers lines are named as not computed; a second "
+            "\"NOT computed\" means the City tax went back on the list")
         ny_ref = (self.REPO / ".agents/skills/tax-compute/references"
                   / "state-return-ny.md").read_text()
-        assert "The City resident tax itself, line 47a, is NOT computed" in ny_ref
         assert "Neither Yonkers amount is computed yet" in ny_ref
 
     def test_every_form_the_note_names_as_an_input_really_is_one(self):
