@@ -83,8 +83,8 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Before publish** | **AA6**, **AA12** — size the UNSUPPORTED list; compute the Yonkers taxes. | The first public issue will be someone hitting a block. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, X7, Z4-Z6, Z8. | — |
+| **Before publish** | **AA6** — size the UNSUPPORTED list. | The first public issue will be someone hitting a block. |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -166,23 +166,6 @@ Windows has not run since 2026-09-13.
   duration spelled in words nor a number two words from its unit. Fold into the
   next PR that touches these tests.
 
-- **AA12 (P1, S): The Yonkers taxes are fetched and never computed.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  `state.yonkers_tax` is fetched (the resident surcharge rate on the net State
-  tax, the nonresident earnings rate and its exclusion) and the interview sets
-  `yonkers_resident` and `yonkers_nonresident_earnings`, but no engine function
-  computes IT-201 line 55 or 56. `compute_city_and_yonkers_total` takes both
-  amounts as arguments defaulting to 0.0, and the compute step names the flags
-  without a formula, so a Yonkers resident's return omits the surcharge unless
-  the agent improvises one, and until AA7 nothing on `meta.limitations` said so.
-  The capability note now names the gap, which makes it §4's degrade, an
-  under-statement WITH a banner; the amounts are still wrong. Either compute
-  both lines from the fetched block (the fetcher's own note: the nonresident tax
-  is capped at what the resident surcharge would have been) or take them as
-  named inputs on `meta.limitations`, as the refundable credits are. AA7 stopped
-  the README and the capability note claiming Yonkers. Found by AA7's review.
-
 - **AA14 (P2, S): The State tax table is a dollar low on 22 joint rows.**
   Every cell of the published 2025 State table, compared with `compute_ny_tax`:
   the single column agrees on all 1,294 rows, and the joint column differs on
@@ -195,6 +178,19 @@ Windows has not run since 2026-09-13.
   then pin the joint rows by test. It is an under-statement within the
   one-dollar acceptance bar, so P2. It is on `main`, not introduced by the
   AA13 change, whose review found it.
+
+- **AA15 (P2, S): The line-58 total defaults the City and Yonkers taxes to zero.**
+  `compute_city_and_yonkers_total` takes the City resident tax (line 47a) and
+  both Yonkers taxes (lines 55 and 56) as arguments defaulting to 0.0, and
+  `result_template.json` ships all three as `0`. So a caller that skips
+  `compute_nyc_resident_tax` or a Yonkers function gets zero with nothing to
+  say so, and a line nobody computed reads the same as a computed zero: an
+  under-statement with no banner, against §4. The same default hid line 47a
+  from Z2 until AA13 and lines 55-56 until AA12; reviews found both, and no
+  gate did. Either the total takes the household flags and refuses a flagged
+  amount that was not passed, or the three lines ship `null` as line 59 does
+  and a check refuses a null line for a flagged household, which also catches
+  an agent that never calls the total. Found by AA12's review.
 
 ### W — engineering hygiene
 
@@ -565,6 +561,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA7 | #174 | the scope it states still BLOCKS part-year, second-state and other-state-income returns until Z8 |
 | AA13 | #175 | a part-year City return (IT-360.1, line 50) is refused, not modeled |
 | AA11 | #175 | — |
+| AA12 | #176 | a part-year Yonkers resident (IT-360.1, line 57), special condition Y1 and a joint Form Y-203 are refused, not modeled; the zero default on the line-58 total is AA15 |
 | Q7 | #156 | — |
 | Q9 | #156 | — |
 | Q8 | #158 | — |
