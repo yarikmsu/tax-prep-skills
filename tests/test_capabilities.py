@@ -3,6 +3,7 @@
 C1: unsupported situations block /tax-compute unless explicitly acknowledged.
 C2: triggered items + state scope become the meta.limitations manifest.
 """
+import importlib.util
 import json
 import re
 import subprocess
@@ -1520,3 +1521,256 @@ def test_the_eic_screen_does_not_make_the_half_year_home_rule_universal():
     assert "a US abode for more than half the year" not in text
     assert "WITHOUT a qualifying child" in text
     assert "born or who died during the year still counts" in text
+
+
+WHO_IT_FITS = REPO / "docs" / "WHO-IT-FITS.md"
+WHO_IT_FITS_SCRIPT = REPO / "scripts" / "who_it_fits.py"
+# Backticked on the page and not a gate rule.
+WHO_IT_FITS_NOT_RULES = frozenset({"acknowledged_limitations"})
+
+
+def _who_it_fits_script():
+    spec = importlib.util.spec_from_file_location("who_it_fits", WHO_IT_FITS_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_who_it_fits_sizes_exactly_the_blocking_rules():
+    """The page sizes the UNSUPPORTED list for the named personas (AA6), so its
+    list has to BE that list. A rule added to the gate and missing here is a
+    block nobody has sized. A rule the page still names after it stopped
+    blocking tells a reader they will be stopped by something that no longer
+    stops them, whether it was demoted to MANUAL or deleted outright: the
+    second review found a deleted rule passed, because the check read only the
+    ids the gate still had. So every rule-shaped id in backticks has to be a
+    blocking rule, and the page may name nothing else that way."""
+    named = set(re.findall(r"`([a-z0-9_]+)`", WHO_IT_FITS.read_text()))
+    blocking = {r.rule_id for r in C.RULES if r.level == C.UNSUPPORTED}
+    assert blocking - named == set(), (
+        f"{sorted(blocking - named)} block at the gate and docs/WHO-IT-FITS.md "
+        "does not size them")
+    assert named - WHO_IT_FITS_NOT_RULES - blocking == set(), (
+        f"{sorted(named - WHO_IT_FITS_NOT_RULES - blocking)} are named in "
+        "docs/WHO-IT-FITS.md as blocks and are not blocking rules")
+
+
+def _collapsed(text):
+    return " ".join(text.split())
+
+
+def test_who_it_fits_prints_what_the_script_measured():
+    """Every cell of the page's table, and every figure its prose quotes, is
+    what scripts/who_it_fits.py renders from the figures it last measured. The
+    first draft was copied by hand and four cells were wrong; the first fix
+    checked only the derived row, so a measured cell edited by hand still
+    passed. A refresh rewrites the figures file, and this names every sentence
+    that then has to change."""
+    script = _who_it_fits_script()
+    figures = json.loads(script.FIGURES.read_text(encoding="utf-8"))
+    page = WHO_IT_FITS.read_text()
+    table = [line for line in page.splitlines() if line.startswith("|")]
+    assert table == script.render_table(figures)
+    missing = [p for p in script.phrases(figures) if p not in _collapsed(page)]
+    assert missing == [], f"docs/WHO-IT-FITS.md no longer says: {missing}"
+
+
+def test_who_it_fits_comparisons_still_hold():
+    """The prose compares the personas ("the highest of the five"), and a
+    newer year's figures can reverse a comparison while every number on the
+    page stays right. Each comparison is checked against the saved figures."""
+    script = _who_it_fits_script()
+    figures = json.loads(script.FIGURES.read_text(encoding="utf-8"))
+    failed = [c for c, holds in script.claims(figures).items() if not holds]
+    assert failed == [], f"docs/WHO-IT-FITS.md claims what no longer holds: {failed}"
+
+
+def _write_csv(path, header, rows):
+    path.write_text("\n".join([header] + [",".join(map(str, r)) for r in rows]) + "\n",
+                    encoding="latin-1")
+
+
+INCOME_PERSONAS = {"Whole": ("90", None, False),
+                   "Area": ("91", frozenset({"001", "002"}), False)}
+
+
+def _write_income(tmp_path, drop=lambda row: False):
+    """State ZZ is the whole-state persona, counties 001 and 002 of state YY
+    the area; `drop` removes rows, to stand for a download missing them."""
+    county = ([("90", "ZZ", "000", 1, 5, 5, 5), ("91", "YY", "000", 8, 999, 999, 999)]
+              + [("91", "YY", "001", b, 100, 30 if b == 8 else 0, 0) for b in range(1, 9)]
+              + [("91", "YY", "002", b, 100, 10 if b == 8 else 0, 40 if b == 1 else 0)
+                 for b in range(1, 9)]
+              + [("91", "YY", "003", 8, 100, 100, 100)])
+    state = [("ZZ", 0, '"1,000"', 50, 100, 0), ("ZZ", 7, 500, 500, 500, 0),
+             ("ZZ", 8, 100, 20, 5, 0), ("ZZ", 9, 60, 10, 0, 30),
+             ("ZZ", 10, 40, 10, 0, 20)]
+    _write_csv(tmp_path / "23incyallagi.csv",
+               "STATEFIPS,STATE,COUNTYFIPS,agi_stub,N1,N25870,N85775",
+               [r for r in county if not drop(r)])
+    _write_csv(tmp_path / "23in55cmcsv.csv", "STATE,AGI_STUB,N1,N25870,N85775,N04470",
+               [r for r in state if not drop(r)])
+
+
+def test_who_it_fits_reads_income_by_the_right_brackets(tmp_path):
+    """The state file's brackets 8-10 are $200,000+ and bracket 0 is every
+    return; the county file has eight brackets, 8 being $200,000+, and no total,
+    so every return is their sum. A county outside the area, and the state's
+    own total row, stay out. Hand-computed from the rows in _write_income."""
+    script = _who_it_fits_script()
+    _write_income(tmp_path)
+    personas = INCOME_PERSONAS
+    fips_of, rows = script.read_county_file(tmp_path, personas)
+    assert fips_of == {"ZZ": "90", "YY": "91"}
+    assert script.income_shares(tmp_path, fips_of, rows, personas) == {
+        "Whole": pytest.approx({"rental_all": 5.0, "marketplace_all": 10.0,
+                                "rental_200k": 20.0, "marketplace_200k": 2.5}),
+        "Area": pytest.approx({"rental_all": 2.5, "marketplace_all": 2.5,
+                               "rental_200k": 20.0, "marketplace_200k": 0.0})}
+    assert script.itemizing_500k(tmp_path, ("ZZ",)) == pytest.approx({"ZZ": 50.0})
+
+
+STATE_OUT = "y1_statefips,y2_statefips,y2_state,y2_state_name,n1,n2,AGI"
+STATE_IN = "y2_statefips,y1_statefips,y1_state,y1_state_name,n1,n2,AGI"
+COUNTY_OUT = "y1_statefips,y1_countyfips,y2_statefips,y2_countyfips,y2_state,y2_countyname,n1,n2,agi"
+COUNTY_IN = "y2_statefips,y2_countyfips,y1_statefips,y1_countyfips,y1_state,y1_countyname,n1,n2,agi"
+
+
+def _county_flows(fips, county, total, us, same, different, foreign, stay, places):
+    """One county's rows in a county flow file, summary rows first."""
+    name = f"C{county} County"
+    return ([(fips, county, "96", "000", "YY", f"{name} Total Migration-US and Foreign", total, 0, 0),
+             (fips, county, "97", "000", "YY", f"{name} Total Migration-US", us, 0, 0),
+             (fips, county, "97", "001", "YY", f"{name} Total Migration-Same State", same, 0, 0),
+             (fips, county, "97", "003", "YY", f"{name} Total Migration-Different State",
+              different, 0, 0),
+             (fips, county, "98", "000", "YY", f"{name} Total Migration-Foreign", foreign, 0, 0),
+             (fips, county, fips, county, "YY", f"{name} Non-migrants", stay, 0, 0)]
+            + [(fips, county, s, c, "YY", f"C{c} County", n, 0, 0) for s, c, n in places])
+
+
+def _write_moves(tmp_path, drop_us_row=False):
+    out_rows = [("90", "96", "ZZ", "ZZ Total Migration-US and Foreign", 60, 0, 0),
+                ("90", "97", "ZZ", "ZZ Total Migration-US", 50, 0, 0),
+                ("90", "98", "ZZ", "ZZ Total Migration-Foreign", 10, 0, 0),
+                ("90", "97", "ZZ", "ZZ Total Migration-Same State", 100, 0, 0),
+                ("90", "90", "ZZ", "ZZ Non-migrants", 830, 0, 0),
+                ("90", "12", "FL", "Florida", 50, 0, 0)]
+    if drop_us_row:
+        out_rows = [r for r in out_rows if not r[3].endswith("Migration-US")]
+    _write_csv(tmp_path / "stateoutflow2223.csv", STATE_OUT, out_rows)
+    _write_csv(tmp_path / "stateinflow2223.csv", STATE_IN, [
+        ("90", "96", "ZZ", "ZZ Total Migration-US and Foreign", 40, 0, 0),
+        ("90", "97", "ZZ", "ZZ Total Migration-US", 35, 0, 0),
+        ("90", "98", "ZZ", "ZZ Total Migration-Foreign", 5, 0, 0),
+        ("90", "36", "NY", "New York", 20, 0, 0),
+        ("90", "13", "GA", "Georgia", 15, 0, 0),
+        ("90", "57", "FR", "Foreign", 5, 0, 0)])
+    # Area = counties 001 and 002 of state 91; 005, 007 and 009 are the rest
+    # of the state, and 003 is outside the area and must not count.
+    _write_csv(tmp_path / "countyoutflow2223.csv", COUNTY_OUT,
+               _county_flows("91", "001", 30, 28, 18, 10, 2, 500,
+                             [("91", "002", 8), ("91", "005", 10)])
+               + _county_flows("91", "002", 20, 20, 12, 8, 0, 300,
+                               [("91", "001", 5), ("91", "007", 7)])
+               + _county_flows("91", "003", 999, 999, 0, 999, 0, 999, []))
+    _write_csv(tmp_path / "countyinflow2223.csv", COUNTY_IN,
+               _county_flows("91", "001", 25, 25, 15, 10, 0, 500,
+                             [("91", "002", 5), ("91", "009", 10)])
+               + _county_flows("91", "002", 16, 15, 8, 7, 1, 300, [("91", "001", 8)]))
+
+
+def _flows(script, tmp_path):
+    return {(level, side): script.read_flows(tmp_path, level, side, {"90", "91"})
+            for level in ("state", "county") for side in ("out", "in")}
+
+
+def test_who_it_fits_counts_moves_across_the_state_line(tmp_path):
+    """Hand-computed. Whole state: households are non-migrants, moves within
+    the state and both directions of moves out of it, 830 + 100 + 60 + 40 =
+    1,030; 85 crossed a state line and 15 went abroad. Area: a move between its
+    two counties (8 + 5 each way) is not a move out; leaving is 50 - 13 = 37,
+    entering 41 - 13 = 28, households 800 + 13 + 37 + 28 = 878, of which 35
+    crossed a state line, 3 went abroad and 27 moved to or from the rest of
+    the state (10 + 7 out, 10 in)."""
+    script = _who_it_fits_script()
+    _write_moves(tmp_path)
+    personas = {"Whole": ("90", None, False),
+                "Area": ("91", frozenset({"001", "002"}), True)}
+    flows = _flows(script, tmp_path)
+    assert script.moves(flows, personas) == {
+        "Whole": pytest.approx({"state_line": 100 * 85 / 1030,
+                                "abroad": 100 * 15 / 1030, "in_state": 0.0}),
+        "Area": pytest.approx({"state_line": 100 * 35 / 878, "abroad": 100 * 3 / 878,
+                               "in_state": 100 * 27 / 878})}
+    origins = script.arrivals(flows, personas)["Whole"]
+    assert [name for name, _ in origins] == ["New York", "Georgia"]
+    assert [share for _, share in origins] == pytest.approx([100 * 20 / 35, 100 * 15 / 35])
+
+
+def _write_commuting(tmp_path, header=True):
+    from openpyxl import Workbook
+    script = _who_it_fits_script()
+    book = Workbook()
+    sheet = book.active
+    sheet.append(("Table 1. Residence County to Workplace County Commuting Flows",))
+    sheet.append((None,))
+    if header:
+        sheet.append(script.COMMUTING_HEADER + ("Margin of Error",))
+    home = ("06", "001", "California", "A County")
+    for work, n in [(("006", "001", "California", "A County"), 100),
+                    (("032", "003", "Nevada", "B County"), 20),
+                    (("053", "033", "Washington", "King County"), 5),
+                    (("041", "005", "Oregon", "C County"), 3),
+                    ((None, None, "Other workplace outside of the U.S.", None), 2),
+                    (("072", "127", "Puerto Rico", "D Municipio"), 1)]:
+        sheet.append(home + work + (n, 1))
+    sheet.append(("12", "086", "Florida", "X County", "053", "033", "Washington",
+                  "King County", 50, 1))
+    book.save(tmp_path / "table1.xlsx")
+
+
+def test_who_it_fits_commuting_blocks_what_the_gate_blocks(tmp_path):
+    """A workplace blocks when its state is not on the gate's no-income-tax
+    list, taken from the gate and turned into FIPS codes with the IRS file's
+    own pairs, not typed a second time: Nevada does not block, and Washington
+    and Oregon do. Abroad and Puerto Rico stay in the denominator and do not
+    block, and a Florida resident's commute is not California's. 8 of 131."""
+    script = _who_it_fits_script()
+    _write_commuting(tmp_path)
+    fips_of = {"AK": "02", "FL": "12", "NV": "32", "SD": "46", "TN": "47",
+               "TX": "48", "WY": "56", "WA": "53", "OR": "41", "CA": "06"}
+    no_tax = script.no_tax_fips(fips_of)
+    assert "32" in no_tax and "53" not in no_tax
+    work = script.commuting(tmp_path, no_tax, {"Cal": ("06", None, False)})
+    assert work["blocking"] == pytest.approx({"Cal": 100 * 8 / 131})
+    places = work["workplaces"]["Cal"]
+    assert [(name, blocks) for name, _, blocks in places] == [
+        ("Nevada", False), ("Washington", True), ("Oregon", True)]
+    assert [share for _, share, _ in places] == pytest.approx(
+        [100 * 20 / 28, 100 * 5 / 28, 100 * 3 / 28])
+
+
+def test_who_it_fits_stops_on_a_changed_layout(tmp_path):
+    """Run against a newer year, a renamed summary row or a moved header would
+    otherwise read as zero and print a plausible 0.00%, and a missing bracket or
+    county would still leave a denominator: the local review found California's
+    $200,000+ rental share fell from 16.6% to 15.4% with its top bracket gone
+    and nothing said. Each of them stops the run."""
+    script = _who_it_fits_script()
+    _write_income(tmp_path, drop=lambda r: r[:2] == ("ZZ", 10))
+    fips_of, rows = script.read_county_file(tmp_path, INCOME_PERSONAS)
+    with pytest.raises(ValueError, match="missing brackets"):
+        script.income_shares(tmp_path, fips_of, rows, INCOME_PERSONAS)
+    with pytest.raises(ValueError, match="missing brackets"):
+        script.itemizing_500k(tmp_path, ("ZZ",))
+    _write_income(tmp_path, drop=lambda r: r[:3] == ("91", "YY", "002"))
+    fips_of, rows = script.read_county_file(tmp_path, INCOME_PERSONAS)
+    with pytest.raises(ValueError, match="'002'"):
+        script.income_shares(tmp_path, fips_of, rows, INCOME_PERSONAS)
+    _write_moves(tmp_path, drop_us_row=True)
+    with pytest.raises(ValueError, match="US"):
+        script.moves(_flows(script, tmp_path), {"Whole": ("90", None, False)})
+    _write_commuting(tmp_path, header=False)
+    with pytest.raises(ValueError, match="header"):
+        script.commuting(tmp_path, set(), {"Cal": ("06", None, False)})

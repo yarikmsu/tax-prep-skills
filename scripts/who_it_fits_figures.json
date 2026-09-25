@@ -1,0 +1,207 @@
+{
+ "arrivals": {
+  "California": [
+   [
+    "Texas",
+    9.87491250202679
+   ],
+   [
+    "New York",
+    7.292486445229235
+   ],
+   [
+    "Washington",
+    7.067463409039678
+   ]
+  ],
+  "Florida": [
+   [
+    "New York",
+    12.19585893728538
+   ],
+   [
+    "Georgia",
+    6.629258539671064
+   ],
+   [
+    "California",
+    5.715988161937466
+   ]
+  ],
+  "North Carolina": [
+   [
+    "Florida",
+    12.036825552998225
+   ],
+   [
+    "South Carolina",
+    8.963344284952942
+   ],
+   [
+    "Virginia",
+    8.871397532078875
+   ]
+  ]
+ },
+ "commuting": {
+  "California": 0.257364462465019,
+  "Florida": 1.04929489287014,
+  "New York City": 2.508502978813841,
+  "North Carolina": 2.3885202280996753,
+  "Seattle (King County)": 0.35632115902706657
+ },
+ "income": {
+  "California": {
+   "marketplace_200k": 1.2841872110939907,
+   "marketplace_all": 5.989568397872559,
+   "rental_200k": 16.60776194144838,
+   "rental_all": 7.059835626518344
+  },
+  "Florida": {
+   "marketplace_200k": 2.437353865048062,
+   "marketplace_all": 16.7524957590593,
+   "rental_200k": 14.996103067948324,
+   "rental_all": 4.748249024115642
+  },
+  "New York City": {
+   "marketplace_200k": 0.31580652126970415,
+   "marketplace_all": 1.38756321675333,
+   "rental_200k": 11.244871518030664,
+   "rental_all": 5.812617232946316
+  },
+  "North Carolina": {
+   "marketplace_200k": 1.6263247770579785,
+   "marketplace_all": 9.164633985348447,
+   "rental_200k": 14.249315588322988,
+   "rental_all": 5.009027745338373
+  },
+  "Seattle (King County)": {
+   "marketplace_200k": 0.6880180252675626,
+   "marketplace_all": 3.62324469416466,
+   "rental_200k": 12.802768166089965,
+   "rental_all": 6.8460164159395145
+  }
+ },
+ "itemizing_500k": {
+  "CA": 63.52138348003912,
+  "FL": 54.13417342353974,
+  "NC": 57.16828478964401,
+  "NY": 58.83646541383447,
+  "WA": 56.18984400929306
+ },
+ "moves": {
+  "California": {
+   "abroad": 0.14970646673991708,
+   "in_state": 0.0,
+   "state_line": 3.6892394185964696
+  },
+  "Florida": {
+   "abroad": 0.193390627787039,
+   "in_state": 0.0,
+   "state_line": 6.712025204213656
+  },
+  "New York City": {
+   "abroad": 0.22501061669811181,
+   "in_state": 2.0409413683603383,
+   "state_line": 6.748892377316395
+  },
+  "North Carolina": {
+   "abroad": 0.13217429920323065,
+   "in_state": 0.0,
+   "state_line": 6.907603403088438
+  },
+  "Seattle (King County)": {
+   "abroad": 0.32048435325813424,
+   "in_state": 4.582537673564852,
+   "state_line": 7.6691424638067325
+  }
+ },
+ "tax_year": 2023,
+ "workplaces": {
+  "California": [
+   [
+    "Nevada",
+    16.875659205437714,
+    false
+   ],
+   [
+    "Arizona",
+    8.528653463025899,
+    true
+   ],
+   [
+    "Texas",
+    7.427047931559827,
+    false
+   ]
+  ],
+  "Florida": [
+   [
+    "Georgia",
+    14.845161523451615,
+    true
+   ],
+   [
+    "Alabama",
+    9.882922598829227,
+    true
+   ],
+   [
+    "New York",
+    9.34451109344511,
+    true
+   ]
+  ],
+  "New York City": [
+   [
+    "New Jersey",
+    72.59827820750877,
+    true
+   ],
+   [
+    "Connecticut",
+    9.779662195037186,
+    true
+   ],
+   [
+    "Pennsylvania",
+    2.8567456731771737,
+    true
+   ]
+  ],
+  "North Carolina": [
+   [
+    "South Carolina",
+    42.566300129366105,
+    true
+   ],
+   [
+    "Virginia",
+    27.454721862871928,
+    true
+   ],
+   [
+    "Georgia",
+    5.565168175937904,
+    true
+   ]
+  ],
+  "Seattle (King County)": [
+   [
+    "California",
+    29.373996789727126,
+    true
+   ],
+   [
+    "Oregon",
+    9.45024077046549,
+    true
+   ],
+   [
+    "Alaska",
+    6.380417335473515,
+    false
+   ]
+  ]
+ }
+}

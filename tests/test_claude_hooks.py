@@ -165,6 +165,9 @@ _ARM_SNAPSHOT = (
     (('docs/ops/review-subagent-acceptance.md',),
      ('AGENTS', 'PORTABILITY', 'PREFLIGHT',)),
     (('docs/contributing/residency-guardrails.md',), ('CAPABILITIES',)),
+    (('docs/WHO-IT-FITS.md',), ('CAPABILITIES',)),
+    (('scripts/who_it_fits.py',), ('CAPABILITIES', 'SECUREFS',)),
+    (('scripts/who_it_fits_figures.json',), ('CAPABILITIES',)),
     (('docs/contributing/parse-boundary.md',), ('AGENTS',)),
     (('docs/ops/season-open-runbook.md',),
      ('AGENTS', 'PORTABILITY', 'PREFLIGHT',)),
@@ -1502,8 +1505,8 @@ class TestSkillInvariantsHook:
         # later: test_secure_fs sweeps every `*.py` under `agents/`, so that
         # path is watched too and this test was asserting the gap
         # `test_a_python_file_deeper_under_agents_is_covered` now closes. A
-        # changelog entry is outside every watched root and stays that way —
-        # only `docs/QUICKSTART.md` and `docs/contributing/` are watched.
+        # changelog entry is outside every watched root and stays that way:
+        # no entry in WATCHED_ROOTS contains `docs/changelog/`.
         r = _run_skill_hook(tmp_path, str(tmp_path / "docs/changelog/x.md"))
         assert r.returncode == 0, r.stderr
         assert r.stderr.strip() == ""

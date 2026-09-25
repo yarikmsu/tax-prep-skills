@@ -83,8 +83,8 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Before publish** | **AA6** — size the UNSUPPORTED list. | The first public issue will be someone hitting a block. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, X7, Z4-Z6, Z8. | — |
+| **Before publish** | **AA6**, **AA16** — size the UNSUPPORTED list; apply the SALT phasedown on the main return. | The first public issue will be someone hitting a block, or a high earner's federal tax coming out low. |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -117,6 +117,8 @@ Windows has not run since 2026-09-13.
   One line.
 
 - **AA6 (P2, S): Size the UNSUPPORTED list against the named personas.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   The capability gate's BLOCK list defines the addressable user base and nobody
   has written down how large the hole is. Rental income blocks, and a CA or NYC
   high earner with a rental condo is not an exotic filer. "Explicitly not
@@ -191,6 +193,38 @@ Windows has not run since 2026-09-13.
   amount that was not passed, or the three lines ship `null` as line 59 does
   and a check refuses a null line for a flagged household, which also catches
   an agent that never calls the total. Found by AA12's review.
+
+- **AA16 (P1, S): The main return ignores the SALT cap's MAGI phasedown.**
+  `compute_schedule_a` caps state and local tax at the `salt_cap` it is
+  passed, and the compute step passes the fetched `federal.salt_cap` amount
+  whatever the MAGI. The function says so in a note it emits on EVERY
+  Schedule A: "OBBBA SALT-cap MAGI phasedown above $500K ($250K MFS) not
+  modeled". A single filer with $700,000 of AGI and $72,000 of state and
+  local tax deducts $40,000 where §164(b)(7)(B) allows $10,000: $30,000 too
+  much, about $11,000 of federal tax at 37%. That under-states the tax on a
+  return, which is not advisory output, so AGENTS.md §2 allows it no degrade,
+  and `capabilities.py` already treats an under-stated tax on the return as
+  the hard-error direction. A note printed on every return, affected or not,
+  warns no one in practice, and it names the 2025 threshold for every year.
+  It is the commonest wrong number AA6 found for the high-earner personas:
+  54-64% of $500,000+ returns in the five persona states itemize.
+  `ptet._salt_cap` already takes `modified_agi` and applies the phasedown
+  (#157), and the compute step's own optimization text calls it "the one
+  place that decides it". So the main return should take its cap from that
+  function with the return's modified AGI, and stop rather than print a note
+  where that cannot be formed. Found by AA6.
+
+- **AA17 (P2, S): A mid-year move abroad passes the capability gate.**
+  The interview asks whether the taxpayer moved states this year, and
+  `part_year_residency` blocks on that answer. A move to or from another
+  country is not a move between states, so a Californian who emigrates in
+  June can answer no, pass the gate and get a full-year resident return that
+  taxes the months after they left. That over-states the state tax, the
+  direction AGENTS.md §4 makes a hard error. Living abroad sets `lives_abroad`,
+  which drives only the MANUAL `feie` note. It is rare, 0.13-0.32% of
+  households a year in the five persona places, and the fix is the question:
+  cover a move to or from another country, and block on it as a move between
+  states is blocked. Found by AA6's review.
 
 ### W — engineering hygiene
 

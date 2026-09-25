@@ -4,8 +4,9 @@ Backlog: `docs/roadmap/BACKLOG.md`. Epic AA began as the seven items a
 product-owner review raised on 2026-09-20, the day the roadmap was collapsed to
 one file. They are not a feature theme: AA2 and AA3 are process, AA4 and AA5 are
 test hygiene, AA6 and AA7 are copy a first public user would hit, and AA1 is the
-one tax finding. AA8 to AA10 were filed later from AA3's review rounds, and AA11
-to AA13 from AA7's scoping and its two reviews.
+one tax finding. AA8 to AA10 were filed later from AA3's review rounds, AA11
+to AA13 from AA7's scoping and its two reviews, AA14 and AA15 from the reviews
+of AA13 and AA12, AA16 from AA6's measurements, and AA17 from AA6's review.
 
 ---
 
@@ -629,3 +630,129 @@ and no reading differs for them.
 Part-year Yonkers residents (IT-360.1, line 57), special condition Y1 and
 Form Y-203 on a joint return are refused, not modeled. The wage allocation (Y-203 Schedules A and C) is an input,
 as the MCTMT's zone allocation is.
+
+## AA6 — the UNSUPPORTED list, sized against the named personas
+
+### What was wrong
+
+The capability gate's blocking rules decide who can use the toolkit at all, and
+nobody had measured how many filers they stop. The owner named the next users on
+2026-09-05: California first, Florida and New York City next, North Carolina and
+Seattle after. Rental property blocks, and a Californian or New Yorker earning
+well with a rental condo is not an unusual filer. Leaving the list unsized meant
+the first public issue would be the first measurement.
+
+### What shipped
+
+- `docs/WHO-IT-FITS.md`, linked from the README's "refuses to guess" bullet. For
+  each persona it gives the share of returns hitting each block, at $200,000+
+  of AGI and for all returns. It then gives a paragraph per persona and the
+  gaps that do not block but matter most for these personas, pointing to the
+  skill catalog for the rest. It ends with the method, the sources and what
+  each measure misses.
+- **The answer:** 16-27% of returns hit a block, depending on the persona, and
+  21-29% of $200,000+ returns. Above $200,000 rental property is most of it
+  everywhere (11-17% by the IRS's own count, which misses owners whose losses
+  are suspended). Moves come second (3.7% of California households a year, up
+  to 8.8% in New York City). Florida is the outlier for all returns (27%),
+  because 17% of Florida returns took an advance premium credit.
+- `test_who_it_fits_sizes_exactly_the_blocking_rules` holds the page to the
+  gate's list both ways. A blocking rule the page does not name fails, and so
+  does a rule the page names that no longer blocks or no longer exists.
+- `scripts/who_it_fits.py` recomputes every figure from the downloaded files
+  and saves them in `scripts/who_it_fits_figures.json`. The national
+  Publication 1304 counts are entered by hand, with their tables and columns,
+  because the lock has no reader for `.xls`. It renders the page's table and
+  the phrases its prose quotes from the saved figures, and stops on a download
+  whose layout has changed rather than reading a missing row as zero.
+- `test_who_it_fits_prints_what_the_script_measured` holds every table cell and
+  every quoted figure to that rendering, and
+  `test_who_it_fits_comparisons_still_hold` checks each comparison the prose
+  makes. Four tests on made-up rows pin the file readers: the income brackets,
+  the moves arithmetic, which commutes block, and the stop on a changed layout.
+- The page, the script and its figures file each have a selection arm in the
+  skill hook, so an edit to any of them runs these tests.
+
+### How it was measured
+
+IRS Statistics of Income data for tax year 2023 gives rental and the advance
+premium credit (fields `N25870` and `N85775`), by state and by county for the
+five New York City boroughs and King County, and nationally the household
+employment tax and Form 8615 counts. IRS migration data for 2022 to 2023 gives
+the moves across a state line, leaving out moves abroad, which the gate does
+not stop. The Census Bureau's 2016-2020 county-to-county commuting flows give
+work in another state, counting every workplace state the gate blocks,
+Washington and New Hampshire included. Every figure was
+computed from the published files, not read off a summary. The page states each
+field and what it misses. The rental field counts rental and royalty net income
+or loss. It misses a suspended loss that nets to zero, so nationally it reads
+15% of $200,000+ returns where returns reporting any rent are 19%. The page
+gives both ends.
+
+### What it found that is not a block
+
+- **AA16.** The main return ignores the SALT cap's MAGI phasedown.
+  `compute_schedule_a` deducts the full cap at any income, and its only warning
+  is a note printed on every Schedule A. Reproduced: at $700,000 of AGI it
+  deducts $40,000 where the statute allows $10,000. `ptet._salt_cap` already
+  applies the phasedown. Filed at P1, because 54-64% of $500,000+ returns in
+  these states itemize.
+- **AA17.** A mid-year move abroad passes the gate: the interview asks only
+  about moving states. The first draft of the page said the gate stopped it;
+  the review found it does not. Filed at P2, because 0.13-0.32% of households
+  a year move abroad or arrive from abroad in these places.
+- **The Washington capital-gains excise is not named on the return.** The state
+  note says only that Washington is an estimate, and the page says so. Nothing
+  new is filed: Z5 already covers the excise, and its affirmative statement
+  replaces that note.
+
+### What the review changed
+
+A review of the first draft found the page wrong in ways that all read well.
+Besides the move abroad above:
+
+- Several at-least-one cells did not follow from the rows above them, and the
+  method behind the range was not stated. The row is now computed from the
+  cells as printed, by the script and by a test.
+- The kiddie-tax figure was called a ceiling. It counts Form 8615 only, and
+  parents who use Form 8814 are blocked by the same flag and counted nowhere.
+- The SALT phasedown was given as "above $500,000 (2025 onward)". The
+  threshold rises 1% a year by statute, halves for married filing separately,
+  and the phasedown ends after 2029, so the page now names the section, not a
+  figure.
+- The New York City paragraph missed the joint return with one City-resident
+  spouse, which the City tax refuses at compute, and called the MCTMT a City
+  tax. The commuting row called its states ones "that tax wages", which
+  Washington and New Hampshire do not, and its figure is per worker, not per
+  return. Two persona paragraphs contradicted the table.
+- AA16's entry called the over-deduction a degrade a note could cover. On a
+  return, which is not advisory, AGENTS.md §2 allows no degrade; the entry now
+  asks for a stop where modified AGI cannot be formed.
+
+A second review found the checks narrower than they read. The page test
+passed a blocking rule deleted from the gate outright. The commuting test
+compared state letters while the script counted by FIPS code. A measured cell
+or a figure in the prose could be edited by hand with every test green, and a
+renamed row in a newer year's download would have printed a plausible 0.00%.
+The headline said rental was most of the blocks everywhere, which holds only
+above $200,000. The script now derives the FIPS codes from the IRS file,
+renders the page from saved figures, checks the prose's comparisons, reads the
+`.xlsx` through defusedxml, and stops on a changed layout.
+
+A third review found three more. The income readers still accepted a download
+missing a bracket or a county: with California's top bracket gone, its
+$200,000+ rental share fell from 16.6% to 15.4% and nothing said so. They now
+require every bracket and county they read. The page said a block always means
+the toolkit cannot produce the return, but an accepted PFIC event is computed
+under §1291, unless the fund has a QEF or mark-to-market election or became a
+PFIC after it was bought. And it listed two New York refusals at compute and
+left out the third, Form Y-203 on a joint return.
+
+### Not done
+
+The page cannot measure three blocks: statutory residency in a second state, a
+PFIC distribution or sale, and out-of-state income other than a commute (a
+multistate K-1, a sale of out-of-state property, remote work under a
+convenience-of-the-employer rule). It names them rather than guessing, and says
+the commuting figure is only a floor. The figures describe 2023 returns and need
+refreshing when a newer year is published.
