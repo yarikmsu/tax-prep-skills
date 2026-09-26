@@ -317,24 +317,38 @@ by the federal SALT cap into a fully-deductible federal expense. This step is
 read-only (`ptet.py` writes nothing).
 
 **Do not state the cap from memory.** OBBBA raised it from $10,000 to $40,000
-($20,000 MFS) for TY2025-2029 and INDEXES the base through 2029, after which it
-reverts — so a figure written here would be wrong for most of the years this
-skill runs in, and it was: this step said "$10,000" while `ptet._salt_cap` had
-been returning the OBBBA figure since PR #22. The engine prints the cap it
+($20,000 MFS) for TY2025, steps it 101% a year by statute through 2029, phases
+it down on modified AGI, then reverts — so a figure written here would be
+wrong for most of the years this skill runs in, and it was: this step said
+"$10,000" while `ptet._salt_cap` had been returning the OBBBA figure since
+PR #22. The engine prints the cap it
 actually used, labelled with the regime it came from; read it off the output
 rather than telling the taxpayer a number first.
 
 1. Check `flags.has_k1_income`. If false and no K-1 surfaced during parsing,
    record `_PTET: not applicable (no pass-through income)._` and proceed to Step 4.
 2. Else, for each entity state in `flags.k1_states` that is CA/NY/NJ, ask the
-   taxpayer for the qualifying pass-through income and whether their SALT cap
-   is already exhausted — ask it as "is your state-and-local-tax deduction
-   already at the cap?", without naming a figure, since the answer depends on
-   a cap that has moved twice in two years. Then run:
+   taxpayer for the qualifying pass-through income. When the return itemized,
+   also get their OTHER state and local taxes — the figure `/tax-ptet` step 3
+   asks for, which leaves out the state tax on the pass-through income itself —
+   and pass it as `--other-salt`, so the engine derives the headroom against
+   the cap it prices. Then run:
    ```bash
    sh agents/lib/run.sh -m agents.lib.ptet --year {year} \
- --income CA=<amount> [--income NY=<amount>] [--salt-room <unused $>]
+ --income CA=<amount> [--income NY=<amount>] [--other-salt <amount>] \
+ [--standard-deduction]
    ```
+   The engine reads the return's modified AGI and itemize choice from
+   `result.json`'s `schedule_a`, so it prices the cap the return applied. A
+   return with no `schedule_a` section took the standard deduction: pass
+   `--standard-deduction` then, because a missing section alone is not read
+   as one.
+   Never pass `schedule_a.salt_before_cap` as `--other-salt`: it includes the
+   state tax on the pass-through income whenever the entity has not elected,
+   so the headroom comes out too small and the benefit too large. And never
+   ask whether the cap is already used up, to pass `--salt-room`: the answer
+   depends on a cap that moves every year and with MAGI, and `--salt-room`
+   overrides the cap the engine priced.
 3. Embed the rendered output as the "PTET Election Opportunity" report block, and
    flag the **earliest election deadline** (NY's is due *during* the tax year and
    cannot be made on the return — the highest-risk one to miss).

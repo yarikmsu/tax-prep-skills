@@ -71,6 +71,8 @@ from agents.lib.scenario import (  # noqa: E402
     _validate_name,
     extract_baseline_inputs,
     read_tax_year,
+    salt_cap_may_move,
+    salt_phasedown_caveat,
     save_scenario,
 )
 from agents.lib.tax_computations import (  # noqa: E402
@@ -936,6 +938,7 @@ class HarvestReport:
     # deriving the true marginal rate needs the recapture worksheet, not a
     # bracket lookup.
     state_rate_floor_note: "str | None" = None
+    salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
 
 
 _STATE_RATE_FLOOR_NOTE = (
@@ -1174,8 +1177,10 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         # and harvested NIIT are the same (no marginal effect to add).
         harvested_anchored = line24
         harvested_niit = baseline_niit
+        harvested_agi = base_out["agi"]
     else:
         harv_out = compute_scenario(base_inputs, delta, **rate_kwargs)
+        harvested_agi = harv_out["agi"]
         # Layer NIIT OUTSIDE the keystone (which omits it). The DELTA is what
         # the anchored figure consumes; we don't subtract baseline_niit (which
         # would double-count, since line_24 already carries the real baseline
@@ -1234,6 +1239,9 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         nonresident_income_warning=(
             _NONRESIDENT_INCOME_WARNING if _nonresident_income_flag(profile)
             else None),
+        salt_cap_may_move=salt_cap_may_move(
+            result, tax_law, year, filing_status, base_out["agi"],
+            [harvested_agi]),
     )
 
 
@@ -1277,6 +1285,7 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "state_no_income_tax": r.state_no_income_tax,
         "state_cache_mismatch": r.state_cache_mismatch,
         "nonresident_income_warning": r.nonresident_income_warning,
+        "salt_cap_may_move": r.salt_cap_may_move,
     }
 
 
@@ -1578,8 +1587,11 @@ def render_markdown(r: HarvestReport) -> str:
               "- **LTCG bracket down-shifting** (a harvest reducing AGI can drop "
               "preferential income from the 20% → 15% or 15% → 0% bracket) IS reflected "
               "automatically — the QDCG worksheet inside the keystone re-prices "
-              "preferential income at the post-harvest taxable-income position.",
-              "- This is a planning estimate, not a filed return. Confirm with your broker's "
+              "preferential income at the post-harvest taxable-income position."]
+    lines += salt_phasedown_caveat(
+        r.salt_cap_may_move, "a harvest that lowers modified AGI while it is above the "
+        "threshold can save more than shown.")
+    lines += ["- This is a planning estimate, not a filed return. Confirm with your broker's "
               "realized lot reports before executing trades.", ""]
     return "\n".join(lines) + "\n"
 

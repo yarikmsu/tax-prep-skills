@@ -5,11 +5,12 @@ The Tax Cuts and Jobs Act capped the federal itemized deduction for state and
 local taxes (SALT) at $10,000. A pass-through entity (partnership / S-corp) can
 elect to pay its owners' state income tax AT THE ENTITY LEVEL, where it is fully
 deductible against the federal pass-through income — bypassing the individual
-$10,000 cap. The owner then claims a state credit (or income exclusion) for the
-PTET paid, so the state isn't double-taxed. Net federal benefit ≈
-`federal_marginal_rate × PTET_paid` whenever the owner's $10,000 SALT cap is
-already exhausted by other state/local taxes (the common case for the high-income
-pass-through owners this regime targets).
+cap, which OBBBA raised for TY2025-2029 and phases down on MAGI
+(`tax_computations/federal/salt.py`). The owner then claims a state credit (or
+income exclusion) for the PTET paid, so the state isn't double-taxed. Net
+federal benefit ≈ `federal_marginal_rate × PTET_paid` whenever the owner's SALT
+cap is already exhausted by other state/local taxes (the common case for the
+high-income pass-through owners this regime targets).
 
 This module is the analyzer behind `/tax-ptet` and the PTET sections the backlog
 calls for in `/tax-review` and `/tax-project`. It mirrors the established
@@ -34,9 +35,10 @@ Scope: CA / NY / NJ only (the three states with mature elective-PTET regimes the
 toolkit models elsewhere, e.g. tax_calendar.py). Graduated NY/NJ rates are applied
 to the OWNER's supplied qualifying income as a per-owner approximation; for
 multi-owner entities whose entity-level pool sits in a different bracket, pass
-`--ptet-rate STATE=0.0xx` to override. The estimate assumes the $10,000 SALT cap
+`--ptet-rate STATE=0.0xx` to override. The estimate assumes the year's SALT cap
 is already fully consumed by the owner's other state/local taxes — pass
-`--salt-room` to model unused cap headroom (which reduces the federal benefit).
+`--other-salt` or `--salt-room` to model unused cap headroom (which reduces the
+federal benefit).
 """
 
 from __future__ import annotations
@@ -63,9 +65,11 @@ from agents.lib.scenario import (  # noqa: E402
     ScenarioError,
     _rate_kwargs,
     extract_baseline_inputs,
+    line_13c_claimed,
     read_tax_year,
 )
 from agents.lib.tax_computations import compute_scenario  # noqa: E402
+from agents.lib.tax_computations.federal import salt  # noqa: E402
 from agents.lib.irs_dates import next_business_day_state  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
@@ -345,36 +349,9 @@ def _strict_non_negative(value, field_name: str) -> float:
     return v
 
 
-# §164(b)(7) as amended by OBBBA (Pub. L. 119-21 §70120). Verified against the
-# section text 2026-09-13. This is a STATUTORY STEP SCHEDULE, not an indexed
-# figure: the statute NAMES the first two amounts and gives a formula for the
-# rest, and no inflation index appears anywhere in the section. That is why
-# these may be constants at all — AGENTS.md §2's third enumerated exception,
-# on the `tax-safe-harbor` terms: pinned to the statute by test, and the
-# fetched cache still WINS at runtime.
-_SALT_CAP_2025 = 40000.0              # (A)(i)
-_SALT_CAP_2026 = 40400.0              # (A)(ii)
-_SALT_STEP = 1.01                     # (A)(iii), 101% of the preceding year
-_SALT_CAP_REVERSION = 10000.0         # (A)(iv), years beginning after 2029
-_SALT_MAGI_THRESHOLD_2025 = 500000.0  # (B)(ii)(I)
-_SALT_MAGI_THRESHOLD_2026 = 505000.0  # (B)(ii)(II), then 101% a year
-_SALT_PHASEDOWN_RATE = 0.30           # (B)(i)
-_SALT_PHASEDOWN_FLOOR = 10000.0       # (B)(iii)
-_SALT_FIRST_OBBBA_YEAR = 2025
-_SALT_LAST_OBBBA_YEAR = 2029
-
-
-def _salt_phasedown_applies(tax_year: int) -> bool:
-    """§164(b)(7)(B) can only reduce an amount (A) actually raised. Outside
-    TY2025-2029 the cap IS the $10,000 floor, so the reduction is a no-op —
-    and a STOP or a banner about a missing MAGI in those years is noise about
-    a figure that cannot change the answer."""
-    return _SALT_FIRST_OBBBA_YEAR <= tax_year <= _SALT_LAST_OBBBA_YEAR
-
-
 def _finite(value, field_name: str) -> float:
-    """A signed figure. MAGI is AGI plus the §911/§931/§933 exclusions
-    (§164(b)(7)(B)(iv)) and can be NEGATIVE — a loss year is a real return, and
+    """A signed figure. MAGI is AGI plus §164(b)(7)(B)(iv)'s add-backs
+    (`salt.salt_cap` names them) and can be NEGATIVE — a loss year is a real return, and
     refusing it would refuse the taxpayer furthest from the phasedown."""
     if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         raise PtetError(f"{field_name} must be a number, got {value!r}")
@@ -384,37 +361,6 @@ def _finite(value, field_name: str) -> float:
     return v
 
 
-def _salt_step_from(base: float, base_year: int, tax_year: int) -> float:
-    """101% a year, compounded from a NAMED anchor. §164(b)(7)(A)(iii)/(B)(ii)(III).
-
-    The statute states no rounding for the steps, so none is invented here
-    beyond settling the binary representation at cents. The IRS-published
-    figure is what the cache carries, and the cache wins.
-    """
-    amount = base
-    for _ in range(base_year, tax_year):
-        amount *= _SALT_STEP
-    return round(amount, 2)
-
-
-def _salt_base_cap(tax_year: int) -> float:
-    """§164(b)(7)(A) — the applicable limitation amount before (B) and before
-    the §164(b)(6)(B) halving for a separate return."""
-    if tax_year < _SALT_FIRST_OBBBA_YEAR or tax_year > _SALT_LAST_OBBBA_YEAR:
-        return _SALT_CAP_REVERSION
-    if tax_year == _SALT_FIRST_OBBBA_YEAR:
-        return _SALT_CAP_2025
-    return _salt_step_from(_SALT_CAP_2026, 2026, tax_year)
-
-
-def _salt_cap_floor(cap: float, mfs: bool) -> float:
-    """The lowest cap any MAGI can produce — §164(b)(7)(B)(iii)'s floor, but
-    never ABOVE the cap it is flooring, because a floor on a REDUCTION cannot
-    raise the thing reduced. `_salt_cap` makes the same clamp on the live
-    figure; one rule, so a change to it cannot leave this copy green."""
-    return min(cap, _salt_phasedown_floor(mfs))
-
-
 def _salt_headroom(cap: float, other_salt: float) -> float:
     """Unused SALT cap. Round to cents, THEN floor at zero — the order is a
     decision, and `phasedown_unknown` compares two of these for equality, so
@@ -422,42 +368,18 @@ def _salt_headroom(cap: float, other_salt: float) -> float:
     return max(0.0, round(cap - other_salt, 2))
 
 
-def _salt_phasedown_rate(mfs: bool) -> float:
-    """§164(b)(7)(B)(i)'s rate, with §164(b)(6)(B)'s halving distributed
-    through the reduction for a separate return."""
-    return _SALT_PHASEDOWN_RATE / 2 if mfs else _SALT_PHASEDOWN_RATE
-
-
-def _salt_phasedown_floor(mfs: bool) -> float:
-    """§164(b)(7)(B)(iii)'s floor, halved for a separate return.
-
-    Beside the threshold helper below because the halving convention is the
-    same one, and open-coding it is what let the banner quote a flat 30% while
-    `_salt_cap` applied 15% — one copy drifting from another, twofold, in a
-    caveat whose whole job was to describe the rule correctly.
-    """
-    return _SALT_PHASEDOWN_FLOOR / 2 if mfs else _SALT_PHASEDOWN_FLOOR
-
-
-def _salt_magi_threshold(tax_year: int, mfs: bool) -> float:
-    """§164(b)(7)(B)(ii), halved for a separate return by (B)(i)'s own words."""
-    if tax_year <= _SALT_FIRST_OBBBA_YEAR:
-        threshold = _SALT_MAGI_THRESHOLD_2025
-    else:
-        threshold = _salt_step_from(_SALT_MAGI_THRESHOLD_2026, 2026, tax_year)
-    return threshold / 2 if mfs else threshold
-
-
 def _salt_cap(tax_year: int, filing_status: str, cfg: "dict | None" = None,
               modified_agi: "float | None" = None) -> float:
     """Federal SALT itemized-deduction cap for the year, status and MAGI.
 
-    Four things this got wrong, and the first three were all in the same
-    direction — a cap too HIGH, which over-states the SALT headroom a filer has
-    and so UNDER-states the incremental benefit of a PTET election, because
-    what the election rescues is the state tax the cap BLOCKS. (The converse is
-    the one that bites harder and is what X6 found in the skill text: a cap too
-    LOW over-states the benefit.)
+    The rule is `salt.salt_cap`, shared with the return's own Schedule A since
+    AA16; this reads the cache and validates in PTET's terms. Four things the
+    rule got wrong while it lived here, and the first three were all in the
+    same direction — a cap too HIGH, which over-states the SALT headroom a
+    filer has and so UNDER-states the incremental benefit of a PTET election,
+    because what the election rescues is the state tax the cap BLOCKS. (The
+    converse is the one that bites harder and is what X6 found in the skill
+    text: a cap too LOW over-states the benefit.)
 
     1. It returned a FLAT $40,000 for the whole of TY2025-2029 while
        §164(b)(7)(A)(ii) makes TY2026 $40,400 and (A)(iii) steps it 101% a year.
@@ -466,35 +388,11 @@ def _salt_cap(tax_year: int, filing_status: str, cfg: "dict | None" = None,
     3. The (B) MAGI phasedown was not modeled, so a high-MAGI owner — most of
        this tool's population — was priced at the full cap.
     4. A fetched cache value was treated as the final answer. It is not: the
-       cache carries the year's STATUTORY amount (see `tax_law_fetcher`), which
-       is the same for every taxpayer, and (B) reduces it per RETURN. Applying
-       the phasedown only on the fallback path made a populated cache the one
-       way to get the unreduced cap.
+       cache carries the year's STATUTORY amount, and (B) reduces it per
+       RETURN.
 
-    So the cache supplies the BASE and nothing more, and (B) applies to
-    whichever base was used. `modified_agi` None means the phasedown is not
-    applied — `analyze` says so loudly rather than silently, since that leaves
-    the cap too high.
-
-    Per-status arithmetic, which is the halving distributed rather than a second
-    rule: §164(b)(6)(B) halves the amount, (B)(i) halves the threshold in its
-    own words, so for a separate return the reduction RATE is likewise half
-    (15% of the excess over the halved threshold) and the (B)(iii) floor
-    arrives as $5,000. Algebraically identical to reducing the joint amount and
-    halving at the end, and it keeps a cached `mfs_amount` — already a separate
-    return's figure — from being halved twice.
-
-    MFS ORDERING, stated at length because the section can be read two ways and
-    they differ FOURFOLD for a real filer. Taken here: (B)(i)'s halved threshold
-    and the halved amount together, floor $5,000. The alternative — compute the
-    whole of (7) on a joint basis against the FULL $500,000 threshold and halve
-    only at the end — gives an MFS filer with $350,000 of TY2025 MAGI a $20,000
-    cap where this gives $5,000. The one taken is the only reading under which
-    (B)(i)'s "half the threshold amount in the case of a married individual
-    filing a separate return" does anything at all; on the joint-basis reading
-    the reduction never consults an MFS threshold and that clause is inoperative.
-    It also keeps an MFS reversion year at $5,000, the figure this module has
-    always returned.
+    `modified_agi` None means the phasedown is not applied — `analyze` says so
+    loudly rather than silently, since that leaves the cap too high.
     """
     # X8: this was `(filing_status or "").upper() == "MFS"`, which is a TYPE
     # check wearing a value check's clothes. "Married Filing Separately" — the
@@ -510,26 +408,20 @@ def _salt_cap(tax_year: int, filing_status: str, cfg: "dict | None" = None,
         if val is not None:
             base = _strict_non_negative(val, "tax_law federal.salt_cap."
                                         + ("mfs_amount" if mfs else "amount"))
-    if base is None:
-        statutory = _salt_base_cap(tax_year)
-        base = statutory / 2 if mfs else statutory
-
-    if modified_agi is not None and _salt_phasedown_applies(tax_year):
-        magi = _finite(modified_agi, "modified_agi")
-        excess = max(0.0, magi - _salt_magi_threshold(tax_year, mfs))
-        rate = _salt_phasedown_rate(mfs)
-        floor = _salt_phasedown_floor(mfs)
-        # §164(b)(7)(B)(iii) floors the RESULT OF THE REDUCTION, and a floor
-        # on a reduction cannot raise the thing it is reducing. Written as a
-        # bare `max(floor, ...)` it did: a cache carrying a cap BELOW $10,000
-        # came back RAISED to it the moment a MAGI was supplied, so passing
-        # --magi increased the modeled headroom. Never above the base.
-        base = min(base, max(floor, base - rate * excess))
-    return round(base, 2)
+    # Validated in every year, as the return's Schedule A validates it: a
+    # corrupt figure is corrupt whether or not the year can use it, and the
+    # rule already ignores a MAGI outside the phasedown years.
+    magi = None if modified_agi is None else _finite(modified_agi, "modified_agi")
+    return salt.salt_cap(tax_year, mfs, base, magi)
 
 
 def _salt_cap_label(tax_year: int) -> str:
-    return "OBBBA TY2025-2029" if 2025 <= tax_year <= 2029 else "statutory $10K cap"
+    """The regime the cap came from, read off the rule's own constants so the
+    label cannot describe a window the rule no longer has."""
+    first, last = salt.SALT_FIRST_OBBBA_YEAR, salt.SALT_LAST_OBBBA_YEAR
+    if first <= tax_year <= last:
+        return f"OBBBA TY{first}-{last}"
+    return f"statutory ${salt.SALT_CAP_REVERSION / 1000:,.0f}K cap"
 
 
 def _baseline_passthrough(baseline_inputs: dict) -> float:
@@ -730,6 +622,16 @@ def analyze(
         salt_room = _salt_headroom(salt_cap, other_salt)
     else:
         salt_room = _strict_non_negative(salt_room, "salt_room")
+        # Unused headroom is part of the cap, so it cannot exceed it. A figure
+        # from memory is most often priced against last year's cap or the
+        # unreduced one, and it printed as "$30,000 of unused SALT cap
+        # headroom (cap $11,900 ...)". Refused, not trimmed to the cap: a
+        # trimmed figure is one the taxpayer never gave.
+        if itemizes and round(salt_room, 2) > round(salt_cap, 2):
+            raise PtetError(
+                f"salt_room ${salt_room:,.2f} is more than the whole SALT cap "
+                f"(${salt_cap:,.2f}): unused headroom is part of the cap. Pass "
+                f"--other-salt so the headroom is derived from the cap.")
     if marginal_fed is not None:
         marginal_fed = _validate_rate(marginal_fed, "marginal_fed")
     qbi_rate = float(rate_kwargs.get("qbi_rate", 0.20) or 0.0)
@@ -904,8 +806,8 @@ def analyze(
     # benefit and must stay that way, so the FIGURE carries its own
     # qualification instead of borrowing that banner's.
     cap_qualifier = ""
-    if (modified_agi is None and _salt_phasedown_applies(tax_year)
-            and _salt_cap_floor(salt_cap, mfs) != salt_cap):
+    if (modified_agi is None and salt.phasedown_applies(tax_year)
+            and salt.cap_floor(salt_cap, mfs) != salt_cap):
         # Both ends of the range again — the printed cap is qualified exactly
         # when the floor is below it.
         #
@@ -925,9 +827,9 @@ def analyze(
     # does not narrow the type, so mypy still saw `float | None` here and
     # reported `floor_cap - other_salt` as float-minus-None.
     if (other_salt is not None and modified_agi is None and itemizes
-            and _salt_phasedown_applies(tax_year)):
+            and salt.phasedown_applies(tax_year)):
         room_if_fully_phased = _salt_headroom(
-            _salt_cap_floor(salt_cap, mfs), other_salt)
+            salt.cap_floor(salt_cap, mfs), other_salt)
         phasedown_unknown = (min(room_if_fully_phased, total_ptet)
                              != min(salt_room, total_ptet))
 
@@ -960,14 +862,14 @@ def analyze(
                 "$100 income probe. Near an AGI cliff (CTC / education-credit / "
                 "IRA / NIIT phase-outs) the true marginal rate can differ — pass "
                 "an explicit --marginal-fed for a precise offset.")
-    if itemizes and _salt_phasedown_applies(tax_year):
+    if itemizes and salt.phasedown_applies(tax_year):
         # This note used to say the phasedown was "not modeled here" and quote
         # TY2025's $500,000 threshold for every year in the range. It is modeled
         # now, and a caveat describing a limitation the code no longer has is
         # the lying kind — it teaches a reader to discount the figure that is
         # actually right. What it says depends on what was actually done.
-        threshold = _salt_magi_threshold(tax_year, mfs)
-        floor = _salt_phasedown_floor(mfs)
+        threshold = salt.magi_threshold(tax_year, mfs)
+        floor = salt.phasedown_floor(mfs)
         if modified_agi is not None:
             # Like with like. Comparing against the UNHALVED statutory base
             # reported every MFS return as a phasedown of half its cap — an
@@ -976,15 +878,46 @@ def analyze(
             unreduced = _salt_cap(tax_year, filing_status, salt_cap_cfg, None)
             applied = round(unreduced - salt_cap, 2)
             if applied > 0:
+                # The cap is priced at the MAGI given, which is the MAGI
+                # WITHOUT the election. Electing moves the PTET out of the
+                # owner's income, and a lower MAGI can only raise the cap, so
+                # the deduction the election costs can only be smaller than
+                # modeled. An under-statement of advisory output, which
+                # AGENTS.md §2 lets stand — said, not silent.
+                # A FLOOR only where the headroom was DERIVED from this cap.
+                # Assumed zero, or given as --salt-room, it was not, and the
+                # assumption over-states: the note called a benefit
+                # conservative beside the ASSUMPTION note saying it may be
+                # too high.
+                if other_salt is not None:
+                    effect = ", so the modeled benefit is a FLOOR."
+                else:
+                    effect = (". That can only add to the benefit, but the "
+                              "headroom above was not derived from this cap, "
+                              "so the benefit is not a floor.")
+                # To the cent, as the return's own note: a dollar over the
+                # threshold cuts cents, and whole dollars printed "$0".
                 notes.append(
                     f"§164(b)(7)(B) phasedown APPLIED: MAGI over "
-                    f"${threshold:,.0f} cut the cap by ${applied:,.0f}, to "
-                    f"${salt_cap:,.0f} (never below ${floor:,.0f}).")
+                    f"${threshold:,.2f} cut the cap by ${applied:,.2f}, to "
+                    f"${salt_cap:,.2f} (never below ${floor:,.0f}). The "
+                    f"election itself lowers your MAGI by the PTET it pays, "
+                    f"which raises the cap again; that is not re-computed"
+                    f"{effect}")
+            elif modified_agi > threshold:
+                # Over the threshold with nothing taken: a cap already at the
+                # floor, or an excess too small to cut a cent. The note that
+                # stood here said MAGI was "at or under" the threshold.
+                notes.append(
+                    f"§164(b)(7)(B) phasedown leaves the cap unchanged: MAGI "
+                    f"is over ${threshold:,.2f}, but the reduction takes "
+                    f"nothing from the ${salt_cap:,.2f} cap (it never goes "
+                    f"below ${floor:,.0f}).")
             else:
                 notes.append(
                     f"§164(b)(7)(B) phasedown does not bite: MAGI is at or "
-                    f"under ${threshold:,.0f}, so the cap is the full "
-                    f"${salt_cap:,.0f}.")
+                    f"under ${threshold:,.2f}, so the cap is the full "
+                    f"${salt_cap:,.2f}.")
         elif phasedown_unknown:
             # DEGRADE, not STOP, and the direction is why. AGENTS.md §2 allows
             # it where the output is ADVISORY and the fallback UNDER-states:
@@ -997,7 +930,7 @@ def analyze(
             # §164(b)(6)(B) halving distributed through the reduction — so the
             # note overstated an MFS filer's exposure twofold. A caveat that
             # misreports the rule it is warning about is the lying kind.
-            rate = _salt_phasedown_rate(mfs)
+            rate = salt.phasedown_rate(mfs)
             notes.append(
                 f"MAGI not supplied, so §164(b)(7)(B)'s phasedown was NOT "
                 f"applied: the ${salt_cap:,.0f} cap is (A)'s amount, and above "
@@ -1020,7 +953,7 @@ def render_markdown(report: PtetReport) -> str:
         f"# PTET Election Analysis — TY{report.tax_year} ({report.filing_status})",
         "",
         "Pass-through entity tax: a SALT-cap workaround that moves your state tax "
-        "on K-1 income to the entity level, where it dodges the $10,000 federal "
+        "on K-1 income to the entity level, where it dodges the federal SALT "
         "itemized-deduction cap.",
         "",
     ]
@@ -1103,6 +1036,45 @@ def _parse_state_amounts(tokens: "list[str]", *, what: str,
     return out
 
 
+def _return_salt_position(result: dict, magi_flag: "float | None",
+                          standard_flag: bool) -> "tuple[float | None, bool]":
+    """The MAGI and the itemize choice to price: the flags, or else the
+    return's own `schedule_a`, so the cap priced is the one the return applied.
+
+    Both lived in skill prose until AA16's third review: /tax-review passed
+    them, while /tax-ptet's own procedure and /tax-project's call did not, so
+    one election was priced against two caps depending on which skill ran it.
+    A flag given still wins.
+
+    A MISSING section changes nothing. It is absent for a return that took the
+    standard deduction by a clear margin, but also for a result.json missing
+    it for any other reason, and reading THAT as standard drops the SALT
+    offset — the over-stating direction (AGENTS.md §2). A section present with
+    a corrupt value fails closed, as the pass-through bucket does.
+    """
+    itemizes = not standard_flag
+    # A positive line 13c is the standard deduction on its face, section or
+    # no section: the compute step's by-hand §170(p) tilt can take a return
+    # there after `use_itemized` was recorded, and the offset priced for an
+    # itemizer then under-stated the benefit with no banner.
+    if itemizes and line_13c_claimed(result):
+        itemizes = False
+    sched = result.get("schedule_a")
+    if not isinstance(sched, dict):
+        return magi_flag, itemizes
+    magi = magi_flag
+    if magi is None and sched.get("modified_agi") is not None:
+        magi = _finite(sched["modified_agi"], "result.json schedule_a.modified_agi")
+    if itemizes and "use_itemized" in sched:
+        chosen = sched["use_itemized"]
+        if not isinstance(chosen, bool):
+            raise PtetError(
+                "result.json schedule_a.use_itemized must be true or false, "
+                f"got {type(chosen).__name__}")
+        itemizes = chosen
+    return magi, itemizes
+
+
 def _main(argv: list) -> int:
     p = argparse.ArgumentParser(
         prog="tax-ptet",
@@ -1119,10 +1091,11 @@ def _main(argv: list) -> int:
                    help="Unused SALT cap headroom directly (default: assume cap "
                         "exhausted unless --other-salt is given)")
     p.add_argument("--magi", type=float, default=None,
-                   help="modified AGI, for §164(b)(7)(B)'s 30%%-of-excess SALT "
-                        "cap phasedown. Without it the cap is (A)'s amount, "
-                        "which over-states headroom and so UNDER-states the "
-                        "benefit; the report says so. The cache does not "
+                   help="modified AGI, for §164(b)(7)(B)'s SALT cap "
+                        "phasedown. Defaults to result.json's "
+                        "schedule_a.modified_agi; without either the cap is "
+                        "(A)'s amount, which over-states headroom and so "
+                        "UNDER-states the benefit; the report says so. The cache does not "
                         "settle it — it carries the year's statutory amount, "
                         "and (B) reduces that per return.")
     p.add_argument("--other-salt", type=float, default=None,
@@ -1137,7 +1110,9 @@ def _main(argv: list) -> int:
                         "PTET's QBI clawback is priced (repeatable)")
     p.add_argument("--standard-deduction", action="store_true",
                    help="You take the standard deduction — suppresses the "
-                        "forgone-SALT offset (no SALT itemized deduction to displace)")
+                        "forgone-SALT offset (no SALT itemized deduction to "
+                        "displace). Defaults to result.json's "
+                        "schedule_a.use_itemized where that section exists")
     args = p.parse_args(argv)
 
     try:
@@ -1219,13 +1194,15 @@ def _main(argv: list) -> int:
         # (derive headroom from the cap). Default: neither → assume exhausted.
         salt_room = args.salt_room if args.salt_room is not None else 0.0
         other_salt = args.other_salt if args.salt_room is None else None
+        modified_agi, itemizes = _return_salt_position(
+            result, args.magi, args.standard_deduction)
         report = analyze(
             baseline_inputs=baseline_inputs, rate_kwargs=rate_kwargs,
             state_incomes=state_incomes, tax_year=year, filing_status=filing_status,
             salt_room=salt_room, other_salt=other_salt,
-            modified_agi=args.magi, marginal_fed=args.marginal_fed,
+            modified_agi=modified_agi, marginal_fed=args.marginal_fed,
             rate_overrides=rate_overrides, qbi_eligible_states=qbi_eligible,
-            itemizes=not args.standard_deduction,
+            itemizes=itemizes,
             passthrough_income=passthrough_income,
             salt_cap_cfg=(tax_law.get("federal", {}) or {}).get("salt_cap"),
             ptet_cfg=(tax_law.get("ptet") if isinstance(tax_law, dict) else None))

@@ -756,3 +756,213 @@ multistate K-1, a sale of out-of-state property, remote work under a
 convenience-of-the-employer rule). It names them rather than guessing, and says
 the commuting figure is only a floor. The figures describe 2023 returns and need
 refreshing when a newer year is published.
+
+## AA16 — the SALT phasedown, on the return itself
+
+### What was wrong
+
+§164(b)(7)(B) cuts the SALT cap by 30% of modified AGI over a threshold, never
+below $10,000 (half each on a separate return), for TY2025-2029. `/tax-ptet`
+applied it since #157. The return's own Schedule A did not: `compute_schedule_a`
+capped at whatever cap it was handed, the compute step handed it the fetched
+`federal.salt_cap` amount, and a note saying the phasedown was not modeled
+printed on every Schedule A whatever the income. A single filer with $700,000
+of AGI and $72,000 of state and local tax deducted $40,000 where the statute
+allows $10,000, about $11,000 of federal tax under-stated. AA6 found it; 54-64%
+of $500,000+ returns in the five persona states itemize.
+
+### What shipped
+
+- **One rule, in the tax library.** The §164(b)(7) constants and the cap
+  function moved from `ptet.py` to `agents/lib/tax_computations/federal/salt.py`.
+  `ptet` imports it, and its `_salt_cap` keeps reading the cache and raising
+  `PtetError`. Its answers were recorded across 6,244 cases of year, status,
+  cache and MAGI before the move and matched once after it, errors included.
+  That comparison ran against code no longer in the tree and cannot be re-run;
+  what stands behind the claim now is `test_ptet.py`, unchanged and green, and
+  the review-subagent acceptance digests, which hash the engine's answer.
+- **The return applies it.** `compute_schedule_a` takes `modified_agi`, the same
+  figure Schedule 1-A takes (AGI plus Form 2555 lines 45 and 50, Form 4563 line
+  15 and excluded Puerto Rico income), and applies the phasedown to the fetched
+  cap. For TY2025-2029 it refuses without one
+  wherever MAGI could move the deduction: a return is not advisory output, so
+  AGENTS.md §2 allows no degrade. The
+  every-return note is gone; a note now appears only when the cap was reduced,
+  and the result carries `salt_cap_applied` and `modified_agi`, which the
+  template records.
+- **The instructions say so.** The compute step passes `modified_agi`, and the
+  claims that the phasedown was "not modeled" are gone from the compute step's
+  optimization reference, `/tax-ptet`'s limitations, the fetcher's comment and
+  `compute_schedule_a` itself. `/tax-ptet` had contradicted itself: one step said
+  the phasedown was modeled, and the limitations list said it was not. The pin
+  in AGENTS.md §2 and its test now name the new module.
+- `docs/WHO-IT-FITS.md` no longer lists the phasedown as a gap.
+
+### Tests
+
+Hand-computed from the section: the AA6 case ($40,000 to $10,000), a joint
+return whose threshold is not doubled, TY2026's stepped threshold, a separate
+return's halved amount, threshold, rate and floor, a dollar under the
+threshold and a dollar over it, a loss year, MAGI above AGI, TY2027-2029's
+stepped thresholds, and the refusal without MAGI in 2025 and 2029 but not in
+2024 or 2030, or where no MAGI can move the deduction. The §70111 haircut test used $1,000,000 of AGI and asserted a
+$40,400 SALT deduction, which was the defect written into a test; it now
+floors at $10,000.
+
+### Review
+
+A local review found 13 issues. All are fixed:
+- **MAGI below AGI was accepted.** $100,000 against $700,000 of AGI kept the
+  whole cap, AA16's bug reached by input. It refuses now, and MAGI is
+  validated in every year, not only TY2025-2029, so NaN no longer passes in
+  2030.
+- **One name meant two things.** The result's `salt_cap` was the cap after
+  the phasedown and the input of the same name the amount before it, so a
+  re-call fed the result would have reduced the cap twice. The result key is
+  `salt_cap_applied`, and the compute step says to re-pass the cache figure.
+- **The review disagreed with the return.** `/tax-review`'s PTET step ran
+  without `--magi`, so its block said the phasedown was not applied beside a
+  return that applied it. The result records `modified_agi`, and the step
+  passes it, and `--standard-deduction` when the return did not itemize.
+- **The note could crash or mislead.** A cap given past the cent was trimmed
+  by the rule's rounding and read as a reduction, which formatted a missing
+  MAGI in TY2024; a dollar over the threshold printed "$40,000 to $40,000".
+  The cap is taken at cents first, and the note prints cents.
+- **Two tests guarded nothing.** `test_input_validation`'s four bare checks
+  passed on the new "modified_agi is required" error with the check each named
+  deleted, and a threshold frozen at TY2026's left every test green. Each
+  check now matches its own message, and TY2027-2029 have cases.
+- **AGENTS.md §2's exception named only the amounts.** The phasedown's
+  threshold, rate and floor now decide the return and have no cache field; §2
+  names them and says the cache wins for the amount only, and the pin test
+  holds `/tax-ptet`'s statement of all three to the constants.
+- **Territory residents.** Three instructions equated MAGI with AGI when
+  `lives_abroad` was false, but §931/§933 exclusions belong to residents of
+  Puerto Rico and the other territories, who are not abroad. They key on the
+  exclusion now, the education credits' MAGI included.
+- **Smaller:** the fetch step still called the amount "indexed" and never said
+  it is the figure before the phasedown; `/tax-review`, the skill catalog, the
+  season-open runbook and the fetcher's comment were stale; the MAGI check
+  duplicated `_sched_a_amount`; `/tax-ptet`'s label kept its own year window
+  and its `--magi` help quoted a flat 30%; and the 6,244-case claim above read
+  as evidence the tree could reproduce.
+
+### Second review
+
+A second local review found 13 more. Nine are fixed here, three are filed as
+two backlog items, and one is skipped:
+- **The planning tools held the cap fixed without saying so.** `compute_scenario`
+  holds deductions at the baseline, so once the return's cap moved with MAGI,
+  `/tax-scenario`, `/tax-roth-convert` and `/tax-harvest` priced an itemizer
+  above the threshold as if it did not: a conversion there can cost more than
+  shown, and a harvest can save more. Each says so while the phasedown runs,
+  from one helper, `scenario.salt_phasedown_caveat`. `/tax-ptet` prices the cap
+  at the MAGI without the election, which electing lowers, so its phasedown
+  note now says the benefit is a floor.
+- **The review asked the taxpayer what the engine should price.** `/tax-review`'s
+  PTET step asked whether the SALT deduction was "at the cap" and passed
+  `--salt-room`, which overrides the cap priced from `--magi`. It now asks for
+  the other state and local taxes `/tax-ptet` asks for and passes
+  `--other-salt`. The review proposed the return's `salt_before_cap` instead;
+  that holds the state tax on the pass-through income itself when the entity
+  has not elected, which shrinks the headroom and over-states the benefit, so
+  the step says not to use it.
+- **The refusal fired where MAGI cannot matter.** Keyed on the year alone, it
+  stopped a return with a few thousand of property tax. It now refuses only
+  when the tax and the amount are both above the phasedown's floor.
+- **Smaller:** the template's `modified_agi` placeholder was 0, which the
+  review step would pass as a MAGI, and is null; the below-AGI check compared
+  raw floats and compares at cents; `/tax-ptet` validated `--magi` only inside
+  TY2025-2029 and now does in every year, as the return does; `/tax-ptet`'s
+  skill said a missing `--magi` refuses where the code degrades, and quoted a
+  flat "$40K", which also leaves the figure registry; its report intro and
+  module docstring still called the cap $10,000; and an engine comment called
+  the amount indexed.
+- **Filed:** AA18, a territory resident passes the capability gate, so the
+  §931/§933 exclusions the compute step names are never collected; and AA19,
+  nothing checks the cached amount against the statute, while the freshness
+  auditor still calls it indexed (that edit rides Y2's replay).
+- **Skipped:** the who-it-fits script still measures the itemizing share for all
+  five persona states while the page quotes California's. Its comment says so,
+  and a narrower script would save nothing.
+
+### Third review
+
+A third local review found 13. Twelve are fixed here and one is skipped:
+- **MAGI left out the foreign housing deduction.** Every IRS worksheet that
+  defines it — Schedule A's line 5e, Schedule 1-A Part I, Pub 970's
+  education-credit worksheets — adds back Form 2555 lines 45 and 50, Form 4563
+  line 15 and excluded Puerto Rico income. Line 50 is a deduction, not an
+  exclusion, and "AGI plus the §911/§931/§933 exclusions" left it out: MAGI
+  reads low, the cap high, and a filed return deducts too much. The compute
+  steps, the engine's docstrings and its refusal now name the four amounts.
+  The same passages gave Guam and the Northern Marianas a §931 exclusion, which
+  the worksheets give only to American Samoa; a bona fide resident of either
+  files with the territory (§935).
+- **`/tax-ptet` reads the return.** The MAGI and the itemize choice lived in
+  skill prose: `/tax-review` passed them, while `/tax-ptet`'s own procedure and
+  `/tax-project`'s call did not, so one election was priced against two caps
+  depending on which skill ran it. The analyzer now takes both from
+  `schedule_a` where the flags leave them out. A missing section is not read as
+  the standard deduction, which would drop the SALT offset and over-state the
+  benefit.
+- **The "floor" note claimed too much.** It called the benefit a floor on every
+  path, including the default one that assumes the cap is used up, which can
+  over-state. It says so only where the headroom was derived from
+  `--other-salt`.
+- **The return recorded a cap it did not know.** Where MAGI may be left out —
+  tax at or under the floor — `salt_cap_applied` held the unreduced amount, and
+  the summary printed it for a filer whose statutory cap was $10,000. It is
+  null there, with a note.
+- **Smaller:** the refusal compared a raw float sum with the floor, so cents
+  totalling exactly $10,000.00 could refuse, about 3% of random splits;
+  `/tax-ptet`'s phasedown note printed whole dollars ("cut the cap by $0"); a
+  `--salt-room` larger than the whole cap was priced and is refused; the
+  planning caveat, gated on the year alone, reached standard-deduction filers
+  far below the threshold, and now shows only where the cap can move or that
+  is not known (`scenario.salt_cap_may_move`); the template's
+  `salt_cap_applied` placeholder was 0 and is null; and `salt.py`'s header said
+  the cache wins for every figure, where it wins for the amount only.
+- **Skipped:** taking the excluded amount in place of MAGI. An agent can pass 0
+  by reflex as easily as it passes AGI, and the input would part from
+  Schedule 1-A's.
+
+### Fourth review
+
+A fourth local review found 11, none of them a figure on the filed return.
+Nine are fixed here, one is filed and one is left:
+- **The recorded election could be stale.** The compute step redoes the
+  itemize-or-standard choice by hand when §170(p) tips it, after
+  `schedule_a.use_itemized` is recorded, so `/tax-ptet` could price the SALT
+  offset for a filer who took the standard deduction and under-state the
+  benefit with no banner. The step now writes the final choice back, and
+  `/tax-ptet` and the planning caveat read a positive line 13c as the standard
+  deduction, since only a standard-deduction filer has one.
+- **The caveat's gate asked the wrong question.** It asked whether any MAGI in
+  play crossed the threshold, so it fired where the deduction could not move,
+  with a cap at the floor or above the tax throughout. And it measured from the
+  immediate base, so a stacked chain that had moved MAGI far from the return
+  could drop it. It now compares the deduction at each MAGI in play with the
+  return's own, on the cache's amount as the return used.
+- **A note said something false.** `/tax-ptet` said MAGI was "at or under" the
+  threshold whenever the cut came to nothing, including at $600,000 of MAGI
+  against a cap already at its floor. It now says the phasedown leaves the cap
+  unchanged.
+- **Smaller:** `modified_agi` came back unrounded and is recorded at cents; the
+  saved planning JSON now carries the caveat flag; a `--salt-room` is checked
+  against the cap only for an itemizer, the only filer it prices; the SALT-cap
+  block moved out of `compute_schedule_a` into `_schedule_a_salt_cap`; and this
+  section's "What shipped" gave the old MAGI definition.
+- **Filed:** AA20, the planning keystone prices every return on the standard
+  deduction, which is why the SALT phasedown is a caveat there and not a price.
+- **Left:** a standard filer's harvest still carries the caveat. With no
+  Schedule A there is no MAGI on record, and a foreign or territory filer's can
+  sit far above AGI.
+
+### Not done
+
+Modified AGI is an input. The return forms it the way Schedule 1-A does, and a
+foreign earned income exclusion is itself a manual worksheet (the `feie` note).
+`/tax-ptet` does not check `--magi` against the return's AGI: a figure too low
+leaves its cap too high, which under-states the advisory benefit, the
+direction AGENTS.md §2 lets it degrade in.

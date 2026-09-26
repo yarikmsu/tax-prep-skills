@@ -534,9 +534,13 @@ AMT and the whole of Step 6 read.
 **Schedule 1-A (OBBBA tips / overtime / car-loan / senior) — run
 `compute_schedule_1a()` whenever any of those items exist (TY2025-2028).**
 BELOW-AGI deductions; they never touch line 10/11.
-- Inputs: `filing_status`, `tax_year`, `magi` (= AGI + §911/§931/§933
-  exclusions — reuse the FEIE add-back convention; MAGI≈AGI when
-  `lives_abroad` is false), `limits` = `federal.schedule_1a` from tax_law
+- Inputs: `filing_status`, `tax_year`, `magi` (= AGI plus Form 2555 lines 45
+  and 50, Form 4563 line 15 and any excluded Puerto Rico income — Part I,
+  lines 2a-2d. Line 50 is the foreign housing DEDUCTION, not an exclusion,
+  and is added back all the same. MAGI = AGI only when none applies, and a
+  bona fide resident of Puerto Rico (§933) or American Samoa (§931, Form 4563)
+  has one without `lives_abroad`),
+  `limits` = `federal.schedule_1a` from tax_law
   JSON, plus the raw per-provision amounts and the two `age_65` booleans.
 - **Overtime is the FLSA premium portion ONLY** (the "half" of
   time-and-a-half), not gross overtime pay — pass the premium, and surface
@@ -618,8 +622,23 @@ and made cash charitable gifts:**
 itemizable expense exists** (state withholding alone qualifies — for the CA
 persona SALT usually exceeds the OBBBA cap by itself):
 - Inputs: AGI (line 11), filing status, tax year, the filing status's
-  standard deduction, and `salt_cap` = `federal.salt_cap.amount`
-  (`mfs_amount` for MFS) from tax_law JSON.
+  standard deduction, `salt_cap` = `federal.salt_cap.amount`
+  (`mfs_amount` for MFS) from tax_law JSON, and `modified_agi` = the same
+  figure Schedule 1-A takes — the line 5e worksheet adds back the same Form
+  2555 lines 45 and 50, Form 4563 line 15 and excluded Puerto Rico income —
+  and AGI itself only when none applies. `salt_cap` is the year's amount BEFORE
+  the §164(b)(7)(B) phasedown; the function applies the phasedown from
+  `modified_agi`, and for TY2025-2029 it REFUSES without one, because a cap
+  left whole over-states the deduction — unless state and local tax before the
+  cap, or the cap itself, is at or under the phasedown's floor, where no MAGI
+  can change the deduction. Pass it anyway: `/tax-ptet` reads it back, in
+  the review too. It also
+  refuses a `modified_agi` below AGI. Record the result's `salt_cap_applied` and `modified_agi` in the
+  `schedule_a` section as they come back — the cap is null where no MAGI was
+  given and one could have moved it — and copy its phasedown note when there
+  is one. On any
+  re-call, pass `salt_cap` from the cache again, never `salt_cap_applied`:
+  the applied cap fed back in is reduced a second time.
 - `state_local_income_taxes` = W-2 box 17 (all states) + CA SDI (box 14) +
   state estimated payments PAID during the year + prior-year state balance
   paid this year. Ask the user for the last two — they're not on any W-2 —
@@ -692,7 +711,9 @@ persona SALT usually exceeds the OBBBA cap by itself):
   near the margin who would itemize on the bare numbers can come out ahead
   taking the standard deduction once §170(p) is added. `compute_schedule_a`'s
   election does not know about §170(p) — do this tilt yourself, then set
-  `itemizes` accordingly before finalizing line 13c. **EXCEPTION — mandatory
+  `itemizes` accordingly, and record that final choice as
+  `schedule_a.use_itemized` wherever the section is written (`/tax-ptet` and
+  the planning tools read it back), before finalizing line 13c. **EXCEPTION — mandatory
   itemization:** when `mfs_spouse_itemizes` is set, §63(c)(6)(A) DENIES the
   standard deduction to this MFS filer (their standard deduction is $0 and
   `compute_schedule_a` already forces `use_itemized=True`). Do NOT run the tilt

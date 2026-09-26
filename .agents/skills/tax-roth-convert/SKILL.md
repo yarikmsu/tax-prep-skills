@@ -110,6 +110,9 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   aggregates all traditional/SEP/SIMPLE IRAs (per IRS rules) and is per-individual.
 - MAGI approximated as AGI (no tax-exempt-interest / foreign-EI add-backs).
 - Second-order Social Security taxability is not re-computed.
+- Itemized deductions are held at the baseline, so for TY2025-2029 the SALT cap's
+  phasedown on modified AGI (§164(b)(7)(B)) is not re-computed: an itemizer's
+  conversion above the threshold can cost more than shown. The output says so.
 - MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` is keyed `single`/`mfj` only).
 - A planning estimate, not a filed return.
 

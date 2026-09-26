@@ -1,4 +1,5 @@
 """Tests for the tax-loss harvesting scanner — agents/lib/loss_harvest.py (backlog #4)."""
+import dataclasses
 import datetime
 import json
 import shutil
@@ -572,6 +573,30 @@ def test_build_harvest_anchor_invariant_with_niit_modeled():
     assert r.harvested_fed_tax == r.baseline_fed_tax  # == line_24
     assert r.fed_savings == 0
     assert r.harvested_niit == r.baseline_niit  # no marginal effect
+
+
+def test_render_markdown_names_the_salt_phasedown_it_holds_fixed():
+    """A harvest lowers modified AGI, and for an itemizer above the
+    §164(b)(7)(B) threshold that raises the SALT cap the keystone holds at the
+    baseline, so the harvest can save more than shown. Said while the
+    phasedown runs, and only then."""
+    r = _build()
+    # No Schedule A, and a harvest lowers AGI: not known, so said.
+    assert r.salt_cap_may_move is True
+    assert lh._report_to_dict(r)["salt_cap_may_move"] is True
+    assert "SALT cap is held at the baseline" in lh.render_markdown(r)
+    assert "SALT cap is held at the baseline" not in lh.render_markdown(
+        dataclasses.replace(r, salt_cap_may_move=False))
+    # An itemizer whose MAGI stays far under the threshold: the cap is whole
+    # before and after, so there is nothing to say.
+    result = _load("result.json")
+    agi = result["form_1040"]["line_11_agi"]
+    result["schedule_a"] = {"use_itemized": True, "salt_before_cap": 30000,
+                            "modified_agi": agi}
+    r = lh.build_harvest(result, _load("taxpayer_profile.json"),
+                         _load("tax_law_2026.json"), _load("holdings.json"),
+                         2026, name="harvest", today=TODAY)
+    assert r.salt_cap_may_move is False
 
 
 def test_render_markdown_splits_fed_savings_when_niit_relief_present():

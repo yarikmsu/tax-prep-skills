@@ -4636,9 +4636,11 @@ _FIGURE_REGISTRY = {
     # for the rest, and no inflation index appears in the section. That puts it
     # in the `tax-safe-harbor` class: statutory, so it may be STATED, and pinned
     # to the engine constant by the test below. AGENTS.md §2's third enumerated
-    # exception. The figures here are the pre-OBBBA cap, the phase-down MAGI
-    # threshold, and `$40K` as the skill twice abbreviates the current cap.
-    "tax-ptet": {"$10,000", "$40K", "$500,000"},
+    # exception. The figures here are the pre-OBBBA cap and the phase-down MAGI
+    # threshold. `$40K` left with the last sentence that abbreviated the cap as
+    # a flat figure across TY2025-2029, and an allowance nothing uses is one
+    # the next flat figure would pass under.
+    "tax-ptet": {"$10,000", "$500,000"},
     "tax-withholding": {"$150,000"},
     # Empty, and each verified empty rather than assumed. An empty entry is not
     # a formality: it is what puts the skill UNDER the lint, so the first
@@ -4750,6 +4752,90 @@ def test_the_exemptions_each_carry_a_reason():
         "stricter than this registry and must not be replaced by it")
 
 
+class TestTheSaltPhasedownHandoffs:
+    """Where AA16's modified AGI and cap pass from the return to the PTET
+    analysis. Each pin is a claim a review found false or a handoff it found
+    open, and each is prose or a placeholder that nothing computes against.
+    """
+
+    def test_the_result_template_leaves_the_salt_figures_unset(self):
+        """The engine writes None for each where it has none, and /tax-ptet
+        reads `schedule_a.modified_agi` back. A zero placeholder nobody
+        overwrote reads as a real figure: a MAGI of zero, so the PTET block
+        reports the phasedown as not biting beside a return that cut the cap,
+        or "Salt Cap Applied $0.00" beside a nonzero SALT deduction on the
+        summary PDF. Null is absent (`pdf_render._display`)."""
+        template = json.loads((REPO / "agents" / "templates" /
+                               "result_template.json").read_text())
+        for field in ("modified_agi", "salt_cap_applied"):
+            assert template["schedule_a"][field] is None, (
+                f"schedule_a.{field} has a numeric placeholder again; an "
+                "unfilled one reads as a real figure")
+
+    def test_the_final_election_is_written_back(self):
+        """`/tax-ptet` and the planning caveat read `schedule_a.use_itemized`,
+        and the compute step's by-hand §170(p) tilt could change the election
+        without it: an itemizer on record who took the standard deduction."""
+        flat = re.sub(r"\s+", " ", skill_text("tax-compute"))
+        assert ("record that final choice as `schedule_a.use_itemized`"
+                in flat), (
+            "the §170(p) tilt no longer writes the final election back to "
+            "schedule_a.use_itemized")
+
+    def test_magi_adds_back_what_the_irs_worksheets_add(self):
+        """Schedule A's line 5e worksheet, Schedule 1-A Part I and Pub 970's
+        education-credit worksheets all add back Form 2555 lines 45 AND 50,
+        Form 4563 line 15 and excluded Puerto Rico income. The steps said "AGI
+        + §911/§931/§933 exclusions", and line 50 is the foreign housing
+        DEDUCTION: left out, MAGI reads low and the SALT cap high, which
+        over-states a filed return's deduction. They also gave Guam and the
+        Northern Marianas a §931 exclusion, which no IRS worksheet has — a
+        bona fide resident of either files with the territory (§935)."""
+        refs = REPO / ".agents" / "skills" / "tax-compute" / "references"
+        agi = re.sub(r"\s+", " ", (refs / "income-and-agi.md").read_text())
+        credits = re.sub(r"\s+", " ", (refs / "tax-and-credits.md").read_text())
+        # Schedule 1-A's MAGI and Schedule A's, which says it is the same one.
+        assert agi.count("lines 45 and 50") >= 2, (
+            "a MAGI step in income-and-agi.md no longer adds back Form 2555 "
+            "line 50, the foreign housing deduction")
+        assert "lines 45 and 50" in credits, (
+            "the education credits' MAGI no longer adds back Form 2555 line 50")
+        for text in (agi, credits):
+            assert "Guam" not in text and "Northern Marianas" not in text, (
+                "a MAGI step gives Guam or the Northern Marianas a §931 "
+                "exclusion again")
+
+    def test_the_review_prices_ptet_headroom_from_other_salt(self):
+        """The review asked the taxpayer whether their SALT was "at the cap"
+        and passed `--salt-room`, which overrides the cap the engine prices
+        from `--magi`, so the answer, not the return, set the headroom. The
+        return's own `salt_before_cap` is no substitute: it holds the state
+        tax on the pass-through income when the entity has not elected, which
+        shrinks the headroom and over-states the benefit."""
+        flat = re.sub(r"\s+", " ", skill_text("tax-review"))
+        assert "[--other-salt <amount>]" in flat, (
+            "/tax-review's PTET command no longer passes --other-salt")
+        assert "[--salt-room" not in flat, (
+            "/tax-review's PTET command passes --salt-room again, which "
+            "overrides the cap the engine priced")
+        assert ("Never pass `schedule_a.salt_before_cap` as `--other-salt`"
+                in flat), (
+            "the warning against the return's salt_before_cap is gone, and it "
+            "is the figure a reader reaches for first")
+
+    def test_tax_ptet_describes_the_no_magi_path_the_code_takes(self):
+        """The skill said `--other-salt` with no `--magi` REFUSES; the code
+        degrades with a banner (`test_ptet`'s
+        `test_deriving_headroom_without_magi_degrades_with_the_direction_named`).
+        A reader who believes it refuses takes a clean run as proof the
+        phasedown was priced."""
+        flat = re.sub(r"\s+", " ", skill_text("tax-ptet"))
+        assert "REFUSES rather than pricing" not in flat, (
+            "/tax-ptet claims a missing --magi refuses again; it degrades")
+        assert "the headroom is a ceiling and the benefit a floor" in flat, (
+            "/tax-ptet no longer says what a missing --magi does to the output")
+
+
 class TestTheTwoSkillsTheFigureRegistryDoesNotCover:
     """X6's re-verification found both of these, and the lint above found
     neither — `tax-extend` and `tax-ptet` are not in `_FIGURE_REGISTRY`, and
@@ -4802,16 +4888,18 @@ class TestTheTwoSkillsTheFigureRegistryDoesNotCover:
         being pinned to the one place the engine keeps it.
 
         This is the `tax-safe-harbor` arrangement. Without it the skill's prose
-        and `ptet._salt_cap` are two copies of the same law, and three audits
+        and the engine's rule are two copies of the same law, and three audits
         have now found that the copy which drifts is the PROSE, because nothing
-        computes against it.
+        computes against it. The rule moved from `ptet.py` to
+        `tax_computations/federal/salt.py` with AA16, when the return's own
+        Schedule A began applying it, and the pin moved with it.
         """
         import importlib
-        ptet = importlib.import_module("agents.lib.ptet")
+        salt = importlib.import_module("agents.lib.tax_computations.federal.salt")
         flat = re.sub(r"\s+", " ", skill_text("tax-ptet"))
         for constant, spelling in (
-            (ptet._SALT_CAP_2025, "$40,000 for TY2025"),
-            (ptet._SALT_CAP_2026, "$40,400 for TY2026"),
+            (salt.SALT_CAP_2025, "$40,000 for TY2025"),
+            (salt.SALT_CAP_2026, "$40,400 for TY2026"),
         ):
             amount = f"${constant:,.0f}"
             assert spelling in flat, (
@@ -4820,12 +4908,24 @@ class TestTheTwoSkillsTheFigureRegistryDoesNotCover:
             assert amount in spelling, (
                 f"the engine constant {amount} and the skill's {spelling!r} "
                 "have diverged — that is the drift this test exists to catch")
-        assert f"${ptet._SALT_CAP_REVERSION:,.0f}" in flat, (
+        assert f"${salt.SALT_CAP_REVERSION:,.0f}" in flat, (
             "the TY2030 reversion is no longer stated, and it is the arm that "
             "tells a reader the schedule ENDS")
         assert "101%" in flat, (
             "the 101%-a-year step is gone from the skill; without it the two "
             "named years read as the whole schedule")
+        # (B)'s phasedown rides the same exception, and since AA16 it decides
+        # the filed return: no cache field overrides it, so these constants
+        # ARE the figures and the skill's statement of them is pinned here.
+        for spelling in (
+            f"by {salt.SALT_PHASEDOWN_RATE:.0%} of MAGI over "
+            f"${salt.SALT_MAGI_THRESHOLD_2025:,.0f}",
+            f"${salt.SALT_MAGI_THRESHOLD_2026:,.0f} for TY2026",
+            f"never below ${salt.SALT_PHASEDOWN_FLOOR:,.0f}",
+        ):
+            assert spelling in flat, (
+                f"/tax-ptet no longer states {spelling!r} as the engine "
+                "computes it — the phasedown's figures and the rule drifted")
 
     def test_the_salt_cap_subsection_is_cited_as_164_b_7(self):
         """OBBBA put the cap in §164(b)(7). (b)(6) is the superseded 2018-2025
@@ -4860,7 +4960,7 @@ def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
         "instruction it gives — ask about platform and gig income whatever "
         "arrived — is the same at any figure")
     everything = set().union(*_FIGURE_REGISTRY.values())
-    assert everything == {"$0", "$1M", "$3K", "$10,000", "$40K", "$200K",
+    assert everything == {"$0", "$1M", "$3K", "$10,000", "$200K",
                           "$250K", "$250,000", "$500K", "$500,000",
                           "$1,000", "$2,000", "$2,500", "$3,000",
                           "$150,000"}, (
@@ -4878,10 +4978,9 @@ def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
     # $40,000 for TY2025, $40,400 for TY2026, 101% of the prior year through
     # TY2029, $10,000 after. No inflation index appears in the section — which
     # is what separates it from a figure a Revenue Procedure publishes each
-    # autumn, and is what the owner ruled on in Q10. Both `$40K` spellings in
-    # the skill abbreviate the current cap, and `$10,000` is the pre-OBBBA
+    # autumn, and is what the owner ruled on in Q10. `$10,000` is the pre-OBBBA
     # limitation the skill contrasts it with.
-    assert _FIGURE_REGISTRY["tax-ptet"] == {"$10,000", "$40K", "$500,000"}, (
+    assert _FIGURE_REGISTRY["tax-ptet"] == {"$10,000", "$500,000"}, (
         "the /tax-ptet entry changed. Its figures are §164(b)(7)'s, pinned to "
         "the engine constants by "
         "`test_the_ptet_skill_figures_match_the_engine_constants`")

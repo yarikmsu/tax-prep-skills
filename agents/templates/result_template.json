@@ -128,6 +128,8 @@
     "note": "Itemized deductions. Election computed by compute_schedule_a, not vibes.",
     "medical_deductible": 0,
     "salt_before_cap": 0,
+    "salt_cap_applied": null,
+    "modified_agi": null,
     "salt_deductible": 0,
     "mortgage_deductible": 0,
     "investment_interest": 0,

@@ -1,4 +1,5 @@
 """Tests for scenario modeling — tax_computations.compute_scenario + agents/lib/scenario.py."""
+import dataclasses
 import datetime
 import json
 import os
@@ -535,6 +536,103 @@ def test_build_report_job_loss_agi_zero_renders():
     assert "Bottom line" in md
     # Codex round-4 P2: the Schedule 1-A second-order caveat is user-facing.
     assert "Schedule 1-A" in md and "phase OUT" in md
+
+
+def test_the_salt_phasedown_caveat_is_owed_only_while_the_phasedown_runs():
+    """The keystone holds deductions at the baseline, and since AA16 the
+    return's SALT cap moves with modified AGI, so for an itemizer above the
+    threshold a delta can cost or save more than shown. A report that does not
+    say so under-states in silence, which AGENTS.md §4 does not allow. Outside
+    the phasedown's years there is nothing to say, and saying it anyway is a
+    caveat about a rule not in force."""
+    assert len(sc.salt_phasedown_caveat(True, "x.")) == 1
+    assert sc.salt_phasedown_caveat(False, "x.") == []
+    r = _build(["wages=10000"])
+    assert "SALT cap is held at the baseline" in sc.render_markdown(
+        dataclasses.replace(r, salt_cap_may_move=True))
+    assert "SALT cap is held at the baseline" not in sc.render_markdown(
+        dataclasses.replace(r, salt_cap_may_move=False))
+
+
+def _itemizer(salt_before_cap=30000.0, modified_agi=600000.0, agi=600000.0,
+              status="MFJ", use_itemized=True, line_13c=0):
+    return {"meta": {"filing_status": status},
+            "form_1040": {"line_11_agi": agi,
+                          "line_13c_charitable_non_itemizer": line_13c},
+            "schedule_a": {"use_itemized": use_itemized,
+                           "salt_before_cap": salt_before_cap,
+                           "modified_agi": modified_agi}}
+
+
+def test_the_salt_caveat_is_owed_only_where_the_deduction_can_move():
+    """Gated on the year, then on the threshold, the caveat fired where no
+    MAGI could change the deduction. Measured from the immediate base, it
+    dropped out of a stacked chain that had already moved MAGI far from the
+    return. It now compares the deduction at each MAGI in play with the
+    return's own, and says it wherever that is not known."""
+    may = sc.salt_cap_may_move
+    law = {}                                  # the statute's amount
+    assert not may(_itemizer(), law, 2030, "MFJ", 600000, [610000])
+    # $30,000 of tax under a cap of $35,900 at $520,000 and $23,900 at $560,000.
+    assert may(_itemizer(modified_agi=520000, agi=520000), law, 2026, "MFJ",
+               520000, [560000])
+    # A cap at the $10,000 floor throughout moves nothing.
+    assert not may(_itemizer(modified_agi=1_000_000, agi=1_000_000), law, 2026,
+                   "MFJ", 1_000_000, [1_100_000])
+    # Nor does one above a $20,000 tax throughout ($35,900 to $29,900).
+    assert not may(_itemizer(salt_before_cap=20000, modified_agi=520000,
+                             agi=520000), law, 2026, "MFJ", 520000, [540000])
+    # Nor a delta that leaves MAGI where it was.
+    assert not may(_itemizer(), law, 2026, "MFJ", 600000, [600000])
+    # The cache's amount, as the return used it: cached at $10,000 the cap
+    # cannot move, where the statute's phases from $11,900 to the floor.
+    cached = {"federal": {"salt_cap": {"amount": 10000}}}
+    assert not may(_itemizer(), cached, 2026, "MFJ", 600000, [650000])
+    assert may(_itemizer(), law, 2026, "MFJ", 600000, [650000])
+    # A separate return's threshold is halved: $300,000 is past $252,500 on
+    # one and nowhere near $505,000 on a joint return.
+    assert may(_itemizer(modified_agi=300000, agi=300000, status="MFS"), law,
+               2026, "MFS", 300000, [330000])
+    assert not may(_itemizer(modified_agi=300000, agi=300000), law, 2026,
+                   "MFJ", 300000, [330000])
+    # The return's add-back rides along: $80,000 excluded puts a delta that
+    # moves nothing at the return's own $560,000.
+    assert not may(_itemizer(modified_agi=560000, agi=480000), law, 2026,
+                   "MFJ", 480000, [480000])
+    # The standard deduction, by the section or by a positive line 13c,
+    # matters only where the deduction would RISE; an itemizer's either way.
+    for standard in (_itemizer(use_itemized=False), _itemizer(line_13c=1000)):
+        assert not may(standard, law, 2026, "MFJ", 600000, [610000])
+        assert may(standard, law, 2026, "MFJ", 600000, [560000])
+    assert may(_itemizer(), law, 2026, "MFJ", 600000, [610000])
+    # No Schedule A: only a lower AGI, measured from the RETURN — a stacked
+    # base $200,000 under it is lower whichever way the last delta goes.
+    none = {"form_1040": {"line_11_agi": 700000}}
+    assert not may(none, law, 2026, "MFJ", 700000, [710000])
+    assert may(none, law, 2026, "MFJ", 700000, [690000])
+    assert may(none, law, 2026, "MFJ", 500000, [501000])
+    # The same with a section: a close-call standard return at $700,000.
+    close = _itemizer(modified_agi=700000, agi=700000, use_itemized=False)
+    assert may(close, law, 2026, "MFJ", 500000, [501000])
+    # Not known: say it.
+    assert may(_itemizer(modified_agi=None), law, 2026, "MFJ", 400000, [410000])
+
+
+def test_the_scenario_report_carries_the_gate():
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+    def build(result):
+        return sc.build_report(result, profile, tax_law, 2026, "t",
+                               sc.parse_deltas(["wages=10000"]), None,
+                               datetime.date(2026, 5, 26))
+    # The fixture has no Schedule A and the delta raises AGI.
+    assert build(base).salt_cap_may_move is False
+    high = dict(base, schedule_a=_itemizer()["schedule_a"])
+    assert build(high).salt_cap_may_move is True
+    assert "SALT cap is held at the baseline" in sc.render_markdown(build(high))
+    # The saved scenario keeps it: only the JSON is written to disk.
+    assert sc._report_to_dict(build(high))["salt_cap_may_move"] is True
 
 
 def test_three_deep_stacking_carries_anchor_and_accumulates():

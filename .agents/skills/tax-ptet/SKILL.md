@@ -67,9 +67,15 @@ Steps:
    amount the entity would elect to pay PTET on). Map each to `--income STATE=AMT`.
 3. Ask for their other state/local taxes (property tax + state income/wage
    withholding) and pass `--other-salt`; the analyzer derives the unused headroom
-   against the year's SALT cap ($40K for TY2025–2029, $10K otherwise). With the
-   larger OBBBA cap, don't assume the cap is exhausted — get the number. (Or pass
-   `--salt-room` directly if they already know their headroom.)
+   against the year's SALT cap, which moves every year and with modified AGI
+   (step 3 of "What the analyzer computes" below). With the larger OBBBA cap,
+   don't assume the cap is exhausted — get the number. The analyzer reads the
+   return's modified AGI and itemize choice from `result.json`'s `schedule_a`,
+   so it prices the cap the return applied. A return with no `schedule_a`
+   section took the standard deduction: pass `--standard-deduction` then,
+   because a missing section alone is not read as one. Prefer this to
+   `--salt-room`: a headroom figure from memory is usually priced against an
+   older or unreduced cap, and one larger than the cap itself is refused.
 4. Ask whether the K-1 income is **§199A QBI-eligible** (operating businesses
    usually yes; investment/specified-service partnerships at high income often
    no). If yes, pass `--qbi-eligible STATE` so the QBI clawback is priced — the
@@ -121,12 +127,15 @@ Steps:
    **§164(b)(7)(B) then phases the cap DOWN** by 30% of MAGI over $500,000
    (TY2025; $505,000 for TY2026, then 101% a year), halved for MFS, never below
    $10,000 — so the OBBBA increase is fully spent by about $100,000 of excess
-   MAGI. This IS modeled: pass `--magi`. Deriving headroom with `--other-salt`
-   and no `--magi` REFUSES rather than pricing a cap the filer may not have.
+   MAGI. This IS modeled, from `result.json`'s `schedule_a.modified_agi` or
+   `--magi`. Without either, headroom derived from
+   `--other-salt` is priced against the unreduced cap, and the output says so:
+   the headroom is a ceiling and the benefit a floor.
    By default the estimate **assumes the cap is fully exhausted** — but with the
    larger OBBBA cap that's less likely, so pass `--other-salt <property + state
    income/wage tax>` to derive the unused headroom from the cap, or `--salt-room
-   <unused $>` to set it directly (`--salt-room` wins). The offset is valued at your
+   <unused $>` to set it directly (`--salt-room` wins, and is refused above
+   the cap). The offset is valued at your
    marginal rate (auto-estimated or `--marginal-fed`).
 
 4. **Phantom-income guard.** If the supplied `--income` exceeds the pass-through
@@ -135,8 +144,10 @@ Steps:
    `/tax-compute` (K-1 included) first.
 
 5. **Itemize vs standard deduction.** The forgone-SALT offset only applies if the
-   taxpayer itemizes. Pass `--standard-deduction` for a non-itemizer — they get no
-   SALT deduction to displace, so the full PTET is incremental (offset suppressed).
+   taxpayer itemizes, which is read from `schedule_a.use_itemized`. Pass
+   `--standard-deduction` for a non-itemizer whose return has no `schedule_a`
+   section — they get no SALT deduction to displace, so the full PTET is
+   incremental (offset suppressed).
 
 ## Usage
 
@@ -174,8 +185,12 @@ sh agents/lib/run.sh -m agents.lib.ptet --year 2025
   are surfaced as a "not modeled" note rather than silently ignored.
 - **SALT-cap-exhausted assumption** defaults on; if it's wrong the estimate
   *overstates* savings — the skill loudly caveats this and accepts `--other-salt`
-  / `--salt-room`. The cap itself is OBBBA-aware ($40K for TY2025–2029, reverting
-  to $10K in 2030); the MAGI phasedown above $500K is caveated, not modeled.
+  / `--salt-room`. The cap itself follows §164(b)(7)'s schedule, reverting to
+  $10K in 2030, and the MAGI phasedown is applied from the return's
+  `schedule_a.modified_agi` or `--magi` (step above); without either the output
+  says the cap may be too high. That MAGI is the one without the election, and
+  electing lowers it, so where the phasedown applies to headroom derived from
+  `--other-salt` the benefit reads low, and the output says that too.
 - **Graduated rate on your share** approximates the per-owner tax; verify against
   the entity's PTE return for multi-owner entities (use `--ptet-rate`).
 - **QBI clawback is simplified.** When `--qbi-eligible` is set, the lost §199A

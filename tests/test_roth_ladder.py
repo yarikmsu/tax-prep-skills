@@ -1,4 +1,5 @@
 """Tests for the Roth conversion ladder — agents/lib/roth_ladder.py (backlog #6)."""
+import dataclasses
 import datetime
 import json
 import shutil
@@ -327,6 +328,31 @@ def test_render_markdown_has_sections():
     for header in ("# Roth Conversion Ladder", "## Ladder", "## Threshold crossings",
                    "## Caveats", "Marginal rate"):
         assert header in md
+
+
+def test_render_markdown_names_the_salt_phasedown_it_holds_fixed():
+    """A conversion raises modified AGI, and for an itemizer above the
+    §164(b)(7)(B) threshold that lowers the SALT cap the keystone holds at the
+    baseline, so a rung can cost more than shown. Said while the phasedown
+    runs, and only then."""
+    r = _build()
+    # The fixture has no Schedule A, and a conversion only raises AGI.
+    assert r.salt_cap_may_move is False
+    assert "SALT cap is held at the baseline" not in rl.render_markdown(r)
+    # $280,000 added back carries the $0 rung to $480,000 of MAGI, under the
+    # threshold, and the top rung past it.
+    result = _load("result.json")
+    result["schedule_a"] = {"use_itemized": True, "salt_before_cap": 30000,
+                            "modified_agi": result["form_1040"]["line_11_agi"]
+                            + 280000}
+    r = rl.build_ladder(result, _load("taxpayer_profile.json"),
+                        _load("tax_law_2026.json"), 2026, max_amount=100000,
+                        step=10000, name="roth-ladder", today=TODAY)
+    assert r.salt_cap_may_move is True
+    assert rl._report_to_dict(r)["salt_cap_may_move"] is True
+    assert "SALT cap is held at the baseline" in rl.render_markdown(r)
+    assert "SALT cap is held at the baseline" not in rl.render_markdown(
+        dataclasses.replace(r, salt_cap_may_move=False))
 
 
 def test_report_to_dict_roundtrips_json():

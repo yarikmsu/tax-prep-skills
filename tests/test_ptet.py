@@ -288,6 +288,17 @@ def test_the_salt_schedule_is_the_one_the_statute_states():
     assert ptet._salt_cap(2024, "MFJ") == 10000.0          # pre-OBBBA §164(b)(6)
 
 
+def test_the_cap_label_reads_the_rules_own_window(monkeypatch):
+    """The label kept its own `2025 <= year <= 2029` after AA16 moved the window
+    into `federal/salt.py`, so a change there would leave it naming the old
+    regime. Moving the rule's window moves the label."""
+    from agents.lib.tax_computations.federal import salt
+    assert ptet._salt_cap_label(2029) == "OBBBA TY2025-2029"
+    assert ptet._salt_cap_label(2030) == "statutory $10K cap"
+    monkeypatch.setattr(salt, "SALT_LAST_OBBBA_YEAR", 2030)
+    assert ptet._salt_cap_label(2030) == "OBBBA TY2025-2030"
+
+
 def test_mfs_is_half_the_limitation_amount_not_a_second_schedule():
     """§164(b)(6)(B): "half the applicable limitation amount in the case of a
     married individual filing a separate return". It was a second hardcoded
@@ -998,6 +1009,152 @@ def test_a_negative_magi_is_a_real_return_and_not_a_refusal():
             continue                      # None means "not supplied"
         with pytest.raises(PtetError):
             ptet._salt_cap(2026, "MFJ", None, bad)
+
+
+def test_magi_is_validated_outside_the_phasedown_years_too():
+    """The return's Schedule A validates MAGI in every year, and this validated
+    it only inside TY2025-2029: `--year 2030 --magi nan` ran clean here while
+    the same figure refused there. The rule ignores a MAGI outside those years,
+    so a valid one still changes nothing."""
+    for year in (2024, 2030):
+        with pytest.raises(PtetError, match="modified_agi must be finite"):
+            ptet._salt_cap(year, "MFJ", None, float("nan"))
+        assert ptet._salt_cap(year, "MFJ", None, 900000.0) == 10000.0
+
+
+def test_the_applied_note_says_the_election_lowers_magi():
+    """The cap is priced at the MAGI WITHOUT the election, and electing takes
+    the PTET out of the owner's income. A lower MAGI can only raise the cap, so
+    wherever the phasedown bites the modeled benefit is a floor, and the note
+    says so; where it does not bite there is nothing to raise."""
+    def notes_at(magi):
+        return analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                       state_incomes={"CA": 200000}, tax_year=2026,
+                       filing_status="MFJ", other_salt=25000,
+                       modified_agi=magi, marginal_fed=0.30).notes
+    applied = [n for n in notes_at(600000.0) if "APPLIED" in n]
+    assert len(applied) == 1, applied
+    assert "modeled benefit is a FLOOR" in applied[0], applied
+    below = notes_at(400000.0)
+    assert not any("FLOOR" in n for n in below), below
+
+
+def test_the_applied_note_claims_a_floor_only_where_headroom_was_derived():
+    """The election's own MAGI cut can only add to the benefit, but the
+    benefit is a floor only where the headroom came from the cap. Assumed
+    zero, the default, it may be too high, and the note called it a floor
+    beside the ASSUMPTION note saying so."""
+    for kwargs in ({}, {"salt_room": 5000}):
+        notes = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                        state_incomes={"CA": 200000}, tax_year=2026,
+                        filing_status="MFJ", modified_agi=600000.0,
+                        marginal_fed=0.30, **kwargs).notes
+        applied = [n for n in notes if "APPLIED" in n]
+        assert len(applied) == 1, notes
+        assert "FLOOR" not in applied[0], (kwargs, applied)
+        assert "the benefit is not a floor" in applied[0], (kwargs, applied)
+
+
+def test_the_applied_note_prints_the_cut_to_the_cent():
+    """A dollar over the threshold cuts thirty cents, and whole dollars
+    printed "cut the cap by $0, to $40,000"."""
+    notes = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                    state_incomes={"CA": 200000}, tax_year=2025,
+                    filing_status="MFJ", other_salt=20000,
+                    modified_agi=500001.0, marginal_fed=0.30).notes
+    applied = [n for n in notes if "APPLIED" in n]
+    assert len(applied) == 1, notes
+    assert "cut the cap by $0.30, to $39,999.70" in applied[0], applied
+
+
+def test_a_salt_room_above_the_whole_cap_refuses():
+    """Unused headroom is part of the cap. $30,000 of it beside an $11,900
+    cap printed as modeled headroom and priced the benefit on it."""
+    def run(room, magi):
+        return analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                       state_incomes={"CA": 200000}, tax_year=2026,
+                       filing_status="MFJ", salt_room=room,
+                       modified_agi=magi, marginal_fed=0.30)
+    with pytest.raises(PtetError, match="more than the whole SALT cap"):
+        run(30000, 600000.0)
+    assert run(11900, 600000.0).salt_room == 11900.0   # the whole cap stands
+    assert run(30000, None).salt_room == 30000.0       # under the unreduced cap
+    # A standard-deduction filer's headroom prices nothing, so it is not checked.
+    analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+            state_incomes={"CA": 200000}, tax_year=2026, filing_status="MFJ",
+            salt_room=30000, modified_agi=600000.0, itemizes=False,
+            marginal_fed=0.30)
+
+
+def test_the_return_supplies_magi_and_the_itemize_choice():
+    """/tax-review passed these, while /tax-ptet's own procedure and
+    /tax-project's call did not, so one election was priced against two caps
+    depending on which skill ran it. A flag given still wins; a MISSING
+    section is not read as the standard deduction, since dropping the SALT
+    offset over-states the benefit; a corrupt one refuses."""
+    position = ptet._return_salt_position
+    sched = {"schedule_a": {"modified_agi": 600000, "use_itemized": True}}
+    assert position(sched, None, False) == (600000.0, True)
+    assert position(sched, 400000.0, False) == (400000.0, True)
+    assert position(sched, None, True) == (600000.0, False)
+    standard = {"schedule_a": {"modified_agi": None, "use_itemized": False}}
+    assert position(standard, None, False) == (None, False)
+    assert position({}, None, False) == (None, True)
+    assert position({"schedule_a": None}, None, False) == (None, True)
+    with pytest.raises(PtetError, match="use_itemized must be true or false"):
+        position({"schedule_a": {"use_itemized": "yes"}}, None, False)
+    with pytest.raises(PtetError, match="schedule_a.modified_agi must be"):
+        position({"schedule_a": {"modified_agi": "600000"}}, None, False)
+    # A positive line 13c is the standard deduction, section or no section:
+    # the compute step's by-hand §170(p) tilt can take a return there after
+    # `use_itemized` was recorded.
+    donor = {"form_1040": {"line_13c_charitable_non_itemizer": 1000},
+             "schedule_a": {"modified_agi": 600000, "use_itemized": True}}
+    assert position(donor, None, False) == (600000.0, False)
+    assert position({"form_1040": {"line_13c_charitable_non_itemizer": 1000}},
+                    None, False) == (None, False)
+    assert position({"form_1040": {"line_13c_charitable_non_itemizer": 0}},
+                    None, False) == (None, True)
+
+
+def test_the_phasedown_note_never_puts_magi_under_a_threshold_it_is_over():
+    """With nothing cut, the note said MAGI was "at or under" the threshold —
+    at $600,000 against a cap already cached at its floor, and a cent over
+    the threshold, where the cut rounds to nothing."""
+    def notes(magi, cfg=None):
+        return analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                       state_incomes={"CA": 200000}, tax_year=2026,
+                       filing_status="MFJ", other_salt=5000,
+                       modified_agi=magi, salt_cap_cfg=cfg,
+                       marginal_fed=0.30).notes
+    for magi, cfg in ((600000.0, {"amount": 10000}), (505000.01, None)):
+        found = [n for n in notes(magi, cfg) if "phasedown" in n]
+        assert len(found) == 1, (magi, found)
+        assert "leaves the cap unchanged" in found[0], (magi, found)
+        assert "at or under" not in found[0], (magi, found)
+    assert any("does not bite" in n for n in notes(505000.0))
+
+
+def test_cli_prices_the_cap_the_return_applied(tmp_path):
+    ws = _ws(tmp_path)
+    res = json.loads((ws / "result.json").read_text())
+    res["schedule_a"] = {"modified_agi": 600000, "use_itemized": True}
+    (ws / "result.json").write_text(json.dumps(res))
+    out = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000", "--other-salt", "5000"])
+    assert out.returncode == 0, out.stderr
+    assert "cut the cap by $28,500.00, to $11,900.00" in out.stdout
+
+
+def test_the_render_intro_states_no_flat_cap():
+    """The intro told every taxpayer PTET dodges "the $10,000 federal
+    itemized-deduction cap": the pre-OBBBA figure, printed on TY2025-2029
+    analyses whose cap is four times that before any phasedown."""
+    md = render_markdown(analyze(
+        baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+        state_incomes={"CA": 200000}, tax_year=2026, filing_status="MFJ"))
+    assert "dodges the federal SALT itemized-deduction cap" in md
+    assert "$10,000 federal" not in md
 
 
 def test_the_applied_banner_compares_like_with_like_for_MFS():

@@ -97,9 +97,10 @@ and the usual cause is a `web_search` that is not live — Codex ships
   `docs/contributing/residency-guardrails.md`. One of them is AUDIT POLICY, not
   statute, and has already moved once — re-read it at season open.
 - **Third: §164(b)(7)'s SALT schedule** — the statute NAMES each amount
-  ($40,000 TY2025, $40,400 TY2026, 101%/yr to TY2029, $10,000 after; half that
-  for MFS) and carries no inflation index, so it is statutory. Pinned to
-  `ptet`'s constants by test; the cache still wins.
+  ($40,000 TY2025, $40,400 TY2026, 101%/yr to TY2029, $10,000 after; half for
+  MFS) and (B)'s phasedown threshold, rate and floor, with no inflation index.
+  Pinned to `tax_computations/federal/salt.py` by test; the cache wins for the
+  amount only.
 - **If live web access is unavailable, cached-only, or you cannot confirm the
   figure is current: STOP.** Ask the user to paste the current figures along with
   the source URL. Never infer a figure from a prior year and never let a

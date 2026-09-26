@@ -83,8 +83,9 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Before publish** | **AA6**, **AA16** — size the UNSUPPORTED list; apply the SALT phasedown on the main return. | The first public issue will be someone hitting a block, or a high earner's federal tax coming out low. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, X7, Z4-Z6, Z8. | — |
+| **Before publish** | **AA16** — apply the SALT phasedown on the main return. | A high earner's federal tax coming out low would be the first public issue. |
+| **Before publish** | **AA20** — price an itemizer on their own deduction in the planning tools. | A harvest or PTET saving for an itemizer can come out high, the direction AGENTS.md §4 makes a hard error. |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -115,18 +116,6 @@ Windows has not run since 2026-09-13.
   `openpyxl` and `defusedxml`, the only lock that reaches a taxpayer's documents.
   It IS universal today, so this is a missing guard rather than a live defect.
   One line.
-
-- **AA6 (P2, S): Size the UNSUPPORTED list against the named personas.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  The capability gate's BLOCK list defines the addressable user base and nobody
-  has written down how large the hole is. Rental income blocks, and a CA or NYC
-  high earner with a rental condo is not an exotic filer. "Explicitly not
-  scheduled" is a defensible list; leaving it unsized until the first public
-  issue arrives is not. Deliverable is a paragraph per named persona (CA, FL,
-  NYC, NC, WA) saying what fraction of that persona hits a block, and which
-  blocks. It is analysis, not a feature, and it belongs before Y1 rather than
-  after.
 
 - **AA8 (P2, XS): Stop pinning the whole suite's count in the hook.**
   `test_the_measured_costs_counts_match_live_collection` holds MEASURED COSTS'
@@ -195,6 +184,8 @@ Windows has not run since 2026-09-13.
   an agent that never calls the total. Found by AA12's review.
 
 - **AA16 (P1, S): The main return ignores the SALT cap's MAGI phasedown.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   `compute_schedule_a` caps state and local tax at the `salt_cap` it is
   passed, and the compute step passes the fetched `federal.salt_cap` amount
   whatever the MAGI. The function says so in a note it emits on EVERY
@@ -225,6 +216,55 @@ Windows has not run since 2026-09-13.
   households a year in the five persona places, and the fix is the question:
   cover a move to or from another country, and block on it as a move between
   states is blocked. Found by AA6's review.
+
+- **AA18 (P2, S): A territory resident passes the capability gate.**
+  Since AA16 the compute step says modified AGI adds a §931 or §933
+  exclusion, which a bona fide resident of Puerto Rico or American Samoa can
+  have without `lives_abroad` (one of Guam or the Northern Marianas files with
+  the territory, §935). Nothing collects
+  one: the interview does not ask, the profile has no field, and the gate
+  accepts a PR, GU, AS, MP or VI address with no rule. So modified AGI goes
+  in equal to AGI, and the SALT cap's phasedown and Schedule 1-A's
+  phase-outs read the smaller figure: the deduction is over-stated, the
+  direction AGENTS.md §4 makes a hard error, and the `modified_agi` below-AGI
+  refusal cannot see an equal value. The excluded income has no path into or
+  out of the return either, so the phasedown is the smallest part of it. The
+  fix is the question and a block, as `part_year_residency` blocks a move
+  between states; which form each territory needs is part of the work. Found
+  by AA16's second review.
+
+- **AA19 (P2, S): Nothing checks the cached SALT cap against the statute.**
+  §164(b)(7)(A) names every year's amount and indexes none, but
+  `compute_schedule_a` and `ptet._salt_cap` take whatever `federal.salt_cap`
+  holds, and AGENTS.md §2 says the cache wins for the amount. The hazard
+  AA16 wrote into `tax-law-fetch.md`, a filer's already-reduced cap fetched as
+  the year's amount and then reduced again, is guarded by that sentence and
+  the season-open auditor alone: $10,000 cached for TY2026 lets a filer with
+  $300,000 of MAGI deduct $10,000 of $30,000 of state and local tax. The
+  auditor would not catch it either. Its check 5
+  says `federal.salt_cap` "indexes roughly 1%/yr" and that an absent value
+  "degrades quietly", both false since AA16 (the amount steps by statute, and
+  the return refuses a missing cap), and it never asks whether the cached
+  figure is a reduced one. Decide first whether a cache that differs from
+  `salt.base_cap` by more than rounding refuses, which amends §2's sentence.
+  The auditor edit rides Y2's chain, since the definition is digest-pinned to
+  a passed acceptance. Found by AA16's second review.
+
+- **AA20 (P1, M): The planning keystone prices every return on the standard
+  deduction.** `compute_scenario` takes the cache's
+  `filing_statuses.<status>.standard_deduction` for every filer, and nothing
+  passes it the return's line 12. An itemizer is priced from a taxable-income
+  position too high by the difference, so a delta can land in the wrong
+  bracket: the anchor to line 24 corrects the level, not the position. Where
+  that bracket is higher, `/tax-harvest` and `/tax-ptet` over-state the saving,
+  the direction AGENTS.md §4 makes a hard error, and `/tax-roth-convert`
+  over-states a conversion's cost. Holding deductions fixed also leaves out
+  what moves with AGI: the §164(b)(7)(B) phasedown, the medical floor, the
+  §70111 haircut and an itemize-or-standard switch. AA16 disclosed the SALT
+  part with a caveat and a gate (`scenario.salt_cap_may_move`) rather than
+  pricing it. Passing the return's Schedule A inputs to the keystone and
+  re-running `compute_schedule_a` at each priced AGI would price all of them
+  and retire both. Found by AA16's fourth review.
 
 ### W — engineering hygiene
 
@@ -321,9 +361,10 @@ Windows has not run since 2026-09-13.
   procedure. What gates Y2 is the figures publishing and then the owner's fetch
   and FRESH-SESSION replay — neither a decision. **Pre-stage the chain now**, in
   one place, because it has three links and they are currently recorded
-  separately: replay from a fresh session → correct the auditor's stale keying
-  note (it still tells the auditor `federal.capital_gains_rates` is keyed
-  `single`/`mfj` alone, which #89 changed a month ago) → run the runbook. The
+  separately: replay from a fresh session → correct the auditor's stale notes
+  (it still tells the auditor `federal.capital_gains_rates` is keyed
+  `single`/`mfj` alone, which #89 changed a month ago, and AA19's `salt_cap`
+  check) → run the runbook. The
   definition is digest-pinned to a PASSED acceptance, so editing it without the
   replay silently withdraws an acceptance this repository advertises.
 
@@ -596,6 +637,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA13 | #175 | a part-year City return (IT-360.1, line 50) is refused, not modeled |
 | AA11 | #175 | — |
 | AA12 | #176 | a part-year Yonkers resident (IT-360.1, line 57), special condition Y1 and a joint Form Y-203 are refused, not modeled; the zero default on the line-58 total is AA15 |
+| AA6 | #178 | three blocks cannot be sized from public data (statutory residency in a second state, a PFIC event, out-of-state income other than a commute); the figures are tax year 2023 and need a yearly refresh |
 | Q7 | #156 | — |
 | Q9 | #156 | — |
 | Q8 | #158 | — |

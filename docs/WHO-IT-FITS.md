@@ -104,8 +104,9 @@ royalty income, and that one block is most of the 22–27% that hit any. Moves
 blocks: Nevada, the commonest out-of-state workplace, has no income tax and does
 not block. An ISO exercise, Form 8938 for foreign accounts and a separate return
 under community-property law carry a note on the return, not a block: the ISO's
-AMT is computed, and the other two are worked by hand. The SALT phasedown
-(below) matters most here: 64% of California returns above $500,000 itemize.
+AMT is computed, and the other two are worked by hand. 64% of California returns
+above $500,000 itemize, and for them the federal return applies the SALT cap's
+phasedown on high incomes.
 
 ### Florida
 
@@ -167,13 +168,6 @@ are the ones that matter most for these personas. Every situation the gate
 notes without blocking is listed in the
 [skill catalog](contributing/skill-catalog.md).
 
-- **The SALT cap's phasedown for high incomes** (§164(b)(7)(B), tax years 2025
-  through 2029). Above a modified-AGI threshold the statute sets for each year,
-  and half that for married filing separately, the cap shrinks as income rises.
-  The federal return does not apply it yet, so above the threshold it deducts
-  too much state and local tax and under-states the federal tax. Between 54% and
-  64% of $500,000+ returns in these five states itemize. Tracked as AA16 in the
-  [backlog](roadmap/BACKLOG.md).
 - **A move abroad.** The interview asks only whether you moved states, so
   someone who leaves the country or arrives from abroad during the year can pass
   the gate. In a state with an income tax they then get a full-year resident

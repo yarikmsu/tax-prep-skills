@@ -260,6 +260,10 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 - **LTCG bracket down-shifting** (a harvest dropping AGI from the 20%→15% or 15%→0%
   preferential bracket) IS reflected automatically via the QDCG worksheet inside the
   keystone.
+- **The SALT cap's phasedown is not re-computed.** Itemized deductions are held at the
+  baseline, so for TY2025-2029 an itemizer whose modified AGI is above the §164(b)(7)(B)
+  threshold can save more than shown: a harvest lowers MAGI, which raises the cap. The
+  output says so.
 - A planning estimate, not a filed return.
 
 ## Security & safety

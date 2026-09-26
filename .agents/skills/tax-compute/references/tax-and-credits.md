@@ -287,7 +287,11 @@ When `flags.has_education_expenses` is true, use `compute_education_credits()`:
    year (e.g. freshman fall with $800 of tuition) claiming AOTC burns a
    lifetime year for a small credit; surface the trade-off and let the user
    choose (set `aotc_eligible` false to defer).
-3. `magi` = AGI (+ FEIE/foreign-housing addbacks if `lives_abroad`).
+3. `magi` = AGI plus Form 2555 lines 45 and 50 (the foreign earned income and
+   housing exclusions, and the foreign housing deduction), Form 4563 line 15
+   and any excluded Puerto Rico income — Pub 970 Worksheets 2-1 and 3-1. The
+   last two are for a bona fide resident of American Samoa or Puerto Rico, who
+   is not `lives_abroad`.
    **QSS phases out on the SINGLE $80K-$90K range** (Form 8863 groups QSS
    with Single/HoH — not the usual QSS→MFJ mapping). MFS gets neither credit.
 4. `tax_liability` = line 18 minus the Form 8863 Credit Limit Worksheet

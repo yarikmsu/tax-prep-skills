@@ -33,7 +33,7 @@ the enacting statute; state figures come from the state tax authority.
 |-------|--------|-------|
 | `filing_statuses` (brackets, standard deduction) | Rev. Proc. (annual inflation adjustments) | per status |
 | `capital_gains_rates`, `qbi_threshold`, `child_tax_credit`, `social_security`, `additional_medicare_tax`, `niit`, `irmaa`, `hsa_limits`, `ira_limits`, `retirement_401k` | Rev. Proc. + statute | `irmaa` ships empty — fetch it |
-| `salt_cap` `{amount, mfs_amount}` | OBBBA §70120 schedule (IRS Topic 503) | $40K/$20K-MFS TY2025-2029, reverts $10K in 2030; statutory fallback exists but PIN it |
+| `salt_cap` `{amount, mfs_amount}` | OBBBA §70120 schedule (IRS Topic 503) | the year's amount BEFORE the MAGI phasedown: $40K/$20K-MFS TY2025, $40,400 TY2026, 101%/yr to TY2029, $10K in 2030; `/tax-ptet` falls back to statute, `compute_schedule_a` refuses None — PIN it |
 | `amt.phaseout_rate` | §55(d)(3) as amended by OBBBA §70107 | 25% ≤TY2025, 50% TY2026+; statutory fallback exists — fetch only to OVERRIDE |
 | `schedule_1a` (tips/overtime/car-loan/senior caps + phase-out starts) | OBBBA §§224/225/70103/70203 + annual indexing | **FAIL-CLOSED**: a nonzero Schedule 1-A input with this unfetched hard-errors |
 | `charitable_non_itemizer` `{amount, joint_amount}` | §170(p) (OBBBA §70424) | **FAIL-CLOSED** on nonzero cash gift; $1,000/$2,000-MFJ |
@@ -87,7 +87,7 @@ engine today and every one of them was found CORRECT:
 | §6654(d)(1)(C)(i) prior-year AGI threshold | `PRIOR_YEAR_AGI_THRESHOLD` 150_000 / `_MFS` 75_000 | 26 USC §6654(d)(1)(C)(i) | unchanged |
 | §6654(e)(1) de-minimis balance | `DE_MINIMIS_BALANCE` 1000 | 26 USC §6654(e)(1) | unchanged |
 | §1211(b) capital-loss limit | `CAPITAL_LOSS_LIMIT` 3000 / `_MFS` 1500 | 26 USC §1211(b) | unchanged |
-| SALT cap reversion year | `_salt_cap` falls back at 2030 | 26 USC §164(b)(7) | unchanged |
+| SALT cap reversion year | `federal/salt.py` `base_cap` falls back at 2030 | 26 USC §164(b)(7) | unchanged |
 | SS wage base TY2026 | not hardcoded anywhere; fetched | SSA contribution and benefit base | $184,500, matches the TY2026 eval golden |
 
 Four things were WRONG, none of them a constant — every one was a figure or a

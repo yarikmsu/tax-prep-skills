@@ -14,6 +14,7 @@ and rollover.py path/year validation.
 
 import datetime
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_scenario,
     net_capital_gains,
 )
+from agents.lib.tax_computations.federal import salt  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -100,6 +102,7 @@ class ScenarioReport:
     base_outcome: Outcome
     scenario_outcome: Outcome
     diff: ScenarioDiff
+    salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
 
 
 def parse_deltas(tokens: "list[str]") -> dict:
@@ -405,6 +408,9 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
         created=today.isoformat(), base=base["base_label"], filing_status=filing_status,
         applied_deltas=applied, anchor=anchor, inputs=resolved_inputs,
         base_outcome=_outcome(base_out), scenario_outcome=_outcome(scen_out), diff=diff,
+        salt_cap_may_move=salt_cap_may_move(
+            result, tax_law, year, filing_status, base_out["agi"],
+            [scen_out["agi"]]),
     )
 
 
@@ -414,12 +420,101 @@ def _report_to_dict(r: ScenarioReport) -> dict:
         "base": r.base, "filing_status": r.filing_status, "applied_deltas": r.applied_deltas,
         "anchor": r.anchor, "inputs": r.inputs,
         "base_outcome": vars(r.base_outcome), "scenario_outcome": vars(r.scenario_outcome),
-        "diff": vars(r.diff),
+        "diff": vars(r.diff), "salt_cap_may_move": r.salt_cap_may_move,
     }
 
 
 def _pct(v) -> str:
     return "—" if v is None else f"{v:.1%}"
+
+
+def _known_amount(value) -> "float | None":
+    """A finite number, or None — for a gate where unknown means say it."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def line_13c_claimed(result: dict) -> bool:
+    """Whether the return claims §170(p)'s line-13c deduction, which only a
+    standard-deduction filer can. It is the election the return actually
+    made: the compute step redoes the itemize-or-standard choice by hand when
+    §170(p) tips it, after `schedule_a.use_itemized` was already recorded."""
+    amount = _known_amount((result.get("form_1040", {}) or {}).get(
+        "line_13c_charitable_non_itemizer"))
+    return amount is not None and amount > 0
+
+
+def salt_cap_may_move(result: dict, tax_law: dict, tax_year: int,
+                      filing_status: "str | None", base_agi: float,
+                      priced_agis: "list[float]") -> bool:
+    """Whether §164(b)(7)(B) can move the return's SALT deduction anywhere a
+    report prices — the gate on `salt_phasedown_caveat`.
+
+    Measured from the RETURN, because every figure a report prints is
+    anchored to its line 24: a stacked base can already sit far from it. And
+    it asks whether min(tax, cap) changes, not whether MAGI crosses the
+    threshold — a cap at the floor throughout, or above the tax throughout,
+    moves nothing however far MAGI goes. Anything not known is True:
+
+    - no `schedule_a`: the standard deduction, since the template includes
+      the section only for an itemizer or a margin within $500. Its tax and
+      MAGI are unknown, so only a lower AGI can matter — a lower MAGI can
+      raise the cap until itemizing wins;
+    - a return with the section that took the standard deduction: the same,
+      priced — it matters only where the deduction would rise;
+    - an itemizer: wherever the deduction differs from the return's.
+
+    `base_agi` and `priced_agis` are keystone AGIs, carried to MAGI by the
+    return's own add-back: `modified_agi` less line 11. The amount is the
+    cache's, as the return's was, or the statute's where the cache has none.
+    """
+    mfs = _full_status_key(filing_status, "SALT caveat") == "mfs"
+    if not salt.phasedown_applies(tax_year):
+        return False
+    return_agi = _known_amount((result.get("form_1040", {}) or {}).get("line_11_agi"))
+    in_play = [base_agi, *priced_agis]
+    sched = result.get("schedule_a")
+    if not isinstance(sched, dict):
+        reference = base_agi if return_agi is None else return_agi
+        return any(a < reference for a in in_play)
+    salt_total = _known_amount(sched.get("salt_before_cap"))
+    magi = _known_amount(sched.get("modified_agi"))
+    if salt_total is None or magi is None or return_agi is None:
+        return True
+    cfg = ((tax_law.get("federal", {}) or {}).get("salt_cap") or {})
+    base = (_known_amount(cfg.get("mfs_amount" if mfs else "amount"))
+            if isinstance(cfg, dict) else None)
+    if base is not None and base < 0:
+        base = None
+
+    def deduction(m: float) -> float:
+        return min(salt_total, salt.salt_cap(tax_year, mfs, base, m))
+
+    at_return = deduction(magi)
+    elsewhere = [deduction(a + magi - return_agi) for a in in_play]
+    if sched.get("use_itemized") is False or line_13c_claimed(result):
+        return any(d > at_return for d in elsewhere)
+    return any(d != at_return for d in elsewhere)
+
+
+def salt_phasedown_caveat(may_move: bool, effect: str) -> "list[str]":
+    """The caveat a `compute_scenario` report owes wherever §164(b)(7)(B) can
+    move the SALT cap; `salt_cap_may_move` decides where.
+
+    The keystone holds deductions at the baseline, and since AA16 the return's
+    cap moves with modified AGI, so a delta that raises it can cost more than
+    the keystone says and one that lowers it can save more. Both under-state,
+    which AGENTS.md §4 lets degrade with a banner and not in silence. Where
+    the cap cannot move it would describe nothing, and a caveat about nothing
+    teaches a reader to skip the ones that are real.
+    """
+    if not may_move:
+        return []
+    return ["- If you itemize, your SALT cap is held at the baseline: "
+            "§164(b)(7)(B) lowers it as modified AGI rises past the year's "
+            f"threshold, and that is not re-computed here, so {effect} The "
+            "filed /tax-compute return applies it exactly."]
 
 
 def render_markdown(r: ScenarioReport) -> str:
@@ -468,8 +563,11 @@ def render_markdown(r: ScenarioReport) -> str:
               "minimum QBI deduction (TY2026+ small active trade) is not applied (all held "
               "from the baseline result.json); marginal pricing near a threshold may read "
               "slightly off. The filed /tax-compute return handles them exactly.",
-              "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6).",
-              "- This is a planning estimate, not a filed return.", ""]
+              "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6)."]
+    lines += salt_phasedown_caveat(
+        r.salt_cap_may_move, "a delta that raises modified AGI above the threshold can "
+        "cost more than shown, and one that lowers it there can save more.")
+    lines += ["- This is a planning estimate, not a filed return.", ""]
     return "\n".join(lines) + "\n"
 
 

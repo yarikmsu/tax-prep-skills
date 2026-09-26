@@ -43,6 +43,8 @@ from agents.lib.scenario import (  # noqa: E402
     _validate_name,
     extract_baseline_inputs,
     read_tax_year,
+    salt_cap_may_move,
+    salt_phasedown_caveat,
     save_scenario,
 )
 from agents.lib.tax_computations import (  # noqa: E402
@@ -109,6 +111,7 @@ class LadderReport:
     irmaa_modeled: bool      # False → no IRMAA tiers in tax_law; tiers NOT checked
     rungs: "list[LadderRung]"
     crossings: "list[ThresholdCrossing]"
+    salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
 
 
 def parse_sweep(max_amount, step) -> "list[float]":
@@ -382,7 +385,10 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
         basis_modeled=basis_modeled, ira_basis=basis, ira_value=value,
         baseline_nii=nii,
         niit_threshold=niit_threshold, niit_modeled=(niit_threshold is not None),
-        irmaa_modeled=bool(irmaa_tiers), rungs=rungs, crossings=crossings)
+        irmaa_modeled=bool(irmaa_tiers), rungs=rungs, crossings=crossings,
+        salt_cap_may_move=salt_cap_may_move(
+            result, tax_law, year, filing_status, base_out["agi"],
+            [x.agi for x in rungs]))
 
 
 def _report_to_dict(r: LadderReport) -> dict:
@@ -395,6 +401,7 @@ def _report_to_dict(r: LadderReport) -> dict:
         "niit_modeled": r.niit_modeled, "irmaa_modeled": r.irmaa_modeled,
         "rungs": [vars(x) for x in r.rungs],
         "crossings": [vars(x) for x in r.crossings],
+        "salt_cap_may_move": r.salt_cap_may_move,
     }
 
 
@@ -493,8 +500,11 @@ def render_markdown(r: LadderReport) -> str:
               "- Marginal-rate column already reflects LTCG bracket bumping (the QDCG "
               "worksheet stacks the conversion under preferential income).",
               "- MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` "
-              "is keyed `single`/`mfj` only).",
-              "- This is a planning estimate, not a filed return.", ""]
+              "is keyed `single`/`mfj` only)."]
+    lines += salt_phasedown_caveat(
+        r.salt_cap_may_move, "rungs that carry modified AGI above the threshold can cost "
+        "more than shown.")
+    lines += ["- This is a planning estimate, not a filed return.", ""]
     return "\n".join(lines) + "\n"
 
 

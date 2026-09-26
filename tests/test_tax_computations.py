@@ -2212,6 +2212,7 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=400000, filing_status="Single", tax_year=2025,
             standard_deduction=15750, salt_cap=40000,
+            modified_agi=400000,
             medical_expenses=5000,
             state_local_income_taxes=35000, real_estate_taxes=12000,
             mortgage_interest=18000, average_mortgage_balance=900000,
@@ -2231,11 +2232,13 @@ class TestScheduleA:
         r26 = compute_schedule_a(
             agi=200000, filing_status="Single", tax_year=2026,
             standard_deduction=16000, salt_cap=40400,
+            modified_agi=200000,
             charitable_cash=5000, charitable_over_250_substantiated=True)
         assert r26["charitable_deductible"] == 4000.00
         r25 = compute_schedule_a(
             agi=200000, filing_status="Single", tax_year=2025,
             standard_deduction=15750, salt_cap=40000,
+            modified_agi=200000,
             charitable_cash=5000, charitable_over_250_substantiated=True)
         assert r25["charitable_deductible"] == 5000.00
 
@@ -2247,6 +2250,7 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=100000, filing_status="Single", tax_year=2025,
             standard_deduction=15750, salt_cap=40000,
+            modified_agi=100000,
             charitable_cash=70000, charitable_noncash=20000,
             charitable_over_250_substantiated=True)
         assert r["charitable_deductible"] == 60000.00
@@ -2267,6 +2271,7 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=100000, filing_status="Single", tax_year=2025,
             standard_deduction=15750, salt_cap=40000,
+            modified_agi=100000,
             charitable_noncash=40000,
             charitable_over_250_substantiated=True)
         assert r["charitable_deductible"] == 30000.00
@@ -2276,6 +2281,7 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=80000, filing_status="MFS", tax_year=2025,
             standard_deduction=15750, salt_cap=20000,
+            modified_agi=80000,
             state_local_income_taxes=5000, mfs_spouse_itemizes=True)
         assert r["itemized_total"] == 5000.00
         assert r["use_itemized"] is True  # despite margin being negative
@@ -2285,6 +2291,7 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=90000, filing_status="Single", tax_year=2025,
             standard_deduction=15750, salt_cap=40000,
+            modified_agi=90000,
             state_local_income_taxes=4000, state_local_sales_taxes=6000,
             real_estate_taxes=1000)
         assert r["salt_before_cap"] == 7000.00
@@ -2296,6 +2303,7 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=300000, filing_status="MFJ", tax_year=2025,
             standard_deduction=31500, salt_cap=40000,
+            modified_agi=300000,
             mortgage_interest=30000, average_mortgage_balance=950000,
             mortgage_pre_dec_16_2017=True)
         assert r["mortgage_deductible"] == 30000.00
@@ -2304,6 +2312,7 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=300000, filing_status="MFJ", tax_year=2025,
             standard_deduction=31500, salt_cap=40000,
+            modified_agi=300000,
             mortgage_interest=30000)
         assert r["mortgage_deductible"] == 30000.00
         assert any("OVERSTATES" in n for n in r["notes"])
@@ -2311,25 +2320,32 @@ class TestScheduleA:
     def test_substantiation_gate_warnings(self):
         unknown = compute_schedule_a(
             agi=100000, filing_status="Single", tax_year=2025,
-            standard_deduction=15750, salt_cap=40000, charitable_cash=1000)
+            standard_deduction=15750, salt_cap=40000,
+            modified_agi=100000, charitable_cash=1000)
         assert any("SUBSTANTIATION UNKNOWN" in n for n in unknown["notes"])
         missing = compute_schedule_a(
             agi=100000, filing_status="Single", tax_year=2025,
-            standard_deduction=15750, salt_cap=40000, charitable_cash=1000,
+            standard_deduction=15750, salt_cap=40000,
+            modified_agi=100000, charitable_cash=1000,
             charitable_over_250_substantiated=False)
         assert any("SUBSTANTIATION GATE" in n for n in missing["notes"])
 
     def test_input_validation(self):
-        with pytest.raises(ValueError):
-            compute_schedule_a(float("nan"), "Single", 2025, 15750, 40000)
-        with pytest.raises(ValueError):
+        """Each check by its own message. Bare `pytest.raises(ValueError)`
+        passed on AA16's "modified_agi is required" once that refusal existed,
+        so all four stayed green with the check each one names deleted."""
+        with pytest.raises(ValueError, match="agi must be a finite number"):
+            compute_schedule_a(float("nan"), "Single", 2025, 15750, 40000,
+                               modified_agi=100000)
+        with pytest.raises(ValueError, match="filing_status must be one of"):
             compute_schedule_a(100000, "Married Filing Jointly", 2025,
-                               15750, 40000)
-        with pytest.raises(ValueError):
-            compute_schedule_a(100000, "Single", 2025.0, 15750, 40000)
-        with pytest.raises(ValueError):
+                               15750, 40000, modified_agi=100000)
+        with pytest.raises(ValueError, match="tax_year must be an int"):
+            compute_schedule_a(100000, "Single", 2025.0, 15750, 40000,
+                               modified_agi=100000)
+        with pytest.raises(ValueError, match="medical_expenses cannot be negative"):
             compute_schedule_a(100000, "Single", 2025, 15750, 40000,
-                               medical_expenses=-1)
+                               modified_agi=100000, medical_expenses=-1)
 
     def test_negative_agi_floors_at_zero(self):
         """Self-review: an unclamped negative AGI would turn the 7.5%
@@ -2338,11 +2354,231 @@ class TestScheduleA:
         r = compute_schedule_a(
             agi=-20000, filing_status="Single", tax_year=2025,
             standard_deduction=15750, salt_cap=40000,
+            modified_agi=-20000,
             medical_expenses=8000, charitable_cash=1000,
             charitable_over_250_substantiated=True)
         assert r["medical_deductible"] == 8000.00
         assert r["charitable_deductible"] == 0.00
         assert r["charitable_carryforward"] == 1000.00
+
+    # AA16. §164(b)(7)(B): the cap falls by 30% of modified AGI over the year's
+    # threshold, never below $10,000; a separate return halves the amount, the
+    # threshold, the rate and the floor. Hand-computed from the section, with
+    # the cap as the fetched cache would carry it.
+    @pytest.mark.parametrize("status,year,base,magi,cap", [
+        # The threshold is not doubled for a joint return: 520,000 - 500,000
+        # = 20,000, 30% of it 6,000, so 40,000 - 6,000.
+        ("MFJ", 2025, 40000, 520000, 34000.00),
+        # TY2026: 505,000 threshold; 95,000 excess, 28,500 off 40,400.
+        ("Single", 2026, 40400, 600000, 11900.00),
+        # Separate return: 20,200 amount, 252,500 threshold, 15% of 47,500.
+        ("MFS", 2026, 20200, 300000, 13075.00),
+        # Deep enough to floor: 5,000 on a separate return, not 10,000.
+        ("MFS", 2025, 20000, 900000, 5000.00),
+        # One dollar under the threshold keeps the whole cap.
+        ("Single", 2025, 40000, 499999, 40000.00),
+        # One dollar over takes 30 cents.
+        ("Single", 2025, 40000, 500001, 39999.70),
+        # A loss year is a real return, far from the phasedown.
+        ("Single", 2025, 40000, -50000, 40000.00),
+        # TY2027-2029 step the threshold 101% a year from 505,000 as well as
+        # the amount from 40,400. TY2027: 510,050 threshold, 40,804 amount;
+        # 20,000 over takes 6,000.
+        ("Single", 2027, 40804, 530050, 34804.00),
+        # TY2028: 515,150.50 threshold, so 515,000 is under it and the whole
+        # 41,212.04 stands. A threshold left at 505,000 would take 3,000.
+        ("Single", 2028, 41212.04, 515000, 41212.04),
+        # TY2028 separate return: 257,575.25 threshold and 20,606.02 amount;
+        # 15% of the 42,424.75 excess is 6,363.71.
+        ("MFS", 2028, 20606.02, 300000, 14242.31),
+        # TY2029: 520,302.01 threshold (505,000 x 1.01^3), 41,624.16 amount;
+        # 30% of the 39,999.99 excess is 12,000.00 to the cent.
+        ("MFJ", 2029, 41624.16, 560302, 29624.16),
+    ])
+    def test_the_salt_cap_phases_down_on_modified_agi(self, status, year, base, magi, cap):
+        r = compute_schedule_a(
+            agi=magi, filing_status=status, tax_year=year,
+            standard_deduction=15750, salt_cap=base, modified_agi=magi,
+            state_local_income_taxes=90000)
+        assert r["salt_cap_applied"] == cap
+        assert r["salt_deductible"] == cap
+        assert r["modified_agi"] == magi
+        reduced = [n for n in r["notes"] if "phasedown" in n]
+        assert bool(reduced) == (cap < base), r["notes"]
+
+    def test_the_backlog_case_deducts_what_the_statute_allows(self):
+        """AA16's own case: single, TY2025, $700,000 of AGI and $72,000 of
+        state and local tax. The excess over 500,000 is 200,000, and 30% of it
+        is 60,000, so 40,000 floors at 10,000. The return deducted 40,000,
+        $30,000 too much, under a note on every Schedule A saying the
+        phasedown was not modeled. That note is gone; this one says what
+        happened, on the return it happened to."""
+        r = compute_schedule_a(
+            agi=700000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000, modified_agi=700000,
+            state_local_income_taxes=72000)
+        assert r["salt_deductible"] == 10000.00
+        assert any("$40,000.00 to $10,000.00 at modified AGI $700,000.00" in n
+                   for n in r["notes"]), r["notes"]
+        assert not any("not modeled" in n and "SALT" in n for n in r["notes"])
+
+    def test_modified_agi_not_agi_drives_the_phasedown(self):
+        """MAGI adds back the §911/§931/§933 exclusions. A filer with $480,000
+        of AGI and $80,000 of excluded foreign earned income has $560,000 of
+        MAGI: 30% of the 60,000 excess takes 18,000 off 40,000. Read off AGI,
+        the cap would stay whole."""
+        r = compute_schedule_a(
+            agi=480000, filing_status="Single", tax_year=2025,
+            standard_deduction=15750, salt_cap=40000, modified_agi=560000,
+            state_local_income_taxes=90000)
+        assert r["salt_deductible"] == 22000.00
+
+    def test_modified_agi_is_required_while_the_phasedown_runs(self):
+        """A missing MAGI in TY2025-2029 would leave the cap whole, which
+        over-states the deduction on a return; that refuses. Outside those
+        years the cap is the $10,000 floor already and nothing can reduce it,
+        so nothing is required."""
+        for year in (2025, 2029):
+            with pytest.raises(ValueError, match="modified_agi is required"):
+                compute_schedule_a(100000, "Single", year, 15750, 40000,
+                                   state_local_income_taxes=30000)
+        for bad in (float("nan"), float("inf"), True, "100000"):
+            with pytest.raises(ValueError, match="modified_agi"):
+                compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                                   modified_agi=bad)
+        for year in (2024, 2030):
+            r = compute_schedule_a(900000, "Single", year, 15000, 10000,
+                                   state_local_income_taxes=30000)
+            assert r["salt_deductible"] == 10000.00
+
+    def test_modified_agi_is_required_only_where_it_can_move_the_deduction(self):
+        """The deduction is the lesser of the tax and the cap, and MAGI moves
+        the cap between the amount and the floor, so only a tax AND an amount
+        both above the floor can be moved. It refused on the year alone: an
+        itemizer with a few thousand of property tax hit a hard stop over a
+        figure that could not change the answer."""
+        # At the floor, deducted whole at any MAGI; a cent over can be cut.
+        r = compute_schedule_a(100000, "Single", 2026, 15750, 40400,
+                               real_estate_taxes=10000)
+        assert r["salt_deductible"] == 10000.00
+        assert r["modified_agi"] is None
+        with pytest.raises(ValueError, match="modified_agi is required"):
+            compute_schedule_a(100000, "Single", 2026, 15750, 40400,
+                               real_estate_taxes=10000.01)
+        # A separate return's floor is half.
+        r = compute_schedule_a(100000, "MFS", 2026, 15750, 20200,
+                               real_estate_taxes=5000)
+        assert r["salt_deductible"] == 5000.00
+        with pytest.raises(ValueError, match="modified_agi is required"):
+            compute_schedule_a(100000, "MFS", 2026, 15750, 20200,
+                               real_estate_taxes=5000.01)
+        # An amount at or under the floor is one no MAGI can reduce. (A cache
+        # that low in these years is its own defect, AA19's.)
+        r = compute_schedule_a(100000, "Single", 2026, 15750, 9000,
+                               real_estate_taxes=30000)
+        assert r["salt_deductible"] == 9000.00
+
+    def test_modified_agi_equal_to_agi_at_cents_stands(self):
+        """Compared at cents, the precision both are written at. A MAGI summed
+        along another path from the same items lands a float's width under
+        AGI, and that refused a return over binary representation."""
+        r = compute_schedule_a(123456.78, "Single", 2025, 15750, 40000,
+                               modified_agi=123456.77999999999,
+                               state_local_income_taxes=50000)
+        assert r["salt_cap_applied"] == 40000.00
+        # And recorded at cents, as every figure the engine returns: it came
+        # back as 123456.77999999998 and went into result.json that way.
+        assert r["modified_agi"] == 123456.78
+        with pytest.raises(ValueError, match="modified_agi is below agi"):
+            compute_schedule_a(123456.78, "Single", 2025, 15750, 40000,
+                               modified_agi=123456.77,
+                               state_local_income_taxes=50000)
+
+    def test_the_floor_check_is_at_cents(self):
+        """$3,932.55 + $5,888.01 + $179.44 is exactly the floor, and its
+        float sum is 10000.000000000002 — which refused a return the check
+        says no MAGI could change. About 3% of cent-valued splits of
+        $10,000.00 did."""
+        r = compute_schedule_a(900000, "Single", 2026, 15750, 40400,
+                               state_local_income_taxes=3932.55,
+                               real_estate_taxes=5888.01,
+                               personal_property_taxes=179.44)
+        assert r["salt_before_cap"] == 10000.00
+        assert r["salt_deductible"] == 10000.00
+
+    def test_the_cap_is_unrecorded_where_no_magi_set_it(self):
+        """Without a MAGI the cap is known only where no MAGI can move it.
+        Recording the unreduced amount put "Salt Cap Applied $40,400.00" on the
+        summary of a filer whose statutory cap was $10,000; the deduction was
+        right, the figure beside it was not."""
+        r = compute_schedule_a(900000, "Single", 2026, 15750, 40400,
+                               real_estate_taxes=8000)
+        assert r["salt_cap_applied"] is None
+        assert r["salt_deductible"] == 8000.00
+        assert any("SALT cap left unrecorded" in n for n in r["notes"]), r["notes"]
+        # Known wherever the cap cannot move: a MAGI given, a year outside the
+        # phasedown, or a cap already at or under the floor.
+        for kwargs, cap in (
+                (dict(tax_year=2026, salt_cap=40400, modified_agi=900000), 10000.00),
+                (dict(tax_year=2030, salt_cap=10000), 10000.00),
+                (dict(tax_year=2026, salt_cap=9000), 9000.00)):
+            r = compute_schedule_a(900000, "Single", standard_deduction=15750,
+                                   real_estate_taxes=8000, **kwargs)
+            assert r["salt_cap_applied"] == cap, kwargs
+            assert not any("unrecorded" in n for n in r["notes"]), kwargs
+
+    def test_the_refusal_names_the_housing_deduction(self):
+        """The worksheet adds back Form 2555 line 50, the foreign housing
+        DEDUCTION, beside the exclusions; the message said "AGI plus any
+        §911/§931/§933 exclusion", which leaves it out."""
+        with pytest.raises(ValueError, match="Form 2555 lines 45 and 50"):
+            compute_schedule_a(700000, "Single", 2025, 15750, 40000,
+                               state_local_income_taxes=50000)
+
+    def test_modified_agi_below_agi_refuses(self):
+        """MAGI adds exclusions to AGI and never subtracts, so a smaller figure
+        is some other number. Passed through, $100,000 against $700,000 of AGI
+        kept the whole $40,000 cap: $30,000 over-deducted, the AA16 bug
+        reached by input. Equal is the ordinary case and stands."""
+        with pytest.raises(ValueError, match="modified_agi is below agi"):
+            compute_schedule_a(700000, "Single", 2025, 15750, 40000,
+                               modified_agi=100000,
+                               state_local_income_taxes=50000)
+        r = compute_schedule_a(-20000, "Single", 2025, 15750, 40000,
+                               modified_agi=-20000)
+        assert r["salt_cap_applied"] == 40000.00
+
+    def test_modified_agi_is_validated_in_every_year(self):
+        """Outside TY2025-2029 the phasedown cannot move the cap, so MAGI is
+        not required there, but a corrupt one given is still a corrupt input
+        (AGENTS.md §8) and refuses rather than passing unread."""
+        for bad in (float("nan"), True, "600000"):
+            with pytest.raises(ValueError, match="modified_agi must be"):
+                compute_schedule_a(600000, "Single", 2030, 15750, 10000,
+                                   modified_agi=bad)
+        with pytest.raises(ValueError, match="modified_agi is below agi"):
+            compute_schedule_a(600000, "Single", 2030, 15750, 10000,
+                               modified_agi=1)
+
+    def test_only_the_phasedown_writes_the_phasedown_note(self):
+        """A cap given past the cent was trimmed by the rule's rounding and read
+        as a reduction: in TY2024, with no MAGI, the note then formatted None
+        and raised TypeError; inside the window it reported a phasedown that
+        had not happened. A dollar over the threshold is a real reduction and
+        says so to the cent, where it used to print "$40,000 to $40,000"."""
+        r = compute_schedule_a(100000, "Single", 2024, 15000, 10000.004,
+                               state_local_income_taxes=20000)
+        assert r["salt_cap_applied"] == 10000.00
+        assert r["modified_agi"] is None
+        assert not any("phasedown" in n for n in r["notes"]), r["notes"]
+        r = compute_schedule_a(100000, "Single", 2025, 15750, 40000.004,
+                               modified_agi=100000,
+                               state_local_income_taxes=50000)
+        assert not any("phasedown" in n for n in r["notes"]), r["notes"]
+        r = compute_schedule_a(500001, "Single", 2025, 15750, 40000,
+                               modified_agi=500001,
+                               state_local_income_taxes=50000)
+        assert any("$40,000.00 to $39,999.70" in n for n in r["notes"]), r["notes"]
 
 
 class TestCaItemized:
@@ -2935,6 +3171,7 @@ class TestCaItemized:
         r = compute_schedule_a(
             agi=100000, filing_status="Single", tax_year=2026,
             standard_deduction=16000, salt_cap=40400,
+            modified_agi=100000,
             charitable_cash=70000, charitable_over_250_substantiated=True)
         assert r["charitable_deductible"] == 59500.00
         assert r["charitable_carryforward"] == 10500.00
@@ -2963,6 +3200,7 @@ class TestCaItemized:
         r = compute_schedule_a(
             agi=200000, filing_status="MFS", tax_year=2025,
             standard_deduction=15750, salt_cap=20000,
+            modified_agi=200000,
             mortgage_interest=24000, average_mortgage_balance=600000)
         assert r["mortgage_deductible"] == 15000.00
 
@@ -2983,26 +3221,29 @@ class TestCaItemized:
 
     def test_obbba_70111_haircut(self):
         """Codex P2 — H.R.1 §70111 (TY2026+): itemized reduced by 2/37 of
-        the lesser of the itemized total or 37%-bracket income. SALT 40,400
-        + charity floor'd → total 50,000-ish exercise: use round numbers —
-        itemized 44,400; top-bracket income 100,000 → haircut 2/37 ×
-        44,400 = 2,400."""
+        the lesser of the itemized total or 37%-bracket income. At $1,000,000
+        of modified AGI §164(b)(7)(B) takes the SALT cap to its $10,000 floor
+        (505,000 threshold, 30% of the 495,000 excess is 148,500). This case
+        used the full 40,400 until AA16, which was the bug AA16 fixed, written
+        into a test. Round numbers: SALT 10,000 + investment interest 27,000 =
+        37,000; top-bracket income 100,000 → haircut 2/37 × 37,000 = 2,000."""
         r = compute_schedule_a(
             agi=1000000, filing_status="Single", tax_year=2026,
-            standard_deduction=16000, salt_cap=40400,
-            state_local_income_taxes=90000,   # capped at 40,400
-            investment_interest=4000, top_bracket_income=100000)
-        assert r["itemized_total"] == 44400.00 - 2400.00
-        assert r["obbba_70111_reduction"] == 2400.00
+            standard_deduction=16000, salt_cap=40400, modified_agi=1000000,
+            state_local_income_taxes=90000,   # capped at 10,000
+            investment_interest=27000, top_bracket_income=100000)
+        assert r["salt_deductible"] == 10000.00
+        assert r["itemized_total"] == 37000.00 - 2000.00
+        assert r["obbba_70111_reduction"] == 2000.00
         unknown = compute_schedule_a(
             agi=1000000, filing_status="Single", tax_year=2026,
-            standard_deduction=16000, salt_cap=40400,
-            state_local_income_taxes=90000, investment_interest=4000)
+            standard_deduction=16000, salt_cap=40400, modified_agi=1000000,
+            state_local_income_taxes=90000, investment_interest=27000)
         assert unknown["obbba_70111_reduction"] == 0.0
         assert any("§70111" in n and "OVERSTATED" in n for n in unknown["notes"])
         r25 = compute_schedule_a(
             agi=1000000, filing_status="Single", tax_year=2025,
-            standard_deduction=15750, salt_cap=40000,
+            standard_deduction=15750, salt_cap=40000, modified_agi=1000000,
             state_local_income_taxes=90000)
         assert r25["obbba_70111_reduction"] == 0.0
         assert not any("§70111" in n for n in r25["notes"])
@@ -7758,6 +7999,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ny.py::compute_ny_required_annual_payment": "direct",
         "tax_computations/state/ny.py::compute_ny_itemized": "direct",
         "withholding.py::build_ny_true_up": "direct",
+        "scenario.py::salt_cap_may_move": "direct",
 
         "ptet.py::analyze": "delegates: _salt_cap",
         "return_builder.py::build": "delegates: _context",

@@ -279,11 +279,12 @@ def create_empty_tax_law(year: int) -> dict:
             "qbi_phase_in_range": {"other": None, "mfj": None},
             # Federal SALT itemized-deduction cap for THIS cache's year, fetched
             # per-year because the OBBBA base ($40,000 / $20,000 MFS for
-            # TY2025-2029, reverting to $10,000 / $5,000 in TY2030) is indexed
-            # ~1%/yr for 2026-2029. The MAGI phasedown above $500K ($250K MFS)
-            # is NOT modeled — callers caveat it. Consumers (ptet._salt_cap,
-            # /tax-compute itemized-vs-standard guidance) fall back to the
-            # unindexed statutory schedule when unset.
+            # TY2025-2029, reverting to $10,000 / $5,000 in TY2030) steps up
+            # each year by statute for 2026-2029. It is the amount BEFORE the
+            # §164(b)(7)(B) MAGI phasedown, which tax_computations/federal/
+            # salt.py applies per return. `ptet._salt_cap` falls back to the
+            # statutory schedule when unset; `compute_schedule_a` takes it as
+            # a required input and refuses None, so /tax-setup must fetch it.
             "salt_cap": {"amount": None, "mfs_amount": None},
             # IRC §6621 federal underpayment rate (short-term AFR + 3%), set
             # PER CALENDAR QUARTER. Form 2210 accrues the tax year's penalty

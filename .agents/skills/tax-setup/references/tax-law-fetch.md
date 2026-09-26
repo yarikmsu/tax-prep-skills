@@ -29,9 +29,11 @@ a figure from a prior year.
   `federal.qbi_threshold` (`single`/`mfj`; above it Form 8995-A limits apply and
   `compute_qbi_deduction` flags `over_threshold`)
 - Search: `"IRS {year} SALT deduction cap"` — populate `federal.salt_cap`
-  (`amount`/`mfs_amount`; OBBBA $40K/$20K-MFS for TY2025-2029 indexed ~1%/yr,
-  $10K/$5K-MFS in TY2030 — consumed by `/tax-ptet` and the itemize-vs-standard
-  check in `/tax-compute`)
+  (`amount`/`mfs_amount`): the year's §164(b)(7)(A) amount, the same for every
+  filer — BEFORE the MAGI phasedown, never a filer's reduced cap, because
+  `compute_schedule_a` in `/tax-compute` and `/tax-ptet` apply the phasedown
+  per return and would reduce it twice. OBBBA's amount steps 101% a year by
+  statute through TY2029, not by an inflation index, and reverts in TY2030.
 - Search: `"IRS {year} HSA contribution limits"`
 - Search: `"IRS {year} 401k contribution limit"`
 - Search: `"IRS {year} IRA contribution limit phase out"`

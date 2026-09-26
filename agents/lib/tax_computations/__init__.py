@@ -1525,7 +1525,8 @@ def compute_excess_ss_withholding(
 # appreciated property 30%, overall 50% ordering per Pub 526; OBBBA §70425
 # 0.5%-of-AGI charitable floor for itemizers from TY2026; acquisition-debt
 # limits $750K post-TCJA / $1M for pre-Dec-16-2017 originations (§163(h)(3));
-# the SALT cap dollar amount is INDEXED and comes from federal.salt_cap.
+# the SALT cap's amount steps by statute, not by an index (federal/salt.py),
+# and is read from federal.salt_cap.
 # The medical floor and the appreciated-property cap are in `_shared.py`, not
 # because they are less federal but because California conforms to both and
 # `compute_ca_itemized` reads them — see that file's note on what belongs there.
@@ -1965,6 +1966,61 @@ def compute_sales_tax_deduction(
     }
 
 
+def _schedule_a_salt_cap(agi: float, fs: str, tax_year: int, salt_cap,
+                         salt_before_cap: float, modified_agi,
+                         ) -> "tuple[float, float, float | None, bool]":
+    """§164(b)(7) for the return: (the amount, the cap applied, MAGI, and
+    whether that cap is known). One block, out of `compute_schedule_a`, so the
+    name `cap` there means one thing.
+
+    `salt_before_cap` is the tax the cap limits, at cents.
+    """
+    mfs = fs == "MFS"
+    # At cents before the rule sees it, so `applied < base` means the
+    # phasedown cut the cap, not that the rule's rounding trimmed a fraction
+    # of a cent off the input.
+    base = round(_amount(salt_cap, "salt_cap"), 2)
+    # Validated whenever it is given. What it adds to AGI is never negative,
+    # so a figure below AGI is some other number — taxable income, another
+    # section's MAGI — and would leave the cap too high, AA16 again by input.
+    # At cents, the precision AGI is written at and the figure goes back into
+    # result.json at: a MAGI summed along another path from the same items
+    # can land a float's width under AGI, and that is the same number.
+    magi = None
+    if modified_agi is not None:
+        magi = round(_amount(modified_agi, "modified_agi", allow_negative=True), 2)
+        if magi < round(float(agi), 2):
+            raise ValueError(
+                "modified_agi is below agi: it is AGI plus Form 2555 lines 45 "
+                "and 50, Form 4563 line 15 and excluded Puerto Rico income, "
+                "which only add, so a smaller figure is a different number and "
+                "would leave the SALT cap unreduced")
+    # Required only where it can change the answer. The deduction is the
+    # lesser of the tax and the cap, and MAGI moves the cap between the amount
+    # and the floor, so it matters only when the tax AND the amount are both
+    # above the floor. Anywhere else a refusal is the noise `phasedown_applies`
+    # exists to prevent — the kind that teaches an agent to pass AGI by reflex,
+    # which is the wrong figure for the exclusion filers this check is for.
+    if (magi is None and _salt_rule.phasedown_applies(tax_year)
+            and min(salt_before_cap, base) > _salt_rule.phasedown_floor(mfs)):
+        raise ValueError(
+            f"modified_agi is required for TY{tax_year}: §164(b)(7)(B) "
+            "reduces the SALT cap as modified AGI rises past the year's "
+            "threshold, and without it the full cap would over-state the "
+            "deduction. Pass AGI plus Form 2555 lines 45 and 50, Form 4563 "
+            "line 15 and any excluded Puerto Rico income — AGI itself when "
+            "there are none.")
+    applied = _salt_rule.salt_cap(tax_year, mfs, base=base, modified_agi=magi)
+    # Unknown where no MAGI was given and one could have moved the cap — which
+    # the check above allows only when the tax is at or under the floor, so
+    # the deduction is right at any MAGI but the cap is not known. Recording
+    # the unreduced amount printed "Salt Cap Applied $40,400.00" for a filer
+    # whose statutory cap was $10,000.
+    known = (magi is not None or not _salt_rule.phasedown_applies(tax_year)
+             or _salt_rule.cap_floor(base, mfs) == base)
+    return base, applied, magi, known
+
+
 def compute_schedule_a(
     agi: float,
     filing_status: str,
@@ -1986,13 +2042,32 @@ def compute_schedule_a(
     charitable_over_250_substantiated: bool = None,
     mfs_spouse_itemizes: bool = False,
     top_bracket_income: float = None,
+    modified_agi: "float | None" = None,
 ) -> dict:
     """Federal Schedule A + the itemize-vs-standard election, computed.
 
     Args:
-        salt_cap: the DOLLAR cap for this year/status from federal.salt_cap
-            (amount, or mfs_amount for MFS) — never hardcoded here. The
-            OBBBA MAGI phasedown above $500K is not modeled (caveated).
+        salt_cap: the year's cap for this status from federal.salt_cap
+            (amount, or mfs_amount for MFS) — never hardcoded here. It is the
+            amount BEFORE §164(b)(7)(B)'s phasedown, which is applied here
+            from `modified_agi` by the one rule, `federal/salt.py`.
+        modified_agi: AGI plus Form 2555 lines 45 and 50, Form 4563 line 15
+            and any excluded Puerto Rico income — the line 5e worksheet's
+            add-backs, which are Schedule 1-A Part I's too — and AGI itself
+            when there are none. Line 50 is the foreign housing DEDUCTION, not
+            an exclusion: "AGI plus the §911/§931/§933 exclusions" stood here
+            and left it out, which lowers MAGI and raises the cap. It can
+            be negative but never below `agi`, which refuses. REQUIRED in
+            TY2025-2029, the years §164(b)(7)(B) reduces the cap per return,
+            whenever state and local tax before the cap and the cap itself
+            are both above the phasedown's floor; otherwise no MAGI can move
+            the deduction. Validated whenever given. Until AA16
+            this function capped at the amount it was handed, with a note on
+            every Schedule A that the phasedown was not modeled: at $700,000
+            of AGI it deducted $40,000 where the statute allows $10,000. A cap
+            left unreduced over-states the deduction and under-states the tax,
+            and a return is not advisory output, so a missing MAGI refuses
+            rather than degrading (AGENTS.md §2).
         medical_expenses: total unreimbursed — the 7.5% AGI floor is applied
             HERE, pass the gross figure.
         state_local_income_taxes: W-2 box 17 + CA SDI + estimated state
@@ -2036,7 +2111,6 @@ def compute_schedule_a(
     # medical floor into a medical BONUS (med − negative = med + x).
     agi_v = max(0.0, float(agi))
     std = _sched_a_amount(standard_deduction, "standard_deduction")
-    cap = _sched_a_amount(salt_cap, "salt_cap")
     med = _sched_a_amount(medical_expenses, "medical_expenses")
     inc_tax = _sched_a_amount(state_local_income_taxes, "state_local_income_taxes")
     sales_tax = _sched_a_amount(state_local_sales_taxes, "state_local_sales_taxes")
@@ -2057,9 +2131,13 @@ def compute_schedule_a(
         raise ValueError(
             "charitable_over_250_substantiated must be a boolean or None, "
             f"got {charitable_over_250_substantiated!r}")
+    # At cents: $3,932.55 + $5,888.01 + $179.44 is exactly the phasedown's
+    # floor and sums a float's width over it, which refused a MAGI-less return.
+    salt_before_cap = round(max(inc_tax, sales_tax) + re_tax + pp_tax, 2)
+    base_cap, applied_cap, magi, cap_known = _schedule_a_salt_cap(
+        agi, fs, tax_year, salt_cap, salt_before_cap, modified_agi)
 
     notes = [
-        "OBBBA SALT-cap MAGI phasedown above $500K ($250K MFS) not modeled",
         "Form 4952 investment-interest limit not modeled — pass the "
         "post-limit allowed amount",
         "casualty/theft losses (federally-declared disasters only) not "
@@ -2070,10 +2148,19 @@ def compute_schedule_a(
 
     medical_deductible = round(max(0.0, med - _SCHED_A_MEDICAL_FLOOR * agi_v), 2)
 
-    salt_before_cap = max(inc_tax, sales_tax) + re_tax + pp_tax
     if sales_tax > inc_tax and sales_tax > 0:
         notes.append("sales-tax election used (exceeds state income taxes)")
-    salt_deductible = round(min(cap, salt_before_cap), 2)
+    if magi is not None and applied_cap < base_cap:
+        # To the cent: a dollar over the threshold takes cents off, and a
+        # whole-dollar note printed that as "$40,000 to $40,000".
+        notes.append(
+            f"SALT cap reduced by the §164(b)(7)(B) phasedown: ${base_cap:,.2f} "
+            f"to ${applied_cap:,.2f} at modified AGI ${magi:,.2f}")
+    elif not cap_known:
+        notes.append(
+            "SALT cap left unrecorded: no modified AGI was given, and at this "
+            "state and local tax no MAGI changes the deduction")
+    salt_deductible = round(min(applied_cap, salt_before_cap), 2)
 
     limit = (_MORTGAGE_LIMIT_GRANDFATHERED if mortgage_pre_dec_16_2017
              else _MORTGAGE_LIMIT_TCJA)
@@ -2166,7 +2253,13 @@ def compute_schedule_a(
         use_itemized = itemized_total > std
     return {
         "medical_deductible": medical_deductible,
-        "salt_before_cap": round(salt_before_cap, 2),
+        "salt_before_cap": salt_before_cap,
+        # Not `salt_cap`: that name is the INPUT, the amount before the
+        # phasedown, and a re-call fed this figure under it would reduce the
+        # cap twice. `modified_agi` is recorded so `ptet`, which reads it back,
+        # prices the same cap the return applied.
+        "salt_cap_applied": applied_cap if cap_known else None,
+        "modified_agi": magi,
         "salt_deductible": salt_deductible,
         "mortgage_deductible": mortgage_deductible,
         "investment_interest": round(inv_int, 2),
@@ -2265,9 +2358,9 @@ def compute_schedule_1a(
     credits, ACA PTC) and understates tax.
 
     Args:
-        magi: modified AGI = AGI + §911/§931/§933 exclusions (the caller
-            computes it; reuse the FEIE-addback convention from
-            compute_education_credits). Each provision phases out on MAGI.
+        magi: modified AGI = AGI plus Form 2555 lines 45 and 50, Form 4563
+            line 15 and excluded Puerto Rico income (Part I, lines 2a-2d; the
+            caller computes it). Each provision phases out on MAGI.
         limits: the fetched federal.schedule_1a block. Its indexed figures
             (caps, senior per-person amount, per-provision phase-out
             thresholds) are REQUIRED when the corresponding input is nonzero;
@@ -3186,6 +3279,7 @@ from agents.lib.tax_computations._shared import (  # noqa: F401
     qdcg_worksheet_applies,
     _CHARITY_APPRECIATED_AGI_CAP,
     _SCHED_A_MEDICAL_FLOOR,
+    _amount,
     _coerce_numeric,
     _f2210_amount,
     _multi_employer_excess,
@@ -3227,6 +3321,7 @@ from agents.lib.tax_computations.federal.international import (  # noqa: E402,F4
     compute_section_988,
 )
 
+from agents.lib.tax_computations.federal import salt as _salt_rule  # noqa: E402
 from agents.lib.tax_computations.federal.amt import (  # noqa: E402,F401
     _resolve_amt_phaseout_rate,
     compute_form_6251,

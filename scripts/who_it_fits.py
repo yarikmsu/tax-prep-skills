@@ -59,7 +59,8 @@ PERSONAS = {
     "Seattle (King County)": ("53", frozenset({"033"}), False),
 }
 
-# The $500,000+ itemizing share is quoted for the five states.
+# The $500,000+ itemizing share, measured for the five states; the page quotes
+# California's.
 PERSONA_STATES = ("CA", "FL", "NY", "NC", "WA")
 
 # Publication 1304, tax year 2023, by adjusted gross income.
@@ -538,7 +539,8 @@ def phrases(figures: dict) -> list[str]:
         f"income, and that one block is most of the {ends[ca]['200k']} that hit any",
         f"Moves ({moved[ca]}) are the lowest of the five",
         f"{work[ca][0][0]}, the commonest out-of-state workplace",
-        f"{pct(itemize['CA'])} of California returns above $500,000 itemize",
+        f"{pct(itemize['CA'])} of California returns above $500,000 itemize, and for "
+        "them the federal return applies the SALT cap's phasedown",
         f"{inc[fl]['marketplace_all']} of Florida returns took an advance premium credit",
         f"highest of the five for all returns ({ends[fl]['all']})",
         f"Above $200,000 that falls to {inc[fl]['marketplace_200k']}, and rental takes over",
@@ -562,8 +564,6 @@ def phrases(figures: dict) -> list[str]:
         f"rental at {inc[sea]['rental_200k']} above $200,000, moves across the state "
         f"line at {moved[sea]}, and almost no commuting ({com[sea]})",
         f"{ends[sea]['200k']} of $200,000+ returns hit one",
-        f"Between {pct(min(itemize.values()))} and {pct(max(itemize.values()))} of "
-        "$500,000+ returns in these five states itemize",
         f"Between {pct(min(abroad))} and {pct(max(abroad))} of households in these five "
         "places move abroad or arrive from abroad in a year",
         f"returns reporting any rent are {n['any_rent_200k']} of $200,000+ returns "
