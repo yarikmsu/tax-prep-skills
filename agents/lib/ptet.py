@@ -47,7 +47,7 @@ import argparse
 import datetime
 import math
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -66,7 +66,10 @@ from agents.lib.scenario import (  # noqa: E402
     _rate_kwargs,
     extract_baseline_inputs,
     line_13c_claimed,
+    medical_floor_may_move,
+    medical_floor_sentence,
     read_tax_year,
+    refuse_where_the_charity_cap_moves,
 )
 from agents.lib.tax_computations import compute_scenario  # noqa: E402
 from agents.lib.tax_computations.federal import salt  # noqa: E402
@@ -1075,6 +1078,24 @@ def _return_salt_position(result: dict, magi_flag: "float | None",
     return magi, itemizes
 
 
+def _medical_floor_note(result: dict, itemizes: bool, keystone_agi: float,
+                        total_ptet: float) -> "str | None":
+    """The election lowers the owner's AGI by the PTET it pays, and the
+    medical-expense floor is a share of AGI. The keystone holds the return's
+    deduction, so where the floor can move the benefit reads low — the
+    under-statement AGENTS.md §2 lets stand, said rather than silent.
+    `keystone_agi` is the keystone's AGI for the return, so a missing line 11
+    is measured from it as the other tools' checks are, not skipped."""
+    if not itemizes or total_ptet <= 0:
+        return None
+    if not medical_floor_may_move(result, keystone_agi,
+                                  [keystone_agi - total_ptet]):
+        return None
+    return medical_floor_sentence(
+        "the election, which lowers AGI by the PTET it pays, can save more "
+        "than shown.")
+
+
 def _main(argv: list) -> int:
     p = argparse.ArgumentParser(
         prog="tax-ptet",
@@ -1135,7 +1156,7 @@ def _main(argv: list) -> int:
         filing_status = (result.get("meta", {}) or {}).get("filing_status") \
             or profile.get("filing_status") or "Single"
         baseline_inputs = extract_baseline_inputs(result)
-        rate_kwargs = _rate_kwargs(profile, tax_law, filing_status)
+        rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)
         # Phantom-income guard bucket (L2): PREFER the dedicated
         # `schedule_e_k1_income` field (the gross positive qualifying K-1
         # distributive income) — the aggregate line 8 also folds in
@@ -1206,6 +1227,15 @@ def _main(argv: list) -> int:
             passthrough_income=passthrough_income,
             salt_cap_cfg=(tax_law.get("federal", {}) or {}).get("salt_cap"),
             ptet_cfg=(tax_law.get("ptet") if isinstance(tax_law, dict) else None))
+        # The keystone's AGI for the return: the frame the held-deduction
+        # checks are measured in.
+        return_agi = compute_scenario(baseline_inputs, {}, **rate_kwargs)["agi"]
+        priced = [return_agi - report.total_ptet_paid]
+        refuse_where_the_charity_cap_moves(result, return_agi, priced)
+        note = _medical_floor_note(result, itemizes, return_agi,
+                                   report.total_ptet_paid)
+        if note:
+            report = replace(report, notes=report.notes + (note,))
         print(render_markdown(report))
         return 0
     except (WorkspaceError, PtetError, ProjectionError, ScenarioError, RolloverError, ValueError) as e:

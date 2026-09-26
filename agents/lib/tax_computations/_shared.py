@@ -44,6 +44,14 @@ import agents.lib  # noqa: F401 — the host-interpreter guard, see agents/lib/_
 _SCHED_A_MEDICAL_FLOOR = 0.075
 _CHARITY_APPRECIATED_AGI_CAP = 0.30
 
+
+def _medical_deductible(expenses: float, agi: float) -> float:
+    """Medical expenses over the floor, a share of AGI floored at zero — an
+    unclamped negative AGI would turn the floor into a bonus. One copy for the
+    federal and CA Schedule A and the planning tools' medical gate, which
+    held three."""
+    return round(max(0.0, expenses - _SCHED_A_MEDICAL_FLOOR * max(0.0, agi)), 2)
+
 _CANONICAL_FILING_STATUSES = {"SINGLE", "MFJ", "MFS", "HOH", "QSS"}
 
 def _split_remainder_last(shortfall: float, weights: "list[float]") -> "list[float]":

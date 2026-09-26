@@ -16,6 +16,7 @@ import datetime
 import json
 import math
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +39,7 @@ from agents.lib.rollover import (  # noqa: E402
 from agents.lib.secure_fs import atomic_write, redact, secure_path  # noqa: E402
 from agents.lib.tax_computations import (  # noqa: E402
     SCENARIO_INPUT_KEYS,
+    _medical_deductible,
     _coerce_numeric,
     compute_scenario,
     net_capital_gains,
@@ -103,6 +105,7 @@ class ScenarioReport:
     scenario_outcome: Outcome
     diff: ScenarioDiff
     salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
+    medical_floor_may_move: bool = True  # gates medical_floor_caveat
 
 
 def parse_deltas(tokens: "list[str]") -> dict:
@@ -232,8 +235,51 @@ def _num_ctc_children(profile: dict) -> int:
     return sum(1 for d in deps if isinstance(d, dict) and d.get("ctc_eligible"))
 
 
-def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None") -> dict:
-    """Build the compute_scenario rate kwargs from tax_law for this filing status."""
+def return_deduction(result: dict) -> float:
+    """The return's line 12, standard or itemized — the deduction every
+    planning tool holds across the baseline and the scenario.
+
+    It was the cache's standard deduction for every filer, so an itemizer was
+    priced from a taxable-income position too high by the difference, and a
+    delta could land a bracket too high: a harvest or PTET saving over-stated,
+    the direction AGENTS.md §4 makes a hard error (AA20). The age-65/blind
+    add-on rides along, since line 12 carries it.
+
+    Missing or corrupt, it refuses rather than falling back to the cache: that
+    fallback is the over-statement this replaces.
+    """
+    value = (result.get("form_1040", {}) or {}).get("line_12_standard_deduction")
+    if value is None:
+        raise ScenarioError(
+            "result.json has no form_1040.line_12_standard_deduction: the "
+            "planning tools price from the deduction the return took. Run "
+            "/tax-compute first.")
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or value < 0):
+        raise ScenarioError(
+            "result.json form_1040.line_12_standard_deduction must be a finite, "
+            f"non-negative number, got {type(value).__name__}")
+    # Zero is the template's placeholder. The only return that deducts
+    # nothing is one §63(c)(6)(A) forced to itemize, an MFS filer whose spouse
+    # itemizes, with nothing to itemize; anything else priced on $0 over-states
+    # more than the cache fallback this replaced.
+    sched = result.get("schedule_a")
+    forced_to_nothing = (isinstance(sched, dict)
+                         and sched.get("use_itemized") is True
+                         and _known_amount(sched.get("itemized_total")) == 0)
+    if value == 0 and not forced_to_nothing:
+        raise ScenarioError(
+            "result.json form_1040.line_12_standard_deduction is 0, the "
+            "template's placeholder: only a return forced to itemize with "
+            "nothing to itemize deducts nothing. Run /tax-compute first.")
+    return round(float(value), 2)
+
+
+def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None",
+                 result: dict) -> dict:
+    """The compute_scenario kwargs: the cache's rates for this filing status,
+    and the return's own deduction (`return_deduction`), read last so a
+    missing status or rate refuses first."""
     full_key = _full_status_key(filing_status)
     bin_key = _binary_status_key(filing_status)
     fed = tax_law.get("federal", {}) or {}
@@ -249,7 +295,6 @@ def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None") -> d
     threshold_map = addl_cfg.get("threshold") or {}
     return {
         "brackets": brackets,
-        "standard_deduction": _num(fstatus.get("standard_deduction"), "standard_deduction"),
         "cg_zero_limit": cg_zero,
         "cg_fifteen_limit": cg_fifteen,
         "ss_wage_base": (fed.get("social_security", {}) or {}).get("wage_base"),
@@ -260,6 +305,7 @@ def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None") -> d
         "addl_medicare_threshold": threshold_map.get(full_key) or threshold_map.get(bin_key),
         "addl_medicare_rate": addl_cfg.get("rate", 0.009),
         "capital_loss_limit": _capital_loss_limit(filing_status, "scenario"),
+        "deduction": return_deduction(result),
     }
 
 
@@ -276,6 +322,29 @@ def _eff_rate(tax: float, agi: float) -> "float | None":
     # Undefined for non-positive AGI; also suppress a negative rate, which can
     # arise only in the degenerate case where modeled savings exceed the real tax.
     return round(tax / agi, 4) if (agi > 0 and tax >= 0) else None
+
+
+def _require_the_same_deduction(anchor: dict, deduction: float) -> None:
+    """A stacked base carries the anchor it was priced with, and
+    `build_report` re-prices its inputs on the CURRENT deduction. Two
+    deductions in one `line_24 + (base - anchor)` moved a saved baseline from
+    $27,000 to $15,800 with no warning. A base saved before AA20 was priced on
+    the cache's standard deduction and records none."""
+    saved = anchor.get("deduction")
+    if saved is None:
+        raise ScenarioError(
+            "--base scenario was saved before the planning tools priced from "
+            "the return's line 12, so its figures rest on another deduction. "
+            "Re-run it from result.json, then stack on the new file.")
+    if (isinstance(saved, bool) or not isinstance(saved, (int, float))
+            or not math.isfinite(saved)):
+        raise ScenarioError(
+            f"--base scenario anchor.deduction is not numeric: {redact(repr(saved))}")
+    if round(float(saved), 2) != round(deduction, 2):
+        raise ScenarioError(
+            f"--base scenario was priced on a ${saved:,.2f} deduction, and the "
+            f"return's line 12 is now ${deduction:,.2f}. Re-run it from "
+            "result.json, then stack on the new file.")
 
 
 def resolve_base(result: dict, base_scenario: "dict | None", year: int,
@@ -351,8 +420,10 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
                  today: datetime.date) -> ScenarioReport:
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
-    rate_kwargs = _rate_kwargs(profile, tax_law, filing_status)
+    rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)
     base = resolve_base(result, base_scenario, year, filing_status)
+    if base["anchor"] is not None:
+        _require_the_same_deduction(base["anchor"], rate_kwargs["deduction"])
     base_inputs = base["inputs"]
 
     # Deltas are applied verbatim (no derived adjustments), so every delta is exactly
@@ -364,13 +435,20 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
     # Outcome of the immediate base (zero further delta) and of the new scenario.
     base_out = compute_scenario(base_inputs, {}, **rate_kwargs)
     scen_out = compute_scenario(base_inputs, deltas, **rate_kwargs)
+    # The keystone's AGI for the return itself: the frame every held-deduction
+    # check is measured in, which a stacked base has already moved away from.
+    return_agi = compute_scenario(
+        extract_baseline_inputs(result), {}, **rate_kwargs)["agi"]
+    priced = [base_out["agi"], scen_out["agi"]]
+    refuse_where_the_charity_cap_moves(result, return_agi, priced)
 
     # Anchor is constant across a stack: original result.json line 24 + the zero-delta
     # recompute of the ORIGINAL inputs. For base=result.json we establish it here.
     if base["anchor"] is None:
         line24 = _num(_get(result.get("form_1040", {}) or {}, "line_24_total_tax"), "line_24")
         anchor = {"line_24": round(line24, 2),
-                  "baseline_recompute_total": base_out["total_federal_tax"]}
+                  "baseline_recompute_total": base_out["total_federal_tax"],
+                  "deduction": rate_kwargs["deduction"]}
     else:
         anchor = base["anchor"]
 
@@ -409,8 +487,8 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
         applied_deltas=applied, anchor=anchor, inputs=resolved_inputs,
         base_outcome=_outcome(base_out), scenario_outcome=_outcome(scen_out), diff=diff,
         salt_cap_may_move=salt_cap_may_move(
-            result, tax_law, year, filing_status, base_out["agi"],
-            [scen_out["agi"]]),
+            result, tax_law, year, filing_status, return_agi, priced),
+        medical_floor_may_move=medical_floor_may_move(result, return_agi, priced),
     )
 
 
@@ -421,6 +499,7 @@ def _report_to_dict(r: ScenarioReport) -> dict:
         "anchor": r.anchor, "inputs": r.inputs,
         "base_outcome": vars(r.base_outcome), "scenario_outcome": vars(r.scenario_outcome),
         "diff": vars(r.diff), "salt_cap_may_move": r.salt_cap_may_move,
+        "medical_floor_may_move": r.medical_floor_may_move,
     }
 
 
@@ -435,6 +514,13 @@ def _known_amount(value) -> "float | None":
     return float(value) if math.isfinite(value) else None
 
 
+def _known_non_negative(value) -> "float | None":
+    """`_known_amount`, and not below zero: a negative tax or expense total is
+    corrupt, and read as known it silenced the caveat it gates."""
+    amount = _known_amount(value)
+    return amount if amount is not None and amount >= 0 else None
+
+
 def line_13c_claimed(result: dict) -> bool:
     """Whether the return claims §170(p)'s line-13c deduction, which only a
     standard-deduction filer can. It is the election the return actually
@@ -445,57 +531,162 @@ def line_13c_claimed(result: dict) -> bool:
     return amount is not None and amount > 0
 
 
+def _return_frame(result: dict, keystone_agi: float,
+                  priced_agis: "list[float]") -> "tuple[float, list[float]]":
+    """The return's own AGI, and each priced keystone AGI carried to it.
+
+    The keystone models half the SE tax as its only adjustment, so its AGI
+    sits off line 11 by every other line-10 adjustment — an IRA deduction, an
+    HSA, student-loan interest. Its DIFFERENCES are right and its levels are
+    not, so a priced AGI is line 11 plus how far the keystone moved from its
+    recompute of the return itself, `keystone_agi`. Comparing levels dropped
+    the caveat where it applied and showed it where it did not.
+    """
+    line_11 = _known_amount((result.get("form_1040", {}) or {}).get("line_11_agi"))
+    anchor = keystone_agi if line_11 is None else line_11
+    return anchor, [anchor + (a - keystone_agi) for a in priced_agis]
+
+
+def _held_deduction_may_move(result: dict, keystone_agi: float,
+                             priced_agis: "list[float]",
+                             deduction_at: "Callable[[float], float] | None",
+                             ) -> bool:
+    """Whether a deduction the keystone holds at the return's can move anywhere
+    a report prices: the shape both gates below share, each passing only
+    `deduction_at`, the deduction at an AGI in the return's frame, or None
+    where the return does not record enough to price it. Anything not known
+    is True:
+
+    - no `schedule_a`: the standard deduction, since the template includes
+      the section only for an itemizer or a margin within $500, with nothing
+      to price, so only a lower AGI can matter, by growing a deduction until
+      itemizing wins;
+    - a return with the section that took the standard deduction, or claims
+      line 13c: the same, priced — only where the deduction would rise;
+    - an itemizer: wherever the deduction differs from the return's.
+    """
+    return_agi, in_play = _return_frame(result, keystone_agi, priced_agis)
+    lower = any(a < return_agi for a in in_play)
+    sched = result.get("schedule_a")
+    if not isinstance(sched, dict):
+        return lower
+    standard = sched.get("use_itemized") is False or line_13c_claimed(result)
+    if deduction_at is None:
+        return lower if standard else any(a != return_agi for a in in_play)
+    at_return = deduction_at(return_agi)
+    elsewhere = [deduction_at(a) for a in in_play]
+    if standard:
+        return any(d > at_return for d in elsewhere)
+    return any(d != at_return for d in elsewhere)
+
+
 def salt_cap_may_move(result: dict, tax_law: dict, tax_year: int,
-                      filing_status: "str | None", base_agi: float,
+                      filing_status: "str | None", keystone_agi: float,
                       priced_agis: "list[float]") -> bool:
     """Whether §164(b)(7)(B) can move the return's SALT deduction anywhere a
     report prices — the gate on `salt_phasedown_caveat`.
 
-    Measured from the RETURN, because every figure a report prints is
-    anchored to its line 24: a stacked base can already sit far from it. And
-    it asks whether min(tax, cap) changes, not whether MAGI crosses the
-    threshold — a cap at the floor throughout, or above the tax throughout,
-    moves nothing however far MAGI goes. Anything not known is True:
-
-    - no `schedule_a`: the standard deduction, since the template includes
-      the section only for an itemizer or a margin within $500. Its tax and
-      MAGI are unknown, so only a lower AGI can matter — a lower MAGI can
-      raise the cap until itemizing wins;
-    - a return with the section that took the standard deduction: the same,
-      priced — it matters only where the deduction would rise;
-    - an itemizer: wherever the deduction differs from the return's.
-
-    `base_agi` and `priced_agis` are keystone AGIs, carried to MAGI by the
-    return's own add-back: `modified_agi` less line 11. The amount is the
-    cache's, as the return's was, or the statute's where the cache has none.
+    It asks whether min(tax, cap) changes, not whether MAGI crosses the
+    threshold: a cap at the floor throughout, or above the tax throughout,
+    moves nothing however far MAGI goes. MAGI is an AGI in the return's frame
+    plus its own add-back, `modified_agi` less line 11; the amount is the
+    cache's, as the return used, or the statute's where the cache has none.
+    Everything else is `_held_deduction_may_move`.
     """
     mfs = _full_status_key(filing_status, "SALT caveat") == "mfs"
     if not salt.phasedown_applies(tax_year):
         return False
-    return_agi = _known_amount((result.get("form_1040", {}) or {}).get("line_11_agi"))
-    in_play = [base_agi, *priced_agis]
     sched = result.get("schedule_a")
-    if not isinstance(sched, dict):
-        reference = base_agi if return_agi is None else return_agi
-        return any(a < reference for a in in_play)
-    salt_total = _known_amount(sched.get("salt_before_cap"))
+    sched = sched if isinstance(sched, dict) else {}
+    salt_total = _known_non_negative(sched.get("salt_before_cap"))
     magi = _known_amount(sched.get("modified_agi"))
-    if salt_total is None or magi is None or return_agi is None:
-        return True
+    line_11 = _known_amount((result.get("form_1040", {}) or {}).get("line_11_agi"))
     cfg = ((tax_law.get("federal", {}) or {}).get("salt_cap") or {})
-    base = (_known_amount(cfg.get("mfs_amount" if mfs else "amount"))
+    base = (_known_non_negative(cfg.get("mfs_amount" if mfs else "amount"))
             if isinstance(cfg, dict) else None)
-    if base is not None and base < 0:
-        base = None
+    deduction_at: "Callable[[float], float] | None" = None
+    if salt_total is not None and magi is not None and line_11 is not None:
+        tax, added_back = salt_total, magi - line_11
 
-    def deduction(m: float) -> float:
-        return min(salt_total, salt.salt_cap(tax_year, mfs, base, m))
+        def salt_deduction(agi: float) -> float:
+            return min(tax, salt.salt_cap(tax_year, mfs, base, agi + added_back))
+        deduction_at = salt_deduction
+    return _held_deduction_may_move(result, keystone_agi, priced_agis, deduction_at)
 
-    at_return = deduction(magi)
-    elsewhere = [deduction(a + magi - return_agi) for a in in_play]
-    if sched.get("use_itemized") is False or line_13c_claimed(result):
-        return any(d > at_return for d in elsewhere)
-    return any(d != at_return for d in elsewhere)
+
+def medical_floor_may_move(result: dict, keystone_agi: float,
+                           priced_agis: "list[float]") -> bool:
+    """Whether the medical-expense floor, a share of AGI, can move the
+    return's deduction anywhere a report prices — the gate on
+    `medical_floor_caveat`.
+
+    The keystone holds the return's line 12, and the part of Schedule A that
+    moves with AGI in EVERY year is the medical floor: a delta that raises AGI
+    shrinks the deduction and one that lowers it grows it. Priced on the gross
+    `compute_schedule_a` records, by the engine's own rule. Everything else is
+    `_held_deduction_may_move`.
+    """
+    sched = result.get("schedule_a")
+    expenses = (_known_non_negative(sched.get("medical_expenses"))
+                if isinstance(sched, dict) else None)
+    deduction_at: "Callable[[float], float] | None" = None
+    if expenses is not None:
+        gross = expenses
+
+        def medical_deduction(agi: float) -> float:
+            return _medical_deductible(gross, agi)
+        deduction_at = medical_deduction
+    return _held_deduction_may_move(result, keystone_agi, priced_agis, deduction_at)
+
+
+def refuse_where_the_charity_cap_moves(result: dict, keystone_agi: float,
+                                       priced_agis: "list[float]") -> None:
+    """Refuse wherever a charitable deduction capped at a share of AGI moves.
+
+    §170(b) caps a gift at a share of AGI, and a carryforward above zero is the
+    cap binding. Any priced AGI other than the return's moves that cap, and the
+    keystone holds the deduction, so the figure reads high whichever way AGI
+    goes: a lower AGI allows less of the gift, so a saving is smaller than
+    shown, and a higher one allows more, so a cost is. Over-stating is
+    AGENTS.md §4's hard error, which no caveat may stand in for, and pricing it
+    needs the split between cash and appreciated gifts that the return does
+    not record. So it stops.
+    """
+    sched = result.get("schedule_a")
+    if not isinstance(sched, dict) or sched.get("charitable_carryforward") is None:
+        return
+    carry = sched["charitable_carryforward"]
+    if (isinstance(carry, bool) or not isinstance(carry, (int, float))
+            or not math.isfinite(carry) or carry < 0):
+        raise ScenarioError(
+            "result.json schedule_a.charitable_carryforward must be a finite, "
+            f"non-negative number, got {type(carry).__name__}")
+    if carry == 0:
+        return
+    return_agi, in_play = _return_frame(result, keystone_agi, priced_agis)
+    if any(a != return_agi for a in in_play):
+        raise ScenarioError(
+            "The return's charitable deduction is capped at a share of AGI "
+            "(schedule_a.charitable_carryforward is above zero), and this change "
+            "moves AGI and with it the cap. The planning tools hold the "
+            "deduction, so the figure would read high. Price the change on the "
+            "return itself with /tax-compute.")
+
+
+def medical_floor_sentence(effect: str) -> str:
+    """The one wording of the medical-floor caveat: the three reports print it
+    as a bullet, and /tax-ptet as a note. /tax-ptet's own sentence dropped the
+    "If you itemize" and read as a statement of fact on a standard return."""
+    return ("If you itemize, your medical-expense deduction is held at the "
+            "baseline: its floor is a share of AGI, and that is not re-computed "
+            f"here, so {effect} The filed /tax-compute return applies it exactly.")
+
+
+def medical_floor_caveat(may_move: bool, effect: str) -> "list[str]":
+    """The caveat a `compute_scenario` report owes wherever the medical floor
+    can move the deduction; `medical_floor_may_move` decides where. Held
+    without a word until AA20."""
+    return [f"- {medical_floor_sentence(effect)}"] if may_move else []
 
 
 def salt_phasedown_caveat(may_move: bool, effect: str) -> "list[str]":
@@ -558,15 +749,20 @@ def render_markdown(r: ScenarioReport) -> str:
               "MAGI-increasing delta that would phase OUT more of the tips/overtime/car-loan/"
               "senior deduction near a threshold is not re-computed, so the marginal cost "
               "there may read slightly low.",
-              "- Self-employed §224 tips are not removed from the QBI base, the §63(f) "
-              "age-65/blind standard-deduction add-on is not threaded, and the §70105 "
-              "minimum QBI deduction (TY2026+ small active trade) is not applied (all held "
-              "from the baseline result.json); marginal pricing near a threshold may read "
-              "slightly off. The filed /tax-compute return handles them exactly.",
+              "- Self-employed §224 tips are not removed from the QBI base, and the "
+              "§70105 minimum QBI deduction (TY2026+ small active trade) is not applied "
+              "(both held from the baseline result.json); marginal pricing near a "
+              "threshold may read slightly off. The filed /tax-compute return handles "
+              "them exactly.",
+              "- The deduction is the return's own line 12, standard or itemized, held "
+              "at the baseline.",
               "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6)."]
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "a delta that raises modified AGI above the threshold can "
         "cost more than shown, and one that lowers it there can save more.")
+    lines += medical_floor_caveat(
+        r.medical_floor_may_move, "a delta that raises AGI can cost more than "
+        "shown, and one that lowers it can save more.")
     lines += ["- This is a planning estimate, not a filed return.", ""]
     return "\n".join(lines) + "\n"
 

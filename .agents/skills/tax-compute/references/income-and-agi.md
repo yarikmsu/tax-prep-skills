@@ -633,7 +633,8 @@ persona SALT usually exceeds the OBBBA cap by itself):
   cap, or the cap itself, is at or under the phasedown's floor, where no MAGI
   can change the deduction. Pass it anyway: `/tax-ptet` reads it back, in
   the review too. It also
-  refuses a `modified_agi` below AGI. Record the result's `salt_cap_applied` and `modified_agi` in the
+  refuses a `modified_agi` below AGI. Record the result's `salt_cap_applied`, `modified_agi` and
+  `medical_expenses` (the gross, which the planning tools read) in the
   `schedule_a` section as they come back — the cap is null where no MAGI was
   given and one could have moved it — and copy its phasedown note when there
   is one. On any

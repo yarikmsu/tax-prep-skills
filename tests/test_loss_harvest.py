@@ -1963,3 +1963,49 @@ class TestAStateWhoseBracketsAreKeyedByRateSchedule:
         r = _build()
         assert r.state_rate_floor_note is None
         assert "State rate is a floor" not in lh.render_markdown(r)
+
+
+def test_the_harvest_prices_from_the_returns_line_12():
+    """AA20. The fixture harvest takes $2,500 of short-term loss off ordinary
+    income, $3,750 of long-term loss at 15% ($562.50) and $142.50 of NIIT:
+    - line 12 $30,000: taxable income $246,000, the 24% bracket, $600;
+      $1,305 in all;
+    - line 12 $150,000: $126,000, the 22% bracket, $550; $1,255.
+    On the cache's standard deduction that itemizer's saving read $50 high,
+    the direction AGENTS.md §4 makes a hard error."""
+    def savings(line_12):
+        result = _load("result.json")
+        result["form_1040"]["line_12_standard_deduction"] = line_12
+        return lh.build_harvest(result, _load("taxpayer_profile.json"),
+                                _load("tax_law_2026.json"),
+                                _load("holdings.json"), 2026, name="harvest",
+                                today=TODAY).fed_savings
+    assert savings(30000) == 1305.0
+    assert savings(150000) == 1255.0
+
+
+def test_the_harvest_report_carries_the_medical_gate():
+    # No Schedule A, and a harvest lowers AGI: not known, so said.
+    r = _build()
+    assert r.medical_floor_may_move is True
+    assert lh._report_to_dict(r)["medical_floor_may_move"] is True
+    assert "medical-expense deduction is held" in lh.render_markdown(r)
+    assert "the return's own line 12" in lh.render_markdown(r)
+    # $1,000 of expenses under a floor of about $20,000 before and after.
+    result = _load("result.json")
+    result["schedule_a"] = {"use_itemized": True, "medical_expenses": 1000}
+    r = lh.build_harvest(result, _load("taxpayer_profile.json"),
+                         _load("tax_law_2026.json"), _load("holdings.json"),
+                         2026, name="harvest", today=TODAY)
+    assert r.medical_floor_may_move is False
+
+
+def test_the_harvest_refuses_a_capped_charitable_deduction():
+    """A harvest lowers AGI, which lowers a binding charitable cap while the
+    keystone holds the deduction: the saving would read high."""
+    result = _load("result.json")
+    result["schedule_a"] = {"use_itemized": True, "charitable_carryforward": 5000}
+    with pytest.raises(lh.ScenarioError, match="capped at a share of AGI"):
+        lh.build_harvest(result, _load("taxpayer_profile.json"),
+                         _load("tax_law_2026.json"), _load("holdings.json"),
+                         2026, name="harvest", today=TODAY)

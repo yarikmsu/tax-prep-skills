@@ -25,7 +25,7 @@ MFJ_BRACKETS = [
     {"rate": 0.20, "min": 20000, "max": 200000},
     {"rate": 0.30, "min": 200000, "max": None},
 ]
-RATE_KW = dict(brackets=MFJ_BRACKETS, standard_deduction=30000,
+RATE_KW = dict(brackets=MFJ_BRACKETS, deduction=30000,
                cg_zero_limit=90000, cg_fifteen_limit=550000)
 # wages + $400k of K-1 pass-through income (other_income) → taxable income deep
 # in the 30% top bracket so a deduction is priced at exactly 30%. The large
@@ -1292,3 +1292,70 @@ def test_the_reported_cap_is_qualified_even_when_the_benefit_is_not():
     # Supplied, or already at the floor: nothing left to qualify.
     settled = cap_note(modified_agi=1000000.0)
     assert "$10,000" in settled and "BEFORE §164(b)(7)(B)" not in settled
+
+
+def test_cli_prices_from_the_returns_line_12(tmp_path):
+    """AA20. $18,600 of CA PTET on the fixture, whose $15,000 of qualified
+    dividends and long-term gain stacks above ordinary income, plus $850 of
+    child credit the lower AGI stops phasing out:
+    - line 12 $30,000: ordinary taxable income $372,000, all 30%: $5,580, so
+      $6,430;
+    - line 12 $200,000: $202,000 to $183,400, $2,000 at 30% and $16,600 at
+      20%: $3,920, so $4,770.
+    Priced on the cache's standard deduction, that itemizer's saving read
+    $1,660 high."""
+    def savings(line_12):
+        ws = tmp_path / str(line_12)
+        ws.mkdir()
+        _ws(ws)
+        res = json.loads((ws / "result.json").read_text())
+        res["form_1040"]["line_12_standard_deduction"] = line_12
+        (ws / "result.json").write_text(json.dumps(res))
+        out = _run_cli(["--workspace", str(ws), "--year", "2026",
+                        "--income", "CA=200000"])
+        assert out.returncode == 0, out.stderr
+        return out.stdout
+    assert "Total net federal savings: $6,430" in savings(30000)
+    assert "Total net federal savings: $4,770" in savings(200000)
+
+
+def test_the_medical_note_says_the_election_moves_the_floor(tmp_path):
+    """The election lowers AGI by the PTET, and the medical floor with it;
+    the keystone holds the deduction. $40,000 of expenses over a floor of
+    $31,275 at $417,000 is $8,725, and $10,120 after $18,600 of PTET. The
+    note is the shared sentence, "If you itemize" and all, and a missing
+    line 11 is measured from the keystone's AGI rather than skipped."""
+    note = ptet._medical_floor_note
+    ret = {"form_1040": {"line_11_agi": 417000},
+           "schedule_a": {"use_itemized": True, "medical_expenses": 40000}}
+    said = note(ret, True, 417000.0, 18600.0)
+    assert said and said.startswith("If you itemize, your medical-expense")
+    assert note(ret, False, 417000.0, 18600.0) is None     # standard deduction
+    assert note(ret, True, 417000.0, 0.0) is None          # nothing elected
+    under = {"form_1040": {"line_11_agi": 417000},
+             "schedule_a": {"use_itemized": True, "medical_expenses": 1000}}
+    assert note(under, True, 417000.0, 18600.0) is None    # under the floor throughout
+    assert note({"schedule_a": ret["schedule_a"]}, True, 417000.0, 18600.0)
+    ws = _ws(tmp_path)
+    res = json.loads((ws / "result.json").read_text())
+    res["schedule_a"] = ret["schedule_a"]
+    (ws / "result.json").write_text(json.dumps(res))
+    out = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert out.returncode == 0, out.stderr
+    assert "If you itemize, your medical-expense deduction is held" in out.stdout
+
+
+def test_cli_refuses_a_capped_charitable_deduction(tmp_path):
+    """The election lowers AGI by the PTET, which lowers a binding charitable
+    cap while the keystone holds the deduction: the benefit would read high.
+    With no income to elect on, AGI does not move and nothing refuses."""
+    ws = _ws(tmp_path)
+    res = json.loads((ws / "result.json").read_text())
+    res["schedule_a"] = {"use_itemized": True, "charitable_carryforward": 5000}
+    (ws / "result.json").write_text(json.dumps(res))
+    out = _run_cli(["--workspace", str(ws), "--year", "2026",
+                    "--income", "CA=200000"])
+    assert out.returncode == 1
+    assert "capped at a share of AGI" in out.stderr
+    assert _run_cli(["--workspace", str(ws), "--year", "2026"]).returncode == 0

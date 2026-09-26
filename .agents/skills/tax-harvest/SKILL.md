@@ -36,7 +36,9 @@ Read-only with respect to the baseline: never modifies `result.json` or
 permissions through the same guarded writer `/tax-scenario` uses.
 
 ## Prerequisites
-- `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
+- `result.json` with a computed `form_1040.line_24_total_tax` and
+  `line_12_standard_deduction` — the deduction the return took, standard or
+  itemized, which the engine prices from and refuses without (else: run `/tax-compute`).
 - `taxpayer_profile.json` (filing status, state).
 - `tax_law_{year}.json` with **populated `federal.capital_gains_rates`** (both
   `zero_pct_limit` and `fifteen_pct_limit` for the filing status). The scanner REFUSES
@@ -260,10 +262,16 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 - **LTCG bracket down-shifting** (a harvest dropping AGI from the 20%→15% or 15%→0%
   preferential bracket) IS reflected automatically via the QDCG worksheet inside the
   keystone.
-- **The SALT cap's phasedown is not re-computed.** Itemized deductions are held at the
-  baseline, so for TY2025-2029 an itemizer whose modified AGI is above the §164(b)(7)(B)
-  threshold can save more than shown: a harvest lowers MAGI, which raises the cap. The
-  output says so.
+- **The deduction is the return's own line 12, held at the baseline**, so a harvest is
+  priced from where the return actually sits, standard or itemized. Two parts of an
+  itemizer's deduction move with AGI and are not re-computed: the medical-expense floor,
+  and for TY2025-2029 the SALT cap's phasedown above the §164(b)(7)(B) threshold. A
+  harvest lowers AGI, so it can save more than shown; the output says so wherever either
+  can move.
+- **A charitable deduction at its AGI limit refuses.** Where
+  `schedule_a.charitable_carryforward` is above zero the gift hit its share-of-AGI
+  cap, and moving AGI moves the cap while the tool holds the deduction, so the
+  figure would read high. The tool stops; price the change with `/tax-compute`.
 - A planning estimate, not a filed return.
 
 ## Security & safety

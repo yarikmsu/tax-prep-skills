@@ -2358,6 +2358,7 @@ class TestScheduleA:
             medical_expenses=8000, charitable_cash=1000,
             charitable_over_250_substantiated=True)
         assert r["medical_deductible"] == 8000.00
+        assert r["medical_expenses"] == 8000.00
         assert r["charitable_deductible"] == 0.00
         assert r["charitable_carryforward"] == 1000.00
 
@@ -2493,6 +2494,16 @@ class TestScheduleA:
             compute_schedule_a(123456.78, "Single", 2025, 15750, 40000,
                                modified_agi=123456.77,
                                state_local_income_taxes=50000)
+
+    def test_the_gross_medical_is_recorded_beside_what_cleared_the_floor(self):
+        """AA20: the planning tools ask whether a delta moves the medical
+        deduction, and the deducted amount cannot say when it is zero —
+        $10,000 under a $15,000 floor is zero, and at $120,000 of AGI it is
+        $1,000."""
+        r = compute_schedule_a(200000, "MFJ", 2025, 31500, 40000,
+                               modified_agi=200000, medical_expenses=10000)
+        assert r["medical_deductible"] == 0.00
+        assert r["medical_expenses"] == 10000.00
 
     def test_the_floor_check_is_at_cents(self):
         """$3,932.55 + $5,888.01 + $179.44 is exactly the floor, and its

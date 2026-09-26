@@ -140,10 +140,10 @@ print(f"FTC with foreign > worldwide: ratio capped at 1.0, limitation=${ftc['lim
 
 print("\n=== Scenario Test (MFJ, +$40K Roth conversion as ordinary income) ===")
 base_inputs = {"wages": 150000, "qualified_dividends": 5000, "ordinary_dividends": 5000}
-base = compute_scenario(base_inputs, {}, brackets=brackets_2025, standard_deduction=30000,
+base = compute_scenario(base_inputs, {}, brackets=brackets_2025, deduction=30000,
                         cg_zero_limit=96700, cg_fifteen_limit=600050)
 scen = compute_scenario(base_inputs, {"ira_distribution": 40000},
-                        brackets=brackets_2025, standard_deduction=30000,
+                        brackets=brackets_2025, deduction=30000,
                         cg_zero_limit=96700, cg_fifteen_limit=600050)
 delta_tax = scen["total_federal_tax"] - base["total_federal_tax"]
 print(f"Baseline tax: ${base['total_federal_tax']:,.2f}; +$40K → ${scen['total_federal_tax']:,.2f}")

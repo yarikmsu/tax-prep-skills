@@ -70,7 +70,10 @@ from agents.lib.scenario import (  # noqa: E402
     _rate_kwargs,
     _validate_name,
     extract_baseline_inputs,
+    medical_floor_caveat,
+    medical_floor_may_move,
     read_tax_year,
+    refuse_where_the_charity_cap_moves,
     salt_cap_may_move,
     salt_phasedown_caveat,
     save_scenario,
@@ -939,6 +942,7 @@ class HarvestReport:
     # bracket lookup.
     state_rate_floor_note: "str | None" = None
     salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
+    medical_floor_may_move: bool = True  # gates medical_floor_caveat
 
 
 _STATE_RATE_FLOOR_NOTE = (
@@ -1017,7 +1021,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
 
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
-    rate_kwargs = _rate_kwargs(profile, tax_law, filing_status)
+    rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)
     base_inputs = extract_baseline_inputs(result)
 
     # CG-threshold guard, at the ENTRY point rather than inside the keystone:
@@ -1212,6 +1216,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     else:
         state_savings = 0.0
 
+    refuse_where_the_charity_cap_moves(result, base_out["agi"], [harvested_agi])
     return HarvestReport(
         schema=SCHEMA, name=name, tax_year=year, created=today.isoformat(),
         as_of=as_of.isoformat(), filing_status=filing_status, anchor=anchor,
@@ -1242,6 +1247,8 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         salt_cap_may_move=salt_cap_may_move(
             result, tax_law, year, filing_status, base_out["agi"],
             [harvested_agi]),
+        medical_floor_may_move=medical_floor_may_move(
+            result, base_out["agi"], [harvested_agi]),
     )
 
 
@@ -1286,6 +1293,7 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "state_cache_mismatch": r.state_cache_mismatch,
         "nonresident_income_warning": r.nonresident_income_warning,
         "salt_cap_may_move": r.salt_cap_may_move,
+        "medical_floor_may_move": r.medical_floor_may_move,
     }
 
 
@@ -1587,10 +1595,14 @@ def render_markdown(r: HarvestReport) -> str:
               "- **LTCG bracket down-shifting** (a harvest reducing AGI can drop "
               "preferential income from the 20% → 15% or 15% → 0% bracket) IS reflected "
               "automatically — the QDCG worksheet inside the keystone re-prices "
-              "preferential income at the post-harvest taxable-income position."]
+              "preferential income at the post-harvest taxable-income position.",
+              "- The deduction is the return's own line 12, standard or itemized, held "
+              "at the baseline."]
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "a harvest that lowers modified AGI while it is above the "
         "threshold can save more than shown.")
+    lines += medical_floor_caveat(
+        r.medical_floor_may_move, "a harvest can save more than shown.")
     lines += ["- This is a planning estimate, not a filed return. Confirm with your broker's "
               "realized lot reports before executing trades.", ""]
     return "\n".join(lines) + "\n"

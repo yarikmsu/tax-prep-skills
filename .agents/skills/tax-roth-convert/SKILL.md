@@ -25,7 +25,9 @@ Read-only with respect to the baseline: never modifies `result.json` or
 `taxpayer_profile.json`. Federal only in v1.
 
 ## Prerequisites
-- `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
+- `result.json` with a computed `form_1040.line_24_total_tax` and
+  `line_12_standard_deduction` — the deduction the return took, standard or
+  itemized, which the engine prices from and refuses without (else: run `/tax-compute`).
 - `tax_law_{year}.json` (federal brackets, `niit`), with populated `federal.capital_gains_rates` (both `zero_pct_limit`
   and `fifteen_pct_limit` for the filing status) whenever the return has qualified
   dividends or a net long-term gain: the engine REFUSES to price that income at ordinary
@@ -61,8 +63,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 ### Procedure
 
 1. **Validate prerequisites.** Confirm `result.json`, `taxpayer_profile.json`, and
-   `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24, stop and tell
-   the user to run `/tax-compute`. If `federal.irmaa.tiers` is empty, note IRMAA will be
+   `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24 or line 12,
+   stop and tell the user to run `/tax-compute`. If `federal.irmaa.tiers` is empty, note IRMAA will be
    skipped and offer to fetch it via `/tax-setup`.
 
 2. **Pick the sweep.** Default `--max 100000 --step 5000`. Use a finer `--step` near a
@@ -110,10 +112,16 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   aggregates all traditional/SEP/SIMPLE IRAs (per IRS rules) and is per-individual.
 - MAGI approximated as AGI (no tax-exempt-interest / foreign-EI add-backs).
 - Second-order Social Security taxability is not re-computed.
-- Itemized deductions are held at the baseline, so for TY2025-2029 the SALT cap's
-  phasedown on modified AGI (§164(b)(7)(B)) is not re-computed: an itemizer's
-  conversion above the threshold can cost more than shown. The output says so.
+- The deduction is the return's own line 12, standard or itemized, held at the
+  baseline. Two parts of an itemizer's deduction move with AGI and are not
+  re-computed: the medical-expense floor, and for TY2025-2029 the SALT cap's phasedown
+  on modified AGI (§164(b)(7)(B)). A conversion can cost more than shown; the output
+  says so wherever either can move.
 - MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` is keyed `single`/`mfj` only).
+- **A charitable deduction at its AGI limit refuses.** Where
+  `schedule_a.charitable_carryforward` is above zero the gift hit its share-of-AGI
+  cap, and moving AGI moves the cap while the tool holds the deduction, so the
+  figure would read high. The tool stops; price the change with `/tax-compute`.
 - A planning estimate, not a filed return.
 
 ## Security & safety

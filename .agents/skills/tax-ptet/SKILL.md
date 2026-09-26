@@ -29,7 +29,9 @@ to appear in `/tax-review` and `/tax-project`; run `/tax-ptet` standalone for a
 focused estimate or mid-year deadline check.
 
 ## Prerequisites
-- `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
+- `result.json` with a computed `form_1040.line_24_total_tax` and
+  `line_12_standard_deduction` — the deduction the return took, standard or
+  itemized, which the engine prices from and refuses without (else: run `/tax-compute`).
 - `taxpayer_profile.json` (filing status; `flags.k1_states` lists each K-1 entity's
   state — the same field `/tax-calendar` uses for PTET deadlines).
 - `tax_law_{year}.json` with populated `federal.filing_statuses.<status>.brackets`
@@ -177,6 +179,15 @@ sh agents/lib/run.sh -m agents.lib.ptet --year 2025
 ```
 
 ## Caveats (v1)
+
+- **A charitable deduction at its AGI limit refuses.** Where
+  `schedule_a.charitable_carryforward` is above zero the gift hit its share-of-AGI
+  cap, and moving AGI moves the cap while the tool holds the deduction, so the
+  figure would read high. The tool stops; price the change with `/tax-compute`.
+- **The deduction is the return's own line 12**, held at the baseline, so the
+  election is priced from where the return actually sits. Electing lowers AGI, and
+  with it an itemizer's medical-expense floor, which is not re-computed: there the
+  benefit reads low, and the output says so.
 
 - **Federal-only.** State savings is reported as $0: the owner's PTET credit
   generally offsets the entity tax (CA credit nonrefundable, 5-yr carryforward;

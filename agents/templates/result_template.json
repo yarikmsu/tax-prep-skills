@@ -127,6 +127,7 @@
     "_include_if": "compute_schedule_a ran and use_itemized is true (or the election was close enough to document — within $500)",
     "note": "Itemized deductions. Election computed by compute_schedule_a, not vibes.",
     "medical_deductible": 0,
+    "medical_expenses": null,
     "salt_before_cap": 0,
     "salt_cap_applied": null,
     "modified_agi": null,

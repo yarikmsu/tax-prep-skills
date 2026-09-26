@@ -18,7 +18,9 @@ marginal effect of the delta is modeled, since the recompute is a simplified fed
 model that does not reproduce every credit/schedule of the filed return.
 
 ## Prerequisites
-- `result.json` with a computed `form_1040.line_24_total_tax` (else: run `/tax-compute`).
+- `result.json` with a computed `form_1040.line_24_total_tax` and
+  `line_12_standard_deduction` — the deduction the return took, standard or
+  itemized, which the engine prices from and refuses without (else: run `/tax-compute`).
 - `tax_law_{year}.json` (federal brackets for the filing status), with populated `federal.capital_gains_rates` (both `zero_pct_limit`
   and `fifteen_pct_limit` for the filing status) whenever the return has qualified
   dividends or a net long-term gain: the engine REFUSES to price that income at ordinary
@@ -60,12 +62,15 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 ### Procedure
 
 1. **Validate prerequisites.** Confirm `result.json`, `taxpayer_profile.json`, and
-   `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24, stop and tell
-   the user to run `/tax-compute`.
+   `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24 or line 12,
+   stop and tell the user to run `/tax-compute`.
 
 2. **Pick a name and deltas.** Default name is `scenario`; pass `--name` for a meaningful
    label (a single path segment — letters, digits, `-`, `_`). To stack on a prior scenario,
-   pass `--base scenarios/<other>.json`.
+   pass `--base scenarios/<other>.json`. A base priced on a different line 12, or saved
+   before the anchor recorded one, is refused: re-run it from `result.json` first. A
+   return whose charitable deduction hit its AGI limit (`schedule_a.charitable_carryforward`
+   above zero) is refused too: moving AGI moves that limit, which the tool holds.
 
 3. **Compute.** Run:
    ```bash

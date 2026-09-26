@@ -42,7 +42,10 @@ from agents.lib.scenario import (  # noqa: E402
     _rate_kwargs,
     _validate_name,
     extract_baseline_inputs,
+    medical_floor_caveat,
+    medical_floor_may_move,
     read_tax_year,
+    refuse_where_the_charity_cap_moves,
     salt_cap_may_move,
     salt_phasedown_caveat,
     save_scenario,
@@ -112,6 +115,7 @@ class LadderReport:
     rungs: "list[LadderRung]"
     crossings: "list[ThresholdCrossing]"
     salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
+    medical_floor_may_move: bool = True  # gates medical_floor_caveat
 
 
 def parse_sweep(max_amount, step) -> "list[float]":
@@ -247,7 +251,7 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
                  ira_basis=None, ira_value=None) -> LadderReport:
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
-    rate_kwargs = _rate_kwargs(profile, tax_law, filing_status)
+    rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)
     base_inputs = extract_baseline_inputs(result)
     basis_modeled, basis, value = _resolve_basis(profile, ira_basis, ira_value)
 
@@ -378,6 +382,8 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
         prev_total = total
         prev_amount = amt
 
+    priced = [x.agi for x in rungs]
+    refuse_where_the_charity_cap_moves(result, base_out["agi"], priced)
     return LadderReport(
         schema=SCHEMA, name=name, tax_year=year, created=today.isoformat(),
         filing_status=filing_status, max_amount=round(float(amounts[-1]), 2),
@@ -387,8 +393,9 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
         niit_threshold=niit_threshold, niit_modeled=(niit_threshold is not None),
         irmaa_modeled=bool(irmaa_tiers), rungs=rungs, crossings=crossings,
         salt_cap_may_move=salt_cap_may_move(
-            result, tax_law, year, filing_status, base_out["agi"],
-            [x.agi for x in rungs]))
+            result, tax_law, year, filing_status, base_out["agi"], priced),
+        medical_floor_may_move=medical_floor_may_move(
+            result, base_out["agi"], priced))
 
 
 def _report_to_dict(r: LadderReport) -> dict:
@@ -402,6 +409,7 @@ def _report_to_dict(r: LadderReport) -> dict:
         "rungs": [vars(x) for x in r.rungs],
         "crossings": [vars(x) for x in r.crossings],
         "salt_cap_may_move": r.salt_cap_may_move,
+        "medical_floor_may_move": r.medical_floor_may_move,
     }
 
 
@@ -500,10 +508,14 @@ def render_markdown(r: LadderReport) -> str:
               "- Marginal-rate column already reflects LTCG bracket bumping (the QDCG "
               "worksheet stacks the conversion under preferential income).",
               "- MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` "
-              "is keyed `single`/`mfj` only)."]
+              "is keyed `single`/`mfj` only).",
+              "- The deduction is the return's own line 12, standard or itemized, held "
+              "at the baseline."]
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "rungs that carry modified AGI above the threshold can cost "
         "more than shown.")
+    lines += medical_floor_caveat(
+        r.medical_floor_may_move, "each rung can cost more than shown.")
     lines += ["- This is a planning estimate, not a filed return.", ""]
     return "\n".join(lines) + "\n"
 

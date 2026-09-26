@@ -23,7 +23,9 @@ MFJ_BRACKETS = [
     {"rate": 0.20, "min": 20000, "max": 200000},
     {"rate": 0.30, "min": 200000, "max": None},
 ]
-RATE_KW = dict(brackets=MFJ_BRACKETS, standard_deduction=30000,
+# The deduction a return took, as the planning tools read it from line 12.
+_RETURN = {"form_1040": {"line_12_standard_deduction": 30000}}
+RATE_KW = dict(brackets=MFJ_BRACKETS, deduction=30000,
                cg_zero_limit=90000, cg_fifteen_limit=550000)
 
 
@@ -57,7 +59,7 @@ def test_rate_kwargs_refuses_a_non_canonical_status_for_all_three_skills(status)
     reports a missing-brackets problem instead of the missing status.
     """
     with pytest.raises(sc.ProjectionError):
-        sc._rate_kwargs({}, {}, status)
+        sc._rate_kwargs({}, {}, status, _RETURN)
 
 
 def test_compute_scenario_zero_delta_is_baseline():
@@ -116,7 +118,7 @@ def test_compute_scenario_refuses_preferential_income_without_cg_limits():
     the fix. Only `loss_harvest` guarded this; scenario, roth_ladder, ptet and
     projection's own worksheet branch all fell through."""
     base = {"wages": 150000}
-    kw = dict(brackets=MFJ_BRACKETS, standard_deduction=30000)
+    kw = dict(brackets=MFJ_BRACKETS, deduction=30000)
     with pytest.raises(ValueError, match="tax-setup"):
         compute_scenario(base, {"capital_gains": 20000}, **kw)
     with pytest.raises(ValueError, match="tax-setup"):
@@ -132,7 +134,7 @@ def test_compute_scenario_ordinary_only_still_runs_without_cg_limits():
     nothing the worksheet would price, so a cache without the limits is not
     a defect for a wages-only what-if. A net capital LOSS is ordinary too
     (it is capped and deducted, never worksheet-priced)."""
-    kw = dict(brackets=MFJ_BRACKETS, standard_deduction=30000)
+    kw = dict(brackets=MFJ_BRACKETS, deduction=30000)
     out = compute_scenario({"wages": 150000}, {"ira_distribution": 20000}, **kw)
     assert out["used_qdcg"] is False and out["total_federal_tax"] > 0
     out = compute_scenario({"wages": 150000}, {"capital_gains": -20000}, **kw)
@@ -149,11 +151,11 @@ def test_rate_kwargs_reads_the_cg_limits_through_the_shared_accessor():
         "filing_statuses": {"mfj": {"standard_deduction": 30000, "brackets": b}},
         "capital_gains_rates": {"zero_pct_limit": {"mfj": 11.0},
                                 "fifteen_pct_limit": {"mfj": 22.0}}}}
-    kw = sc._rate_kwargs({}, tax_law, "MFJ")
+    kw = sc._rate_kwargs({}, tax_law, "MFJ", _RETURN)
     assert (kw["cg_zero_limit"], kw["cg_fifteen_limit"]) == (11.0, 22.0)
     tax_law["federal"]["capital_gains_rates"]["zero_pct_limit"]["mfj"] = float("nan")
     with pytest.raises(ProjectionError, match="positive finite"):
-        sc._rate_kwargs({}, tax_law, "MFJ")
+        sc._rate_kwargs({}, tax_law, "MFJ", _RETURN)
 
 
 def test_compute_scenario_se_delta_adds_se_tax():
@@ -295,8 +297,8 @@ def test_rate_kwargs_sets_mfs_capital_loss_limit():
         "mfs": {"standard_deduction": 15000, "brackets": b},
         "mfj": {"standard_deduction": 30000, "brackets": b}}}}
     profile = {"dependents": []}
-    assert sc._rate_kwargs(profile, tax_law, "MFS")["capital_loss_limit"] == 1500
-    assert sc._rate_kwargs(profile, tax_law, "MFJ")["capital_loss_limit"] == 3000
+    assert sc._rate_kwargs(profile, tax_law, "MFS", _RETURN)["capital_loss_limit"] == 1500
+    assert sc._rate_kwargs(profile, tax_law, "MFJ", _RETURN)["capital_loss_limit"] == 3000
 
 
 @pytest.mark.parametrize("net_st,net_lt,exp_capgains,exp_ordinary", [
@@ -568,8 +570,11 @@ def test_the_salt_caveat_is_owed_only_where_the_deduction_can_move():
     """Gated on the year, then on the threshold, the caveat fired where no
     MAGI could change the deduction. Measured from the immediate base, it
     dropped out of a stacked chain that had already moved MAGI far from the
-    return. It now compares the deduction at each MAGI in play with the
-    return's own, and says it wherever that is not known."""
+    return; measured in keystone LEVELS, it was off by every line-10
+    adjustment the keystone does not model. It now compares the deduction at
+    each priced AGI, carried to the return's frame, with the return's own,
+    and says it wherever that is not known. The fourth argument is the
+    keystone's AGI for the return itself."""
     may = sc.salt_cap_may_move
     law = {}                                  # the statute's amount
     assert not may(_itemizer(), law, 2030, "MFJ", 600000, [610000])
@@ -582,7 +587,7 @@ def test_the_salt_caveat_is_owed_only_where_the_deduction_can_move():
     # Nor does one above a $20,000 tax throughout ($35,900 to $29,900).
     assert not may(_itemizer(salt_before_cap=20000, modified_agi=520000,
                              agi=520000), law, 2026, "MFJ", 520000, [540000])
-    # Nor a delta that leaves MAGI where it was.
+    # Nor a delta that leaves AGI where it was.
     assert not may(_itemizer(), law, 2026, "MFJ", 600000, [600000])
     # The cache's amount, as the return used it: cached at $10,000 the cap
     # cannot move, where the statute's phases from $11,900 to the floor.
@@ -595,10 +600,15 @@ def test_the_salt_caveat_is_owed_only_where_the_deduction_can_move():
                2026, "MFS", 300000, [330000])
     assert not may(_itemizer(modified_agi=300000, agi=300000), law, 2026,
                    "MFJ", 300000, [330000])
-    # The return's add-back rides along: $80,000 excluded puts a delta that
-    # moves nothing at the return's own $560,000.
-    assert not may(_itemizer(modified_agi=560000, agi=480000), law, 2026,
-                   "MFJ", 480000, [480000])
+    # The return's add-back rides along: $80,000 excluded puts $480,000 of
+    # AGI at $560,000 of MAGI, past the threshold, where $10,000 more moves
+    # the cap; on AGI alone both would sit under it.
+    assert may(_itemizer(modified_agi=560000, agi=480000), law, 2026, "MFJ",
+               480000, [490000])
+    # The keystone's levels sit $20,000 off line 11 here (line-10
+    # adjustments it does not model); a delta of zero is still zero.
+    assert not may(_itemizer(modified_agi=520000, agi=520000), law, 2026,
+                   "MFJ", 540000, [540000])
     # The standard deduction, by the section or by a positive line 13c,
     # matters only where the deduction would RISE; an itemizer's either way.
     for standard in (_itemizer(use_itemized=False), _itemizer(line_13c=1000)):
@@ -608,14 +618,16 @@ def test_the_salt_caveat_is_owed_only_where_the_deduction_can_move():
     # No Schedule A: only a lower AGI, measured from the RETURN — a stacked
     # base $200,000 under it is lower whichever way the last delta goes.
     none = {"form_1040": {"line_11_agi": 700000}}
-    assert not may(none, law, 2026, "MFJ", 700000, [710000])
-    assert may(none, law, 2026, "MFJ", 700000, [690000])
-    assert may(none, law, 2026, "MFJ", 500000, [501000])
+    assert not may(none, law, 2026, "MFJ", 700000, [700000, 710000])
+    assert may(none, law, 2026, "MFJ", 700000, [700000, 690000])
+    assert may(none, law, 2026, "MFJ", 700000, [500000, 501000])
     # The same with a section: a close-call standard return at $700,000.
     close = _itemizer(modified_agi=700000, agi=700000, use_itemized=False)
-    assert may(close, law, 2026, "MFJ", 500000, [501000])
-    # Not known: say it.
-    assert may(_itemizer(modified_agi=None), law, 2026, "MFJ", 400000, [410000])
+    assert may(close, law, 2026, "MFJ", 700000, [500000, 501000])
+    # Not known, or corrupt: say it wherever AGI moves.
+    assert may(_itemizer(modified_agi=None), law, 2026, "MFJ", 600000, [610000])
+    assert not may(_itemizer(modified_agi=None), law, 2026, "MFJ", 600000, [600000])
+    assert may(_itemizer(salt_before_cap=-5), law, 2026, "MFJ", 600000, [610000])
 
 
 def test_the_scenario_report_carries_the_gate():
@@ -981,3 +993,216 @@ def test_every_keystone_skill_states_the_cg_limit_refusal(name):
     assert "REFUSES" in text, (
         f"{name} does not tell the agent the engine refuses to price "
         "preferential income without the 0%/15% breakpoints")
+
+
+def test_return_deduction_is_the_returns_line_12():
+    """AA20: the keystone subtracted the cache's standard deduction for every
+    filer. It takes the deduction the return took, and refuses rather than
+    fall back to the cache, since that fallback is the over-statement. Zero is
+    the template's placeholder, refused unless the return was forced to
+    itemize with nothing to itemize (§63(c)(6)(A))."""
+    line = "line_12_standard_deduction"
+    assert sc.return_deduction({"form_1040": {line: 48250.5}}) == 48250.5
+    for form in ({}, {line: None}):
+        with pytest.raises(sc.ScenarioError, match=f"has no form_1040.{line}"):
+            sc.return_deduction({"form_1040": form})
+    with pytest.raises(sc.ScenarioError, match=f"has no form_1040.{line}"):
+        sc.return_deduction({})
+    for bad in ("30000", True, float("nan"), float("inf"), -1):
+        with pytest.raises(sc.ScenarioError, match="finite, non-negative"):
+            sc.return_deduction({"form_1040": {line: bad}})
+    forced = {"use_itemized": True, "itemized_total": 0}
+    assert sc.return_deduction({"form_1040": {line: 0},
+                                "schedule_a": forced}) == 0.0
+    for sched in (None, {"use_itemized": True, "itemized_total": 1200},
+                  {"use_itemized": False, "itemized_total": 0}):
+        result = {"form_1040": {line: 0}}
+        if sched is not None:
+            result["schedule_a"] = sched
+        with pytest.raises(sc.ScenarioError, match="template's placeholder"):
+            sc.return_deduction(result)
+
+
+def test_an_itemizer_is_priced_from_its_own_deduction():
+    """$90,000 of other income on the fixture, whose $15,000 of qualified
+    dividends and long-term gain stacks above ordinary income:
+    - line 12 $30,000: ordinary taxable income $122,000 to $212,000, so
+      $78,000 at 20% and $12,000 at 30% = $19,200;
+    - line 12 $50,000, an itemizer: $102,000 to $192,000, all at 20% = $18,000.
+    Priced on the cache's standard deduction, the itemizer paid $1,200 of a
+    bracket it never reaches."""
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+
+    def delta(line_12):
+        result = dict(base, form_1040=dict(base["form_1040"],
+                                           line_12_standard_deduction=line_12))
+        return sc.build_report(result, profile, tax_law, 2026, "t",
+                               sc.parse_deltas(["other_income=90000"]), None,
+                               datetime.date(2026, 5, 26)).diff.delta_total_tax
+    assert delta(30000) == 19200.0
+    assert delta(50000) == 18000.0
+
+
+def test_the_medical_caveat_is_owed_only_where_the_floor_can_move():
+    """The keystone holds line 12, and the medical floor is a share of AGI in
+    every year, so a delta moves an itemizer's deduction without a word.
+    Priced on the gross the return records ($20,000 against a $15,000 floor
+    at $200,000 of AGI is $5,000; $4,250 at $210,000), in the return's frame,
+    and said wherever it is not known. The second argument is the keystone's
+    AGI for the return itself."""
+    may = sc.medical_floor_may_move
+
+    def ret(expenses=20000.0, agi=200000.0, use_itemized=True, line_13c=0,
+            section=True):
+        r = {"form_1040": {"line_11_agi": agi,
+                           "line_13c_charitable_non_itemizer": line_13c}}
+        if section:
+            r["schedule_a"] = {"use_itemized": use_itemized,
+                               "medical_expenses": expenses}
+        return r
+    assert may(ret(), 200000, [210000])
+    assert may(ret(), 200000, [190000])
+    assert not may(ret(), 200000, [200000])
+    # Under the floor throughout: $10,000 against $15,000, and $14,250 at
+    # $190,000. At $120,000 the floor is $9,000 and $1,000 clears it.
+    assert not may(ret(expenses=10000), 200000, [210000])
+    assert not may(ret(expenses=10000), 200000, [190000])
+    assert may(ret(expenses=10000), 200000, [120000])
+    # The standard deduction, by the section or by a positive line 13c:
+    # only where the deduction would RISE.
+    for standard in (ret(use_itemized=False), ret(line_13c=1000)):
+        assert not may(standard, 200000, [210000])
+        assert may(standard, 200000, [190000])
+    # No section: only a lower AGI, measured from the return.
+    none = ret(section=False)
+    assert not may(none, 200000, [210000])
+    assert may(none, 200000, [190000])
+    assert may(none, 200000, [150000, 151000])
+    # From the return, not a stacked base $50,000 under it.
+    assert may(ret(), 200000, [150000, 150000])
+    # $20,000 of line-10 adjustments put the keystone at $167,000 against a
+    # line 11 of $147,000. A standard filer with $14,000 of expenses whose AGI
+    # falls $5,000 goes from $2,975 deductible to $3,350; in keystone levels
+    # the check saw neither. And an itemizer's zero delta stays zero.
+    assert may(ret(expenses=14000, agi=147000, use_itemized=False),
+               167000, [162000])
+    assert not may(ret(agi=147000), 167000, [167000])
+    # Recorded before the gross was, or corrupt: any move that could matter.
+    assert may(ret(expenses=None), 200000, [210000])
+    assert not may(ret(expenses=None), 200000, [200000])
+    assert not may(ret(expenses=None, use_itemized=False), 200000, [210000])
+    assert may(ret(expenses=None, use_itemized=False), 200000, [190000])
+    assert may(ret(expenses=-5), 200000, [120000])
+    assert len(sc.medical_floor_caveat(True, "x.")) == 1
+    assert sc.medical_floor_caveat(False, "x.") == []
+
+
+def test_the_scenario_report_carries_the_medical_gate():
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+
+    def build(result):
+        return sc.build_report(result, profile, tax_law, 2026, "t",
+                               sc.parse_deltas(["wages=10000"]), None,
+                               datetime.date(2026, 5, 26))
+    # No Schedule A, and the delta raises AGI.
+    assert build(base).medical_floor_may_move is False
+    # $20,000 over a $12,525 floor at $167,000; the delta raises the floor.
+    r = build(dict(base, schedule_a={"use_itemized": True,
+                                     "medical_expenses": 20000}))
+    assert r.medical_floor_may_move is True
+    assert "medical-expense deduction is held" in sc.render_markdown(r)
+    assert "the return's own line 12" in sc.render_markdown(r)
+    assert sc._report_to_dict(r)["medical_floor_may_move"] is True
+
+
+def test_the_keystone_refuses_a_deduction_that_is_not_a_number():
+    """`deduction` was used unchecked: NaN kept `max(0.0, agi - nan)` at 0.0,
+    a silent $0 of tax, and a negative one raised taxable income."""
+    for bad in (float("nan"), float("inf"), -1.0, True, "30000"):
+        with pytest.raises(ValueError, match="deduction must be a finite"):
+            compute_scenario({"wages": 100000}, {}, brackets=MFJ_BRACKETS,
+                             deduction=bad)
+
+
+def test_a_stacked_base_must_be_priced_on_the_same_deduction():
+    """The anchor carries the deduction its base was priced on. Stacked after
+    line 12 moved, a saved baseline read $15,800 where it had been $27,000:
+    two deductions in one `line_24 + (base - anchor)`. A base saved before
+    AA20 records none, and was priced on the cache's standard deduction."""
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+
+    def build(result, stacked_on=None):
+        return sc.build_report(result, profile, tax_law, 2026, "t",
+                               sc.parse_deltas(["wages=1000"]), stacked_on,
+                               datetime.date(2026, 5, 26))
+    saved = sc._report_to_dict(build(base))
+    assert saved["anchor"]["deduction"] == 30000.0
+    build(base, saved)                                     # the same line 12 stacks
+    moved = dict(base, form_1040=dict(base["form_1040"],
+                                      line_12_standard_deduction=80000))
+    with pytest.raises(sc.ScenarioError, match="priced on a \\$30,000.00 deduction"):
+        build(moved, saved)
+    legacy = json.loads(json.dumps(saved))
+    del legacy["anchor"]["deduction"]
+    with pytest.raises(sc.ScenarioError, match="saved before the planning tools"):
+        build(base, legacy)
+    legacy["anchor"]["deduction"] = "30000"
+    with pytest.raises(sc.ScenarioError, match="anchor.deduction is not numeric"):
+        build(base, legacy)
+
+
+def test_a_capped_charitable_deduction_refuses_where_agi_moves():
+    """§170(b) caps a gift at a share of AGI, and a carryforward above zero is
+    the cap binding. Any priced AGI other than the return's moves the cap
+    while the keystone holds the deduction, so the figure reads high either
+    way — AGENTS.md §4's hard error, which no caveat may stand in for."""
+    refuse = sc.refuse_where_the_charity_cap_moves
+    capped = {"form_1040": {"line_11_agi": 200000},
+              "schedule_a": {"charitable_carryforward": 5000}}
+    with pytest.raises(sc.ScenarioError, match="capped at a share of AGI"):
+        refuse(capped, 200000, [190000])
+    with pytest.raises(sc.ScenarioError, match="capped at a share of AGI"):
+        refuse(capped, 200000, [210000])
+    refuse(capped, 200000, [200000])                       # AGI unmoved
+    refuse(capped, 220000, [220000])                       # measured in deltas
+    refuse({"schedule_a": {"charitable_carryforward": 0}}, 200000, [190000])
+    refuse({"form_1040": {"line_11_agi": 200000}}, 200000, [190000])
+    for bad in ("5000", True, float("nan"), -1):
+        with pytest.raises(sc.ScenarioError, match="charitable_carryforward must be"):
+            refuse({"schedule_a": {"charitable_carryforward": bad}}, 200000, [190000])
+    # The scenario report refuses before it prices.
+    result = json.loads((FIX / "result.json").read_text())
+    result["schedule_a"] = {"use_itemized": True, "charitable_carryforward": 5000}
+    with pytest.raises(sc.ScenarioError, match="capped at a share of AGI"):
+        sc.build_report(result, json.loads((FIX / "taxpayer_profile.json").read_text()),
+                        json.loads((FIX / "tax_law_2026.json").read_text()), 2026,
+                        "t", sc.parse_deltas(["wages=1000"]), None,
+                        datetime.date(2026, 5, 26))
+
+
+def test_a_stacked_report_measures_its_checks_from_the_return():
+    """A stacked base has already moved AGI away from the return, and the
+    held-deduction checks are measured from the return's own keystone AGI,
+    not the base's. On the fixture (no Schedule A), $1,000 more wages alone
+    moves nothing a standard return holds; stacked on a base $50,000 lower,
+    the chain sits $49,000 under the return, where a lower cap or medical
+    floor can matter."""
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+
+    def build(deltas, stacked_on=None):
+        return sc.build_report(base, profile, tax_law, 2026, "t",
+                               sc.parse_deltas(deltas), stacked_on,
+                               datetime.date(2026, 5, 26))
+    alone = build(["wages=1000"])
+    assert (alone.salt_cap_may_move, alone.medical_floor_may_move) == (False, False)
+    lowered = sc._report_to_dict(build(["other_income=-50000"]))
+    stacked = build(["wages=1000"], lowered)
+    assert (stacked.salt_cap_may_move, stacked.medical_floor_may_move) == (True, True)

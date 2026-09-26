@@ -966,3 +966,85 @@ foreign earned income exclusion is itself a manual worksheet (the `feie` note).
 `/tax-ptet` does not check `--magi` against the return's AGI: a figure too low
 leaves its cap too high, which under-states the advisory benefit, the
 direction AGENTS.md §2 lets it degrade in.
+
+## AA20 — the planning keystone, on the return's own deduction
+
+### What was wrong
+
+`compute_scenario`, which `/tax-scenario`, `/tax-roth-convert`, `/tax-harvest`
+and `/tax-ptet` all price through, subtracted the cache's standard deduction for
+every filer, and nothing passed it the return's line 12. The anchor to line 24
+corrects the level of a figure, not the position a delta is priced from, so an
+itemizer was priced from a taxable-income position too high by the difference.
+On the fixtures, $18,600 of PTET for an itemizer with a $200,000 deduction
+saved $4,770, and the tool said $6,430; a harvest that saves $1,255 read $1,305.
+That is the over-statement AGENTS.md §4 makes a hard error. AA16's fourth
+review found it, and AA20 was filed as P1.
+
+### What shipped
+
+- **The deduction is the return's.** `scenario.return_deduction` reads
+  `form_1040.line_12_standard_deduction`, and `_rate_kwargs` passes it to the
+  keystone, whose parameter is now `deduction`. A missing or corrupt line 12
+  refuses with `/tax-compute` named: falling back to the cache is the
+  over-statement this replaces. The age-65/blind add-on rides along, since line
+  12 carries it, which closes that part of X7.
+- **The medical floor is said.** Holding line 12 holds the medical deduction,
+  whose floor is a share of AGI in every year, and nothing had said so. The
+  three report tools carry a caveat wherever that floor can move the deduction
+  (`scenario.medical_floor_may_move`, measured from the return as the SALT gate
+  is), and `/tax-ptet` adds a note where the election's lower AGI moves it.
+  `compute_schedule_a` now records the gross expenses, `medical_expenses`,
+  beside what cleared the floor, because a deducted amount of zero cannot say
+  whether a lower AGI would clear it.
+- The four planning skills name line 12 as a prerequisite, and their caveats
+  describe the deduction they hold.
+
+### Tests
+
+Each tool is pinned at two line-12 values, hand-computed on its fixture: a
+scenario delta of $90,000 ($19,200 against $18,000), the first Roth rung
+($2,200 against $2,700, the lower position pushing $10,000 of preferential
+income from 0% into 15%, so the error runs both ways), the harvest ($1,305
+against $1,255) and the PTET election ($6,430 against $4,770).
+`return_deduction`'s refusals and the medical gate's cases, each exact where
+the gross is known, are pinned too.
+
+### Review
+
+A local review found 13. Twelve are fixed here and one is filed:
+- **A stacked scenario mixed two deductions.** A saved base carries its anchor,
+  and the stacked run re-priced its inputs on the current line 12, so a baseline
+  saved at $27,000 read $15,800 once line 12 moved. The anchor now records the
+  deduction, and stacking refuses a base priced on another one, which is every
+  file saved before AA20.
+- **A capped charitable deduction over-stated every tool.** A gift over its
+  share-of-AGI cap moves with AGI, and holding it makes a saving or a cost read
+  high, the direction no caveat may cover. The tools now refuse wherever that
+  cap binds (`schedule_a.charitable_carryforward` above zero) and AGI moves;
+  pricing it needs the cash and appreciated split the return does not record.
+- **Zero passed as a deduction.** The template's placeholder is 0, and a line
+  12 nobody filled priced every tool on nothing. Zero now refuses unless the
+  return was forced to itemize with nothing to itemize.
+- **The checks compared keystone levels with line 11.** The keystone models
+  half the SE tax as its only adjustment, so its AGI sits off line 11 by every
+  other line-10 adjustment. Both held-deduction checks now share one shape and
+  measure each priced AGI as line 11 plus the keystone's move from its own
+  recompute of the return.
+- **Smaller:** `/tax-ptet`'s medical note read as a statement of fact on a
+  standard return, and went silent without line 11; it now uses the shared
+  sentence and the keystone's AGI. A negative gross silenced a check and reads
+  as unknown. The keystone validates `deduction`. `/tax-scenario`'s procedure
+  names line 12. The medical-floor rule is one helper, `_medical_deductible`,
+  where the federal and CA Schedule A and the check each held a copy.
+- **Filed:** AA21, `/tax-project` prices every projection on the standard
+  deduction; a current-year projection has no line 12 to read.
+
+### Not done
+
+The planning tools still hold the deduction; they do not re-price it. The SALT
+phasedown and the medical floor are caveated where they can move, and a capped
+charitable deduction refuses. The charitable floor from TY2026, the §70111
+haircut and a switch between itemizing and the standard deduction are held
+under the reports' general line that the deduction is the return's. Re-pricing
+them needs Schedule A's inputs in `result.json`, which holds its outputs.

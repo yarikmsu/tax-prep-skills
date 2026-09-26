@@ -564,3 +564,51 @@ def test_build_ladder_refuses_when_the_cg_limits_are_missing():
     del law["federal"]["capital_gains_rates"]
     with pytest.raises(ValueError, match="tax-setup"):
         _build(tax_law=law)
+
+
+def test_the_ladder_prices_from_the_returns_line_12():
+    """AA20. The first $10,000 rung on the fixture, whose $28,000 of qualified
+    dividends and long-term gain stacks above ordinary income under a 0% limit
+    of $96,000:
+    - line 12 $30,000: ordinary taxable income $142,000 to $152,000 at 22% =
+      $2,200, the preferential income already past the 0% limit;
+    - line 12 $100,000: $72,000 to $82,000 at 12% = $1,200, and the rung
+      pushes $10,000 of preferential income from 0% into 15% = $1,500, so
+      $2,700.
+    The direction is not one-way, which is why the position has to be the
+    return's own."""
+    def first_rung(line_12):
+        result = _load("result.json")
+        result["form_1040"]["line_12_standard_deduction"] = line_12
+        return rl.build_ladder(
+            result, _load("taxpayer_profile.json"), _load("tax_law_2026.json"),
+            2026, max_amount=10000, step=10000, name="roth-ladder",
+            today=TODAY).rungs[1].cumulative_cost
+    assert first_rung(30000) == 2200.0
+    assert first_rung(100000) == 2700.0
+
+
+def test_the_ladder_report_carries_the_medical_gate():
+    # No Schedule A, and a conversion only raises AGI.
+    assert _build().medical_floor_may_move is False
+    result = _load("result.json")
+    result["schedule_a"] = {"use_itemized": True, "medical_expenses": 20000}
+    r = rl.build_ladder(result, _load("taxpayer_profile.json"),
+                        _load("tax_law_2026.json"), 2026, max_amount=20000,
+                        step=10000, name="roth-ladder", today=TODAY)
+    assert r.medical_floor_may_move is True
+    assert rl._report_to_dict(r)["medical_floor_may_move"] is True
+    assert "medical-expense deduction is held" in rl.render_markdown(r)
+    assert "the return's own line 12" in rl.render_markdown(r)
+
+
+def test_the_ladder_refuses_a_capped_charitable_deduction():
+    """Every rung above $0 raises AGI, which raises a binding charitable cap
+    while the keystone holds the deduction: each rung's cost would read
+    high."""
+    result = _load("result.json")
+    result["schedule_a"] = {"use_itemized": True, "charitable_carryforward": 5000}
+    with pytest.raises(rl.ScenarioError, match="capped at a share of AGI"):
+        rl.build_ladder(result, _load("taxpayer_profile.json"),
+                        _load("tax_law_2026.json"), 2026, max_amount=10000,
+                        step=10000, name="roth-ladder", today=TODAY)

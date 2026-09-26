@@ -83,9 +83,8 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Before publish** | **AA16** — apply the SALT phasedown on the main return. | A high earner's federal tax coming out low would be the first public issue. |
 | **Before publish** | **AA20** — price an itemizer on their own deduction in the planning tools. | A harvest or PTET saving for an itemizer can come out high, the direction AGENTS.md §4 makes a hard error. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, **AA21**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -183,28 +182,6 @@ Windows has not run since 2026-09-13.
   and a check refuses a null line for a flagged household, which also catches
   an agent that never calls the total. Found by AA12's review.
 
-- **AA16 (P1, S): The main return ignores the SALT cap's MAGI phasedown.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  `compute_schedule_a` caps state and local tax at the `salt_cap` it is
-  passed, and the compute step passes the fetched `federal.salt_cap` amount
-  whatever the MAGI. The function says so in a note it emits on EVERY
-  Schedule A: "OBBBA SALT-cap MAGI phasedown above $500K ($250K MFS) not
-  modeled". A single filer with $700,000 of AGI and $72,000 of state and
-  local tax deducts $40,000 where §164(b)(7)(B) allows $10,000: $30,000 too
-  much, about $11,000 of federal tax at 37%. That under-states the tax on a
-  return, which is not advisory output, so AGENTS.md §2 allows it no degrade,
-  and `capabilities.py` already treats an under-stated tax on the return as
-  the hard-error direction. A note printed on every return, affected or not,
-  warns no one in practice, and it names the 2025 threshold for every year.
-  It is the commonest wrong number AA6 found for the high-earner personas:
-  54-64% of $500,000+ returns in the five persona states itemize.
-  `ptet._salt_cap` already takes `modified_agi` and applies the phasedown
-  (#157), and the compute step's own optimization text calls it "the one
-  place that decides it". So the main return should take its cap from that
-  function with the return's modified AGI, and stop rather than print a note
-  where that cannot be formed. Found by AA6.
-
 - **AA17 (P2, S): A mid-year move abroad passes the capability gate.**
   The interview asks whether the taxpayer moved states this year, and
   `part_year_residency` blocks on that answer. A move to or from another
@@ -251,7 +228,9 @@ Windows has not run since 2026-09-13.
   a passed acceptance. Found by AA16's second review.
 
 - **AA20 (P1, M): The planning keystone prices every return on the standard
-  deduction.** `compute_scenario` takes the cache's
+  deduction.** **BUILT by the pull request that records it in
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.** `compute_scenario` takes the cache's
   `filing_statuses.<status>.standard_deduction` for every filer, and nothing
   passes it the return's line 12. An itemizer is priced from a taxable-income
   position too high by the difference, so a delta can land in the wrong
@@ -265,6 +244,21 @@ Windows has not run since 2026-09-13.
   pricing it. Passing the return's Schedule A inputs to the keystone and
   re-running `compute_schedule_a` at each priced AGI would price all of them
   and retire both. Found by AA16's fourth review.
+
+- **AA21 (P2, M): `/tax-project` prices every projection on the standard
+  deduction.** `projection.project_federal_tax` subtracts the cache's
+  `filing_statuses.<status>.standard_deduction` for every filer and takes no
+  itemized amount. For an itemizer with $60,000 of itemized deductions against a
+  $31,500 standard deduction, projected taxable income comes out $28,500 too
+  high, and with it the projected tax and the W-4 or 1040-ES amounts
+  `/tax-project` recommends. AA20 fixed the planning keystone by reading the
+  return's line 12, which a current-year projection does not have: this needs
+  an input for the year's expected deduction, asked or carried from the prior
+  return with a banner, and a ruling on which way a missing one may err. That
+  is an over-statement of the number acted on, the direction AGENTS.md §4 makes
+  a hard error; filed P2 because a projection is re-run through the year and
+  over-withheld tax comes back as a refund, which makes the priority the
+  owner's call. Found by AA20's review.
 
 ### W — engineering hygiene
 
@@ -336,7 +330,8 @@ Windows has not run since 2026-09-13.
 ### X — tax correctness
 
 - **X7 (P3, S): the O3 planning-tool carry-forwards.** Deduction-only marginal
-  probe for `_est_marginal_fed`; scenario-keystone §63(f)/SE-tips threading;
+  probe for `_est_marginal_fed`; scenario-keystone SE-tips threading (the §63(f)
+  add-on rides in the return's line 12 since AA20);
   `/tax-harvest` §1091 basis-shift modeling. The first two are absorbed by V1 if
   the orchestrator exposes a deduction knob on `compute_scenario`; sequence them
   after it rather than as separate work.
@@ -638,6 +633,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA11 | #175 | — |
 | AA12 | #176 | a part-year Yonkers resident (IT-360.1, line 57), special condition Y1 and a joint Form Y-203 are refused, not modeled; the zero default on the line-58 total is AA15 |
 | AA6 | #178 | three blocks cannot be sized from public data (statutory residency in a second state, a PFIC event, out-of-state income other than a commute); the figures are tax year 2023 and need a yearly refresh |
+| AA16 | #179 | modified AGI is an input the compute step forms, as Schedule 1-A's is; the planning tools say the cap is held at the baseline rather than re-price it |
 | Q7 | #156 | — |
 | Q9 | #156 | — |
 | Q8 | #158 | — |

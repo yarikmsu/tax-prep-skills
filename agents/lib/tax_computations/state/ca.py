@@ -25,9 +25,9 @@ import math
 
 from agents.lib.tax_computations._shared import (
     _CHARITY_APPRECIATED_AGI_CAP,
-    _SCHED_A_MEDICAL_FLOOR,
     _amount,
     _coerce_numeric,
+    _medical_deductible,
     _multi_employer_excess,
     _normalize_filing_status,
     _prorated_mortgage_interest,
@@ -285,7 +285,7 @@ def compute_ca_itemized(
     notes = ["CA disallows state/local income taxes (incl. CA tax + SDI) "
              "and sales taxes — property taxes deductible WITHOUT cap"]
 
-    medical_deductible = round(max(0.0, med - _SCHED_A_MEDICAL_FLOOR * agi_v), 2)
+    medical_deductible = _medical_deductible(med, agi_v)
     taxes_deductible = round(re_tax + pp_tax, 2)
     # CA keeps the pre-TCJA acquisition-debt limit, halved for MFS/RDP-
     # separate filers ($500K) per the Schedule CA line 8 instructions.

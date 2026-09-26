@@ -2146,7 +2146,7 @@ def compute_schedule_a(
         "the Pub 936 combined-limit worksheet",
     ]
 
-    medical_deductible = round(max(0.0, med - _SCHED_A_MEDICAL_FLOOR * agi_v), 2)
+    medical_deductible = _medical_deductible(med, agi_v)
 
     if sales_tax > inc_tax and sales_tax > 0:
         notes.append("sales-tax election used (exceeds state income taxes)")
@@ -2253,6 +2253,10 @@ def compute_schedule_a(
         use_itemized = itemized_total > std
     return {
         "medical_deductible": medical_deductible,
+        # The gross, not only what cleared the floor: the floor is a share of
+        # AGI, and a planning tool asking whether a delta moves the deduction
+        # cannot answer from the deducted amount when it is zero.
+        "medical_expenses": round(med, 2),
         "salt_before_cap": salt_before_cap,
         # Not `salt_cap`: that name is the INPUT, the amount before the
         # phasedown, and a re-call fed this figure under it would reduce the
@@ -2838,7 +2842,7 @@ def compute_scenario(
     delta: dict,
     *,
     brackets: list[dict],
-    standard_deduction: float,
+    deduction: float,
     cg_zero_limit: float = None,
     cg_fifteen_limit: float = None,
     ss_wage_base: float = None,
@@ -2864,7 +2868,11 @@ def compute_scenario(
                   default to 0.
         delta: Signed additive adjustments (same key space). Applied on top of baseline.
         brackets: Ordinary-income brackets for the filing status.
-        standard_deduction: Standard deduction for the filing status.
+        deduction: The return's line 12, standard or itemized, held across
+                  the baseline and the scenario. It was the cache's standard
+                  deduction for every filer, which priced an itemizer from a
+                  taxable-income position too high by the difference (AA20);
+                  the planning tools pass `scenario.return_deduction`.
         cg_zero_limit, cg_fifteen_limit: QDCG 0%/15% thresholds (binary status key).
                   Required whenever the scenario has qualified dividends or a net
                   long-term gain — `qdcg_worksheet_applies` raises otherwise; an
@@ -2932,6 +2940,15 @@ def compute_scenario(
             "scenario input 'schedule_1a_deduction' must be a finite "
             "non-negative number")
 
+    # The return's line 12, validated as the fixed input beside it is: NaN
+    # keeps `max(0.0, agi - nan)` at 0.0, a silent $0 of tax, and a negative
+    # deduction raises taxable income.
+    if (isinstance(deduction, bool) or not isinstance(deduction, (int, float))
+            or not math.isfinite(deduction) or deduction < 0):
+        raise ValueError(
+            "scenario deduction must be a finite non-negative number (the "
+            "return's line 12)")
+
     if se_net > 0:
         # W-2 wages already consume the Social Security wage base via payroll, so the
         # SS portion of SE tax only applies to the remaining room. Pass wages as the
@@ -2961,7 +2978,7 @@ def compute_scenario(
     # QBI needs taxable income BEFORE QBI (Form 8995 line 11) and net capital gain
     # (line 12 = qualified dividends + net LTCG) for the overall cap, so it is
     # computed after AGI and the preferential-income figures.
-    ti_before_qbi = max(0.0, agi - standard_deduction - schedule_1a_deduction)
+    ti_before_qbi = max(0.0, agi - deduction - schedule_1a_deduction)
     # Form 8995 line 12 and the QDCG worksheet price the same quantity.
     net_capital_gain = eff_qualified + net_ltcg
     if se_net > 0:
@@ -3282,6 +3299,7 @@ from agents.lib.tax_computations._shared import (  # noqa: F401
     _amount,
     _coerce_numeric,
     _f2210_amount,
+    _medical_deductible,
     _multi_employer_excess,
     _normalize_filing_status,
     _prorated_mortgage_interest,

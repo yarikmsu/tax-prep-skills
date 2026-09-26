@@ -4758,16 +4758,16 @@ class TestTheSaltPhasedownHandoffs:
     open, and each is prose or a placeholder that nothing computes against.
     """
 
-    def test_the_result_template_leaves_the_salt_figures_unset(self):
-        """The engine writes None for each where it has none, and /tax-ptet
-        reads `schedule_a.modified_agi` back. A zero placeholder nobody
+    def test_the_result_template_leaves_the_planning_figures_unset(self):
+        """The engine writes None for each where it has none, and the planning
+        tools read `schedule_a.modified_agi` and `medical_expenses` back. A zero placeholder nobody
         overwrote reads as a real figure: a MAGI of zero, so the PTET block
         reports the phasedown as not biting beside a return that cut the cap,
         or "Salt Cap Applied $0.00" beside a nonzero SALT deduction on the
         summary PDF. Null is absent (`pdf_render._display`)."""
         template = json.loads((REPO / "agents" / "templates" /
                                "result_template.json").read_text())
-        for field in ("modified_agi", "salt_cap_applied"):
+        for field in ("modified_agi", "salt_cap_applied", "medical_expenses"):
             assert template["schedule_a"][field] is None, (
                 f"schedule_a.{field} has a numeric placeholder again; an "
                 "unfilled one reads as a real figure")
