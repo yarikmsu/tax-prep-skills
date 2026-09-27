@@ -169,7 +169,12 @@ Life-event flags read False when absent, so a legacy profile still passes.
 **Optional planning branch (off `/tax-setup`, not part of the linear flow):**
 - **`/tax-project`** — mid-year projection: run any time after `/tax-setup` to project
   full-year tax, safe-harbor estimates, and W-4 4(c)/1040-ES guidance from YTD figures.
-  When the state projection runs and the state is CA, adds the FTB 5805 CA safe harbor
+  Priced on the deductions the taxpayer declares for the year, federal and state
+  (`forecast_overrides.itemized_deductions`, `state_itemized_deductions`; 0 is the
+  standard deduction, and an unanswered one refuses — AA21); a separate filer is warned
+  that the spouse's choice can force the other deduction, and an itemizer that the
+  declared total is held as entered while parts of it move with income. When the state projection
+  runs and the state is CA, adds the FTB 5805 CA safe harbor
   (incl. the R&TC §19136.3 $1M/$500K-MFS 90%-only rule on CURRENT-year CA AGI) and a CA
   540-ES voucher schedule under the 30/40/0/30 weighting (E7). Read-only (never mutates
   `result.json`); re-runnable quarterly. Uses `archive/{year-1}/`

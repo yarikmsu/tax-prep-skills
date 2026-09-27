@@ -61,14 +61,40 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    and — for TY2025-2028 — the OBBBA **Schedule 1-A** total via `forecast_overrides.schedule_1a`,
    estimated with `compute_schedule_1a`: tips + overtime premium + car-loan + senior, a
    below-AGI deduction that lowers projected taxable income but not AGI).
+   Ask for the year's deductions too, with step 3's archive defaults and its questions
+   in the same pass; each is REQUIRED where it is read, and the engine refuses a file
+   that leaves one unanswered: `forecast_overrides.itemized_deductions`,
+   the itemized deductions the taxpayer expects (the Schedule A total, after its caps),
+   or 0 to take the standard deduction; and `forecast_overrides.state_itemized_deductions`,
+   the state's (California's Schedule CA total), or 0 for the state's standard
+   deduction. The state figure is read only where a state is projected, which New York
+   normally is not, so a New York resident is not asked up front. The state's own rules
+   decide whether it can differ from the federal choice: California lets it, while some
+   states tie it to the federal return and some allow no itemized deductions, so enter 0
+   there. Each is priced as the larger of it and its standard deduction. Ask in an
+   existing file too, wherever either figure is null or missing (as in one saved before
+   they were required), and wherever step 5 refuses for one. Never write either on the
+   taxpayer's behalf: 0 is their answer that they take the standard deduction, not a way
+   past the refusal.
    Validate inputs (no shell metacharacters; numeric fields numeric). Immediately after
    writing the file, run `sh agents/lib/run.sh -m agents.lib.secure_fs projection_inputs.json`.
 
 3. **Resolve prior-year baseline.** If `archive/{year-1}/` exists, read its
    `result.json` to pre-fill `recurring_from_prior` (interest/dividends) as editable
-   defaults. Do not treat archived Form 1040 line 24 as the federal prior-year
-   safe-harbor base, and do not pair an explicit `prior_year_form_2210_tax_base` with
-   the archive's AGI — `/tax-amend` overwrites `archive/{year-1}/result.json` with the
+   defaults, and the defaults step 2 offers for the deductions, never over an answer
+   the taxpayer gave: federal, `form_1040.line_12_standard_deduction` when
+   `schedule_a.use_itemized` is true and line 13c is zero, else 0; state, for California
+   only, `schedule_ca_itemized.itemized_total` when that section itemized, else 0. No
+   other state's archive records a state itemized total, so there the state figure has
+   no default and is asked. Ask what changed (a paid-off mortgage, a move, a change of
+   filing status, this year's SALT cap) rather than carrying last year's total
+   unexamined; whether this year's income moves the parts of it tied to AGI, the SALT
+   cap's phasedown and the medical-expense floor, which the projection holds at the
+   declared figure; and whether Schedule A's own rules changed between the two years:
+   from TY2026 a charitable floor applies and the top bracket's itemized deductions are
+   limited, and a TY2025 total carries neither. Do not treat
+   archived Form 1040 line 24 as the federal prior-year safe-harbor base, and do not
+   pair an explicit `prior_year_form_2210_tax_base` with the archive's AGI — `/tax-amend` overwrites `archive/{year-1}/result.json` with the
    amended return's figures, so the archive AGI may belong to a different return than
    the one the tax base was composed from. Populate `prior_year_form_2210_tax_base`
    only from a completed pre-factor composition under line 8 of the Form 2210
@@ -153,7 +179,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
    **`as_of_date` must be null, not empty, to mean "absent".** In an OPEN year every PRESENT value is validated and a malformed one is refused outright — the run produces no report at all, because substituting today's date would silently relabel the YTD figures beside it. A workspace created from an older template may carry `"as_of_date": ""` (or `0`), which used to fall through to today's date and now blocks: edit it to `null`, to the MM-DD the YTD figures are current to, or pass `--as-of MM-DD` for this run.
 
-   **Read these fourteen things out of the payload before you summarize anything.** The
+   **Read these sixteen things out of the payload before you summarize anything.** The
    markdown in the next step carries them in prose, but the audit line below is written
    from HERE, and `safe_harbor.covered` alone is not the verdict:
 
@@ -243,6 +269,17 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      is: the qualification first existed only in the markdown and in the closed-year
      `w4_lever_note`, so on an OPEN year an agent reading `--json` first — as this step
      instructs — saw a bare `state.balance` with nothing marking it an estimate.
+   - **`mfs_deduction_note`** and **`state_mfs_deduction_note`** — non-null only for a
+     married-filing-separately taxpayer, whose spouse's choice can force the deduction
+     the projection did not take. Each names the rule; where it binds, the tax and every
+     payment recommended here read LOW. Surface each verbatim beside the figure it
+     qualifies, and ask how the spouse files before presenting a balance as the amount
+     to pay.
+   - **`itemized_deduction_note`** — non-null wherever either projection priced a
+     declared itemized total, which it holds as entered while parts of it move with
+     income, so the tax and payments can read high or low. Surface it verbatim, and
+     where the total was worked out at a different income than this projection's AGI,
+     re-work it with the taxpayer and re-run.
    - **`state_unsupported_note`** — non-null means the resident state's return is NOT
      modeled at all, and the note says why (a pre-2021 TN Hall return, say). No state
      figure is produced. Surface it as its own item: the reader has a state return to

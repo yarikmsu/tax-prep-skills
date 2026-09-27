@@ -1048,3 +1048,138 @@ charitable deduction refuses. The charitable floor from TY2026, the §70111
 haircut and a switch between itemizing and the standard deduction are held
 under the reports' general line that the deduction is the return's. Re-pricing
 them needs Schedule A's inputs in `result.json`, which holds its outputs.
+
+## AA21 — the projection, on the deductions the taxpayer declares
+
+### What was wrong
+
+`projection.project_federal_tax` subtracted the cache's standard deduction for
+every filer, and `project_state_tax` the state's. `/tax-project` projects the
+current year, so there is no return to read a line 12 from, and nothing asked.
+For an itemizer that put projected taxable income too high by the difference:
+on the test cache, $45,000 of itemized deductions against a $30,000 standard
+deduction projected $12,000 of federal tax where the year comes to $9,000, and
+$30,000 of California itemized deductions against its $11,000 standard
+deduction projected $3,650 where it comes to $2,700. Every W-4 and estimated
+payment the report recommends is priced from those figures. AA20's review found
+it.
+
+### What shipped
+
+- **Declared, both.** `forecast_overrides.itemized_deductions` and
+  `state_itemized_deductions` carry the itemized deductions the taxpayer expects
+  for the year, or 0 for the standard deduction. Each projection prices from the
+  larger of the declared figure and its standard deduction, and the report names
+  which it used. An unanswered one refuses (the state's only where a state is
+  projected), because the standard deduction in its place is the over-statement
+  being fixed. The template ships both as null, not 0, so an untouched file reads
+  as unanswered rather than as a declared standard deduction.
+- **The skill asks.** `/tax-project`'s interview asks for both, pre-filled from
+  the archived return where it itemized (federal line 12, California's Schedule
+  CA total) and to be revised for what changed.
+
+### Tests
+
+Both projections are pinned at declared values, hand-computed: federal $12,000
+on the standard deduction, $9,000 at $45,000 itemized, and the standard again at
+$25,000; California $3,650 and $2,700. The refusals, the parse (absent and null
+are unanswered, 0 is an answer), the report's rows, the template's nulls and the
+CLI's refusal of a file that leaves the question out are pinned too. The tests
+written before AA21 priced on the standard deduction, and a helper declares 0
+for them rather than every one of them restating it.
+
+### Review, round 1
+
+A local review found 14. Twelve are fixed here, one is filed and one is left:
+- **New York was blocked.** The state-deduction refusal ran before the branch
+  that declines to project New York, so a New York run without the state figure
+  refused the whole report, federal included, on an answer nothing reads. The
+  decline now runs first, and New York is not asked for it up front.
+- **An unfetched federal standard deduction read as $0.** `_num` reads None as
+  0, so a half-fetched cache priced a declared-standard filer on no deduction:
+  $18,000 of tax where a $30,000 standard deduction gives $12,000. Older than
+  AA21, and now refused, absent or null. Round 2 found the state side refused
+  only the null.
+- **A separate filer's spouse can force the other deduction.** Federally, a
+  spouse who itemizes takes the standard deduction away (§63(c)(6)(A));
+  California makes the two match. Either way the projection's larger figure
+  under-states the tax, and only the skill said so. The report and its JSON now
+  carry `mfs_deduction_note` wherever the federal standard deduction was taken,
+  and `state_mfs_deduction_note` wherever a state is projected.
+- **Siblings.** `/tax-extend` runs the projection at the deadline and now says
+  what to do when an older inputs file refuses; `/tax-retirement` works out its
+  bracket from the declared deduction.
+- **Smaller:** the template no longer says every state's choice is independent
+  of the federal one; the pre-fill names TY2026's Schedule A changes; the
+  federal table gains Schedule 1-A and QBI rows, so it shows every deduction
+  between AGI and taxable income; the CLI test
+  matches the federal message exactly; a stale comment and the template's key
+  order are fixed.
+- **Filed:** AA22, the §170(p) non-itemizer charitable deduction has no place in
+  the projection.
+- **Left:** a file missing both figures refuses one at a time; the skill asks
+  for both together.
+
+### Review, round 2
+
+A second review found 15. Twelve are fixed and three are left:
+- **An absent state standard deduction read as $0.** Only a status key present
+  at null refused; an absent map, or a status missing after its stand-in, gave
+  $5,000 of state tax where the $11,000 joint deduction gives $4,450. Now
+  refused like the federal one.
+- **Filled in for the taxpayer.** Step 3 pre-filled the state figure as 0 for
+  every state but California, whose Schedule CA section is the only state
+  itemized total an archive holds, and could overwrite step 2's answer. It now
+  pre-fills California only, and only where step 2 has no answer. The refusal's
+  "or 0" read as an instruction to an agent meeting it in an older file, so the
+  skill now says to ask, never to write the figure.
+- **`/tax-retirement` priced the state rate on the standard deduction.** Its
+  projection route worked out taxable income by hand. It now reads
+  `federal.taxable_income` and `state.taxable_income` from the projection.
+- **Held as entered.** A declared itemized total is priced as given while its
+  SALT phasedown and medical floor move with income, so a total worked out at
+  another income reads the tax either way. The report and its JSON carry
+  `itemized_deduction_note` wherever either side itemized, and step 3 asks
+  whether this year's income moves it.
+- **A state that requires the federal choice.** Where the state and federal
+  projections took different deductions, the bracket-estimate note says some
+  states would not allow the state's.
+- **Smaller:** New York is asked where the engine refuses for it rather than
+  never; the separate-filer note reads low "by the tax on the difference"; the
+  table comment no longer claims it always adds up; step 5 points at the notes
+  instead of restating their rule. Tests now cover every early return that
+  never reads the state figure, and the shipped template run through the CLI.
+- **Left:** a malformed state figure is refused even where no state is
+  projected, as AGENTS.md §8 asks of parse-boundary validation; California's
+  separate-filer rule is chosen by state code, as the module's other
+  California-only behaviour is; and the engine and skill changes share one
+  commit, which the squash-merge makes moot.
+
+### Simplify
+
+Four review angles over the whole diff: reuse, simplification, efficiency and
+altitude. Both standard-deduction refusals now go through one `_fetched_num`.
+The tests share `_state_law` and a `_report` builder, the early-return sweep
+takes in New York's recapture case, and a CLI check the shipped-template test
+already made is gone. `/tax-extend` points at `/tax-project` steps 2 and 5
+instead of restating them, and step 2 asks for the deductions with step 3's
+archive defaults in one pass rather than two. Filed: AA23, since moving AA20
+to shipped dropped its record of the deeper fix, re-running
+`compute_schedule_a` at each priced AGI.
+
+### Codex review
+
+A local Codex review found one, and it held: round 2's `/tax-retirement`
+rewrite ran the projection whenever `projection_inputs.json` existed, where
+the old text required its full-year forecast figures. A retirement-only file,
+holding contributions and no income, projected AGI and taxable income of $0,
+reporting every phase-out as clear. The precondition is back, and the skill
+names that file as not qualifying.
+
+### Not done
+
+A separate filer whose spouse's choice forces the other deduction is told, not
+priced: the projection does not ask how the spouse files.
+The declared figure is the taxpayer's estimate: the projection does not
+recompute Schedule A from projected AGI, and says so wherever it priced an
+itemized total. AA23 would price it.

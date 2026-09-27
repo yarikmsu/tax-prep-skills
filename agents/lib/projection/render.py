@@ -759,7 +759,14 @@ def render_markdown(r: ProjectionReport) -> str:
               f"| Gross income | {_money(f.gross_income)} |",
               f"| Adjustments | {_money(f.adjustments)} |",
               f"| AGI | {_money(f.agi)} |",
-              f"| Taxable income | {_money(f.taxable_income)} |",
+              f"| Deduction ({'itemized' if f.itemized else 'standard'}) | {_money(f.deduction)} |"]
+    # The other two deductions between AGI and taxable income, where they
+    # apply, so the table shows every one (taxable income still floors at 0).
+    if f.schedule_1a_deduction:
+        lines.append(f"| Schedule 1-A deduction | {_money(f.schedule_1a_deduction)} |")
+    if f.qbi_deduction:
+        lines.append(f"| QBI deduction | {_money(f.qbi_deduction)} |")
+    lines += [f"| Taxable income | {_money(f.taxable_income)} |",
               f"| Tax before credits{' (QDCG worksheet)' if f.used_qdcg else ''} | {_money(f.tax_before_credits)} |",
               f"| Child Tax Credit | {_money(-f.ctc)} |",
               f"| SE tax | {_money(f.se_tax)} |",
@@ -770,6 +777,8 @@ def render_markdown(r: ProjectionReport) -> str:
               f"| Estimates paid | {_money(-f.estimates_paid)} |",
               f"| **Projected balance** | {_money(f.balance)} {'(refund)' if f.balance < 0 else '(owed)'} |",
               ""]
+    if r.mfs_deduction_note:
+        lines += [f"> **⚠ {r.mfs_deduction_note}**", ""]
 
     lines += ["## Safe harbor analysis", "",
               "| Test | Amount |", "|---|---:|",
@@ -845,6 +854,7 @@ def render_markdown(r: ProjectionReport) -> str:
         # bracket-estimate only"); the Caveats line about scheduling qualifies
         # the SCHEDULE, never the amount.
         lines += ["| Item | Amount |", "|---|---:|",
+                  f"| State ({s.code}) deduction ({'itemized' if s.itemized else 'standard'}) | {_money(s.deduction)} |",
                   f"| State ({s.code}) taxable income | {_money(s.taxable_income)} |",
                   f"| State tax | {_money(s.tax)} |",
                   f"| State withholding | {_money(-s.withholding)} |",
@@ -852,6 +862,8 @@ def render_markdown(r: ProjectionReport) -> str:
                   f"{'(refund)' if s.balance < 0 else '(owed)'} |"]
         if r.state_bracket_estimate_note:
             lines += ["", f"> **⚠ {r.state_bracket_estimate_note}**"]
+        if r.state_mfs_deduction_note:
+            lines += ["", f"> **⚠ {r.state_mfs_deduction_note}**"]
     if r.ca_safe_harbor is not None:
         csh = r.ca_safe_harbor
         lines += ["", "### CA safe harbor (FTB 5805)", "",
@@ -922,6 +934,8 @@ def render_markdown(r: ProjectionReport) -> str:
                      "a 1% penalty applies to paper payments.")
     else:
         lines.append("- State estimated-payment scheduling is informational; state rules vary.")
+    if r.itemized_deduction_note:
+        lines.append(f"- **Declared itemized deductions:** {r.itemized_deduction_note}")
     if f.qbi_over_threshold:
         lines.append(
             "- **QBI over the §199A threshold:** the Form 8995-A W-2-wage/UBIA limits "

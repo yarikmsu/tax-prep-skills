@@ -63,7 +63,10 @@ Work down this ladder and TELL the user which rung was used:
 2. **Projection** — no computed return: run `/tax-project` (or
    `sh agents/lib/run.sh -m agents.lib.projection ... --json`)
    and use `federal.balance` / `state.balance` (positive = owed). Label the figures
-   PROJECTED and recommend a cushion (see step 2).
+   PROJECTED and recommend a cushion (see step 2). The projection refuses an inputs
+   file that leaves out a declared deduction, as one saved before they were required
+   does: ask the taxpayer for it, and relay the deduction notes the payload carries, as
+   `/tax-project` steps 2 and 5 do.
 3. **User estimate** — no YTD data either: ask the user for their best
    estimate of total tax and payments so far. Label clearly.
 

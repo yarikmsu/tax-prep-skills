@@ -291,7 +291,8 @@ def capital_gains_limits(tax_law: dict, filing_status: "str | None",
 
 
 
-def _state_bracket_estimate_note(state, ca_safe_harbor) -> "str | None":
+def _state_bracket_estimate_note(state, ca_safe_harbor,
+                                 federal_itemized: bool) -> "str | None":
     """The qualification a non-CA state figure has to carry, or None for CA.
 
     One copy for the payload field and the markdown banner. Written out of the
@@ -299,17 +300,68 @@ def _state_bracket_estimate_note(state, ca_safe_harbor) -> "str | None":
     harbor and every other taxed state does not — rather than by re-testing
     `state.code != "CA"`, so the two cannot disagree about which states are
     modeled.
+
+    Where the state and federal projections took different deductions it says
+    so: some states require the federal choice, and where one does, the
+    larger deduction priced here is one it would not allow (AA21).
     """
     if state is None or ca_safe_harbor is not None:
         return None
     # Plain prose, no markdown: this is a PAYLOAD field first and the
     # renderer's banner second, and a `**` embedded here would reach an agent
     # reading `--json` as literal asterisks.
+    mismatch = "" if state.itemized == federal_itemized else (
+        f" It took the {'itemized' if state.itemized else 'standard'} "
+        "deduction where the federal projection took the "
+        f"{'itemized' if federal_itemized else 'standard'} one; some states "
+        "require the federal choice, and where yours does the state tax here "
+        "reads low.")
     return (f"{state.code} is a bracket ESTIMATE — this state's return is not "
             "modeled in depth, only California is. The figures apply the "
             "state's brackets to a federally-derived taxable income and model "
             "no state-specific credit, addition or subtraction, so treat the "
-            "balance as an order of magnitude rather than an amount owed.")
+            "balance as an order of magnitude rather than an amount owed."
+            + mismatch)
+
+
+def _mfs_deduction_notes(fs: str, federal, state) -> "tuple[str | None, str | None]":
+    """The (federal, state) banners for a separate filer, whose deduction the
+    spouse's choice can force to the smaller one the projection did not take.
+    Plain prose, a payload field first, like `_state_bracket_estimate_note`."""
+    if fs != "MFS":
+        return None, None
+    federal_note = None if federal.itemized else (
+        "Filing separately, this projection took the standard deduction. If "
+        "your spouse itemizes, §63(c)(6)(A) denies it to you and you must "
+        "itemize even where your itemized total is the smaller, so the federal "
+        "tax and the payments recommended here read low by the tax on the "
+        "difference.")
+    if state is None:
+        return federal_note, None
+    rule = ("California makes separate filers match their spouse, both "
+            "itemizing or both taking the standard deduction"
+            if state.code == "CA" else
+            "A state can tie that choice to your spouse's or to your federal "
+            "return")
+    return federal_note, (
+        f"Filing separately, this projection took the larger of {state.code}'s "
+        f"standard deduction and your declared itemized total. {rule}; where "
+        "that forces the other one, the state tax and its payments here read "
+        "low.")
+
+
+def _itemized_deduction_note(federal, state) -> "str | None":
+    """The banner for a declared itemized total, which is priced as entered.
+    Parts of it move with income and the projection holds them, so a total
+    worked out at another income reads the tax high or low (AA21). Plain
+    prose, a payload field first, like `_state_bracket_estimate_note`."""
+    if not (federal.itemized or (state is not None and state.itemized)):
+        return None
+    return ("This projection prices the itemized deductions you declared as "
+            "entered. Parts of them move with income, the SALT cap's phasedown "
+            "and the medical-expense floor among them, and are not re-worked "
+            "at the projected AGI: a total worked out at a different income "
+            "makes the tax and the payments here read high or low.")
 
 
 
@@ -726,6 +778,44 @@ def paychecks_available_for_year(pay_frequency: str, year: int,
     return paychecks_remaining(pay_frequency, elapsed_fraction(today))
 
 
+def _declared_deduction(overrides: dict, key: str) -> "float | None":
+    """An expected itemized total from `forecast_overrides`, or None when the
+    question was not answered. Not `_nonneg_num`'s None-is-zero: an absent
+    figure and a declared 0 (take the standard deduction) are different
+    answers, and reading the first as the second is the silent standard
+    deduction AA21 removed."""
+    raw = overrides.get(key)
+    return None if raw is None else _nonneg_num(raw, f"forecast_overrides.{key}")
+
+
+def _fetched_num(value, key: str) -> float:
+    """A tax-law figure the projection cannot price without. Absent or None is
+    an unfetched cache and refuses: `_num` reads None as 0, and the templates
+    seed a standard deduction None, so a half-fetched cache priced a filer on
+    no deduction at all and over-stated the tax, §4's hard-error direction."""
+    if value is None:
+        raise ProjectionError(
+            f"{key} is unfetched. Run /tax-setup to fetch current rates.")
+    return _num(value, key)
+
+
+def _projected_deduction(standard: float, declared: "float | None",
+                         key: str, standard_name: str) -> "tuple[float, bool]":
+    """The deduction a projection prices from: the larger of the standard
+    deduction and the itemized total the taxpayer expects, with whether the
+    itemized one won. Refuses an unanswered one, since the standard deduction
+    in its place over-states an itemizer's tax and every payment the report
+    recommends — the direction AGENTS.md §4 makes a hard error (AA21)."""
+    if declared is None:
+        raise ProjectionError(
+            f"forecast_overrides.{key} is not set: the projection prices from "
+            "the deduction you expect to take, and the standard deduction in "
+            "its place over-states an itemizer's tax and the payments it "
+            "recommends. Enter the year's expected itemized deductions, or 0 "
+            f"to take {standard_name}.")
+    return (declared, True) if declared > standard else (standard, False)
+
+
 def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
               overrides: dict, recurring: dict, estimates: dict) -> ProjectedInputs:
     frac = elapsed_fraction(as_of)
@@ -788,6 +878,9 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
         schedule_1a_total=_nonneg_num(overrides.get("schedule_1a"), "schedule_1a"),
         schedule_1a_se_tips=_nonneg_num(
             overrides.get("schedule_1a_se_tips"), "schedule_1a_se_tips"),
+        itemized_deductions=_declared_deduction(overrides, "itemized_deductions"),
+        state_itemized_deductions=_declared_deduction(
+            overrides, "state_itemized_deductions"),
         qualified_dividends=qualified,
         ordinary_dividends=ordinary,
         taxable_interest=_num(recurring.get("taxable_interest"), "taxable_interest"),
@@ -829,7 +922,11 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         raise ProjectionError(
             f"No federal brackets for status '{full_key}' in tax_law. Run /tax-setup to fetch."
         )
-    std = _num(fstatus.get("standard_deduction"), "standard_deduction")
+    std = _fetched_num(fstatus.get("standard_deduction"),
+                       f"federal.filing_statuses.{full_key}.standard_deduction")
+    deduction, itemized = _projected_deduction(
+        std, proj.itemized_deductions, "itemized_deductions",
+        "the standard deduction")
 
     # ST/LT netting with character preservation (shared net_capital_gains). The
     # legacy combined `capital_gains` field is treated as LONG-term; short-term
@@ -902,7 +999,7 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
     # silently trusting a possibly-raw figure.
     schedule_1a_unfetched = bool(
         sch1a > 0 and _sch1a_limits_incomplete(fed.get("schedule_1a")))
-    ti_before_qbi = max(0.0, agi - std - sch1a)
+    ti_before_qbi = max(0.0, agi - deduction - sch1a)
     # §224 SE tips are EXCLUDED from QBI (Form 8995): when the applied Schedule
     # 1-A deduction includes self-employed qualified tips, those same dollars
     # are removed from the QBI base so they don't get both the line-13b
@@ -1006,6 +1103,8 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         estimates_paid=round(proj.estimated_fed_paid, 2), balance=balance, used_qdcg=used_qdcg,
         niit=round(niit, 2), qbi_over_threshold=qbi_over_threshold,
         schedule_1a_unfetched=schedule_1a_unfetched,
+        deduction=round(deduction, 2), itemized=itemized,
+        schedule_1a_deduction=round(sch1a, 2), qbi_deduction=round(qbi, 2),
     )
 
 
@@ -2096,6 +2195,8 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
             "such a return is the withholding for ALL of them. Netting the "
             "two would show a refund that is not there. Run /tax-withholding, "
             "which prices the whole return against the same figure.")
+    mfs_deduction_note, state_mfs_deduction_note = _mfs_deduction_notes(
+        fs, federal, state)
 
     return ProjectionReport(
         year=year, as_of=as_of.strftime("%m-%d"), pay_frequency=pay_frequency,
@@ -2116,12 +2217,15 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
             # run has a modeled 540 harbor, every other taxed state does not.
             state_is_bracket_estimate=ca_safe_harbor is None),
         state_bracket_estimate_note=_state_bracket_estimate_note(
-            state, ca_safe_harbor),
+            state, ca_safe_harbor, federal.itemized),
         state_no_income_tax=no_income_tax,
         no_income_tax_state_code=no_income_tax_code,
         state_cache_mismatch=cache_mismatch,
         nonresident_income_warning=nonresident_income_warning,
-        state_unsupported_note=state_unsupported_note)
+        state_unsupported_note=state_unsupported_note,
+        mfs_deduction_note=mfs_deduction_note,
+        state_mfs_deduction_note=state_mfs_deduction_note,
+        itemized_deduction_note=_itemized_deduction_note(federal, state))
 
 
 
@@ -3186,6 +3290,9 @@ def _report_to_dict(r: ProjectionReport) -> dict:
         "state_unsupported_note": r.state_unsupported_note,
         "state_bracket_estimate_note": r.state_bracket_estimate_note,
         "stale_as_of_note": r.stale_as_of_note,
+        "mfs_deduction_note": r.mfs_deduction_note,
+        "state_mfs_deduction_note": r.state_mfs_deduction_note,
+        "itemized_deduction_note": r.itemized_deduction_note,
     }
 
 
@@ -3438,23 +3545,50 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
         has_prior_state = prior_state_code is not None
     if not has_prior_state and (resident is None or resident != code):
         return None
+    # A state whose cache declares a BENEFIT RECAPTURE gets NO PROJECTION.
+    # Keyed on the BLOCK's presence and not on a state name: a cache declaring
+    # a recapture is a cache whose plain bracket math is incomplete, whoever it
+    # belongs to. Checked before the deduction, so a state this function
+    # never prices is not refused for a deduction it never reads (AA21).
+    recapture = state_cfg.get("tax_table_benefit_recapture")
+    if recapture:
+        # REFUSED, and this reverses what the first version of this branch did.
+        #
+        # `compute_ny_tax` returns IT-201 LINE 39 — the State tax alone. This
+        # function then subtracts `proj.state_withholding`, and on a New York
+        # return that field means ALL New York withholding: box 17, box 19 for
+        # a City locality, and any Yonkers amount, because ONE IT-2105 voucher
+        # is measured against all four taxes and `/tax-withholding` tells the
+        # taxpayer to enter it that way. One symbol, two concepts — and the two
+        # errors compound in the SAME direction.
+        #
+        # Measured: a Manhattan single filer on $200,000 of wages, entering
+        # $17,500 of combined withholding, was shown a state BALANCE of
+        # -$5,800 — a projected refund — against a city tax this function never
+        # computed. Over-stating a refund is the direction AGENTS.md §4 calls a
+        # hard error, and a banner does not make it a degrade.
+        #
+        # So no figure is published. `/tax-withholding` computes line 60 — all
+        # four taxes — against the same withholding definition, and is the
+        # tool for this question; `build_report`'s note below says so.
+        return None
     # The FULL status key: California gives head of household the joint
     # amount, and the template carries `hoh`, so collapsing it onto `single`
     # halved the deduction and over-stated the state tax the taxpayer pays
     # as an estimate. A status the map does not carry takes its stand-in
     # (separate and, where the template has no `hoh` row — the generic
     # bracket-estimate states — head of household read single; surviving
-    # spouse reads joint), never a silent zero; a key the map carries at None
-    # is an unfetched cache, refused like the capital-gains breakpoints are.
+    # spouse reads joint), never a silent zero. A key the map carries at None,
+    # or leaves out even after the stand-in, is an unfetched cache and
+    # refuses (`_fetched_num`); a state with no standard deduction declares 0.
     std_map = state_cfg.get("standard_deduction") or {}
     std_key = _full_status_key(filing_status, "state projection")
     if std_key not in std_map:
         std_key = {"mfs": "single", "hoh": "single", "qss": "mfj"}.get(std_key, std_key)
-    if std_key in std_map and std_map[std_key] is None:
-        raise ProjectionError(
-            f"state.standard_deduction.{std_key} is unfetched. Run /tax-setup "
-            "to fetch current rates.")
-    std = _num(std_map.get(std_key), "state.standard_deduction")
+    std = _fetched_num(std_map.get(std_key), f"state.standard_deduction.{std_key}")
+    state_deduction, state_itemized = _projected_deduction(
+        std, proj.state_itemized_deductions, "state_itemized_deductions",
+        "the state's standard deduction")
     # Same capital-gains netting + loss cap as the federal side (v1 assumption:
     # the state taxes capital gains as ordinary income and conforms to the
     # federal $3K/$1.5K-MFS loss limit, as CA does) — the split
@@ -3485,33 +3619,7 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
     state_agi = (proj.wages + cap_in_income + proj.ordinary_dividends
                  + proj.taxable_interest + proj.other_income
                  + proj.self_employment_net - se_deduction)
-    state_ti = max(0.0, state_agi - std)
-    # A state whose cache declares a BENEFIT RECAPTURE gets NO PROJECTION.
-    # Keyed on the BLOCK's presence and not on a state name: a cache declaring
-    # a recapture is a cache whose plain bracket math is incomplete, whoever it
-    # belongs to.
-    recapture = state_cfg.get("tax_table_benefit_recapture")
-    if recapture:
-        # REFUSED, and this reverses what the first version of this branch did.
-        #
-        # `compute_ny_tax` returns IT-201 LINE 39 — the State tax alone. This
-        # function then subtracts `proj.state_withholding`, and on a New York
-        # return that field means ALL New York withholding: box 17, box 19 for
-        # a City locality, and any Yonkers amount, because ONE IT-2105 voucher
-        # is measured against all four taxes and `/tax-withholding` tells the
-        # taxpayer to enter it that way. One symbol, two concepts — and the two
-        # errors compound in the SAME direction.
-        #
-        # Measured: a Manhattan single filer on $200,000 of wages, entering
-        # $17,500 of combined withholding, was shown a state BALANCE of
-        # -$5,800 — a projected refund — against a city tax this function never
-        # computed. Over-stating a refund is the direction AGENTS.md §4 calls a
-        # hard error, and a banner does not make it a degrade.
-        #
-        # So no figure is published. `/tax-withholding` computes line 60 — all
-        # four taxes — against the same withholding definition, and is the
-        # tool for this question; `build_report`'s note below says so.
-        return None
+    state_ti = max(0.0, state_agi - state_deduction)
     tax, _ = compute_bracket_tax(state_ti, brackets)
     # CA mental-health services tax: 1% of taxable income over $1M is part
     # of Form 540 total tax — omitting it understates the safe-harbor
@@ -3531,7 +3639,8 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
         code=code, taxable_income=round(state_ti, 2),
         tax=round(tax, 2), withholding=round(proj.state_withholding, 2),
         estimates_paid=round(proj.estimated_state_paid, 2), balance=balance,
-        agi=round(state_agi, 2),
+        agi=round(state_agi, 2), deduction=round(state_deduction, 2),
+        itemized=state_itemized,
     )
 
 

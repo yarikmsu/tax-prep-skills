@@ -934,7 +934,7 @@ apply_red_checks
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
 #   skill .md edit                1056 tests     about a seventh
 #   cold pass, all seven modules  1316 tests     one
-#   (for scale) `pytest tests/`   5060 tests     about twice
+#   (for scale) `pytest tests/`   5080 tests     about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
 # module alone — so the two state one count, and a test holds them to it.
@@ -946,7 +946,7 @@ apply_red_checks
 # cases W6 added. An eighth depends on the CHECKOUT rather than the platform —
 # tests/test_pdf_toolchain.py skips when `generate_tax_pdf.py` is absent, which
 # it is in a fresh clone and in CI; the scale row is a checkout that has it.
-# `pytest tests/` collects 5067 and runs 5060 for those skips, and that row is
+# `pytest tests/` collects 5087 and runs 5080 for those skips, and that row is
 # the PLAIN invocation, without the two deselections.
 #
 # DECOMPOSITION — each module timed alone, portability carrying the same two

@@ -104,6 +104,10 @@ def test_input_template_is_valid_and_complete():
         assert section in tmpl
     assert tmpl["pay_frequency"] in P.PAY_PERIODS
     assert set(tmpl["ytd"]) >= {"wages", "federal_withholding", "state_withholding"}
+    # AA21: unanswered is null, never 0 — a 0 placeholder would read as a
+    # declared standard deduction and price an itemizer on it.
+    for key in ("itemized_deductions", "state_itemized_deductions"):
+        assert tmpl["forecast_overrides"][key] is None, key
 
 
 def test_parse_as_of_valid():
@@ -250,12 +254,37 @@ def _profile_mfj(deps=None):
     return {"filing_status": "MFJ", "dependents": deps or []}
 
 
+def _declared_standard(inputs: dict) -> dict:
+    """AA21 made the year's deductions a required declaration. Every test
+    written before it priced on the standard deduction, so this declares 0,
+    the standard deduction, wherever a test leaves the question out."""
+    overrides = dict(inputs.get("forecast_overrides") or {})
+    overrides.setdefault("itemized_deductions", 0)
+    overrides.setdefault("state_itemized_deductions", 0)
+    return dict(inputs, forecast_overrides=overrides)
+
+
+def _build_report(inputs, *args, **kwargs):
+    """`P.build_report` with `_declared_standard` applied to its inputs."""
+    return P.build_report(_declared_standard(inputs), *args, **kwargs)
+
+
+def _report(overrides=None, profile=None, tax_law=None, prior=None):
+    """A TY2026 report on $50,000 of wages to July 2, through `_build_report`."""
+    return _build_report(
+        {"pay_frequency": "biweekly", "ytd": {"wages": 50000},
+         "forecast_overrides": overrides or {}},
+        profile or _profile_mfj(), tax_law or _tax_law_2026(), prior,
+        2026, datetime.date(2026, 7, 2))
+
+
 def _proj(**overrides):
     base = dict(
         wages=100000, federal_withholding=12000, state_withholding=0, medicare_wages=100000,
         medicare_withheld=1450, ss_wages=100000, capital_gains=0, qualified_dividends=0,
         ordinary_dividends=0, taxable_interest=0, self_employment_net=0, other_income=0,
-        estimated_fed_paid=0, estimated_state_paid=0, elapsed_fraction=0.5, paychecks_remaining=13)
+        estimated_fed_paid=0, estimated_state_paid=0, elapsed_fraction=0.5, paychecks_remaining=13,
+        itemized_deductions=0, state_itemized_deductions=0)
     base.update(overrides)
     return P.ProjectedInputs(**base)
 
@@ -665,7 +694,7 @@ def test_project_federal_qbi_over_threshold_flagged_and_rendered():
     assert fed.qbi_over_threshold is True
 
     prior = _Prior({"california_540": {"ca_total_tax": 5000}})
-    report = P.build_report(
+    report = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 125000, "federal_withholding": 15000, "medicare_wages": 125000},
          "forecast_overrides": {"self_employment_net": 100000},
@@ -835,12 +864,12 @@ def _build_sample_report(degraded=False, with_state=True):
         inputs["prior_year_form_2210_tax_base"] = 15000
     if not with_state:
         law["state"] = {}
-    return P.build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
+    return _build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
                           prior=prior, year=2026, as_of=datetime.date(2026, 7, 2))
 
 
 def test_build_report_assembles_all_sections():
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "prior_year_form_2210_tax_base": 15000,
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
@@ -905,7 +934,7 @@ def _report_at(as_of, withholding=2000, state_withholding=700, today=None):
     names a date, so the fixture's other assertions are not coupled to when
     the suite runs.
     """
-    return (P.build_report(
+    return (_build_report(
         inputs={"pay_frequency": "biweekly",
                 "prior_year_form_2210_tax_base": 15000,
                 "ytd": {"wages": 50000, "federal_withholding": withholding,
@@ -1358,7 +1387,7 @@ def test_the_federal_projection_value_checks_its_filing_status_too():
     # first-year run takes — and the one that reaches the state projection and
     # the harbor before the federal call would have raised.
     with pytest.raises(P.ProjectionError, match="filing_status"):
-        P.build_report({"pay_frequency": "biweekly", "ytd": {}}, loose,
+        _build_report({"pay_frequency": "biweekly", "ytd": {}}, loose,
                        _tax_law_2026(), None, 2026, datetime.date(2026, 6, 30))
     # What that spelling silently produced: single brackets, not MFJ ones.
     single = P.project_federal_tax(_proj(), {"filing_status": "SINGLE"},
@@ -2103,7 +2132,7 @@ def test_the_catchup_notes_reach_the_json_payload_too():
     warning on this report (`nonresident_income_warning`,
     `state_unsupported_note`) is a field for that reason.
     """
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 2000,
                         "state_withholding": 700},
@@ -2141,7 +2170,7 @@ def test_render_markdown_no_income_tax_state_note():
     # different things to the taxpayer (there's nothing to fetch for FL).
     law = dict(_tax_law_2026())
     law["state"] = {"type": "none", "code": "FL"}
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
                 "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2166,7 +2195,7 @@ def test_build_report_state_cache_mismatch_blocks_no_income_tax_claim():
     # mismatch note instead.
     law = dict(_tax_law_2026())
     law["state"] = {"type": "none", "code": "FL"}
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
                 "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2198,7 +2227,7 @@ def test_build_report_state_year_mismatch_hard_errors():
     law = dict(_tax_law_2026())
     law["state"] = {"type": "none", "code": "FL"}
     with pytest.raises(P.ProjectionError, match="tax_year"):
-        P.build_report(
+        _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000},
                     "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2215,7 +2244,7 @@ def test_build_report_missing_tax_year_hard_errors():
     del law["tax_year"]
     law["state"] = {"type": "none", "code": "FL"}
     with pytest.raises(P.ProjectionError, match="tax_year"):
-        P.build_report(
+        _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000},
                     "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2232,7 +2261,7 @@ def test_build_report_bool_tax_year_hard_errors():
     law["tax_year"] = True
     law["state"] = {"type": "none", "code": "FL"}
     with pytest.raises(P.ProjectionError, match="tax_year"):
-        P.build_report(
+        _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000},
                     "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2248,7 +2277,7 @@ def test_build_report_corrupted_ca_none_type_blocks_no_income_tax_claim():
     # income tax — CA is graduated_income, never "none", for any year.
     law = dict(_tax_law_2026())
     law["state"] = {"type": "none", "code": "CA"}
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
                 "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2271,7 +2300,7 @@ def test_build_report_pre_repeal_tn_none_type_blocks_no_income_tax_claim():
     law = dict(_tax_law_2026())
     law["tax_year"] = 2020
     law["state"] = {"type": "none", "code": "TN"}
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
                 "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2289,7 +2318,7 @@ def test_build_report_unknown_resident_state_no_false_no_tax_claim():
     # this is legacy/degraded behavior, not a new false-positive.
     law = dict(_tax_law_2026())
     law["state"] = {"type": "none", "code": "FL"}
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
                 "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2382,7 +2411,7 @@ def test_build_report_state_none_on_known_mismatch_despite_prior_state_section()
     # state_cache_mismatch plumbing (round-5) must actually be visible now
     # that project_state_tax returns None instead of a CA StateProjection.
     law = _tax_law_2026()  # code "CA", graduated brackets
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
                 "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2405,7 +2434,7 @@ def test_build_report_state_none_on_known_mismatch_despite_prior_state_section()
 
 
 def test_render_markdown_no_crash_on_zeros():
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "monthly", "ytd": {"wages": 1},
                 "estimated_payments_made": {}},
         profile=_profile_mfj(), tax_law=_tax_law_2026(), prior=None,
@@ -2434,7 +2463,7 @@ def test_report_to_dict_includes_no_income_tax_fields():
     # loss_harvest.state_no_income_tax).
     law = dict(_tax_law_2026())
     law["state"] = {"type": "none", "code": "FL"}
-    r_fl = P.build_report(
+    r_fl = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 6000},
                 "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2719,7 +2748,7 @@ def test_build_report_no_ca_block_for_non_ca_state_code():
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
     profile = {"filing_status": "MFJ", "dependents": [],
                "address": {"state": "NY"}}
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "prior_year_form_2210_tax_base": 15000,
          "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
@@ -2733,7 +2762,7 @@ def test_build_report_ca_high_income_note_rendered():
     # YTD wages 600000 over half a year -> projected CA AGI well over $1M.
     prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 900000},
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 600000, "federal_withholding": 150000,
                  "state_withholding": 50000},
@@ -2775,7 +2804,7 @@ def test_ca_block_fires_without_state_code_via_resident_state():
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
     profile = {"filing_status": "MFJ", "dependents": [],
                "address": {"state": "CA"}}
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
          "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2789,7 +2818,7 @@ def test_no_state_code_and_no_address_stays_generic():
     del law["state"]["code"]
     prior = _Prior({"california_540": {"ca_total_tax": 5000},
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
          "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -2985,7 +3014,8 @@ def test_prior_ca_tax_agi_rejects_nan_negative_and_scaffold():
 
 def _cli_workspace(tmp_path, inputs):
     """Minimal /tax-project workspace: inputs + profile + a TY2026 cache."""
-    (tmp_path / "projection_inputs.json").write_text(json.dumps(inputs))
+    (tmp_path / "projection_inputs.json").write_text(
+        json.dumps(_declared_standard(inputs)))
     (tmp_path / "taxpayer_profile.json").write_text(json.dumps(_profile_mfj()))
     (tmp_path / "tax_law_2026.json").write_text(json.dumps(_tax_law_2026()))
     return ["--inputs", str(tmp_path / "projection_inputs.json"),
@@ -3060,8 +3090,8 @@ def test_a_yearless_file_that_answers_a_prior_year_field_is_refused(tmp_path, ca
         "prior_year_return_filed_12_months_confirmed": False})
     assert P._main(_cli_workspace(tmp_path, template_shaped)
                    + ["--year", "2026"]) == 0, (
-        "an untouched template file declares no year-bound answer and must "
-        "still run")
+        "the template's year-bound defaults declare no answer and must still "
+        "run")
 
     for field, value in (("prior_year_form_2210_tax_base", 40000.0),
                          ("prior_year_form_2210_agi", 200000.0),
@@ -3251,7 +3281,7 @@ def test_safe_harbor_prior_agi_missing_flagged_and_rendered():
     # Rendered: prior with CA tax but no ca_agi and no line_11_agi.
     prior = _Prior({"california_540": {"ca_total_tax": 5000},
                     "form_1040": {"line_24_total_tax": 15000}})
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "prior_year_form_2210_tax_base": 15000,
          "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
@@ -3353,7 +3383,7 @@ def test_the_ca_table_explains_an_early_estimate_split_the_old_gate_missed():
     # installments are open and an estimate has already been paid.
     prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 120000},
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 20000, "federal_withholding": 2000, "state_withholding": 100},
          "estimated_payments_made": {"federal": 0, "state": 300}},
@@ -3391,7 +3421,7 @@ def test_ca_voucher_table_shows_renormalized_share():
     misleads — the table must show the share of the REMAINING shortfall."""
     prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 120000},
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 100},
          "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -3410,7 +3440,7 @@ def test_ca_near_boundary_warning_rendered():
     # Projected CA AGI ~980K (MFJ) — within 10% of the $1M cliff but not over.
     prior = _Prior({"california_540": {"ca_total_tax": 5000, "ca_agi": 900000},
                     "form_1040": {"line_24_total_tax": 15000, "line_11_agi": 120000}})
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 490000, "federal_withholding": 120000,
                  "state_withholding": 40000},
@@ -3439,7 +3469,7 @@ def test_ca_block_fires_degraded_without_prior_archive():
     prior-state-section gate was only a "files this state" proxy."""
     profile = {"filing_status": "MFJ", "dependents": [],
                "address": {"state": "CA"}}
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 50000, "federal_withholding": 6000, "state_withholding": 2000},
          "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -3559,7 +3589,7 @@ class TestFloridaStateSection:
         law["state"] = {"type": "none", "code": "FL",
                         "brackets": [{"rate": 0.093, "min": 0, "max": None}],
                         "standard_deduction": {"mfj": 11080}}
-        r = P.build_report(
+        r = _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000},
                     "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -3599,7 +3629,7 @@ class TestFloridaStateSection:
         law["state"] = {"type": "graduated_income", "code": "FL",
                         "brackets": [{"rate": 0.093, "min": 0, "max": None}],
                         "standard_deduction": {"mfj": 11080}}
-        r = P.build_report(
+        r = _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000},
                     "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -3637,7 +3667,7 @@ class TestFloridaStateSection:
         # individual income tax" claim either) for a malformed cache code.
         law = dict(_tax_law_2026())
         law["state"]["code"] = "FLA"
-        r = P.build_report(
+        r = _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000,
                             "state_withholding": 2000},
@@ -3710,7 +3740,7 @@ class TestFloridaStateSection:
         # End to end, on the message that was making the claim.
         law = dict(_tax_law_2026())
         law["state"]["code"] = "ZZ"
-        r = P.build_report(
+        r = _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000,
                             "state_withholding": 2000},
@@ -3726,7 +3756,7 @@ class TestFloridaStateSection:
     def test_build_report_null_code_surfaces_mismatch(self):
         law = dict(_tax_law_2026())
         law["state"]["code"] = None
-        r = P.build_report(
+        r = _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000,
                             "state_withholding": 2000},
@@ -3755,7 +3785,7 @@ class TestNonresidentIncomeWarning:
                    "address": {"state": "FL"}}
         if nonresident_flag is not None:
             profile["flags"] = {"has_nonresident_source_income": nonresident_flag}
-        return P.build_report(
+        return _build_report(
             inputs={"pay_frequency": "biweekly",
                     "ytd": {"wages": 50000, "federal_withholding": 6000},
                     "estimated_payments_made": {"federal": 0, "state": 0}},
@@ -3777,7 +3807,7 @@ class TestNonresidentIncomeWarning:
         profile = {"filing_status": "MFJ", "dependents": []}
         if nonresident_flag is not None:
             profile["flags"] = {"has_nonresident_source_income": nonresident_flag}
-        return P.build_report(inputs=inputs, profile=profile, tax_law=law,
+        return _build_report(inputs=inputs, profile=profile, tax_law=law,
                               prior=prior, year=2026, as_of=datetime.date(2026, 7, 2))
 
     def test_fl_path_warning_present_when_flag_true(self):
@@ -3888,7 +3918,7 @@ def test_build_report_surfaces_hall_tax_skip_note():
     inputs = {"pay_frequency": "biweekly",
               "ytd": {"wages": 50000, "federal_withholding": 6000},
               "estimated_payments_made": {"federal": 0, "state": 0}}
-    r = P.build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
+    r = _build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
                        prior=None, year=2020, as_of=datetime.date(2020, 7, 2))
     assert r.state is None
     assert r.state_unsupported_note is not None
@@ -3909,7 +3939,7 @@ def test_build_report_hall_note_absent_for_non_tn_skip():
     inputs = {"pay_frequency": "biweekly",
               "ytd": {"wages": 50000, "federal_withholding": 6000},
               "estimated_payments_made": {"federal": 0, "state": 0}}
-    r = P.build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
+    r = _build_report(inputs=inputs, profile=_profile_mfj(), tax_law=law,
                        prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
     assert r.state is None
     assert r.state_unsupported_note is None
@@ -3933,7 +3963,7 @@ def test_build_report_no_hall_note_for_post_repeal_codeless_tn_cache():
               "estimated_payments_made": {"federal": 0, "state": 0}}
     profile = _profile_mfj()
     profile["address"] = {"state": "TN"}
-    r = P.build_report(inputs=inputs, profile=profile, tax_law=law,
+    r = _build_report(inputs=inputs, profile=profile, tax_law=law,
                        prior=None, year=2026, as_of=datetime.date(2026, 7, 2))
     assert r.state is None
     assert r.state_unsupported_note is None
@@ -4087,7 +4117,7 @@ def test_the_prior_year_prong_uses_only_a_completed_line8_base():
         "ytd": {"wages": 50000, "federal_withholding": 6000},
         "estimated_payments_made": {"federal": 0, "state": 0},
     }
-    unresolved = P.build_report(
+    unresolved = _build_report(
         base_inputs, _profile_mfj(), _tax_law_2026(), prior, 2026,
         datetime.date(2026, 7, 2))
     assert unresolved.safe_harbor.degraded is True
@@ -4102,7 +4132,7 @@ def test_the_prior_year_prong_uses_only_a_completed_line8_base():
     # "prior AGI unknown" 100% factor rather than guessing 110%.
     completed_inputs = dict(base_inputs)
     completed_inputs["prior_year_form_2210_tax_base"] = 14400
-    completed = P.build_report(
+    completed = _build_report(
         completed_inputs, _profile_mfj(), _tax_law_2026(), prior, 2026,
         datetime.date(2026, 7, 2))
     assert completed.safe_harbor.degraded is False
@@ -4115,7 +4145,7 @@ def test_the_prior_year_prong_uses_only_a_completed_line8_base():
     # Supplying the paired AGI from the SAME return applies the 110% factor.
     paired_inputs = dict(completed_inputs)
     paired_inputs["prior_year_form_2210_agi"] = 162000
-    paired = P.build_report(
+    paired = _build_report(
         paired_inputs, _profile_mfj(), _tax_law_2026(), prior, 2026,
         datetime.date(2026, 7, 2))
     assert paired.safe_harbor.prior_agi_missing is False
@@ -4334,7 +4364,7 @@ def test_the_prior_prong_discloses_its_own_statutory_precondition():
         "statutory precondition")
 
     # Degraded: no base supplied, so no prior-year row and nothing to qualify.
-    degraded = P.render_markdown(P.build_report(
+    degraded = P.render_markdown(_build_report(
         inputs={"pay_frequency": "biweekly",
                 "ytd": {"wages": 50000, "federal_withholding": 2000},
                 "estimated_payments_made": {"federal": 0}},
@@ -4369,7 +4399,7 @@ def test_the_prong_precondition_note_stops_at_a_confirmed_zero_base():
     marker = "assumes a filed, full 12-month prior year"
 
     def render(**flags):
-        return P.render_markdown(P.build_report(
+        return P.render_markdown(_build_report(
             inputs={"pay_frequency": "biweekly",
                     "prior_year_form_2210_tax_base": 0,
                     "ytd": {"wages": 50000, "federal_withholding": 2000},
@@ -5142,7 +5172,7 @@ def test_estimated_payments_are_range_checked_at_the_parse_boundary():
 
 def test_a_closed_year_leads_with_the_balance_when_the_harbor_is_covered():
     """The penalty target can be $0 while a materially larger balance is due."""
-    r = P.build_report(
+    r = _build_report(
         inputs={"pay_frequency": "biweekly",
                 "prior_year_form_2210_tax_base": 10000,
                 "ytd": {"wages": 200000, "federal_withholding": 12000},
@@ -5267,7 +5297,7 @@ def test_a_non_ca_state_balance_is_qualified_in_the_table_too():
     tax_law["state"] = {"code": "NY", "type": "graduated_income",
                         "brackets": [{"rate": 0.05, "min": 0, "max": None}],
                         "standard_deduction": {"single": 8000, "mfj": 16000}}
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 200000, "federal_withholding": 20000,
                  "state_withholding": 200},
@@ -5359,7 +5389,7 @@ def test_the_payload_qualifies_a_non_ca_state_balance_on_an_open_year():
     tax_law["state"] = {"code": "NY", "type": "graduated_income",
                         "brackets": [{"rate": 0.05, "min": 0, "max": None}],
                         "standard_deduction": {"single": 8000, "mfj": 16000}}
-    r = P.build_report(
+    r = _build_report(
         {"pay_frequency": "biweekly",
          "ytd": {"wages": 200000, "federal_withholding": 20000,
                  "state_withholding": 200},
@@ -6230,6 +6260,19 @@ class TestARecaptureStateGetsNoProjectedBalance:
         assert P.project_state_tax(_proj(), None, law, "MFJ",
                                    resident_state="NY") is None
 
+    def test_a_state_it_never_prices_asks_no_deduction(self):
+        """AA21's state-deduction refusal ran before this branch, so a New York
+        run that left the state figure out refused the whole report, federal
+        included, on an answer the branch never reads. Every early return is
+        swept at the function level below."""
+        report = P.build_report(
+            {"pay_frequency": "biweekly", "ytd": {"wages": 50000},
+             "forecast_overrides": {"itemized_deductions": 0}},
+            {"filing_status": "MFJ", "address": {"state": "NY"}},
+            self._law(), None, 2026, datetime.date(2026, 7, 2))
+        assert report.state is None
+        assert "is not projected here" in report.state_unsupported_note
+
 
 class TestTheNewYorkSection:
     """`new_york_it201` is the third state section, and it is registered only
@@ -6373,3 +6416,277 @@ class TestTheNewYorkVoucherSchedule:
         assert P._NY_CALENDAR.observed_due is P._ny_observed_due
         assert "WEEKENDS ONLY" in P._NY_CALENDAR.due_date_caveat
         assert "§§24 and 25-a" in P._NY_CALENDAR.due_date_caveat
+
+
+def test_the_declared_deductions_are_read_as_answers():
+    """AA21. Absent or null is unanswered, which the projection refuses; 0 is
+    the standard deduction. `_nonneg_num` reads None as 0, which here would
+    be the silent standard deduction, so the two are kept apart."""
+    def read(overrides):
+        return P.annualize({"wages": 50000}, datetime.date(2026, 7, 1),
+                           "biweekly", overrides, {}, {})
+    p = read({})
+    assert (p.itemized_deductions, p.state_itemized_deductions) == (None, None)
+    p = read({"itemized_deductions": None, "state_itemized_deductions": 0})
+    assert (p.itemized_deductions, p.state_itemized_deductions) == (None, 0.0)
+    assert read({"itemized_deductions": 45000.5}).itemized_deductions == 45000.5
+    # A numeric string parses, as every projection input's does (`_num`).
+    assert read({"itemized_deductions": "45000"}).itemized_deductions == 45000.0
+    for bad in (-1, True, float("nan"), "forty-five"):
+        with pytest.raises(P.ProjectionError, match="itemized_deductions"):
+            read({"itemized_deductions": bad})
+
+
+def test_the_projection_prices_from_the_declared_deduction():
+    """AA21: the projection subtracted the cache's standard deduction for
+    every filer. `_proj` is $100,000 of wages on a joint return, a $30,000
+    standard deduction and brackets of 10% to $20,000 and 20% to $200,000:
+    - declared 0: $70,000 taxable, $2,000 + $10,000 = $12,000;
+    - declared $45,000 of itemized deductions: $55,000 taxable, $2,000 +
+      $7,000 = $9,000. On the standard deduction that itemizer's tax, and
+      every payment it drives, read $3,000 high;
+    - declared $25,000, under the standard deduction: the standard, $12,000.
+    """
+    def federal(declared):
+        return P.project_federal_tax(_proj(itemized_deductions=declared),
+                                     _profile_mfj(), _tax_law_2026())
+    standard = federal(0)
+    assert (standard.total_tax, standard.deduction, standard.itemized) == (12000.0, 30000.0, False)
+    itemized = federal(45000)
+    assert (itemized.total_tax, itemized.deduction, itemized.itemized) == (9000.0, 45000.0, True)
+    under = federal(25000)
+    assert (under.total_tax, under.deduction, under.itemized) == (12000.0, 30000.0, False)
+    with pytest.raises(P.ProjectionError,
+                       match="forecast_overrides.itemized_deductions is not set"):
+        federal(None)
+
+
+def test_the_state_projection_prices_from_the_declared_state_deduction():
+    """AA21, the state side. $100,000 of state AGI, an $11,000 standard
+    deduction, 1% to $20,000 and 5% above:
+    - declared 0: $89,000 taxable, $200 + $3,450 = $3,650;
+    - declared $30,000 of state itemized deductions: $70,000 taxable, $200 +
+      $2,500 = $2,700."""
+    prior = _Prior({"california_540": {"ca_total_tax": 5000}})
+
+    def state(declared, prior=prior):
+        return P.project_state_tax(_proj(state_itemized_deductions=declared),
+                                   prior, _tax_law_2026(), filing_status="MFJ")
+    standard = state(0)
+    assert (standard.tax, standard.deduction, standard.itemized) == (3650.0, 11000.0, False)
+    itemized = state(30000)
+    assert (itemized.tax, itemized.deduction, itemized.itemized) == (2700.0, 30000.0, True)
+    with pytest.raises(P.ProjectionError,
+                       match="forecast_overrides.state_itemized_deductions is not set"):
+        state(None)
+
+
+def test_the_report_names_the_deduction_it_priced_from():
+    report = _build_report(
+        inputs={"pay_frequency": "biweekly",
+                "ytd": {"wages": 50000, "federal_withholding": 6000},
+                "forecast_overrides": {"itemized_deductions": 45000,
+                                       "state_itemized_deductions": 30000},
+                "estimated_payments_made": {"federal": 0, "state": 0}},
+        profile=_profile_mfj(), tax_law=_tax_law_2026(),
+        prior=_Prior({"california_540": {"ca_total_tax": 5000},
+                      "form_1040": {"line_24_total_tax": 15000,
+                                    "line_11_agi": 120000}}),
+        year=2026, as_of=datetime.date(2026, 7, 2))
+    md = P.render_markdown(report)
+    assert "| Deduction (itemized) | $45,000 |" in md
+    assert "| State (CA) deduction (itemized) | $30,000 |" in md
+
+
+def test_an_unfetched_federal_standard_deduction_refuses():
+    """`_num` reads None as 0 and the template seeds the standard deduction
+    None, so a half-fetched cache priced a declared-standard filer on no
+    deduction: $100,000 taxable, $2,000 + $16,000 = $18,000 of tax against
+    the $12,000 a $30,000 standard deduction gives. Refused absent or null,
+    as the state side is in the test below."""
+    law = _tax_law_2026()
+    law["federal"]["filing_statuses"]["mfj"]["standard_deduction"] = None
+    with pytest.raises(P.ProjectionError,
+                       match="mfj.standard_deduction is unfetched"):
+        P.project_federal_tax(_proj(), _profile_mfj(), law)
+    del law["federal"]["filing_statuses"]["mfj"]["standard_deduction"]
+    with pytest.raises(P.ProjectionError,
+                       match="mfj.standard_deduction is unfetched"):
+        P.project_federal_tax(_proj(), _profile_mfj(), law)
+
+
+def test_a_separate_filer_is_told_the_spouse_can_force_the_other_deduction():
+    """A spouse's choice can force a separate filer onto the smaller
+    deduction, which the projection prices as the larger: under-stated
+    advisory output, which AGENTS.md §4 lets degrade only with a banner.
+    Federal: only where the standard deduction was taken, since §63(c)(6)(A)
+    denies it once the spouse itemizes. State: wherever one is projected,
+    since California's both-or-neither rule binds either way."""
+    ns = types.SimpleNamespace
+    std, item = ns(itemized=False), ns(itemized=True)
+    ca, va = ns(code="CA"), ns(code="VA")
+    assert P._mfs_deduction_notes("MFJ", std, ca) == (None, None)
+    federal, state = P._mfs_deduction_notes("MFS", std, ca)
+    assert "§63(c)(6)(A)" in federal
+    assert "read low by the tax on the difference" in federal
+    assert "California makes separate filers match" in state
+    assert P._mfs_deduction_notes("MFS", item, None) == (None, None)
+    assert "tie that choice" in P._mfs_deduction_notes("MFS", item, va)[1]
+
+    law = _tax_law_2026()
+    law["federal"]["filing_statuses"]["mfs"] = {
+        "standard_deduction": 15000,
+        "brackets": [{"rate": 0.10, "min": 0, "max": None}]}
+    report = _report(profile={"filing_status": "MFS"}, tax_law=law,
+                     prior=_Prior({"california_540": {"ca_total_tax": 5000}}))
+    assert "§63(c)(6)(A)" in report.mfs_deduction_note
+    assert "California makes" in report.state_mfs_deduction_note
+    md = P.render_markdown(report)
+    assert f"> **⚠ {report.mfs_deduction_note}**" in md
+    assert f"> **⚠ {report.state_mfs_deduction_note}**" in md
+    payload = P._report_to_dict(report)
+    assert payload["mfs_deduction_note"] == report.mfs_deduction_note
+    assert payload["state_mfs_deduction_note"] == report.state_mfs_deduction_note
+
+
+def test_the_federal_table_adds_up_with_schedule_1a_and_qbi():
+    """Both deductions sit between AGI and taxable income beside the one AA21
+    added, and the table named only that one. `_proj` on the joint cache:
+    - a $10,000 Schedule 1-A override: $100,000 - $30,000 - $10,000 =
+      $60,000 taxable;
+    - $20,000 of SE income: SE tax $20,000 x 92.35% x 15.3% = $2,825.91,
+      half $1,412.96, AGI $118,587.04; QBI 20% x ($20,000 - $1,412.96) =
+      $3,717.41; $118,587.04 - $30,000 - $3,717.41 = $84,869.63."""
+    law = _tax_law_2026()
+    one_a = P.project_federal_tax(_proj(schedule_1a_total=10000),
+                                  _profile_mfj(), law, requested_year=2026)
+    assert (one_a.schedule_1a_deduction, one_a.taxable_income) == (10000.0, 60000.0)
+    se = P.project_federal_tax(_proj(self_employment_net=20000),
+                               _profile_mfj(), law, requested_year=2026)
+    assert (se.agi, se.qbi_deduction, se.taxable_income) == (
+        118587.04, 3717.41, 84869.63)
+    report = _report({"schedule_1a": 10000, "self_employment_net": 20000},
+                     tax_law=law)
+    f = report.federal
+    assert f.schedule_1a_deduction == 10000.0 and f.qbi_deduction > 0
+    assert round(f.agi - f.deduction - f.schedule_1a_deduction
+                 - f.qbi_deduction, 2) == f.taxable_income
+    md = P.render_markdown(report)
+    assert "| Schedule 1-A deduction | $10,000 |" in md
+    assert f"| QBI deduction | {P._money(f.qbi_deduction)} |" in md
+    plain = P.render_markdown(_report(tax_law=law))
+    assert "Schedule 1-A deduction" not in plain and "QBI deduction |" not in plain
+
+
+def _state_law(**state):
+    """`_tax_law_2026` with a flat 5% California section, `state` overriding
+    its keys."""
+    law = _tax_law_2026()
+    law["state"] = dict({"code": "CA", "type": "graduated_income",
+                         "brackets": [{"rate": 0.05, "min": 0, "max": None}],
+                         "standard_deduction": {"mfj": 11000}}, **state)
+    return law
+
+
+def test_an_unfetched_state_standard_deduction_refuses():
+    """The state side refused only a status key present at None: an absent
+    map, or a status the map leaves out even after its stand-in, reached
+    `_num` as 0. On `_proj`'s $100,000 at 5% that is $5,000 of state tax
+    against $4,450 on the $11,000 joint deduction, an over-stated 540-ES
+    schedule."""
+    ok = P.project_state_tax(_proj(), None, _state_law(), "MFJ",
+                             resident_state="CA")
+    assert (ok.deduction, ok.tax) == (11000.0, 4450.0)
+    absent = _state_law()
+    del absent["state"]["standard_deduction"]
+    for law in (absent, _state_law(standard_deduction={}),
+                _state_law(standard_deduction={"single": 5500}),
+                _state_law(standard_deduction={"mfj": None})):
+        with pytest.raises(P.ProjectionError,
+                           match="state.standard_deduction.mfj is unfetched"):
+            P.project_state_tax(_proj(), None, law, "MFJ", resident_state="CA")
+
+
+@pytest.mark.parametrize("law, resident", [
+    (_state_law(code="FL", type="none"), "FL"),
+    (_state_law(code="FLA"), "FL"),
+    (_state_law(code="FL"), "FL"),
+    (_state_law(brackets=[]), "CA"),
+    (_state_law(), "NY"),
+    (_state_law(code="TN"), "TN"),
+    (_state_law(), None),
+    (dict(_tax_law_2026(), state=ny_state_cache()), "NY"),
+], ids=["type-none", "invalid-code", "no-tax-code", "no-brackets",
+        "cache-mismatch", "tennessee", "no-resident-or-prior", "recapture"])
+def test_a_state_it_never_prices_is_not_refused_for_its_deduction(law, resident):
+    """Every early return before the state deduction is read: moving
+    `_projected_deduction` above any of them refuses the whole report,
+    federal included, on an answer that state never reads."""
+    assert P.project_state_tax(_proj(state_itemized_deductions=None), None,
+                               law, "MFJ", resident_state=resident) is None
+
+
+def test_the_shipped_template_refuses_until_both_deductions_are_answered(
+        tmp_path, capsys):
+    """`_cli_workspace` declares both deductions for the tests that predate
+    them, so no CLI test ran the template itself: a change reading its nulls
+    as 0 would have left every test green."""
+    template = json.loads((REPO / "agents" / "templates"
+                           / "projection_inputs_template.json").read_text())
+    template["ytd"]["wages"] = 50000
+    args = _cli_workspace(tmp_path, {})
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(template))
+    assert P._main(args + ["--year", "2026"]) == 1
+    assert ("forecast_overrides.itemized_deductions is not set"
+            in capsys.readouterr().err)
+    template["forecast_overrides"].update(
+        itemized_deductions=0, state_itemized_deductions=0)
+    (tmp_path / "projection_inputs.json").write_text(json.dumps(template))
+    assert P._main(args + ["--year", "2026"]) == 0
+
+
+def test_a_declared_itemized_total_is_flagged_as_held():
+    """The declared total is priced as entered, while its SALT phasedown and
+    medical floor move with the projected AGI: a total worked out at another
+    income reads the tax high or low. Set wherever either side itemized."""
+    ns = types.SimpleNamespace
+    std, item = ns(itemized=False), ns(itemized=True)
+    assert P._itemized_deduction_note(std, None) is None
+    assert P._itemized_deduction_note(std, std) is None
+    assert "SALT cap's phasedown" in P._itemized_deduction_note(item, None)
+    assert "medical-expense floor" in P._itemized_deduction_note(std, item)
+
+    report = _report({"itemized_deductions": 45000})
+    assert report.federal.itemized and report.itemized_deduction_note
+    assert (f"- **Declared itemized deductions:** "
+            f"{report.itemized_deduction_note}") in P.render_markdown(report)
+    assert (P._report_to_dict(report)["itemized_deduction_note"]
+            == report.itemized_deduction_note)
+    assert _report().itemized_deduction_note is None
+
+
+def test_a_state_estimate_names_a_deduction_the_federal_choice_can_deny():
+    """Some states require the federal choice, and the projection prices each
+    side's larger deduction on its own, so where the two differ the state
+    figure can be one the state would not allow. California lets them differ
+    and is modeled, so it gets no such sentence."""
+    ns = types.SimpleNamespace
+    va_item, va_std = ns(code="VA", itemized=True), ns(code="VA", itemized=False)
+    note = P._state_bracket_estimate_note(va_item, None, federal_itemized=False)
+    assert "took the itemized deduction where the federal projection took the standard" in note
+    assert "require the federal choice" in note
+    note = P._state_bracket_estimate_note(va_std, None, federal_itemized=True)
+    assert "took the standard deduction where the federal projection took the itemized" in note
+    for state, fed in ((va_item, True), (va_std, False)):
+        assert "federal choice" not in P._state_bracket_estimate_note(
+            state, None, federal_itemized=fed)
+    assert P._state_bracket_estimate_note(va_item, object(),
+                                          federal_itemized=False) is None
+
+    report = _report({"state_itemized_deductions": 20000},
+                     profile={"filing_status": "MFJ", "address": {"state": "VA"}},
+                     tax_law=_state_law(code="VA", standard_deduction={
+                         "single": 8000, "mfj": 16000}))
+    assert report.state.itemized and not report.federal.itemized
+    assert "require the federal choice" in report.state_bracket_estimate_note
+

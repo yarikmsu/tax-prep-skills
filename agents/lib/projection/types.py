@@ -68,6 +68,13 @@ class ProjectedInputs:
     # feeding the line-13b total — without it the same SE tips get both the
     # line-13b deduction and 20% QBI. Must not exceed self_employment_net.
     schedule_1a_se_tips: float = 0.0
+    # The deductions the year is projected on, as the taxpayer declares them
+    # (AA21): the expected itemized total, federal and state, or 0 for the
+    # standard deduction. None is "not answered" and refuses where it is
+    # read — the standard deduction in its place over-states an itemizer's
+    # tax and the payments the projection recommends.
+    itemized_deductions: "float | None" = None
+    state_itemized_deductions: "float | None" = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,12 @@ class FederalProjection:
     niit: float = 0.0
     qbi_over_threshold: bool = False
     schedule_1a_unfetched: bool = False
+    deduction: float = 0.0       # the larger of the standard and the declared itemized
+    itemized: bool = False       # whether the declared itemized total was it
+    # The two other deductions between AGI and taxable income, as applied, so
+    # the report's table adds up.
+    schedule_1a_deduction: float = 0.0
+    qbi_deduction: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -98,10 +111,12 @@ class StateProjection:
     withholding: float
     estimates_paid: float
     balance: float
-    # Projected state AGI (income before the standard deduction; state
+    # Projected state AGI (income before the state deduction; state
     # adjustments are not modeled in v1). Feeds the R&TC §19136.3
     # high-income test, which is on CURRENT-year CA AGI.
     agi: float = 0.0
+    deduction: float = 0.0       # the larger of the standard and the declared itemized
+    itemized: bool = False       # whether the declared itemized total was it
 
 
 @dataclass(frozen=True)
@@ -429,6 +444,20 @@ class ProjectionReport:
     # False here is what the renderer's recurring-income-defaulted-to-0
     # warning gates on, not `degraded`.
     has_prior_archive: bool = False
+    # A separate filer's deduction can be forced by the spouse's choice, which
+    # the projection does not ask: it prices the larger of the two, and where
+    # the forced one is the smaller the tax reads low. Under-stated advisory
+    # output degrades with a banner (AGENTS.md §4), so each is a field the
+    # `--json` payload carries too. Federal: set when the standard deduction
+    # was taken (§63(c)(6)(A) denies it once the spouse itemizes). State: set
+    # whenever a state is projected, since a both-or-neither rule binds either
+    # way. See `_mfs_deduction_notes`.
+    mfs_deduction_note: "str | None" = None
+    state_mfs_deduction_note: "str | None" = None
+    # A declared itemized total is priced as entered while parts of it move
+    # with income, so it can read either way; the payload says so wherever
+    # either projection itemized. See `_itemized_deduction_note`.
+    itemized_deduction_note: "str | None" = None
 
 
 def _money(v) -> str:
