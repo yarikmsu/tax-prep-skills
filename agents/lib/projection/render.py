@@ -760,10 +760,13 @@ def render_markdown(r: ProjectionReport) -> str:
               f"| Adjustments | {_money(f.adjustments)} |",
               f"| AGI | {_money(f.agi)} |",
               f"| Deduction ({'itemized' if f.itemized else 'standard'}) | {_money(f.deduction)} |"]
-    # The other two deductions between AGI and taxable income, where they
-    # apply, so the table shows every one (taxable income still floors at 0).
+    # The other deductions between AGI and taxable income, where they apply,
+    # so the table shows every one (taxable income still floors at 0).
     if f.schedule_1a_deduction:
         lines.append(f"| Schedule 1-A deduction | {_money(f.schedule_1a_deduction)} |")
+    if f.charitable_non_itemizer_deduction:
+        lines.append("| Charitable deduction for non-itemizers | "
+                     f"{_money(f.charitable_non_itemizer_deduction)} |")
     if f.qbi_deduction:
         lines.append(f"| QBI deduction | {_money(f.qbi_deduction)} |")
     lines += [f"| Taxable income | {_money(f.taxable_income)} |",
@@ -936,6 +939,8 @@ def render_markdown(r: ProjectionReport) -> str:
         lines.append("- State estimated-payment scheduling is informational; state rules vary.")
     if r.itemized_deduction_note:
         lines.append(f"- **Declared itemized deductions:** {r.itemized_deduction_note}")
+    if r.charitable_gifts_note:
+        lines.append(f"- **Declared cash gifts:** {r.charitable_gifts_note}")
     if f.qbi_over_threshold:
         lines.append(
             "- **QBI over the §199A threshold:** the Form 8995-A W-2-wage/UBIA limits "

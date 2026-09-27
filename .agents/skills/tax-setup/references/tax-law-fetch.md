@@ -72,10 +72,11 @@ a figure from a prior year.
   MECHANICS ($100/$1,000, $200/$1,000, 6%) are coded, not fetched.
 - Search: `"IRS §170(p) non-itemizer charitable deduction {year} amount"` —
   populate `federal.charitable_non_itemizer` (`amount` ~$1,000 non-joint,
-  `joint_amount` ~$2,000 MFJ). ONLY needed for a TY2026+ STANDARD-deduction
-  filer with cash charitable gifts — leave all-null otherwise (freshness does
-  not nag; `compute_charitable_non_itemizer` hard-errors at use if unfetched
-  when actually needed).
+  `joint_amount` ~$2,000 MFJ). Needed for a TY2026+ filer with cash charitable
+  gifts, an itemizer included: the deduction can make the standard deduction
+  the better choice, and `/tax-compute` and `/tax-project` both weigh it — leave
+  all-null otherwise (freshness does not nag; `compute_charitable_non_itemizer`
+  hard-errors at use if unfetched when actually needed).
 - Search: `"IRS §70105 minimum QBI deduction {year} amount threshold"` —
   populate `federal.qbi_minimum` (`income_threshold` and `amount`, BOTH
   indexed — fetch both, and do not carry either over). ONLY needed for a TY2026+ filer with a small ACTIVE qualified

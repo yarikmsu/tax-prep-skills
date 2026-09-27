@@ -614,7 +614,10 @@ and made cash charitable gifts:**
   FIRST (below), then call this with the resolved `itemizes`. But the election
   comparison itself must add §170(p) to the STANDARD side (below) — so compute
   the §170(p) amount provisionally (as if standard) to run the comparison, then
-  finalize with the real `itemizes`.
+  finalize with the real `itemizes`. An itemizer's cache set up when only a
+  standard-deduction filer needed the cap lacks it, and the provisional call
+  refuses: run `/tax-setup`'s §170(p) search for the year alone, never pass a
+  guessed cap or skip the comparison.
 - Copy `notes` verbatim (DAF exclusion, no-0.5%-floor, no-carryforward,
   substantiation). $0 and a not-in-effect note before TY2026.
 

@@ -7,7 +7,8 @@
           "ss_wages": 60000, "medicare_wages": 61000, "medicare_withheld": 885},
   "forecast_overrides": {"year_end_bonus": 0, "rsu_vesting": 0, "capital_gains": 0,
                          "self_employment_net": 0, "other_income": 0,
-                         "itemized_deductions": 0, "state_itemized_deductions": 0},
+                         "itemized_deductions": 0, "state_itemized_deductions": 0,
+                         "charitable_cash_gifts": 0},
   "recurring_from_prior": {"taxable_interest": 500, "ordinary_dividends": 1000, "qualified_dividends": 800},
   "estimated_payments_made": {"federal": 0, "state": 0}
 }

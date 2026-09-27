@@ -1183,3 +1183,153 @@ priced: the projection does not ask how the spouse files.
 The declared figure is the taxpayer's estimate: the projection does not
 recompute Schedule A from projected AGI, and says so wherever it priced an
 itemized total. AA23 would price it.
+
+## AA22 — the projection, on the year's cash gifts to charity
+
+### What was wrong
+
+From TY2026 a filer who takes the standard deduction also deducts cash gifts to
+charity, up to a fetched cap, below AGI on Form 1040 line 13c (§170(p)).
+`/tax-compute` takes it through `compute_charitable_non_itemizer`, but the
+projection had no input for it, so the gifts stayed in projected taxable
+income. On the test cache a joint filer with $1,500 of gifts was projected
+$12,000 of federal tax where the year comes to $11,700, and every W-4 and
+estimated payment the report recommends was priced from the higher figure. The
+compute step also weighs the itemized total against the standard deduction plus
+this deduction, so a donor who itemizes by a little can do better on the
+standard deduction; the projection compared the bare figures. AA21's review
+found it.
+
+### What shipped
+
+- **Declared, from TY2026.** `forecast_overrides.charitable_cash_gifts` carries
+  the cash the taxpayer expects to give to charity this year, or 0 for none.
+  Ruled required, as AA21's deductions are: an unanswered one refuses from
+  TY2026, since reading it as 0 is the over-statement being fixed. Before
+  TY2026 it is never priced, though a malformed one refuses in any year, as
+  every forecast override does. The template ships it as null.
+- **Priced by the engine's function.** Where the standard deduction wins,
+  `compute_charitable_non_itemizer` prices the gifts against the fetched cap.
+  An itemized total above the standard deduction plus every gift declared
+  itemizes without reading the cap. Anywhere else it is read, since short of
+  the figure any cap up to the gifts could decide the choice, and an unfetched
+  one refuses, naming the one block to fetch. The deduction comes off taxable
+  income and the QBI cap's base, as line 13c does, and the report's table and
+  JSON carry it.
+- **The choice.** The itemized total is weighed against the standard deduction
+  plus this one, as the compute step weighs them, so gifts can tip a filer just
+  over the line onto the standard deduction. A separate filer's note says
+  itemizing gives it up.
+- **The skills.** `/tax-project` asks for the gifts with the deductions,
+  pre-filled from the archived return where that return took the deduction.
+  `/tax-setup` fetched the cap only for a standard-deduction filer with gifts,
+  which setup cannot know, since the deduction itself can decide that choice;
+  it now fetches the cap for any TY2026 filer with cash gifts. A cache
+  fetched to the old rule still lacks it for an itemizer, and both
+  `/tax-project` and `/tax-compute`, whose provisional call for the choice
+  refuses there too, say to fetch that one block rather than re-run setup or
+  re-ask the taxpayer.
+
+### Tests
+
+Hand-computed on the test cache: joint $11,700 at $1,500 of gifts against
+$12,000 without, $11,600 at $5,000 capped to $2,000, and single $15,800 capped
+to $1,000. The choice is pinned both ways ($31,000 itemized takes the standard
+deduction at $1,500 of gifts and itemizes at $500), and so is the QBI cap's base
+($4,139.27 taxable, where taking the gifts after QBI reads $3,739.27). So are
+the refusal, a TY2025 run that neither refuses nor applies the figure, an
+unfetched cap refused where it is read and not read where it cannot decide,
+the report's row, the separate filer's sentence and the template's null.
+
+### Simplify
+
+Four review angles; efficiency found nothing to change. From the rest:
+- **One owner for the choice.** The itemize-or-standard comparison was
+  written twice, once in a shortcut that skipped the cap and once in
+  `_projected_deduction`, and the caller zeroed the deduction for an itemizer
+  after both. `_federal_deduction` now returns the deduction, the choice and
+  line 13c, making the comparison through `_projected_deduction` alone.
+- **Point at the owner.** `/tax-extend` and `/tax-retirement` listed the
+  figures `/tax-project` step 2 requires, and step 2 counted them, so each new
+  one meant editing three skills. They now name step 2, and the count is gone.
+- **The cap-fetch rule**, above.
+- **Smaller:** `_declared_deduction` is `_declared_answer`, since it reads the
+  gifts too; the table-adds-up check had two copies, one missing line 13c, and
+  is one; three local test wrappers are one; the separate filer's note is
+  built with a plain `if`.
+- **Recorded, not built:** no engine function owns the itemize-or-standard
+  choice with §170(p) in it. `compute_schedule_a`'s election ignores it,
+  `/tax-compute` adds it by hand and the projection in code. That belongs to
+  AA23, which re-runs `compute_schedule_a` and would otherwise inherit an
+  election that is wrong for a donor near the margin.
+- **Left:** a legacy inputs file missing every figure refuses one at a time;
+  step 2 asks for all of them together.
+
+### Review
+
+Three local reviews. What they found is fixed here, except as the last
+three bullets say:
+- **The gift default read a field nothing writes.** Step 3 pre-filled the
+  gifts from `charitable_non_itemizer.raw`, which `/tax-compute` never fills,
+  so a TY2027 projection from a TY2026 archive defaulted them to 0 and
+  over-stated the tax. The default is now line 13c, the capped deduction,
+  with a question about anything given beyond it.
+- **A cache with no year dropped the gifts.** The gate read a cache that
+  declared none as before TY2026: $12,000 where $1,500 of gifts gives
+  $11,700. A second review found the first fix, letting the year requested
+  win, priced gifts on a cache for another year, which Schedule 1-A's gate
+  refused, and still dropped them where no year was requested. Both gates
+  now read one helper, `_cache_year`: the cache's own year, a plain int
+  matching the one requested. Where it has none, Schedule 1-A's override
+  clears as before and declared gifts refuse. Only a direct call reaches
+  either, since `build_report` refuses such a cache first.
+- **Which gifts qualify went unsaid.** The engine's notes (cash only, no
+  donor-advised fund or supporting organization, a written acknowledgment
+  from $250) reached no reader, so a gift that does not qualify read the tax
+  low with no banner. `charitable_gifts_note` carries it wherever the
+  deduction was taken.
+- **"The larger of" was no longer true federally.** Step 2, the template's
+  comment on the itemized total, the `deduction` field's comment and
+  `_projected_deduction`'s docstring said the larger of the two was priced,
+  where gifts can now make the standard deduction win against a larger
+  itemized total. The separate filer's note called such a total "the
+  smaller"; it now says itemizing can deduct less.
+- **A set-aside itemized total went unexplained.** Where gifts tip the
+  choice, $31,000 itemized against $30,000 plus $1,500, nothing said why the
+  declared total was not used. The gifts note now says so, and how little
+  of them need qualify for itemizing to deduct more. The third
+  review found the first wording weighed the itemized total against every
+  gift where the choice weighed it against the capped deduction, and named
+  only the case where none qualify: at $1,500 of gifts against $31,000,
+  losing $600 of them already makes itemizing better. It now names the
+  deduction and that margin.
+- **An unfetched cap refused with no way through.** A cache set up before
+  the cap-fetch rule changed lacks the cap for an itemizer, and one whose
+  gifts exceed the itemized total's margin over the standard deduction
+  refuses, since short of the figure any cap up to the gifts could decide
+  the choice. The refusal said "fetch via /tax-setup", which reads as the
+  whole interview, and step 2's rule against writing a 0 made re-asking the
+  taxpayer the likely response. The refusal, `/tax-project` step 2 and
+  `/tax-compute` now name the one block to fetch.
+- **Smaller:** a cap block that is not an object is an unfetched one rather
+  than a traceback; the fetcher's schema comment states the new fetch rule;
+  a TY2025 `build_report` with the gifts null, and the non-joint cap's
+  refusal, are tested. The second review also found two separate-filer
+  comments still calling the choice "the larger", `/tax-retirement` no longer
+  naming the half of SE tax taken before AGI, and a no-gifts shortcut the
+  engine already made, whose test could not fail; the shortcut is gone and
+  the test pins the engine. The third found the year refusal saying the
+  cache declared no year where it declared another, and naming gifts the
+  taxpayer declared where none were; `_validate_tax_law_year` repeating
+  `_cache_year`'s rule, which it now asks; the year checked twice in
+  `_federal_deduction`; and the separate filer's sentence on the gifts
+  tested only on stand-ins, which a `build_report` run now covers.
+- **Recorded already:** no engine function owns the itemize-or-standard
+  choice with §170(p) in it; AA23's entry carries it.
+- **Left:** the gifts note states §170(f)(8)'s $250 acknowledgment threshold,
+  as four of the engine's notes and `answers.py` already do. Whether AGENTS.md
+  §2's list of written figures should name it is the owner's call.
+- **Left:** on a cache that cannot show the year being projected, a
+  Schedule 1-A override clears, over-stating the tax, where the gifts
+  refuse. Main cleared it the same way, only a direct `project_federal_tax`
+  call reaches either, and a refusal would change a rule main's tests pin.

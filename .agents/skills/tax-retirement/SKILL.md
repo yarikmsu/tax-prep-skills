@@ -89,11 +89,11 @@ Resolution order (pick the cheapest reliable source):
   `sh agents/lib/run.sh -m agents.lib.projection --inputs projection_inputs.json --year {year} --json`
   and read `federal.agi`, `federal.taxable_income` and `state.taxable_income`
   (ask for the state rate when `state` is null), then look up each bracket.
-  Never re-derive them by hand: the engine prices the declared deductions,
-  federal and state, with Schedule 1-A, QBI and half of SE tax. Where it
-  refuses for an unanswered deduction, ask the taxpayer as `/tax-project`
-  step 2 does and never fill one in, since the standard deduction in an
-  itemizer's place reads the bracket, and the savings, high. A file holding
+  Never re-derive them by hand: the engine takes half of SE tax off before AGI
+  and prices every deduction it models between AGI and taxable income, from the
+  figures the taxpayer declares. Where it refuses for an unanswered one, ask the
+  taxpayer as `/tax-project` step 2 does and never fill one in: a 0 written in
+  its place reads the bracket, and the savings, high. A file holding
   only `retirement_ytd`, its income left null, does not qualify: the
   projection reads that income as $0, which overstates every phase-out
   eligibility the dashboard reports

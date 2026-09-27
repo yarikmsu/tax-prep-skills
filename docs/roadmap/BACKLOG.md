@@ -83,7 +83,7 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, **AA21**, **AA22**, **AA23**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, **AA22**, **AA23**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -226,25 +226,10 @@ Windows has not run since 2026-09-13.
   The auditor edit rides Y2's chain, since the definition is digest-pinned to
   a passed acceptance. Found by AA16's second review.
 
-- **AA21 (P2, M): `/tax-project` prices every projection on the standard
-  deduction.** **BUILT by the pull request that records it in
-  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
-  that merges.** `projection.project_federal_tax` subtracts the cache's
-  `filing_statuses.<status>.standard_deduction` for every filer and takes no
-  itemized amount. For an itemizer with $60,000 of itemized deductions against a
-  $31,500 standard deduction, projected taxable income comes out $28,500 too
-  high, and with it the projected tax and the W-4 or 1040-ES amounts
-  `/tax-project` recommends. AA20 fixed the planning keystone by reading the
-  return's line 12, which a current-year projection does not have: this needs
-  an input for the year's expected deduction, asked or carried from the prior
-  return with a banner, and a ruling on which way a missing one may err. That
-  is an over-statement of the number acted on, the direction AGENTS.md §4 makes
-  a hard error; filed P2 because a projection is re-run through the year and
-  over-withheld tax comes back as a refund, which makes the priority the
-  owner's call. Found by AA20's review.
-
 - **AA22 (P2, S): `/tax-project` has no place for the §170(p) non-itemizer
-  charitable deduction.** From TY2026 a standard-deduction filer deducts cash
+  charitable deduction.** **BUILT by the pull request that records it in
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.** From TY2026 a standard-deduction filer deducts cash
   gifts to charity below the line (Form 1040 line 13c, capped by
   `federal.charitable_non_itemizer`), and `/tax-compute` takes it through
   `compute_charitable_non_itemizer`. The projection subtracts only the larger
@@ -255,7 +240,8 @@ Windows has not run since 2026-09-13.
   filed P2 for AA21's reason, a projection re-run through the year whose excess
   comes back as a refund. The fix is a declared gift figure priced through the
   engine's function where the standard deduction wins, and a ruling on whether
-  it is required as AA21's are. Found by AA21's review.
+  it is required as AA21's are. Found by AA21's review. Ruled 2026-09-26:
+  required from TY2026, as AA21's are.
 
 - **AA23 (P2, M): Schedule A is held, not priced, wherever AGI moves.** The
   planning tools hold the return's line 12 (AA20) and `/tax-project` a declared
@@ -265,7 +251,11 @@ Windows has not run since 2026-09-13.
   `medical_floor_caveat` and `itemized_deduction_note`. Taking Schedule A's
   inputs and re-running `compute_schedule_a` at each priced AGI would price
   them and retire all three. AA20's entry recorded this fix and left with it
-  when AA20 shipped; AA21's simplify pass found it gone.
+  when AA20 shipped; AA21's simplify pass found it gone. The same function
+  should own the itemize-or-standard choice with §170(p) on the standard side:
+  `compute_schedule_a`'s election ignores it, `/tax-compute` adds it by hand
+  and `/tax-project` in code (AA22), so re-running `compute_schedule_a` as it
+  stands would elect wrongly for a donor near the margin.
 
 ### W — engineering hygiene
 
@@ -642,6 +632,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA6 | #178 | three blocks cannot be sized from public data (statutory residency in a second state, a PFIC event, out-of-state income other than a commute); the figures are tax year 2023 and need a yearly refresh |
 | AA16 | #179 | modified AGI is an input the compute step forms, as Schedule 1-A's is; the planning tools say the cap is held at the baseline rather than re-price it |
 | AA20 | #180 | the planning tools hold the return's deduction rather than re-price it: the SALT phasedown and the medical floor are caveated, a capped charitable deduction refuses, and the TY2026 charitable floor, the §70111 haircut and an itemize-or-standard switch are held; /tax-project was AA21 |
+| AA21 | #181 | a declared itemized total is priced as entered, not re-worked at the projected AGI (AA23); the §170(p) deduction for non-itemizers was AA22 |
 | Q7 | #156 | — |
 | Q9 | #156 | — |
 | Q8 | #158 | — |

@@ -171,7 +171,10 @@ Life-event flags read False when absent, so a legacy profile still passes.
   full-year tax, safe-harbor estimates, and W-4 4(c)/1040-ES guidance from YTD figures.
   Priced on the deductions the taxpayer declares for the year, federal and state
   (`forecast_overrides.itemized_deductions`, `state_itemized_deductions`; 0 is the
-  standard deduction, and an unanswered one refuses — AA21); a separate filer is warned
+  standard deduction, and an unanswered one refuses — AA21), and from TY2026 on the
+  year's cash gifts to charity (`charitable_cash_gifts`, required alike — AA22), which
+  earn a standard-deduction filer §170(p)'s deduction and count in the choice between
+  the standard and itemized deductions; a separate filer is warned
   that the spouse's choice can force the other deduction, and an itemizer that the
   declared total is held as entered while parts of it move with income. When the state projection
   runs and the state is CA, adds the FTB 5805 CA safe harbor

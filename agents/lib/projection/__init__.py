@@ -55,6 +55,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     prior_year_prong,
     compute_additional_medicare,
     compute_bracket_tax,
+    compute_charitable_non_itemizer,
     compute_child_tax_credit,
     compute_niit,
     compute_qbi_deduction,
@@ -64,6 +65,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     net_capital_gains,
     _split_remainder_last,
     state_brackets_for_status,
+    _CHARITABLE_NONITEMIZER_FROM,
     _SCH1A_EFFECTIVE_FROM,
     _SCH1A_EFFECTIVE_THROUGH,
 )
@@ -326,16 +328,19 @@ def _state_bracket_estimate_note(state, ca_safe_harbor,
 
 def _mfs_deduction_notes(fs: str, federal, state) -> "tuple[str | None, str | None]":
     """The (federal, state) banners for a separate filer, whose deduction the
-    spouse's choice can force to the smaller one the projection did not take.
+    spouse's choice can force to the one the projection did not take, which
+    deducts less.
     Plain prose, a payload field first, like `_state_bracket_estimate_note`."""
     if fs != "MFS":
         return None, None
     federal_note = None if federal.itemized else (
         "Filing separately, this projection took the standard deduction. If "
         "your spouse itemizes, §63(c)(6)(A) denies it to you and you must "
-        "itemize even where your itemized total is the smaller, so the federal "
-        "tax and the payments recommended here read low by the tax on the "
-        "difference.")
+        "itemize even where that deducts less, so the federal tax and the "
+        "payments recommended here read low by the tax on the difference.")
+    if federal_note and federal.charitable_non_itemizer_deduction:
+        federal_note += (" That difference includes the charitable deduction "
+                         "for non-itemizers taken here, which itemizing gives up.")
     if state is None:
         return federal_note, None
     rule = ("California makes separate filers match their spouse, both "
@@ -364,6 +369,33 @@ def _itemized_deduction_note(federal, state) -> "str | None":
             "makes the tax and the payments here read high or low.")
 
 
+
+
+def _charitable_gifts_note(federal, declared: "float | None") -> "str | None":
+    """The banner for §170(p)'s deduction (AA22), which takes the declared
+    gifts as entered: only some gifts qualify, and the engine's notes saying
+    which reach no reader of the projection otherwise. Where the gifts tipped
+    the choice, a `declared` itemized total above the standard deduction was
+    set aside, and it says so. Plain prose, a payload field first, like
+    `_state_bracket_estimate_note`."""
+    if not federal.charitable_non_itemizer_deduction:
+        return None
+    note = ("This projection deducts the cash gifts to charity you declared, up "
+            "to the cap for filers who take the standard deduction. Only cash "
+            "given directly to a qualifying charity counts: gifts to a "
+            "donor-advised fund or a supporting organization, and gifts of "
+            "property, do not, and a gift of $250 or more needs the charity's "
+            "written acknowledgment. Gifts that do not qualify make the tax and "
+            "the payments here read low.")
+    if declared is not None and declared > federal.deduction:
+        note += (" The itemized total you declared was set aside: it is larger "
+                 "than the standard deduction, but not than the standard "
+                 "deduction plus the "
+                 f"{_money(federal.charitable_non_itemizer_deduction)} "
+                 "deducted for these gifts. If under "
+                 f"{_money(declared - federal.deduction)} of them qualifies, "
+                 "itemizing deducts more.")
+    return note
 
 
 def _capital_loss_limit(filing_status: "str | None",
@@ -778,12 +810,11 @@ def paychecks_available_for_year(pay_frequency: str, year: int,
     return paychecks_remaining(pay_frequency, elapsed_fraction(today))
 
 
-def _declared_deduction(overrides: dict, key: str) -> "float | None":
-    """An expected itemized total from `forecast_overrides`, or None when the
+def _declared_answer(overrides: dict, key: str) -> "float | None":
+    """A figure the taxpayer declares in `forecast_overrides`, or None when the
     question was not answered. Not `_nonneg_num`'s None-is-zero: an absent
-    figure and a declared 0 (take the standard deduction) are different
-    answers, and reading the first as the second is the silent standard
-    deduction AA21 removed."""
+    figure and a declared 0 are different answers, and reading the first as
+    the second is the silent over-statement AA21 removed."""
     raw = overrides.get(key)
     return None if raw is None else _nonneg_num(raw, f"forecast_overrides.{key}")
 
@@ -800,12 +831,18 @@ def _fetched_num(value, key: str) -> float:
 
 
 def _projected_deduction(standard: float, declared: "float | None",
-                         key: str, standard_name: str) -> "tuple[float, bool]":
-    """The deduction a projection prices from: the larger of the standard
-    deduction and the itemized total the taxpayer expects, with whether the
-    itemized one won. Refuses an unanswered one, since the standard deduction
+                         key: str, standard_name: str,
+                         non_itemizer: float = 0.0) -> "tuple[float, bool]":
+    """The deduction a projection prices from, with whether the itemized one
+    won: the itemized total the taxpayer expects where it beats the standard
+    deduction plus `non_itemizer`, else the standard deduction. Refuses an
+    unanswered one, since the standard deduction
     in its place over-states an itemizer's tax and every payment the report
-    recommends — the direction AGENTS.md §4 makes a hard error (AA21)."""
+    recommends — the direction AGENTS.md §4 makes a hard error (AA21).
+
+    `non_itemizer` is a deduction only a standard-deduction filer takes, the
+    federal §170(p) charitable one, so it sits on the standard side of the
+    comparison, as /tax-compute's election puts it (AA22)."""
     if declared is None:
         raise ProjectionError(
             f"forecast_overrides.{key} is not set: the projection prices from "
@@ -813,7 +850,80 @@ def _projected_deduction(standard: float, declared: "float | None",
             "its place over-states an itemizer's tax and the payments it "
             "recommends. Enter the year's expected itemized deductions, or 0 "
             f"to take {standard_name}.")
-    return (declared, True) if declared > standard else (standard, False)
+    return ((declared, True) if declared > standard + non_itemizer
+            else (standard, False))
+
+
+def _cache_year(tax_law: dict, requested_year: "int | None") -> "int | None":
+    """The tax year `tax_law` prices, or None where it cannot show one: its
+    own `tax_year`, a plain int, and the year requested wherever the caller
+    names one. `build_report` refuses such a cache before either projection
+    runs, asking this through `_validate_tax_law_year`, but
+    `project_federal_tax` is called directly too, so each deduction gated on
+    the year reads this rather than a check of its own: None clears a
+    Schedule 1-A override and refuses cash gifts to charity other than 0."""
+    year = tax_law.get("tax_year")
+    if isinstance(year, bool) or not isinstance(year, int):
+        return None
+    if requested_year is not None and year != requested_year:
+        return None
+    return year
+
+
+def _federal_deduction(declared: "float | None", gifts: "float | None",
+                       standard: float, fs: str, year: "int | None",
+                       fed: dict) -> "tuple[float, bool, float]":
+    """The federal deduction, whether it is the itemized one, and §170(p)'s
+    line 13c beside it (AA22), chosen as /tax-compute's election chooses: the
+    itemized total against the standard deduction plus line 13c. From TY2026
+    the gifts are required, since left out they stay in taxable income, and
+    a `year` of None, from `_cache_year`, refuses gifts other than 0 rather
+    than read them as 0.
+
+    Every gift goes on the standard side first, and an itemized total that
+    beats them all itemizes without reading the cap. Anywhere else the cap
+    is read, since short of the figure any cap up to the gifts could decide
+    the choice. So an itemizer whose gifts exceed that margin refuses on a
+    cache set up when only a standard-deduction filer needed the cap, and
+    the refusal names the one block to fetch. The engine prices no gifts at
+    0 before it reads the cap."""
+    def choose(line_13c: float) -> "tuple[float, bool]":
+        return _projected_deduction(standard, declared, "itemized_deductions",
+                                    "the standard deduction", line_13c)
+
+    if year is None or year < _CHARITABLE_NONITEMIZER_FROM:
+        if year is None and gifts != 0:
+            raise ProjectionError(
+                "The tax-law cache does not show that it prices the year being "
+                "projected: its tax_year is missing, not a whole number, or "
+                "another year. Cash gifts to charity are deductible only from "
+                f"TY{_CHARITABLE_NONITEMIZER_FROM}, so they cannot be priced "
+                "without it. Re-run /tax-setup to fetch this year's cache.")
+        return (*choose(0.0), 0.0)
+    if gifts is None:
+        raise ProjectionError(
+            "forecast_overrides.charitable_cash_gifts is not set: from "
+            f"TY{_CHARITABLE_NONITEMIZER_FROM} a filer who takes the standard "
+            "deduction also deducts cash gifts to charity, and leaving them out "
+            "over-states the tax and the payments it recommends. Enter the "
+            "cash you expect to give to charity this year, or 0 for none.")
+    deduction, itemized = choose(gifts)
+    if itemized:
+        return deduction, itemized, 0.0
+    caps = fed.get("charitable_non_itemizer")
+    if not isinstance(caps, dict):
+        caps = {}  # malformed is unfetched, and the engine refuses it
+    try:
+        line_13c = compute_charitable_non_itemizer(
+            gifts, fs, year, itemizes=False, amount=caps.get("amount"),
+            joint_amount=caps.get("joint_amount"))["allowed"]
+    except ValueError as e:
+        raise ProjectionError(
+            f"{redact(e)}. Fetch only federal.charitable_non_itemizer, with "
+            "/tax-setup's §170(p) search: the rest of this year's cache "
+            "stands, and the declared gifts are not what is missing.") from None
+    deduction, itemized = choose(line_13c)
+    return deduction, itemized, 0.0 if itemized else line_13c
 
 
 def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
@@ -878,9 +988,10 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
         schedule_1a_total=_nonneg_num(overrides.get("schedule_1a"), "schedule_1a"),
         schedule_1a_se_tips=_nonneg_num(
             overrides.get("schedule_1a_se_tips"), "schedule_1a_se_tips"),
-        itemized_deductions=_declared_deduction(overrides, "itemized_deductions"),
-        state_itemized_deductions=_declared_deduction(
+        itemized_deductions=_declared_answer(overrides, "itemized_deductions"),
+        state_itemized_deductions=_declared_answer(
             overrides, "state_itemized_deductions"),
+        charitable_cash_gifts=_declared_answer(overrides, "charitable_cash_gifts"),
         qualified_dividends=qualified,
         ordinary_dividends=ordinary,
         taxable_interest=_num(recurring.get("taxable_interest"), "taxable_interest"),
@@ -924,9 +1035,10 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         )
     std = _fetched_num(fstatus.get("standard_deduction"),
                        f"federal.filing_statuses.{full_key}.standard_deduction")
-    deduction, itemized = _projected_deduction(
-        std, proj.itemized_deductions, "itemized_deductions",
-        "the standard deduction")
+    proj_year = _cache_year(tax_law, requested_year)
+    deduction, itemized, charitable = _federal_deduction(
+        proj.itemized_deductions, proj.charitable_cash_gifts, std, fs,
+        proj_year, fed)
 
     # ST/LT netting with character preservation (shared net_capital_gains). The
     # legacy combined `capital_gains` field is treated as LONG-term; short-term
@@ -969,20 +1081,16 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
     # compute_schedule_1a returns $0 outside TY2025-2028, so a stale override
     # for TY2029+/pre-2025 must not shave taxable income (which would understate
     # tax and the safe-harbor target) — Codex P2.
-    proj_year = tax_law.get("tax_year")
     sch1a = max(0.0, proj.schedule_1a_total)
     # Effective-year gate, FAIL CLOSED: apply the Schedule 1-A override ONLY
-    # when the cache's tax_year is a genuine int inside TY2025-2028. A missing,
-    # non-int, or out-of-window year clears it — a malformed or legacy cache
+    # when the cache's tax_year is a genuine int inside TY2025-2028, and the
+    # year requested where one is (`_cache_year`). A missing, non-int,
+    # mismatched or out-of-window year clears it — a malformed or legacy cache
     # (or a TY2029+/pre-2025 projection) must not shave taxable income. (The
     # earlier "clear only when it's an int OUTSIDE the window" logic failed
     # open on a missing/string year — Codex round-16 P2.)
-    year_ok = (isinstance(proj_year, int) and not isinstance(proj_year, bool)
-               and _SCH1A_EFFECTIVE_FROM <= proj_year <= _SCH1A_EFFECTIVE_THROUGH
-               # ...and, when the caller supplies the requested projection year,
-               # the cache year must MATCH it — a cache built for a different
-               # (even in-window) year can't validate this year's override.
-               and (requested_year is None or proj_year == requested_year))
+    year_ok = (proj_year is not None
+               and _SCH1A_EFFECTIVE_FROM <= proj_year <= _SCH1A_EFFECTIVE_THROUGH)
     if sch1a and not year_ok:
         sch1a = 0.0
     # MFS gate: ALL FOUR Schedule 1-A provisions are $0 for a married filer who
@@ -999,7 +1107,9 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
     # silently trusting a possibly-raw figure.
     schedule_1a_unfetched = bool(
         sch1a > 0 and _sch1a_limits_incomplete(fed.get("schedule_1a")))
-    ti_before_qbi = max(0.0, agi - deduction - sch1a)
+    # §170(p)'s line 13c sits beside Schedule 1-A below AGI, so it comes off
+    # the QBI cap's base too.
+    ti_before_qbi = max(0.0, agi - deduction - sch1a - charitable)
     # §224 SE tips are EXCLUDED from QBI (Form 8995): when the applied Schedule
     # 1-A deduction includes self-employed qualified tips, those same dollars
     # are removed from the QBI base so they don't get both the line-13b
@@ -1105,6 +1215,7 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         schedule_1a_unfetched=schedule_1a_unfetched,
         deduction=round(deduction, 2), itemized=itemized,
         schedule_1a_deduction=round(sch1a, 2), qbi_deduction=round(qbi, 2),
+        charitable_non_itemizer_deduction=round(charitable, 2),
     )
 
 
@@ -2058,9 +2169,8 @@ def _validate_tax_law_year(tax_law: dict, year: int) -> None:
     class of unusable-cache problem as a missing one, just with data that
     happens to be present but wrong.
     """
-    cache_tax_year = tax_law.get("tax_year")
-    if isinstance(cache_tax_year, bool) or not isinstance(cache_tax_year, int) \
-            or cache_tax_year != year:
+    if _cache_year(tax_law, year) is None:
+        cache_tax_year = tax_law.get("tax_year")
         raise ProjectionError(
             f"tax_law_{year}.json does not declare tax_year {year} "
             f"(found {cache_tax_year!r}) — this cache cannot be trusted for "
@@ -2225,7 +2335,9 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         state_unsupported_note=state_unsupported_note,
         mfs_deduction_note=mfs_deduction_note,
         state_mfs_deduction_note=state_mfs_deduction_note,
-        itemized_deduction_note=_itemized_deduction_note(federal, state))
+        itemized_deduction_note=_itemized_deduction_note(federal, state),
+        charitable_gifts_note=_charitable_gifts_note(
+            federal, proj.itemized_deductions))
 
 
 
@@ -3293,6 +3405,7 @@ def _report_to_dict(r: ProjectionReport) -> dict:
         "mfs_deduction_note": r.mfs_deduction_note,
         "state_mfs_deduction_note": r.state_mfs_deduction_note,
         "itemized_deduction_note": r.itemized_deduction_note,
+        "charitable_gifts_note": r.charitable_gifts_note,
     }
 
 

@@ -347,8 +347,9 @@ def create_empty_tax_law(year: int) -> dict:
             },
             # §170(p) non-itemizer charitable deduction (OBBBA §70424, TY2026+).
             # OPT-IN: null block is the DEFAULT (compute_charitable_non_itemizer
-            # hard-errors at use when a standard-deduction filer has cash gifts
-            # and the cap is unfetched). amount = non-joint; joint_amount = MFJ.
+            # hard-errors at use when cash gifts meet an unfetched cap, which
+            # the itemize-or-standard choice does for an itemizer with gifts
+            # too). amount = non-joint; joint_amount = MFJ.
             "charitable_non_itemizer": {"amount": None, "joint_amount": None},
             # §70105 minimum QBI deduction (OBBBA, TY2026+). OPT-IN: taxpayer-
             # favorable, so compute_qbi_deduction DEGRADES (no floor) when this

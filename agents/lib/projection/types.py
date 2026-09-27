@@ -75,6 +75,9 @@ class ProjectedInputs:
     # tax and the payments the projection recommends.
     itemized_deductions: "float | None" = None
     state_itemized_deductions: "float | None" = None
+    # The year's expected cash gifts to charity (AA22), read from TY2026 for
+    # §170(p)'s deduction for non-itemizers. None refuses there, as above.
+    charitable_cash_gifts: "float | None" = None
 
 
 @dataclass(frozen=True)
@@ -95,12 +98,13 @@ class FederalProjection:
     niit: float = 0.0
     qbi_over_threshold: bool = False
     schedule_1a_unfetched: bool = False
-    deduction: float = 0.0       # the larger of the standard and the declared itemized
+    deduction: float = 0.0       # the standard or the declared itemized, as chosen
     itemized: bool = False       # whether the declared itemized total was it
-    # The two other deductions between AGI and taxable income, as applied, so
+    # The other deductions between AGI and taxable income, as applied, so
     # the report's table adds up.
     schedule_1a_deduction: float = 0.0
     qbi_deduction: float = 0.0
+    charitable_non_itemizer_deduction: float = 0.0  # §170(p), line 13c
 
 
 @dataclass(frozen=True)
@@ -445,8 +449,8 @@ class ProjectionReport:
     # warning gates on, not `degraded`.
     has_prior_archive: bool = False
     # A separate filer's deduction can be forced by the spouse's choice, which
-    # the projection does not ask: it prices the larger of the two, and where
-    # the forced one is the smaller the tax reads low. Under-stated advisory
+    # the projection does not ask: it prices the choice that deducts more, and
+    # where the spouse forces the other one the tax reads low. Under-stated advisory
     # output degrades with a banner (AGENTS.md §4), so each is a field the
     # `--json` payload carries too. Federal: set when the standard deduction
     # was taken (§63(c)(6)(A) denies it once the spouse itemizes). State: set
@@ -458,6 +462,9 @@ class ProjectionReport:
     # with income, so it can read either way; the payload says so wherever
     # either projection itemized. See `_itemized_deduction_note`.
     itemized_deduction_note: "str | None" = None
+    # §170(p)'s deduction takes the declared gifts as entered, and only some
+    # gifts qualify; set wherever it was taken. See `_charitable_gifts_note`.
+    charitable_gifts_note: "str | None" = None
 
 
 def _money(v) -> str:

@@ -104,9 +104,10 @@ def test_input_template_is_valid_and_complete():
         assert section in tmpl
     assert tmpl["pay_frequency"] in P.PAY_PERIODS
     assert set(tmpl["ytd"]) >= {"wages", "federal_withholding", "state_withholding"}
-    # AA21: unanswered is null, never 0 — a 0 placeholder would read as a
-    # declared standard deduction and price an itemizer on it.
-    for key in ("itemized_deductions", "state_itemized_deductions"):
+    # AA21, AA22: unanswered is null, never 0 — a 0 placeholder would read as
+    # a declared standard deduction, or as no gifts, and over-state the tax.
+    for key in ("itemized_deductions", "state_itemized_deductions",
+                "charitable_cash_gifts"):
         assert tmpl["forecast_overrides"][key] is None, key
 
 
@@ -255,12 +256,14 @@ def _profile_mfj(deps=None):
 
 
 def _declared_standard(inputs: dict) -> dict:
-    """AA21 made the year's deductions a required declaration. Every test
-    written before it priced on the standard deduction, so this declares 0,
-    the standard deduction, wherever a test leaves the question out."""
+    """AA21 made the year's deductions a required declaration, and AA22 the
+    year's cash gifts. Every test written before them priced on the standard
+    deduction and no gifts, so this declares 0 for each wherever a test leaves
+    the question out."""
     overrides = dict(inputs.get("forecast_overrides") or {})
     overrides.setdefault("itemized_deductions", 0)
     overrides.setdefault("state_itemized_deductions", 0)
+    overrides.setdefault("charitable_cash_gifts", 0)
     return dict(inputs, forecast_overrides=overrides)
 
 
@@ -284,7 +287,7 @@ def _proj(**overrides):
         medicare_withheld=1450, ss_wages=100000, capital_gains=0, qualified_dividends=0,
         ordinary_dividends=0, taxable_interest=0, self_employment_net=0, other_income=0,
         estimated_fed_paid=0, estimated_state_paid=0, elapsed_fraction=0.5, paychecks_remaining=13,
-        itemized_deductions=0, state_itemized_deductions=0)
+        itemized_deductions=0, state_itemized_deductions=0, charitable_cash_gifts=0)
     base.update(overrides)
     return P.ProjectedInputs(**base)
 
@@ -5227,7 +5230,8 @@ def test_the_payload_field_count_matches_the_bullets_that_follow_it(skill):
     """
     words = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
              "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
-             "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16}
+             "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+             "seventeen": 17}
     text = skill_text(skill)
     stated = re.search(
         r"Read these (\w+) things out of the payload", text)
@@ -6267,7 +6271,8 @@ class TestARecaptureStateGetsNoProjectedBalance:
         swept at the function level below."""
         report = P.build_report(
             {"pay_frequency": "biweekly", "ytd": {"wages": 50000},
-             "forecast_overrides": {"itemized_deductions": 0}},
+             "forecast_overrides": {"itemized_deductions": 0,
+                                    "charitable_cash_gifts": 0}},
             {"filing_status": "MFJ", "address": {"state": "NY"}},
             self._law(), None, 2026, datetime.date(2026, 7, 2))
         assert report.state is None
@@ -6435,6 +6440,11 @@ def test_the_declared_deductions_are_read_as_answers():
     for bad in (-1, True, float("nan"), "forty-five"):
         with pytest.raises(P.ProjectionError, match="itemized_deductions"):
             read({"itemized_deductions": bad})
+    # AA22's cash gifts are the same kind of answer: absent is not none.
+    assert read({}).charitable_cash_gifts is None
+    assert read({"charitable_cash_gifts": 0}).charitable_cash_gifts == 0.0
+    with pytest.raises(P.ProjectionError, match="charitable_cash_gifts"):
+        read({"charitable_cash_gifts": -1})
 
 
 def test_the_projection_prices_from_the_declared_deduction():
@@ -6523,23 +6533,37 @@ def test_a_separate_filer_is_told_the_spouse_can_force_the_other_deduction():
     denies it once the spouse itemizes. State: wherever one is projected,
     since California's both-or-neither rule binds either way."""
     ns = types.SimpleNamespace
-    std, item = ns(itemized=False), ns(itemized=True)
+    std = ns(itemized=False, charitable_non_itemizer_deduction=0.0)
+    item = ns(itemized=True)
     ca, va = ns(code="CA"), ns(code="VA")
     assert P._mfs_deduction_notes("MFJ", std, ca) == (None, None)
     federal, state = P._mfs_deduction_notes("MFS", std, ca)
     assert "§63(c)(6)(A)" in federal
     assert "read low by the tax on the difference" in federal
+    assert "non-itemizers" not in federal
+    # Gifts can make the standard deduction win against a larger itemized
+    # total, so the note no longer calls that total the smaller.
+    assert "the smaller" not in federal
+    # AA22: itemizing gives up the §170(p) deduction the projection took too.
+    gave = ns(itemized=False, charitable_non_itemizer_deduction=1000.0)
+    assert ("includes the charitable deduction for non-itemizers taken here"
+            in P._mfs_deduction_notes("MFS", gave, None)[0])
     assert "California makes separate filers match" in state
     assert P._mfs_deduction_notes("MFS", item, None) == (None, None)
     assert "tie that choice" in P._mfs_deduction_notes("MFS", item, va)[1]
 
-    law = _tax_law_2026()
+    # Through `build_report`, with gifts: the namespaces above stand in for
+    # the projection, and the sentence has to reach the real one too.
+    law = _gift_law()
     law["federal"]["filing_statuses"]["mfs"] = {
         "standard_deduction": 15000,
         "brackets": [{"rate": 0.10, "min": 0, "max": None}]}
-    report = _report(profile={"filing_status": "MFS"}, tax_law=law,
+    report = _report({"charitable_cash_gifts": 500},
+                     profile={"filing_status": "MFS"}, tax_law=law,
                      prior=_Prior({"california_540": {"ca_total_tax": 5000}}))
     assert "§63(c)(6)(A)" in report.mfs_deduction_note
+    assert ("includes the charitable deduction for non-itemizers taken here"
+            in report.mfs_deduction_note)
     assert "California makes" in report.state_mfs_deduction_note
     md = P.render_markdown(report)
     assert f"> **⚠ {report.mfs_deduction_note}**" in md
@@ -6549,15 +6573,16 @@ def test_a_separate_filer_is_told_the_spouse_can_force_the_other_deduction():
     assert payload["state_mfs_deduction_note"] == report.state_mfs_deduction_note
 
 
-def test_the_federal_table_adds_up_with_schedule_1a_and_qbi():
-    """Both deductions sit between AGI and taxable income beside the one AA21
-    added, and the table named only that one. `_proj` on the joint cache:
+def test_the_federal_table_adds_up_with_every_deduction():
+    """Schedule 1-A, QBI and AA22's gifts sit between AGI and taxable income
+    beside the one AA21 added, and the table named only that one. `_proj` on
+    the joint cache:
     - a $10,000 Schedule 1-A override: $100,000 - $30,000 - $10,000 =
       $60,000 taxable;
     - $20,000 of SE income: SE tax $20,000 x 92.35% x 15.3% = $2,825.91,
       half $1,412.96, AGI $118,587.04; QBI 20% x ($20,000 - $1,412.96) =
       $3,717.41; $118,587.04 - $30,000 - $3,717.41 = $84,869.63."""
-    law = _tax_law_2026()
+    law = _gift_law()
     one_a = P.project_federal_tax(_proj(schedule_1a_total=10000),
                                   _profile_mfj(), law, requested_year=2026)
     assert (one_a.schedule_1a_deduction, one_a.taxable_income) == (10000.0, 60000.0)
@@ -6565,17 +6590,23 @@ def test_the_federal_table_adds_up_with_schedule_1a_and_qbi():
                                _profile_mfj(), law, requested_year=2026)
     assert (se.agi, se.qbi_deduction, se.taxable_income) == (
         118587.04, 3717.41, 84869.63)
-    report = _report({"schedule_1a": 10000, "self_employment_net": 20000},
-                     tax_law=law)
+    report = _report({"schedule_1a": 10000, "self_employment_net": 20000,
+                      "charitable_cash_gifts": 1500}, tax_law=law)
     f = report.federal
     assert f.schedule_1a_deduction == 10000.0 and f.qbi_deduction > 0
+    assert f.charitable_non_itemizer_deduction == 1500.0
     assert round(f.agi - f.deduction - f.schedule_1a_deduction
-                 - f.qbi_deduction, 2) == f.taxable_income
+                 - f.charitable_non_itemizer_deduction - f.qbi_deduction,
+                 2) == f.taxable_income
     md = P.render_markdown(report)
     assert "| Schedule 1-A deduction | $10,000 |" in md
+    assert "| Charitable deduction for non-itemizers | $1,500 |" in md
     assert f"| QBI deduction | {P._money(f.qbi_deduction)} |" in md
+    assert (P._report_to_dict(report)["federal"]
+            ["charitable_non_itemizer_deduction"] == 1500.0)
     plain = P.render_markdown(_report(tax_law=law))
     assert "Schedule 1-A deduction" not in plain and "QBI deduction |" not in plain
+    assert "non-itemizers" not in plain
 
 
 def _state_law(**state):
@@ -6626,21 +6657,22 @@ def test_a_state_it_never_prices_is_not_refused_for_its_deduction(law, resident)
                                law, "MFJ", resident_state=resident) is None
 
 
-def test_the_shipped_template_refuses_until_both_deductions_are_answered(
+def test_the_shipped_template_refuses_until_every_declaration_is_answered(
         tmp_path, capsys):
-    """`_cli_workspace` declares both deductions for the tests that predate
-    them, so no CLI test ran the template itself: a change reading its nulls
-    as 0 would have left every test green."""
+    """`_cli_workspace` declares the deductions and the gifts for the tests
+    that predate them, so no CLI test ran the template itself: a change
+    reading its nulls as 0 would have left every test green. No state is
+    projected here, so the state figure is never read."""
     template = json.loads((REPO / "agents" / "templates"
                            / "projection_inputs_template.json").read_text())
     template["ytd"]["wages"] = 50000
     args = _cli_workspace(tmp_path, {})
-    (tmp_path / "projection_inputs.json").write_text(json.dumps(template))
-    assert P._main(args + ["--year", "2026"]) == 1
-    assert ("forecast_overrides.itemized_deductions is not set"
-            in capsys.readouterr().err)
-    template["forecast_overrides"].update(
-        itemized_deductions=0, state_itemized_deductions=0)
+    for key in ("charitable_cash_gifts", "itemized_deductions"):
+        (tmp_path / "projection_inputs.json").write_text(json.dumps(template))
+        assert P._main(args + ["--year", "2026"]) == 1
+        assert (f"forecast_overrides.{key} is not set"
+                in capsys.readouterr().err)
+        template["forecast_overrides"][key] = 0
     (tmp_path / "projection_inputs.json").write_text(json.dumps(template))
     assert P._main(args + ["--year", "2026"]) == 0
 
@@ -6690,3 +6722,175 @@ def test_a_state_estimate_names_a_deduction_the_federal_choice_can_deny():
     assert report.state.itemized and not report.federal.itemized
     assert "require the federal choice" in report.state_bracket_estimate_note
 
+
+def _gift_law():
+    """`_tax_law_2026` with §170(p)'s caps fetched: $1,000, $2,000 joint."""
+    law = _tax_law_2026()
+    law["federal"]["charitable_non_itemizer"] = {"amount": 1000,
+                                                 "joint_amount": 2000}
+    return law
+
+
+def _gift_federal(gifts, itemized=0, law=None, profile=None):
+    """`project_federal_tax` on `_proj` with the year's gifts declared."""
+    return P.project_federal_tax(
+        _proj(itemized_deductions=itemized, charitable_cash_gifts=gifts),
+        profile or _profile_mfj(), law or _gift_law())
+
+
+def test_a_standard_deduction_filer_deducts_cash_gifts_from_ty2026():
+    """AA22: the projection subtracted only the larger of the standard and
+    the declared itemized deduction, so §170(p)'s cash gifts stayed in
+    taxable income. `_proj` is $100,000 of wages, $30,000 joint standard
+    deduction, 10% to $20,000 and 20% above; $15,000 single, 10% to $10,000:
+    - joint, $1,500 of gifts: $68,500 taxable, $2,000 + $9,700 = $11,700,
+      where no gifts is $12,000;
+    - joint, $5,000: capped at $2,000, $68,000 taxable, $11,600;
+    - single, $5,000: capped at $1,000, $84,000 taxable, $1,000 + $14,800
+      = $15,800."""
+    some = _gift_federal(1500)
+    assert (some.charitable_non_itemizer_deduction, some.taxable_income,
+            some.total_tax) == (1500.0, 68500.0, 11700.0)
+    capped = _gift_federal(5000)
+    assert (capped.charitable_non_itemizer_deduction, capped.total_tax) == (
+        2000.0, 11600.0)
+    single = _gift_federal(5000, profile={"filing_status": "Single"})
+    assert (single.charitable_non_itemizer_deduction, single.taxable_income,
+            single.total_tax) == (1000.0, 84000.0, 15800.0)
+    assert _gift_federal(0).total_tax == 12000.0
+    with pytest.raises(P.ProjectionError,
+                       match="forecast_overrides.charitable_cash_gifts is not set"):
+        _gift_federal(None)
+    # Before TY2026 there is no such deduction: the figure is not read, so
+    # neither refused nor applied, through `build_report` too, which no
+    # helper here backfills.
+    for gifts in (None, 5000):
+        before = _gift_federal(gifts, law=dict(_gift_law(), tax_year=2025))
+        assert (before.charitable_non_itemizer_deduction,
+                before.taxable_income) == (0.0, 70000.0)
+    report = P.build_report(
+        {"pay_frequency": "biweekly", "ytd": {"wages": 50000},
+         "forecast_overrides": {"itemized_deductions": 0,
+                                "state_itemized_deductions": 0}},
+        _profile_mfj(), dict(_gift_law(), tax_year=2025), None, 2025,
+        datetime.date(2025, 7, 2))
+    assert report.federal.charitable_non_itemizer_deduction == 0.0
+    # A cache that cannot show the year being projected, having none, a
+    # string or another year than the one requested, refuses gifts other
+    # than 0, unanswered ones included, rather than read them as 0, which is
+    # the over-statement. No gifts have nothing to read.
+    yearless = _gift_law()
+    del yearless["tax_year"]
+    for law, requested in ((yearless, 2026), (yearless, None),
+                           (dict(_gift_law(), tax_year="2026"), None),
+                           (dict(_gift_law(), tax_year=2025), 2026)):
+        for gifts in (1500, None):
+            with pytest.raises(P.ProjectionError,
+                               match="does not show that it prices the year being projected"):
+                P.project_federal_tax(_proj(charitable_cash_gifts=gifts),
+                                      _profile_mfj(), law, requested_year=requested)
+        assert P.project_federal_tax(
+            _proj(charitable_cash_gifts=0), _profile_mfj(), law,
+            requested_year=requested).total_tax == 12000.0, (law, requested)
+
+
+def test_cash_gifts_can_tip_the_choice_to_the_standard_deduction():
+    """/tax-compute weighs the itemized total against the standard deduction
+    plus §170(p), and the projection now does too. On the $30,000 joint
+    standard deduction:
+    - $31,000 itemized, $1,500 of gifts: $31,500 standard side wins,
+      $68,500 taxable where itemizing is $69,000;
+    - $31,000 itemized, $500 of gifts: $30,500, so itemize, and an
+      itemizer's gifts earn nothing below the line;
+    - $33,000 itemized, $5,000 of gifts capped at $2,000: $32,000, so
+      itemize, $67,000 taxable. The cap is read here, since all $5,000 could
+      have tipped it."""
+    for itemized, gifts, expected in (
+            (31000, 1500, (False, 30000.0, 1500.0, 68500.0)),
+            (31000, 500, (True, 31000.0, 0.0, 69000.0)),
+            (33000, 5000, (True, 33000.0, 0.0, 67000.0))):
+        f = _gift_federal(gifts, itemized)
+        assert (f.itemized, f.deduction, f.charitable_non_itemizer_deduction,
+                f.taxable_income) == expected, (itemized, gifts)
+
+
+def test_the_cap_is_read_only_where_it_can_decide():
+    """An older cache fetched §170(p)'s cap only for a standard-deduction
+    filer. $45,000 itemized beats $30,000 plus all $5,000 of gifts whatever
+    the cap, and the engine prices no gifts at 0 before it reads the cap, so
+    neither reads it. Anywhere else the cap is read, since short of the
+    figure any cap up to the gifts could decide the choice: at $31,000, at
+    $45,000 with $20,000 of gifts, and on the standard deduction, an
+    unfetched one refuses, as the engine does, and names the one block to
+    fetch rather than the whole setup."""
+    law = _tax_law_2026()
+    big = _gift_federal(5000, 45000, law=law)
+    assert (big.itemized, big.charitable_non_itemizer_deduction) == (True, 0.0)
+    assert _gift_federal(0, law=law).total_tax == 12000.0
+    for itemized, gifts in ((31000, 5000), (45000, 20000), (0, 5000)):
+        with pytest.raises(P.ProjectionError,
+                           match=r"charitable_non_itemizer\.joint_amount is unfetched"
+                                 r".*Fetch only federal\.charitable_non_itemizer"):
+            _gift_federal(gifts, itemized, law=law)
+    with pytest.raises(P.ProjectionError,
+                       match="charitable_non_itemizer.amount is unfetched"):
+        _gift_federal(500, law=law, profile={"filing_status": "Single"})
+    # A block that is not an object is an unfetched one, not a traceback.
+    scalar = _tax_law_2026()
+    scalar["federal"]["charitable_non_itemizer"] = 2000
+    with pytest.raises(P.ProjectionError,
+                       match="charitable_non_itemizer.joint_amount is unfetched"):
+        _gift_federal(500, law=scalar)
+
+
+def test_cash_gifts_come_off_the_qbi_cap_base():
+    """Line 13c sits above QBI, so it narrows the 20%-of-taxable-income cap.
+    $40,000 of SE income alone, joint: SE tax $40,000 x 92.35% x 15.3% =
+    $5,651.82, half $2,825.91, AGI $37,174.09; less $30,000 and $2,000 of
+    gifts, $5,174.09 before QBI; QBI capped at 20% of it, $1,034.82;
+    $4,139.27 taxable. Taking the gifts after QBI instead reads $3,739.27."""
+    f = P.project_federal_tax(
+        _proj(wages=0, ss_wages=0, medicare_wages=0, self_employment_net=40000,
+              charitable_cash_gifts=2000),
+        _profile_mfj(), _gift_law())
+    assert (f.agi, f.charitable_non_itemizer_deduction, f.qbi_deduction,
+            f.taxable_income) == (37174.09, 2000.0, 1034.82, 4139.27)
+
+
+def test_a_charitable_deduction_says_which_gifts_qualify():
+    """The engine's notes on §170(p), cash only, no donor-advised fund, a
+    written acknowledgment from $250, reached no reader of the projection, so
+    a declared gift that does not qualify read the tax low with nothing saying
+    so. Set wherever the deduction was taken, and only there. Where the gifts
+    tipped the choice, it says the itemized total was set aside, against the
+    deduction the gifts were given and how little of them need qualify for
+    itemizing to deduct more, the itemized total's margin over the standard
+    deduction:
+    - $31,000 itemized, $1,500 of gifts against $30,000: the $1,500, and
+      under $1,000;
+    - $31,500 itemized, $5,000 of gifts capped at $2,000: the $2,000, and
+      under $1,500, where the gifts themselves would say $5,000;
+    - $30,000, which the standard deduction alone matches: nothing was."""
+    report = _report({"charitable_cash_gifts": 1500}, tax_law=_gift_law())
+    note = report.charitable_gifts_note
+    assert "donor-advised fund" in note and "written acknowledgment" in note
+    assert "set aside" not in note
+    for itemized, gifts, deducted, margin in ((31000, 1500, "$1,500", "$1,000"),
+                                              (31500, 5000, "$2,000", "$1,500"),
+                                              (30000, 1500, None, None)):
+        tipped = _report({"charitable_cash_gifts": gifts,
+                          "itemized_deductions": itemized},
+                         tax_law=_gift_law()).charitable_gifts_note
+        assert tipped.startswith(note), itemized
+        set_aside = (" The itemized total you declared was set aside: it is "
+                     "larger than the standard deduction, but not than the "
+                     f"standard deduction plus the {deducted} deducted for "
+                     f"these gifts. If under {margin} of them qualifies, "
+                     "itemizing deducts more.")
+        assert tipped == (note + set_aside if deducted else note), itemized
+    assert f"- **Declared cash gifts:** {note}" in P.render_markdown(report)
+    assert P._report_to_dict(report)["charitable_gifts_note"] == note
+    assert _report(tax_law=_gift_law()).charitable_gifts_note is None
+    itemizer = _report({"charitable_cash_gifts": 1500,
+                        "itemized_deductions": 45000}, tax_law=_gift_law())
+    assert itemizer.charitable_gifts_note is None
