@@ -293,6 +293,19 @@ def _run_skill_hook(project_dir: Path, edited: str, path=None,
         text=True, capture_output=True, env=env)
 
 
+def _without_inherited_functions() -> dict:
+    """The runner's environment less every function it could hand bash: the
+    exported entries, and the file BASH_ENV names.
+
+    For a test whose PREMISE is that nothing was inherited, and only for one.
+    Every other test runs under the contributor's own environment, which is
+    how an inherited function was found reaching a gate (AA25), and a fixture
+    that scrubbed it from the whole module is what hid that.
+    """
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith("BASH_FUNC_") and k != "BASH_ENV"}
+
+
 def _chmod_logging_shim(root: Path):
     """A PATH shim recording every chmod the hook makes, then performing it.
 
@@ -654,6 +667,9 @@ def quiescent_workspace(tmp_path_factory):
     `_clear_red_carry_forward` first — without it those assertions depend on
     execution order, which pytest-randomly reshuffles on every run.
     """
+    # A mark does nothing on a fixture, so the skip it would give is here.
+    if needs_jq.args[0]:
+        pytest.skip(needs_jq.kwargs["reason"])
     workspace = tmp_path_factory.mktemp("quiescent")
     (workspace / ".claude").mkdir()
     (workspace / "AGENTS.md").write_text("# a watched root\n")
@@ -1465,6 +1481,7 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
 
 
 class TestSkillInvariantsHook:
+    @needs_jq
     def test_a_bash_call_runs_the_focused_invariants(self, tmp_path):
         """Opaque shell helpers can rewrite covered prose without file_path.
 
@@ -1511,6 +1528,7 @@ class TestSkillInvariantsHook:
         assert r.returncode == 0, r.stderr
         assert r.stderr.strip() == ""
 
+    @needs_jq
     def test_an_edit_through_the_claude_symlink_is_covered(self, tmp_path):
         """`.claude/skills/<name>` is a symlink to `.agents/skills/<name>`, so
         the same SKILL.md has two reachable paths. An agent that opened it by
@@ -1520,6 +1538,7 @@ class TestSkillInvariantsHook:
                             str(tmp_path / ".claude/skills/tax-setup/SKILL.md"))
         assert r.returncode == 2
 
+    @needs_jq
     def test_an_agent_definition_edit_is_covered(self, tmp_path):
         """`.claude/agents/*.md` names schema paths that `test_claude_agents.py`
         resolves against the real fetcher. Leaving it out of the matcher meant
@@ -1540,6 +1559,7 @@ class TestSkillInvariantsHook:
         assert r.returncode == 0
         assert r.stderr.strip() == ""
 
+    @needs_jq
     def test_a_failing_check_exits_2_and_reports_the_tail(self, tmp_path):
         """The pipeline-status regression, pinned.
 
@@ -1610,6 +1630,7 @@ class TestSkillInvariantsHook:
         # present in the hook before that slice too.
         ("PYTEST_PLUGINS", "dropred"),
     ])
+    @needs_jq
     def test_an_inherited_pytest_variable_cannot_reach_the_suite(
             self, tmp_path, name, value):
         """Two variables that turn this gate into a rubber stamp.
@@ -1687,6 +1708,7 @@ class TestSkillInvariantsHook:
             "ancestor's pytest.ini — the guard this repository relies on has "
             f"changed shape: {defended.stdout[-300:]}")
 
+    @needs_jq
     def test_an_inherited_errexit_does_not_swallow_the_verdict(self, tmp_path):
         """`set -u` does not turn errexit OFF, and bash imports it.
 
@@ -1732,6 +1754,25 @@ class TestSkillInvariantsHook:
             f"{len(traced)} traced lines reached the agent's stderr, where "
             f"the failure report is: {traced[:3]}")
 
+    @needs_jq
+    def test_an_inherited_function_cannot_stand_in_for_a_command(
+            self, tmp_path, inherited_function):
+        """A function runs ahead of the PATH lookup, and bash takes one from
+        the environment before the script's first line. A stub `jq` left the
+        payload unread, and the hook exited 0 over a red suite with nothing
+        on stderr: a pass that checked nothing, reported as one that did.
+        """
+        (tmp_path / ".claude").mkdir()
+        _fake_venv(tmp_path, exit_code=1, lines=["1 failed"])
+        r = _run_skill_hook(
+            tmp_path, str(tmp_path / ".agents/skills/tax-setup/SKILL.md"),
+            env_extra=inherited_function("jq", ":"))
+        assert r.returncode == 2, (
+            "an inherited `jq` stub turned a red suite into a silent pass "
+            f"(rc={r.returncode}, stderr={r.stderr[-200:]!r})")
+        assert "FAILED" in r.stderr, r.stderr[-300:]
+
+    @needs_jq
     def test_an_inherited_physical_does_not_drop_a_symlinked_edit(self, tmp_path):
         """`set -P` makes `cd` resolve symlinks, and the payload does not.
 
@@ -1768,6 +1809,7 @@ class TestSkillInvariantsHook:
         assert _selects(PORTABILITY, _selected_modules(r)), sorted(
             _selected_modules(r))
 
+    @needs_jq
     def test_an_inherited_cdpath_cannot_redirect_the_hook_to_another_clone(
             self, tmp_path):
         """CDPATH is searched BEFORE the relative path.
@@ -1825,6 +1867,7 @@ class TestSkillInvariantsHook:
         assert r.returncode == 0
         assert r.stderr.strip() == ""
 
+    @needs_jq
     def test_an_unchanged_watched_tree_does_not_rerun_the_suite(self, tmp_path):
         """The cheap-skip path, and the only assertion that can see it.
 
@@ -1858,6 +1901,7 @@ class TestSkillInvariantsHook:
             "already delivered, and the repeat lands on the very commands the "
             "agent needs to diagnose it")
 
+    @needs_jq
     def test_a_watched_change_after_a_reported_failure_fires_again(self, tmp_path):
         """The counterweight to the test above, and it is not optional.
 
@@ -2563,6 +2607,7 @@ class TestSkillInvariantsHook:
         "agents/templates/answers_template.md",
         "docs/changelog/epic-V.md",
     ])
+    @needs_jq
     def test_an_unwatched_source_edit_stays_silent(self, tmp_path, relative):
         """The counterweight to the parametrization above: the watched set is a
         list, not a mood.
@@ -2691,6 +2736,7 @@ class TestSkillInvariantsHook:
             "Add the path to WATCHED_ROOTS and to select_modules_for — both, "
             "since one without the other is half-covered")
 
+    @needs_jq
     def test_an_unrunnable_check_is_named_as_such(self, tmp_path):
         """pytest exits 1 for "ran and failed" and 2-5 for "no verdict at all":
         a collection error, an internal error, a renamed module (usage error), or
@@ -2711,6 +2757,7 @@ class TestSkillInvariantsHook:
         assert failed.returncode == 2
         assert "Skill invariants FAILED" in failed.stderr
 
+    @needs_jq
     def test_a_symlinked_dot_claude_is_refused_and_nothing_is_written_through_it(
             self, tmp_path):
         """The branch above the one below it, and the only one that can write
@@ -2768,6 +2815,7 @@ class TestSkillInvariantsHook:
             "this test is measuring a hook that has no stamp")
         assert _run_skill_hook_bash(tmp_path).returncode == 0
 
+    @needs_jq
     def test_a_run_marker_that_cannot_be_created_forces_the_full_pass(
             self, tmp_path):
         """The third branch, and the one with no visible symptom.
@@ -2809,6 +2857,7 @@ class TestSkillInvariantsHook:
             "the stamp is never written here regardless, so the refusal above "
             "costs nothing and this test measures nothing")
 
+    @needs_jq
     def test_a_symlinked_skill_invariant_stamp_is_rejected_without_external_write(
             self, tmp_path):
         """Stamp maintenance obeys the same workspace boundary as every other
@@ -2856,6 +2905,7 @@ class TestSkillInvariantsHook:
         quiet = _run_skill_hook_bash(tmp_path)
         assert quiet.returncode == 0 and _selected_modules(quiet) == []
 
+    @needs_jq
     def test_the_stamp_boundary_precedes_writes_concurrent_with_the_pass(
             self, tmp_path):
         """The pass is a whole pytest run, so a file written
@@ -2899,6 +2949,7 @@ class TestSkillInvariantsHook:
 
     @pytest.mark.parametrize("corruption", ["wrong-version", "legacy-v1",
                                             "future"])
+    @needs_jq
     def test_a_future_or_wrong_version_stamp_forces_a_full_pass(self, tmp_path,
                                                                 corruption):
         """Both branches exist so a stamp that cannot be trusted fails toward
@@ -2945,6 +2996,7 @@ class TestSkillInvariantsHook:
             "every change")
 
     @pytest.mark.parametrize("exit_code", [2, 3, 4, 5])
+    @needs_jq
     def test_a_no_verdict_pass_does_not_advance_the_stamp(self, tmp_path,
                                                           exit_code):
         """pytest exits 1 for "ran and failed" and 2-5 for "no verdict at all",
@@ -3070,6 +3122,7 @@ class TestSkillInvariantsHook:
                 f"check and must share a name, or the mapping needs a third "
                 f"place to be kept in step")
 
+    @needs_jq
     def test_a_red_check_is_recarried_until_it_goes_green(self, tmp_path):
         """The two stamp rules that only make sense together.
 
@@ -3138,6 +3191,7 @@ class TestSkillInvariantsHook:
             "the green pass covered every carried check and must clear them; a "
             "carry-forward that only grows is a permanent tax on every edit")
 
+    @needs_jq
     def test_an_unknown_red_token_never_reaches_the_pytest_argv(self, tmp_path):
         """The stamp records a CHECK NAME, never a module path, and this is the
         assertion that pins the difference.
@@ -3177,6 +3231,7 @@ class TestSkillInvariantsHook:
             assert junk not in r.stderr, (
                 f"{junk} reached pytest's argv straight out of a stamp on disk")
 
+    @needs_jq
     def test_the_skill_hook_cleans_up_after_a_signal(self, tmp_path):
         """The stamp candidate is `mktemp`'d INSIDE `.claude/`, because it has
         to land on the same filesystem as the file it atomically replaces —
@@ -3297,16 +3352,17 @@ class TestRuntimePermissionsHook:
     OPAQUE_BASH = {"tool_name": "Bash", "tool_input": {"command": "bash helper.sh"}}
 
     def _run(self, workspace: Path, payload: dict | None = None, indent=None,
-             env_extra: dict | None = None):
+             env_extra: dict | None = None, base_env: dict | None = None):
         """`indent` writes the payload pretty-printed — i.e. across several
-        lines, which is what a `read`-based payload parser truncates."""
+        lines, which is what a `read`-based payload parser truncates.
+        `base_env` stands in for the runner's environment."""
         return subprocess.run(
             ["bash", str(PERMS_HOOK)],
             input=(json.dumps(payload, indent=indent)
                    if payload is not None else None),
             text=True, capture_output=True,
-            env=dict(os.environ, CLAUDE_PROJECT_DIR=str(workspace),
-                     **(env_extra or {})))
+            env=dict(os.environ if base_env is None else base_env,
+                     CLAUDE_PROJECT_DIR=str(workspace), **(env_extra or {})))
 
     def test_runtime_files_are_forced_to_owner_only(self, tmp_path):
         names = ("taxpayer_profile.json", "result.json", "answers.md",
@@ -3324,6 +3380,25 @@ class TestRuntimePermissionsHook:
         # fails on those for reasons that have nothing to do with the rule.
         leaked = [n for n in names if _mode(tmp_path / n) != 0o600]
         assert not leaked, f"still group/world readable: {leaked}"
+
+    def test_an_inherited_function_cannot_stand_in_for_chmod(
+            self, tmp_path, inherited_function):
+        """A function runs ahead of the PATH lookup, and bash takes one from
+        the environment before the script's first line. A stub `chmod` there
+        replaced every chmod this hook makes: result.json stayed readable by
+        others and the hook exited 0 with nothing on stderr, the exposure it
+        exists to close, reported nowhere.
+        """
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        exposed = workspace / "result.json"
+        exposed.write_text("{}")
+        exposed.chmod(0o644)
+        r = self._run(workspace, env_extra=inherited_function("chmod", ":"))
+        assert r.returncode == 0, r.stderr
+        assert _mode(exposed) == 0o600, (
+            "an inherited `chmod` stub ran in place of chmod and left "
+            "result.json readable by others")
 
     def test_dot_prefixed_pdfs_are_forced_to_owner_only(self, tmp_path):
         """Shell `*.pdf` does not include dot-prefixed artifacts by default.
@@ -4636,39 +4711,80 @@ class TestRuntimePermissionsHook:
         assert not (dot_claude / ".archive-index-dirty").exists(), (
             "a successful publish left the dirty marker behind")
 
+    def _an_exposure_only_the_scan_finds(self, root: Path,
+                                         payload: dict) -> tuple[Path, Path]:
+        """A workspace under `root` holding a new archived file readable by
+        others, which only the exposure scan can find, and that file.
+
+        The index pass finds a directory that changed since it last looked,
+        or a file it already lists whose mode moved. This is neither: the file
+        is new, and it and every directory above it are set back to before the
+        index was written, the way a copy that keeps timestamps leaves them.
+        So the next payload the hook trusts leaves it exposed, and one it does
+        not sends the hook to the scan, which hardens it.
+
+        PROVED, on a twin built the same way beside it: `payload` run there
+        with nothing inherited must leave the twin's file exposed, so if
+        something else starts hardening it, the test says so instead of
+        passing. On a TWIN, because that run indexes the file, and in the same
+        tree the run under test would then find it by the index whatever the
+        hook decided. Nothing inherited is `_without_inherited_functions`,
+        not the runner's own environment: an `echo` exported there is one the
+        hook rightly distrusts, and the proof would fail on the contributor's
+        shell rather than on the hook. The run under test starts from it too.
+        """
+        def build(workspace: Path) -> Path:
+            (workspace / "archive" / "2024").mkdir(parents=True)
+            (workspace / "archive" / "2024" / "out.md").write_text("old")
+            reviews = workspace / "archive" / "2025" / "reviews"
+            reviews.mkdir(parents=True)
+            (workspace / ".claude").mkdir()
+            assert self._run(workspace).returncode == 0
+            exposed = reviews / "new.md"
+            exposed.write_text("financial data")
+            exposed.chmod(0o644)
+            for path in (exposed, reviews, reviews.parent,
+                         workspace / "archive" / "2024"):
+                os.utime(path, (1, 1))
+            return exposed
+
+        twin = root / "control"
+        twin_file = build(twin)
+        control = self._run(twin, payload,
+                            base_env=_without_inherited_functions())
+        assert control.returncode == 0, control.stderr
+        assert _mode(twin_file) == 0o644, (
+            "a trusted payload with nothing inherited hardened the file, so "
+            "it is not an exposure only the scan finds, and the run under test "
+            "cannot show the hook's decision")
+        workspace = root / "workspace"
+        return workspace, build(workspace)
+
     @needs_jq
-    def test_exported_echo_function_forces_a_full_archive_pass(self, tmp_path):
-        """An exported function named like a builtin can write another year."""
-        visible = tmp_path / "archive" / "2024" / "out.md"
-        hidden = tmp_path / "archive" / "2025" / "reviews" / "out.md"
-        visible.parent.mkdir(parents=True)
-        hidden.parent.mkdir(parents=True)
-        visible.write_text("old")
-        hidden.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        for year in ("2024", "2025"):
-            os.utime(tmp_path / "archive" / year, (1, 1))
+    @pytest.mark.parametrize("command", ["echo x > archive/2024/out.md",
+                                         "ls -la"], ids=["echo", "ls"])
+    def test_an_inherited_function_is_not_trusted_as_its_namesake(
+            self, tmp_path, inherited_function, command):
+        """An exported `echo` can write any year, and an exported `ls` can
+        write at all, so neither earns the trust its name gets.
 
-        hidden.write_text("financial data")
-        hidden.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {"command": "echo x > archive/2024/out.md"},
-        }
-        wrapper = (
-            'echo() { :; }; export -f echo; '
-            'exec bash "$PERMISSIONS_HOOK"'
-        )
-        result = subprocess.run(
-            ["bash", "-c", wrapper], input=json.dumps(payload), text=True,
-            capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PERMISSIONS_HOOK": str(PERMS_HOOK)},
-        )
-
-        assert result.returncode == 0, result.stderr
-        assert _mode(hidden) == 0o600
+        The first is the bounded year write, the second the read-only command
+        that skips the scan altogether. The hook asked `type -t`, which cannot
+        see a function once it has re-run itself under `-p`, so it asks the
+        environment the agent's shell inherited instead.
+        """
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+        workspace, exposed = self._an_exposure_only_the_scan_finds(tmp_path,
+                                                                   payload)
+        name = command.split()[0]
+        r = self._run(workspace, payload,
+                      base_env=_without_inherited_functions(),
+                      env_extra=inherited_function(name, ":"))
+        assert r.returncode == 0, r.stderr
+        assert _mode(exposed) == 0o600, (
+            f"`{name}` arrived as an inherited function, and the hook still "
+            f"trusted `{command}` as the plain {name}: an archived file stayed "
+            "readable by others")
 
     @needs_jq
     def test_notebook_edit_payload_hardens_existing_archive_notebook(self,
@@ -4958,29 +5074,19 @@ class TestRuntimePermissionsHook:
     @needs_jq
     def test_read_only_utility_name_from_a_path_shim_is_opaque(self, tmp_path):
         """A helper-capable PATH shim must not inherit `ls`'s read-only trust."""
-        target = tmp_path / "archive" / "2024" / "reviews" / "out.md"
-        target.parent.mkdir(parents=True)
-        target.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2024", (1, 1))
-
-        target.write_text("financial data")
-        target.chmod(0o644)
+        payload = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
+        workspace, exposed = self._an_exposure_only_the_scan_finds(tmp_path,
+                                                                   payload)
         shim = tmp_path / "bin"
         shim.mkdir()
         (shim / "ls").write_text("#!/bin/sh\nexit 0\n")
         (shim / "ls").chmod(0o755)
-        payload = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
-        result = subprocess.run(
-            ["bash", str(PERMS_HOOK)], input=json.dumps(payload),
-            text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PATH": f"{shim}:{os.environ['PATH']}"},
-        )
+        result = self._run(workspace, payload,
+                           base_env=_without_inherited_functions(),
+                           env_extra={"PATH": f"{shim}:{os.environ['PATH']}"})
 
         assert result.returncode == 0, result.stderr
-        assert _mode(target) == 0o600
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_aliased_write_destination_forces_full_archive_pass(self, tmp_path):
@@ -5356,7 +5462,10 @@ class TestRuntimePermissionsHook:
         env_extra, log = _chmod_logging_shim(tmp_path)
 
         payload = {"tool_name": "Bash", "tool_input": {"command": "pwd -P"}}
-        r = self._run(tmp_path, payload, indent=2, env_extra=env_extra)
+        # A `pwd` the contributor's shell exported, or any BASH_ENV, is one the
+        # hook rightly distrusts, so this premise has to be built, not assumed.
+        r = self._run(tmp_path, payload, indent=2, env_extra=env_extra,
+                      base_env=_without_inherited_functions())
 
         assert r.returncode == 0, r.stderr
         calls = log.read_text() if log.exists() else ""
@@ -6640,9 +6749,9 @@ class TestHookRegistration:
                                  (REPO / HOOKS).read_text()))
         calls = len(re.findall(r"pytest\s*\.\s*skip\s*\(",
                                (REPO / HOOKS).read_text()))
-        assert (markers, calls) == (2, 3), (
+        assert (markers, calls) == (2, 4), (
             f"this module declares {markers} skipif markers and {calls} skip "
-            f"calls, against the 2 and 3 the block's stated skip count was "
+            f"calls, against the 2 and 4 the block's stated skip count was "
             "taken with — re-run this module and re-derive its RUN row, the "
             "cold pass summed from it and the scale row's gap")
         suite_pair = _the_one_statement(_SUITE_PAIR, flat)

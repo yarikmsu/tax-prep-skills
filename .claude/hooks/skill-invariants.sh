@@ -55,6 +55,12 @@
 # exported SHELLOPTS and all three matter before another line runs. See "A GATE
 # INHERITS ITS ENVIRONMENT" below for what each one does to this hook.
 set +exP -uo pipefail
+# Then keep out an inherited FUNCTION; see the list below.
+POSIXLY_CORRECT=y
+case $-:${GATE_REEXEC_PID-} in
+    *p*:"$$") unset GATE_REEXEC_PID POSIXLY_CORRECT ;;
+    *) GATE_REEXEC_PID=$$ exec "$BASH" -p -- "$0" "$@" ;;
+esac
 umask 077
 
 # ---------------------------------------------------------------------------
@@ -115,6 +121,19 @@ umask 077
 #     `/tmp/x/sub` — after which this script reads another repository's files,
 #     writes its stamp there, and reports a verdict about a tree nobody edited.
 #     (A bare `.` is safe; bash special-cases it. A relative name is not.)
+#   - A FUNCTION, exported into the environment (`export -f`) or defined by the
+#     file BASH_ENV names. Bash imports both before this script's first line,
+#     and a function runs ahead of the PATH lookup, so either stands in for any
+#     command here: a stub `jq` leaves the payload unread, and the hook exits 0
+#     silently over a red suite. Reproduced. Privileged mode (`-p`) imports no
+#     function and reads no BASH_ENV, so the script re-runs itself under it,
+#     SECOND rather than first: an inherited xtrace traces every line up to the
+#     statement that clears it, and the test holds that to one. The form of
+#     the re-run is part of the guard, each line closing a way past it, and
+#     scripts/pre-commit-pii-scan.sh explains it once. It covers this
+#     script's own commands and not the suite's, since the functions stay in
+#     the environment pytest inherits. Bash 3.2, the macOS /bin/bash, still
+#     reads CDPATH in that mode, so the line after this list still clears it.
 #
 # NOT A COMPLETE SWEEP, and the stopping rule matters more than the list. The
 # environment is unbounded the way bash grammar is: every round of review finds
@@ -933,27 +952,27 @@ apply_red_checks
 #   nothing watched changed        no pytest     under a thousandth
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
 #   skill .md edit                1056 tests     about a seventh
-#   cold pass, all seven modules  1316 tests     one
-#   (for scale) `pytest tests/`   5085 tests     about twice
+#   cold pass, all seven modules  1335 tests     one
+#   (for scale) `pytest tests/`   5119 tests     about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
 # module alone — so the two state one count, and a test holds them to it.
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 252 and runs 250; and
-# the hooks module holds two platform skips, so it collects 168 and runs 166.
+# the hooks module holds two platform skips, so it collects 187 and runs 185.
 # THE SUITE holds seven skips, not two: those two and the five Windows-only DACL
 # cases W6 added. An eighth depends on the CHECKOUT rather than the platform —
 # tests/test_pdf_toolchain.py skips when `generate_tax_pdf.py` is absent, which
 # it is in a fresh clone and in CI; the scale row is a checkout that has it.
-# `pytest tests/` collects 5092 and runs 5085 for those skips, and that row is
+# `pytest tests/` collects 5126 and runs 5119 for those skips, and that row is
 # the PLAIN invocation, without the two deselections.
 #
 # DECOMPOSITION — each module timed alone, portability carrying the same two
 # deselections run_focused_modules passes. WHICH module dominates, and by how
 # much, is the half of a timing that survives a change of machine.
 #
-#   tests/test_claude_hooks.py     166 tests    the dominant row
+#   tests/test_claude_hooks.py     185 tests    the dominant row
 #   tests/test_portability.py      250 tests    about a tenth of the hooks row
 #   tests/test_preflight.py        383 tests    a twelfth to a twentieth of it
 #   tests/test_secure_fs.py        183 tests    under a fiftieth of it
@@ -978,7 +997,7 @@ apply_red_checks
 # a dependency the lock does not carry.
 #
 # ARITHMETIC, which is the half that is EXACT: 48 + 192 + 183 + 250 + 383 = 1056
-# for a skill edit, plus 94 + 166 = 1316 for a cold pass, both matching the
+# for a skill edit, plus 94 + 185 = 1335 for a cold pass, both matching the
 # trigger table to the test. `test_the_measured_costs_counts_match_live_
 # collection` collects every module and re-derives both sums, the parts
 # included, so a stale count is a red suite rather than a figure a reader has to

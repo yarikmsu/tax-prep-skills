@@ -2340,6 +2340,28 @@ def test_a_pathspec_env_var_cannot_empty_the_range_scan(tmp_path):
     assert FAKE_SSN not in r.stdout + r.stderr
 
 
+def test_an_inherited_function_cannot_stand_in_for_grep(tmp_path,
+                                                        inherited_function):
+    """A function runs ahead of the PATH lookup, and bash takes one from the
+    environment before the script's first line, by any of the routes
+    `tests/conftest.py` lists. A `grep` that always answered "no match",
+    arriving by any of them, let a staged AWS key commit clean.
+
+    One mode is enough, unlike the pathspec pair above. What closes this is
+    the script's opening lines, ahead of anything that tells staged mode from
+    range mode.
+    """
+    repo = _make_repo(tmp_path / "repo")
+    _stage(repo, "config.py", f'KEY = "{FAKE_AWS_KEY}"\n')
+    r = _run_env(repo, inherited_function("grep", "return 1"))
+    assert r.returncode == 1, (
+        f"an inherited `grep` stub let a credential through: {r.stdout!r}")
+    assert "BLOCKED CONTENT" in r.stdout, (
+        f"blocked, but not by detecting the content: {r.stdout!r}")
+    assert "config.py" in r.stdout, "must name the file, not merely fail"
+    assert FAKE_AWS_KEY not in r.stdout + r.stderr
+
+
 def test_a_replace_ref_cannot_swap_what_the_range_scan_reads(tmp_path):
     """`git replace` rewrites what every command READS, object for object.
 
@@ -2816,6 +2838,50 @@ def test_a_real_leak_still_blocks_the_commit_through_the_hook(tmp_path):
     assert "BLOCKED CONTENT" in r.stdout + r.stderr, (
         f"the refusal did not survive being captured:\n{r.stdout}{r.stderr}")
     assert "leak.md" in r.stdout + r.stderr
+    assert FAKE_SSN not in r.stdout + r.stderr
+
+
+def test_an_inherited_git_cannot_let_a_commit_onto_main(tmp_path,
+                                                       inherited_function):
+    """The pre-commit hook asks git which branch it is on before the scan
+    runs, and a function runs ahead of the PATH lookup. One answering `git
+    branch` with another name let a commit onto main, where the hook's own
+    guard exists to stop it.
+    """
+    repo = _hooked_repo(tmp_path)
+    subprocess.run(["git", "checkout", "-q", "-b", "main"], cwd=repo,
+                   check=True)
+    _stage(repo, "notes.md", "Nothing sensitive here.\n")
+    r = subprocess.run(
+        ["git", "commit", "-m", "onto main"], cwd=repo,
+        capture_output=True, text=True,
+        env={**os.environ, **inherited_function(
+            "git", 'if [ "$1" = branch ]; then echo work; '
+                   'else command git "$@"; fi')})
+    assert r.returncode != 0, (
+        f"an inherited `git` let a commit onto main:\n{r.stdout}{r.stderr}")
+    assert "Direct commit to main" in r.stdout + r.stderr
+
+
+def test_an_inherited_git_cannot_hide_the_push_from_the_scan(
+        tmp_path, inherited_function):
+    """The pre-push hook enumerates the outgoing commits with git before the
+    scan sees any, so a function in git's place decides what is scanned. One
+    whose `git rev-list` printed nothing made a branch carrying a full SSN
+    publish "no commit", unscanned.
+    """
+    clone, _ = _pushable_clone(tmp_path)
+    _stage(clone, "leak.md", f"SSN: {FAKE_SSN}\n", force=True)
+    _commit(clone, "leak")
+    r = subprocess.run(
+        ["git", "push", "origin", "HEAD:refs/heads/feature"], cwd=clone,
+        capture_output=True, text=True,
+        env={**os.environ, **inherited_function(
+            "git", 'if [ "$1" = rev-list ]; then return 0; '
+                   'else command git "$@"; fi')})
+    assert r.returncode != 0, (
+        f"an inherited `git` hid a full SSN from the push scan:\n{r.stdout}")
+    assert "leak.md" in r.stdout, "must name the file it found, not merely fail"
     assert FAKE_SSN not in r.stdout + r.stderr
 
 

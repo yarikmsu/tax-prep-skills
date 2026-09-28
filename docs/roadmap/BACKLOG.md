@@ -240,6 +240,19 @@ Windows has not run since 2026-09-13.
   and `/tax-project` in code (AA22), so re-running `compute_schedule_a` as it
   stands would elect wrongly for a donor near the margin.
 
+- **AA26 (P2, S): Permissions-hook routing tests pass with the exposure scan
+  off.** Each drives a Bash payload the hook must not trust, a dynamic,
+  mixed, variable or aliased archive destination, a git or ripgrep helper, or
+  an opaque script, and asserts an archived file ends owner-only. That file
+  already exists, and the index pass re-hardens a listed file whose mode moved,
+  so replacing every payload-driven call to `harden_exposed_archive_entries`
+  with a no-op leaves every one green, which is also how to list them.
+  AA25 moved two of the same shape, the
+  inherited-function and PATH-shim `ls` tests, onto
+  `_an_exposure_only_the_scan_finds`: a new file behind timestamps set back,
+  with a control run on a twin tree that must leave it exposed. The rest
+  need the same. Found by AA25's review.
+
 ### W — engineering hygiene
 
 - **W3 (P3, L): the hook stamp state machine.** *Selection shipped in #163/#164;

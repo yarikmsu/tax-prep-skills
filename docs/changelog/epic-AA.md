@@ -1333,3 +1333,142 @@ three bullets say:
   Schedule 1-A override clears, over-stating the tax, where the gifts
   refuse. Main cleared it the same way, only a direct `project_federal_tax`
   call reaches either, and a refusal would change a rule main's tests pin.
+
+## AA25 — the gates, run without the functions their shell exported
+
+### What was wrong
+
+Bash imports every function exported into its environment, and runs the file
+`BASH_ENV` names, before a script's first line, and a function runs ahead of
+the PATH lookup. A function inherited from a contributor's shell could
+therefore stand in for any command the three scripts that decide a verdict
+run, and each then reported on work it had not done:
+
+- **`harden-runtime-perms.sh`**, under a stub `chmod`, left `result.json`
+  readable by others and exited 0 with nothing on stderr.
+- **`scripts/pre-commit-pii-scan.sh`**, under a `grep` that always answered
+  "no match", printed its clean banner over a staged AWS key and exited 0.
+- **`skill-invariants.sh`**, under a stub `jq`, left its payload unread and
+  exited 0 over a red suite with nothing on stderr.
+
+AA4's review found the first, where a test fixture had removed these
+variables from the tests rather than making the hook ignore them. Sweeping
+the other scripts that decide a verdict found the other two.
+
+The first version of the fix re-ran each script under `-p` whenever `$-`
+lacked it, and its review found that short in three ways, each reproduced:
+
+- **The permissions hook lost sight of the functions it screened for.** It
+  asked `type -t` whether `echo`, or a read-only utility, was really a
+  function before trusting a command as a bounded write or as a read, and
+  under `-p` it can see none. With an exported `echo`, a new file in another
+  year stayed at 644 after `echo x > archive/2024/out.md`, where main hardened
+  it. Its test still passed, because the index pass hardened that test's
+  file, which already existed.
+- **`p` in `$-` is not proof of the re-run.** Bash turns `-p` on from an
+  exported `SHELLOPTS` after importing the functions, and under any exported
+  `SHELLOPTS` a gate that has re-run hands `privileged` on to every gate it
+  starts, so a gate started by a gate would have kept them. With
+  `SHELLOPTS=privileged` the scan's clean banner and the hook's 644 came back.
+- **The re-run went through `exec`**, which a function of that name replaces
+  outside POSIX mode.
+
+It also left the git hook wrappers `agents/install.sh` writes running under
+the functions, though each runs git itself before the scan is handed
+anything: a `git` answering `branch` with another name let a commit onto
+main, and one whose `rev-list` printed nothing pushed a full SSN unscanned.
+
+A review of the second version found the child bash that answers for the
+permissions hook inheriting that same `privileged`. Under an ordinary exported
+`SHELLOPTS` it skipped `BASH_ENV`, so an `echo` defined there was trusted and
+the other year's file stayed at 644, reproduced; the routes each tested one
+setting, and none combined the two. It also found the trust tests' control
+running under the runner's own functions, so an `echo` exported in a
+contributor's shell failed them, reproduced.
+
+A second local review found the replay itself unfaithful. The hook's own start
+runs `BASH_ENV` before the re-run, so the child's run was the second: a file
+behind an include guard it exported defined nothing, and a relative path named
+nothing after the hook's `cd`. Both left the other year's file at 644 behind
+an `echo` the file defined, reproduced, where main hardened it.
+
+### What shipped
+
+- **Five scripts re-run themselves under bash's privileged mode (`-p`)**,
+  which imports no function and reads no `BASH_ENV`: the PII scan, both git
+  hook wrappers, and both tool-time hooks, the skill hook second, after the
+  statement that turns an inherited `xtrace` off. The re-run is recognised by
+  the PID `exec` keeps, and `exec` runs with `POSIXLY_CORRECT` set, where a
+  special builtin is found before any function. The scan's comment explains
+  the form once, and the other four point to it.
+- **The permissions hook asks whether a command's name arrived as a
+  function** before trusting it as a bounded write or a read. Any `BASH_ENV`
+  counts as yes, since it cannot be run again faithfully, which costs the
+  read-only shortcut for whoever sets one. For an exported function a child
+  bash answers: without `-p` it imports the entry as the agent's shell did.
+- **One set of routes for every gate's test**, the `inherited_function`
+  fixture in `tests/conftest.py`: exported, defined by a `BASH_ENV` file
+  behind an exported include guard,
+  exported under `SHELLOPTS=privileged`, exported beside a no-op `exec`, and
+  a `BASH_ENV` file beside an ordinary exported `SHELLOPTS`. Each script's
+  test runs all five.
+- **An exposure only the scan finds** for the tests of the hook's trust in a
+  command: a new file behind timestamps set back, with a control run on a
+  twin tree that must leave it exposed. The inherited-function test and the
+  PATH-shim `ls` test use it; the shim test had passed with its check
+  deleted, for the same reason as the `echo` test. Their runs start from the
+  runner's environment less its functions, since nothing inherited is their
+  premise, and so does the one older test of the read-only shortcut that an
+  inherited `pwd` or any `BASH_ENV` failed. Every other test keeps the
+  contributor's environment.
+- **`@needs_jq` wherever a hooks-module test needs jq.** The skill hook is a
+  documented no-op without it, so on a host without jq most of its tests
+  failed, and a shared fixture errored every test that used it, instead of
+  skipping.
+- `pii-gate.md` and `claude-automation.md` state the form, the skill hook's
+  place in it, and what the re-run does not cover.
+
+### Verified
+
+- **Against the first version of the fix**, the new cases fail, each as
+  described above: the `SHELLOPTS` and `exec` routes of the three scripts,
+  the exported and `BASH_ENV` routes of the permissions hook's trust test,
+  and every wrapper case. The rest pass there: the first
+  version closed those routes, and where its guard let a function through,
+  `type -t` could still see it.
+- **One mutation at a time**, each part of the fix removed alone, turns its
+  own cases red. Keying one script's re-run on `$-` reds its `SHELLOPTS`
+  case, and the scan's also reds the push test's, the gate-started-by-a-gate
+  case. Dropping `POSIXLY_CORRECT` reds the `exec` case. Removing a wrapper's
+  lines reds its cases, asking the child with `-p` reds the exported routes
+  of the trust test, and replaying `BASH_ENV` instead of counting it reds
+  both of its routes, through the include guard.
+- **One branch is untested:** an answer from the child that is neither a
+  builtin, a file nor a function counts as a function. Only a broken bash
+  produces one, and it is the safe answer.
+- **With jq hidden from PATH**, the hooks module passes, skipping what needs
+  jq.
+- **With an inherited pass-through `chmod` and a `BASH_ENV` defining one**,
+  the hooks and PII-scan modules pass with no fixture, the read-only
+  shortcut's tests included. With pass-through functions exported for every
+  name the shortcuts trust, or with a `BASH_ENV` that defines none, the
+  permissions hook's tests pass.
+
+### Left
+
+- **Bash 3.2 still reads `GLOBIGNORE` and `CDPATH` in privileged mode.** That
+  is the macOS `/bin/bash`. The skill hook clears `CDPATH` itself; the other
+  four clear neither.
+- **The functions stay in what each script's children inherit.** The skill
+  hook's verdict is the suite's, and the suite starts bash; a gate it runs
+  re-runs itself, but a test's own `bash -c` imports what it is handed.
+- **A clone gets the wrapper change only when it re-runs**
+  `bash agents/install.sh --hooks-only`.
+- **Refuted under the threat model:** a caller that exports `SHELLOPTS`
+  with `privileged` and sets `GATE_REEXEC_PID` to the PID the script will
+  have, by `exec`ing it, passes the check. Nothing does that by accident.
+- **More routing tests pass with the exposure scan off** (AA26).
+- **Tests that drive a script through PATH shims** elsewhere, the PII scan's
+  fake `git` and preflight's stubbed interpreter among them, still run their
+  shims under whatever the contributor's shell exported. That is noise in a
+  test, not a hole in a gate.

@@ -395,6 +395,15 @@ if [ -n "$HOOKS_DIR" ] && [ -d "$HOOKS_DIR" ]; then
 # tax-prep-skills-managed-hook
 # Git pre-commit hook — blocks commits to main and runs PII guard.
 
+# No function from the environment, first. This hook asks git which branch it
+# is on before the scan runs, so an inherited `git` answered for it. The lines
+# are the scan's own, explained in scripts/pre-commit-pii-scan.sh.
+POSIXLY_CORRECT=y
+case $-:${GATE_REEXEC_PID-} in
+    *p*:"$$") unset GATE_REEXEC_PID POSIXLY_CORRECT ;;
+    *) GATE_REEXEC_PID=$$ exec "$BASH" -p -- "$0" "$@" ;;
+esac
+
 # Block direct commits to main/master
 BRANCH=$(git branch --show-current 2>/dev/null)
 if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
@@ -534,6 +543,16 @@ HOOK_EOF
 # commit, a shallow boundary, a ref that publishes no commit at all, and a ref
 # whose target is not a commit. What each one is and why it is handled the way
 # it is: docs/contributing/pii-gate.md.
+#
+# No function from the environment, first. This hook enumerates the outgoing
+# commits with git before the scan sees any, so an inherited `git` decided what
+# was scanned. The lines are the scan's own, explained in
+# scripts/pre-commit-pii-scan.sh.
+POSIXLY_CORRECT=y
+case $-:${GATE_REEXEC_PID-} in
+    *p*:"$$") unset GATE_REEXEC_PID POSIXLY_CORRECT ;;
+    *) GATE_REEXEC_PID=$$ exec "$BASH" -p -- "$0" "$@" ;;
+esac
 set -u
 
 # A `git replace` mapping rewrites what every command here READS while the pack

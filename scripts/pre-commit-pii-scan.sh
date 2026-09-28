@@ -13,6 +13,36 @@
 #
 # Every failure path BLOCKS. An unperformed scan must never look like a clean
 # one, so a git command that cannot run is an error, not an empty result.
+
+# NO FUNCTION FROM THE ENVIRONMENT, before anything else. Bash imports every
+# function exported into its environment (`export -f`), and runs the file
+# BASH_ENV names, before this script's first line, and a function runs ahead of
+# the PATH lookup, so either can stand in for any command below. Reproduced: an
+# exported `grep` that always answered "no match" let a staged AWS key through,
+# exit 0. Privileged mode (`-p`) imports no function and reads no BASH_ENV, so
+# the script re-runs itself under it: once, here, rather than guarding each
+# command a function could shadow, for the reason the git settings below give.
+#
+# THE FORM IS THE GUARD, and this is the one place it is explained: the git
+# hooks agents/install.sh writes, harden-runtime-perms.sh and
+# skill-invariants.sh carry the same lines and point here. Each part closes a
+# way past the re-run, reproduced:
+#
+#   - The re-run is recognised by the PID `exec` keeps, not by `p` in `$-`.
+#     Bash turns `-p` on from an exported SHELLOPTS AFTER importing the
+#     functions, and under any exported SHELLOPTS a gate that has re-run hands
+#     `privileged` on to every gate it starts, so asking `$-` kept them.
+#   - POSIXLY_CORRECT, set by an assignment no function can intercept, is POSIX
+#     mode, where `exec` is a special builtin found BEFORE any function.
+#     Outside it, an exported no-op `exec` skipped the re-run entirely.
+#   - The caller's options stop at this line, `-x` included. That is `-p`
+#     working, and here it is wanted: a trace would print staged content.
+POSIXLY_CORRECT=y
+case $-:${GATE_REEXEC_PID-} in
+    *p*:"$$") unset GATE_REEXEC_PID POSIXLY_CORRECT ;;
+    *) GATE_REEXEC_PID=$$ exec "$BASH" -p -- "$0" "$@" ;;
+esac
+
 set -euo pipefail
 
 # Byte-oriented matching, not character-oriented. Under a UTF-8 locale — the

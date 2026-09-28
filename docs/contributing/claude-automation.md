@@ -23,6 +23,24 @@ is why they do not replace the git hooks and the git hooks do not replace them:
 everything `harden-runtime-perms.sh` protects is gitignored, so a commit hook never sees
 it at all, and nothing here runs for an agent that is not Claude Code.
 
+**Both re-run themselves under bash's privileged mode (`-p`)**, in the form the PII scan
+uses and explains (`pii-gate.md`). Bash imports every function exported into its
+environment, and runs the file `BASH_ENV` names, before a script's first line, and a
+function runs ahead of the PATH lookup. So a stub `chmod` in a contributor's shell left
+`result.json` world-readable behind an exit 0, and a stub `jq` left the skill hook's
+payload unread over a red suite. Privileged mode imports no function and reads no
+`BASH_ENV`. The permissions hook re-runs first; the skill hook second, after the
+statement that turns an inherited `xtrace` off, so the one traced line its test allows
+stays one. The functions stay in the environment, so neither covers what it starts, and
+the skill hook's verdict comes from a suite that starts bash. The permissions hook also
+loses its own sight of them, so before trusting `echo` as a bounded write or `ls` as a
+read it asks whether that name arrived as a function. Any `BASH_ENV` counts as yes,
+since the hook's own start already ran it and a second run can come out different;
+for an exported function, a child bash answers, importing it as the agent's shell
+did. Bash 3.2, the
+macOS `/bin/bash`, still reads `GLOBIGNORE` and `CDPATH` in that mode; the skill hook
+clears `CDPATH` itself.
+
 ### `skill-invariants.sh` (`Write|Edit|Bash`, timeout 480s)
 
 **It fires on CHANGE, not on state.** A Write/Edit is filtered by its path. A Bash

@@ -231,13 +231,26 @@ the pre-commit hook matches that count against its own enumeration of the index
 — the assertion the pre-push hook has made against the outgoing commits since it
 was written. The hook CAPTURES the line, so a clean commit is still silent.
 
-Five environment settings it pins, because each let the gate report a file or a
+Six environment settings it pins, because each let the gate report a file or a
 commit as checked when it had not been read. They do not share one mechanism —
-the locale one is about `grep`, the pathspec one empties a diff, and the ancestry
-ones produce a walk that is short rather than empty — so what they share is only
-the OUTCOME, which is why all five are pinned where the environment is read, at
-the top of the script, rather than defended at each call site.
+an inherited function replaces a command, the locale one is about `grep`, the pathspec one
+empties a diff, and the ancestry ones produce a walk that is short rather than
+empty — so what they share is only the OUTCOME, which is why all six are pinned
+where the environment is read, at the top of the script, rather than defended at
+each call site.
 
+- **Privileged mode (`bash -p`)** — bash imports every function exported into its
+  environment, and runs the file `BASH_ENV` names, before a script's first line, and a
+  function runs ahead of the PATH lookup. An exported `grep` that always answered "no
+  match" let a staged AWS key commit clean. The script re-runs itself under `-p` before
+  anything else, which imports no function and reads no `BASH_ENV`. The re-run is
+  recognised by the PID `exec` keeps, not by `-p` in `$-`: bash turns that on from an
+  exported `SHELLOPTS` after importing the functions, and under any exported
+  `SHELLOPTS` a gate that has re-run hands it to every gate it starts. And `exec` runs
+  with `POSIXLY_CORRECT` set, where a
+  special builtin is found before any function, so one named `exec` cannot skip it.
+  Both git hooks open with the same lines, since each runs git itself before the scan
+  is handed anything, and so do both tool-time hooks (`claude-automation.md`).
 - **`LC_ALL=C`** — under a UTF-8 locale `grep` silently skips any line that is not valid
   UTF-8, and one Latin-1 byte hid every match on its line.
 - **`cd` to the repository root** — a pathspec resolved from a subdirectory matched

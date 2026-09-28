@@ -50,3 +50,48 @@ def pytest_configure(config):
                     "above",
                     returncode=refusal.code if isinstance(refusal.code, int)
                     else 2)
+
+
+# THE ROUTES BY WHICH BASH HANDS A SCRIPT A FUNCTION IT NEVER DEFINED, in one
+# place so that every gate re-running itself under `-p` is tested against all of
+# them, and a route found later reaches every gate's test at once. A function
+# runs ahead of the PATH lookup, so whichever arrives stands in for the command
+# of its name.
+#
+#   export -f                 an environment entry bash imports before line one
+#   BASH_ENV                  a file bash runs before line one, defining it
+#                             behind an exported include guard, as startup
+#                             files often are, so a second run defines nothing
+#   SHELLOPTS=privileged      the export, with `-p` already on when the script
+#                             looks, since bash reads SHELLOPTS after importing
+#   exported exec             the export, beside a no-op `exec` for the re-run
+#   BASH_ENV under SHELLOPTS  the file, beside an ordinary exported SHELLOPTS,
+#                             which a gate's re-run hands on as `privileged`
+INHERITED_FUNCTION_ROUTES = ("export -f", "BASH_ENV", "SHELLOPTS=privileged",
+                             "exported exec", "BASH_ENV under SHELLOPTS")
+
+
+@pytest.fixture(params=INHERITED_FUNCTION_ROUTES)
+def inherited_function(request, tmp_path_factory):
+    """`inherited_function(name, body)` is the environment that hands a bash
+    script a function called `name` running `body`, by one route per case."""
+    route = request.param
+
+    def environment(name: str, body: str) -> dict:
+        if route.startswith("BASH_ENV"):
+            startup = tmp_path_factory.mktemp("bash-env") / "startup.sh"
+            startup.write_text('[ -n "${INHERITED_FUNCTION_LOADED-}" ] && return\n'
+                               "export INHERITED_FUNCTION_LOADED=1\n"
+                               f"{name}() {{ {body}; }}\n")
+            entries = {"BASH_ENV": str(startup)}
+            if route == "BASH_ENV under SHELLOPTS":
+                entries["SHELLOPTS"] = "braceexpand"
+            return entries
+        entries = {f"BASH_FUNC_{name}%%": f"() {{  {body}\n}}"}
+        if route == "SHELLOPTS=privileged":
+            entries["SHELLOPTS"] = "privileged"
+        elif route == "exported exec":
+            entries["BASH_FUNC_exec%%"] = "() {  :\n}"
+        return entries
+
+    return environment

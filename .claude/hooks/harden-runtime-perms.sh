@@ -30,6 +30,25 @@
 # nothing. It exits 1 when a chmod FAILED, which surfaces the message to the user
 # and lets the tool call proceed — silence was the wrong way to get never-block,
 # because a chmod that cannot run leaves a return exposed and said so nowhere.
+
+# NO FUNCTION FROM THE ENVIRONMENT, before anything else. Bash imports every
+# function exported into its environment (`export -f`), and runs the file
+# BASH_ENV names, before this script's first line, and a function runs ahead of
+# the PATH lookup. So an inherited `chmod` replaced every chmod below:
+# reproduced with a stub, result.json stayed world-readable and the hook exited
+# 0 having said nothing, the exposure this file exists to close. Privileged mode
+# (`-p`) imports no function and reads no BASH_ENV, so the script re-runs
+# itself under it, in the form scripts/pre-commit-pii-scan.sh explains. The
+# functions stay in the environment its children inherit, which is harmless
+# only while none of them is a shell: find and xargs start chmod as a program,
+# not as a name a shell looks up. What it costs this hook is its own sight of
+# them, which may_be_inherited_function gives back.
+POSIXLY_CORRECT=y
+case $-:${GATE_REEXEC_PID-} in
+    *p*:"$$") unset GATE_REEXEC_PID POSIXLY_CORRECT ;;
+    *) GATE_REEXEC_PID=$$ exec "$BASH" -p -- "$0" "$@" ;;
+esac
+
 set -u
 umask 077
 
@@ -1224,6 +1243,29 @@ if [ -e archive ] || [ -L archive ]; then
     fi
 fi
 
+# Whether the agent's shell may have run `$1` as a FUNCTION. That shell and
+# this hook inherit one environment, but this hook re-ran itself under `-p` and
+# imported none, so `type -t` here cannot see one.
+#
+# ANY BASH_ENV COUNTS AS YES, because it cannot be asked again faithfully:
+# this hook's own start already ran it, before the re-run, and a second run
+# can come out different. Reproduced both ways, an `echo` it defined trusted:
+# a file behind an include guard it exported defined nothing the second time,
+# and a relative path named nothing once this hook had changed directory.
+# What it costs is the read-only shortcut for whoever sets one.
+#
+# An exported function is an environment entry, which a child bash without
+# `-p` imports exactly as the agent's shell did, so a child answers for those.
+# Any answer but a builtin or a file counts as yes, since yes costs one scan
+# and no can cost an exposure.
+may_be_inherited_function() {
+    [ -n "${BASH_ENV-}" ] && return 0
+    case $("$BASH" -c 'type -t -- "$1"' _ "$1" 2>/dev/null) in
+        builtin|file) return 1 ;;
+    esac
+    return 0
+}
+
 # Claude supplies the completed tool call as JSON on stdin. Write/Edit identify
 # their exact file, letting an edit inside an existing archived year be hardened
 # without traversing sibling years. Bash supplies its command: concrete
@@ -1265,14 +1307,15 @@ bash_command_is_obviously_read_only() {
         *) return 1 ;;
     esac
     command_name=${normalized%%[[:space:]]*}
+    may_be_inherited_function "$command_name" && return 1
     command_kind=$(type -t -- "$command_name" 2>/dev/null) || return 1
     if [ "$command_name" = pwd ]; then
         [ "$command_kind" = builtin ]
         return
     fi
-    # A PATH shim or exported function can turn a safe utility name into an
-    # arbitrary archive writer. Only the host's standard read-only binary is
-    # eligible for the optimization.
+    # A PATH shim can turn a safe utility name into an arbitrary archive
+    # writer, as an inherited function can (asked above). Only the host's
+    # standard read-only binary is eligible for the optimization.
     [ "$command_kind" = file ] || return 1
     resolved=$(type -P -- "$command_name" 2>/dev/null) || return 1
     case "$resolved" in
@@ -1303,6 +1346,7 @@ bash_archive_command_is_bounded() {
         printf|echo) ;;
         *) return 1 ;;
     esac
+    may_be_inherited_function "$command_name" && return 1
     [ "$(type -t -- "$command_name" 2>/dev/null)" = builtin ] || return 1
     case "$command_text" in
         *'>'*) ;;
