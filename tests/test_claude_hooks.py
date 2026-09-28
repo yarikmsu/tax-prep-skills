@@ -27,7 +27,6 @@ import json
 import math
 import os
 import re
-import resource
 import shutil
 import stat
 import subprocess
@@ -3355,11 +3354,14 @@ class TestRuntimePermissionsHook:
              env_extra: dict | None = None, base_env: dict | None = None):
         """`indent` writes the payload pretty-printed — i.e. across several
         lines, which is what a `read`-based payload parser truncates.
-        `base_env` stands in for the runner's environment."""
+        `base_env` stands in for the runner's environment. No payload is an
+        EMPTY stdin rather than an inherited one: the hook reads its payload
+        to EOF, and a terminal under `pytest -s` never sends one."""
         return subprocess.run(
             ["bash", str(PERMS_HOOK)],
             input=(json.dumps(payload, indent=indent)
                    if payload is not None else None),
+            stdin=subprocess.DEVNULL if payload is None else None,
             text=True, capture_output=True,
             env=dict(os.environ if base_env is None else base_env,
                      CLAUDE_PROJECT_DIR=str(workspace), **(env_extra or {})))
@@ -3483,10 +3485,8 @@ class TestRuntimePermissionsHook:
         )
         (shim / "chmod").chmod(0o755)
 
-        r = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
+        r = self._run(tmp_path, env_extra={
+            "PATH": f"{shim}:{os.environ['PATH']}"})
 
         assert r.returncode == 0, r.stderr
         assert _mode(artifact) == 0o600
@@ -3789,10 +3789,8 @@ class TestRuntimePermissionsHook:
         (shim / "chmod").write_text("#!/bin/sh\nexit 1\n")
         (shim / "chmod").chmod(0o755)
 
-        r = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
+        r = self._run(tmp_path, env_extra={
+            "PATH": f"{shim}:{os.environ['PATH']}"})
         assert r.returncode == 1, (
             "a failed chmod must surface; 0 hides it and 2 would derail the "
             "session over a permissions pass")
@@ -3878,20 +3876,8 @@ class TestRuntimePermissionsHook:
         new_file.write_text("x")
         new_file.chmod(0o644)
 
-        shim = tmp_path / "bin"
-        shim.mkdir()
-        log = tmp_path / "chmod.log"
-        (shim / "chmod").write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' \"$*\" >> \"$PERMS_CHMOD_LOG\"\n"
-            "exec /bin/chmod \"$@\"\n"
-        )
-        (shim / "chmod").chmod(0o755)
-        r = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PERMS_CHMOD_LOG": str(log),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
+        env_extra, log = _chmod_logging_shim(tmp_path)
+        r = self._run(tmp_path, env_extra=env_extra)
 
         assert r.returncode == 0, r.stderr
         assert _mode(new_file) == 0o600
@@ -3900,35 +3886,116 @@ class TestRuntimePermissionsHook:
         assert "archive/2024" not in calls, (
             "an unchanged historical year was recursively revisited")
 
+    # What a full walk may spend on each directory: one chmod from
+    # restore_owner_traversal's find, which makes descent possible before the
+    # walk, and one from the walk's own harden_one, which observes a failure.
+    # Read off the hook rather than timed, and batching either only lowers it.
+    FULL_WALK_CHMODS_PER_DIRECTORY = 2
+
+    def _full_walk_chmods(self, workspace: Path) -> list[str]:
+        """Every chmod one FULL pass over `workspace` spawns, one logged
+        argument list each, whatever ran there before: `.claude/` is emptied
+        first, so the pass finds no stamp and no index, and so is the log.
+
+        The shim logs `"$*"`, so a name holding whitespace would read as two
+        arguments; no fixture that calls this names one."""
+        shutil.rmtree(workspace / ".claude", ignore_errors=True)
+        (workspace / ".claude").mkdir()
+        shim_root = workspace.with_name(f"{workspace.name}-shim")
+        shim_root.mkdir(exist_ok=True)
+        env_extra, log = _chmod_logging_shim(shim_root)
+        log.unlink(missing_ok=True)
+        run = self._run(workspace, env_extra=env_extra)
+        assert run.returncode == 0, run.stderr
+        return log.read_text().splitlines() if log.exists() else []
+
     def test_full_archive_pass_batches_file_chmods(self, tmp_path):
-        """A full pass must not launch one chmod process per archived file."""
-        year = tmp_path / "archive" / "2025"
-        year.mkdir(parents=True)
-        for i in range(100):
-            artifact = year / f"artifact-{i}.pdf"
-            artifact.write_text("financial data")
-            artifact.chmod(0o644)
+        """A full pass must not launch a chmod per archived file, nor more
+        than a fixed few per archived directory.
 
-        shim = tmp_path / "bin"
-        shim.mkdir()
-        log = tmp_path / "chmod.log"
-        (shim / "chmod").write_text(
-            "#!/bin/sh\n"
-            "printf 'call\\n' >> \"$PERMS_CHMOD_LOG\"\n"
-            "exec /bin/chmod \"$@\"\n"
-        )
-        (shim / "chmod").chmod(0o755)
+        Three states still take the full walk: an invalid or missing stamp, a
+        missing file index, and a directory the scan could not descend into.
+        On a large archive it is the expensive pass, and it is priced here in
+        the chmods it spawns, a count that reads the same on every run.
 
-        r = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PERMS_CHMOD_LOG": str(log),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
+        FILES. An archive with the same directories and three times the files
+        must spawn no more chmods: both archives' paths fit one command line
+        under BSD's and GNU's xargs defaults alike, so the added files go to
+        the chmod the others went to. A chmod per file adds one per added file,
+        and a batch smaller than the added files adds at least one. A larger
+        batch passes, being no finer than xargs's own: BSD's caps a command at
+        5000 arguments.
 
-        assert r.returncode == 0, r.stderr
-        assert len(log.read_text().splitlines()) < 20, (
-            "the full walk launched a separate chmod for each archive file")
-        assert all(_mode(p) == 0o600 for p in year.glob("*.pdf"))
+        DIRECTORIES. The same files moved a level down, a folder each, add a
+        hundred directories, and each may cost `FULL_WALK_CHMODS_PER_DIRECTORY`
+        more. A walk whose chmods grow with directories times depth, such as
+        one repeating the traversal repair over each directory's subtree, adds
+        several times that.
+
+        A count means something only if the shim sees the chmods, so every
+        archived file must appear in one it logged. That catches a hook
+        hardening files by a spelled-out `/bin/chmod` INSTEAD of the batch.
+        One doing it as well as the batch passes: the batch still names every
+        file, and a PATH shim cannot count a process it is never asked to
+        start. A single recursive chmod would name no file and fail here, and
+        a hook that moved to one would need this check rewritten.
+
+        What it does NOT pin: the dominant path no longer taking this walk at
+        all, which is the exposure scan's cost change and is pinned by
+        `test_opaque_bash_does_not_rechmod_an_already_hardened_archive`.
+        """
+        walks = {}
+        # Two subtrees a year so the walk pays for nested directories. `dense`
+        # has `sparse`'s directories and three times its files; `nested` has
+        # its files, each in a folder of its own a level further down.
+        for name, per_directory, nested in (("sparse", 5, False),
+                                            ("dense", 15, False),
+                                            ("nested", 5, True)):
+            workspace = tmp_path / name
+            files = []
+            for year in range(2016, 2026):
+                for sub in ("documents", "summaries"):
+                    for i in range(per_directory):
+                        directory = workspace / "archive" / str(year) / sub
+                        if nested:
+                            directory = directory / f"folder-{i}"
+                        directory.mkdir(parents=True, exist_ok=True)
+                        artifact = directory / f"doc-{i}.pdf"
+                        artifact.write_text("financial data")
+                        artifact.chmod(0o644)
+                        files.append(artifact)
+            directories = 1 + sum(1 for p in (workspace / "archive").rglob("*")
+                                  if p.is_dir())
+
+            chmods = self._full_walk_chmods(workspace)
+            # The walk must actually have happened, or the comparison below is
+            # counting a hook that refused the tree.
+            exposed = [p for p in files if _mode(p) != 0o600]
+            assert not exposed, (
+                f"the {name} pass left {len(exposed)} archived files exposed")
+            logged = {(workspace / arg).resolve()
+                      for call in chmods for arg in call.split()}
+            unseen = [p for p in files if p.resolve() not in logged]
+            assert not unseen, (
+                f"the {name} pass hardened {len(unseen)} of {len(files)} "
+                "archived files by a chmod the shim did not log, so the counts "
+                "below cannot see what they cost")
+            walks[name] = (len(files), directories, len(chmods))
+
+        sparse, dense, nested = walks["sparse"], walks["dense"], walks["nested"]
+        assert dense[2] <= sparse[2], (
+            f"{dense[0] - sparse[0]} more archived files in the same "
+            f"directories cost {dense[2] - sparse[2]} more chmod processes "
+            f"({sparse[2]} against {dense[2]}): the full walk's file chmods "
+            "grow with the archive's files instead of being batched")
+        added_directories = nested[1] - sparse[1]
+        allowed = self.FULL_WALK_CHMODS_PER_DIRECTORY * added_directories
+        assert nested[2] - sparse[2] <= allowed, (
+            f"the same files in {added_directories} more directories cost "
+            f"{nested[2] - sparse[2]} more chmod processes ({sparse[2]} "
+            f"against {nested[2]}), over the "
+            f"{self.FULL_WALK_CHMODS_PER_DIRECTORY} a directory allowed: the "
+            "full walk's directory chmods grow faster than its directories")
 
     @needs_jq
     def test_write_payload_hardens_a_file_inside_an_existing_archive(self, tmp_path):
@@ -4835,27 +4902,14 @@ class TestRuntimePermissionsHook:
         generated.write_text("financial data")
         generated.chmod(0o644)
 
-        shim = tmp_path / "bin"
-        shim.mkdir()
-        log = tmp_path / "chmod.log"
-        (shim / "chmod").write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' \"$*\" >> \"$PERMS_CHMOD_LOG\"\n"
-            "exec /bin/chmod \"$@\"\n"
-        )
-        (shim / "chmod").chmod(0o755)
+        env_extra, log = _chmod_logging_shim(tmp_path)
         payload = {
             "tool_name": "Bash",
             "tool_input": {
                 "command": "printf x > archive/2024/reviews/generated.md"
             },
         }
-        r = subprocess.run(
-            ["bash", str(PERMS_HOOK)], input=json.dumps(payload),
-            text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PERMS_CHMOD_LOG": str(log),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
+        r = self._run(tmp_path, payload, env_extra=env_extra)
 
         assert r.returncode == 0, r.stderr
         assert _mode(generated) == 0o600
@@ -5004,26 +5058,12 @@ class TestRuntimePermissionsHook:
         assert self._run(tmp_path).returncode == 0
         os.utime(year, (1, 1))
 
-        shim = tmp_path / "bin"
-        shim.mkdir()
-        log = tmp_path / "chmod.log"
-        (shim / "chmod").write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' \"$*\" >> \"$PERMS_CHMOD_LOG\"\n"
-            "exec /bin/chmod \"$@\"\n"
-        )
-        (shim / "chmod").chmod(0o755)
+        env_extra, log = _chmod_logging_shim(tmp_path)
         payload = {
             "tool_name": "Bash",
             "tool_input": {"command": "pwd -P"},
         }
-        result = subprocess.run(
-            ["bash", str(PERMS_HOOK)], input=json.dumps(payload),
-            text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PERMS_CHMOD_LOG": str(log),
-                 "PATH": f"{shim}:{os.environ['PATH']}"},
-        )
+        result = self._run(tmp_path, payload, env_extra=env_extra)
 
         assert result.returncode == 0, result.stderr
         assert "archive/2024" not in log.read_text(), (
@@ -5169,10 +5209,8 @@ class TestRuntimePermissionsHook:
         shim.mkdir()
         (shim / "chmod").write_text("#!/bin/sh\nexit 1\n")
         (shim / "chmod").chmod(0o755)
-        failed = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
+        failed = self._run(tmp_path, env_extra={
+            "PATH": f"{shim}:{os.environ['PATH']}"})
 
         assert failed.returncode == 1
         assert _mode(exposed) == 0o644
@@ -5236,12 +5274,9 @@ class TestRuntimePermissionsHook:
             "esac\n"
         )
         (shim / "mktemp").chmod(0o755)
-        failed = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "REAL_MKTEMP": shutil.which("mktemp"),
-                 "PATH": f"{shim}:{os.environ['PATH']}"},
-        )
+        failed = self._run(tmp_path, env_extra={
+            "REAL_MKTEMP": shutil.which("mktemp"),
+            "PATH": f"{shim}:{os.environ['PATH']}"})
 
         assert failed.returncode == 1
         assert "permissions pass boundary" in failed.stderr
@@ -5279,13 +5314,10 @@ class TestRuntimePermissionsHook:
             "exec /bin/chmod \"$@\"\n"
         )
         (shim / "chmod").chmod(0o755)
-        second = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "CONCURRENT_SENTINEL": str(sentinel),
-                 "CONCURRENT_TARGET": str(target),
-                 "PATH": f"{shim}:{os.environ['PATH']}"},
-        )
+        second = self._run(tmp_path, env_extra={
+            "CONCURRENT_SENTINEL": str(sentinel),
+            "CONCURRENT_TARGET": str(target),
+            "PATH": f"{shim}:{os.environ['PATH']}"})
 
         assert second.returncode == 0, second.stderr
         assert _mode(target) == 0o644
@@ -5336,10 +5368,8 @@ class TestRuntimePermissionsHook:
         shim.mkdir()
         (shim / "touch").write_text("#!/bin/sh\nexit 1\n")
         (shim / "touch").chmod(0o755)
-        r = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
+        r = self._run(tmp_path, env_extra={
+            "PATH": f"{shim}:{os.environ['PATH']}"})
 
         assert r.returncode == 1
         assert (stamp.read_bytes(), stamp.stat().st_mtime_ns) == before, (
@@ -5986,9 +6016,7 @@ class TestRuntimePermissionsHook:
         assert r.stderr.strip() == ""
 
     def test_a_nonexistent_project_dir_does_not_block(self, tmp_path):
-        r = subprocess.run(
-            ["bash", str(PERMS_HOOK)], text=True, capture_output=True,
-            env=dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path / "gone")))
+        r = self._run(tmp_path / "gone")
         assert r.returncode == 0
 
 
@@ -6270,125 +6298,41 @@ class TestHookRegistration:
             assert "NotebookEdit" in matcher, (
                 f"matcher {matcher!r} misses notebook-written financial data")
 
-    # The archive this timeout has to cover, CHOSEN rather than measured, and
-    # written down so the projection below is arguable instead of opaque: a
-    # decade of retained filing history, each year holding documents/,
-    # summaries/, reviews/ and the return artifacts — order 300 entries a year.
-    # It is also the size the permissions hook's own comments use for their
-    # synthetic archive, so the two agree about what "large" means here.
-    REFERENCE_ARCHIVE_ENTRIES = 3000
-    # The registered timeout is WALL clock; the measurement below is CPU, which
-    # is the only figure that survives a machine doing something else. This
-    # bridges them. On this host, with one competing session, the same walk's
-    # wall time ran four to five times its CPU time; 8x leaves room for a busier
-    # one. Raising it is not free in the other direction — the margin is also
-    # what gives the assertion teeth, and a per-file chmod regression (measured:
-    # it roughly triples the slope) has to stay inside what this catches.
-    FULL_WALK_WALL_OVER_CPU = 8
+    # The permissions hook's timeout, held where it is registered: a budget
+    # the test compares against, not a reading of the walk.
+    PERMS_TIMEOUT_FLOOR = 60
 
-    def _full_walk_cpu_seconds(self, workspace: Path) -> float:
-        """CPU seconds the permissions hook spends on one pass over `workspace`.
+    def test_the_permissions_hook_timeout_is_not_cut(self):
+        """A pass the timeout cancels mid-refresh leaves an index candidate
+        behind and reports nothing, the same silent mode as a hook that never
+        fired.
 
-        RUSAGE_CHILDREN counts only children this process has REAPED, and
-        `subprocess.run` waits, so the delta is exactly this hook's pass — no
-        other subprocess runs inside the window.
-        """
-        shutil.rmtree(workspace / ".claude")
-        (workspace / ".claude").mkdir()
-        before = resource.getrusage(resource.RUSAGE_CHILDREN)
-        subprocess.run(["bash", str(PERMS_HOOK)], stdin=subprocess.DEVNULL,
-                       capture_output=True,
-                       env=dict(os.environ, CLAUDE_PROJECT_DIR=str(workspace)))
-        after = resource.getrusage(resource.RUSAGE_CHILDREN)
-        return ((after.ru_utime - before.ru_utime)
-                + (after.ru_stime - before.ru_stime))
+        The floor is not derived. This used to derive one from a full walk, in
+        CPU seconds, and every attempt to make it load-independent moved with
+        something the hook does not control: the load, the kind of core a pass
+        landed on, or the fixture's shape against a stated budget per process.
+        AA4 has the readings, and pricing the walk against the timeout is
+        AA24's. So the registered value is held instead: a cut needs AA24's
+        reading first, which makes it a decision rather than a quiet edit. The
+        walk's shape is pinned by `test_full_archive_pass_batches_file_chmods`.
 
-    def test_the_permissions_hook_timeout_covers_a_full_archive_walk(self,
-                                                                     tmp_path):
-        """Three states still legitimately walk the whole filing history: an
-        invalid or missing stamp, a missing file index, and a directory the scan
-        could not descend into. A dynamic archive write no longer does — it
-        takes the exposure scan, which is one traversal and no chmod processes
-        when the tree is already correct — so what this covers is the RARE pass,
-        which on a large archive is also the expensive one. A pass the timeout
-        cancels mid-refresh leaves an index candidate behind and reports
-        nothing, the same silent mode as a hook that never fired.
-
-        This used to assert `t >= 60` against a registered 60, which is not an
-        assertion at all: no value the file could hold made it red, and it read
-        as coverage. So it now does what its sibling does for the skill hook —
-        derives a floor from the work the hook actually performs — with two
-        differences forced by the subject.
-
-        First, the driving quantity is not knowable at test time. The skill hook
-        runs a fixed module list, so its pass can be counted; this one runs over
-        whatever archive the taxpayer has. `REFERENCE_ARCHIVE_ENTRIES` is
-        therefore a stated assumption, and moving it is the honest way to
-        disagree with this test.
-
-        Second, cost is measured as CPU, not wall. Wall time is the quantity the
-        timeout actually bounds, but it is also the one that a second session on
-        the machine inflates by several times, and a headroom test that goes red
-        because something else was compiling is a test people delete.
-        `FULL_WALK_WALL_OVER_CPU` carries that conversion explicitly instead.
-
-        The slope, not the average: a small empty-archive pass measures the
-        hook's fixed cost and is subtracted, so the projection is the marginal
-        cost of an archive entry rather than that plus a constant amortized over
-        a deliberately small tree. Minimum of several runs, because scheduling
-        noise only ever adds.
-
-        What it does NOT pin: the repair did not change this hook's registered
-        timeout, so this passes against the pre-repair tree too. The repair's own
-        cost change — the dominant path no longer taking this walk at all — is
-        pinned by `test_opaque_bash_does_not_rechmod_an_already_hardened_archive`.
+        An unregistered timeout is Claude Code's default, not no limit, and a
+        bool is an int to `isinstance`, so `true` is refused by name.
         """
         timeouts = [h.get("timeout") for e in self._post_tool_use()
                     for h in e["hooks"] if "harden-runtime-perms" in h["command"]]
         assert timeouts, "the permissions hook is not registered at all"
-        assert all(isinstance(t, (int, float)) for t in timeouts), (
-            f"permissions-hook timeouts {timeouts} are not all numbers — an "
-            "unregistered timeout is Claude Code's default, not no limit")
-
-        # Two subtrees a year so the walk pays for nested directories, which is
-        # where its per-entry cost lives: every directory is chmod'd twice, once
-        # by the traversal repair and once by the materialized pass.
-        empty = tmp_path / "empty"
-        (empty / ".claude").mkdir(parents=True)
-        (empty / "archive").mkdir()
-        loaded = tmp_path / "loaded"
-        (loaded / ".claude").mkdir(parents=True)
-        entries = 1
-        for year in range(2016, 2026):
-            entries += 1
-            for sub in ("documents", "summaries"):
-                directory = loaded / "archive" / str(year) / sub
-                directory.mkdir(parents=True)
-                entries += 1
-                for i in range(10):
-                    artifact = directory / f"doc-{i}.pdf"
-                    artifact.write_text("financial data")
-                    artifact.chmod(0o644)
-                    entries += 1
-
-        fixed = min(self._full_walk_cpu_seconds(empty) for _ in range(2))
-        walked = min(self._full_walk_cpu_seconds(loaded) for _ in range(3))
-        # The walk must actually have happened, or the slope below is measuring
-        # a hook that refused the tree and the projection is meaningless.
-        exposed = [p for p in (loaded / "archive").rglob("*.pdf")
-                   if _mode(p) != 0o600]
-        assert not exposed, f"the pass left {len(exposed)} archived files exposed"
-
-        per_entry = (walked - fixed) / (entries - 1)
-        projected = per_entry * self.REFERENCE_ARCHIVE_ENTRIES
-        floor = projected * self.FULL_WALK_WALL_OVER_CPU
         for t in timeouts:
-            assert t >= floor, (
-                f"the {t}s registered timeout does not cover a full walk of a "
-                f"{self.REFERENCE_ARCHIVE_ENTRIES}-entry archive: measured "
-                f"{per_entry * 1000:.2f}ms of CPU per entry over {entries} "
-                f"entries projects to {projected:.1f}s of CPU, and "
-                f"{self.FULL_WALK_WALL_OVER_CPU}x that is {floor:.1f}s of wall")
+            assert t is not None, (
+                "the permissions hook registers no timeout, and an unregistered "
+                "timeout is Claude Code's default, not no limit")
+            assert (isinstance(t, (int, float)) and not isinstance(t, bool)
+                    and math.isfinite(t)), (
+                f"the permissions hook's timeout {t!r} is not a finite number")
+            assert t >= self.PERMS_TIMEOUT_FLOOR, (
+                f"the permissions hook's timeout of {t} is under its "
+                f"{self.PERMS_TIMEOUT_FLOOR}s floor: a cut needs the full walk "
+                "priced against it first, which is AA24")
 
     def test_the_hook_runs_test_files_that_exist(self):
         """A renamed module makes pytest exit 4 — a USAGE error, not a failed

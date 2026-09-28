@@ -1472,3 +1472,120 @@ an `echo` the file defined, reproduced, where main hardened it.
   fake `git` and preflight's stubbed interpreter among them, still run their
   shims under whatever the contributor's shell exported. That is noise in a
   test, not a hole in a gate.
+
+## AA4 — the permissions hook's full walk, pinned by its shape
+
+### What was wrong
+
+`test_the_permissions_hook_timeout_covers_a_full_archive_walk` held the
+permissions hook's registered timeout above the cost of a full walk of a
+reference archive. It priced the walk in CPU seconds, on the view that CPU is
+the figure that survives a machine doing something else, and converted to wall
+with a fixed factor. On a machine with two kinds of core that view does not
+hold: CPU seconds move with the kind of core a pass lands on and the clock it
+runs at. Re-measured idle, with every core busy and under file-system churn,
+the correct hook's cost per entry moved by about two times, and so did the
+cost of the per-file chmod regression the test exists to catch. The floor sat
+in the narrow gap between the two: a correct hook read over it, failing the
+test when AA4 was filed and again during AA22's merge, while the regression
+under churn read barely above it. A gate that fires on correct code teaches an
+agent to reason past it, and the recorded outcome is that the assertion gets
+deleted.
+
+The first repair kept the timing and made it a ratio: the hook's CPU over that
+of a reference walk spawning one chmod per file, the two alternating, on the
+view that both would land on the same cores at the same clock. Its review
+re-ran it under partial load, a condition its own measurements had skipped,
+and they did not: the minimum of each list came from different passes, the
+margin between a correct hook and the regression shrank to a fraction of what
+it was idle, and single paired readings of the regression fell under the
+limit.
+
+The second stopped timing. It counted the chmod processes a pass spawns, which
+read the same on every run, and converted the count back to wall with a stated
+budget per process. Its review showed that the conversion carried the problem
+forward. The per-file regression was caught only because the hook chmods every
+directory twice, so batching the traversal repair, or dropping the repeat, let
+a chmod per file through at exactly the limit. The projection scaled the
+fixture's directory density up to a reference archive the test described as
+file-heavy, and in that shape the correct hook's floor fell to a small fraction
+of the timeout, which any timeout clears. The floor also came out close to the
+real walk's wall time, so it bounded nothing in either direction. And an
+exported bash `chmod` function in a contributor's shell runs before the shim's
+PATH lookup, which hid the per-file chmods from the count altogether.
+
+The third pinned the walk's shape, and its review found the bound still too
+loose, the check duplicating one already there, and a fixture at the wrong
+depth. Letting the added files cost a tenth of a chmod each passed a hook
+batching ten files a chmod. The check sat beside
+`test_full_archive_pass_batches_file_chmods`, which pinned the same property
+with a fixed limit of its own that a batch of ten also met. And the module
+fixture that dropped inherited bash functions made the tests ignore them
+rather than the hook: under an exported stub `chmod` the hook itself left
+`result.json` readable and exited 0. That is AA25, fixed in the hook.
+
+The fourth review, after AA25 merged, found the shape blind to directories.
+Both archives had the same ones, so a walk repeating the traversal repair over
+every directory's subtree, whose chmods grow with directories times depth,
+more than doubled its count and passed; reproduced. The timeout test accepted
+any positive number, so it passed a cut of any size. The xargs-derived bound
+came out zero at the fixture's size on every host, and was asked of a
+different command in a different environment than the hook's. And the helper
+counting a full pass neither emptied `.claude/` nor its log, so a second call
+on one workspace would have counted an incremental pass on top of a full one.
+
+### What shipped
+
+- **The shape, not a price.** `test_full_archive_pass_batches_file_chmods`
+  walks three archives and counts their chmods. One with the first's
+  directories and three times its files must spawn no more: both fit one
+  xargs command line, so the added files join the batch. One with the first's
+  files a level down, a folder each, may spend at most
+  `FULL_WALK_CHMODS_PER_DIRECTORY` on each added directory, two, the traversal
+  repair's and the walk's own. This replaces that test's fixed limit over one
+  directory, and each call walks a fresh `.claude/` with an empty log.
+- **Every file through a counted chmod.** Each archived file must appear in a
+  chmod the shim logged. That catches a hook hardening files by a spelled-out
+  `/bin/chmod` instead of the batch. One doing it as well as the batch still
+  passes, since a PATH shim cannot count a process it is never asked to start.
+- **The timeout is held where it is registered.**
+  `test_the_permissions_hook_timeout_is_not_cut` replaces
+  `test_the_permissions_hook_timeout_covers_a_full_archive_walk`. It holds the
+  timeout at `PERMS_TIMEOUT_FLOOR` or above, a budget the test compares
+  against rather than a reading, so a cut waits on AA24's measurement. A
+  missing timeout, `true` and a non-finite one each fail with their own
+  message.
+- **Every pass with no payload gets an empty stdin.**
+  `TestRuntimePermissionsHook._run` passes one, and every test in the class
+  that ran the hook to completion by hand now goes through it, the three that
+  wrote their own copy of the chmod-logging shim using `_chmod_logging_shim`.
+  The hook reads its payload to EOF, and under `pytest -s` an inherited
+  terminal never sends one.
+
+### Verified
+
+The correct hook passes, and so do its variants that batch the traversal
+repair or drop the repeat directory chmod. A chmod per file fails, and so does
+a batch of ten; a third chmod per directory fails, and so does the traversal
+repair repeated over each directory's subtree. A per-file `/bin/chmod` in
+place of the batch fails on the logged-file check; one alongside the batch
+passes, as stated above. A hook that does nothing fails on the exposure check.
+A registered timeout under the floor, missing, `true`, 0, -1 or infinite
+fails. Without the reset, a second full-pass count on one workspace comes out
+different from the first. With the empty stdin removed, `pytest -s` under an
+open stdin hangs. The counts are in the pull request's description, as ruling
+Q13 places a changed threshold's reading.
+
+### Left
+
+- **Nothing prices the walk against its timeout (AA24).** The walk's two
+  chmods per directory, its per-entry shell loop, its traversals and its index
+  refresh are unmeasured against the registered timeout, and in a file-heavy
+  archive the loop is nearly all of the cost.
+- **A fixed batch at least the size of the dense archive passes.** It is no
+  finer than xargs's own at that size.
+- **A single recursive chmod would fail the logged-file check.** It names no
+  file, and a hook that moved to one would need that check rewritten.
+- **Linux has not run it.** The file check assumes GNU's xargs puts the dense
+  archive's paths in one command, as BSD's does here, and the hook has no
+  platform branch. AA2's run on 2026-10-01 is its first reading.

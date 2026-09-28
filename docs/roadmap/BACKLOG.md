@@ -83,7 +83,7 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, **AA23**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -101,6 +101,9 @@ Windows has not run since 2026-09-13.
   reads the previous commit's runs.
 
 - **AA4 (P2, XS): A gate whose verdict depends on machine load.**
+  **BUILT by the pull request that records it in
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.**
   `test_the_permissions_hook_timeout_covers_a_full_archive_walk` failed at load
   6.9 and passes at 3.1. That is the cry-wolf shape — a gate that fires on
   correct data teaches the agent to reason past it, and the recorded outcome is
@@ -239,6 +242,21 @@ Windows has not run since 2026-09-13.
   `compute_schedule_a`'s election ignores it, `/tax-compute` adds it by hand
   and `/tax-project` in code (AA22), so re-running `compute_schedule_a` as it
   stands would elect wrongly for a donor near the margin.
+
+- **AA24 (P2, S): Nothing prices the permissions hook's full walk against its timeout.**
+  AA4's test pins the walk's shape — added files spawn no chmod, and an added
+  directory at most two — and no longer converts that to
+  seconds: every conversion it tried moved with the load, with the kind of core
+  a pass landed on, or with the fixture's shape against a stated budget per
+  process. What the registered timeout has to cover is therefore unmeasured:
+  two chmods per directory, and the per-entry shell loop, the traversals and
+  the index refresh, which in a file-heavy archive are nearly all of the cost.
+  A regression that slows the loop without adding a chmod, such as a command
+  substitution per file, passes every test. AA9's remedy fits here too: the
+  hook times its own full walk and reports, without blocking, when it uses more
+  than a set fraction of its timeout. Until then the registered timeout is held
+  where it is by `test_the_permissions_hook_timeout_is_not_cut`, so a cut
+  waits on this. Raised by AA4's reviews (#184).
 
 - **AA26 (P2, S): Permissions-hook routing tests pass with the exposure scan
   off.** Each drives a Bash payload the hook must not trust, a dynamic,
