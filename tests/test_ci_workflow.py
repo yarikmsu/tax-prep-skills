@@ -711,7 +711,8 @@ class TestTheDevToolingIsLockedLikeTheRuntime:
     def test_the_lock_says_which_command_regenerates_it(self):
         assert "uv pip compile requirements-dev.in" in DEV_LOCK.read_text(encoding="utf-8")
 
-    @pytest.mark.parametrize("lock", ["requirements-dev.txt", "requirements-test.txt"])
+    @pytest.mark.parametrize("lock", ["requirements.txt", "requirements-dev.txt",
+                                      "requirements-test.txt"])
     def test_every_lock_was_resolved_universally(self, lock):
         assert "--universal" in (REPO / lock).read_text(encoding="utf-8")
 

@@ -521,7 +521,7 @@ HOOKS_DEPENDENTS = {
 # NOT in it, and the absence is a decision rather than an oversight — see the
 # HOOKS_DEPENDENTS comment in the hook, which states it at length.
 # `test_the_measured_costs_counts_match_live_collection` goes red the instant a
-# test is ADDED anywhere in the suite and stays red until a several-place hand
+# test is ADDED to one of the seven modules the hook selects and stays red until a several-place hand
 # refresh of the MEASURED COSTS block, which can only be made coherently once a
 # round's tests are final. Selected on those arms it blocked every tool call in
 # between, on correct in-progress work — the gates-that-cry-wolf pattern
@@ -6047,7 +6047,6 @@ def _measured_costs_span(script: str) -> tuple[int, int]:
 # The `collects N and runs M` sentences the counts test reads. Shared with the
 # timing test, whose numeral allowlist may trust only a sentence that is read.
 _MODULE_PAIR = r"(portability|hooks)\b[^.]*?collects (\d+) and runs (\d+)"
-_SUITE_PAIR = r"`pytest tests/` collects (\d+) and runs (\d+)"
 
 
 def _the_one_statement(pattern: str, text: str):
@@ -6431,7 +6430,6 @@ class TestHookRegistration:
         labelled = re.sub(r"\b\d{4}-\d\d-\d\d\b", "", inside)
         counts = set(re.findall(r"(\d+) tests\b", labelled))
         counts |= {n for m in re.findall(_MODULE_PAIR, labelled) for n in m[1:]}
-        counts |= {n for m in re.findall(_SUITE_PAIR, labelled) for n in m}
         foreign = sorted(set(re.findall(
             r"(?<![\w.#])(?:\d+(?:\.\d+)?|\.\d+)", labelled)) - counts)
         assert not foreign, (
@@ -6459,6 +6457,10 @@ class TestHookRegistration:
         the run count subtracts platform skips that are not. The block states
         both, so its collected figures are what can be checked here — and the
         DERIVED rows are checked as arithmetic over the parts.
+
+        ONLY THE SEVEN MODULES THE HOOK SELECTS (AA8). The scale row states no
+        count, because pinning the suite's made every change that added a test
+        anywhere hand-edit the hook; so this collects those seven alone.
         """
         block = SKILL_HOOK.read_text()
         start, end = _measured_costs_span(block)
@@ -6467,29 +6469,6 @@ class TestHookRegistration:
         # mid-phrase still reads as one; `[^.]*?` in the patterns below keeps a
         # match inside one sentence.
         flat = re.sub(r"\s+", " ", re.sub(r"^#[ \t]?", "", costs, flags=re.M))
-
-        # ONE collection, attributed per file from the node ids. This test runs
-        # inside the module that dominates a cold pass, and it used to shell
-        # out seven times.
-        out = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/", "--collect-only",
-             "-q", "-p", "no:cacheprovider"],
-            cwd=REPO, capture_output=True, text=True)
-        found = re.search(r"(\d+) tests? collected", out.stdout)
-        assert found, f"could not collect tests/: {out.stdout[-400:]}"
-        suite_collects = int(found.group(1))
-        live: dict = {}
-        for line in out.stdout.splitlines():
-            node = line.strip()
-            if "::" not in node:
-                continue
-            path = node.split("::", 1)[0]
-            if path.startswith("tests/") and path.endswith(".py"):
-                live[path] = live.get(path, 0) + 1
-        assert sum(live.values()) == suite_collects, (
-            f"node-id attribution sums to {sum(live.values())} against a "
-            f"reported {suite_collects} — the per-module figures below would "
-            "be derived from an incomplete listing")
 
         # BOTH halves of each sentence, and EVERY copy of it: the run half
         # restates a table row, and a restatement nothing compares is one
@@ -6516,7 +6495,10 @@ class TestHookRegistration:
         # lines, and every line inside that run is REQUIRED to parse — a
         # reindented row fails, and a quotation outside both is not read.
         TABLE_ROW = re.compile(r"^#   (\S.*?)\s\s+(\d+) tests\s\s+(\S.*?)\s*$")
-        FAST_ROW = re.compile(r"^#   (\S.*?)\s\s+no pytest\s\s+(\S.*?)\s*$")
+        # The two rows that state no count: the fast path runs no pytest, and
+        # the scale row is the whole suite, whose count is deliberately unpinned.
+        UNCOUNTED_ROW = re.compile(
+            r"^#   (\S.*?)\s\s+(?:no pytest|every module)\s\s+(\S.*?)\s*$")
 
         def _rows_under(anchor, what, blank_between):
             assert costs.count(anchor) == 1, (
@@ -6542,10 +6524,10 @@ class TestHookRegistration:
         triggers: dict = {}
         for ln in trigger_lines:
             counted = TABLE_ROW.match(ln)
-            fast = None if counted else FAST_ROW.match(ln)
-            assert counted or fast, (
+            uncounted = None if counted else UNCOUNTED_ROW.match(ln)
+            assert counted or uncounted, (
                 f"a trigger-table line does not parse as a row: {ln!r}")
-            triggers[(counted or fast).group(1)] = (
+            triggers[(counted or uncounted).group(1)] = (
                 int(counted.group(2)) if counted else None)
         # A SET, because looking a row up by name is how a renamed row becomes
         # a row nothing reads.
@@ -6558,6 +6540,10 @@ class TestHookRegistration:
             "a row nothing checks")
         assert triggers["nothing watched changed"] is None, (
             "the fast-path row states a count; it runs no pytest")
+        assert triggers["(for scale) `pytest tests/`"] is None, (
+            "the scale row states a count again. AA8 took it out: its one job "
+            "is the ratio to a cold pass, and a pinned suite count makes every "
+            "change that adds a test anywhere hand-edit this hook")
 
         rows: dict = {}
         for ln in decomposition_lines:
@@ -6572,14 +6558,36 @@ class TestHookRegistration:
             assert path not in rows, f"{path} has two decomposition rows"
             rows[path] = int(row.group(2))
 
+        # ONE collection over exactly those modules, attributed per file from
+        # the node ids. This test runs inside the module that dominates a cold
+        # pass, and it used to shell out seven times.
+        out = subprocess.run(
+            [sys.executable, "-m", "pytest", *sorted(rows), "--collect-only",
+             "-q", "-p", "no:cacheprovider"],
+            cwd=REPO, capture_output=True, text=True)
+        found = re.search(r"(\d+) tests? collected", out.stdout)
+        assert found and out.returncode == 0, (
+            "could not collect the decomposition's modules — a renamed or "
+            f"deleted module:\n{out.stdout[-400:]}{out.stderr[-400:]}")
+        live: dict = {}
+        for line in out.stdout.splitlines():
+            node = line.strip()
+            if "::" in node:
+                path = node.split("::", 1)[0]
+                live[path] = live.get(path, 0) + 1
+        assert sum(live.values()) == int(found.group(1)), (
+            f"node-id attribution sums to {sum(live.values())} against a "
+            f"reported {found.group(1)} — the per-module figures below would "
+            "be derived from an incomplete listing")
+
         # Portability's gap is the hook's own --deselect flags: derivable, so
         # it is derived rather than trusted from the prose.
         deselects = len(re.findall(r"--deselect\s+tests/test_portability\.py",
                                    block))
         missing = sorted(p for p in rows if p not in live)
         assert not missing, (
-            f"the decomposition names {missing}, which the suite collection "
-            "did not produce — a renamed or deleted module")
+            f"the decomposition names {missing}, which the collection did not "
+            "produce — a renamed or deleted module")
         assert rows["tests/test_portability.py"] == (
             live["tests/test_portability.py"] - deselects), (
             f"portability collects {live['tests/test_portability.py']} and the "
@@ -6671,22 +6679,7 @@ class TestHookRegistration:
             f"block says it collects {stated_collects['hooks']} and holds "
             f"{skips} platform skips, which is "
             f"{stated_collects['hooks'] - skips}")
-        suite_skips_stated = _the_one_statement(
-            r"THE SUITE holds ([a-z -]+?) skips", flat)
-        assert suite_skips_stated, (
-            "the block no longer states how many tests the SUITE skips — that "
-            "figure is what makes the scale row's RUN count derivable")
-        suite_skips = _words_to_int(suite_skips_stated.group(1))
-        assert suite_skips is not None and suite_skips >= skips, (
-            f"the suite skip count {suite_skips_stated.group(1)!r} is "
-            "unreadable or smaller than the hooks module's own")
-        stated_suite = triggers["(for scale) `pytest tests/`"]
-        assert suite_collects - stated_suite == suite_skips, (
-            f"`pytest tests/` collects {suite_collects}; the scale row reads "
-            f"{stated_suite}, a gap of {suite_collects - stated_suite} against "
-            f"the {suite_skips} skips the block states")
-
-        # ...and the tripwire under both: a skip added to an EXISTING test
+        # ...and the tripwire under it: a skip added to an EXISTING test
         # moves no collected count, so the construct count is the signal that
         # the stated figure has to be re-derived by a real run.
         markers = len(re.findall(r"pytest\s*\.\s*mark\s*\.\s*skipif\s*\(",
@@ -6697,22 +6690,13 @@ class TestHookRegistration:
             f"this module declares {markers} skipif markers and {calls} skip "
             f"calls, against the 2 and 4 the block's stated skip count was "
             "taken with — re-run this module and re-derive its RUN row, the "
-            "cold pass summed from it and the scale row's gap")
-        suite_pair = _the_one_statement(_SUITE_PAIR, flat)
-        assert suite_pair, (
-            "the block no longer says `pytest tests/` collects <n> and runs <m>")
-        assert int(suite_pair.group(1)) == suite_collects, (
-            f"the block says `pytest tests/` collects {suite_pair.group(1)}; "
-            f"it collects {suite_collects}")
-        assert int(suite_pair.group(2)) == stated_suite, (
-            f"the scale row reads {stated_suite} tests and the sentence beside "
-            f"it says {suite_pair.group(2)} run — one quantity, two values")
+            "and the cold pass summed from it")
 
         # PROSE counts too, not only the tables: every "N tests" in the block
         # must be one of its own derived figures. Read off the JOINED text: a
         # numeral and its `tests` either side of a line break is how a stale
         # count once stayed green here.
-        allowed = set(rows.values()) | {skill_edit, cold, stated_suite}
+        allowed = set(rows.values()) | {skill_edit, cold}
         for stale in {int(n) for n in re.findall(r"(\d+) tests\b", flat)} - allowed:
             raise AssertionError(
                 f"the block says \"{stale} tests\" somewhere, which is none of "

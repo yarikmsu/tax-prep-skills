@@ -1589,3 +1589,55 @@ Q13 places a changed threshold's reading.
 - **Linux has not run it.** The file check assumes GNU's xargs puts the dense
   archive's paths in one command, as BSD's does here, and the hook has no
   platform branch. AA2's run on 2026-10-01 is its first reading.
+
+## AA5 — the runtime lock, held to a universal resolution
+
+### What was wrong
+
+`test_every_lock_was_resolved_universally` covered `requirements-dev.txt` and
+`requirements-test.txt` and left out `requirements.txt`, the runtime lock and
+the only one that reaches a taxpayer's documents. The lock was universal, so
+nothing was wrong yet; nothing would have noticed a regeneration without the
+flag.
+
+### What shipped
+
+- The runtime lock joins the parametrization, so all three locks are held to
+  `--universal` in their regenerate comment.
+
+### Verified
+
+With `--universal` removed from `requirements.txt`'s header, the new case
+fails and the other two pass.
+
+## AA8 — the suite's count, out of the hook
+
+### What was wrong
+
+`test_the_measured_costs_counts_match_live_collection` held MEASURED COSTS'
+scale row, the `pytest tests/` reconciliation sentence and the suite's skip
+count to a live collection of the whole suite. So every change that added a
+test anywhere had to hand-edit `.claude/hooks/skill-invariants.sh`, and that
+edit selects the hooks module, the dominant row of a cold pass. Since ruling
+Q13 the row's only job is its ratio to a cold pass, which needs no count.
+
+### What shipped
+
+- **The scale row states no count.** Its middle column reads `every module`,
+  and the test requires it to stay uncounted, so a count cannot creep back in
+  unread.
+- **The suite-wide reconciliation is gone**: the `pytest tests/` sentence, the
+  suite skip count and `_SUITE_PAIR`, which the timing test also trusted as a
+  source of numerals.
+- **The collection covers only the seven modules the hook selects**, named by
+  the decomposition table, instead of the suite. A renamed or deleted module
+  fails the collection and says so.
+- The comments in the hook and the test, and `test-invariants.md`, now say the
+  check goes red when a test is added to one of the seven, not anywhere. The
+  backlog's Status sentence no longer says the block states the suite's size.
+
+### Verified
+
+The counts test fails with a count put back in the scale row, fails with a
+test added to `tests/test_claude_agents.py`, and passes with a test added in a
+new module the hook does not select.

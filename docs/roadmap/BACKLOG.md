@@ -54,10 +54,10 @@ accurate history, and git resolves it.
 ## Status
 
 **Engineering: drained.** Epics V, W and X are complete but for P3 filler, and
-`main` is green locally. The suite's size is stated once, in
-`.claude/hooks/skill-invariants.sh`'s MEASURED COSTS block, and deliberately
-not repeated here — a count restated in a second place is the mirror this file
-was collapsed to remove.
+`main` is green locally. The suite's size is stated nowhere: since AA8 the
+MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` counts only the
+seven modules that hook selects, and a count restated here would be the mirror
+this file was collapsed to remove.
 
 **Product: blocked on one decision.** The repository is private, Discussions are
 off, and there are zero non-owner users. Every distribution item has been
@@ -111,6 +111,9 @@ Windows has not run since 2026-09-13.
   load-independent assertion or mark it `slow` and take it off the default path.
 
 - **AA5 (P3, XS): The runtime lock has no universal-resolution guard.**
+  **BUILT by the pull request that records it in
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.**
   `test_every_lock_was_resolved_universally` parametrizes over
   `requirements-dev.txt` and `requirements-test.txt` and omits
   **`requirements.txt`** — the runtime lock, the one pinning `pdfplumber`,
@@ -119,6 +122,9 @@ Windows has not run since 2026-09-13.
   One line.
 
 - **AA8 (P2, XS): Stop pinning the whole suite's count in the hook.**
+  **BUILT by the pull request that records it in
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.**
   `test_the_measured_costs_counts_match_live_collection` holds MEASURED COSTS'
   scale row and its `pytest tests/` sentence to the exact collected count, so
   every PR that adds a test ANYWHERE must hand-edit

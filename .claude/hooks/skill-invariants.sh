@@ -376,8 +376,8 @@ RUN_HOSTGUARD=0
 #
 # WHAT IS DELIBERATELY ABSENT is `test_the_measured_costs_counts_match_live_
 # collection`, and leaving it out is the same judgement the `--deselect` pair in
-# `run_focused_modules` records. It goes red the instant a test is ADDED
-# anywhere in the suite, and stays red until the MEASURED COSTS tables, its two
+# `run_focused_modules` records. It goes red the instant a test is ADDED to one
+# of the seven modules, and stays red until the MEASURED COSTS tables, its two
 # derived rows, the ARITHMETIC sentence and the reconciliation sentences have
 # all been refreshed — a hand edit in several places that can only be made
 # coherently once a round's tests are final. Selected here it blocked every
@@ -953,7 +953,7 @@ apply_red_checks
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
 #   skill .md edit                1056 tests     about a seventh
 #   cold pass, all seven modules  1335 tests     one
-#   (for scale) `pytest tests/`   5119 tests     about twice
+#   (for scale) `pytest tests/`   every module  about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
 # module alone — so the two state one count, and a test holds them to it.
@@ -961,12 +961,13 @@ apply_red_checks
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 252 and runs 250; and
 # the hooks module holds two platform skips, so it collects 187 and runs 185.
-# THE SUITE holds seven skips, not two: those two and the five Windows-only DACL
-# cases W6 added. An eighth depends on the CHECKOUT rather than the platform —
-# tests/test_pdf_toolchain.py skips when `generate_tax_pdf.py` is absent, which
-# it is in a fresh clone and in CI; the scale row is a checkout that has it.
-# `pytest tests/` collects 5126 and runs 5119 for those skips, and that row is
-# the PLAIN invocation, without the two deselections.
+#
+# THE SCALE ROW STATES NO COUNT, on purpose (AA8). Its one job since ruling Q13
+# is "about twice" a cold pass, which no exact count serves, and pinning the
+# whole suite's count here made every change that added a test ANYWHERE edit
+# this file — an edit that selects the hooks module, the dominant row below.
+# Only the seven modules this hook selects are counted, and only they are
+# pinned. It is the PLAIN invocation, without the two deselections.
 #
 # DECOMPOSITION — each module timed alone, portability carrying the same two
 # deselections run_focused_modules passes. WHICH module dominates, and by how
@@ -1003,7 +1004,7 @@ apply_red_checks
 # included, so a stale count is a red suite rather than a figure a reader has to
 # distrust on their own. It is left out of HOOKS_DEPENDENTS on purpose, so an
 # edit to one of the other test modules does not run it: it goes red the moment
-# a test is added anywhere in the suite, which is correct and is also a moment
+# a test is added to one of the seven, which is correct and is also a moment
 # nothing can be done about, mid-round. Every edit that runs the hooks module,
 # an edit to that module included, still runs it.
 #
