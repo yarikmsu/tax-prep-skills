@@ -142,6 +142,9 @@ Windows has not run since 2026-09-13.
   AA13 change, whose review found it.
 
 - **AA15 (P2, S): The line-58 total defaults the City and Yonkers taxes to zero.**
+  **BUILT by the pull request that records it in
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.**
   `compute_city_and_yonkers_total` takes the City resident tax (line 47a) and
   both Yonkers taxes (lines 55 and 56) as arguments defaulting to 0.0, and
   `result_template.json` ships all three as `0`. So a caller that skips
@@ -155,6 +158,9 @@ Windows has not run since 2026-09-13.
   an agent that never calls the total. Found by AA12's review.
 
 - **AA17 (P2, S): A mid-year move abroad passes the capability gate.**
+  **BUILT by the pull request that records it in
+  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
+  that merges.**
   The interview asks whether the taxpayer moved states this year, and
   `part_year_residency` blocks on that answer. A move to or from another
   country is not a move between states, so a Californian who emigrates in

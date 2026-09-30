@@ -1641,3 +1641,76 @@ Q13 the row's only job is its ratio to a cold pass, which needs no count.
 The counts test fails with a count put back in the scale row, fails with a
 test added to `tests/test_claude_agents.py`, and passes with a test added in a
 new module the hook does not select.
+
+## AA17 — a move abroad, stopped at the gate
+
+### What was wrong
+
+The interview asked only whether the taxpayer moved states, and
+`part_year_residency` blocked on that answer. A move to or from another country
+is not a move between states, so a Californian who emigrated in June answered
+"no" truthfully, passed the gate and got a full-year resident return taxing the
+months after they left: an over-statement, the direction AGENTS.md §4 makes a
+hard error. `lives_abroad` did not cover it; it drives only the MANUAL `feie`
+note, and describes a whole year abroad rather than a move.
+
+### What shipped
+
+- **A rule of its own, `move_abroad`,** keyed on
+  `flags.moved_abroad_this_year`, UNSUPPORTED: part-year allocation is not
+  modeled whichever side of the border the other home is on, and a non-citizen
+  can also have a dual-status federal year, which is not modeled either.
+- **A separate question, not a wider one.** The states question kept its flag;
+  the interview now asks the abroad question next to it in Group 2.
+- **The flag is required.** Every profile written before this answered only the
+  states question, and "no" to that is not "no" to this, so an unanswered flag
+  blocks as `unanswered_gate_questions` rather than reading as False.
+- **WHO-IT-FITS sizes the block.** Its row comes from the migration files'
+  foreign rows the page already measured (0.13% to 0.32% of households), and
+  the "not blocks" bullet that tracked this item is gone. Seattle's
+  all-returns range moves from 17–18% to 18%; no other cell changes.
+
+### Verified
+
+The flag blocks through the parametrized rule test. A profile holding every
+gate answer but this one blocks with `unanswered_gate_questions` naming it;
+with the flag taken out of the required list that test fails, and with the rule
+deleted two tests fail (the rule test and the WHO-IT-FITS roster).
+
+## AA15 — line 58, refusing a City or Yonkers tax nobody computed
+
+### What was wrong
+
+`compute_city_and_yonkers_total` took the City resident tax (line 47a) and both
+Yonkers taxes (lines 55 and 56) as arguments defaulting to 0.0. A caller that
+skipped the function computing one got a line 58 without it and nothing to say
+so, and a line nobody computed read the same as a computed zero: an
+under-statement with no banner. The same default hid line 47a until AA13 and
+lines 55-56 until AA12, and reviews found both, not a gate.
+
+### What shipped
+
+- **The three household flags are required** keyword arguments —
+  `nyc_resident`, `yonkers_resident`, `yonkers_nonresident_earnings` — held to
+  bool, and the three taxes default to None.
+- **A flagged tax that was not passed is refused**, naming the function that
+  computes its line. A computed zero passed explicitly is taken.
+- **A tax passed for an unflagged household is refused too**: either the flag
+  is wrong, and the gate reads it, or the amount is someone else's. An
+  unflagged tax left out is the zero the flag asserts.
+- `/tax-compute`'s New York reference says to pass the flags from the profile,
+  and never to drop an argument to get past the refusal.
+
+Of the backlog's two remedies this is the first. The second, shipping the lines
+`null` with a check that refuses a null line for a flagged household, would
+also catch an agent that never calls the total or types line 58 by hand, which
+this does not. Its natural home is the tie-out gate, `agents/lib/tie_out.py`,
+which already reads `new_york_it201` and already checks a profile flag against
+result lines (`may_qualify_for_eic` against the EIC lines).
+
+### Verified
+
+With the flagged-but-missing refusal switched off, three cases fail (one per
+line); with the unflagged-amount refusal switched off, three others fail. The
+engine self-test, mypy and ruff pass.
+

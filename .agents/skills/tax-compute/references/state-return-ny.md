@@ -274,6 +274,13 @@ Then `compute_city_and_yonkers_total(...)`. **Line 58 adds the MCTMT and both
 Yonkers taxes AFTER the two city credit caps** — the line-45 pattern a second
 time.
 
+Pass it the household's three flags, `nyc_resident`, `yonkers_resident` and
+`yonkers_nonresident_earnings`, straight from `taxpayer_profile.json`; they
+are required. A flagged tax you did not pass is REFUSED, not read as zero: run
+the function above that computes it and pass its tax. A tax passed for a
+household whose flag is false is refused too — fix the flag or the amount,
+never drop the argument to get past it.
+
 ## 10.NY.5 — Sales or use tax (line 59)
 
 **ASK. Do not write 0.** New York reports sales and use tax on untaxed

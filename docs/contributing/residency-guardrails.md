@@ -160,10 +160,13 @@ uses, `capabilities._NO_INCOME_TAX_STATES`.
 **BOTH prongs are required.** Days alone, with hotels and no abode, is not
 statutory residency; an abode alone without the days is not either.
 
-It is DISTINCT from the two rules next to it, and all three can fire at once:
+It is DISTINCT from the three rules next to it, and all four can fire at once:
 
 - `part_year_residency` fires on a mid-year MOVE. A taxpayer who never moved and
   simply kept two homes is not caught by it.
+- `move_abroad` fires on a mid-year move to or from ANOTHER COUNTRY, which is
+  not a move between states and so is not `part_year_residency`'s: an emigrant
+  answers "no" to the states question truthfully (AA17).
 - `nonresident_source_income` fires on income SOURCED elsewhere. Statutory
   residency taxes ALL income, wherever it arose, so the source test misses it
   entirely for a taxpayer whose income is all from their resident state.

@@ -46,8 +46,9 @@ is one figure. How each was measured, and what it misses, is at the end.
 | Rental real estate, Schedule E (`rental_income`) | 17% · 7.1% | 15% · 4.7% | 11% · 5.8% | 14% · 5.0% | 13% · 6.8% |
 | Marketplace health insurance with an advance credit, Form 8962 (`marketplace_insurance`) | 1.3% · 6.0% | 2.4% · 17% | 0.32% · 1.4% | 1.6% · 9.2% | 0.69% · 3.6% |
 | Moved to or from another state during the year (`part_year_residency`) | 3.7% | 6.7% | 8.8%&nbsp;¹ | 6.9% | 7.7% |
+| Moved to or from another country during the year (`move_abroad`) | 0.15% | 0.19% | 0.23% | 0.13% | 0.32% |
 | Works in another state (`nonresident_source_income`) ³ | 0.26% | 1.0% | 2.5% | 2.4% | 0.36% |
-| **At least one block** ² | **22–27%** · 16% | **24–29%** · 27% | **22–27%** · 18% | **24–29%** · 22% | **21–26%** · 17–18% |
+| **At least one block** ² | **22–27%** · 16% | **24–29%** · 27% | **22–27%** · 18% | **24–29%** · 22% | **21–26%** · 18% |
 
 ¹ Of the 8.8%, 6.7% cross a state line, which the gate stops, and 2.0% move
 between the City and the rest of New York State; each is rounded on its own.
@@ -168,12 +169,6 @@ are the ones that matter most for these personas. Every situation the gate
 notes without blocking is listed in the
 [skill catalog](contributing/skill-catalog.md).
 
-- **A move abroad.** The interview asks only whether you moved states, so
-  someone who leaves the country or arrives from abroad during the year can pass
-  the gate. In a state with an income tax they then get a full-year resident
-  return, which taxes the part of the year they lived elsewhere. Between 0.13%
-  and 0.32% of households in these five places move abroad or arrive from
-  abroad in a year. Tracked as AA17.
 - **North Carolina's D-400** is a bracket-based estimate.
 - **Washington's capital-gains excise** is not computed, and the return's state
   note does not name it: it says only that Washington is an estimate.
@@ -211,8 +206,8 @@ published.
   [migration data](https://www.irs.gov/statistics/soi-tax-stats-migration-data),
   2022 to 2023. Households whose return address moved to or from another state
   between the two filing years, over the households that filed in the place in
-  either year. Moves abroad are left out, because the gate does not stop them
-  (above). It covers every income only.
+  either year. Moves abroad are the
+  same files' foreign rows, sized as their own row. It covers every income only.
 - **Commuting**: Census Bureau,
   [county-to-county commuting flows](https://www.census.gov/data/tables/2020/demo/metro-micro/commuting-flows-2020.html),
   American Community Survey 2016-2020. Workers whose workplace is in another

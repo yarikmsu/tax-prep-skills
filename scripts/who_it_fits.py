@@ -82,13 +82,15 @@ PUB1304 = {
 }
 
 BLOCK_ROWS = ("rental_income", "marketplace_insurance", "part_year_residency",
-              "nonresident_source_income")
+              "move_abroad", "nonresident_source_income")
 ROW_LABELS = {
     "rental_income": "Rental real estate, Schedule E (`rental_income`)",
     "marketplace_insurance": "Marketplace health insurance with an advance "
                              "credit, Form 8962 (`marketplace_insurance`)",
     "part_year_residency": "Moved to or from another state during the year "
                            "(`part_year_residency`)",
+    "move_abroad": "Moved to or from another country during the year "
+                   "(`move_abroad`)",
     "nonresident_source_income": "Works in another state "
                                  "(`nonresident_source_income`) ³",
 }
@@ -476,6 +478,7 @@ def columns(figures: dict) -> dict[str, dict[str, str]]:
                 f"{pct(s['marketplace_200k'])} · {pct(s['marketplace_all'])}",
             "part_year_residency": pct(_moving(figures, persona))
                                    + ("&nbsp;¹" if local_moves_block else ""),
+            "move_abroad": pct(figures["moves"][persona]["abroad"]),
             "nonresident_source_income": pct(figures["commuting"][persona]),
         }
     return out
@@ -518,7 +521,6 @@ def phrases(figures: dict) -> list[str]:
     com = {p: pct(v) for p, v in figures["commuting"].items()}
     moved = {p: pct(_moving(figures, p)) for p in PERSONAS}
     ends, work = ranges(figures), figures["workplaces"]
-    abroad = [m["abroad"] for m in figures["moves"].values()]
     itemize = figures["itemizing_500k"]
     origin = figures["arrivals"][fl][0]
     return [
@@ -564,8 +566,6 @@ def phrases(figures: dict) -> list[str]:
         f"rental at {inc[sea]['rental_200k']} above $200,000, moves across the state "
         f"line at {moved[sea]}, and almost no commuting ({com[sea]})",
         f"{ends[sea]['200k']} of $200,000+ returns hit one",
-        f"Between {pct(min(abroad))} and {pct(max(abroad))} of households in these five "
-        "places move abroad or arrive from abroad in a year",
         f"returns reporting any rent are {n['any_rent_200k']} of $200,000+ returns "
         f"against {n['rental_field_200k']} by this field",
     ]

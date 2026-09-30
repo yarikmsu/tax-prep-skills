@@ -1645,14 +1645,40 @@ def compute_yonkers_nonresident_earnings_tax(
             "form": form, "resident_limit": limit, "notes": notes}
 
 
+def _flagged_tax(amount, name: str, flag, flag_name: str, line: str) -> float:
+    """One of line 58's flag-governed taxes, refused where the household flag
+    and the amount disagree. See compute_city_and_yonkers_total."""
+    if not isinstance(flag, bool):
+        raise ValueError(f"{flag_name} must be True or False, got {flag!r}")
+    if amount is None:
+        if flag:
+            raise ValueError(
+                f"flags.{flag_name} is set and {name} was not passed: line "
+                f"{line} comes from compute_{name}, and a line nobody computed "
+                "is not "
+                "a zero. Run it and pass its tax, or correct the flag.")
+        return 0.0
+    value = _amount(amount, name)
+    if value and not flag:
+        raise ValueError(
+            f"{name} of {value:,.2f} was passed, but flags.{flag_name} is not "
+            f"set: either the household owes line {line} and the flag is "
+            "wrong, or the amount belongs to someone else.")
+    return value
+
+
 def compute_city_and_yonkers_total(
-    nyc_resident_tax: float = 0.0,
+    nyc_resident_tax: "float | None" = None,
     nyc_household_credit: float = 0.0,
     other_nyc_taxes: float = 0.0,
     nyc_nonrefundable_credits: float = 0.0,
     mctmt: float = 0.0,
-    yonkers_resident_surcharge: float = 0.0,
-    yonkers_nonresident_earnings_tax: float = 0.0,
+    yonkers_resident_surcharge: "float | None" = None,
+    yonkers_nonresident_earnings_tax: "float | None" = None,
+    *,
+    nyc_resident: bool,
+    yonkers_resident: bool,
+    yonkers_nonresident_earnings: bool,
 ) -> dict:
     """IT-201 lines 47a through 58 — the city block's own two credit caps.
 
@@ -1670,17 +1696,30 @@ def compute_city_and_yonkers_total(
 
     Part-year city and Yonkers lines (50 and 57) are not here. This module is
     full-year residents, and a part-year figure belongs to IT-360.1.
+
+    **The three household flags are required, and the three taxes they govern
+    default to None, not zero (AA15).** Each of lines 47a, 55 and 56 comes from
+    its own function, and a default of zero made a line nobody computed read
+    the same as a computed zero: an under-statement with nothing to say so. It
+    hid line 47a until AA13 and lines 55-56 until AA12. So a flagged tax that
+    was not passed is refused, and so is a tax passed for a household the
+    profile says does not owe it. An unflagged tax left out is a zero, which is
+    what the flag asserts.
     """
-    city_tax = _amount(nyc_resident_tax, "nyc_resident_tax")
+    city_tax = _flagged_tax(nyc_resident_tax, "nyc_resident_tax",
+                            nyc_resident, "nyc_resident", "47a")
+    yonkers_res = _flagged_tax(yonkers_resident_surcharge,
+                               "yonkers_resident_surcharge",
+                               yonkers_resident, "yonkers_resident", "55")
+    yonkers_non = _flagged_tax(yonkers_nonresident_earnings_tax,
+                               "yonkers_nonresident_earnings_tax",
+                               yonkers_nonresident_earnings,
+                               "yonkers_nonresident_earnings", "56")
     household = _amount(nyc_household_credit, "nyc_household_credit")
     other_city = _amount(other_nyc_taxes, "other_nyc_taxes")
     city_credits = _amount(nyc_nonrefundable_credits,
                               "nyc_nonrefundable_credits")
     mobility = _amount(mctmt, "mctmt")
-    yonkers_res = _amount(yonkers_resident_surcharge,
-                             "yonkers_resident_surcharge")
-    yonkers_non = _amount(yonkers_nonresident_earnings_tax,
-                             "yonkers_nonresident_earnings_tax")
 
     notes: "list[str]" = []
     line_49 = round(max(city_tax - household, 0.0), 2)

@@ -127,7 +127,8 @@ interview never captures is invisible to every downstream check.
   like the HoH block. Also capture basis step-up on inherited assets
   (FULL step-up on community property incl. CA) → consider
   `received_inheritance`.
-- Moved states? asked in Group 2 (`moved_states_this_year`).
+- Moved states? asked in Group 2 (`moved_states_this_year`), and moved to or
+  from another country (`moved_abroad_this_year`).
 
 **Group 2 — Address & state:**
 - Street address, city, state, ZIP
@@ -135,6 +136,12 @@ interview never captures is invisible to every downstream check.
 - Did you move states during THIS tax year? → sets `moved_states_this_year`
   (part-year returns are NOT modeled — the `/tax-compute` capability gate will
   block; tell the user now, not at compute time)
+- Did you move to or from ANOTHER COUNTRY during THIS tax year? → sets
+  `moved_abroad_this_year`. Ask it separately: someone who emigrated in June
+  truthfully answers "no" to the states question, and without this one gets a
+  full-year resident return taxing the months they lived abroad. It blocks at
+  the same gate, for the same reason; tell the user now. Living abroad all
+  year is `lives_abroad` (Group 4), not this.
 - If NY appears anywhere — the address, `residency.domicile_state`, or either
   count above: are you a New York City resident? → sets `nyc_resident`.
   **Not "if state is NY"**: the taxpayer this matters most to has a Florida

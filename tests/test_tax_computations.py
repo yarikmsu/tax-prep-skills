@@ -7093,13 +7093,67 @@ def test_mctmt_needs_no_rate_for_a_zone_below_the_threshold():
     assert out["mctmt"] == round(70000 * 0.0034, 2)
 
 
+# Line 58's three household flags, all unset; and a City resident with no
+# Yonkers tax, the household most of these cases model.
+_NO_FLAGS = dict.fromkeys(
+    ("nyc_resident", "yonkers_resident", "yonkers_nonresident_earnings"), False)
+_CITY_ONLY = {**_NO_FLAGS, "nyc_resident": True}
+# Each flag, the tax it governs, and that tax's IT-201 line.
+_LINE_58_FLAGGED = [
+    ("nyc_resident", "nyc_resident_tax", "47a"),
+    ("yonkers_resident", "yonkers_resident_surcharge", "55"),
+    ("yonkers_nonresident_earnings", "yonkers_nonresident_earnings_tax", "56"),
+]
+
+
+@pytest.mark.parametrize("flag,tax,line", _LINE_58_FLAGGED)
+def test_a_flagged_line_58_tax_nobody_computed_is_refused(flag, tax, line):
+    """AA15: the three taxes defaulted to 0.0, so a caller that skipped the
+    function computing one got a line 58 without it and nothing to say so. A
+    City resident owing $3,000 of line 47a would have read a total of $0. The
+    same default hid line 47a until AA13 and lines 55-56 until AA12."""
+    flags = {**_NO_FLAGS, flag: True}
+    with pytest.raises(ValueError, match=f"line {line} comes from"):
+        compute_city_and_yonkers_total(**flags)
+    # Passed, even as a computed zero, it is taken.
+    assert compute_city_and_yonkers_total(
+        **{tax: 0.0}, **flags)["line_58_total_city_and_yonkers"] == 0.0
+
+
+@pytest.mark.parametrize("flag,tax,line", _LINE_58_FLAGGED)
+def test_a_line_58_tax_for_an_unflagged_household_is_refused(flag, tax, line):
+    """The other half of the disagreement: a tax passed for a household the
+    profile says does not owe it. Either the flag is wrong, and the gate and
+    the rest of the return read it, or the amount is someone else's."""
+    with pytest.raises(ValueError,
+                       match=f"flags.{flag} is not set: either the household "
+                             f"owes line {line}"):
+        compute_city_and_yonkers_total(**{tax: 100.0}, **_NO_FLAGS)
+    # An unflagged tax left out is the zero the flag asserts.
+    assert compute_city_and_yonkers_total(
+        **_NO_FLAGS)["line_58_total_city_and_yonkers"] == 0.0
+
+
+def test_line_58_takes_its_household_flags_as_booleans():
+    """A string "false" is truthy; the flags are held to bool, as the gate
+    holds its own."""
+    with pytest.raises(ValueError, match="nyc_resident must be True or False"):
+        compute_city_and_yonkers_total(
+            3000, nyc_resident="false", yonkers_resident=False,
+            yonkers_nonresident_earnings=False)
+    with pytest.raises(TypeError):
+        compute_city_and_yonkers_total(3000)
+
+
 def test_city_credits_are_capped_twice_and_the_excess_is_lost():
     """Line 49: "if line 48 is more than line 47a, enter 0", and line 54 does
     the same against the city's nonrefundable credits."""
-    out = compute_city_and_yonkers_total(3000, nyc_household_credit=3500)
+    out = compute_city_and_yonkers_total(3000, nyc_household_credit=3500,
+                                         **_CITY_ONLY)
     assert out["line_49_after_household_credit"] == 0.0
     out2 = compute_city_and_yonkers_total(3000, other_nyc_taxes=200,
-                                          nyc_nonrefundable_credits=5000)
+                                          nyc_nonrefundable_credits=5000,
+                                          **_CITY_ONLY)
     assert out2["line_52_city_tax_before_credits"] == 3200
     assert out2["line_54_after_city_credits"] == 0.0
 
@@ -7112,7 +7166,9 @@ def test_mctmt_and_yonkers_come_after_both_city_credit_caps():
     out = compute_city_and_yonkers_total(
         3000, nyc_household_credit=3500, mctmt=238,
         yonkers_resident_surcharge=100,
-        yonkers_nonresident_earnings_tax=50)
+        yonkers_nonresident_earnings_tax=50,
+        nyc_resident=True, yonkers_resident=True,
+        yonkers_nonresident_earnings=True)
     assert out["line_54_after_city_credits"] == 0.0
     assert out["line_58_total_city_and_yonkers"] == 388, (
         "a city credit absorbed the MCTMT or a Yonkers tax, which line 58 "
@@ -7124,7 +7180,9 @@ def test_city_block_is_plain_arithmetic_when_nothing_is_capped():
     out = compute_city_and_yonkers_total(
         3000, nyc_household_credit=75, other_nyc_taxes=200,
         nyc_nonrefundable_credits=100, mctmt=238,
-        yonkers_resident_surcharge=500)
+        yonkers_resident_surcharge=500,
+        nyc_resident=True, yonkers_resident=True,
+        yonkers_nonresident_earnings=False)
     assert out["line_49_after_household_credit"] == 2925
     assert out["line_52_city_tax_before_credits"] == 3125
     assert out["line_54_after_city_credits"] == 3025
@@ -7162,7 +7220,7 @@ def test_the_city_nonrefundable_cap_also_holds_against_the_later_taxes():
     zero, and the MCTMT is still owed in full.
     """
     out = compute_city_and_yonkers_total(
-        3000, nyc_nonrefundable_credits=5000, mctmt=238)
+        3000, nyc_nonrefundable_credits=5000, mctmt=238, **_CITY_ONLY)
     assert out["line_54_after_city_credits"] == 0.0
     assert out["line_58_total_city_and_yonkers"] == 238, (
         "the excess city credit absorbed the MCTMT, which line 58 does not "
@@ -7548,7 +7606,7 @@ class TestTheNewYorkResultSection:
         keys |= set(compute_mctmt(0.0, 0.0, {
             "net_earnings_threshold_per_zone": 50000,
             "zone_1": {"rate": 0.0011}, "zone_2": {"rate": 0.0034}})["lines"])
-        keys |= {k for k in compute_city_and_yonkers_total()
+        keys |= {k for k in compute_city_and_yonkers_total(**_NO_FLAGS)
                  if k.startswith("line_")}
         keys |= {k for k in compute_nyc_resident_tax(
                      0.0, "single", brackets=_NYC_2025_SCHEDULES,

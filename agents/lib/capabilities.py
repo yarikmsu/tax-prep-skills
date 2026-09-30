@@ -104,6 +104,20 @@ RULES: "tuple[Rule, ...]" = (
          "Moved states during the tax year", "Part-year state returns",
          "Part-year/nonresident income allocation and the other-state tax "
          "credit are not modeled."),
+    Rule("move_abroad", "moved_abroad_this_year", UNSUPPORTED,
+         "Moved to or from another country during the tax year",
+         "Part-year state returns",
+         "A move abroad is not a move between states, so "
+         "`part_year_residency` does not see it, and a state with an income "
+         "tax would otherwise get a full-year resident return that taxes the "
+         "months lived outside the country: an over-statement. Part-year "
+         "allocation is not modeled, whichever side of the border the other "
+         "home is on. Like `part_year_residency`, it blocks whatever the "
+         "state, including one with no income tax, where the state return "
+         "is not at risk and the acknowledgement is the way through. A "
+         "taxpayer who is not a US citizen can also have a "
+         "dual-status federal year (Form 1040-NR), which is not modeled "
+         "either."),
     Rule("statutory_residency_second_state",
          "statutory_resident_of_another_state", UNSUPPORTED,
          "Resident of a second state under its mechanical residency test",
@@ -464,6 +478,11 @@ _RULES_BY_ID = {r.rule_id: r for r in RULES}
 # this list on exactly the same reasoning that put a flag which blocked one
 # here.
 #
+# `moved_abroad_this_year` (AA17) is required for the reason
+# `moved_states_this_year` is: every profile written before it answered only
+# the narrower state question, and "no, I did not move states" from a taxpayer
+# who emigrated in June is not "no, I did not move abroad". Absence has to ask.
+#
 # `yonkers_resident` and `yonkers_nonresident_earnings` join it for the same
 # reason and the same module: the Yonkers surcharge and the Yonkers
 # nonresident earnings tax are two DIFFERENT taxes with two different
@@ -472,6 +491,7 @@ _RULES_BY_ID = {r.rule_id: r for r in RULES}
 _REQUIRED_GATE_FLAGS = (
     "has_iso_exercise",
     "moved_states_this_year",
+    "moved_abroad_this_year",
     "nyc_resident",
     "yonkers_resident",
     "yonkers_nonresident_earnings",
@@ -931,7 +951,8 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
             "Ask the taxpayer the missing questions and set each flag "
             "explicitly true/false in taxpayer_profile.json flags: "
             f"{', '.join(missing_flags)}. Absence is not treated as 'no' — an "
-            "existing ISO/NYC/household-employee/kiddie-tax situation would "
+            "existing ISO/NYC/household-employee/kiddie-tax/move-abroad "
+            "situation would "
             "otherwise slip through the gate. This blocker cannot be "
             "acknowledged; answer the questions instead.",
             acknowledged=False))

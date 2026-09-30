@@ -69,6 +69,7 @@ def test_iso_exercise_is_manual_not_blocking():
     ("has_rental_income", "rental_income"),
     ("has_marketplace_insurance", "marketplace_insurance"),
     ("moved_states_this_year", "part_year_residency"),
+    ("moved_abroad_this_year", "move_abroad"),
     ("statutory_resident_of_another_state", "statutory_residency_second_state"),
     ("has_nonresident_source_income", "nonresident_source_income"),
     ("has_household_employees", "household_employees"),
@@ -249,6 +250,22 @@ def test_missing_gate_flags_fail_closed():
     blocker = next(f for f in r.blocking if f.rule_id == "unanswered_gate_questions")
     for flag in C._REQUIRED_GATE_FLAGS:
         assert flag in blocker.note
+
+
+def test_a_profile_that_answered_only_the_states_question_blocks():
+    """AA17: every profile written before the abroad question answered only
+    whether the taxpayer moved STATES, and an emigrant answers that one "no"
+    truthfully. So the new flag is required, not defaulted: a profile holding
+    every other gate answer, and no answer to this one, is stopped until it is
+    asked. Were it defaulted to False, the June emigrant this item is about
+    would pass on a stale answer to a narrower question."""
+    p = _profile({})
+    del p["flags"]["moved_abroad_this_year"]
+    r = C.evaluate(p)
+    assert _blocking_ids(r) == ["unanswered_gate_questions"]
+    blocker = r.blocking[0]
+    assert "moved_abroad_this_year" in blocker.note
+    assert "moved_states_this_year" not in blocker.note
 
 
 def test_partially_migrated_profile_lists_only_missing_flags():
