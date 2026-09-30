@@ -13,6 +13,6 @@
 # unrelated pull request red on a rule nobody in this repository has ruled on.
 # pip-audit is deliberately NOT pinned that way: its new findings are real
 # advisories, and going red on one is the job.
-ruff==0.16.6
+ruff==0.16.8
 mypy==2.3.1
 pip-audit

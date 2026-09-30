@@ -83,7 +83,7 @@ Windows has not run since 2026-09-13.
 | **2026-10-01** | **AA2** — full matrix on `main` before any new work. | Everything from #155 on ran on one interpreter; the floor has never run. |
 | **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA4**, **AA5**, **AA8**, **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA9**, **AA10**, **AA14**, **AA15**, **AA17**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -99,42 +99,6 @@ Windows has not run since 2026-09-13.
   merge from #155 on is drift since the last one, which is not a small exposure.
   Bind the poll to the commit (`gh run list --commit "$SHA"`) — `gh pr checks`
   reads the previous commit's runs.
-
-- **AA4 (P2, XS): A gate whose verdict depends on machine load.**
-  **BUILT by the pull request that records it in
-  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
-  that merges.**
-  `test_the_permissions_hook_timeout_covers_a_full_archive_walk` failed at load
-  6.9 and passes at 3.1. That is the cry-wolf shape — a gate that fires on
-  correct data teaches the agent to reason past it, and the recorded outcome is
-  that the assertion gets deleted rather than fixed. Either give it a
-  load-independent assertion or mark it `slow` and take it off the default path.
-
-- **AA5 (P3, XS): The runtime lock has no universal-resolution guard.**
-  **BUILT by the pull request that records it in
-  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
-  that merges.**
-  `test_every_lock_was_resolved_universally` parametrizes over
-  `requirements-dev.txt` and `requirements-test.txt` and omits
-  **`requirements.txt`** — the runtime lock, the one pinning `pdfplumber`,
-  `openpyxl` and `defusedxml`, the only lock that reaches a taxpayer's documents.
-  It IS universal today, so this is a missing guard rather than a live defect.
-  One line.
-
-- **AA8 (P2, XS): Stop pinning the whole suite's count in the hook.**
-  **BUILT by the pull request that records it in
-  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
-  that merges.**
-  `test_the_measured_costs_counts_match_live_collection` holds MEASURED COSTS'
-  scale row and its `pytest tests/` sentence to the exact collected count, so
-  every PR that adds a test ANYWHERE must hand-edit
-  `.claude/hooks/skill-invariants.sh`, and that edit selects the hooks module,
-  the slowest check the hook runs, at tool time. Since ruling Q13 the row's only
-  job is "about twice" a cold pass, which needs no exact count. Drop the count
-  from the scale row, and the suite-wide pair and skip reconciliation with it,
-  leaving the seven hook-selected modules pinned. In the same change, reword the
-  Status sentence saying the suite's size "is stated once, in" MEASURED COSTS:
-  after AA8 nothing states it. Raised by AA3's review rounds (#172).
 
 - **AA9 (P2, S): The skill hook times itself against its own timeout.**
   An overrun of the registered timeout CANCELS the hook, and a cancelled check
@@ -654,6 +618,10 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA20 | #180 | the planning tools hold the return's deduction rather than re-price it: the SALT phasedown and the medical floor are caveated, a capped charitable deduction refuses, and the TY2026 charitable floor, the §70111 haircut and an itemize-or-standard switch are held; /tax-project was AA21 |
 | AA21 | #181 | a declared itemized total is priced as entered, not re-worked at the projected AGI (AA23); the §170(p) deduction for non-itemizers was AA22 |
 | AA22 | #182 | the gifts are priced as declared, which of them qualify said in a note rather than asked; an itemizer's cache fetched before it lacks the cap and refuses until that one block is fetched; no engine function owns the itemize-or-standard choice (AA23); the note's $250 acknowledgment threshold is the owner's call |
+| AA25 | #185 | most permissions-hook routing tests still pass with the exposure scan off (AA26) |
+| AA4 | #184 | the walk is pinned by its shape, in chmods, not priced in seconds; nothing prices it against its timeout, which is held where it is (AA24) |
+| AA5 | #186 | — |
+| AA8 | #186 | the suite's size is stated nowhere, and the scale row's "about twice" a cold pass is a reader's to keep, not a check's |
 | Q7 | #156 | — |
 | Q9 | #156 | — |
 | Q8 | #158 | — |
