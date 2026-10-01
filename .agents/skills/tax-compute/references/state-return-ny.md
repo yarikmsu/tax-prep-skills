@@ -149,6 +149,10 @@ under the table's published taxable income, New York's TABLE applies, and it is
 the schedule at each row's MIDPOINT, rounded. The two answers differ by up to
 about two dollars in either direction. Record `regime` and `schedule` as
 `tax_regime` and `tax_schedule`, and `recapture_amount` as `benefit_recapture`.
+**Carry every entry of its `notes` into the state section's `notes`, and tell
+the user.** A note is how an under-stating degrade reaches anyone — an
+unfetched `state.tax_table.table_bases` computes, a dollar low on some rows,
+and says so only there.
 
 Then `compute_ny_state_tax_total(tax_before_credits, household_credit,
 resident_credit, other_nonrefundable_credits, net_other_state_taxes)`:
@@ -208,7 +212,8 @@ table, verified against the instructions rather than assumed.
 `compute_nyc_resident_tax(nyc_taxable_income, filing_status,
 state.nyc_tax.brackets, state.bracket_schedule_by_status,
 state.nyc_tax.tax_table)`, and pass its `tax` to
-`compute_city_and_yonkers_total` as `nyc_resident_tax`. Below the fetched table
+`compute_city_and_yonkers_total` as `nyc_resident_tax`; its `notes` go where
+`compute_ny_tax`'s do. Below the fetched table
 ceiling it reads the City TAX TABLE, which is the schedule at each row's
 midpoint on the City's OWN rows (their bottom differs from the State table's);
 at or above it, the rate schedule. There is no New York AGI condition and no

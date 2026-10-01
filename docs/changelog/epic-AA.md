@@ -1714,3 +1714,75 @@ With the flagged-but-missing refusal switched off, three cases fail (one per
 line); with the unflagged-amount refusal switched off, three others fail. The
 engine self-test, mypy and ruff pass.
 
+## AA14 — the State table's one departure from its schedule
+
+### What was wrong
+
+Every published row of the 2025 State tax table was compared with
+`compute_ny_tax`. The single and head-of-household columns agreed on every row,
+and the married-joint column was a dollar LOW on 22 rows, every one in the
+$23,600-27,900 band: the $23,600-23,650 row publishes 978 and the engine gave
+977. The engine builds each row as the rate schedule at the row's midpoint,
+with the PUBLISHED base, and that band's published base is 976.
+
+### What it turned out to be
+
+The table is built on 976.25 in that band, the bands beneath it summed and not
+rounded. That base reproduces all 22 rows, and 976, 976.5 and 977 do not. It is
+not a rule New York applies everywhere. Summing every band breaks 510 single
+rows (13,900 band, 599.5 against a printed 600) and 17 head-of-household rows
+(17,650 band, 730.25 against 730), and both of those columns follow the printed
+base on every row. The statute, Tax Law §601(a), also says $976. The 2024 table
+has the same 22 rows on the same schedule, so it is how the table is built, not
+a one-year slip. The City table agrees with its printed bases on every row.
+
+The form tells a taxpayer in the table region to use the table, so the table's
+figure is the one that is filed.
+
+### What shipped
+
+- **`tax_table.table_bases`, fetched.** It is a list of `{schedule, min}`
+  naming each band where the table is not built on the printed base. It names
+  the band and never the figure: `_ny_table_bases` sums the bands beneath and
+  uses that, unrounded, for the table only. A transcribed figure could not be
+  checked, because it differs from the printed one by cents, and a typed
+  977.2 moved a row up a dollar with nothing refusing. Every entry is checked
+  on every return, whichever column it is for: an unknown schedule letter, a
+  floor that meets no band, a band named twice or an entry carrying any other
+  key refuses. The schedule, and the worksheets above the table, keep the
+  printed base.
+- **A key that was never fetched gets a note, not a refusal.** It moves a line
+  by at most the table's rounding dollar, inside the acceptance bar, and
+  refusing would stop every cache written before the key existed. The NY
+  compute reference now carries `compute_ny_tax`'s and
+  `compute_nyc_resident_tax`'s `notes` into the result, which nothing did
+  before, so the note reaches the user.
+- **The cache can hold it.** `set` validates `table_bases` as its own table,
+  since a None seed read as a number and refused every list. The freshness
+  walker accepts `[]`, the result for a table with no departure, which it
+  otherwise flags as an empty list forever; None still flags.
+- **`/tax-setup` says how to find a departure**, row by row: a cents-sized
+  base difference tips only some rows, so a band's first row can agree while
+  later ones differ. It names no year's entries.
+- **The test fixture gained schedule b**, so the head-of-household column is
+  now tested.
+
+### Verified
+
+The 22 joint rows are pinned against the published figures. So are the rows on
+either side of every fractional base in the table region, in all three columns.
+With the fixture's entry removed, 23 tests fail. With the engine ignoring the
+entry, 24 fail. `set` writes a one-entry list and `[]`, and the freshness check
+reads both as fetched.
+
+
+## AA27 — urllib3 2.7.0 failed the Dependency audit
+
+The first CI run after the minutes returned, on #189, failed pip-audit on three
+advisories against urllib3 2.7.0 (CVE-2026-97687, -97688, -97689), fixed in
+2.8.0. urllib3 comes into `requirements-dev.txt` alone, through `requests`, so
+`main` was red on the same job and no branch could go green. The dev lock was
+regenerated with `--upgrade-package urllib3`: the diff is that one pin and its
+two hashes. pip-audit then reports no known vulnerabilities in any of the three
+locks. It rides #189 rather than a pull request of its own so that the AA14
+change can merge on a green run.

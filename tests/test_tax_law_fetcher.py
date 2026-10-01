@@ -1251,6 +1251,7 @@ from agents.lib.tax_law_fetcher import (  # noqa: E402
     TaxLawSetError,
     _expected_pins,
     set_figure,
+    validate_cache,
 )
 
 IRS = "https://www.irs.gov/pub/irs-drop/rp-25-32.pdf"
@@ -1442,6 +1443,58 @@ class TestSetFigureOnStateAndDynamicBlocks:
         assert data["_sources"] == {"state.CA": FTB}
         # The whole-block write is dated under the pin; the leaf under its path.
         assert set(data["_provenance"]) == {"state.CA", "state.standard_deduction.mfj"}
+
+    _NYS = "https://www.tax.ny.gov/pit/file/tax-tables/it201i-2025.htm"
+
+    def _ny_cache(self, tmp_path):
+        """A NY state block written straight in: `set` cannot take the whole
+        NY template, whose brackets are keyed by schedule."""
+        cache = _fresh_cache(tmp_path)
+        seeded = json.loads(cache.read_text())
+        seeded["state"] = create_state_template("NY")
+        cache.write_text(json.dumps(seeded))
+        return cache
+
+    def test_new_yorks_table_bases_are_written_and_read_fresh(self, tmp_path):
+        """AA14. `table_bases` seeds as None, and a None seed is a NUMBER to
+        the generic checker, so `set` refused every list — the one write path
+        could not record the key the engine reads. And the freshness walker
+        flags every empty list, while `[]` is the documented fetch result for
+        a table that follows its schedule (the City's TY2025 one does): a
+        correct cache would have read INCOMPLETE forever."""
+        self._ny_cache(tmp_path)
+        _set(tmp_path, "state.tax_table.table_bases",
+             [{"schedule": "a", "min": 23600}], source=self._NYS)
+        _set(tmp_path, "state.nyc_tax.tax_table.table_bases", [],
+             source=self._NYS)
+        data = _read(tmp_path)
+        assert data["state"]["tax_table"]["table_bases"] == [
+            {"schedule": "a", "min": 23600}]
+        assert data["state"]["nyc_tax"]["tax_table"]["table_bases"] == []
+        nulls = check_freshness(2026, str(tmp_path))["null_fields"]
+        assert not any("table_bases" in f for f in nulls), nulls
+        assert not any("table_bases" in e for e in validate_cache(data, 2026))
+
+    def test_an_unfetched_table_bases_still_reads_incomplete(self, tmp_path):
+        self._ny_cache(tmp_path)
+        nulls = check_freshness(2026, str(tmp_path))["null_fields"]
+        assert "state.tax_table.table_bases" in nulls
+
+    @pytest.mark.parametrize("bad", [
+        # The old shape: the engine sums the figure, so one carrying it
+        # refuses rather than lingering.
+        [{"schedule": "a", "min": 23600, "base": 976.25}],
+        [{"schedule": "", "min": 23600}],
+        [{"schedule": "a", "min": -1}],
+        [{"schedule": "a", "min": 23600}, {"schedule": "a", "min": 23600}],
+        {"a": 23600},
+    ])
+    def test_a_table_bases_entry_of_the_wrong_shape_is_refused(self, tmp_path,
+                                                                bad):
+        self._ny_cache(tmp_path)
+        with pytest.raises(TaxLawSetError, match="table_bases"):
+            _set(tmp_path, "state.tax_table.table_bases", bad,
+                 source=self._NYS)
 
     def test_a_state_field_needs_the_block_first(self, tmp_path):
         _fresh_cache(tmp_path)
@@ -2378,6 +2431,12 @@ class TestTheNewYorkBlock:
         assert block["row_segments"] == [], (
             "the tax table has no place for its row widths, so a caller has to "
             "assume one — and it is wrong at the bottom of the table")
+        # AA14: the table is not always built on the schedule's published
+        # base, and only the rows show where. None is "not fetched", which
+        # the engine notes; [] is a fetch that found no departure.
+        assert block["table_bases"] is None
+        assert create_state_template("NY")["nyc_tax"]["tax_table"][
+            "table_bases"] is None
 
     def test_new_york_does_not_conform_to_federal(self):
         """This key read True until the module existed, and that is what makes

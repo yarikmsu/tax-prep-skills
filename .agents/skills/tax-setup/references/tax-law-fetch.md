@@ -209,6 +209,20 @@ a figure from a prior year.
     must span 0 up to the top. Using the schedule where the form says table is
     worth up to two dollars and runs BOTH ways, against an acceptance bar of
     one dollar a line — `compute_ny_tax` refuses rather than guessing a width.
+    Then record `table_bases`: the bands where the TABLE is not built on the
+    schedule's printed base but on the bands beneath it summed, UNROUNDED.
+    Where those two bases differ only by cents, the departure moves just the
+    rows whose rounding it tips, so a band's first row can agree while later
+    ones do not — check EVERY row. For each band that starts below the table's
+    top, in each column, compute each $50 row's midpoint tax on the printed
+    base and on the summed one, both rounded half up, and read the table's
+    figure. A band whose rows match the summed base wherever the two differ
+    departs: enter `{"schedule", "min"}` — the band, never the figure, which
+    the engine sums itself. A band whose rows match neither throughout is a
+    misread; stop. Record `[]` when no band departs, because a missing key is
+    "not fetched" and the return then carries a note that its table line may
+    be a dollar off. Which bands depart is a fact about THIS year's table;
+    never carry an entry over from a prior year's cache.
   - Search `"New York IT-196 itemized deduction limitation {year}"` →
     `state.itemized_reduction`, which holds **FOUR** mutually exclusive
     mechanisms by NYAGI band: a first reduction (per-status threshold, band,
@@ -264,7 +278,8 @@ a figure from a prior year.
     `max_taxable_income` (the line-47 ceiling below which the table is used) and
     `row_segments`, recorded from the CITY table itself — its narrow bottom rows
     are not the State table's, and reusing those puts a small return in the
-    wrong row. `compute_nyc_resident_tax` refuses without either. The
+    wrong row. `compute_nyc_resident_tax` refuses without either. Check the
+    City table's `table_bases` the State's way, row by row. The
     school tax credit is **TWO** credits: a fixed amount by status under an
     income ceiling, and a rate reduction that is its own bracket schedule.
     Also fetch the NYC household credit — tables 4, 5 and 6, with the SAME

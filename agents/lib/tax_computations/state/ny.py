@@ -461,9 +461,95 @@ def _ny_round_half_up(value: float) -> int:
     return math.floor(value + 0.5) if value >= 0 else -math.floor(-value + 0.5)
 
 
-def _ny_table_tax(taxable_income: float, table: list, schedule: str,
+def _ny_table_bases(brackets: dict, schedule: str, tax_table: dict,
+                    source: str) -> "tuple[list, list]":
+    """The schedule the TABLE is built from, which is not always the published
+    one.
+
+    New York's table departs from its own rate schedule band by band. Every
+    row of the TY2024 and TY2025 State tables was compared with the schedule at
+    the row's midpoint: the single, joint-above-$27,900 and head-of-household
+    columns agree on every row with the PUBLISHED bases, and the married-joint
+    $23,600-27,900 band is a dollar low on 22 rows until its base is the bands
+    beneath it summed, unrounded, where the schedule and §601(a) both print the
+    rounded figure. Summing every band instead breaks 510 single rows and 17
+    head-of-household ones, so no one rule produces the table; WHICH bands
+    depart is a per-year fact about the published table. The City table
+    follows its published bases on every row.
+
+    So the departures are FETCHED, as `table_bases` — `[{"schedule", "min"}]`,
+    `[]` where the table follows the schedule — and each named band's base is
+    replaced, in a copy, by the bands beneath it summed. The entry names the
+    band and never the figure: the figure differs from the printed one by
+    CENTS, so no check can tell a mis-typed one from a real one, and a
+    transcribed 977.2 moved a row up a dollar with nothing refusing.
+
+    EVERY entry is checked, whichever schedule this return is on, because one
+    for another column would otherwise sit wrong until a return in that column
+    reached the table. A schedule letter or floor that meets nothing refuses:
+    the entry would read as applied while the table stayed a dollar off.
+
+    A key that was never fetched is a NOTE, not a refusal: the most it moves a
+    row is the dollar the table rounds to, inside the one-dollar acceptance
+    bar, and every cache written before the key existed would otherwise stop.
+    """
+    entries = (tax_table or {}).get("table_bases")
+    if entries is None:
+        return brackets[schedule], [
+            f"{source}.table_bases is not fetched. New York's table departs "
+            "from its own rate schedule in some bands, so this line can be a "
+            "dollar off the published table. Re-run /tax-setup."]
+    out = [dict(band) for band in brackets[schedule]]
+    for name, floor in _ny_table_bases_entries(entries,
+                                               f"{source}.table_bases"):
+        bands = brackets.get(name)
+        if not bands:
+            raise ValueError(
+                f"{source}.table_bases names a schedule that the brackets do "
+                f"not have; known: {sorted(brackets)}")
+        at = next((i for i, band in enumerate(bands)
+                   if band.get("min") == floor), None)
+        if at is None:
+            raise ValueError(
+                f"{source}.table_bases names a band of schedule {name!r} "
+                f"starting at {floor:,}, and the schedule has no band there")
+        if name == schedule:
+            out[at]["base"] = sum((band["max"] - band["min"]) * band["rate"]
+                                  for band in bands[:at])
+    return out, []
+
+
+def _ny_table_bases_entries(entries, where: str) -> "list[tuple[str, float]]":
+    """The SHAPE of a `table_bases` list, as (schedule, min) pairs: the one
+    copy, which `tax_law_fetcher set` runs when the key is written and
+    `_ny_table_bases` runs again on a cache it did not write. Whether each
+    pair meets a band needs the brackets, so that check stays with the engine.
+    """
+    if not isinstance(entries, list):
+        raise ValueError(
+            f"{where} must be a list of {{schedule, min}}, got "
+            f"{type(entries).__name__}")
+    pairs: "list[tuple[str, float]]" = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"schedule", "min"}:
+            raise ValueError(
+                f"{where} holds a {type(entry).__name__} that is not a "
+                "{schedule, min} object; the entry names the band, and the "
+                "engine sums its base")
+        name = entry["schedule"]
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{where} holds an entry with no schedule key")
+        pair = (name, _amount(entry["min"], f"{where}[{name}].min"))
+        if pair in pairs:
+            raise ValueError(
+                f"{where} names schedule {name!r}'s band at {pair[1]:,} twice")
+        pairs.append(pair)
+    return pairs
+
+
+def _ny_table_tax(taxable_income: float, brackets: dict, schedule: str,
                   tax_table: dict,
-                  source: str = "state.tax_table") -> "tuple[float, list]":
+                  source: str = "state.tax_table") -> "tuple[float, list, list]":
     """New York's TAX TABLE, which is a different method from its schedule.
 
     Below a published taxable income, and at or below the recapture's entry
@@ -473,7 +559,8 @@ def _ny_table_tax(taxable_income: float, table: list, schedule: str,
     the published TY2025 table: the $50,000-$50,050 row reads 2,587 / 2,419 /
     2,503 for single-and-MFS, married-joint and head-of-household, which is
     exactly the schedule at $50,025. The row FLOOR gives 2,586 / 2,418 / 2,502,
-    one dollar low in every case.
+    one dollar low in every case. The schedule it is evaluated on is not
+    always the published one, band for band: `_ny_table_bases` says where.
 
     Using the schedule where the form says table is worth up to about two
     dollars and runs BOTH ways — it over-states whenever taxable income sits in
@@ -497,6 +584,7 @@ def _ny_table_tax(taxable_income: float, table: list, schedule: str,
             "midpoint, and its rows are not all the same width — using the "
             "schedule instead is worth up to two dollars in EITHER direction. "
             "Re-run /tax-setup.")
+    table, notes = _ny_table_bases(brackets, schedule, tax_table, source)
     for segment in segments:
         upper = segment.get("not_over")
         if taxable_income >= segment["over"] and (upper is None
@@ -516,7 +604,7 @@ def _ny_table_tax(taxable_income: float, table: list, schedule: str,
                 "row": f"{row_floor:,.0f} - {row_floor + width:,.0f}",
                 "midpoint": midpoint,
                 "tax": tax,
-            }]
+            }], notes
     raise ValueError(
         f"taxable income {taxable_income:,.2f} is in the tax-table region and "
         "no fetched row segment covers it; the segments must span 0 up to "
@@ -680,10 +768,10 @@ def compute_ny_tax(
                 "midpoint-rounded — and picking the wrong one is worth up to "
                 "two dollars in either direction. Re-run /tax-setup.")
         if taxable_income < table_max:
-            table_tax, table_breakdown = _ny_table_tax(
-                taxable_income, table, schedule, tax_table)
+            table_tax, table_breakdown, table_notes = _ny_table_tax(
+                taxable_income, brackets, schedule, tax_table)
             return _ny_result(table_tax, schedule, "tax_table", 0.0,
-                              table_breakdown, notes)
+                              table_breakdown, notes + table_notes)
         return _ny_result(schedule_tax, schedule, "graduated", 0.0,
                           breakdown, notes)
 
@@ -1235,9 +1323,10 @@ def compute_nyc_resident_tax(
             "whether line 47 is in the TABLE region is unknown; the table and "
             "the schedule differ by up to a dollar either way. Re-run "
             "/tax-setup.")
+    notes: "list[str]" = []
     if nyc_taxable_income < ceiling:
-        exact, breakdown = _ny_table_tax(
-            nyc_taxable_income, table, schedule, tax_table,
+        exact, breakdown, notes = _ny_table_tax(
+            nyc_taxable_income, brackets, schedule, tax_table,
             source="state.nyc_tax.tax_table")
         regime = "table"
     else:
@@ -1251,7 +1340,7 @@ def compute_nyc_resident_tax(
         "schedule": schedule,
         "regime": regime,
         "breakdown": breakdown,
-        "notes": [],
+        "notes": notes,
     }
 
 

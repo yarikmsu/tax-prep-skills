@@ -34,6 +34,9 @@ from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
 from agents.lib.tax_computations.state.ca import (  # noqa: E402
     _SDI_NO_CEILING_FROM,
 )
+from agents.lib.tax_computations.state.ny import (  # noqa: E402
+    _ny_table_bases_entries,
+)
 from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
@@ -593,6 +596,13 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "max_taxable_income": None,
                 # [{"over", "not_over", "row_width"}], spanning 0 to the max.
                 "row_segments": [],
+                # The bands where the TABLE is built on the bands beneath
+                # summed, unrounded, rather than on the schedule's printed
+                # base: [{"schedule", "min"}], naming the band and never the
+                # figure, which the engine sums. [] is a fetch that found the
+                # table following its schedule throughout; None is NOT
+                # FETCHED, which `compute_ny_tax` notes.
+                "table_bases": None,
             },
             # §615(f) reduces the NY itemized deduction TWICE, §615(g) replaces
             # both with a CHARITABLE-only limit at very high NYAGI, and between
@@ -703,7 +713,8 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 # City's own rows, whose narrow bottom rows are not the
                 # State's. Same shape as `state.tax_table`, and not shared
                 # with it, or a small City return lands in the wrong row.
-                "tax_table": {"max_taxable_income": None, "row_segments": []},
+                "tax_table": {"max_taxable_income": None, "row_segments": [],
+                              "table_bases": None},
                 # TWO school tax credits, not one: a fixed amount by filing
                 # status under an income ceiling, and a RATE REDUCTION that is
                 # its own per-schedule bracket table. A scalar holds neither.
@@ -1298,6 +1309,14 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         # $1,000,000 taxable-income threshold, unindexed since 2004.
         "state.mental_health_surcharge.threshold",
     }
+    # Paths where `[]` is a FETCHED value and only None is the gap. New York's
+    # table_bases: an empty list is a fetch that found the table following its
+    # schedule in every band — the City's TY2025 table does. Keyed by PATH,
+    # as above, so the same name elsewhere still flags.
+    _EMPTY_LIST_BY_DESIGN = {
+        "state.tax_table.table_bases",
+        "state.nyc_tax.tax_table.table_bases",
+    }
 
     def _walk(obj, path=""):
         if isinstance(obj, dict):
@@ -1388,7 +1407,8 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                     _walk(v, child_path)
         elif isinstance(obj, list):
             if len(obj) == 0:
-                null_fields.append(f"{path} (empty list)")
+                if path not in _EMPTY_LIST_BY_DESIGN:
+                    null_fields.append(f"{path} (empty list)")
             else:
                 for i, item in enumerate(obj):
                     # A bracket table is open at the top: the LAST bracket's
@@ -1882,6 +1902,7 @@ _TABLE_VALIDATORS = (
     (re.compile(r"^federal\.underpayment_rates$"), "underpayment_rates"),
     (re.compile(r"^ptet\.[A-Z]{2}\.schedule$"), "ptet_schedule"),
     (re.compile(r"^federal\.irmaa\.tiers\.(single|mfj)$"), "tiers"),
+    (re.compile(r"^state\.(nyc_tax\.)?tax_table\.table_bases$"), "table_bases"),
 )
 
 
@@ -2024,6 +2045,14 @@ def _check_table(kind: str, dotted: str, value) -> None:
         _check_ascending(dotted, value,
                          fields=("magi_threshold", "annual_surcharge_per_person"),
                          order_by="magi_threshold")
+    elif kind == "table_bases":
+        # EMPTY is a value here, not the unfetched state: the table was
+        # compared with its schedule and follows it throughout. The shape is
+        # the engine's own check, so the two cannot drift.
+        try:
+            _ny_table_bases_entries(value, dotted)
+        except ValueError as exc:
+            raise TaxLawSetError(str(exc)) from None
     elif kind == "ptet_schedule":
         rows = []
         for i, row in enumerate(value if isinstance(value, list) else []):

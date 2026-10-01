@@ -36,6 +36,17 @@ _NY_2025_SCHEDULE_C = [
     {"rate": 0.0965, "min": 1077550, "max": 5000000, "base": 71413},
     {"rate": 0.103, "min": 5000000, "max": 25000000, "base": 449929},
     {"rate": 0.109, "min": 25000000, "max": None, "base": 2509929},]
+# IT-201-I (2025) p.33, "Head of household".
+_NY_2025_SCHEDULE_B = [
+    {"rate": 0.04, "min": 0, "max": 12800, "base": 0},
+    {"rate": 0.045, "min": 12800, "max": 17650, "base": 512},
+    {"rate": 0.0525, "min": 17650, "max": 20900, "base": 730},
+    {"rate": 0.055, "min": 20900, "max": 107650, "base": 901},
+    {"rate": 0.06, "min": 107650, "max": 269300, "base": 5672},
+    {"rate": 0.0685, "min": 269300, "max": 1616450, "base": 15371},
+    {"rate": 0.0965, "min": 1616450, "max": 5000000, "base": 107651},
+    {"rate": 0.103, "min": 5000000, "max": 25000000, "base": 434163},
+    {"rate": 0.109, "min": 25000000, "max": None, "base": 2494163},]
 _NY_SCHEDULE_BY_STATUS = {"single": "c", "mfs": "c", "mfj": "a", "qss": "a",
                           "hoh": "b"}
 # IT-201-I (2025) pp.34-38, tax computation worksheets 1-16.
@@ -95,7 +106,8 @@ _NY_2025_RECAPTURE = {
     # rate, with no schedule at all.
     "full_recapture": {"nyagi_over": 25000000, "rate": 0.109},
 }
-_NY_BRACKETS = {"a": _NY_2025_SCHEDULE_A, "c": _NY_2025_SCHEDULE_C, "b": []}
+_NY_BRACKETS = {"a": _NY_2025_SCHEDULE_A, "c": _NY_2025_SCHEDULE_C,
+                "b": _NY_2025_SCHEDULE_B}
 # IT-201-I (2025) p.32: the TABLE is used when NYAGI is at or below the entry
 # threshold AND taxable income is under $65,000; the rate schedule takes over
 # above it. The rows are $50 wide over most of the range and NARROWER at the
@@ -109,6 +121,12 @@ _NY_2025_TAX_TABLE = {
         {"over": 25, "not_over": 50, "row_width": 25},
         {"over": 50, "not_over": 65000, "row_width": 50},
     ],
+    # The one band where the published table is not the published schedule:
+    # its married-joint $23,600-27,900 rows are built on 976.25, the bands
+    # beneath summed, where the schedule prints 976 (AA14). Found by comparing
+    # every row of the TY2024 and TY2025 tables with the schedule; the other
+    # columns, and the City table, follow their published bases throughout.
+    "table_bases": [{"schedule": "a", "min": 23600}],
 }
 
 

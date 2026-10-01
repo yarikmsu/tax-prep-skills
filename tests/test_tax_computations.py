@@ -5625,7 +5625,7 @@ def test_ny_refuses_an_unmapped_status_and_an_unfetched_schedule():
             schedule_by_status={k: v for k, v in _NY_SCHEDULE_BY_STATUS.items()
                                 if k != "qss"})
     with pytest.raises(ValueError, match="empty"):
-        _ny(90000, 100000, status="hoh")   # schedule "b" is [] in the fixture
+        _ny(90000, 100000, status="hoh", brackets={**_NY_BRACKETS, "b": []})
 
 
 def test_ny_accepts_the_canonical_uppercase_status():
@@ -5760,6 +5760,7 @@ def test_ny_uses_the_table_below_the_cutoff_and_the_schedule_above_it():
         "everyone in one row pays the same tax — that is what a table is")
     # The published single/MFS and head-of-household figures for the same row.
     assert _ny(50000, 80000, status="single")["tax"] == 2587
+    assert _ny(50000, 80000, status="hoh")["tax"] == 2503
     # One dollar above the cutoff the method changes.
     assert _ny(65000, 80000)["regime"] == "graduated"
 
@@ -5781,6 +5782,102 @@ def test_ny_table_rows_are_not_all_the_same_width():
     out = _ny(30, 1000)
     assert out["breakdown"][0]["row"] == "25 - 50"
     assert out["tax"] == round(37.50 * 0.04)
+
+
+# AA14. Every row of the 2025 State table (tax.ny.gov/pit/file/tax-tables/
+# it201i-2025.htm) was compared with the schedule at its midpoint. These are
+# the 22 married-joint rows that disagree with the PUBLISHED base of 976 and
+# agree with 976.25, the bands beneath summed — all of them in the $23,600-
+# 27,900 band, all of them the table's figure.
+_NY_2025_JOINT_ROWS_ON_THE_SUMMED_BASE = [
+    (23600, 978), (23850, 991), (24000, 999), (24250, 1012), (24400, 1020),
+    (24650, 1033), (24800, 1041), (25050, 1054), (25200, 1062), (25450, 1075),
+    (25600, 1083), (25850, 1096), (26000, 1104), (26250, 1117), (26400, 1125),
+    (26650, 1138), (26800, 1146), (27050, 1159), (27200, 1167), (27450, 1180),
+    (27600, 1188), (27850, 1201)]
+
+
+@pytest.mark.parametrize("row_floor, published",
+                         _NY_2025_JOINT_ROWS_ON_THE_SUMMED_BASE)
+def test_ny_joint_table_rows_in_the_23600_band_are_the_published_ones(
+        row_floor, published):
+    """The State table departs from its own schedule in ONE band: the joint
+    $23,600-27,900 rows are built on 976.25 where the schedule prints 976, a
+    dollar low on these 22 rows before the table's base was fetched."""
+    out = _ny(row_floor, 80000)
+    assert out["regime"] == "tax_table"
+    assert out["tax"] == published
+    assert out["notes"] == []
+
+
+@pytest.mark.parametrize("taxable, status, published", [
+    # The rows either side of every fractional base the table region holds,
+    # in all three columns: the other two columns are built on the PUBLISHED
+    # base, so summing every band would break them (510 single rows, 17
+    # head-of-household) where it fixes the joint one.
+    (23550, "mfj", 975), (27900, "mfj", 1203),
+    (13850, "single", 598), (13900, "single", 601),
+    (17600, "hoh", 729), (17650, "hoh", 731),
+    (20850, "hoh", 899), (20900, "hoh", 902),
+    (64950, "single", 3409), (64950, "mfj", 3241), (64950, "hoh", 3325),
+])
+def test_ny_table_rows_outside_that_band_follow_the_published_bases(
+        taxable, status, published):
+    assert _ny(taxable, 80000, status=status)["tax"] == published
+
+
+def test_ny_table_bases_that_were_never_fetched_are_noted():
+    """An older cache has no `table_bases`. The row is at most the table's
+    rounding dollar off, inside the acceptance bar, so it computes — on the
+    published schedule — and SAYS so, rather than stopping every such cache."""
+    table = {k: v for k, v in _NY_2025_TAX_TABLE.items() if k != "table_bases"}
+    out = _ny(23600, 80000, tax_table=table)
+    assert out["tax"] == 977
+    assert any("table_bases is not fetched" in n for n in out["notes"])
+    assert _ny(23600, 80000, tax_table={**table, "table_bases": []})[
+        "notes"] == [], "an EMPTY list is a fetch that found nothing to record"
+
+
+@pytest.mark.parametrize("status, taxable", [("mfj", 23600),
+                                             ("single", 13900)])
+@pytest.mark.parametrize("match, entries", [
+    ("no band there", [{"schedule": "a", "min": 23650}]),
+    ("no band there", [{"schedule": "a", "min": 30000000}]),
+    ("do not have", [{"schedule": "A", "min": 23600}]),
+    ("do not have", [{"schedule": "mfj", "min": 23600}]),
+    ("twice", [{"schedule": "a", "min": 23600},
+               {"schedule": "a", "min": 23600}]),
+    ("finite", [{"schedule": "a", "min": float("nan")}]),
+    ("negative", [{"schedule": "a", "min": -1}]),
+    # The old shape, carrying a figure: the engine sums the base itself, so
+    # a transcribed one is refused rather than silently ignored.
+    ("schedule, min", [{"schedule": "a", "min": 23600, "base": 977.2}]),
+    ("schedule, min", ["a"]),
+    ("must be a list", {"a": 976.25}),
+])
+def test_ny_table_bases_that_do_not_fit_the_schedule_refuse(
+        status, taxable, match, entries):
+    """An entry that meets no band, or no schedule, would replace nothing and
+    read as applied. Every entry is checked on every return, so one for
+    another column refuses now — on the single return here — rather than
+    when a return in that column reaches the table."""
+    with pytest.raises(ValueError, match=match):
+        _ny(taxable, 80000, status=status,
+            tax_table={**_NY_2025_TAX_TABLE, "table_bases": entries})
+
+
+def test_ny_table_bases_for_another_schedule_leave_this_one_alone():
+    assert _ny(13900, 80000, status="single")["tax"] == 601
+
+
+def test_ny_table_bases_move_the_table_and_never_the_schedule():
+    """The departure is the TABLE's. Above the table the joint $23,600 band
+    is never reached again — but a return in it on the schedule (NYAGI over
+    the entry threshold) uses the printed 976, as the worksheets do."""
+    assert _ny(23600, 80000)["tax"] == 978
+    graduated = _ny(24000, 120000)
+    assert graduated["regime"] != "tax_table"
+    assert graduated["breakdown"][0]["base"] == 976
 
 
 def test_ny_rounds_half_up_the_way_the_form_says():
@@ -6673,6 +6770,8 @@ _NYC_2025_TAX_TABLE = {
         {"over": 25, "not_over": 50, "row_width": 25},
         {"over": 50, "not_over": 65000, "row_width": 50},
     ],
+    # Every row of the City table follows the published bases (AA14).
+    "table_bases": [],
 }
 
 
