@@ -1537,7 +1537,8 @@ _CHARITY_OBBBA_FLOOR_FROM = 2026
 _MORTGAGE_LIMIT_TCJA = 750000.0
 _MORTGAGE_LIMIT_GRANDFATHERED = 1000000.0
 # OBBBA §70111 (TY2026+): itemized deductions are reduced by 2/37 of the
-# lesser of the itemized total or the income taxed in the 37% bracket.
+# lesser of the itemized total or §68(a)(2)'s base, taxable income plus the
+# itemized deductions over the start of the 37% bracket (AA34).
 _OBBBA_ITEMIZED_HAIRCUT = 2.0 / 37.0
 _OBBBA_ITEMIZED_HAIRCUT_FROM = 2026
 
@@ -2092,12 +2093,21 @@ def compute_schedule_a(
             is a preparer stop, not a disallowance).
         mfs_spouse_itemizes: MFS must itemize when the spouse itemizes,
             even if the standard deduction is larger (§63(c)(6)(A)).
-        top_bracket_income: TY2026+ only — taxable income falling in the 37%
-            bracket, for the OBBBA §70111 haircut (itemized reduced by 2/37
-            of the lesser of the itemized total or this amount). The figure
-            is circular with the deduction, so /tax-compute computes taxable
-            income provisionally first and re-calls; None for a 2026+ year
-            emits a loud not-applied note instead of silently overstating.
+        top_bracket_income: TY2026+ only — §68(a)(2)'s base for the OBBBA
+            §70111 haircut, which reduces itemized deductions by 2/37 of the
+            lesser of the itemized total or THIS: "so much of the taxable
+            income ... (determined without regard to this section and
+            increased by such amount of itemized deductions) as exceeds" the
+            start of the 37% bracket. Taxable income PLUS the itemized total,
+            not the taxable income in the 37% bracket alone: that reading,
+            this docstring's until AA34, under-applied the haircut by up to
+            the whole itemized total and over-stated line 12. The deductions
+            cancel, so the base is AGI less the QBI deduction, line 13b and
+            the 37% threshold, unfloored and 0 when not positive — with the
+            QBI deduction PROVISIONAL, computed against the un-reduced line
+            12, since §68(a)(2) measures taxable income "without regard to
+            this section". None for a 2026+ year emits a
+            loud not-applied note instead of silently overstating.
         non_itemizer_charitable: TY2026+ — the §170(p) deduction this filer
             would take on line 13c with the STANDARD deduction, i.e.
             `compute_charitable_non_itemizer(..., itemizes=False)["allowed"]`
@@ -2267,10 +2277,10 @@ def compute_schedule_a(
             notes.append(
                 f"OBBBA §70111 (TY{tax_year}): itemized deductions are "
                 "reduced by 2/37 of the lesser of the itemized total or "
-                "income taxed in the 37% bracket — NOT applied "
-                "(top_bracket_income not provided); a 37%-bracket "
-                "itemizer's line 12 is OVERSTATED — compute taxable income "
-                "provisionally and re-call with top_bracket_income")
+                "§68(a)(2)'s base — NOT applied (top_bracket_income not "
+                "provided); a top-bracket itemizer's line 12 is OVERSTATED. "
+                "Pass taxable income plus the itemized total, less the 37% "
+                "threshold (0 when below it)")
         else:
             tbi = _sched_a_amount(top_bracket_income, "top_bracket_income")
             if tbi > 0:
@@ -2279,8 +2289,9 @@ def compute_schedule_a(
                 itemized_total = round(itemized_total - obbba_70111_reduction, 2)
                 notes.append(
                     f"OBBBA §70111 haircut applied: −${obbba_70111_reduction:,.2f}"
-                    " (2/37 of the lesser of itemized total or 37%-bracket "
-                    "income)")
+                    " (2/37 of the lesser of the itemized total or §68(a)(2)'s "
+                    "base, taxable income plus itemized deductions over the "
+                    "37% threshold)")
 
     # The standard side of the election: the standard deduction plus the
     # §170(p) line-13c deduction a standard-deduction donor also takes.
@@ -2410,10 +2421,10 @@ def rerun_schedule_a(inputs: dict, agi: float,
     - MAGI is rebuilt, `agi` plus the recorded add-back (Form 2555 lines 45
       and 50, Form 4563, Puerto Rico) — never taken from a caller who would
       pass the AGI and drop it, raising the SALT cap.
-    - `top_bracket_income` is REQUIRED from TY2026 for an itemizer: the
-      §70111 haircut moves with the income in the 37% bracket, and omitted it
-      is skipped (0 when none of it is). It is circular with the deduction:
-      price it provisionally, then re-run, as /tax-compute does.
+    - `top_bracket_income` is REQUIRED from TY2026: §68(a)(2)'s base (AGI
+      less a provisional QBI deduction, line 13b and the 37% threshold) moves
+      with AGI, and omitted the haircut is skipped. 0 when the base is not
+      positive.
     - `investment_interest` is the post-Form 4952 figure, a min() whose other
       side (net investment income) a scenario moves; at another AGI it
       refuses, since held it can over-state.
@@ -2483,9 +2494,9 @@ def rerun_schedule_a(inputs: dict, agi: float,
             and args.get("tax_year", 0) >= _OBBBA_ITEMIZED_HAIRCUT_FROM):
         raise ValueError(
             "top_bracket_income is required from "
-            f"TY{_OBBBA_ITEMIZED_HAIRCUT_FROM}: the §70111 haircut moves with "
-            "the income in the 37% bracket at this AGI, and omitted it is "
-            "skipped, over-stating the deduction. Pass 0 when none is.")
+            f"TY{_OBBBA_ITEMIZED_HAIRCUT_FROM}: the §70111 haircut's §68(a)(2) "
+            "base moves with AGI, and omitted it is skipped, over-stating the "
+            "deduction. Pass 0 when the base is not positive.")
     out = compute_schedule_a(
         agi=agi, top_bracket_income=top_bracket_income,
         modified_agi=None if addback is None else round(agi + addback, 2),

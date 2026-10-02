@@ -686,9 +686,11 @@ def schedule_a_pricer(result: dict, brackets: "list[dict]", keystone_agi: float,
     age-65 add-on lands on an itemizer, and a §170(p) the section did not
     record is dropped from a new standard filer.
 
-    The §70111 haircut is priced only where it is zero under any reading: an
-    AGI at or below the top bracket's floor bounds every base the statute or
-    the engine measures it on. Above it, it refuses too.
+    The §70111 haircut is priced only where it is zero: §68(a)(2)'s base is
+    taxable income plus the itemized deductions, at most AGI, over the top
+    bracket's floor (AA34). Above that floor the base needs the priced
+    point's QBI deduction and line 13b, which this does not re-price, so it
+    refuses too.
 
     None — the held figures — where the section is absent (a standard filer
     far from the margin) or predates `inputs`, or the re-run refuses at the

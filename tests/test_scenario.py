@@ -1266,8 +1266,9 @@ def test_schedule_a_is_held_wherever_re_pricing_could_over_state():
       itemizing to $29,725, so the standard deduction would win. Line 12's
       offset from the re-run is an itemizer's, and carried across the flip it
       would land on a standard filer (an age-65 add-on, the other way).
-    - An AGI above the top bracket's floor: the §70111 haircut's base is
-      disputed, so it is priced only where it is zero under every reading.
+    - An AGI above the top bracket's floor: §68(a)(2)'s base needs the
+      priced point's QBI deduction, which the pricer does not track, so the
+      haircut is priced only where the base is provably not positive.
     - A binding charitable cap: the re-run assumes a public charity and
       appreciated property, which the return does not record, so the refusal
       stands whether or not the rest re-prices."""

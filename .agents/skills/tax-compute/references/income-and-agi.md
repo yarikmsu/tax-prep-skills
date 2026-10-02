@@ -696,13 +696,23 @@ persona SALT usually exceeds the OBBBA cap by itself):
   where the two answers give different numbers, so most returns can pass it
   as unknown. Ask the question anyway when the answer is no: the interview is
   cheap and the refusal arrives mid-computation.
-- **TY2026+ §70111 haircut:** the OBBBA top-bracket reduction (2/37 of the
-  lesser of itemized total or 37%-bracket income) is circular with the
-  deduction — compute taxable income PROVISIONALLY with the un-haircut
-  itemized total; if any of it falls in the 37% bracket, re-call
-  `compute_schedule_a` with `top_bracket_income` set to that slice and use
-  the re-called result. Skipping this on a top-bracket return overstates
-  line 12 (the function emits a loud note when the input is absent).
+- **TY2026+ §70111 haircut (§68 as amended):** itemized deductions are
+  reduced by 2/37 of the lesser of the itemized total or §68(a)(2)'s base —
+  "so much of the taxable income ... (determined without regard to this
+  section and increased by such amount of itemized deductions) as exceeds"
+  the start of the 37% bracket. The base ADDS THE ITEMIZED DEDUCTIONS BACK,
+  so it is not the taxable income inside the 37% bracket. The deductions
+  cancel: the base is AGI − a PROVISIONAL QBI deduction (Form 8995 computed
+  against the UN-reduced itemized total as line 12, since the statute
+  measures taxable income "without regard to this section") − line 13b −
+  the 37% threshold, unfloored, and 0 when not positive. The threshold is
+  the `min` of the `rate` 0.37 entry in
+  `federal.filing_statuses.<single|mfj|mfs|hoh>.brackets` (QSS reads mfj).
+  Pass it as `top_bracket_income` and use the function's result; the FINAL
+  QBI deduction below then uses the reduced line 12. A taxpayer whose
+  taxable income sits below the 37% bracket can still owe the haircut, by up
+  to the itemized total. Skipping it on such a return overstates line 12
+  (the function emits a loud note when the input is absent).
 - Use `use_itemized` for line 12; write the result into the `schedule_a`
   section when itemizing (or when `election_margin` is within $500, or when a
   note says §170(p) decided the election — document the close call), and
@@ -752,7 +762,9 @@ Use `compute_qbi_deduction()` from `agents/lib/tax_computations/`:
   for transparency; `qbi_income` is the netted Form 8995 line-1 figure.
 - **ALWAYS pass the overall-cap inputs** — Form 8995 lines 11-14 cap the deduction
   at 20% × (taxable income before QBI − net capital gain):
-  - `taxable_income_before_qbi` = max(0, Line 11 − Line 12 − Line 13b − Line 13c)
+  - `taxable_income_before_qbi` = max(0, Line 11 − Line 12 − Line 13b − Line 13c),
+    with Line 12 AFTER the §70111 haircut (the provisional QBI the haircut's
+    base used took it before)
     — BOTH the Schedule 1-A total (13b) AND the §170(p) charitable deduction
     (13c) reduce the QBI overall-cap base, since both come before QBI in the
     deduction stack. Omitting either overstates the cap.

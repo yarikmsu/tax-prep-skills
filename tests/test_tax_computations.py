@@ -3235,12 +3235,12 @@ class TestCaItemized:
 
     def test_obbba_70111_haircut(self):
         """Codex P2 — H.R.1 §70111 (TY2026+): itemized reduced by 2/37 of
-        the lesser of the itemized total or 37%-bracket income. At $1,000,000
+        the lesser of the itemized total or §68(a)(2)'s base. At $1,000,000
         of modified AGI §164(b)(7)(B) takes the SALT cap to its $10,000 floor
         (505,000 threshold, 30% of the 495,000 excess is 148,500). This case
         used the full 40,400 until AA16, which was the bug AA16 fixed, written
         into a test. Round numbers: SALT 10,000 + investment interest 27,000 =
-        37,000; top-bracket income 100,000 → haircut 2/37 × 37,000 = 2,000."""
+        37,000; a §68(a)(2) base of 100,000 → haircut 2/37 × 37,000 = 2,000."""
         r = compute_schedule_a(
             agi=1000000, filing_status="Single", tax_year=2026,
             standard_deduction=16000, salt_cap=40400, modified_agi=1000000,
@@ -8770,7 +8770,7 @@ def test_schedule_a_records_its_inputs_and_reruns_from_them():
                    None):
         with pytest.raises(ValueError, match="schedule_a.inputs"):
             rerun_schedule_a(broken, 120000, top_bracket_income=0)
-    # The §70111 haircut moves with 37%-bracket income: required from 2026.
+    # The §70111 haircut moves with §68(a)(2)'s base: required from 2026.
     with pytest.raises(ValueError, match="top_bracket_income is required"):
         rerun_schedule_a(out["inputs"], 120000)
 
@@ -8813,7 +8813,7 @@ def test_a_schedule_a_rerun_refuses_what_it_would_over_state():
     assert any("table amount" in n for n in up["notes"])
 
     # The haircut itself is re-priced: 2/37 of the lesser of the itemized
-    # total and the 37%-bracket income ($37,000 -> $2,000 off $60,000).
+    # total and §68(a)(2)'s base ($37,000 -> $2,000 off $60,000).
     big = compute_schedule_a(900000, "Single", 2026, 15750, 40400,
                              modified_agi=900000, mortgage_interest=60000,
                              top_bracket_income=37000)
@@ -8843,3 +8843,30 @@ def test_a_schedule_a_rerun_can_be_handed_section_170p():
                              non_itemizer_charitable=2000)
     assert moved["itemized_total"] == 17000.0
     assert (moved["use_itemized"], moved["election_margin"]) == (False, -750.0)
+
+
+def test_section_68_base_adds_the_itemized_deductions_back():
+    """AA34: §68(a)(2), as OBBBA §70111 enacted it for taxable years after
+    2025, measures the haircut on "so much of the taxable income ...
+    (determined without regard to this section and increased by such amount
+    of itemized deductions) as exceeds" the start of the 37% bracket — not
+    on the taxable income inside that bracket, which /tax-compute was told to
+    pass. Hand-computed, TY2026 Single, a 37% bracket starting at $640,600:
+    AGI $700,000 and $60,000 itemized give taxable income of $640,000, below
+    the bracket, so the old reading passed 0 and took no haircut. The
+    statute's base is 640,000 + 60,000 - 640,600 = 59,400, and the haircut
+    2/37 x min(60,000, 59,400) = 3,210.81."""
+    base = 640000 + 60000 - 640600
+    r = compute_schedule_a(700000, "Single", 2026, 16100, 40400,
+                           mortgage_interest=60000, top_bracket_income=base)
+    assert r["obbba_70111_reduction"] == 3210.81
+    assert r["itemized_total"] == round(60000 - 3210.81, 2)
+    step = " ".join(skill_text("tax-compute").split())
+    assert "ADDS THE ITEMIZED DEDUCTIONS BACK" in step, (
+        "the compute step no longer tells the agent that §68(a)(2)'s base "
+        "adds the itemized deductions back to taxable income")
+    assert "set to that slice" not in step, (
+        "the compute step still passes only the 37%-bracket slice")
+    assert "PROVISIONAL QBI deduction" in step, (
+        "the compute step no longer says the base's QBI deduction is the "
+        "provisional one, computed before the haircut")

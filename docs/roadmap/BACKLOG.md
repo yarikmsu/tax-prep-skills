@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA19**, **AA23**, **AA34**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA19**, **AA23**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -122,12 +122,15 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   `docs/changelog/epic-AA.md`.** What remains is `/tax-project`, whose
   deduction is a declared total and its own §170(p) tilt rather than a
   return's Schedule A, and the cases every tool still holds (an election flip,
-  the top bracket pending AA34, a binding charitable cap). A return written before `inputs` existed, or one whose
+  an AGI above the top bracket's floor, whose §68 base needs a QBI deduction
+  the pricer does not track, a binding charitable cap). A return written before `inputs` existed, or one whose
   section was not written (a standard filer far from the margin), keeps the
   held figure and its disclosure. `/tax-project` still
   tilts in its own code (AA22) and moves with that step.
 
 - **AA34 (P2, S): Check the §70111 haircut's base against the statute.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   `compute_schedule_a` takes `top_bracket_income` as the taxable income in the
   37% bracket. AA23's bias review read new §68 (OBBBA §70111) as measuring it on
   taxable income "determined without regard to this section and increased by

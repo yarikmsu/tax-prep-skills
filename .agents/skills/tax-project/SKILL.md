@@ -101,7 +101,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    year's income moves the parts of it tied to AGI, the SALT cap's phasedown and the
    medical-expense floor, which the projection holds at the declared figure; and whether
    Schedule A's own rules changed between the two years: from TY2026 a charitable floor
-   applies and the top bracket's itemized deductions are limited, and a TY2025 total
+   applies and itemized deductions are cut wherever taxable income plus those
+   deductions exceeds the 37% bracket's start (§68, so below that bracket too), and a TY2025 total
    carries neither. Do not treat archived Form 1040 line 24 as the federal prior-year
    safe-harbor base, and do not pair an explicit `prior_year_form_2210_tax_base` with the
    archive's AGI — `/tax-amend` overwrites `archive/{year-1}/result.json` with the

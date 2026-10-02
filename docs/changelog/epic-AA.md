@@ -2407,3 +2407,32 @@ Nothing new over-states, but three older gaps sat beside the new wording:
 - **Stale skill text corrected.** Both skills said the deduction is always held; they now describe the re-pricing and when it holds.
 
 Mutation check: removing the state line turns the test red.
+
+## AA34 — §68's base adds the itemized deductions back
+
+### What was wrong
+
+`compute_schedule_a` documented `top_bracket_income` as "taxable income falling in the 37% bracket", and `/tax-compute` passed that slice. §68(a)(2), as OBBBA §70111 enacted it for taxable years beginning after 2025, measures the haircut on "so much of the taxable income of the taxpayer for the taxable year (determined without regard to this section and increased by such amount of itemized deductions) as exceeds the dollar amount at which the 37 percent rate bracket under section 1 begins".
+
+The base adds the itemized deductions back. Every top-bracket itemizer's haircut was therefore under-applied by up to the itemized total, and line 12 over-stated: the hard-error direction. A taxpayer whose taxable income sat just below the bracket took no haircut at all. AA23's bias review raised it, and the enacted text (26 U.S.C. §68(a), as amended by Pub. L. 119-21) confirms it.
+
+### What shipped
+
+- **The engine's arithmetic is unchanged**: 2/37 of the lesser of the itemized total and the base. What changed is what the base is.
+- **The docstring, the notes and the `/tax-compute` step** now define `top_bracket_income` as §68(a)(2)'s base: taxable income computed with the un-reduced itemized total (QBI included), plus that total, less the fetched 37% threshold, and 0 below it.
+- **No more two-pass step.** Because the base adds the deductions back, it does not depend on the haircut, so the provisional re-call `/tax-compute` described is gone.
+- **The planning tools' pricer** still holds above the top bracket's floor, now for a stated reason: the base needs the priced point's QBI deduction, which it does not track.
+
+### Verified
+
+A hand-computed TY2026 Single case: AGI $700,000 and $60,000 itemized, against a bracket starting at $640,600, give $640,000 of taxable income, below the bracket.
+- The old reading passed 0.
+- The statute's base is $59,400, and the haircut is $3,210.81.
+
+The test also pins the step's wording.
+
+### Found by the review
+
+- **The base needs a provisional QBI deduction.** §68(a)(2) measures taxable income "without regard to this section", so the QBI deduction inside the base is the one computed against the un-reduced line 12. The final Form 8995 then uses the reduced one. The step now says so in both places, with the base written as AGI less that QBI, line 13b and the threshold, unfloored.
+- **The step names the threshold's cache path.**
+- **`rerun_schedule_a`'s docstring and refusal no longer describe the old reading**, nor do the constant's comment, a test docstring, the backlog or `/tax-project`'s skill. `/tax-project`'s skill now says the haircut reaches a filer below the 37% bracket.
