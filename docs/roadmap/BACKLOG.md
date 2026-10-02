@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA10**, **AA19**, **AA23**, **AA26**, **AA32**, **AA33**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA10**, **AA19**, **AA23**, **AA26**, **AA32**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -133,23 +133,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   and `/tax-project` in code (AA22), so re-running `compute_schedule_a` as it
   stands would elect wrongly for a donor near the margin.
 
-- **AA24 (P2, S): Nothing prices the permissions hook's full walk against its timeout.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  AA4's test pins the walk's shape — added files spawn no chmod, and an added
-  directory at most two — and no longer converts that to
-  seconds: every conversion it tried moved with the load, with the kind of core
-  a pass landed on, or with the fixture's shape against a stated budget per
-  process. What the registered timeout has to cover is therefore unmeasured:
-  two chmods per directory, and the per-entry shell loop, the traversals and
-  the index refresh, which in a file-heavy archive are nearly all of the cost.
-  A regression that slows the loop without adding a chmod, such as a command
-  substitution per file, passes every test. AA9's remedy fits here too: the
-  hook times its own full walk and reports, without blocking, when it uses more
-  than a set fraction of its timeout. Until then the registered timeout is held
-  where it is by `test_the_permissions_hook_timeout_is_not_cut`, so a cut
-  waits on this. Raised by AA4's reviews (#184).
-
 - **AA26 (P2, S): Permissions-hook routing tests pass with the exposure scan
   off.** Each drives a Bash payload the hook must not trust, a dynamic,
   mixed, variable or aliased archive destination, a git or ripgrep helper, or
@@ -171,6 +154,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   would close it. Split from AA30.
 
 - **AA33 (P3, S): The permissions hook still states absolute timings.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   CLAUDE.md's MEASURED COSTS rule forbids an absolute outside that block, and
   `test_the_hook_states_no_absolute_timing` reads `skill-invariants.sh` alone,
   so the readings #73 left in `harden-runtime-perms.sh`'s comments were never
@@ -556,6 +541,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
 | AA30 | #195 | a household line's 0 still passes as computed (AA32); an acknowledged refused household's City or Yonkers tax is prepared by hand |
+| AA24 | #198 | it prices the walk only when the walk ran past a second, and reads its timeout from `settings.json` |
 | AA9 | #197 | it times the pytest pass, not the selector and scan around it |
 | AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
 | AA15 | #188 | nothing yet refuses a line 58 typed by hand or an agent that never calls the total (AA29) |

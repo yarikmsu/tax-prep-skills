@@ -831,17 +831,17 @@ PY
 # command AGENTS.md §7 documents — the pytest run, `git status`, a `source
 # .venv/bin/activate && …` chain — fails the read-only whitelist, so each one
 # walked all of archive/ through the per-entry shell loop and an xargs chmod
-# over every archived file. Measured on this host against a 3021-entry synthetic
-# archive, that was 18.7s of hook per tool call, after `ls | wc -l`.
+# over every archived file — measured against a 3021-entry synthetic archive
+# (`ls | wc -l`), on every one of those tool calls.
 #
 # What the net actually has to establish is one property: nothing under archive/
 # is readable by anyone but its owner. It does NOT have to re-apply a mode a
 # file already carries. So ask find for the EXPOSURES — a directory that is not
 # exactly 700, a file that is not exactly 600, or any symlink, which is refused
 # and never followed exactly as the full walk refuses it. One traversal, and
-# zero chmod processes when the tree is already correct: 0.33s for the same
-# pass, index refresh included. Nothing the full walk would have changed is
-# missed, because "the walk would have changed it" and "its mode is not the
+# zero chmod processes when the tree is already correct: under a fiftieth of
+# the full walk's cost for the same pass, index refresh included. Nothing the
+# full walk would have changed is missed, because "the walk would have changed it" and "its mode is not the
 # target mode" are the same statement.
 #
 # Deliberately NOT `-newercm "$STAMP"`, the obvious mirror of
@@ -873,10 +873,10 @@ PY
 # into a SINGLE traversal is possible — BSD find has no -fprint0 (`find:
 # -fprint0: unknown primary or operator` here), but a python3 os.scandir walk
 # can emit exposures, directories and files together — and it does not pay for
-# itself: at 3021 entries the three finds are 0.041s against the one walk's
-# 0.069s, and at 30061 entries 0.210s against 0.189s. A wash at every size
-# measured, bought by putting python3 on the dominant path — the path whose
-# fallback, when python3 is missing, is the 18.7s full walk.
+# itself: at 3021 entries the three finds cost about three fifths of the one
+# walk, and at 30061 entries about a tenth more. A wash at every size measured,
+# bought by putting python3 on the dominant path — the path whose fallback, when
+# python3 is missing, is the full walk this function replaced.
 harden_exposed_archive_entries() {
     local entry
     local saw_untraversable_directory=0

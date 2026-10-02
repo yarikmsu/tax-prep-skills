@@ -6475,6 +6475,14 @@ class TestHookRegistration:
             f"skill-invariants.sh states {copied} outside MEASURED COSTS, "
             "which owns every runtime figure about this hook — cite the block "
             "and quote a ratio from it instead")
+        # The permissions hook has no block of its own, and CLAUDE.md's rule
+        # binds it all the same: its readings went unchecked from #73 until
+        # AA33, because this test read the one script alone.
+        perms = _TIMED_FIGURE.findall(
+            _comment_prose(PERMS_HOOK.read_text().splitlines()))
+        assert not perms, (
+            f"harden-runtime-perms.sh states {perms} in its comments — an "
+            "absolute that goes stale while reading as fresh; state a ratio")
 
     def test_the_measured_costs_counts_match_live_collection(self):
         """The block's own rule, enforced instead of asked for.

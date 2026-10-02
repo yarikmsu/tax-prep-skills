@@ -2116,3 +2116,28 @@ timeout — exit 1, the file hardened, the stamp written — and an ample timeou
 stays silent. Mutation checks, each turning it red: the threshold never met,
 the warning without exit 1, a warning at any speed, and a pass clock that
 started too early.
+
+A pass under a second skips the read, so the usual call spawns no `jq` — a
+fix from AA24's review, which measured the read on every call.
+
+## AA33 — the permissions hook states no absolute timing
+
+### What was wrong
+
+CLAUDE.md's rule keeps every runtime timing in `MEASURED COSTS` and allows only
+ratios elsewhere, but `test_the_hook_states_no_absolute_timing` read
+`skill-invariants.sh` alone. The comments #73 wrote into
+`harden-runtime-perms.sh` carried six absolute readings, none of them checked.
+AA24's review found them.
+
+### What shipped
+
+Each reading is now a ratio to the full walk it was compared with, and the
+same test applies its figure rule to every comment in the permissions hook,
+which has no block of its own. It is the same test, not a new one, so the hook
+module's count is unchanged.
+
+### Verified
+
+Restoring one of the old readings turns the test red, naming it; removing it
+again turns it green.
