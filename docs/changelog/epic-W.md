@@ -946,3 +946,36 @@ These still branch on the state inside their own modules, and are the next slice
 - Mutation checks:
   - a window table planted back in `tax_calendar` turns the copy scan red;
   - moving every regime's first-year boundary turns five tests red.
+
+## W10, third slice: the filing package's state forms come from the registry
+
+### What was wrong
+
+`filing_package._STATE_SECTIONS` was a CA-only table, and it was the last per-state table that held data rather than behaviour. Because nothing tied it to the registry, NY's depth module shipped without an entry. As a result, `/tax-generate --filing-package` built a NY return's package with no IT-201 in the assembly order and no NY line in the checklist. The package read as complete. For a paper filer, that under-states what has to be mailed.
+
+### What shipped
+
+- **The registry.** Each `StateSection` row has a new `package_forms` field: (section, title) pairs in assembly order.
+  - CA lists Form 540, then Schedule CA (540).
+  - NY lists Form IT-201.
+  - FL lists nothing, since a no-income-tax statement is not a form.
+- **`filing_package._STATE_SECTIONS`** is now derived from the registry.
+- **The NY checklist.** These lines come from the TY2025 IT-201 instructions, Step 11:
+  - The return mails in its own envelope. A return with a payment goes to a different PO box from one without. The addresses themselves are left to tax.ny.gov.
+  - Federal Forms W-2 and 1099-R are not sent. Form IT-2 goes in instead, plus IT-1099-R, 1099-G and W-2G where they apply.
+  - When line 80 shows an amount owed, it is paid online or by a check with Form IT-201-V.
+- **Packaging refuses an uncomputed state.** Found by the bias review. Parsed withholding alone makes a state section PRESENT while its tax and line 80 are still template zeros. Packaged, that read as a $0 return with no balance-due line. `assembly_order` and `attachment_checklist` now refuse a state form whose registry row's `evidence_fields` are all zero, the same way they refuse an uncomputed Form 1040. This covers CA's 540 and Schedule CA as well as NY.
+- **More NY checklist lines**, verified against the same instructions: no staples; the check made payable to "New York State Income Tax"; Form Y-203 when line 56 is non-zero; and 1099-G or W-2G only when it shows NY tax withheld.
+- **Docs.** The playbook names the registry's new field and the checklist as places to extend. `/tax-generate` names the NY conditional, and tells the line-numbered pages to number NY's nested blocks inline.
+
+### Verified
+
+- New tests:
+  - a NY return assembles its IT-201;
+  - FL assembles nothing;
+  - the NY checklist lines appear, and the balance-due line is gated on line 80;
+  - the registry pins that every package form is a real template section and that the package table is its projection.
+- Mutation checks:
+  - restoring the CA-only table turns the NY assembly test red;
+  - removing the evidence gate turns all three refusal cases red.
+- A two-state test pins the order: CA 540, then Schedule CA, then IT-201.

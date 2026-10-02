@@ -30,6 +30,10 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
 )
 from agents.lib import receipt  # noqa: E402
+from agents.lib.tax_computations.state.registry import (  # noqa: E402
+    STATE_SECTIONS,
+)
+from agents.lib.projection import _section_computed  # noqa: E402
 from agents.lib.yoy_diff import _section_present  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
@@ -67,10 +71,30 @@ _FEDERAL_SEQUENCE = {
     "form_8959_additional_medicare": ("Form 8959 (Additional Medicare Tax)", "71"),
 }
 
-_STATE_SECTIONS = {
-    "california_540": "California Form 540",
-    "schedule_ca_itemized": "California Schedule CA (540)",
-}
+# From the state registry (W10): it listed California alone, so a New York
+# return's package assembled no IT-201.
+_STATE_SECTIONS = {key: title for s in STATE_SECTIONS
+                   for key, title in s.package_forms}
+
+
+def _refuse_uncomputed_states(result: dict) -> None:
+    """A state form with data but no COMPUTED evidence is parse-stage
+    withholding over template zeros: packaged, it prints $0 tax and suppresses
+    the balance-due line, a confident under-statement. Present is not
+    computed (`projection._section_computed`), so refuse, as the package does
+    an uncomputed Form 1040."""
+    for s in STATE_SECTIONS:
+        if not s.evidence_fields:
+            continue
+        if (any(_section_present(result, key) for key, _ in s.package_forms)
+                and not _section_computed(result, s.section,
+                                          s.evidence_fields)):
+            raise FilingPackageError(
+                f"result.json carries {s.section} data but no computed "
+                f"{s.code} return (every one of {', '.join(s.evidence_fields)} "
+                f"is zero or absent) — run /tax-compute's state step before "
+                f"packaging, or remove the section if no {s.code} return is "
+                f"filed")
 
 
 def _seq_sort_key(seq: str):
@@ -230,6 +254,7 @@ def assembly_order(result: dict) -> list:
         raise FilingPackageError(
             "result.json shows no compute evidence (meta.limitations is "
             "empty) — run /tax-compute through Step 12 before packaging")
+    _refuse_uncomputed_states(result)
     order = [{"key": "form_1040", "title": "Form 1040", "sequence": None}]
     federal = []
     for key, (title, seq) in _FEDERAL_SEQUENCE.items():
@@ -253,6 +278,7 @@ def assembly_order(result: dict) -> list:
 
 def attachment_checklist(result: dict) -> list:
     """Human checklist lines for what physically attaches to a paper filing."""
+    _refuse_uncomputed_states(result)
     lines = [
         "Sign and date Form 1040 (both spouses on a joint return) — an "
         "unsigned return is not filed.",
@@ -314,6 +340,34 @@ def attachment_checklist(result: dict) -> list:
                     "Board' with SSN and '{tax year} Form 540' in the "
                     "memo, or pay via FTB Web Pay (mandatory e-pay may "
                     "apply — R&TC §19011.5).")
+    if _section_present(result, "new_york_it201"):
+        # The TY2025 IT-201 instructions: Step 11 ("Finish your return"),
+        # line 56, line 72's withholding forms and line 80's payment.
+        lines.append(
+            "New York Form IT-201 mails to the NYS Tax Department, not the "
+            "IRS — a return enclosing a payment and one "
+            "without go to DIFFERENT PO boxes; confirm the current addresses "
+            "in the IT-201 instructions on tax.ny.gov. Do not staple "
+            "anything to it.")
+        lines.append(
+            "IT-201 attachments: do NOT send federal Form W-2 or 1099-R — "
+            "include Form IT-2 (Summary of W-2 Statements) and IT-1099-R "
+            "instead, any 1099-G or W-2G showing NYS, NYC or Yonkers tax "
+            "withheld, and each IT form or schedule the return uses (IT-196, "
+            "IT-225, IT-201-ATT...).")
+        ny = result.get("new_york_it201") or {}
+        if _field_num(ny.get("yonkers") or {},
+                      "line_56_yonkers_nonresident_earnings_tax",
+                      "ny_line_56") > 0:
+            lines.append(
+                "Line 56 (Yonkers nonresident earnings tax): submit Form "
+                "Y-203 with the return.")
+        if _field_num(ny, "line_80_amount_owed", "ny_owed") > 0:
+            lines.append(
+                "NY balance due (line 80): pay online at tax.ny.gov, or "
+                "enclose a check or money order payable to 'New York State "
+                "Income Tax' — last four SSN digits and '{tax year} Income "
+                "Tax' on it — with Form IT-201-V, at the payment address.")
     # FBAR: never a categorical all-clear — absence of the section only
     # means /tax-fbar hasn't run (review P1: gating on the wrong signal
     # printed 'nothing files outside this package' for a foreign-account

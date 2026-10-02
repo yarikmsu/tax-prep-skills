@@ -149,10 +149,12 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   computed-evidence fields, movers and informational key; projection's and
   yoy_diff's tables derive from it, and a test refuses a local copy. The
   PTET regime windows `/tax-ptet` and `/tax-calendar` each carried are ONE
-  registry table by the pull request that records "W10, second slice". Still
+  registry table by the pull request that records "W10, second slice", and
+  the filing package's state forms derive from it by the one recording "W10,
+  third slice" (a NY package had no IT-201). Still
   per-module: `capabilities._state_note`, the tie-out withholding rows,
-  `tax_calendar`'s estimated-tax and extension branches, `filing_package`'s
-  CA-only section table, and the two generic deferrals below. *Raised by the 2026-09-12 four-angle review.*
+  `tax_calendar`'s estimated-tax and extension branches, and the two generic
+  deferrals below. *Raised by the 2026-09-12 four-angle review.*
   Six parallel per-state tables across four modules: `projection.STATE_SECTION_KEYS`
   and `_STATE_SECTION_CODES`, the two `_*_COMPUTED_EVIDENCE_FIELDS`, `yoy_diff`'s
   three, `capabilities._state_note`'s if/elif chain, `tie_out`'s per-state

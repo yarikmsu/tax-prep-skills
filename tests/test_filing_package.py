@@ -387,3 +387,64 @@ def test_a_valid_receipt_does_not_certify_another_result_file(tmp_path):
     assert out.returncode == 2
     assert "no gate has seen this file" in out.stderr
 
+
+
+def test_a_new_york_return_assembles_its_it201():
+    """W10: the state table listed California alone, so a NY package had no
+    state form at all. It comes from the registry now."""
+    r = _result(new_york_it201={"line_46_total_state_tax": 4200})
+    entries = FP.assembly_order(r)
+    assert entries[-1] == {"key": "new_york_it201",
+                           "title": "New York Form IT-201",
+                           "sequence": "STATE"}
+
+
+def test_a_florida_statement_is_not_a_state_form():
+    r = _result(florida_state={"no_income_tax_statement": "FL has none"})
+    assert [e["key"] for e in FP.assembly_order(r)] == ["form_1040"]
+
+
+def test_the_new_york_checklist():
+    """IT-201 instructions, Step 11: no federal W-2 or 1099-R, Form IT-2
+    instead; payment and no-payment returns mail to different PO boxes."""
+    r = _result(new_york_it201={"line_46_total_state_tax": 4200,
+                                "line_80_amount_owed": 0})
+    lines = "\n".join(FP.attachment_checklist(r))
+    assert "do NOT send federal Form W-2 or 1099-R" in lines
+    assert "IT-2 (Summary" in lines and "Do not staple" in lines
+    assert "DIFFERENT PO boxes" in lines
+    assert "NY balance due" not in lines and "Y-203" not in lines
+    assert "Franchise Tax" not in lines  # no CA line on a NY-only return
+    r["new_york_it201"]["line_80_amount_owed"] = 350
+    r["new_york_it201"]["yonkers"] = {
+        "line_56_yonkers_nonresident_earnings_tax": 120}
+    lines = "\n".join(FP.attachment_checklist(r))
+    assert "IT-201-V" in lines and "New York State Income Tax" in lines
+    assert "Form Y-203" in lines
+
+
+def test_a_two_state_return_keeps_california_then_new_york():
+    r = _result(california_540={"ca_total_tax": 8000},
+                schedule_ca_itemized={"total_ca_itemized": 30000},
+                new_york_it201={"line_46_total_state_tax": 4200})
+    assert [e["key"] for e in FP.assembly_order(r)][-3:] == [
+        "california_540", "schedule_ca_itemized", "new_york_it201"]
+
+
+@pytest.mark.parametrize("section, block", [
+    ("new_york_it201", {"line_80_amount_owed": 0,
+                        "refundable_credits_and_payments": {
+                            "line_72_state_withholding": 3000}}),
+    ("california_540", {"ca_withholding_box17": 3000, "ca_total_tax": 0}),
+    ("schedule_ca_itemized", {"total_ca_itemized": 30000}),
+])
+def test_a_state_section_with_only_parsed_data_refuses_the_package(
+        section, block):
+    """Bias review: parse-stage withholding makes a section PRESENT while its
+    tax and line 80 are template zeros — packaged, it read as a $0 return with
+    no balance-due line. Both entry points refuse."""
+    r = _result(**{section: block})
+    with pytest.raises(FP.FilingPackageError, match="no computed"):
+        FP.assembly_order(r)
+    with pytest.raises(FP.FilingPackageError, match="no computed"):
+        FP.attachment_checklist(r)

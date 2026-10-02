@@ -47,6 +47,9 @@ def test_every_derived_table_is_the_registry_projection():
         "CA"].evidence_fields
     assert projection._NY_COMPUTED_EVIDENCE_FIELDS is registry.BY_CODE[
         "NY"].evidence_fields
+    from agents.lib import filing_package
+    assert list(filing_package._STATE_SECTIONS.items()) == [
+        f for s in STATE_SECTIONS for f in s.package_forms]
     assert set(s.section for s in STATE_SECTIONS) <= set(
         yoy_diff.OPTIONAL_SECTIONS)
     assert yoy_diff.INFORMATIONAL_SECTIONS == {"florida_state":
@@ -71,6 +74,8 @@ def test_every_registered_field_is_real_in_the_result_template():
         if s.informational_key:
             assert s.informational_key in section, (s.code,
                                                     s.informational_key)
+        for key, _title in s.package_forms:
+            assert isinstance(TEMPLATE.get(key), dict), (s.code, key)
 
 
 def _literal_copies(source: str) -> "list[tuple[int, list[str]]]":

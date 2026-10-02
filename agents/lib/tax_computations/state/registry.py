@@ -36,12 +36,16 @@ class StateSection:
     year-over-year rows, (label, dotted path). `informational_key` names the
     one string field whose non-empty value means a section that holds only a
     statement was populated (`yoy_diff._section_present`).
+    `package_forms` are the (result section, title) pairs `/tax-generate`'s
+    filing package assembles after the federal forms, in order; empty for a
+    state that files no return.
     """
     code: str
     section: str
     evidence_fields: "tuple[str, ...]" = ()
     mover_fields: "tuple[tuple[str, str], ...]" = ()
     informational_key: "str | None" = None
+    package_forms: "tuple[tuple[str, str], ...]" = ()
 
 
 # In DETECTION order: `projection._detect_prior_state` takes the first section
@@ -49,6 +53,10 @@ class StateSection:
 STATE_SECTIONS: "tuple[StateSection, ...]" = (
     StateSection(
         code="CA", section="california_540",
+        package_forms=(
+            ("california_540", "California Form 540"),
+            ("schedule_ca_itemized", "California Schedule CA (540)"),
+        ),
         # A genuinely computed CA return always carries a non-zero
         # ca_standard_deduction (statutory minimum ~$5K), even at zero income.
         evidence_fields=("ca_total_tax", "ca_agi", "ca_taxable_income",
@@ -68,6 +76,7 @@ STATE_SECTIONS: "tuple[StateSection, ...]" = (
     ),
     StateSection(
         code="NY", section="new_york_it201",
+        package_forms=(("new_york_it201", "New York Form IT-201"),),
         # Line 72's box 17 withholding lands before IT-201 is computed, so it
         # proves nothing; line 34's standard deduction has a floor for every
         # status, and line 33 may be negative, which is non-zero too.

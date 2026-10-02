@@ -256,7 +256,7 @@ package has four parts:
    Render its table (Form 1040 first, then every present form by its
    official Attachment Sequence No., state forms last) and its checklist
    (signature, W-2 Copy B, withholding-only 1099 rule, Form 8949/1040-V/
-   CA-540/FBAR conditionals) verbatim into the PDF. Spot-check the
+   CA 540/NY IT-201/FBAR conditionals) verbatim into the PDF. Spot-check the
    sequence numbers against the filing year's official forms (they are
    printed in each form's top-right corner and can change).
 2. **Line-numbered form pages** — for each section in the assembly order,
@@ -274,6 +274,10 @@ package has four parts:
    **Field-name ≠ official-line caveats (print ON the affected page — a
    filer transcribing by our labels would put figures on the wrong
    official lines):**
+   - New York IT-201: the nested `nyc`, `yonkers`, `mctmt` and
+     `refundable_credits_and_payments` blocks carry OFFICIAL line numbers
+     (`line_56_yonkers_nonresident_earnings_tax`, `line_72_…`) — number
+     them inline on the IT-201 page, never under "supporting detail".
    - Schedule D: `line_1c_1099b_box_c` is NOT official line 1c (Box C
      rows go on line 3); `line_11_1099b`/`line_12_not_reported` do NOT
      match official lines 11/12 (those are 4797/K-1 lines) — label these
