@@ -273,7 +273,8 @@ Prove every parsed document landed on the return — the CP2000 killer:
      ledger record, a ledger record pointing at a missing file, a category
      sum that doesn't match the return (the classic dropped-1099), or a New
      York City or Yonkers line (IT-201 47a, 55, 56) the profile flags and
-     nobody computed — compute it and recompute line 58. Fix the
+     nobody computed, or one written without its function's `method` beside
+     it — compute it, write both, and recompute line 58. Fix the
      aggregation (or the ledger, if the parse was wrong) and re-run. NEVER
      proceed to `/tax-generate` past a failed tie-out, and never "fix" a
      mismatch by editing the ledger to match the return without re-checking

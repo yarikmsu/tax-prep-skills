@@ -8611,3 +8611,43 @@ def test_the_gate_and_the_engine_agree_on_the_refused_households():
     for status, flags in computed:
         assert not ny.ny_household_refusals(status, flags), (status, flags)
         assert not engine_refuses(status, flags), (status, flags)
+
+
+def test_each_household_function_returns_the_method_the_tie_out_reads():
+    """AA32: the tie-out holds a flagged line 47a, 55 or 56 to the `method`
+    its function returned, from `NY_HOUSEHOLD_METHODS`. A function whose
+    method drifted from that table would fail every return it computed —
+    both regimes of 47a included, the table and the schedule."""
+    from agents.lib.tax_computations import NY_HOUSEHOLD_METHODS
+    calls = {
+        "line_47a_nyc_resident_tax": [_nyc(1000.0), _nyc(100000.0)],
+        "line_55_yonkers_resident_surcharge": [_yonkers_res(5000.0)],
+        "line_56_yonkers_nonresident_earnings_tax": [
+            _y203({"wages": 20000})],
+    }
+    assert set(calls) == set(NY_HOUSEHOLD_METHODS)
+    seen = set()
+    for field, outs in calls.items():
+        for out in outs:
+            assert field in out, field
+            assert out["method"] in NY_HOUSEHOLD_METHODS[field], (
+                field, out["method"])
+            seen.add(out["method"])
+    assert seen == {m for ms in NY_HOUSEHOLD_METHODS.values() for m in ms}, (
+        "a method in the table that no function returns is one no computed "
+        "line can carry")
+
+
+def test_the_city_and_yonkers_total_returns_no_household_line():
+    """AA32: it echoed lines 55 and 56 under their own field names, so
+    writing its dict overwrote the computed figure and left the computing
+    function's `method` beside the new one — a 0 passed to the total then
+    read as computed at the tie-out. It adds the three lines; it returns none."""
+    from agents.lib.tax_computations import NY_HOUSEHOLD_LINES
+    out = compute_city_and_yonkers_total(
+        nyc_resident_tax=1292.0, yonkers_resident_surcharge=0.0,
+        yonkers_nonresident_earnings_tax=None, nyc_resident=True,
+        yonkers_resident=True, yonkers_nonresident_earnings=False)
+    fields = {field for _f, _a, _b, field, _l in NY_HOUSEHOLD_LINES}
+    assert not fields & set(out), sorted(fields & set(out))
+    assert out["line_58_total_city_and_yonkers"] == 1292.0

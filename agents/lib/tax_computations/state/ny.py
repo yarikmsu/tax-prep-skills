@@ -1367,7 +1367,8 @@ def compute_nyc_resident_tax(
 
     Returns:
         {"tax", "tax_exact", "line_47a_nyc_resident_tax", "schedule", "regime",
-         "breakdown", "notes"} — `tax` is the WHOLE-DOLLAR line 47a.
+         "method", "breakdown", "notes"} — `tax` is the WHOLE-DOLLAR line 47a,
+        and `method` is `regime` again, the witness the tie-out reads (AA32).
     """
     filing_status = _ny_status(filing_status)
     if nyc_taxable_income is None or isinstance(nyc_taxable_income, bool) or \
@@ -1412,6 +1413,7 @@ def compute_nyc_resident_tax(
         "line_47a_nyc_resident_tax": line,
         "schedule": schedule,
         "regime": regime,
+        "method": regime,
         "breakdown": breakdown,
         "notes": notes,
     }
@@ -1654,7 +1656,7 @@ def compute_yonkers_resident_surcharge(
         notes.append("The worksheet's credits exceed line 46, so the "
                      "surcharge is zero rather than a negative tax.")
     return {"tax": line, "tax_exact": round(sheet["exact"], 4),
-            "line_55_yonkers_resident_surcharge": line,
+            "line_55_yonkers_resident_surcharge": line, "method": "worksheet",
             "worksheet": sheet["lines"], "notes": notes}
 
 
@@ -1804,6 +1806,7 @@ def compute_yonkers_nonresident_earnings_tax(
             "submit the calculation with the form as a separate schedule.")
     return {"tax": form["line_6"],
             "line_56_yonkers_nonresident_earnings_tax": form["line_6"],
+            "method": "form_y203",
             "form": form, "resident_limit": limit, "notes": notes}
 
 
@@ -1820,6 +1823,18 @@ NY_HOUSEHOLD_LINES = (
     ("yonkers_nonresident_earnings", "yonkers_nonresident_earnings_tax",
      "yonkers", "line_56_yonkers_nonresident_earnings_tax", "56"),
 )
+
+
+# What each household line's function returns as `method`, keyed by the line's
+# result field: the witness `/tax-compute` writes beside the line as
+# `<field>_method`, so the tie-out can tell a computed 0 from a typed one
+# (AA32). The template ships both null, and a figure typed after it carries no
+# method — the hazard the null default exists for, one write later.
+NY_HOUSEHOLD_METHODS = {
+    "line_47a_nyc_resident_tax": frozenset({"table", "schedule"}),
+    "line_55_yonkers_resident_surcharge": frozenset({"worksheet"}),
+    "line_56_yonkers_nonresident_earnings_tax": frozenset({"form_y203"}),
+}
 
 
 def ny_household_refusals(filing_status, flags: dict) -> "list[tuple[str, str]]":
@@ -1963,8 +1978,11 @@ def compute_city_and_yonkers_total(
         # for one line means a reader tying out line 54e has to know which
         # function produced the dict in front of them.
         "line_54e_total_mctmt": round(mobility, 2),
-        "line_55_yonkers_resident_surcharge": round(yonkers_res, 2),
-        "line_56_yonkers_nonresident_earnings_tax": round(yonkers_non, 2),
+        # NOT lines 55 and 56, though it adds them (AA32). Under their own
+        # field names, writing this dict overwrote the figure the computing
+        # function wrote and left its `method` beside the new value, so a 0
+        # passed here read as computed. Each household line is written only
+        # by the function that computes it.
         "line_58_total_city_and_yonkers": total,
         "notes": notes,
     }

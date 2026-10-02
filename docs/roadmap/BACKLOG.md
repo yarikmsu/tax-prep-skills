@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA19**, **AA23**, **AA32**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA19**, **AA23**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -116,22 +116,9 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   and `/tax-project` in code (AA22), so re-running `compute_schedule_a` as it
   stands would elect wrongly for a donor near the margin.
 
-- **AA26 (P2, S): Permissions-hook routing tests pass with the exposure scan
-  off.**
+- **AA32 (P2, S): A household line's 0 passes as computed.**
   **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.** Each drives a Bash payload the hook must not trust, a dynamic,
-  mixed, variable or aliased archive destination, a git or ripgrep helper, or
-  an opaque script, and asserts an archived file ends owner-only. That file
-  already exists, and the index pass re-hardens a listed file whose mode moved,
-  so replacing every payload-driven call to `harden_exposed_archive_entries`
-  with a no-op leaves every one green, which is also how to list them.
-  AA25 moved two of the same shape, the
-  inherited-function and PATH-shim `ls` tests, onto
-  `_an_exposure_only_the_scan_finds`: a new file behind timestamps set back,
-  with a control run on a twin tree that must leave it exposed. The rest
-  need the same. Found by AA25's review.
-
-- **AA32 (P2, S): A household line's 0 passes as computed.** AA29's tie-out
+  this entry moves to the shipped index the day that merges.** AA29's tie-out
   checks a flagged line 47a, 55 or 56 for a VALUE, not for where it came from,
   so a 0 written after the template passes — the hazard the null default
   exists for, one write later. A witness the computing function co-writes
@@ -517,6 +504,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
 | AA30 | #195 | a household line's 0 still passes as computed (AA32); an acknowledged refused household's City or Yonkers tax is prepared by hand |
+| AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
 | AA10 | #200 | outside MEASURED COSTS the timing rule reads whole-line comments only, and catches no duration in words |
 | AA33 | #199 | outside MEASURED COSTS the figure rule still reads whole-line comments only (AA10) |
 | AA24 | #198 | it prices the walk only when the walk ran past a second, and reads its timeout from `settings.json` |

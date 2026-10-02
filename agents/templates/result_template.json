@@ -543,10 +543,11 @@
     "line_46_total_state_tax": 0,
     "nyc": {
       "_include_if": "flags.nyc_resident",
-      "_note": "New York City resident tax, IT-201 lines 47-54. City taxable income is the STATE's, except that a Charitable Gifts Trust deduction taken for the state is added back. Line 47a reads the City tax table while line 47 is under the fetched table ceiling and the City rate schedule at or above it. A joint return with only ONE city resident REFUSES rather than taxing the household as residents, and so does a City resident for only part of the year: IT-360.1 is not modeled.",
+      "_note": "New York City resident tax, IT-201 lines 47-54. City taxable income is the STATE's, except that a Charitable Gifts Trust deduction taken for the state is added back. Line 47a reads the City tax table while line 47 is under the fetched table ceiling and the City rate schedule at or above it. Beside 47a, 55 and 56 goes each function's `method`, as `<field>_method`: the tie-out fails a flagged line without it. A joint return with only ONE city resident REFUSES rather than taxing the household as residents, and so does a City resident for only part of the year: IT-360.1 is not modeled.",
       "nyc_taxable_income": 0,
       "charitable_gifts_trust_addback": 0,
       "line_47a_nyc_resident_tax": null,
+      "line_47a_nyc_resident_tax_method": null,
       "line_49_after_household_credit": 0,
       "line_52_city_tax_before_credits": 0,
       "line_54_after_city_credits": 0,
@@ -556,7 +557,9 @@
       "_include_if": "a Yonkers resident, or nonresident with Yonkers earnings",
       "_note": "Yonkers has the same parity with the State residency test that the City has. Line 55 comes from compute_yonkers_resident_surcharge (the IT-201-I worksheet on line 46, for a WHOLE-year Yonkers resident), line 56 from compute_yonkers_nonresident_earnings_tax (Form Y-203 on a return that is not joint, line 6 limited to the resident surcharge). Lines 50 and 57 are the PART-YEAR city and Yonkers lines and belong to IT-360.1 — a named non-goal for this full-year-resident module.",
       "line_55_yonkers_resident_surcharge": null,
-      "line_56_yonkers_nonresident_earnings_tax": null
+      "line_55_yonkers_resident_surcharge_method": null,
+      "line_56_yonkers_nonresident_earnings_tax": null,
+      "line_56_yonkers_nonresident_earnings_tax_method": null
     },
     "mctmt": {
       "_include_if": "self-employment net earnings in the MCTD",

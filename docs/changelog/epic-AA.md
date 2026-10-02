@@ -2197,3 +2197,35 @@ With every payload-driven scan call replaced by `true`, all eight go red, alongs
 - The aliased test's symlink does not decide its route: `cat` is not a bounded writer, so the command scans with or without it. A symlink inside archive/, where it would be the only deciding factor, is refused as a symlink in a runtime path. The test's docstring now says so.
 - `git` and `rg` are not on the read-only list at all, so `--ext-diff` and `--hostname-bin` are not what routes those two tests. Their names claim more than they pin.
 - The scan call for a bounded command whose text names archive outside `archive/YYYY` has no test. It is defensive, because a bounded `printf` or `echo` writes only its literal destination.
+
+## AA32 — a household line carries the method that computed it
+
+### What was wrong
+
+AA29's tie-out checked a flagged IT-201 line 47a, 55 or 56 for a VALUE, not for where the value came from. A 0 written after the template's null passed as computed: the hazard the null default exists for, one write later.
+
+### What shipped
+
+- **A `method` from each function.** `compute_nyc_resident_tax` returns its regime, `table` or `schedule`. `compute_yonkers_resident_surcharge` returns `worksheet`, and `compute_yonkers_nonresident_earnings_tax` returns `form_y203`.
+- **`NY_HOUSEHOLD_METHODS`** in `ny.py` names each line's methods.
+- **The template** ships `<field>_method` null beside each line.
+- **`/tax-compute`** writes the method from the same call as the line.
+- **The tie-out** fails a flagged figure whose method is absent, null, made up, or another line's. A computed 0 that carries its method passes.
+
+### Verified
+
+- One tie-out test runs every line through each bad method, and the control passes.
+- One engine test holds each function, both 47a regimes included, to the table and requires every method in the table to be returned by some function.
+- Mutation checks: removing the tie-out's check turns the tie-out test red, and renaming Y-203's method turns the engine test red.
+
+### Found by the bias review
+
+`compute_city_and_yonkers_total` returned lines 55 and 56 under their own field names. Writing its dict, as the step said to, overwrote the figure the computing function had written and left that function's `method` beside the new value. So a 0 passed to the total still read as computed. The total now returns none of the three household lines; each line is written only by the function that computes it. Restoring the echo turns a new test red.
+
+### Found by the general review
+
+A method that was a list or dict crashed the set lookup with a TypeError, past the gate's own exit codes. It is now a finding like any other bad method, and the test covers both shapes. The `/tax-compute` exit-2 description names the missing method too. The summary PDF shows the method as its own row under its line.
+
+### Limits
+
+A method is a provenance marker, not a proof: an agent that types the line can type its method too. It catches the placeholder 0, the case AA32 names; a receipt binding would close the rest.

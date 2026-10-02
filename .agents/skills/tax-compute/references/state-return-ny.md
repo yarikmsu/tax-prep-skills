@@ -287,9 +287,13 @@ household whose flag is false is refused too — fix the flag or the amount,
 never drop the argument to get past it.
 
 Lines 47a, 55 and 56 ship `null`, not 0. Write each one only from the function
-that computes it; an unflagged one stays null, or takes the 0
-`compute_city_and_yonkers_total` returns for it. At Step 12.7 the tie-out FAILS
-a flagged line still null or absent, and a line 58 below line 54 plus lines
+that computes it, and beside it, as `<line field>_method` (e.g.
+`line_47a_nyc_resident_tax_method`), the `method` that same call returned; an
+unflagged one stays null. `compute_city_and_yonkers_total` adds them into line
+58 but returns none of the three, so writing its dict cannot overwrite one.
+At Step 12.7 the tie-out FAILS a flagged line still null or absent, a flagged
+line without its function's `method` — a 0 typed over the
+null reads exactly like a computed one — and a line 58 below line 54 plus lines
 54e, 55 and 56, whichever way line 58 was assembled. A household the function
 refuses still owes the tax: prepare it by hand, never enter 0. Those households
 block at Step 0.7 as `ny_city_or_yonkers_household_unmodeled`; acknowledged, the

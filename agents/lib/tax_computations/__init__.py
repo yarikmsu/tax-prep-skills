@@ -3366,6 +3366,7 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
 # file has to keep valid forever in exchange for nothing.
 from agents.lib.tax_computations.state.ny import (  # noqa: E402,F401
     NY_HOUSEHOLD_LINES,
+    NY_HOUSEHOLD_METHODS,
     compute_city_and_yonkers_total,
     ny_household_refusals,
     compute_mctmt,

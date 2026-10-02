@@ -79,6 +79,7 @@ from agents.lib.secure_fs import (  # noqa: E402
 from agents.lib.capabilities import _NY_HOUSEHOLD_RULE_ID  # noqa: E402
 from agents.lib.tax_computations import (  # noqa: E402
     NY_HOUSEHOLD_LINES,
+    NY_HOUSEHOLD_METHODS,
     ny_household_refusals,
     compute_pfic_1291,
     compute_pfic_excess_distribution,
@@ -365,13 +366,16 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
     under-states what the return owes with nothing to say so. This is where
     every route to line 58 meets.
 
-    Two checks, on a New York return whose profile was read. An ABSENT flag
+    Three checks, on a New York return whose profile was read. An ABSENT flag
     is Step 0.7's to refuse — all three are required gate questions there —
     and reads here as unflagged:
 
     - a flagged line must hold a figure — null, absent, a pruned block, NaN, a
       bool, a negative or a string all fail, and so does a flag that is not a
       boolean, which the engine would refuse by name;
+    - and beside it, as `<field>_method`, the `method` its function returned
+      (AA32): a figure is a VALUE and says nothing of where it came from, so a
+      0 typed over the null passed as computed;
     - line 58 must be at least line 54 plus lines 54e, 55 and 56, the terms no
       City credit reaches. A line 58 that dropped one fails; one that says MORE
       passes, the loud direction.
@@ -395,7 +399,8 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
             continue
         if not flagged:
             continue
-        value = (_section(ny, (block,)) or {}).get(field)
+        node = _section(ny, (block,)) or {}
+        value = node.get(field)
         if not _is_figure(value):
             out.append(
                 f"IT-201 line {line}: flags.{flag} is set and "
@@ -407,6 +412,18 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
                 "one resident spouse, Form Y-203 on a joint return) the tax is "
                 "still owed and is not computed here: prepare it by hand. "
                 "Never enter 0.")
+            continue
+        method = node.get(f"{field}_method")
+        # A str test first: a list or dict is unhashable, and the set lookup
+        # would raise past the gate's own exit codes rather than report it.
+        if not isinstance(method, str) or method not in NY_HOUSEHOLD_METHODS[field]:
+            out.append(
+                f"IT-201 line {line}: new_york_it201.{block}.{field} is "
+                f"{value!r} but {field}_method is {method!r}, not the `method` "
+                f"compute_{arg} returns, so nothing shows the figure was "
+                "computed — a 0 typed over the template's null reads exactly "
+                "like a computed one. Write the line and its method together "
+                f"from compute_{arg}.")
 
     def figure(path) -> float:
         node = _section(ny, path[:-1]) or {}

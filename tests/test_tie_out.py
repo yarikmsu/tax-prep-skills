@@ -2732,11 +2732,16 @@ def _ny_report(result, flags):
 def _computed():
     # Line 54 is 47a after the City credits (none here); line 58 = 54 + 55 +
     # 56 = 1,292 + 782 + 0 = 2,074.
+    # Each line carries the `method` its function returned (AA32).
     return {
         "nyc": {"line_47a_nyc_resident_tax": 1292.0,
+                "line_47a_nyc_resident_tax_method": "table",
                 "line_54_after_city_credits": 1292.0},
         "yonkers": {"line_55_yonkers_resident_surcharge": 782.0,
-                    "line_56_yonkers_nonresident_earnings_tax": 0},
+                    "line_55_yonkers_resident_surcharge_method": "worksheet",
+                    "line_56_yonkers_nonresident_earnings_tax": 0,
+                    "line_56_yonkers_nonresident_earnings_tax_method":
+                        "form_y203"},
     }
 
 
@@ -2763,6 +2768,32 @@ def test_a_flagged_line_without_a_figure_fails_the_gate(flag, _arg, block,
     assert f"line {line}" in finding and f"flags.{flag}" in finding
     assert "Never enter 0" in finding
     assert "not computed or not totalled" in T.render_markdown(report)
+
+
+@pytest.mark.parametrize("flag,_arg,block,field,line", T.NY_HOUSEHOLD_LINES)
+def test_a_flagged_figure_without_its_method_fails_the_gate(flag, _arg, block,
+                                                            field, line):
+    """AA32: a 0 typed over the template's null is a figure, so the figure
+    check passed it as computed. The method its function returned is what a
+    typed figure lacks — absent, null, made up, or another line's."""
+    others = {m for f, ms in T.NY_HOUSEHOLD_METHODS.items() if f != field
+              for m in ms}
+    for method in ("absent", None, "typed", ["table"], {"m": 1},
+                   *sorted(others)):
+        blocks = _computed()
+        blocks[block][field] = 0
+        if method == "absent":
+            del blocks[block][f"{field}_method"]
+        else:
+            blocks[block][f"{field}_method"] = method
+        report = _ny_report(_ny_result(**blocks), {flag: True})
+        assert report.failed, (field, method)
+        (finding,) = report.ny_city_and_yonkers
+        assert f"line {line}" in finding and f"{field}_method" in finding
+    blocks = _computed()
+    blocks[block][field] = 0
+    assert not _ny_report(_ny_result(**blocks), {flag: True}).failed, (
+        "a computed 0 with its method is a computed 0")
 
 
 def test_a_flagged_line_whose_block_was_pruned_fails_the_gate():
@@ -2828,6 +2859,7 @@ def test_the_template_ships_the_household_lines_null():
                           .read_text())["new_york_it201"]
     for _flag, _arg, block, field, _line in T.NY_HOUSEHOLD_LINES:
         assert template[block][field] is None, field
+        assert template[block][f"{field}_method"] is None, field
 
 
 def test_ny_household_cli_reads_the_flags_from_the_profile(tmp_path):
