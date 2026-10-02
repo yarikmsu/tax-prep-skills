@@ -172,11 +172,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   with a control run on a twin tree that must leave it exposed. The rest
   need the same. Found by AA25's review.
 
-- **AA30 (P2, S): AA29's two remainders.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.** The refused
-  City and Yonkers households block at Step 0.7. The provenance half is AA32.
-
 - **AA32 (P2, S): A household line's 0 passes as computed.** AA29's tie-out
   checks a flagged line 47a, 55 or 56 for a VALUE, not for where it came from,
   so a 0 written after the template passes — the hazard the null default
@@ -256,6 +251,9 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   evaluated without it.
 
 - **Y2 (P1, S): Season-open runbook when the TY2026 figures publish.**
+  **PRE-STAGED 2026-10-02:** the chain is one ordered paragraph in
+  `docs/ops/season-open-runbook.md` §5, with the two auditor edits and the
+  AA14 `table_bases` check written into it. What remains is the run itself.
   Ruled at Q5: **write the procedure, touch nothing.** Both reviewer definitions
   and `docs/ops/review-subagent-acceptance.md` stay exactly as they are,
   certified with their digest pins matching, and the runbook carries one ordered
@@ -559,6 +557,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA29 | #192 | a 0 written after the template passes as computed, and the refused households are caught at Step 12.7 rather than Step 0.7 (AA30) |
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
+| AA30 | #195 | a household line's 0 still passes as computed (AA32); an acknowledged refused household's City or Yonkers tax is prepared by hand |
 | AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
 | AA15 | #188 | nothing yet refuses a line 58 typed by hand or an agent that never calls the total (AA29) |
 | Q7 | #156 | — |

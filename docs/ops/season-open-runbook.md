@@ -146,6 +146,13 @@ with its own cry-wolf validation in both directions, not a regex tweak.
 
 ---
 
+### The State and City tax-table bases (AA14)
+
+When the year's New York State and City tax tables publish, compare each table's
+rows with its rate schedule and fetch `state.tax_table.table_bases` and
+`state.nyc_tax.tax_table.table_bases`. A cache without them gets a note, not a
+refusal, and a table row can then be a dollar off in either direction.
+
 ## 2. Pin every source (K2)
 
 Every fetched block records its authoritative URL in `tax_law_<year>.json`
@@ -218,6 +225,11 @@ deliberately DEFERRED to this moment, and they have to be made and scored in the
 sitting — the acceptance record digest-pins the definition bytes, so an edit without a
 replay leaves the record certifying something that is no longer there.
 
+**The whole chain, in one place (Y2):** fetch and gate (steps 1-4 above) →
+make the queued definition edits below → a FRESH session → replay both
+reviewers → re-record the verdicts and digests. Every link is below; none is a
+decision, and the first is gated only on the year's figures publishing.
+
 **Do these in order, and do not split them across sittings.** A replay run before the
 fetch scores the auditor against last year's figures and proves nothing about this year's;
 a definition edited in the session that replays it is not what the replay tested, because
@@ -229,7 +241,11 @@ a definition loads at SESSION START.
    - the `_provenance` check (V4, `docs/changelog/epic-V.md`): the auditor reads
      `_sources` today and cannot see WHEN a block was retrieved, which is exactly the
      staleness it exists to catch;
-   - the item-7 keying note (X1, `docs/changelog/epic-X.md`);
+   - the item-7 keying note (X1, #89, `docs/changelog/epic-X.md`): the definition says
+     `capital_gains_rates` is keyed ONLY `single`/`mfj`, and #89 keyed both its limits
+     by all four statuses; `child_tax_credit.phase_out_start` and `qbi_threshold` are
+     still the two-status ones. Left as is, the auditor reports a correct `mfs`/`hoh`
+     figure as a keying error;
    - the scope-limits paragraph AND the four schema reads in "What to check" (V7):
      the scope sentence says "read `tax_law_<year>.json` and nothing else in the
      workspace", and there is no workspace any more — the auditor is pointed at an
@@ -243,6 +259,13 @@ a definition loads at SESSION START.
    - **Replay B's fixture** in `docs/ops/review-subagent-acceptance.md`: it hands the
      auditor a file path and so bypasses the export. Hand it an exported directory, or
      the procedure that scores this agent proves nothing about the isolation.
+   - **Item 5's `federal.salt_cap`** (AA19): it says the amount "indexes roughly
+     1%/yr" and that an absent value degrades quietly. Both are false since AA16 —
+     §164(b)(7)(A) NAMES each year's amount ($40,000 TY2025, $40,400 TY2026, 101%
+     a year to TY2029), and `compute_schedule_a` refuses a missing cap. Replace
+     them with the check that matters: a cached amount that differs from the
+     statute's, which is what a filer's already-REDUCED cap fetched as the year's
+     amount looks like.
    Do NOT touch `docs/ops/review-subagent-acceptance.md` yet.
 3. **Start a FRESH session.** Not a new sub-agent, not a cleared context — a new session,
    because that is when the edited definition is loaded.
