@@ -3183,7 +3183,10 @@ class TestCaItemized:
             agi=100000, filing_status="Single", tax_year=2026,
             standard_deduction=16000, salt_cap=40400,
             modified_agi=100000,
-            charitable_cash=70000, charitable_over_250_substantiated=True)
+            charitable_cash=70000, charitable_over_250_substantiated=True,
+            # AA23: a 2026 cash donor's election weighs §170(p); its capped
+            # allowed (the non-joint cap, as a stand-in) cannot flip this one.
+            non_itemizer_charitable=1000)
         assert r["charitable_deductible"] == 59500.00
         assert r["charitable_carryforward"] == 10500.00
 
@@ -8651,3 +8654,82 @@ def test_the_city_and_yonkers_total_returns_no_household_line():
     fields = {field for _f, _a, _b, field, _l in NY_HOUSEHOLD_LINES}
     assert not fields & set(out), sorted(fields & set(out))
     assert out["line_58_total_city_and_yonkers"] == 1292.0
+
+
+def test_schedule_a_weighs_section_170p_on_the_standard_side():
+    """AA23: the election compares the itemized total with the standard
+    deduction PLUS the §170(p) line-13c deduction a standard-deduction donor
+    also takes. Hand-computed, TY2026 Single, AGI $100,000: mortgage interest
+    $15,500 plus $1,000 cash gifts, of which §70425's 0.5%-of-AGI floor ($500)
+    leaves $500 — itemized total $16,000; standard $15,750; §170(p) $1,000.
+      bare:     16,000 > 15,750           -> itemize, margin +250
+      weighed:  16,000 <= 15,750 + 1,000  -> standard, margin -750"""
+    def run(**kw):
+        kw.setdefault("charitable_cash", 1000)
+        return compute_schedule_a(100000, "Single", 2026, 15750, 40400,
+                                  mortgage_interest=15500, **kw)
+
+    weighed = run(non_itemizer_charitable=1000)
+    assert weighed["itemized_total"] == 16000.0
+    assert (weighed["use_itemized"], weighed["election_margin"]) == (
+        False, -750.0)
+    assert weighed["non_itemizer_charitable_weighed"] == 1000.0
+    assert any("§170(p) decides the election" in n for n in weighed["notes"])
+
+    # Weighed as $0 beside cash gifts: legitimate for an all-DAF donor, and
+    # also what the FINALIZED (itemizes=True) figure looks like — said loudly.
+    zero = run(non_itemizer_charitable=0)
+    assert (zero["use_itemized"], zero["election_margin"]) == (True, 250.0)
+    assert zero["non_itemizer_charitable_weighed"] == 0.0
+    assert any("WEIGHED AS $0" in n for n in zero["notes"])
+    # Not weighed where it could decide the election: REFUSED, as a missing
+    # MAGI is — left out, the election can only lean to itemizing.
+    with pytest.raises(ValueError, match="non_itemizer_charitable is required"):
+        run()
+    # Where it cannot decide it — below the standard deduction, or above it by
+    # more than the cash gifts, the most §170(p) can weigh — omitting it is
+    # fine, and is recorded as None so a margin read back cannot pass for a
+    # weighed one.
+    below = compute_schedule_a(100000, "Single", 2026, 15750, 40400,
+                               mortgage_interest=1000, charitable_cash=1000)
+    above = compute_schedule_a(
+        100000, "Single", 2026, 15750, 40400, mortgage_interest=30000,
+        charitable_cash=1000)
+    for r in (below, above):
+        assert r["non_itemizer_charitable_weighed"] is None
+        assert not any("WEIGHED" in n for n in r["notes"])
+    # Where weighing cannot change the election, no note: no cash gifts, or
+    # an itemized total the standard deduction already beats.
+    for quiet in (run(charitable_cash=0),
+                  compute_schedule_a(100000, "Single", 2026, 15750, 40400,
+                                     mortgage_interest=1000,
+                                     charitable_cash=1000)):
+        assert not any("WEIGHED" in n for n in quiet["notes"]), quiet["notes"]
+    # §170(p) cash is a subset of Schedule A cash.
+    with pytest.raises(ValueError, match="exceeds charitable_cash"):
+        run(non_itemizer_charitable=1000.01)
+
+    # A forced MFS itemizer has no standard side, so nothing on it to weigh.
+    forced = compute_schedule_a(100000, "MFS", 2026, 15750, 20200,
+                                mortgage_interest=1000, charitable_cash=1000,
+                                mfs_spouse_itemizes=True,
+                                non_itemizer_charitable=1000)
+    assert forced["use_itemized"] is True
+    assert forced["non_itemizer_charitable_weighed"] == 0.0
+    assert forced["election_margin"] == round(
+        forced["itemized_total"] - 15750, 2)
+
+    # Before TY2026 the engine does not model §170(p) (TY2021's own version
+    # included): no note without it, and a figure for it refuses rather than
+    # tilting an earlier election.
+    early = compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                               mortgage_interest=16000, charitable_cash=1000)
+    assert not any("WEIGHED" in n for n in early["notes"])
+    assert early["non_itemizer_charitable_weighed"] == 0.0
+    with pytest.raises(ValueError, match="models §170\\(p\\) from"):
+        compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                           mortgage_interest=16000, charitable_cash=1000,
+                           non_itemizer_charitable=1000)
+    for bad in (-1, float("nan"), True, "1000"):
+        with pytest.raises(ValueError):
+            run(non_itemizer_charitable=bad)

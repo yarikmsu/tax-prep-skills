@@ -111,19 +111,15 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   inputs and re-running `compute_schedule_a` at each priced AGI would price
   them and retire all three. AA20's entry recorded this fix and left with it
   when AA20 shipped; AA21's simplify pass found it gone. The same function
-  should own the itemize-or-standard choice with §170(p) on the standard side:
-  `compute_schedule_a`'s election ignores it, `/tax-compute` adds it by hand
-  and `/tax-project` in code (AA22), so re-running `compute_schedule_a` as it
-  stands would elect wrongly for a donor near the margin.
-
-- **AA32 (P2, S): A household line's 0 passes as computed.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.** AA29's tie-out
-  checks a flagged line 47a, 55 or 56 for a VALUE, not for where it came from,
-  so a 0 written after the template passes — the hazard the null default
-  exists for, one write later. A witness the computing function co-writes
-  (`compute_nyc_resident_tax`'s `regime`, Y-203's `form`) or a receipt binding
-  would close it. Split from AA30.
+  should own the itemize-or-standard choice with §170(p) on the standard side.
+  **That half is BUILT by the pull request that records "AA23, first slice" in
+  `docs/changelog/epic-AA.md`:** `compute_schedule_a` takes
+  `non_itemizer_charitable` and elects on it, and `/tax-compute` no longer
+  tilts by hand. What remains is the pricing: `result.json` holds Schedule A's
+  OUTPUTS, so the inputs a re-run needs (the SALT components, gross mortgage
+  interest and points, the charitable cash/noncash split) are recorded first,
+  then each planning tool re-runs it at its priced AGI. `/tax-project` still
+  tilts in its own code (AA22) and moves with that step.
 
 ### W — engineering hygiene
 
@@ -504,6 +500,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
 | AA30 | #195 | a household line's 0 still passes as computed (AA32); an acknowledged refused household's City or Yonkers tax is prepared by hand |
+| AA32 | #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
 | AA10 | #200 | outside MEASURED COSTS the timing rule reads whole-line comments only, and catches no duration in words |
 | AA33 | #199 | outside MEASURED COSTS the figure rule still reads whole-line comments only (AA10) |

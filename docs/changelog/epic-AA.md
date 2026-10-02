@@ -2229,3 +2229,55 @@ A method that was a list or dict crashed the set lookup with a TypeError, past t
 ### Limits
 
 A method is a provenance marker, not a proof: an agent that types the line can type its method too. It catches the placeholder 0, the case AA32 names; a receipt binding would close the rest.
+
+## AA23, first slice — `compute_schedule_a` owns the election, §170(p) included
+
+### What was wrong
+
+The itemize-or-standard election compared the itemized total with the standard deduction alone. A standard-deduction donor also takes §170(p)'s line-13c deduction from TY2026, so the right comparison is with the standard deduction plus line 13c. `/tax-compute` made that tilt by hand and `/tax-project` in its own code (AA22). The function every planning tool would re-run to price Schedule A at a moved AGI would therefore have elected wrongly for a donor near the margin. That was the precondition AA23 named.
+
+### What shipped
+
+- **A new argument.** `compute_schedule_a` takes `non_itemizer_charitable`: the `allowed` from a provisional `compute_charitable_non_itemizer(..., itemizes=False)` call.
+- **The election weighs it.** `use_itemized` compares the itemized total with the standard deduction plus that figure. `election_margin` is measured against that same side, and `non_itemizer_charitable_weighed` reports what was weighed.
+- **Notes.** A note says when §170(p) decided the election.
+  - Left out in a 2026+ year, the function compares the bare figures and says `§170(p) NOT WEIGHED`.
+  - Passed nonzero before 2026, it refuses.
+- **A forced MFS itemizer** (§63(c)(6)(A)) has no standard side, so nothing is weighed for them.
+- **`/tax-compute`** now passes the figure and writes back the function's own election rather than tilting by hand.
+
+### Verified
+
+A hand-computed TY2026 case covers the core result:
+- $16,000 itemized, $15,750 standard and $1,000 of §170(p) elect standard, with a margin of −$750.
+- Without §170(p) the same figures itemize at +$250.
+
+The same test also covers:
+- the not-weighed note;
+- the forced MFS itemizer;
+- the pre-2026 refusal;
+- bad inputs.
+
+Mutation check: comparing against the bare standard deduction turns the test red. The portability test now requires the step to pass the figure.
+
+### Found by the bias review
+
+- **The provisional amount is checked.** A §170(p) figure of $0 beside cash gifts, which is also what the finalized `itemizes=True` call returns, now carries a loud note. Before, it confirmed itemizing on its own and said nothing.
+- **"Never weighed" no longer reads as "weighed $0".** `non_itemizer_charitable_weighed` is None in that case, so a margin read back from `result.json` cannot pass for a weighed one.
+- **Notes only where weighing can change the election.** Both notes fire only for a donor whose itemized total already beats the standard deduction alone; anywhere else they would teach an agent to pass 0 by reflex.
+- **A figure above `charitable_cash` refuses.** §170(p) cash is a subset of Schedule A cash.
+- **The pre-2026 refusal says "not modeled".** TY2021 had its own §170(p) under CAA 2021, a statutory $300/$600 that this engine does not carry. `compute_charitable_non_itemizer`'s own note still says "not in effect", which is wrong for TY2021.
+
+Each guard was mutation-checked: switching it off turns the test red.
+
+### Found by the general review
+
+- **A missing figure now REFUSES where it can decide the election**, as a missing MAGI does. That is TY2026+ with an itemized total above the standard deduction by no more than the cash gifts, the most §170(p) can weigh. Left out, the election can only lean to itemizing, which zeroes line 13c: a smaller deduction than the return is owed. The earlier note was the advisory-only degrade, and a return is not advisory.
+- **The schedule_a section is written when §170(p) decided the election**, as well as within $500, so the note saying why travels with the return.
+- **Stale "by hand" wording corrected** in `ptet.py`, `scenario.py`, a `test_ptet` comment and the step's own header.
+- **A capped figure is required, and documented as such.** An uncapped one at or below the cash gifts passes every check.
+- **Recorded, not changed:** a forced MFS itemizer whose itemized total is below line 13c might do better not itemizing ($0 standard plus line 13c). That reading of §63(c)(6)(A) contradicts the position the project took in PR #46, so it needs the statute or the IRS instructions before it changes anything.
+
+### Not yet
+
+The pricing itself. `result.json` holds Schedule A's outputs, not the inputs a re-run needs. Until they are recorded and each planning tool re-runs the function, the three disclosures stay. `/tax-project`'s own tilt moves with that step.

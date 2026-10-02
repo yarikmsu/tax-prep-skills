@@ -2043,6 +2043,7 @@ def compute_schedule_a(
     mfs_spouse_itemizes: bool = False,
     top_bracket_income: float = None,
     modified_agi: "float | None" = None,
+    non_itemizer_charitable: "float | None" = None,
 ) -> dict:
     """Federal Schedule A + the itemize-vs-standard election, computed.
 
@@ -2096,9 +2097,23 @@ def compute_schedule_a(
             is circular with the deduction, so /tax-compute computes taxable
             income provisionally first and re-calls; None for a 2026+ year
             emits a loud not-applied note instead of silently overstating.
+        non_itemizer_charitable: TY2026+ — the §170(p) deduction this filer
+            would take on line 13c with the STANDARD deduction, i.e.
+            `compute_charitable_non_itemizer(..., itemizes=False)["allowed"]`
+            (0 with no cash gifts). The election weighs it on the standard
+            side: a donor near the margin can come out ahead NOT itemizing.
+            This function owns that comparison (AA23); /tax-compute did it
+            by hand. It must be the CAPPED provisional figure, never the raw
+            gifts: an uncapped one at or below `charitable_cash` passes every
+            check here and tilts the election to standard. REQUIRED wherever
+            it can decide the election (2026+, an itemized total above the
+            standard deduction by no more than the cash gifts), as
+            `modified_agi` is; a nonzero
+            figure before 2026 refuses, §170(p) not being modeled there.
 
     Returns dict with per-line amounts, itemized_total, use_itemized,
-    election margin, charitable carryforward, and notes.
+    election margin (against the standard side, §170(p) included),
+    charitable carryforward, and notes.
     """
     fs = _normalize_filing_status(filing_status)
     if isinstance(tax_year, bool) or not isinstance(tax_year, int):
@@ -2244,13 +2259,74 @@ def compute_schedule_a(
                     " (2/37 of the lesser of itemized total or 37%-bracket "
                     "income)")
 
-    if fs == "MFS" and mfs_spouse_itemizes:
+    # The standard side of the election: the standard deduction plus the
+    # §170(p) line-13c deduction a standard-deduction donor also takes.
+    non_itemizer = 0.0
+    if non_itemizer_charitable is not None:
+        non_itemizer = _sched_a_amount(non_itemizer_charitable,
+                                       "non_itemizer_charitable")
+        if non_itemizer and tax_year < _CHARITABLE_NONITEMIZER_FROM:
+            # "Not modeled", not "not in effect": CAA 2021 gave TY2021 its own
+            # §170(p), a statutory $300/$600 this engine does not carry.
+            raise ValueError(
+                f"non_itemizer_charitable of {non_itemizer:,.2f} was passed "
+                f"for TY{tax_year}; this engine models §170(p) from "
+                f"TY{_CHARITABLE_NONITEMIZER_FROM} (OBBBA) only, so nothing "
+                "on line 13c can weigh against itemizing here")
+        if non_itemizer > cash:
+            # §170(p) cash is a SUBSET of Schedule A cash (it excludes DAF and
+            # §509(a)(3) gifts), so a larger figure is an uncapped or wrong one,
+            # and it would tilt the election to standard.
+            raise ValueError(
+                f"non_itemizer_charitable of {non_itemizer:,.2f} exceeds "
+                f"charitable_cash of {cash:,.2f}: §170(p) counts only cash "
+                "gifts, so it cannot. Pass compute_charitable_non_itemizer("
+                "..., itemizes=False)['allowed'].")
+    forced = fs == "MFS" and bool(mfs_spouse_itemizes)
+    # Only where weighing could change the election: an itemized total that
+    # beats the standard deduction alone by no more than the cash gifts, the
+    # most §170(p) can ever weigh. Anywhere else a refusal or note is noise,
+    # and noise teaches an agent to pass 0 by reflex.
+    could_tilt = (not forced and tax_year >= _CHARITABLE_NONITEMIZER_FROM
+                  and std < itemized_total <= std + cash)
+    if forced:
         use_itemized = True
         notes.append(
             "MFS with an itemizing spouse MUST itemize (§63(c)(6)(A)) even "
             "though the standard deduction is larger")
     else:
-        use_itemized = itemized_total > std
+        if could_tilt and non_itemizer_charitable is None:
+            # REFUSES, as a missing MAGI does: left out, the election can only
+            # lean to itemizing, which zeroes line 13c — a smaller deduction
+            # than the return is owed, on a return that is not advisory.
+            raise ValueError(
+                "non_itemizer_charitable is required: on this TY"
+                f"{tax_year} return the itemized total ({itemized_total:,.2f})"
+                f" beats the standard deduction ({std:,.2f}) by no more than "
+                f"the cash gifts ({cash:,.2f}), so §170(p)'s line 13c can "
+                "decide the election. "
+                "Pass compute_charitable_non_itemizer(..., itemizes=False)"
+                "['allowed'] (0 only if no gift qualifies).")
+        if could_tilt and non_itemizer == 0:
+            notes.append(
+                "§170(p) WEIGHED AS $0 beside cash gifts of "
+                f"{cash:,.2f}: right only if none qualifies (donor-advised "
+                "fund or §509(a)(3) gifts). The figure must be the PROVISIONAL "
+                "allowed, from itemizes=False — the finalized call returns $0 "
+                "for an itemizer and would confirm itemizing on its own.")
+        use_itemized = itemized_total > std + non_itemizer
+        if non_itemizer and std < itemized_total <= std + non_itemizer:
+            notes.append(
+                f"§170(p) decides the election: itemizing ({itemized_total:,.2f}) "
+                f"beats the standard deduction ({std:,.2f}) alone, but not the "
+                f"standard deduction plus the line 13c deduction of "
+                f"{non_itemizer:,.2f} — take the standard deduction.")
+    # None, not 0, for "never weighed" in a year it could have been: a margin
+    # read back from result.json must not pass for one that weighed $0.
+    weighed = (0.0 if forced
+               else None if (non_itemizer_charitable is None
+                             and tax_year >= _CHARITABLE_NONITEMIZER_FROM)
+               else non_itemizer)
     return {
         "medical_deductible": medical_deductible,
         # The gross, not only what cleared the floor: the floor is a share of
@@ -2273,7 +2349,13 @@ def compute_schedule_a(
         "itemized_total": itemized_total,
         "standard_deduction": std,
         "use_itemized": use_itemized,
-        "election_margin": round(itemized_total - std, 2),
+        # What the election weighed on the standard side: None where it could
+        # have and was not given the figure, 0 for a forced MFS itemizer.
+        "non_itemizer_charitable_weighed": weighed,
+        # A forced itemizer weighs no §170(p); the margin keeps the bare
+        # itemized-minus-standard figure it always had for them.
+        "election_margin": round(
+            itemized_total - std - (0.0 if forced else non_itemizer), 2),
         "notes": notes,
     }
 

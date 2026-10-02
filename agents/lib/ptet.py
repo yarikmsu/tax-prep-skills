@@ -1057,8 +1057,9 @@ def _return_salt_position(result: dict, magi_flag: "float | None",
     """
     itemizes = not standard_flag
     # A positive line 13c is the standard deduction on its face, section or
-    # no section: the compute step's by-hand §170(p) tilt can take a return
-    # there after `use_itemized` was recorded, and the offset priced for an
+    # no section: a result.json written before AA23 moved the §170(p) tilt
+    # into compute_schedule_a can carry an itemizer's `use_itemized` beside a
+    # line 13c the by-hand tilt took to standard, and the offset priced for an
     # itemizer then under-stated the benefit with no banner.
     if itemizes and line_13c_claimed(result):
         itemizes = False

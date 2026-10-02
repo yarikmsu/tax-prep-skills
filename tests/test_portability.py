@@ -4775,12 +4775,18 @@ class TestTheSaltPhasedownHandoffs:
     def test_the_final_election_is_written_back(self):
         """`/tax-ptet` and the planning caveat read `schedule_a.use_itemized`,
         and the compute step's by-hand §170(p) tilt could change the election
-        without it: an itemizer on record who took the standard deduction."""
+        without it: an itemizer on record who took the standard deduction.
+        Since AA23 `compute_schedule_a` weighs §170(p) itself, from
+        `non_itemizer_charitable`, so the step must pass it and write the
+        function's own election back."""
         flat = re.sub(r"\s+", " ", skill_text("tax-compute"))
-        assert ("record that final choice as `schedule_a.use_itemized`"
+        assert ("Record `use_itemized` as `schedule_a.use_itemized`"
                 in flat), (
-            "the §170(p) tilt no longer writes the final election back to "
+            "the compute step no longer writes the final election back to "
             "schedule_a.use_itemized")
+        assert "as `non_itemizer_charitable`" in flat, (
+            "the compute step no longer passes §170(p) to compute_schedule_a, "
+            "whose election then compares the bare figures")
 
     def test_magi_adds_back_what_the_irs_worksheets_add(self):
         """Schedule A's line 5e worksheet, Schedule 1-A Part I and Pub 970's

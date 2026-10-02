@@ -1106,8 +1106,9 @@ def test_the_return_supplies_magi_and_the_itemize_choice():
     with pytest.raises(PtetError, match="schedule_a.modified_agi must be"):
         position({"schedule_a": {"modified_agi": "600000"}}, None, False)
     # A positive line 13c is the standard deduction, section or no section:
-    # the compute step's by-hand §170(p) tilt can take a return there after
-    # `use_itemized` was recorded.
+    # a result.json from before AA23's in-engine election came from a by-hand
+    # §170(p) tilt that could take a return there after `use_itemized` was
+    # recorded.
     donor = {"form_1040": {"line_13c_charitable_non_itemizer": 1000},
              "schedule_a": {"modified_agi": 600000, "use_itemized": True}}
     assert position(donor, None, False) == (600000.0, False)

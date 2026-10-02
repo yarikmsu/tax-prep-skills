@@ -524,8 +524,9 @@ def _known_non_negative(value) -> "float | None":
 def line_13c_claimed(result: dict) -> bool:
     """Whether the return claims §170(p)'s line-13c deduction, which only a
     standard-deduction filer can. It is the election the return actually
-    made: the compute step redoes the itemize-or-standard choice by hand when
-    §170(p) tips it, after `schedule_a.use_itemized` was already recorded."""
+    made. Since AA23 `compute_schedule_a` weighs §170(p) in its own election,
+    but a result.json written before that came from a by-hand tilt that could
+    move a return to standard after `schedule_a.use_itemized` was recorded."""
     amount = _known_amount((result.get("form_1040", {}) or {}).get(
         "line_13c_charitable_non_itemizer"))
     return amount is not None and amount > 0

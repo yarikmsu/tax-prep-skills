@@ -596,8 +596,8 @@ BELOW-AGI deductions; they never touch line 10/11.
   the non-SSN recipient ONLY; the function caveats this.
 
 **§170(p) non-itemizer charitable deduction (OBBBA, TY2026+) — run
-`compute_charitable_non_itemizer()` when the filer takes the STANDARD deduction
-and made cash charitable gifts:**
+`compute_charitable_non_itemizer()` for EVERY filer with cash charitable gifts,
+provisionally first (the election weighs it), whichever way the election goes:**
 - Inputs: `cash_contributions` (CASH gifts only — NOT donor-advised-fund or
   §509(a)(3) supporting-org gifts, and NOT noncash; confirm/attest),
   `filing_status`, `tax_year`, `itemizes` (the computed election result — pass
@@ -610,11 +610,10 @@ and made cash charitable gifts:**
   like line 13b.
 - **QBI base:** line 13c ALSO reduces the Form 8995 taxable-income-before-QBI
   base (it comes before QBI in the deduction stack) — see the QBI section.
-- CHICKEN-AND-EGG with the election: compute the itemize-vs-standard election
-  FIRST (below), then call this with the resolved `itemizes`. But the election
-  comparison itself must add §170(p) to the STANDARD side (below) — so compute
-  the §170(p) amount provisionally (as if standard) to run the comparison, then
-  finalize with the real `itemizes`. An itemizer's cache set up when only a
+- CHICKEN-AND-EGG with the election: call this FIRST provisionally, with
+  `itemizes=False`, and pass its `allowed` to `compute_schedule_a` as
+  `non_itemizer_charitable` — the election weighs it on the standard side
+  (below). Then call this again with the resolved `itemizes` to finalize. An itemizer's cache set up when only a
   standard-deduction filer needed the cap lacks it, and the provisional call
   refuses: run `/tax-setup`'s §170(p) search for the year alone, never pass a
   guessed cap or skip the comparison.
@@ -705,26 +704,26 @@ persona SALT usually exceeds the OBBBA cap by itself):
   the re-called result. Skipping this on a top-bracket return overstates
   line 12 (the function emits a loud note when the input is absent).
 - Use `use_itemized` for line 12; write the result into the `schedule_a`
-  section when itemizing (or when `election_margin` is within $500 —
-  document the close call). Copy `notes` verbatim, and surface
+  section when itemizing (or when `election_margin` is within $500, or when a
+  note says §170(p) decided the election — document the close call). Copy `notes` verbatim, and surface
   `charitable_carryforward` for next year.
-- **§170(p) tilts the election (TY2026+) — but only when the election is NOT
-  mandatory.** The comparison is NOT (itemized total) vs (standard deduction) —
-  a standard-deduction donor ALSO gets the §170(p) line-13c deduction, so
-  compare `itemized_total` vs `standard_deduction + §170(p) allowed`. A donor
-  near the margin who would itemize on the bare numbers can come out ahead
-  taking the standard deduction once §170(p) is added. `compute_schedule_a`'s
-  election does not know about §170(p) — do this tilt yourself, then set
-  `itemizes` accordingly, and record that final choice as
+- **§170(p) tilts the election (TY2026+), and `compute_schedule_a` owns it
+  (AA23).** A standard-deduction donor ALSO gets the §170(p) line-13c
+  deduction, so the comparison is `itemized_total` vs `standard_deduction +
+  §170(p) allowed`: a donor near the margin who would itemize on the bare
+  numbers can come out ahead taking the standard deduction. Pass the
+  provisional `allowed` as `non_itemizer_charitable` — the CAPPED figure, never
+  the raw gifts. Where it can decide the election (2026+, an itemized total above
+  the standard deduction by no more than the cash gifts) the function REFUSES
+  without it, and a
+  $0 beside cash gifts carries a `WEIGHED AS $0` note: right only if no gift
+  qualifies. Its `use_itemized` and `election_margin`
+  already include it; do not re-tilt by hand. Record `use_itemized` as
   `schedule_a.use_itemized` wherever the section is written (`/tax-ptet` and
-  the planning tools read it back), before finalizing line 13c. **EXCEPTION — mandatory
-  itemization:** when `mfs_spouse_itemizes` is set, §63(c)(6)(A) DENIES the
-  standard deduction to this MFS filer (their standard deduction is $0 and
-  `compute_schedule_a` already forces `use_itemized=True`). Do NOT run the tilt
-  in that case — the taxpayer must itemize regardless of §170(p), and because
-  §170(p) is a NON-itemizer deduction it is $0 for them (line 13c stays $0). Run
-  the standard-vs-standard+§170(p) tilt ONLY when the standard deduction is
-  actually available (i.e. `compute_schedule_a` did not force itemization).
+  the planning tools read it back) before finalizing line 13c. **Mandatory
+  itemization:** a forced MFS itemizer (`mfs_spouse_itemizes`, §63(c)(6)(A))
+  has no standard side: the function itemizes regardless and weighs nothing,
+  and line 13c stays $0.
 
 **QBI Deduction (Form 8995):**
 Use `compute_qbi_deduction()` from `agents/lib/tax_computations/`:
