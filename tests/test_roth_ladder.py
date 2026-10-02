@@ -612,3 +612,45 @@ def test_the_ladder_refuses_a_capped_charitable_deduction():
         rl.build_ladder(result, _load("taxpayer_profile.json"),
                         _load("tax_law_2026.json"), 2026, max_amount=10000,
                         step=10000, name="roth-ladder", today=TODAY)
+
+
+def test_an_itemizer_with_recorded_inputs_is_repriced_per_rung():
+    """AA23: each rung priced on Schedule A at its own AGI. Hand-computed,
+    TY2026 MFJ at the fixture's AGI of $200,000: medical $30,000 over a 7.5%
+    floor of $15,000 = $15,000, plus mortgage $20,000 = $35,000 itemized.
+    Each $10,000 rung raises the floor by $750, so taxable income rises
+    $10,750 a rung where held it rose $10,000."""
+    from agents.lib.tax_computations import compute_schedule_a
+    result = _load("result.json")
+    sched = compute_schedule_a(200000, "MFJ", 2026, 30000, 40400,
+                               medical_expenses=30000, mortgage_interest=20000,
+                               top_bracket_income=0)
+    assert sched["itemized_total"] == 35000.0
+    result["schedule_a"] = sched
+    result["form_1040"]["line_12_standard_deduction"] = 35000.0
+
+    def ladder(r):
+        return rl.build_ladder(r, _load("taxpayer_profile.json"),
+                               _load("tax_law_2026.json"), 2026,
+                               max_amount=20000, step=10000,
+                               name="roth-ladder", today=TODAY)
+    priced = ladder(result)
+    steps = [round(b.taxable_income - a.taxable_income, 2)
+             for a, b in zip(priced.rungs, priced.rungs[1:])]
+    assert steps == [10750.0, 10750.0]
+    assert priced.schedule_a_repriced is True
+    assert (priced.medical_floor_may_move, priced.salt_cap_may_move) == (
+        False, False)
+    assert "re-priced at each AGI" in rl.render_markdown(priced)
+    # What re-pricing does not reach is still said (AA23's bias review).
+    assert "Schedule 1-A (line 13b) deductions" in rl.render_markdown(priced)
+    assert "Taxable Social Security is held" in rl.render_markdown(priced)
+    assert rl._report_to_dict(priced)["schedule_a_repriced"] is True
+
+    held = ladder(dict(result, schedule_a={k: v for k, v in sched.items()
+                                           if k != "inputs"}))
+    steps = [round(b.taxable_income - a.taxable_income, 2)
+             for a, b in zip(held.rungs, held.rungs[1:])]
+    assert steps == [10000.0, 10000.0]
+    assert held.schedule_a_repriced is False
+    assert held.medical_floor_may_move is True

@@ -2009,3 +2009,37 @@ def test_the_harvest_refuses_a_capped_charitable_deduction():
         lh.build_harvest(result, _load("taxpayer_profile.json"),
                          _load("tax_law_2026.json"), _load("holdings.json"),
                          2026, name="harvest", today=TODAY)
+
+
+def test_an_itemizer_with_recorded_inputs_is_repriced_at_the_harvested_agi():
+    """AA23: the federal side priced on Schedule A at the harvested AGI. A
+    harvest LOWERS AGI, which lowers the 7.5% medical floor and raises the
+    deduction, so it saves MORE than the held figure showed — the
+    under-statement the medical-floor caveat used to disclose."""
+    from agents.lib.tax_computations import compute_schedule_a
+    result = _load("result.json")
+    agi = result["form_1040"]["line_11_agi"]
+    sched = compute_schedule_a(agi, "MFJ", 2026, 30000, 40400,
+                               medical_expenses=40000, mortgage_interest=20000,
+                               top_bracket_income=0)
+    result["schedule_a"] = sched
+    result["form_1040"]["line_12_standard_deduction"] = sched["itemized_total"]
+
+    def harvest(r):
+        return lh.build_harvest(r, _load("taxpayer_profile.json"),
+                                _load("tax_law_2026.json"),
+                                _load("holdings.json"), 2026, name="harvest",
+                                today=TODAY)
+    priced = harvest(result)
+    held = harvest(dict(result, schedule_a={k: v for k, v in sched.items()
+                                            if k != "inputs"}))
+    assert priced.schedule_a_repriced is True and held.schedule_a_repriced is False
+    assert priced.medical_floor_may_move is False and held.medical_floor_may_move
+    assert priced.fed_savings > held.fed_savings
+    assert "Schedule 1-A (line 13b) deductions" in lh.render_markdown(priced)
+    if priced.state_modeled:
+        assert "state estimate keeps the held deduction" in lh.render_markdown(
+            priced)
+    assert lh._report_to_dict(priced)["schedule_a_repriced"] is True
+    # The state estimate stays on the held federal taxable-income change.
+    assert priced.state_savings == held.state_savings

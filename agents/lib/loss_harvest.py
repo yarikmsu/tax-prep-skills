@@ -44,7 +44,7 @@ import json
 import math
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -74,6 +74,8 @@ from agents.lib.scenario import (  # noqa: E402
     medical_floor_may_move,
     read_tax_year,
     refuse_where_the_charity_cap_moves,
+    reprice_outcomes,
+    schedule_a_caveat,
     salt_cap_may_move,
     salt_phasedown_caveat,
     save_scenario,
@@ -943,6 +945,9 @@ class HarvestReport:
     state_rate_floor_note: "str | None" = None
     salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
     medical_floor_may_move: bool = True  # gates medical_floor_caveat
+    # AA23: Schedule A re-priced at the harvested AGI, and what that still held.
+    schedule_a_repriced: bool = False
+    schedule_a_held: "list[str]" = field(default_factory=list)
 
 
 _STATE_RATE_FLOOR_NOTE = (
@@ -1182,8 +1187,17 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         harvested_anchored = line24
         harvested_niit = baseline_niit
         harvested_agi = base_out["agi"]
+        harv_held = base_out
+        repriced, held_notes = False, []
     else:
-        harv_out = compute_scenario(base_inputs, delta, **rate_kwargs)
+        harv_held = compute_scenario(base_inputs, delta, **rate_kwargs)
+        # AA23: the federal side on a Schedule A priced at the harvested AGI,
+        # where the return recorded what a re-run needs. The state estimate
+        # below keeps the held figure: it prices a federal taxable-income
+        # change at a STATE rate, and the federal deduction is not the state's.
+        (harv_out,), repriced, held_notes = reprice_outcomes(
+            result, rate_kwargs, base_out["agi"], [(base_inputs, delta)],
+            [harv_held])
         harvested_agi = harv_out["agi"]
         # Layer NIIT OUTSIDE the keystone (which omits it). The DELTA is what
         # the anchored figure consumes; we don't subtract baseline_niit (which
@@ -1211,7 +1225,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         if delta["capital_gains"] == 0 and delta["other_income"] == 0:
             ti_reduction = 0.0
         else:
-            ti_reduction = round(base_out["taxable_income"] - harv_out["taxable_income"], 2)
+            ti_reduction = round(base_out["taxable_income"] - harv_held["taxable_income"], 2)
         state_savings = round(max(0.0, ti_reduction) * (state_mtr or 0.0), 2)
     else:
         state_savings = 0.0
@@ -1244,11 +1258,12 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         nonresident_income_warning=(
             _NONRESIDENT_INCOME_WARNING if _nonresident_income_flag(profile)
             else None),
-        salt_cap_may_move=salt_cap_may_move(
+        salt_cap_may_move=(not repriced and salt_cap_may_move(
             result, tax_law, year, filing_status, base_out["agi"],
-            [harvested_agi]),
-        medical_floor_may_move=medical_floor_may_move(
-            result, base_out["agi"], [harvested_agi]),
+            [harvested_agi])),
+        medical_floor_may_move=(not repriced and medical_floor_may_move(
+            result, base_out["agi"], [harvested_agi])),
+        schedule_a_repriced=repriced, schedule_a_held=held_notes,
     )
 
 
@@ -1294,6 +1309,8 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "nonresident_income_warning": r.nonresident_income_warning,
         "salt_cap_may_move": r.salt_cap_may_move,
         "medical_floor_may_move": r.medical_floor_may_move,
+        "schedule_a_repriced": r.schedule_a_repriced,
+        "schedule_a_held": r.schedule_a_held,
     }
 
 
@@ -1596,8 +1613,16 @@ def render_markdown(r: HarvestReport) -> str:
               "preferential income from the 20% → 15% or 15% → 0% bracket) IS reflected "
               "automatically — the QDCG worksheet inside the keystone re-prices "
               "preferential income at the post-harvest taxable-income position.",
-              "- The deduction is the return's own line 12, standard or itemized, held "
-              "at the baseline."]
+              "- OBBBA Schedule 1-A (line 13b) deductions are held at the baseline "
+              "amount: a harvest that lowers MAGI through a phase-out restores "
+              "deduction this report does not, so it may save more than shown."]
+    lines += schedule_a_caveat(r.schedule_a_repriced, r.schedule_a_held)
+    if r.schedule_a_repriced and r.state_modeled:
+        lines += ["- The state estimate keeps the held deduction: it prices the "
+                  "federal taxable-income change at a state rate, and the "
+                  "re-priced Schedule A is federal. Where the harvest lowers the "
+                  "medical floor or raises the SALT cap, it may save more than "
+                  "shown."]
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "a harvest that lowers modified AGI while it is above the "
         "threshold can save more than shown.")

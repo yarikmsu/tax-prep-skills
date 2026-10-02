@@ -20,7 +20,7 @@ markdown renderer + guarded writer + CLI.
 import datetime
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -43,6 +43,8 @@ from agents.lib.scenario import (  # noqa: E402
     _validate_name,
     extract_baseline_inputs,
     medical_floor_caveat,
+    reprice_outcomes,
+    schedule_a_caveat,
     medical_floor_may_move,
     read_tax_year,
     refuse_where_the_charity_cap_moves,
@@ -116,6 +118,9 @@ class LadderReport:
     crossings: "list[ThresholdCrossing]"
     salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
     medical_floor_may_move: bool = True  # gates medical_floor_caveat
+    # AA23: Schedule A re-priced at each rung's AGI, and what that still held.
+    schedule_a_repriced: bool = False
+    schedule_a_held: "list[str]" = field(default_factory=list)
 
 
 def parse_sweep(max_amount, step) -> "list[float]":
@@ -300,18 +305,22 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
     prev_total = None
     prev_amount = None
 
-    for amt in amounts:
-        # Form 8606 pro-rata: only the taxable fraction of the conversion is ordinary
-        # income. A conversion of `amt` out of beginning balance B leaves year-end FMV
-        # B - amt, so the keystone's line 9 recovers B and the taxable portion is
-        # amt * (1 - basis/B). Amounts are clamped to <= B by the truncation above, so
-        # we never need to cap converted here. Without basis/B we feed the full amount.
-        if basis_modeled:
-            f8606 = compute_form_8606(0.0, basis, max(0.0, value - amt), 0.0, amt)
-            taxable_conv = f8606["taxable_conversion"]
-        else:
-            taxable_conv = amt
-        scen = compute_scenario(base_inputs, {"ira_distribution": taxable_conv}, **rate_kwargs)
+    # Form 8606 pro-rata: only the taxable fraction of the conversion is ordinary
+    # income. A conversion of `amt` out of beginning balance B leaves year-end FMV
+    # B - amt, so the keystone's line 9 recovers B and the taxable portion is
+    # amt * (1 - basis/B). Amounts are clamped to <= B by the truncation above, so
+    # we never need to cap converted here. Without basis/B we feed the full amount.
+    convs = [compute_form_8606(0.0, basis, max(0.0, value - amt), 0.0,
+                               amt)["taxable_conversion"]
+             if basis_modeled else amt for amt in amounts]
+    runs = [(base_inputs, {"ira_distribution": c}) for c in convs]
+    # AA23: every rung priced on Schedule A at its own AGI where the return
+    # recorded what a re-run needs, or all held.
+    scens, repriced, held_notes = reprice_outcomes(
+        result, rate_kwargs, base_out["agi"], runs,
+        [compute_scenario(i, d, **rate_kwargs) for i, d in runs])
+
+    for amt, taxable_conv, scen in zip(amounts, convs, scens):
         fed_anchored = round(line24 + (scen["total_federal_tax"] - baseline_recompute), 2)
         niit_here = compute_niit(scen["agi"], nii, niit_threshold, rate=niit_rate)
         niit_addon = round(niit_here - base_niit, 2)
@@ -392,10 +401,11 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
         baseline_nii=nii,
         niit_threshold=niit_threshold, niit_modeled=(niit_threshold is not None),
         irmaa_modeled=bool(irmaa_tiers), rungs=rungs, crossings=crossings,
-        salt_cap_may_move=salt_cap_may_move(
-            result, tax_law, year, filing_status, base_out["agi"], priced),
-        medical_floor_may_move=medical_floor_may_move(
-            result, base_out["agi"], priced))
+        salt_cap_may_move=(not repriced and salt_cap_may_move(
+            result, tax_law, year, filing_status, base_out["agi"], priced)),
+        medical_floor_may_move=(not repriced and medical_floor_may_move(
+            result, base_out["agi"], priced)),
+        schedule_a_repriced=repriced, schedule_a_held=held_notes)
 
 
 def _report_to_dict(r: LadderReport) -> dict:
@@ -410,6 +420,8 @@ def _report_to_dict(r: LadderReport) -> dict:
         "crossings": [vars(x) for x in r.crossings],
         "salt_cap_may_move": r.salt_cap_may_move,
         "medical_floor_may_move": r.medical_floor_may_move,
+        "schedule_a_repriced": r.schedule_a_repriced,
+        "schedule_a_held": r.schedule_a_held,
     }
 
 
@@ -509,8 +521,14 @@ def render_markdown(r: LadderReport) -> str:
               "worksheet stacks the conversion under preferential income).",
               "- MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` "
               "is keyed `single`/`mfj` only).",
-              "- The deduction is the return's own line 12, standard or itemized, held "
-              "at the baseline."]
+              "- OBBBA Schedule 1-A (line 13b) deductions, the senior deduction "
+              "among them, are held at the baseline amount: a rung that carries "
+              "MAGI through a phase-out removes deduction this table does not, "
+              "so its cost may read low.",
+              "- Taxable Social Security is held at the baseline: a conversion "
+              "that pushes more benefits into the taxable range costs more than "
+              "shown."]
+    lines += schedule_a_caveat(r.schedule_a_repriced, r.schedule_a_held)
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "rungs that carry modified AGI above the threshold can cost "
         "more than shown.")

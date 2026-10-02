@@ -112,6 +112,9 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   aggregates all traditional/SEP/SIMPLE IRAs (per IRS rules) and is per-individual.
 - MAGI approximated as AGI (no tax-exempt-interest / foreign-EI add-backs).
 - Second-order Social Security taxability is not re-computed.
+- Where the return's Schedule A recorded its `inputs` (AA23), every rung re-prices it
+  at the rung's AGI, all rungs or none: one rung that flips the election, reaches the
+  top bracket or makes the re-run refuse holds the whole ladder. Otherwise:
 - The deduction is the return's own line 12, standard or itemized, held at the
   baseline. Two parts of an itemizer's deduction move with AGI and are not
   re-computed: the medical-expense floor, and for TY2025-2029 the SALT cap's phasedown

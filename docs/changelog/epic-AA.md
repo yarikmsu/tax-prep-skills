@@ -2373,3 +2373,37 @@ Both fixes were mutation-checked.
 ### Not yet
 
 The same wiring in `/tax-roth-convert` and `/tax-harvest`, and `/tax-project`, whose deduction is a declared total rather than a return's Schedule A.
+
+## AA23, fourth slice — `/tax-roth-convert` and `/tax-harvest` re-price too
+
+### What shipped
+
+`scenario.reprice_outcomes` takes the (inputs, deltas) runs a report priced on the return's line 12. It prices each one again on a Schedule A at its own AGI, all or nothing: wherever `schedule_a_pricer` refuses, every run stays held. `scenario.schedule_a_caveat` is the one deduction bullet all three reports print.
+
+- **`/tax-scenario`** now uses both helpers in place of its inline code.
+- **`/tax-roth-convert`** prices every rung first, then re-prices them together.
+- **`/tax-harvest`** re-prices the federal side at the harvested AGI. Its state estimate keeps the held federal taxable-income change, because it prices that change at a state rate and the federal deduction is not the state's.
+
+All three record `schedule_a_repriced` and `schedule_a_held`.
+
+### Verified
+
+- **`/tax-roth-convert`, hand-computed.** TY2026 MFJ at $200,000: $30,000 of medical and $20,000 of mortgage itemize $35,000. Each $10,000 rung raises taxable income $10,750 where held it rose $10,000.
+- **`/tax-harvest`.** The re-priced harvest saves more than the held one: the lower AGI lowers the medical floor, the under-statement the caveat used to disclose. The state estimate is unchanged.
+
+Mutation check: switching the pricer off turns all three tools' tests red.
+
+### Found by the bias review
+
+Nothing new over-states, but three older gaps sat beside the new wording:
+- **Line 13b was held without a word.** Both tools held the Schedule 1-A deductions (the senior deduction among them) and never said so, and the Roth tool also held taxable Social Security silently. Now that the caveat says the deduction is re-priced, both are disclosed in each tool, in its own direction: a Roth rung may cost more, a harvest may save more.
+- **The charitable wording.** The caveat now says the charitable deduction is priced as gifts to public charities, which is what the return computed. A private foundation's 30% cap is not modeled anywhere.
+- **All or nothing, kept.** One refused rung holds the whole ladder, so a wider `--max` can hold rungs a narrower one priced. Pricing up to the first refusal would mix priced and held rungs in one marginal-cost column, so the uniform choice stays; the held path keeps its caveats.
+
+### Found by the general review
+
+- **The state estimate had lost its banner.** `/tax-harvest`'s state estimate keeps the held deduction, and the medical and SALT caveats that used to cover it stood down with the federal re-pricing. It now carries its own line wherever the federal side re-prices.
+- **`harv_held` is bound on every path**, so the state estimate no longer relies on two conditions staying identical.
+- **Stale skill text corrected.** Both skills said the deduction is always held; they now describe the re-pricing and when it holds.
+
+Mutation check: removing the state line turns the test red.

@@ -449,26 +449,9 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
     # re-run needs. AGI does not depend on the deduction, so each side is
     # priced again at the AGI it already has; anywhere the re-run refuses,
     # both stay held and the disclosures below apply as before.
-    pricer = schedule_a_pricer(result, rate_kwargs["brackets"], return_agi)
-    repriced = False
-    held_notes: "list[str]" = []
-    if pricer is not None:
-        sides: "tuple[tuple[float, float, list[str]], ...] | None"
-        try:
-            sides = (pricer(base_out["agi"]), pricer(scen_out["agi"]))
-        except ValueError:
-            sides = None
-        if sides is not None:
-            at_base, at_scen = sides
-
-            def again(d: "dict[str, float]",
-                      at: "tuple[float, float, list[str]]") -> dict:
-                return compute_scenario(
-                    {**base_inputs, "schedule_1a_deduction": at[1]}, d,
-                    **{**rate_kwargs, "deduction": at[0]})
-            base_out, scen_out = again({}, at_base), again(deltas, at_scen)
-            repriced = True
-            held_notes = list(dict.fromkeys(at_base[2] + at_scen[2]))
+    (base_out, scen_out), repriced, held_notes = reprice_outcomes(
+        result, rate_kwargs, return_agi,
+        [(base_inputs, {}), (base_inputs, deltas)], [base_out, scen_out])
     # ALWAYS, re-priced or not: the re-run assumes a public charity and
     # appreciated property, which the return does not record, so a binding
     # charitable cap still cannot be priced.
@@ -757,6 +740,50 @@ def schedule_a_pricer(result: dict, brackets: "list[dict]", keystone_agi: float,
     return priced
 
 
+def reprice_outcomes(result: dict, rate_kwargs: dict, keystone_agi: float,
+                     runs: "list[tuple[dict, dict]]", held: "list[dict]",
+                     ) -> "tuple[list[dict], bool, list[str]]":
+    """Each `compute_scenario` run again on a Schedule A priced at its own AGI
+    (AA23), or the held outcomes unchanged.
+
+    `runs` are the (inputs, deltas) pairs `held` was computed from, priced on
+    the return's line 12 — `held[i]` must be `compute_scenario(*runs[i],
+    **rate_kwargs)`, which every caller builds it as. AGI does not depend on the deduction, so each run is
+    priced again at the AGI it already has. All or nothing: anywhere
+    `schedule_a_pricer` refuses, every run stays held and the report owes the
+    disclosures, so one report never mixes a priced deduction with a held one.
+    Returns (outcomes, re-priced, what the re-pricing still held).
+    """
+    pricer = schedule_a_pricer(result, rate_kwargs["brackets"], keystone_agi)
+    if pricer is None:
+        return held, False, []
+    try:
+        sides = [pricer(out["agi"]) for out in held]
+    except ValueError:
+        return held, False, []
+    outs = [compute_scenario({**inputs, "schedule_1a_deduction": side[1]},
+                             deltas, **{**rate_kwargs, "deduction": side[0]})
+            for (inputs, deltas), side in zip(runs, sides)]
+    return outs, True, list(dict.fromkeys(n for side in sides for n in side[2]))
+
+
+def schedule_a_caveat(repriced: bool, held_notes: "list[str]") -> "list[str]":
+    """The deduction bullet the three re-pricing reports (/tax-scenario,
+    /tax-roth-convert, /tax-harvest) print: re-priced
+    from Schedule A's recorded inputs, with what that still held, or the
+    return's line 12 held throughout."""
+    if not repriced:
+        return ["- The deduction is the return's own line 12, standard or "
+                "itemized, held at the baseline."]
+    return (["- The deduction is the return's own line 12, re-priced at each "
+             "AGI from the inputs its Schedule A recorded: the medical floor, "
+             "the SALT phasedown and the charitable deduction below its cap "
+             "(as gifts to public charities, as the return computed them) "
+             "move with it. It is priced only where the election does not flip "
+             "and no AGI reaches the top bracket; elsewhere it is held."]
+            + [f"- {note}" for note in held_notes])
+
+
 def refuse_where_the_charity_cap_moves(result: dict, keystone_agi: float,
                                        priced_agis: "list[float]") -> None:
     """Refuse wherever a charitable deduction capped at a share of AGI moves.
@@ -872,16 +899,8 @@ def render_markdown(r: ScenarioReport) -> str:
               "(both held from the baseline result.json); marginal pricing near a "
               "threshold may read slightly off. The filed /tax-compute return handles "
               "them exactly.",
-              ("- The deduction is the return's own line 12, re-priced at each AGI "
-               "from the inputs its Schedule A recorded: the medical floor, the SALT "
-               "phasedown and the charitable deduction below its cap move with it. "
-               "It is priced only where the election does not flip and no AGI "
-               "reaches the top bracket; elsewhere it is held."
-               if r.schedule_a_repriced else
-               "- The deduction is the return's own line 12, standard or itemized, "
-               "held at the baseline."),
               "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6)."]
-    lines += [f"- {note}" for note in r.schedule_a_held]
+    lines += schedule_a_caveat(r.schedule_a_repriced, r.schedule_a_held)
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "a delta that raises modified AGI above the threshold can "
         "cost more than shown, and one that lowers it there can save more.")

@@ -262,6 +262,11 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 - **LTCG bracket down-shifting** (a harvest dropping AGI from the 20%→15% or 15%→0%
   preferential bracket) IS reflected automatically via the QDCG worksheet inside the
   keystone.
+- **Where the return's Schedule A recorded its `inputs` (AA23)**, the federal side is
+  re-priced at the harvested AGI instead — medical floor, SALT phasedown and the
+  charitable deduction below its cap — unless the election would flip, the AGI reaches
+  the top bracket, or the re-run refuses; the report says which. The state estimate
+  keeps the held deduction either way, and says so. Otherwise:
 - **The deduction is the return's own line 12, held at the baseline**, so a harvest is
   priced from where the return actually sits, standard or itemized. Two parts of an
   itemizer's deduction move with AGI and are not re-computed: the medical-expense floor,

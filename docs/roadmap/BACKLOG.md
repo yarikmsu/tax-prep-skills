@@ -117,10 +117,12 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   tilts by hand. **The inputs shipped in #204:** the function returns
   `inputs`, `/tax-compute` writes them into `schedule_a`, and
   `rerun_schedule_a` re-prices from them at another AGI. **`/tax-scenario`'s
-  wiring is BUILT by the pull request that records "AA23, third slice" in
-  `docs/changelog/epic-AA.md`** (`scenario.schedule_a_pricer`). What remains
-  is the same wiring in `/tax-roth-convert` and `/tax-harvest`, and
-  `/tax-project`'s own tilt and declared itemized total. A return written before `inputs` existed, or one whose
+  wiring shipped in #205; `/tax-roth-convert`'s and `/tax-harvest`'s are BUILT
+  by the pull request that records "AA23, fourth slice" in
+  `docs/changelog/epic-AA.md`.** What remains is `/tax-project`, whose
+  deduction is a declared total and its own §170(p) tilt rather than a
+  return's Schedule A, and the cases every tool still holds (an election flip,
+  the top bracket pending AA34, a binding charitable cap). A return written before `inputs` existed, or one whose
   section was not written (a standard filer far from the margin), keeps the
   held figure and its disclosure. `/tax-project` still
   tilts in its own code (AA22) and moves with that step.
