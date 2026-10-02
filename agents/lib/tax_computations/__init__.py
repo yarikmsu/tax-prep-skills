@@ -2491,6 +2491,9 @@ def rerun_schedule_a(inputs: dict, agi: float,
         modified_agi=None if addback is None else round(agi + addback, 2),
         **args)
     out["notes"] = notes + out["notes"]
+    # What the re-run held rather than priced, apart from the function's own
+    # notes, so a caller that reports only the figures can still say so.
+    out["rerun_notes"] = notes
     return out
 
 

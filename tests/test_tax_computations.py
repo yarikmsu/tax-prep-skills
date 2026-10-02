@@ -8753,7 +8753,7 @@ def test_schedule_a_records_its_inputs_and_reruns_from_them():
         set(inspect.signature(compute_schedule_a).parameters)
         - set(SCHEDULE_A_AGI_ARGUMENTS)) | {"agi_at_compute", "magi_addback"}
     same = rerun_schedule_a(out["inputs"], 100000, top_bracket_income=0)
-    drop = ("notes", "inputs")
+    drop = ("notes", "inputs", "rerun_notes")
     assert {k: v for k, v in same.items() if k not in drop} == {
         k: v for k, v in out.items() if k not in drop}
     assert out["medical_deductible"] == 4500.0

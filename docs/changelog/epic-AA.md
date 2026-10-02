@@ -2327,3 +2327,49 @@ Both fixes were mutation-checked.
 The planning tools do not call `rerun_schedule_a` yet; that is the third slice. Two kinds of return still keep the held figure and its disclosure:
 - a return written before `inputs` existed;
 - a standard filer far from the margin, whose section is not written.
+
+## AA23, third slice — `/tax-scenario` re-prices Schedule A at each AGI
+
+### What was wrong
+
+The keystone held the return's line 12 at every priced AGI. The medical floor, the SALT phasedown, the charitable caps and floor, the §70111 haircut and the itemize-or-standard election all move with AGI, so each was held and disclosed: `salt_phasedown_caveat`, `medical_floor_caveat`, and a refusal wherever a capped charitable deduction moved.
+
+### What shipped
+
+`scenario.schedule_a_pricer` maps a priced keystone AGI to two figures: line 12, and the below-AGI lines 13b + 13c.
+- **Anchored to the return.** Each figure is the return's own plus how far `rerun_schedule_a` moves between the return's AGI and the priced one. At the return's AGI they are the return's figures exactly, so the anchor still reproduces line 24.
+- **The election moves with AGI.** A priced AGI that tips the return to standard takes line 13c, and one that tips it to itemizing gives 13c up. Where a standard filer's section recorded §170(p) as None, its line 13c stands in, since §170(p) has no AGI term.
+- **The haircut input.** `top_bracket_income` is the taxable income above the top bracket's floor, priced on the return's own deduction.
+
+`build_report` prices both sides again at the AGIs they already have, because AGI does not depend on the deduction.
+- Where every priced AGI re-prices, the SALT and medical disclosures and the charitable refusal stand down, and the caveat says the deduction was re-priced. `schedule_a_repriced` is recorded in the report.
+- Where the section is absent, predates `inputs`, or the re-run refuses anywhere, both sides stay held and everything applies as before.
+
+### Verified
+
+Hand-computed TY2026 MFJ cases at the fixture's $167,000 of AGI:
+- **Medical floor.** $20,000 of medical expenses plus $30,000 of mortgage interest itemize $37,475. `wages=10000` raises the floor by $750, so taxable income rises by $10,750, where held it rose $10,000.
+- **Election flip.** $30,475 itemized against a $30,000 standard deduction tips to standard under the same delta, so taxable income rises by $10,475.
+
+The held path is pinned beside it. Mutation check: switching the pricer off turns the test red.
+
+### Found by the bias review
+
+Re-pricing is now done only where it is provably right. Everywhere else the report falls back to the held figures and their disclosures, and every fallback was mutation-checked:
+- **The election flips.** Line 12's offset from the re-run belongs to one regime. Carried across a flip, an age-65 add-on would land on an itemizer, or an unrecorded §170(p) would drop off a new standard filer. A flip at any priced AGI holds.
+- **The top bracket.** The §70111 haircut's base is in doubt (below), so it is priced only where it is zero under every reading: no priced AGI above the top bracket's floor.
+- **A binding charitable cap.** The refusal stands, re-priced or not. The re-run assumes a public charity and appreciated property, which the return does not record.
+- **What the re-run held** (state income tax, an income-keyed sales-tax table) is reported as `schedule_a_held` and printed as caveats. The SALT caveat that used to cover them now stands down.
+
+The bias review also read new §68 as measuring the haircut on taxable income increased by the itemized deductions, not on taxable income alone as `compute_schedule_a` takes it. That is filed as AA34.
+
+### Found by the general review
+
+- **A stack could mix a re-priced deduction with a held one in a single anchored total.** The base re-priced, then a later change crossed into a held case. The anchor now records `schedule_a_repriced`, and a stack whose new change prices the other way refuses.
+- **The pricer read the brackets through its own filing-status lookup**, which turned the engine-wide filing-status sweep red. It now takes the report's own brackets.
+
+Both fixes were mutation-checked.
+
+### Not yet
+
+The same wiring in `/tax-roth-convert` and `/tax-harvest`, and `/tax-project`, whose deduction is a declared total rather than a return's Schedule A.

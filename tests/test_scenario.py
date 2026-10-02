@@ -1206,3 +1206,158 @@ def test_a_stacked_report_measures_its_checks_from_the_return():
     lowered = sc._report_to_dict(build(["other_income=-50000"]))
     stacked = build(["wages=1000"], lowered)
     assert (stacked.salt_cap_may_move, stacked.medical_floor_may_move) == (True, True)
+
+
+def test_an_itemizer_with_recorded_inputs_is_repriced_not_held():
+    """AA23: where Schedule A recorded its inputs, the scenario re-prices it at
+    each AGI instead of holding line 12 and disclosing the drift.
+    Hand-computed, TY2026 MFJ at the fixture's AGI of $167,000: medical
+    $20,000 over a 7.5% floor of $12,525 = $7,475, plus mortgage interest
+    $30,000 = $37,475 itemized against a $30,000 standard deduction.
+    wages=10000 raises AGI to $177,000 and the floor to $13,275, so medical
+    falls to $6,725 and line 12 to $36,725: taxable income rises by $10,750,
+    where held it rose by $10,000."""
+    from agents.lib.tax_computations import compute_schedule_a
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+    sched = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                               medical_expenses=20000, mortgage_interest=30000,
+                               top_bracket_income=0)
+    assert (sched["use_itemized"], sched["itemized_total"]) == (True, 37475.0)
+    result = dict(base, schedule_a=sched,
+                  form_1040=dict(base["form_1040"],
+                                 line_12_standard_deduction=37475.0))
+
+    def build(r):
+        return sc.build_report(r, profile, tax_law, 2026, "t",
+                               sc.parse_deltas(["wages=10000"]), None,
+                               datetime.date(2026, 5, 26))
+    priced = build(result)
+    assert priced.diff.delta_agi == 10000.0
+    assert priced.diff.delta_taxable_income == 10750.0
+    assert (priced.medical_floor_may_move, priced.salt_cap_may_move) == (
+        False, False)
+    assert priced.schedule_a_repriced is True
+    assert sc._report_to_dict(priced)["schedule_a_repriced"] is True
+    assert "re-priced at each AGI" in sc.render_markdown(priced)
+    # At the return's own AGI the deduction is the return's line 12 exactly,
+    # so the anchor still reproduces line 24.
+    assert priced.base_outcome.taxable_income == build(dict(
+        result, schedule_a={k: v for k, v in sched.items() if k != "inputs"}
+    )).base_outcome.taxable_income
+
+    # Without the inputs (a return written before them): held, disclosed.
+    held = build(dict(result, schedule_a={k: v for k, v in sched.items()
+                                          if k != "inputs"}))
+    assert held.diff.delta_taxable_income == 10000.0
+    assert held.medical_floor_may_move is True
+    assert held.schedule_a_repriced is False
+    assert "held at the baseline." in sc.render_markdown(held)
+
+
+def test_schedule_a_is_held_wherever_re_pricing_could_over_state():
+    """AA23's bias review: re-pricing stands down — the deduction held, the
+    disclosures back — wherever it could over-state.
+
+    - The election flips. Hand-computed, TY2026 MFJ: medical $20,000 less
+      $12,525 = $7,475 plus mortgage $23,000 = $30,475, itemized by $475 over
+      the $30,000 standard deduction; wages=10000 cuts medical to $6,725 and
+      itemizing to $29,725, so the standard deduction would win. Line 12's
+      offset from the re-run is an itemizer's, and carried across the flip it
+      would land on a standard filer (an age-65 add-on, the other way).
+    - An AGI above the top bracket's floor: the §70111 haircut's base is
+      disputed, so it is priced only where it is zero under every reading.
+    - A binding charitable cap: the re-run assumes a public charity and
+      appreciated property, which the return does not record, so the refusal
+      stands whether or not the rest re-prices."""
+    from agents.lib.tax_computations import compute_schedule_a
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+
+    def with_schedule_a(sched, line_12):
+        return dict(base, schedule_a=sched,
+                    form_1040=dict(base["form_1040"],
+                                   line_12_standard_deduction=line_12))
+
+    def build(result, deltas=("wages=10000",), law=tax_law):
+        return sc.build_report(result, profile, law, 2026, "t",
+                               sc.parse_deltas(list(deltas)), None,
+                               datetime.date(2026, 5, 26))
+
+    flip = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                              medical_expenses=20000, mortgage_interest=23000,
+                              top_bracket_income=0)
+    assert flip["itemized_total"] == 30475.0
+    r = build(with_schedule_a(flip, 30475.0))
+    assert (r.schedule_a_repriced, r.diff.delta_taxable_income) == (
+        False, 10000.0)
+    assert r.medical_floor_may_move is True
+
+    stays = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                               medical_expenses=20000, mortgage_interest=30000,
+                               top_bracket_income=0)
+    result = with_schedule_a(stays, 37475.0)
+    assert build(result).schedule_a_repriced is True
+    # The fixture's MFJ top bracket starts at $200,000: a delta that carries
+    # AGI past it holds.
+    assert build(result, ("wages=40000",)).schedule_a_repriced is False
+
+    capped = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                                charitable_cash=150000, top_bracket_income=0,
+                                non_itemizer_charitable=0)
+    assert capped["charitable_carryforward"] > 0
+    with pytest.raises(sc.ScenarioError, match="capped at a share of AGI"):
+        build(with_schedule_a(capped, capped["itemized_total"]))
+
+
+def test_what_a_re_priced_schedule_a_still_holds_is_said():
+    """AA23's bias review: the re-run holds state income tax at the return's
+    figure (withholding moves with wages), and says so; the report must too,
+    now that the SALT caveat stands down."""
+    from agents.lib.tax_computations import compute_schedule_a
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+    sched = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                               state_local_income_taxes=12000,
+                               mortgage_interest=30000, modified_agi=167000,
+                               top_bracket_income=0)
+    result = dict(base, schedule_a=sched,
+                  form_1040=dict(base["form_1040"],
+                                 line_12_standard_deduction=sched[
+                                     "itemized_total"]))
+    r = sc.build_report(result, profile, tax_law, 2026, "t",
+                        sc.parse_deltas(["wages=10000"]), None,
+                        datetime.date(2026, 5, 26))
+    assert r.schedule_a_repriced is True
+    assert any("income taxes are held" in n for n in r.schedule_a_held)
+    assert "income taxes are held" in sc.render_markdown(r)
+
+
+def test_a_stack_prices_its_schedule_a_one_way_throughout():
+    """AA23's review: a stack whose base re-priced Schedule A, extended by a
+    change that holds it (here, one that carries AGI past the fixture's
+    $200,000 top-bracket floor), mixed the two in one anchored total."""
+    from agents.lib.tax_computations import compute_schedule_a
+    base = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    tax_law = json.loads((FIX / "tax_law_2026.json").read_text())
+    sched = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                               medical_expenses=20000, mortgage_interest=30000,
+                               top_bracket_income=0)
+    result = dict(base, schedule_a=sched,
+                  form_1040=dict(base["form_1040"],
+                                 line_12_standard_deduction=37475.0))
+
+    def build(deltas, base_scenario=None):
+        return sc.build_report(result, profile, tax_law, 2026, "t",
+                               sc.parse_deltas(deltas), base_scenario,
+                               datetime.date(2026, 5, 26))
+    first = build(["wages=10000"])
+    assert first.anchor["schedule_a_repriced"] is True
+    saved = sc._report_to_dict(first)
+    assert build(["wages=5000"], saved).schedule_a_repriced is True
+    with pytest.raises(sc.ScenarioError, match="one way throughout"):
+        build(["wages=40000"], saved)

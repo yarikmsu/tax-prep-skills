@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA19**, **AA23**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA19**, **AA23**, **AA34**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -114,15 +114,26 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   should own the itemize-or-standard choice with §170(p) on the standard side.
   **That half shipped in #203:** `compute_schedule_a` takes
   `non_itemizer_charitable` and elects on it, and `/tax-compute` no longer
-  tilts by hand. **The inputs are BUILT by the pull request that records "AA23,
-  second slice" in `docs/changelog/epic-AA.md`:** the function returns
+  tilts by hand. **The inputs shipped in #204:** the function returns
   `inputs`, `/tax-compute` writes them into `schedule_a`, and
-  `rerun_schedule_a` re-prices from them at another AGI. What remains is the
-  wiring: each planning tool re-runs it at its priced AGI and the three
-  disclosures retire. A return written before `inputs` existed, or one whose
+  `rerun_schedule_a` re-prices from them at another AGI. **`/tax-scenario`'s
+  wiring is BUILT by the pull request that records "AA23, third slice" in
+  `docs/changelog/epic-AA.md`** (`scenario.schedule_a_pricer`). What remains
+  is the same wiring in `/tax-roth-convert` and `/tax-harvest`, and
+  `/tax-project`'s own tilt and declared itemized total. A return written before `inputs` existed, or one whose
   section was not written (a standard filer far from the margin), keeps the
   held figure and its disclosure. `/tax-project` still
   tilts in its own code (AA22) and moves with that step.
+
+- **AA34 (P2, S): Check the §70111 haircut's base against the statute.**
+  `compute_schedule_a` takes `top_bracket_income` as the taxable income in the
+  37% bracket. AA23's bias review read new §68 (OBBBA §70111) as measuring it on
+  taxable income "determined without regard to this section and increased by
+  such amount of itemized deductions", which is larger by the itemized total.
+  If so, every top-bracket itemizer's haircut is under-applied and line 12
+  over-stated, the hard-error direction. Read the enacted text and the 2026
+  Schedule A instructions before changing anything. The planning tools price
+  no AGI above the top bracket's floor until it is settled (AA23).
 
 ### W — engineering hygiene
 

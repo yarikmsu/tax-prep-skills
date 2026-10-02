@@ -17,7 +17,7 @@ import json
 import math
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -43,6 +43,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     _coerce_numeric,
     compute_scenario,
     net_capital_gains,
+    rerun_schedule_a,
 )
 from agents.lib.tax_computations.federal import salt  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
@@ -106,6 +107,10 @@ class ScenarioReport:
     diff: ScenarioDiff
     salt_cap_may_move: bool = True  # gates salt_phasedown_caveat
     medical_floor_may_move: bool = True  # gates medical_floor_caveat
+    # AA23: Schedule A re-priced at each AGI from the return's recorded inputs.
+    schedule_a_repriced: bool = False
+    # What the re-pricing held rather than priced: the re-run's own notes.
+    schedule_a_held: "list[str]" = field(default_factory=list)
 
 
 def parse_deltas(tokens: "list[str]") -> dict:
@@ -440,6 +445,33 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
     return_agi = compute_scenario(
         extract_baseline_inputs(result), {}, **rate_kwargs)["agi"]
     priced = [base_out["agi"], scen_out["agi"]]
+    # AA23: Schedule A re-priced at each AGI where the return recorded what a
+    # re-run needs. AGI does not depend on the deduction, so each side is
+    # priced again at the AGI it already has; anywhere the re-run refuses,
+    # both stay held and the disclosures below apply as before.
+    pricer = schedule_a_pricer(result, rate_kwargs["brackets"], return_agi)
+    repriced = False
+    held_notes: "list[str]" = []
+    if pricer is not None:
+        sides: "tuple[tuple[float, float, list[str]], ...] | None"
+        try:
+            sides = (pricer(base_out["agi"]), pricer(scen_out["agi"]))
+        except ValueError:
+            sides = None
+        if sides is not None:
+            at_base, at_scen = sides
+
+            def again(d: "dict[str, float]",
+                      at: "tuple[float, float, list[str]]") -> dict:
+                return compute_scenario(
+                    {**base_inputs, "schedule_1a_deduction": at[1]}, d,
+                    **{**rate_kwargs, "deduction": at[0]})
+            base_out, scen_out = again({}, at_base), again(deltas, at_scen)
+            repriced = True
+            held_notes = list(dict.fromkeys(at_base[2] + at_scen[2]))
+    # ALWAYS, re-priced or not: the re-run assumes a public charity and
+    # appreciated property, which the return does not record, so a binding
+    # charitable cap still cannot be priced.
     refuse_where_the_charity_cap_moves(result, return_agi, priced)
 
     # Anchor is constant across a stack: original result.json line 24 + the zero-delta
@@ -448,9 +480,19 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
         line24 = _num(_get(result.get("form_1040", {}) or {}, "line_24_total_tax"), "line_24")
         anchor = {"line_24": round(line24, 2),
                   "baseline_recompute_total": base_out["total_federal_tax"],
-                  "deduction": rate_kwargs["deduction"]}
+                  "deduction": rate_kwargs["deduction"],
+                  "schedule_a_repriced": repriced}
     else:
         anchor = base["anchor"]
+        # A stack priced one way and extended the other mixes a re-priced
+        # deduction with a held one in a single `line_24 + (base - anchor)`.
+        if bool(anchor.get("schedule_a_repriced", False)) != repriced:
+            raise ScenarioError(
+                "The base scenario was priced with Schedule A "
+                f"{'re-priced' if anchor.get('schedule_a_repriced') else 'held'}"
+                f", and this change {'re-prices' if repriced else 'holds'} it: "
+                "a stack must price its deduction one way throughout. Re-run "
+                "the stack from result.json.")
 
     # Resolved post-delta inputs (for stacking) — fold the delta into the set verbatim.
     resolved_inputs = dict(base_inputs)
@@ -486,9 +528,12 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
         created=today.isoformat(), base=base["base_label"], filing_status=filing_status,
         applied_deltas=applied, anchor=anchor, inputs=resolved_inputs,
         base_outcome=_outcome(base_out), scenario_outcome=_outcome(scen_out), diff=diff,
-        salt_cap_may_move=salt_cap_may_move(
-            result, tax_law, year, filing_status, return_agi, priced),
-        medical_floor_may_move=medical_floor_may_move(result, return_agi, priced),
+        salt_cap_may_move=(not repriced and salt_cap_may_move(
+            result, tax_law, year, filing_status, return_agi, priced)),
+        medical_floor_may_move=(not repriced and medical_floor_may_move(
+            result, return_agi, priced)),
+        schedule_a_repriced=repriced,
+        schedule_a_held=held_notes,
     )
 
 
@@ -500,6 +545,8 @@ def _report_to_dict(r: ScenarioReport) -> dict:
         "base_outcome": vars(r.base_outcome), "scenario_outcome": vars(r.scenario_outcome),
         "diff": vars(r.diff), "salt_cap_may_move": r.salt_cap_may_move,
         "medical_floor_may_move": r.medical_floor_may_move,
+        "schedule_a_repriced": r.schedule_a_repriced,
+        "schedule_a_held": r.schedule_a_held,
     }
 
 
@@ -640,6 +687,76 @@ def medical_floor_may_move(result: dict, keystone_agi: float,
     return _held_deduction_may_move(result, keystone_agi, priced_agis, deduction_at)
 
 
+def schedule_a_pricer(result: dict, brackets: "list[dict]", keystone_agi: float,
+                      ) -> "Callable[[float], tuple[float, float, list[str]]] | None":
+    """Schedule A priced at a keystone AGI, from the inputs the return recorded
+    (AA23), or None where it cannot be — and then the tools hold the return's
+    figures and owe the disclosures, exactly as before.
+
+    The returned function maps a priced keystone AGI to (line 12, the
+    below-AGI deduction lines 13b + 13c, the re-run's own held-input notes).
+    Line 12 is the return's plus how far `rerun_schedule_a` moves between the
+    return's AGI and the priced one, so at the return's AGI it is line 12
+    exactly, whatever add-on or rounding it carries. That offset belongs to
+    ONE regime, itemized or standard, so the function REFUSES (ValueError, and
+    the caller holds) wherever the election would flip: carried across it, an
+    age-65 add-on lands on an itemizer, and a §170(p) the section did not
+    record is dropped from a new standard filer.
+
+    The §70111 haircut is priced only where it is zero under any reading: an
+    AGI at or below the top bracket's floor bounds every base the statute or
+    the engine measures it on. Above it, it refuses too.
+
+    None — the held figures — where the section is absent (a standard filer
+    far from the margin) or predates `inputs`, or the re-run refuses at the
+    return's own AGI. Each refusal is an over-statement the re-run would not
+    make.
+    """
+    sched = result.get("schedule_a")
+    inputs = sched.get("inputs") if isinstance(sched, dict) else None
+    if not isinstance(inputs, dict):
+        return None
+    f = result.get("form_1040", {}) or {}
+    line_12 = return_deduction(result)
+    line_13b = _known_amount(f.get("line_13b_schedule_1a_deductions")) or 0.0
+    line_13c = _known_amount(f.get("line_13c_charitable_non_itemizer")) or 0.0
+    return_agi, _ = _return_frame(result, keystone_agi, [])
+    top = max(brackets, key=lambda b: b.get("rate", 0), default=None)
+    top_min = _known_amount(top.get("min")) if isinstance(top, dict) else None
+    if top_min is None:
+        return None
+    override = None
+    if inputs.get("non_itemizer_charitable") is None and line_13c > 0:
+        # A standard filer's line 13c IS the §170(p) allowed, which has no
+        # AGI term; the section recorded None only because it could not tip
+        # the election at the return's AGI.
+        override = line_13c
+
+    def at(agi: float) -> "tuple[bool, float, float, list[str]]":
+        if agi > top_min:
+            raise ValueError("the §70111 haircut can apply at this AGI")
+        out = rerun_schedule_a(inputs, agi, top_bracket_income=0.0,
+                               non_itemizer_charitable=override)
+        if out["use_itemized"]:
+            return True, out["itemized_total"], 0.0, out["rerun_notes"]
+        weighed = out["non_itemizer_charitable_weighed"]
+        return (False, out["standard_deduction"],
+                line_13c if weighed is None else weighed, out["rerun_notes"])
+
+    try:
+        regime, d_return, c_return, _ = at(return_agi)
+    except ValueError:
+        return None
+
+    def priced(keystone: float) -> "tuple[float, float, list[str]]":
+        itemizes, d, c, notes = at(return_agi + (keystone - keystone_agi))
+        if itemizes != regime:
+            raise ValueError("the itemize-or-standard election flips here")
+        return (round(line_12 + d - d_return, 2),
+                round(line_13b + line_13c + c - c_return, 2), notes)
+    return priced
+
+
 def refuse_where_the_charity_cap_moves(result: dict, keystone_agi: float,
                                        priced_agis: "list[float]") -> None:
     """Refuse wherever a charitable deduction capped at a share of AGI moves.
@@ -755,9 +872,16 @@ def render_markdown(r: ScenarioReport) -> str:
               "(both held from the baseline result.json); marginal pricing near a "
               "threshold may read slightly off. The filed /tax-compute return handles "
               "them exactly.",
-              "- The deduction is the return's own line 12, standard or itemized, held "
-              "at the baseline.",
+              ("- The deduction is the return's own line 12, re-priced at each AGI "
+               "from the inputs its Schedule A recorded: the medical floor, the SALT "
+               "phasedown and the charitable deduction below its cap move with it. "
+               "It is priced only where the election does not flip and no AGI "
+               "reaches the top bracket; elsewhere it is held."
+               if r.schedule_a_repriced else
+               "- The deduction is the return's own line 12, standard or itemized, "
+               "held at the baseline."),
               "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6)."]
+    lines += [f"- {note}" for note in r.schedule_a_held]
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "a delta that raises modified AGI above the threshold can "
         "cost more than shown, and one that lowers it there can save more.")
