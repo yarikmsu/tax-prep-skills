@@ -4860,6 +4860,31 @@ class TestRuntimePermissionsHook:
         workspace = root / "workspace"
         return workspace, build(workspace)
 
+    def _the_scan_runs_for(self, root: Path, command: str, before=None,
+                           env_extra=None) -> Path:
+        """Run the Bash `command` over `_an_exposure_only_the_scan_finds`, so
+        only the exposure scan can harden its file: the routing tests below
+        passed with that scan replaced by a no-op, because the file they
+        exposed was one the index pass already re-hardens (AA26).
+
+        The twin's proof runs a payload the hook TRUSTS, `ls -la`, since
+        `command` is one it must not trust and would rightly scan there too.
+        `before(workspace, file)` sets up what the command's routing reads
+        from the filesystem, such as a symlink, after that proof ran, and
+        `env_extra` reaches the run under test alone. Returns the file.
+        """
+        trusted = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
+        workspace, exposed = self._an_exposure_only_the_scan_finds(root,
+                                                                   trusted)
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+        if before is not None:
+            before(workspace, exposed)
+        result = self._run(workspace, payload,
+                           base_env=_without_inherited_functions(),
+                           env_extra=env_extra)
+        assert result.returncode == 0, result.stderr
+        return exposed
+
     @needs_jq
     @pytest.mark.parametrize("command", ["echo x > archive/2024/out.md",
                                          "ls -la"], ids=["echo", "ls"])
@@ -4959,127 +4984,40 @@ class TestRuntimePermissionsHook:
         The bounded optimization must yield to a full archive pass rather than
         treat the absence of a literal `archive/YYYY` token as no write.
         """
-        target = tmp_path / "archive" / "2024" / "reviews" / "generated.md"
-        target.parent.mkdir(parents=True)
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": (
-                    'archive_root=archive; printf x > '
-                    '"$archive_root/2024/reviews/generated.md"'
-                )
-            },
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        exposed = self._the_scan_runs_for(
+            tmp_path, 'archive_root=archive; printf x > '
+                      '"$archive_root/2024/reviews/generated.md"')
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_mixed_literal_and_dynamic_bash_archive_paths_fall_back_to_full(
             self, tmp_path):
         """One literal source year must not hide a dynamic destination year."""
-        source = tmp_path / "archive" / "2024" / "reviews" / "source.md"
-        target = tmp_path / "archive" / "2025" / "reviews" / "out.md"
-        source.parent.mkdir(parents=True)
-        target.parent.mkdir(parents=True)
-        source.write_text("source")
-        target.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2024", (1, 1))
-        os.utime(tmp_path / "archive" / "2025", (1, 1))
-
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": (
-                    "YEAR=2025; cat archive/2024/reviews/source.md > "
-                    "archive/$YEAR/reviews/out.md"
-                ),
-            },
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        exposed = self._the_scan_runs_for(
+            tmp_path, "YEAR=2025; cat archive/2024/reviews/source.md > "
+                      "archive/$YEAR/reviews/out.md")
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_opaque_bash_payload_hardens_an_existing_archive(self, tmp_path):
         """A helper script can write archive without naming it in the payload."""
-        target = tmp_path / "archive" / "2025" / "reviews" / "out.md"
-        target.parent.mkdir(parents=True)
-        target.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2025", (1, 1))
-
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {"command": "bash helper.sh"},
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        exposed = self._the_scan_runs_for(tmp_path, "bash helper.sh")
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_opaque_bash_with_literal_archive_argument_hardens_all_years(
             self, tmp_path):
         """A script's literal input year does not bound its output year."""
-        helper = tmp_path / "archive" / "2024" / "helper.sh"
-        target = tmp_path / "archive" / "2025" / "reviews" / "out.md"
-        helper.parent.mkdir(parents=True)
-        target.parent.mkdir(parents=True)
-        helper.write_text("#!/bin/sh\n")
-        target.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2024", (1, 1))
-        os.utime(tmp_path / "archive" / "2025", (1, 1))
-
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {"command": "bash archive/2024/helper.sh"},
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        exposed = self._the_scan_runs_for(tmp_path, "bash archive/2024/helper.sh")
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_literal_source_with_variable_destination_hardens_all_years(
             self, tmp_path):
         """A literal input year cannot bound a variable-expanded destination."""
-        source = tmp_path / "archive" / "2024" / "source.md"
-        target = tmp_path / "archive" / "2025" / "reviews" / "out.md"
-        source.parent.mkdir(parents=True)
-        target.parent.mkdir(parents=True)
-        source.write_text("source")
-        target.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2024", (1, 1))
-        os.utime(tmp_path / "archive" / "2025", (1, 1))
-
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": 'cat archive/2024/source.md > "$DESTINATION"'
-            },
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        exposed = self._the_scan_runs_for(
+            tmp_path, 'cat archive/2024/source.md > "$DESTINATION"')
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_simple_read_only_bash_payload_does_not_walk_archive(self, tmp_path):
@@ -5105,89 +5043,40 @@ class TestRuntimePermissionsHook:
     @needs_jq
     def test_git_external_diff_is_treated_as_opaque(self, tmp_path):
         """Git diff options can execute a configured external helper."""
-        target = tmp_path / "archive" / "2024" / "reviews" / "out.md"
-        target.parent.mkdir(parents=True)
-        target.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2024", (1, 1))
-
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {"command": "git diff --ext-diff"},
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        exposed = self._the_scan_runs_for(tmp_path, "git diff --ext-diff")
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_ripgrep_helper_options_are_treated_as_opaque(self, tmp_path):
         """Ripgrep can execute hostname and decompression helper programs."""
-        target = tmp_path / "archive" / "2024" / "reviews" / "out.md"
-        target.parent.mkdir(parents=True)
-        target.write_text("old")
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2024", (1, 1))
-
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": "rg --hostname-bin=helper --hyperlink-format=default"
-            },
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        exposed = self._the_scan_runs_for(
+            tmp_path, "rg --hostname-bin=helper --hyperlink-format=default")
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_read_only_utility_name_from_a_path_shim_is_opaque(self, tmp_path):
         """A helper-capable PATH shim must not inherit `ls`'s read-only trust."""
-        payload = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
-        workspace, exposed = self._an_exposure_only_the_scan_finds(tmp_path,
-                                                                   payload)
         shim = tmp_path / "bin"
         shim.mkdir()
         (shim / "ls").write_text("#!/bin/sh\nexit 0\n")
         (shim / "ls").chmod(0o755)
-        result = self._run(workspace, payload,
-                           base_env=_without_inherited_functions(),
-                           env_extra={"PATH": f"{shim}:{os.environ['PATH']}"})
-
-        assert result.returncode == 0, result.stderr
+        exposed = self._the_scan_runs_for(
+            tmp_path, "ls -la",
+            env_extra={"PATH": f"{shim}:{os.environ['PATH']}"})
         assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_aliased_write_destination_forces_full_archive_pass(self, tmp_path):
-        """A visible source year cannot bound a symlink-aliased destination."""
-        source = tmp_path / "archive" / "2024" / "source.md"
-        target_dir = tmp_path / "archive" / "2025" / "reviews"
-        target = target_dir / "out.md"
-        source.parent.mkdir(parents=True)
-        target_dir.mkdir(parents=True)
-        source.write_text("source")
-        target.write_text("old")
-        (tmp_path / "shortcut").symlink_to(target_dir, target_is_directory=True)
-        (tmp_path / ".claude").mkdir()
-        assert self._run(tmp_path).returncode == 0
-        os.utime(tmp_path / "archive" / "2024", (1, 1))
-        os.utime(tmp_path / "archive" / "2025", (1, 1))
+        """A visible source year cannot bound a symlink-aliased destination.
 
-        target.write_text("financial data")
-        target.chmod(0o644)
-        payload = {
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": "cat archive/2024/source.md > shortcut/out.md"
-            },
-        }
-
-        assert self._run(tmp_path, payload).returncode == 0
-        assert _mode(target) == 0o600
+        The symlink does not decide the route: `cat` is not a bounded writer,
+        so this scans with or without it. One inside archive/, where it would
+        be the only thing, is refused as a symlink in a runtime path (exit 1)."""
+        exposed = self._the_scan_runs_for(
+            tmp_path, "cat archive/2024/source.md > shortcut/out.md",
+            before=lambda ws, file: (ws / "shortcut").symlink_to(
+                file.parent, target_is_directory=True))
+        assert _mode(exposed) == 0o600
 
     @needs_jq
     def test_globbed_archive_destination_forces_full_archive_pass(self, tmp_path):

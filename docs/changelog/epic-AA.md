@@ -2171,3 +2171,29 @@ comment marker inside the span, so a stale `999 tests` there passed both
 tests. Both tests now slice whole lines through one `_block_prose`, and the
 pair pattern comes from one `_module_pair`. With the same `999 tests` the
 counts test now goes red; the draft's version of it passes.
+
+## AA26 — the routing tests need the exposure scan
+
+### What was wrong
+
+Eight permissions-hook tests drive a Bash payload the hook must not trust and assert that an archived file ends owner-only:
+- a dynamic, mixed, variable or aliased archive destination;
+- a `git` or ripgrep helper;
+- an opaque script, with and without a literal year.
+
+The file each one exposed already existed, and the index pass re-hardens a listed file whose mode moved. So with every payload-driven call to `harden_exposed_archive_entries` replaced by a no-op, all eight stayed green. AA25's review found them.
+
+### What shipped
+
+All eight now run through a new `_the_scan_runs_for`, built on AA25's `_an_exposure_only_the_scan_finds`: a new file behind timestamps set back, which only the exposure scan can find. That helper's proof runs a payload the hook TRUSTS, `ls -la`, on a twin tree and requires the file to stay exposed there; the command under test is one the hook rightly scans for. The aliased case adds its symlink after the proof. No test was added or removed, so the hook module's counts are unchanged.
+
+### Verified
+
+With every payload-driven scan call replaced by `true`, all eight go red, alongside AA25's tests. Restored, they pass.
+
+### Accepted from the review
+
+- The PATH-shim `ls` test now uses the helper too.
+- The aliased test's symlink does not decide its route: `cat` is not a bounded writer, so the command scans with or without it. A symlink inside archive/, where it would be the only deciding factor, is refused as a symlink in a runtime path. The test's docstring now says so.
+- `git` and `rg` are not on the read-only list at all, so `--ext-diff` and `--hostname-bin` are not what routes those two tests. Their names claim more than they pin.
+- The scan call for a bounded command whose text names archive outside `archive/YYYY` has no test. It is defensive, because a bounded `printf` or `echo` writes only its literal destination.

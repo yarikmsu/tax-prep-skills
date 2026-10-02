@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA19**, **AA23**, **AA26**, **AA32**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA19**, **AA23**, **AA32**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -84,25 +84,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 ## Open
 
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
-
-- **AA10 (P3, XS): Tidy what AA3's review rounds left.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  In `tests/test_claude_hooks.py` unless named: `_words_to_int` keeps negative
-  and thousands branches and a docstring for the counts-ahead paragraph AA3
-  deleted; the counts test flattens the block with its own regex beside
-  `_comment_prose`, and re-implements `_the_one_statement` for the portability
-  and hooks sentences; the `HOOKS_DEPENDENTS_EXCLUDED` message still says the
-  counts test reacts to "one of" six modules; the headroom comment cites "the
-  rule that keeps the seconds in one place"; the retry cost below MEASURED COSTS
-  states a timing ratio the block does not hold; and `agents-compat.md` and the
-  `GIT_TIMEOUT` comment in `tests/test_claude_agents.py` argue an absolute from
-  a ratio. One owner question rides along: whether CLAUDE.md's one-owner rule
-  for timings covers `harden-runtime-perms.sh`, which states its own readings in
-  seconds. Accepted and recorded so a review does not re-find them: outside the
-  block the timing test reads whole-line comments only, and catches neither a
-  duration spelled in words nor a number two words from its unit. Fold into the
-  next PR that touches these tests.
 
 - **AA19 (P2, S): Nothing checks the cached SALT cap against the statute.**
   §164(b)(7)(A) names every year's amount and indexes none, but
@@ -136,7 +117,9 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   stands would elect wrongly for a donor near the margin.
 
 - **AA26 (P2, S): Permissions-hook routing tests pass with the exposure scan
-  off.** Each drives a Bash payload the hook must not trust, a dynamic,
+  off.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.** Each drives a Bash payload the hook must not trust, a dynamic,
   mixed, variable or aliased archive destination, a git or ripgrep helper, or
   an opaque script, and asserts an archived file ends owner-only. That file
   already exists, and the index pass re-hardens a listed file whose mode moved,
@@ -534,6 +517,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
 | AA30 | #195 | a household line's 0 still passes as computed (AA32); an acknowledged refused household's City or Yonkers tax is prepared by hand |
+| AA10 | #200 | outside MEASURED COSTS the timing rule reads whole-line comments only, and catches no duration in words |
 | AA33 | #199 | outside MEASURED COSTS the figure rule still reads whole-line comments only (AA10) |
 | AA24 | #198 | it prices the walk only when the walk ran past a second, and reads its timeout from `settings.json` |
 | AA9 | #197 | it times the pytest pass, not the selector and scan around it |
