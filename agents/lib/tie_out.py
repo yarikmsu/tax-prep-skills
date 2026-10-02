@@ -77,6 +77,7 @@ from agents.lib.secure_fs import (  # noqa: E402
     secure_path,
 )
 from agents.lib.tax_computations import (  # noqa: E402
+    NY_HOUSEHOLD_LINES,
     compute_pfic_1291,
     compute_pfic_excess_distribution,
 )
@@ -316,9 +317,96 @@ def _eic_lines_still_zero(result: dict) -> "tuple[str, ...]":
             continue
         node = _section(result, path[:-1]) or {}
         value = node.get(path[-1])
-        if isinstance(value, bool) or not isinstance(value, (int, float)) \
-                or not math.isfinite(value) or value <= 0:
+        if not _is_figure(value) or value == 0:
             out.append(label)
+    return tuple(out)
+
+
+def _is_figure(value) -> bool:
+    """A finite, non-negative number — what a computed line holds. A bool is
+    not one, though `isinstance(True, int)` says otherwise."""
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) and value >= 0)
+
+
+def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
+                                  tolerance: float) -> "tuple[str, ...]":
+    """IT-201 lines 47a, 55 and 56, and the line 58 they flow into (AA29).
+
+    Each of the three is owed only by the household its profile flag names,
+    and comes from its own function. The template ships them null, so a line
+    nobody computed stays null rather than reading as a computed zero, and
+    `compute_city_and_yonkers_total` refuses a flagged one it was not passed.
+    That guarded only a total computed THROUGH it: a line 58 assembled without
+    it, or typed into result.json, treated the missing line as $0, which
+    under-states what the return owes with nothing to say so. This is where
+    every route to line 58 meets.
+
+    Two checks, on a New York return whose profile was read. An ABSENT flag
+    is Step 0.7's to refuse — all three are required gate questions there —
+    and reads here as unflagged:
+
+    - a flagged line must hold a figure — null, absent, a pruned block, NaN, a
+      bool, a negative or a string all fail, and so does a flag that is not a
+      boolean, which the engine would refuse by name;
+    - line 58 must be at least line 54 plus lines 54e, 55 and 56, the terms no
+      City credit reaches. A line 58 that dropped one fails; one that says MORE
+      passes, the loud direction.
+
+    A household the engine REFUSES — a part-year City or Yonkers resident, a
+    joint return with one resident spouse, Form Y-203 on a joint return — still
+    owes that tax and nothing here computes it, so failing is the right
+    verdict; the finding says so instead of pointing at a function that will
+    refuse again.
+    """
+    ny = _section(result, ("new_york_it201",))
+    if ny is None or not isinstance(flags, dict):
+        return ()
+    out = []
+    for flag, arg, block, field, line in NY_HOUSEHOLD_LINES:
+        flagged = flags.get(flag)
+        if flagged is not None and not isinstance(flagged, bool):
+            out.append(f"IT-201 line {line}: flags.{flag} is {flagged!r}, not "
+                       "true or false, so whether the household owes it is "
+                       "unanswered.")
+            continue
+        if not flagged:
+            continue
+        value = (_section(ny, (block,)) or {}).get(field)
+        if not _is_figure(value):
+            out.append(
+                f"IT-201 line {line}: flags.{flag} is set and "
+                f"new_york_it201.{block}.{field} is {value!r}, not a computed "
+                f"figure, so line 58 would read it as $0. Compute it with "
+                f"compute_{arg} and total line 58 through "
+                "compute_city_and_yonkers_total. Where that function refuses "
+                "this household (a part-year resident, a joint return with "
+                "one resident spouse, Form Y-203 on a joint return) the tax is "
+                "still owed and is not computed here: prepare it by hand. "
+                "Never enter 0.")
+
+    def figure(path) -> float:
+        node = _section(ny, path[:-1]) or {}
+        value = node.get(path[-1])
+        return float(value) if _is_figure(value) else 0.0
+
+    # 54e is written by compute_mctmt into the `mctmt` block and echoed by the
+    # total into `nyc`; the larger of the two is the one a dropped term hides.
+    floor = round(
+        figure(("nyc", "line_54_after_city_credits"))
+        + max(figure(("mctmt", "line_54e_total_mctmt")),
+              figure(("nyc", "line_54e_total_mctmt")))
+        + sum(figure((block, field))
+              for _flag, _arg, block, field, _line in NY_HOUSEHOLD_LINES
+              if field != "line_47a_nyc_resident_tax"), 2)
+    line_58 = ny.get("line_58_total_city_and_yonkers")
+    if floor > 0 and (not _is_figure(line_58)
+                      or line_58 < floor - tolerance):
+        out.append(
+            f"IT-201 line 58 is {line_58!r}, below {floor:,.2f} — line 54 "
+            "plus lines 54e, 55 and 56, which no City credit reaches. A term "
+            "was left out of the total. Recompute line 58 through "
+            "compute_city_and_yonkers_total.")
     return tuple(out)
 
 
@@ -365,6 +453,7 @@ class TieOutReport:
     sum_checks: "tuple[SumCheck, ...]"
     missing_result_targets: "tuple[str, ...]"  # ledger income with NO result section — fails
     pfic_incomplete: "tuple[str, ...]"  # form_8621_pfic present but not all_complete — fails
+    ny_city_and_yonkers: "tuple[str, ...]"  # IT-201 47a/55/56 uncomputed or line 58 short — fails
     unverifiable: "tuple[str, ...]"  # Check D warnings (section present, figures unavailable)
     advisories: "tuple[str, ...]"  # loud manual-verify notes (never a failure)
     failed: bool
@@ -1222,7 +1311,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              pfic_holding_mismatch_ids: "set | None" = None,
              pfic_multiyear_disposition_ids: "set | None" = None,
              pfic_recompute_failures: "list | None" = None,
-             eic_screening: "bool | None" = False) -> TieOutReport:
+             eic_screening: "bool | None" = False,
+             profile_flags: "dict | None" = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
     source files that exist under documents/."""
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) \
@@ -1790,8 +1880,11 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                 "lines 9/11 leaves taxable Social Security, NIIT/MAGI, and "
                 "AGI-limited deductions/credits computed on a pre-PFIC AGI.")
 
+    ny_city_and_yonkers = _ny_city_and_yonkers_findings(
+        result, profile_flags, tolerance)
     failed = bool(missing_records or phantom_files or pending_skips
                   or missing_targets or pfic_incomplete
+                  or ny_city_and_yonkers
                   or any(not c.ok and not c.advisory for c in sum_checks))
     return TieOutReport(
         records=len(ledger), skipped=sum(1 for r in ledger if r.skipped is not None),
@@ -1800,6 +1893,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         sum_checks=tuple(sum_checks),
         missing_result_targets=tuple(missing_targets),
         pfic_incomplete=tuple(pfic_incomplete),
+        ny_city_and_yonkers=ny_city_and_yonkers,
         unverifiable=tuple(unverifiable),
         advisories=tuple(advisories),
         failed=failed)
@@ -1832,6 +1926,10 @@ def render_markdown(report: TieOutReport) -> str:
     if report.pfic_incomplete:
         lines += ["## ⛔ PFIC §1291 computation INCOMPLETE", ""]
         lines += [f"- {t}" for t in report.pfic_incomplete]
+        lines.append("")
+    if report.ny_city_and_yonkers:
+        lines += ["## ⛔ New York City / Yonkers tax not computed or not totalled", ""]
+        lines += [f"- {t}" for t in report.ny_city_and_yonkers]
         lines.append("")
     lines += ["## Category sums (ledger vs result.json)", "",
               "| Category | Ledger | Result | Δ | |",
@@ -1985,6 +2083,7 @@ def _main(argv: list) -> int:
         pfic_multiyear_disposition_ids: set = set()
         pfic_recompute_failures: list = []
         eic_screening: "bool | None" = None
+        profile_flags: "dict | None" = None
         profile_path = (workspace / "taxpayer_profile.json").resolve()
         if profile_path.exists():
             prof = _read_json(_validate_subpath(profile_path, workspace),
@@ -1998,6 +2097,7 @@ def _main(argv: list) -> int:
             # pipeline, and the loud direction is the safe one if it is.
             _eic_flag = flags.get("may_qualify_for_eic")
             eic_screening = _eic_flag if isinstance(_eic_flag, bool) else None
+            profile_flags = flags
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None
@@ -2040,7 +2140,8 @@ def _main(argv: list) -> int:
                           pfic_holding_mismatch_ids=pfic_holding_mismatch_ids,
                           pfic_multiyear_disposition_ids=pfic_multiyear_disposition_ids,
                           pfic_recompute_failures=pfic_recompute_failures,
-                          eic_screening=eic_screening)
+                          eic_screening=eic_screening,
+                          profile_flags=profile_flags)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
@@ -2065,6 +2166,7 @@ def _main(argv: list) -> int:
             "pending_skips": list(report.pending_skips),
             "sum_checks": [vars(c) for c in report.sum_checks],
             "missing_result_targets": list(report.missing_result_targets),
+            "ny_city_and_yonkers": list(report.ny_city_and_yonkers),
             "unverifiable": list(report.unverifiable),
             "advisories": list(report.advisories),
         }

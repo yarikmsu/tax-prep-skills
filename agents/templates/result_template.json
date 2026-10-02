@@ -546,7 +546,7 @@
       "_note": "New York City resident tax, IT-201 lines 47-54. City taxable income is the STATE's, except that a Charitable Gifts Trust deduction taken for the state is added back. Line 47a reads the City tax table while line 47 is under the fetched table ceiling and the City rate schedule at or above it. A joint return with only ONE city resident REFUSES rather than taxing the household as residents, and so does a City resident for only part of the year: IT-360.1 is not modeled.",
       "nyc_taxable_income": 0,
       "charitable_gifts_trust_addback": 0,
-      "line_47a_nyc_resident_tax": 0,
+      "line_47a_nyc_resident_tax": null,
       "line_49_after_household_credit": 0,
       "line_52_city_tax_before_credits": 0,
       "line_54_after_city_credits": 0,
@@ -555,8 +555,8 @@
     "yonkers": {
       "_include_if": "a Yonkers resident, or nonresident with Yonkers earnings",
       "_note": "Yonkers has the same parity with the State residency test that the City has. Line 55 comes from compute_yonkers_resident_surcharge (the IT-201-I worksheet on line 46, for a WHOLE-year Yonkers resident), line 56 from compute_yonkers_nonresident_earnings_tax (Form Y-203 on a return that is not joint, line 6 limited to the resident surcharge). Lines 50 and 57 are the PART-YEAR city and Yonkers lines and belong to IT-360.1 — a named non-goal for this full-year-resident module.",
-      "line_55_yonkers_resident_surcharge": 0,
-      "line_56_yonkers_nonresident_earnings_tax": 0
+      "line_55_yonkers_resident_surcharge": null,
+      "line_56_yonkers_nonresident_earnings_tax": null
     },
     "mctmt": {
       "_include_if": "self-employment net earnings in the MCTD",
@@ -568,7 +568,7 @@
       "line_54e_total_mctmt": 0
     },
     "line_58_total_city_and_yonkers": 0,
-    "_note_line_58": "Line 58 adds the MCTMT and both Yonkers taxes AFTER the two city credit caps, the same pattern as line 45 on the state side. compute_city_and_yonkers_total takes the three household flags and REFUSES a flagged line 47a, 55 or 56 nobody computed. It guards only a total that is computed through it: nothing yet refuses a 0 here that was typed by hand.",
+    "_note_line_58": "Line 58 adds the MCTMT and both Yonkers taxes AFTER the two city credit caps, the same pattern as line 45 on the state side. compute_city_and_yonkers_total takes the three household flags and REFUSES a flagged line 47a, 55 or 56 nobody computed. Those three lines ship null, not 0, so one nobody computed stays visibly uncomputed, and the tie-out gate fails a return whose profile flags one while it is still null or absent: a line 58 assembled without the function, or typed here, cannot read it as $0.",
     "line_59_sales_or_use_tax": null,
     "_note_line_59": "NOT COMPUTED, and null on purpose rather than 0. New York reports sales and use tax on untaxed out-of-state and online purchases ON THE INCOME TAX RETURN, and it changes the amount owed. A silent 0 would assert an answer nobody gave. /tax-compute asks, records the answer in answers.md, and records the limitation when the taxpayer cannot state one.",
     "line_60_total_taxes": 0,

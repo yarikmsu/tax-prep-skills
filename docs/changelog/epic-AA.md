@@ -1847,3 +1847,58 @@ with the engine's value checks off, 13 tests fail; with the closed-top rule
 off, 1; with the engine skipping the tier check, 1; with the audit normalising
 its copy, 1; with the recursion guard removed, 4; with the tiers pattern off,
 5.
+
+## AA29 — a line 58 that read an uncomputed line as $0
+
+### What was wrong
+
+AA15 made `compute_city_and_yonkers_total` refuse a flagged line 47a, 55 or 56
+it was not passed, but that guarded only a line 58 computed through it. The
+template shipped all three lines as 0, so a line nobody computed was
+indistinguishable from a computed zero, and a line 58 an agent assembled without
+the function, or typed into `result.json`, under-stated what the return owes
+with every gate green.
+
+### What shipped
+
+- **The three lines ship `null`, not 0,** like line 59: a line nobody computed
+  stays visibly uncomputed. An unflagged household leaves its line null, or
+  takes the 0 the total returns for it.
+- **The tie-out gate checks them, and line 58.** Reading the household flags
+  from the profile, `tie_out` fails (exit 2) when a flagged line is null,
+  absent, not a finite non-negative number, or its block was pruned; when a
+  household flag is present but not a boolean; and when line 58 is below line
+  54 plus lines 54e, 55 and 56, the terms no City credit reaches. A computed
+  $0 passes, and so does a line 58 above the floor, the loud direction. It is
+  the one place every route to line 58 meets, a total typed by hand included.
+- **One table.** `NY_HOUSEHOLD_LINES` in `ny.py` pairs each flag with its
+  argument, block, field and line; `compute_city_and_yonkers_total` and the
+  gate both read it, and the tests parametrize over it.
+- **The remedy is the real one.** A household the engine refuses (a part-year
+  City or Yonkers resident, a joint return with one resident spouse, Form
+  Y-203 on a joint return) still owes the tax, so the gate still fails it, and
+  says to prepare the tax by hand and never enter 0 rather than pointing at a
+  function that will refuse again. `/tax-compute` Step 12.7, the New York
+  reference and `/tax-verify`'s line map say so.
+
+Changing the template moves its digest, which the validation receipt binds,
+so every existing receipt goes stale and the gates re-run once.
+
+### Not done — AA30
+
+A 0 written after the template still passes as computed: the gate checks a
+line's value, not where it came from. And the refused households are caught
+here, at Step 12.7, rather than at the capability gate before any work is done.
+
+### Verified
+
+Tests cover each line (from the shared table) with null, absent, NaN, a bool, a
+negative and a string; a pruned block; a non-boolean flag; line 58 at 0, short
+by a term, null and a string; the MCTMT counted from its own block; a line 58
+above the floor; an unflagged null; a non-New-York return and a missing
+profile; the template's nulls; and the CLI reading the flags from the profile,
+in both output modes.
+Mutation checks: the findings left out of the verdict (28 tests fail), the
+CLI not passing the flags (1), a non-boolean flag skipped (3), no line-58
+floor (5), the floor ignoring the `mctmt` block (1), a negative accepted (3),
+the template back to 0 (1), and a mislabelled row in the shared table (1).

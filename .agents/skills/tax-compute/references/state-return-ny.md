@@ -286,6 +286,13 @@ the function above that computes it and pass its tax. A tax passed for a
 household whose flag is false is refused too — fix the flag or the amount,
 never drop the argument to get past it.
 
+Lines 47a, 55 and 56 ship `null`, not 0. Write each one only from the function
+that computes it; an unflagged one stays null, or takes the 0
+`compute_city_and_yonkers_total` returns for it. At Step 12.7 the tie-out FAILS
+a flagged line still null or absent, and a line 58 below line 54 plus lines
+54e, 55 and 56, whichever way line 58 was assembled. A household the function
+refuses still owes the tax: prepare it by hand, never enter 0.
+
 ## 10.NY.5 — Sales or use tax (line 59)
 
 **ASK. Do not write 0.** New York reports sales and use tax on untaxed

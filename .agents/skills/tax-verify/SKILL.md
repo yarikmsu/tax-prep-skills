@@ -312,6 +312,12 @@ software's figure cannot be checked against anything. Report it as UNVERIFIED
 with the taxpayer's answer still owed; never read the null as agreement with a
 software zero.
 
+**Lines 47a, 55 and 56 ship null too, and a null there is NOT the same.** For a
+household the profile does not flag, null (or the 0
+`compute_city_and_yonkers_total` returns) is the right figure and matches the
+software's blank or zero: not a finding. A flagged one cannot reach this step
+null, because the Step 12.7 tie-out fails it.
+
 **Each refundable credit's AMOUNT (lines 63-71) is an INPUT** taken from its own
 worksheet (IT-213, IT-216, IT-215, IT-214, IT-272), so a difference is a
 worksheet the engine never ran. Route it to OVERRIDDEN (unverified), not to the

@@ -2702,3 +2702,155 @@ def test_eic_a_deleted_new_york_credit_block_is_still_reported():
         ["documents/W2_Acme.pdf"], eic_screening=True)
     text = _eic_advisories(report)[0]
     assert "line 65" in text and "line 66" in text
+
+
+# --------------------------------------------------------------------------
+# AA29: a flagged New York City or Yonkers line that nobody computed, and a
+# line 58 that left one out. Line 58 read a missing 47a, 55 or 56 as $0, which
+# under-states what the return owes; `compute_city_and_yonkers_total` refuses
+# that only for a total computed through it, so the gate checks the result
+# every route to line 58 lands in.
+# --------------------------------------------------------------------------
+
+_NY_FLAGS = {"nyc_resident": True, "yonkers_resident": True,
+             "yonkers_nonresident_earnings": True}
+
+
+def _ny_result(nyc=None, yonkers=None, mctmt=None, line_58=2074.0):
+    ny = {"line_58_total_city_and_yonkers": line_58}
+    for name, block in (("nyc", nyc), ("yonkers", yonkers), ("mctmt", mctmt)):
+        if block is not None:
+            ny[name] = block
+    return {**_result(), "new_york_it201": ny}
+
+
+def _ny_report(result, flags):
+    return T.evaluate(_ledger(_record()), result, ["documents/W2_Acme.pdf"],
+                      profile_flags=flags)
+
+
+def _computed():
+    # Line 54 is 47a after the City credits (none here); line 58 = 54 + 55 +
+    # 56 = 1,292 + 782 + 0 = 2,074.
+    return {
+        "nyc": {"line_47a_nyc_resident_tax": 1292.0,
+                "line_54_after_city_credits": 1292.0},
+        "yonkers": {"line_55_yonkers_resident_surcharge": 782.0,
+                    "line_56_yonkers_nonresident_earnings_tax": 0},
+    }
+
+
+def test_ny_household_lines_computed_pass_including_a_computed_zero():
+    """A computed $0 is a figure: Y-203's line 6 can be zero."""
+    report = _ny_report(_ny_result(**_computed()), _NY_FLAGS)
+    assert not report.failed, report.ny_city_and_yonkers
+    assert report.ny_city_and_yonkers == ()
+
+
+@pytest.mark.parametrize("flag,_arg,block,field,line", T.NY_HOUSEHOLD_LINES)
+@pytest.mark.parametrize("value", [None, "absent", float("nan"), True, -1.0,
+                                   "1,292"])
+def test_a_flagged_line_without_a_figure_fails_the_gate(flag, _arg, block,
+                                                         field, line, value):
+    blocks = _computed()
+    if value == "absent":
+        del blocks[block][field]
+    else:
+        blocks[block][field] = value
+    report = _ny_report(_ny_result(**blocks), {flag: True})
+    assert report.failed
+    (finding,) = report.ny_city_and_yonkers
+    assert f"line {line}" in finding and f"flags.{flag}" in finding
+    assert "Never enter 0" in finding
+    assert "not computed or not totalled" in T.render_markdown(report)
+
+
+def test_a_flagged_line_whose_block_was_pruned_fails_the_gate():
+    report = _ny_report(_ny_result(line_58=0), {"nyc_resident": True})
+    assert report.failed
+    assert "line 47a" in report.ny_city_and_yonkers[0]
+
+
+@pytest.mark.parametrize("flag_value", ["true", 1, "yes"])
+def test_a_household_flag_that_is_not_a_boolean_fails_the_gate(flag_value):
+    """Skipping it read an unanswered flag as a no: the under-statement."""
+    report = _ny_report(_ny_result(**_computed()),
+                        {**_NY_FLAGS, "nyc_resident": flag_value})
+    assert report.failed
+    (finding,) = report.ny_city_and_yonkers
+    assert "flags.nyc_resident" in finding and "not true or false" in finding
+
+
+@pytest.mark.parametrize("line_58", [0, 1292.0, None, "2,074"])
+def test_a_line_58_that_left_a_term_out_fails_the_gate(line_58):
+    """Every line computed and line 58 short of 54 + 55 + 56: the total typed
+    by hand, or assembled without one of the taxes."""
+    report = _ny_report(_ny_result(**_computed(), line_58=line_58), _NY_FLAGS)
+    assert report.failed
+    (finding,) = report.ny_city_and_yonkers
+    assert "line 58" in finding and "2,074.00" in finding
+
+
+def test_the_mctmt_counts_toward_line_58_from_its_own_block():
+    """54e is added after both City credit caps, like the Yonkers taxes."""
+    blocks = {**_computed(), "mctmt": {"line_54e_total_mctmt": 500.0}}
+    assert _ny_report(_ny_result(**blocks), _NY_FLAGS).failed
+    assert not _ny_report(_ny_result(**blocks, line_58=2574.0),
+                          _NY_FLAGS).failed
+
+
+def test_a_line_58_that_says_more_passes():
+    """Over the floor is the loud direction; the floor is not the form."""
+    assert not _ny_report(_ny_result(**_computed(), line_58=2500.0),
+                          _NY_FLAGS).failed
+
+
+def test_an_unflagged_household_line_left_null_is_not_a_finding():
+    """The template ships the lines null, and a household that does not owe
+    one leaves it there."""
+    nulls = {"nyc": {"line_47a_nyc_resident_tax": None},
+             "yonkers": {"line_55_yonkers_resident_surcharge": None,
+                         "line_56_yonkers_nonresident_earnings_tax": None}}
+    report = _ny_report(_ny_result(**nulls, line_58=0),
+                        {"nyc_resident": False, "yonkers_resident": False})
+    assert not report.failed
+
+
+def test_no_new_york_return_and_no_profile_ask_nothing():
+    assert not _ny_report(_result(), _NY_FLAGS).failed
+    assert not _ny_report(_ny_result(nyc={}, line_58=0), None).failed
+
+
+def test_the_template_ships_the_household_lines_null():
+    """A 0 default is the hazard: a line nobody computed read as a computed
+    zero. null stays visibly uncomputed and is what the gate refuses."""
+    template = json.loads((REPO / "agents/templates/result_template.json")
+                          .read_text())["new_york_it201"]
+    for _flag, _arg, block, field, _line in T.NY_HOUSEHOLD_LINES:
+        assert template[block][field] is None, field
+
+
+def test_ny_household_cli_reads_the_flags_from_the_profile(tmp_path):
+    """The flags reach the gate through the profile, and the verdict is the
+    gate's exit 2 — a parameter only tests set is a check nothing runs."""
+    (tmp_path / "parse_ledger.json").write_text(json.dumps(
+        {"records": [_record()]}))
+    (tmp_path / "documents").mkdir()
+    (tmp_path / "documents" / "W2_Acme.pdf").write_bytes(b"%PDF-1.4\n")
+    (tmp_path / "result.json").write_text(json.dumps(
+        _ny_result(nyc={"line_47a_nyc_resident_tax": None}, line_58=0)))
+    profile = tmp_path / "taxpayer_profile.json"
+
+    profile.write_text(json.dumps({"flags": {"nyc_resident": True}}))
+    out = _run_cli(tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "line 47a" in out.stdout
+
+    profile.write_text(json.dumps({"flags": {"nyc_resident": False}}))
+    out = _run_cli(tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+    profile.write_text(json.dumps({"flags": {"nyc_resident": True}}))
+    out = _run_cli(tmp_path, "--json")
+    assert out.returncode == 2
+    assert json.loads(out.stdout)["ny_city_and_yonkers"]

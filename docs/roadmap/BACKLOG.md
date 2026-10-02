@@ -75,9 +75,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 | When | What | Why |
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **Now** | **W5a** — all three clusters, BUILT; merging. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA9**, **AA10**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, **AA29**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA9**, **AA10**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, **AA30**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -189,22 +188,25 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   with a control run on a twin tree that must leave it exposed. The rest
   need the same. Found by AA25's review.
 
-- **AA28 (P2, S): A fetched New York cache reads its brackets INCOMPLETE.**
+- **AA29 (P2, S): Nothing refuses a line 58 typed by hand.**
   **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  `_TABLE_VALIDATORS` read `state.brackets` as one list, and New York's is
-  keyed by rate schedule, so the freshness audit flagged every fetched New York
-  cache, and `set`, the remedy the compute skill names, refused the same write.
-  One schedule at a time got only "expected a list", and so did the recapture
-  tiers, keyed the same way. Found by AA14's review.
-
-- **AA29 (P2, S): Nothing refuses a line 58 typed by hand.** AA15 made
+  this entry moves to the shipped index the day that merges.** AA15 made
   `compute_city_and_yonkers_total` refuse a flagged tax it was not passed, but
   that guards only a total computed through the function. An agent that never
   calls it, or a line 58 typed into `result.json`, still reads a skipped line
   47a, 55 or 56 as a computed zero, an under-statement of what the return
   owes. The tie-out gate is the place for it: a household flag set with its
   line null or absent fails the gate. Recorded as AA15's remainder (#188).
+
+- **AA30 (P2, S): AA29's two remainders.** The tie-out checks a household
+  line's VALUE, not its provenance, so a 0 written after the template passes
+  as computed — the hazard the null default exists for, one write later. A
+  witness the computing function co-writes (`compute_nyc_resident_tax`'s
+  `regime`, Y-203's `form`) or a receipt binding would close it. And a
+  household the engine refuses — a part-year City or Yonkers resident, a joint
+  return with one resident spouse, Form Y-203 on a joint return — is caught at
+  Step 12.7, after the work, where a capability rule at Step 0.7 would block
+  it with the form it needs before any. Found by AA29's bias review.
 
 ### W — engineering hygiene
 
@@ -222,26 +224,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   that makes the same `[ -x .venv/bin/python ]` check, holds the change boundary
   the same way, then `exec`s the Python, which lives outside `agents/lib/` so it
   never meets the import guard.
-
-- **W5a (P3, S): generate three of the copies instead of asserting about them.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-W.md`;
-  this entry moves to the shipped index the day that merges.**
-  The interpreter floor is stated in roughly two dozen places and #166 compares
-  them all. Comparison is right for PROSE, which nothing generates; it is one
-  level too low for three machine-readable clusters.
-  - `actions/setup-python` accepts `python-version-file: .python-version`,
-    deleting three single-version job pins. **Blocked until 2026-10-01** and the
-    reasoning holds: setup-python's resolution of `3.13` to a patch release is
-    observable only on a runner, so nothing local distinguishes "installed the
-    floor" from "installed something else".
-  - the three step conditions (`matrix.python-version == '3.13'` twice, `!=`
-    once) become data if the matrix carries `include:` entries with a `coverage:`
-    boolean. **Not blocked** — verifiable by parsing, which the guard already
-    does — and it collapses `LEG_STEPS` to one question.
-  - `--python-version 3.13` is hand-typed in five files. A
-    `scripts/recompile-locks.sh` reading `.python-version` deletes all five and
-    makes the recipe runnable. It does NOT retire the recipe parser: the three
-    `.txt` headers are echoed BY uv and are a fact about how each lock was made.
 
 - **W10 (P3, M): a state REGISTRY.** *Raised by the 2026-09-12 four-angle review.*
   Six parallel per-state tables across four modules: `projection.STATE_SECTION_KEYS`
@@ -561,7 +543,8 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | W2 | #148, #149, #150, #151, #152 | — |
 | W3 | #163, #164 | OPEN: the stamp state machine, above |
 | W4 | #90, #118 | the MEASURED COSTS seconds were retired by Q13 rather than re-measured |
-| W5 | #90, #166 | W5a is a separate open item, above |
+| W5 | #90, #166 | W5a, below |
+| W5a | #191 | the matrix legs, the tool targets, `MIN_PYTHON` and the prose still state the floor, compared rather than read; the lock headers are uv's record and stay |
 | W6 | #105 | — |
 | X1 | #89 | the auditor's keying note is WRONG, not pending; only the Y2 replay can correct it |
 | X2 | #86 | — |
@@ -596,6 +579,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA17 | #188 | a part-year return across the border is blocked, not modeled, and so is a non-citizen's dual-status federal year |
 | AA14 | #189 | a cache without `table_bases` gets a note, and the row can be a dollar off either way; the TY2026 check rides Y2 |
 | AA27 | #189 | — |
+| AA28 | #190 | the TY2026 `table_bases` check rides Y2 |
 | AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
 | AA15 | #188 | nothing yet refuses a line 58 typed by hand or an agent that never calls the total (AA29) |
 | Q7 | #156 | — |

@@ -3365,6 +3365,7 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
 # NOWHERE outside `state/ny.py`; a re-export nothing imports is an address this
 # file has to keep valid forever in exchange for nothing.
 from agents.lib.tax_computations.state.ny import (  # noqa: E402,F401
+    NY_HOUSEHOLD_LINES,
     compute_city_and_yonkers_total,
     compute_mctmt,
     compute_ny_agi,

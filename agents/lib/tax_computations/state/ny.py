@@ -1807,6 +1807,21 @@ def compute_yonkers_nonresident_earnings_tax(
             "form": form, "resident_limit": limit, "notes": notes}
 
 
+# Line 58's three household-governed taxes: (profile flag, the argument
+# compute_city_and_yonkers_total takes — and `compute_<argument>` produces —,
+# the result.json block and field it is written to, the IT-201 line). ONE table,
+# read by the function below and by the tie-out gate, which checks that a
+# flagged line reached result.json as a computed figure (AA29).
+NY_HOUSEHOLD_LINES = (
+    ("nyc_resident", "nyc_resident_tax", "nyc",
+     "line_47a_nyc_resident_tax", "47a"),
+    ("yonkers_resident", "yonkers_resident_surcharge", "yonkers",
+     "line_55_yonkers_resident_surcharge", "55"),
+    ("yonkers_nonresident_earnings", "yonkers_nonresident_earnings_tax",
+     "yonkers", "line_56_yonkers_nonresident_earnings_tax", "56"),
+)
+
+
 def _flagged_tax(amount, name: str, flag, flag_name: str, line: str) -> float:
     """One of line 58's flag-governed taxes, refused where the household flag
     and the amount disagree. See compute_city_and_yonkers_total."""
@@ -1868,15 +1883,16 @@ def compute_city_and_yonkers_total(
     profile says does not owe it. An unflagged tax left out is a zero, which is
     what the flag asserts.
     """
-    city_tax = _flagged_tax(nyc_resident_tax, "nyc_resident_tax",
-                            nyc_resident, "nyc_resident", "47a")
-    yonkers_res = _flagged_tax(yonkers_resident_surcharge,
-                               "yonkers_resident_surcharge",
-                               yonkers_resident, "yonkers_resident", "55")
-    yonkers_non = _flagged_tax(yonkers_nonresident_earnings_tax,
-                               "yonkers_nonresident_earnings_tax",
-                               yonkers_nonresident_earnings,
-                               "yonkers_nonresident_earnings", "56")
+    passed = {"nyc_resident_tax": nyc_resident_tax,
+              "yonkers_resident_surcharge": yonkers_resident_surcharge,
+              "yonkers_nonresident_earnings_tax":
+                  yonkers_nonresident_earnings_tax}
+    flags = {"nyc_resident": nyc_resident,
+             "yonkers_resident": yonkers_resident,
+             "yonkers_nonresident_earnings": yonkers_nonresident_earnings}
+    city_tax, yonkers_res, yonkers_non = (
+        _flagged_tax(passed[arg], arg, flags[flag], flag, line)
+        for flag, arg, _block, _field, line in NY_HOUSEHOLD_LINES)
     household = _amount(nyc_household_credit, "nyc_household_credit")
     other_city = _amount(other_nyc_taxes, "other_nyc_taxes")
     city_credits = _amount(nyc_nonrefundable_credits,
