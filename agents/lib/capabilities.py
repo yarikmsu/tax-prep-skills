@@ -981,7 +981,7 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     if missing_flags:
         _place(Finding(
             _MIGRATION_RULE_ID, UNSUPPORTED,
-            "Profile predates the capability gate — screening questions unanswered",
+            "Screening questions unanswered",
             "capability-gate migration",
             "Ask the taxpayer the missing questions and set each flag "
             "explicitly true/false in taxpayer_profile.json flags: "

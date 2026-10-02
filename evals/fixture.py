@@ -24,6 +24,7 @@ from pathlib import Path
 _ROOT = str(Path(__file__).resolve().parent.parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+from agents.lib.capabilities import _REQUIRED_GATE_FLAGS  # noqa: E402
 from agents.lib.secure_fs import secure_path, write_secure  # noqa: E402
 from agents.lib.tax_law_fetcher import (  # noqa: E402
     create_empty_tax_law, save_tax_law)
@@ -283,13 +284,14 @@ def taxpayer_profile() -> dict:
     # The template ships ONE placeholder dependent, marked as such, so that a
     # reader can see the shape. A filled profile carries the real list.
     profile["dependents"] = []
-    # ANSWERED, not absent, and every flag the template has rather than the
-    # seven this case turns on. The capability gate BLOCKS a profile that
-    # predates it — "absence is not treated as no" — so a fixture with a partial
-    # flags block stops /tax-compute at Step 0.7 and the eval measures the gate
-    # instead of the agent. `has_capital_gains` is the one this case sets: it is
-    # what `result_template.json` keys `schedule_d`'s `_include_if` on, and the
-    # golden carries that section.
+    # ANSWERED, not absent: the template ships the capability gate's REQUIRED
+    # questions null (AA31), and a null one blocks /tax-compute at Step 0.7 —
+    # the eval would then measure the gate instead of the agent. This case's
+    # taxpayer answered each of them no. `has_capital_gains` is the one this
+    # case sets: it is what `result_template.json` keys `schedule_d`'s
+    # `_include_if` on, and the golden carries that section.
+    for flag in _REQUIRED_GATE_FLAGS:
+        profile["flags"][flag] = False
     profile["flags"]["has_capital_gains"] = True
     return profile
 

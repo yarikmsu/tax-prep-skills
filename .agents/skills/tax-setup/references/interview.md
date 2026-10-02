@@ -152,7 +152,10 @@ interview never captures is invisible to every downstream check.
   count above: are you a New York City resident? → sets `nyc_resident`.
   **Not "if state is NY"**: the taxpayer this matters most to has a Florida
   address and a Manhattan apartment, and an address-gated question never
-  reaches them.
+  reaches them. **If NY appears nowhere**, the condition has answered the City
+  and both Yonkers questions: set `nyc_resident`, `yonkers_resident` and
+  `yonkers_nonresident_earnings` to `false`. They ship `null`, and a null one
+  blocks the gate as unanswered.
 
   This flag used to BLOCK the return and is now the **city-tax switch** — the
   New York City resident tax is computed on it (IT-201 lines 47-54). That
@@ -464,7 +467,8 @@ own state of residence)**:**
 (see their `_note`s); KEEP `florida_state` for FL.
 
 **Group 3 — Dependents:**
-- Number of dependents (0 = skip)
+- Number of dependents (0 = skip, and set `has_dependent_unearned_income` to
+  `false` — no dependent, no Form 8615)
 - For each: name, SSN (last 4), DOB, relationship, months lived with taxpayer
 - Under 17 at end of tax year? (for CTC eligibility)
 - Does any dependent have investment/unearned income over the kiddie-tax
@@ -592,7 +596,7 @@ own state of residence)**:**
 - Any gig/freelance income (1099-NEC)? Crypto transactions (buy/sell/exchange)?
 - Stock compensation: RSU vesting, ISO exercises, ESPP purchases?
   - **If ISOs were EXERCISED (and any shares held past year-end)** → sets
-    `has_iso_exercise`. This is load-bearing: it triggers the federal AMT
+    `has_iso_exercise`; otherwise set it `false`. This is load-bearing: it triggers the federal AMT
     computation (Form 6251 — the bargain element is the most common AMT
     trigger and can add tens of thousands of tax) and the Form 8801 credit
     carryforward. CA's own AMT (Schedule P) is NOT computed — tell a CA
@@ -622,7 +626,10 @@ own state of residence)**:**
     documentation (never inferred).
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
 - Gambling income (W-2G)? → sets `has_gambling_income` flag
-- **OBBBA Schedule 1-A deductions (TY2025-2028 only — BELOW-AGI, line 13b):**
+- **OBBBA Schedule 1-A deductions (TY2025-2028 only — BELOW-AGI, line 13b).**
+  Ask the unreported/allocated-tips question below in EVERY year:
+  `has_unreported_or_allocated_tips` is a required gate question, and Form
+  4137 is not a Schedule 1-A item.
   - Any **qualified tip income** in a customarily-tipped occupation? → sets
     `has_qualified_tips` (§224). Source: the employer's designated qualified-
     tip amount (W-2 box 14 code / separate statement) if provided, ELSE **W-2

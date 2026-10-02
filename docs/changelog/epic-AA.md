@@ -1954,3 +1954,40 @@ The template ships every required gate flag `false`, so a profile built from
 it carries an answered "no" to a question nobody asked; `unanswered_gate_
 questions` fires only on a key that is absent or null. This item adds one more
 such flag; the fix belongs to all of them.
+
+## AA31 — the template pre-answered the gate's required questions
+
+### What was wrong
+
+`taxpayer_profile_template.json` shipped every `_REQUIRED_GATE_FLAGS` entry as
+`false`, and `/tax-setup` builds the profile from it. A question the interview
+skipped — a headless run whose `answers.md` lacked it — therefore reached the
+gate as an answered "no", and `unanswered_gate_questions` fires only on an
+absent or null key. "Absence is not a no" held for a legacy profile and not
+for a new one. Found by AA18's bias review.
+
+### What shipped
+
+- **The required gate flags ship `null`**, as `nyc_resident_spouses` already
+  did: a profile straight from the template blocks, naming every one, until
+  each is asked.
+- **The eval fixture answers them**, from `_REQUIRED_GATE_FLAGS`, instead of
+  inheriting the template's answers.
+- **The interview answers a question its condition skipped.** Five are asked
+  only when something holds — the City and both Yonkers questions when New
+  York appears, the ISO question when ISOs were exercised, the Form 8615 one
+  when there are dependents — and the template's `false` used to answer them
+  otherwise. The interview now says to set each `false` there, the tips
+  question is asked in every year, and `/tax-setup` says every required flag
+  must end `true` or `false`. Found by this item's own review: without it, a
+  correctly run interview blocked every filer the conditions skipped.
+- The gate's blocker reads "Screening questions unanswered", not "Profile
+  predates the capability gate": a new profile reaches it too.
+
+### Verified
+
+A test reads the template: every required flag ships null, and a profile
+built from it blocks; and each conditionally asked flag is set `false` in the
+interview where its condition skips it. Mutation checks: one flag back to
+`false` (1 test fails), the fixture no longer answering (2), the ISO
+question's `false` removed (1).

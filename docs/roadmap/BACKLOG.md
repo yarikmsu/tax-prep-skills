@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA9**, **AA10**, **AA19**, **AA23**, **AA24**, **AA26**, **AA30**, **AA31**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA9**, **AA10**, **AA19**, **AA23**, **AA24**, **AA26**, **AA30**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -112,24 +112,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   block the timing test reads whole-line comments only, and catches neither a
   duration spelled in words nor a number two words from its unit. Fold into the
   next PR that touches these tests.
-
-- **AA18 (P2, S): A territory resident passes the capability gate.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  Since AA16 the compute step says modified AGI adds a §931 or §933
-  exclusion, which a bona fide resident of Puerto Rico or American Samoa can
-  have without `lives_abroad` (one of Guam or the Northern Marianas files with
-  the territory, §935). Nothing collects
-  one: the interview does not ask, the profile has no field, and the gate
-  accepts a PR, GU, AS, MP or VI address with no rule. So modified AGI goes
-  in equal to AGI, and the SALT cap's phasedown and Schedule 1-A's
-  phase-outs read the smaller figure: the deduction is over-stated, the
-  direction AGENTS.md §4 makes a hard error, and the `modified_agi` below-AGI
-  refusal cannot see an equal value. The excluded income has no path into or
-  out of the return either, so the phasedown is the smallest part of it. The
-  fix is the question and a block, as `part_year_residency` blocks a move
-  between states; which form each territory needs is part of the work. Found
-  by AA16's second review.
 
 - **AA19 (P2, S): Nothing checks the cached SALT cap against the statute.**
   §164(b)(7)(A) names every year's amount and indexes none, but
@@ -201,6 +183,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   it with the form it needs before any. Found by AA29's bias review.
 
 - **AA31 (P2, S): The template pre-answers the gate's required questions.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   `taxpayer_profile_template.json` ships every `_REQUIRED_GATE_FLAGS` entry
   as `false`, and `/tax-setup` builds the profile from it, so a question the
   interview skipped — a headless run whose `answers.md` lacks it — reads as an
@@ -583,6 +567,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA27 | #189 | — |
 | AA28 | #190 | the TY2026 `table_bases` check rides Y2 |
 | AA29 | #192 | a 0 written after the template passes as computed, and the refused households are caught at Step 12.7 rather than Step 0.7 (AA30) |
+| AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
 | AA15 | #188 | nothing yet refuses a line 58 typed by hand or an agent that never calls the total (AA29) |
 | Q7 | #156 | — |

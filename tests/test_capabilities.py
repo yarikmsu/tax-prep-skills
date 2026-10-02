@@ -1852,3 +1852,37 @@ def test_a_territory_domicile_blocks_behind_a_stateside_address():
     p = _profile({"bona_fide_territory_resident": False}, state="FL")
     p["residency"] = {"domicile_state": "PR"}
     assert _blocking_ids(C.evaluate(p)) == ["territory_resident"]
+
+
+def test_the_template_leaves_every_required_question_unanswered():
+    """AA31: the template shipped them `false`, and /tax-setup builds the
+    profile from it, so a question the interview skipped read as an answered
+    no. Null is unanswered, and a profile straight from the template blocks
+    until every one is asked."""
+    template = json.loads((REPO / "agents/templates/taxpayer_profile_template.json")
+                          .read_text())
+    shipped = {f: template["flags"][f] for f in C._REQUIRED_GATE_FLAGS}
+    assert set(shipped.values()) == {None}, shipped
+    template["address"] = {"state": "CA"}
+    template["tax_year"] = 2025
+    template["filing_status"] = "single"
+    assert "unanswered_gate_questions" in _blocking_ids(C.evaluate(template))
+
+
+@pytest.mark.parametrize("flag", ["nyc_resident", "yonkers_resident",
+                                  "yonkers_nonresident_earnings",
+                                  "has_iso_exercise",
+                                  "has_dependent_unearned_income"])
+def test_a_conditionally_asked_gate_question_is_answered_when_skipped(flag):
+    """A question asked only under a condition — NY appears somewhere, ISOs
+    were exercised, there are dependents — used to be answered by the
+    template's `false` when the condition failed. With the template null
+    (AA31), the interview has to say so, or a correctly run interview leaves
+    the flag null and the gate blocks every filer the condition skipped."""
+    text = " ".join((REPO / ".agents/skills/tax-setup/references/interview.md")
+                    .read_text().split())
+    near_false = [i for i in range(len(text)) if text.startswith(flag, i)
+                  and "`false`" in text[max(0, i - 250):i + 250]]
+    assert near_false, (
+        f"interview.md never says to set `{flag}` false when its condition "
+        "skips the question")

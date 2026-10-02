@@ -151,7 +151,7 @@ prior-year overpayment it asks about)**:**
 
 ### 3. Save Taxpayer Profile
 
-Create `taxpayer_profile.json` from the interview answers. Use the template at `agents/templates/taxpayer_profile_template.json` as the structure. Populate all fields from interview.
+Create `taxpayer_profile.json` from the interview answers. Use the template at `agents/templates/taxpayer_profile_template.json` as the structure. Populate all fields from interview. The capability gate's required questions ship `null`, and each must end `true` or `false`: a question its condition skipped is answered `false`, and a null one blocks at `/tax-compute` Step 0.7.
 
 **Input validation before saving:**
 - State: must be a 2-letter US state code (e.g., CA, NY, TX)
