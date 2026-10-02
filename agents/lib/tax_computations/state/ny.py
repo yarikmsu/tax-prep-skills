@@ -44,47 +44,9 @@ def _ny_schedule_tax(taxable_income: float, table: list,
     """
     if taxable_income < 0:
         raise ValueError(f"taxable_income cannot be negative, got {taxable_income}")
-    summed = 0.0
-    for i, band in enumerate(table):
-        for key in ("rate", "min", "base"):
-            if band.get(key) is None:
-                raise ValueError(
-                    f"New York bracket {i} of schedule {schedule!r} has no "
-                    f"{key!r}. Each band carries the PUBLISHED cumulative base; "
-                    "summing the bands instead disagrees with the form, because "
-                    "New York rounds those bases to the dollar.")
+    _ny_check_schedule(table, schedule)
+    for band in table:
         upper = band.get("max")
-        # A dropped `max` makes its band TERMINAL, and the bands above it
-        # unreachable: a $400,000 return would then be taxed at the 5.5% band's
-        # rate all the way up. That is a five-figure under-statement from one
-        # missing key, so only the LAST band may be open-ended.
-        if upper is None and i != len(table) - 1:
-            raise ValueError(
-                f"New York bracket {i} of schedule {schedule!r} has no 'max' "
-                "and is not the last band; every band above it would be "
-                "unreachable")
-        # The bands must meet exactly. A gap swallows the incomes inside it and
-        # an overlap makes the first match win, and both are transcription
-        # errors that no per-band check can see.
-        if band["min"] != (0 if i == 0 else table[i - 1].get("max")):
-            raise ValueError(
-                f"New York schedule {schedule!r} band {i} starts at "
-                f"{band['min']}, which does not meet the previous band's top; "
-                "the schedule has a gap or an overlap")
-        # The PUBLISHED base against the bands beneath it. A base that is
-        # MISSING refuses above; a base that is WRONG — a transposed 18,522 for
-        # 18,252 — is the likelier transcription error and would shift every
-        # affected return by hundreds. The whole argument for requiring the
-        # published figure is that it differs from the sum by CENTS, so a
-        # difference of more than a dollar refutes the figure, not the rule.
-        if abs(band["base"] - summed) > 1.0:
-            raise ValueError(
-                f"New York schedule {schedule!r} band {i} publishes a base of "
-                f"{band['base']:,} where the bands beneath it sum to "
-                f"{summed:,.2f}. New York rounds its bases to the dollar, so a "
-                "gap this size is a mis-transcribed figure, not rounding.")
-        if upper is not None:
-            summed += (upper - band["min"]) * band["rate"]
         if taxable_income > band["min"] and (upper is None
                                              or taxable_income <= upper):
             excess = taxable_income - band["min"]
@@ -113,6 +75,116 @@ def _ny_schedule_tax(taxable_income: float, table: list,
         f"taxable income {taxable_income:,.2f} falls in no band of New York "
         f"schedule {schedule!r}; the first band must start at 0 and the last "
         "must have a null max. Re-run /tax-setup.")
+
+
+def _ny_check_schedule(table: list, schedule: str) -> None:
+    """Every rule a New York rate schedule must meet before a band is read.
+
+    Shared with `tax_law_fetcher set` and its freshness audit, as
+    `_ny_table_bases_entries` is, so the cache refuses exactly what the return
+    would: a schedule the write path accepts and the engine then refuses is a
+    cache that reads fetched and cannot be filed from. The WHOLE schedule is
+    checked before any band is read, so a bad band refuses every return on the
+    schedule, not only those that land in it. Raises ValueError.
+    """
+    summed = 0.0
+    for i, band in enumerate(table):
+        if not isinstance(band, dict):
+            raise ValueError(
+                f"New York bracket {i} of schedule {schedule!r} is not an object")
+        for key in ("rate", "min", "base"):
+            if band.get(key) is None:
+                raise ValueError(
+                    f"New York bracket {i} of schedule {schedule!r} has no "
+                    f"{key!r}. Each band carries the PUBLISHED cumulative base; "
+                    "summing the bands instead disagrees with the form, because "
+                    "New York rounds those bases to the dollar.")
+            # Finite, non-negative, not a bool: a NaN base passes the dollar
+            # comparison below, every comparison with NaN being False (§8).
+            _amount(band[key], f"New York bracket {i} of schedule "
+                               f"{schedule!r} {key!r}")
+        upper = band.get("max")
+        if upper is not None:
+            _amount(upper, f"New York bracket {i} of schedule {schedule!r} 'max'")
+        # A dropped `max` makes its band TERMINAL, and the bands above it
+        # unreachable: a $400,000 return would then be taxed at the 5.5% band's
+        # rate all the way up. That is a five-figure under-statement from one
+        # missing key, so only the LAST band may be open-ended.
+        if upper is None and i != len(table) - 1:
+            raise ValueError(
+                f"New York bracket {i} of schedule {schedule!r} has no 'max' "
+                "and is not the last band; every band above it would be "
+                "unreachable")
+        # And the last band IS open: a closed top leaves every income above
+        # it in no band at all.
+        if upper is not None and i == len(table) - 1:
+            raise ValueError(
+                f"New York schedule {schedule!r} closes its last band at "
+                f"{upper:,}; the top band's 'max' must be null")
+        # The bands must meet exactly. A gap swallows the incomes inside it and
+        # an overlap makes the first match win, and both are transcription
+        # errors that no per-band check can see.
+        if band["min"] != (0 if i == 0 else table[i - 1].get("max")):
+            raise ValueError(
+                f"New York schedule {schedule!r} band {i} starts at "
+                f"{band['min']}, which does not meet the previous band's top; "
+                "the schedule has a gap or an overlap")
+        # The PUBLISHED base against the bands beneath it. A base that is
+        # MISSING refuses above; a base that is WRONG — a transposed 18,522 for
+        # 18,252 — is the likelier transcription error and would shift every
+        # affected return by hundreds. The whole argument for requiring the
+        # published figure is that it differs from the sum by CENTS, so a
+        # difference of more than a dollar refutes the figure, not the rule.
+        if abs(band["base"] - summed) > 1.0:
+            raise ValueError(
+                f"New York schedule {schedule!r} band {i} publishes a base of "
+                f"{band['base']:,} where the bands beneath it sum to "
+                f"{summed:,.2f}. New York rounds its bases to the dollar, so a "
+                "gap this size is a mis-transcribed figure, not rounding.")
+        if upper is not None:
+            summed += (upper - band["min"]) * band["rate"]
+
+
+_NY_RECAPTURE_TIER_KEYS = ("taxable_income_over", "recapture_base",
+                           "incremental_benefit", "nyagi_excess_over")
+
+
+def _ny_check_recapture_tiers(tiers: list, schedule: str) -> None:
+    """Every rule one schedule's recapture tiers must meet before a tier is
+    read, shared with `tax_law_fetcher` as `_ny_check_schedule` is: the four
+    figures on every tier, finite and non-negative, tiers that meet, and only
+    the top one open. Raises ValueError."""
+    where = f"state.tax_table_benefit_recapture.tiers[{schedule!r}]"
+    for i, tier in enumerate(tiers):
+        if not isinstance(tier, dict):
+            raise ValueError(f"{where}[{i}] is not an object")
+        for key in _NY_RECAPTURE_TIER_KEYS:
+            if tier.get(key) is None:
+                raise ValueError(
+                    f"{where}[{i}] has no {key!r}. Each tier carries its own "
+                    "base and benefit, and they move year to year — there is "
+                    "no structural default to use instead.")
+            _amount(tier[key], f"{where}[{i}] {key!r}")
+        upper = tier.get("taxable_income_not_over")
+        last = i == len(tiers) - 1
+        if upper is None and not last:
+            raise ValueError(
+                f"{where}[{i}] has no 'taxable_income_not_over' and is not the "
+                "last tier; every tier above it would be unreachable")
+        if upper is not None:
+            _amount(upper, f"{where}[{i}] 'taxable_income_not_over'")
+            if last:
+                raise ValueError(
+                    f"{where} closes its last tier at {upper:,}; the top "
+                    "tier's 'taxable_income_not_over' must be null")
+            if upper <= tier["taxable_income_over"]:
+                raise ValueError(f"{where}[{i}] ends at or below where it starts")
+        if i and tier["taxable_income_over"] != tiers[i - 1].get(
+                "taxable_income_not_over"):
+            raise ValueError(
+                f"{where}[{i}] starts at {tier['taxable_income_over']:,}, which "
+                "does not meet the previous tier's top; the tiers have a gap "
+                "or an overlap")
 
 
 def _ny_status(filing_status) -> str:
@@ -839,6 +911,7 @@ def compute_ny_tax(
             "and this return is above the entry tier. Each tier carries its "
             "own base and benefit, and they move year to year — there is no "
             "structural default to use instead.")
+    _ny_check_recapture_tiers(tiers, schedule)
     for tier in tiers:
         upper = tier.get("taxable_income_not_over")
         if taxable_income > tier["taxable_income_over"] and \

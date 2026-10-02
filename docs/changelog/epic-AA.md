@@ -1786,3 +1786,64 @@ regenerated with `--upgrade-package urllib3`: the diff is that one pin and its
 two hashes. pip-audit then reports no known vulnerabilities in any of the three
 locks. It rides #189 rather than a pull request of its own so that the AA14
 change can merge on a green run.
+
+## AA28 — New York's brackets, read as one list
+
+### What was wrong
+
+New York's brackets are keyed by §601 rate schedule, `{"a": [...], "b": [...],
+"c": [...]}`, the City's too, and `_TABLE_VALIDATORS` matched `state.brackets`
+as the flat list every other state has. Three things followed:
+
+- **The freshness audit flagged every fetched New York cache.**
+  `validate_cache` runs the write path's rules over the whole state block, so a
+  correct cache reported `state.brackets: brackets must be a list` and read
+  INCOMPLETE. `/tax-compute` answers INCOMPLETE by re-fetching the named
+  fields with `set`.
+- **`set` refused that re-fetch,** for `state.brackets` and for the whole
+  `state` block alike, so the remedy looped. AA14's tests had worked around it
+  by writing the New York block straight into the file.
+- **One schedule at a time went in unchecked.** `state.brackets.a` matched no
+  pattern and got only "expected a list", so a gap between bands, a missing
+  published base or a transposed one entered the cache as fetched, and the
+  return refused it later.
+
+### What shipped
+
+- **The engine's schedule rules are one function,** `_ny_check_schedule`,
+  taken out of `_ny_schedule_tax`: `rate`, `min` and the published `base` on
+  every band, bands that meet, each base within New York's dollar of rounding
+  of the bands beneath it, and only the last band open. Two things changed on
+  the way. The engine now checks the WHOLE schedule before reading a band,
+  where it used to stop at the band the income landed in, so a bad band
+  anywhere refuses every return on that schedule. And it now checks values,
+  not only presence: a NaN base passed the dollar comparison, every comparison
+  with NaN being False, and a closed top band is refused outright rather than
+  when an income falls off it. Both are refusals, the safe direction.
+- **The fetcher checks each schedule,** State and City, with the generic
+  bracket rules and then that function, as AA14 shares
+  `_ny_table_bases_entries`. A table validator applies only where the seed is
+  a list, so any block keyed by schedule or status recurses rather than being
+  read as one table.
+- **The audit reads a schedule as stored.** `set` still normalises an
+  inclusive "over X" floor before writing it, but the audit had run the same
+  normalisation on its own copy, so a hand-written floor a dollar high read
+  FRESH while the engine refused it as a gap.
+- **The recapture tiers, the same shape one block over, get the same
+  treatment:** `_ny_check_recapture_tiers`, shared by the engine and the
+  fetcher. A tier with no base was a `KeyError` in `compute_ny_tax`, and a
+  closed top tier left every return above it in no tier.
+- The generic refusal message printed `{{rate, min, max}}` with doubled braces;
+  it prints single ones.
+
+### Verified
+
+A cache holding the published TY2025 schedules and tiers audits clean, and
+`set` writes the whole New York state block, `state.brackets`, one schedule
+and one schedule's tiers. A gap, a missing base, a base $50 off, a NaN, bool,
+negative or string base and a closed top are refused for a State and a City
+schedule; a string base is an audit finding, not a crash. Mutation checks:
+with the engine's value checks off, 13 tests fail; with the closed-top rule
+off, 1; with the engine skipping the tier check, 1; with the audit normalising
+its copy, 1; with the recursion guard removed, 4; with the tiers pattern off,
+5.

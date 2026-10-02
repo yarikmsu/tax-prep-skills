@@ -63,21 +63,10 @@ this file was collapsed to remove.
 off, and there are zero non-owner users. Every distribution item has been
 waiting on that since 2026-08-12.
 
-**CI is back, and red on one job.** Minutes returned 2026-10-01. The first full
-run was on #189's head, which is `main` at #188 plus AA14. The 3.13 floor ran
-for the first time and passed, and so did 3.14, Windows, lint and the PII scan.
-The Dependency audit failed on three urllib3 advisories that are on `main` too
-(AA27). Until AA2 has a green run on `main` itself, the paragraph below stands.
-
-**Unverified on `main`: everything from #155 on.** CI minutes were exhausted
-2026-09-13 18:29 UTC. Every merge until 2026-10-01 was validated on one local
-interpreter. A merge that can change what a return says touches the engine, a
-skill or a template, so after a `git fetch`,
-`git log 70d10b2..origin/main -- agents/lib .agents/skills agents/templates`
-lists every candidate since the last green CI run. It is a superset to triage,
-not a verdict, and a list typed here would go stale at the next such merge. The
-declared floor has been 3.13 since #166 and **has never executed anywhere**;
-Windows has not run since 2026-09-13.
+**CI is back and green.** Minutes returned 2026-10-01, and the first full
+matrix on `main`, at #189, passed: the 3.13 floor for the first time, 3.14,
+Windows, lint, the PII scan and the Dependency audit once AA27 moved urllib3.
+Everything merged on one local interpreter from #155 on is now covered by it.
 
 ---
 
@@ -86,10 +75,9 @@ Windows has not run since 2026-09-13.
 | When | What | Why |
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **2026-10-01** | **#189** (AA14 and AA27), then **AA2** — merge it, then a green full matrix on `main`. | The audit is red on every branch, and the floor has run only on a PR head. |
-| **2026-10-01+** | **W5a**'s two unblocked clusters. | The only tooling work that DELETES assertions rather than adding them. |
+| **Now** | **W5a** — all three clusters, the first unblocked now that CI runs. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA9**, **AA10**, **AA14**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, **AA28**, **AA29**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA9**, **AA10**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, **AA29**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -97,27 +85,6 @@ Windows has not run since 2026-09-13.
 ## Open
 
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
-
-- **AA2 (P1, XS): Run the full matrix on `main` the day CI returns.**
-  Before any new work on 2026-10-01. A red 3.13 leg or a red Windows job is then
-  the highest-priority defect in the repository, ahead of everything below. The
-  first `windows-latest` run ever taken found two shipped defects, and every
-  merge from #155 on is drift since the last one, which is not a small exposure.
-  Bind the poll to the commit (`gh run list --commit "$SHA"`) — `gh pr checks`
-  reads the previous commit's runs. **Half done:** #189's head, `main` at #188
-  plus AA14, ran the whole matrix green on 2026-10-01 but the audit (AA27).
-  What remains is the same on `main` itself, which the next merge after AA27
-  produces.
-
-- **AA27 (P1, XS): urllib3 2.7.0 fails the Dependency audit.**
-  **BUILT by #189, beside AA14; this entry moves to the shipped index the day
-  that merges.**
-  pip-audit reports CVE-2026-97687, -97688 and -97689 against urllib3 2.7.0, a
-  transitive pin through `requests` in `requirements-dev.txt` alone, fixed in
-  2.8.0. It is red on `main` and on every branch, so no pull request can go
-  green until it lands. The fix is the lock regenerated with
-  `--upgrade-package urllib3`, a diff of that one pin and its hashes, never a
-  hand edit. Found on #189.
 
 - **AA9 (P2, S): The skill hook times itself against its own timeout.**
   An overrun of the registered timeout CANCELS the hook, and a cancelled check
@@ -146,22 +113,6 @@ Windows has not run since 2026-09-13.
   block the timing test reads whole-line comments only, and catches neither a
   duration spelled in words nor a number two words from its unit. Fold into the
   next PR that touches these tests.
-
-- **AA14 (P2, S): The State tax table is a dollar low on 22 joint rows.**
-  **BUILT by the pull request that records it in
-  `docs/changelog/epic-AA.md`; this entry moves to the shipped index the day
-  that merges.**
-  Every cell of the published 2025 State table, compared with `compute_ny_tax`:
-  the single column agrees on all 1,294 rows, and the joint column differs on
-  22, every one in the $23,600-27,900 band and every one a dollar LOW (the
-  $23,600-23,650 row publishes 978; the engine gives 977). Those rows match the
-  bands summed to that floor, 976.25, and not the published base of 976, which
-  `_ny_schedule_tax` reads by design. The head-of-household column is
-  unchecked, because the test fixture has no schedule b. Find out how New York
-  builds its table, and why the single column does not show the same thing,
-  then pin the joint rows by test. It is an under-statement within the
-  one-dollar acceptance bar, so P2. It is on `main`, not introduced by the
-  AA13 change, whose review found it.
 
 - **AA18 (P2, S): A territory resident passes the capability gate.**
   Since AA16 the compute step says modified AGI adds a §931 or §933
@@ -238,17 +189,14 @@ Windows has not run since 2026-09-13.
   with a control run on a twin tree that must leave it exposed. The rest
   need the same. Found by AA25's review.
 
-- **AA28 (P2, S): `set` cannot write New York's bracket schedules whole, and
-  does not check them one at a time.** `_TABLE_VALIDATORS` reads
-  `state.brackets` as one list, the shape of every other state. New York's is
-  keyed by schedule (`a`, `b`, `c`), so a write of `state.brackets`, or of the
-  whole `state` block that holds it, is refused as "must be a list". A write of
-  `state.brackets.a` matches no pattern and gets only the "expected a list"
-  check, so a gap, an overlap or a missing `base` goes in unrefused.
-  `state.nyc_tax.brackets` is the same. `compute_ny_tax` still refuses a
-  missing `base`, so the cost is a cache that accepts what the return then
-  refuses. The fix is a per-schedule pattern that checks `base` too, so the
-  same rows are refused at `set`. Found by AA14's review.
+- **AA28 (P2, S): A fetched New York cache reads its brackets INCOMPLETE.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
+  `_TABLE_VALIDATORS` read `state.brackets` as one list, and New York's is
+  keyed by rate schedule, so the freshness audit flagged every fetched New York
+  cache, and `set`, the remedy the compute skill names, refused the same write.
+  One schedule at a time got only "expected a list", and so did the recapture
+  tiers, keyed the same way. Found by AA14's review.
 
 - **AA29 (P2, S): Nothing refuses a line 58 typed by hand.** AA15 made
   `compute_city_and_yonkers_total` refuse a flagged tax it was not passed, but
@@ -644,6 +592,9 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA5 | #186 | — |
 | AA8 | #186 | the suite's size is stated nowhere, and the scale row's "about twice" a cold pass is a reader's to keep, not a check's |
 | AA17 | #188 | a part-year return across the border is blocked, not modeled, and so is a non-citizen's dual-status federal year |
+| AA14 | #189 | a cache without `table_bases` gets a note, and the row can be a dollar off either way; the TY2026 check rides Y2 |
+| AA27 | #189 | — |
+| AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
 | AA15 | #188 | nothing yet refuses a line 58 typed by hand or an agent that never calls the total (AA29) |
 | Q7 | #156 | — |
 | Q9 | #156 | — |

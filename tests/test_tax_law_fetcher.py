@@ -1,5 +1,6 @@
 """Tests for tax_law_fetcher freshness logic — the sdi_wage_limit year-aware
 null exception (Codex P1 on PR #29)."""
+import copy
 import json
 import os
 import subprocess
@@ -1447,8 +1448,7 @@ class TestSetFigureOnStateAndDynamicBlocks:
     _NYS = "https://www.tax.ny.gov/pit/file/tax-tables/it201i-2025.htm"
 
     def _ny_cache(self, tmp_path):
-        """A NY state block written straight in: `set` cannot take the whole
-        NY template, whose brackets are keyed by schedule."""
+        """A NY state block, unfetched, written straight in."""
         cache = _fresh_cache(tmp_path)
         seeded = json.loads(cache.read_text())
         seeded["state"] = create_state_template("NY")
@@ -1494,6 +1494,122 @@ class TestSetFigureOnStateAndDynamicBlocks:
         self._ny_cache(tmp_path)
         with pytest.raises(TaxLawSetError, match="table_bases"):
             _set(tmp_path, "state.tax_table.table_bases", bad,
+                 source=self._NYS)
+
+    def _ny_filled(self):
+        """The NY template with the fixture's published TY2025 schedules in
+        it, State and City, every other figure left as the seed's null."""
+        from tests.ny_fixtures import ny_state_cache
+        block = create_state_template("NY")
+        block["brackets"] = copy.deepcopy(ny_state_cache()["brackets"])
+        block["nyc_tax"]["brackets"] = copy.deepcopy(ny_state_cache()["brackets"])
+        return block
+
+    def test_a_fetched_new_york_cache_reads_its_brackets_as_valid(self, tmp_path):
+        """AA28. New York's brackets are keyed by rate schedule, and the
+        audit read `state.brackets` as one list: every fetched New York cache
+        reported the brackets INCOMPLETE, and the remedy the compute skill
+        gives, re-fetching them with `set`, was refused the same way."""
+        data = create_empty_tax_law(2026)
+        data["state"] = self._ny_filled()
+        assert not any("brackets" in e for e in validate_cache(data, 2026)), (
+            validate_cache(data, 2026))
+
+    def test_set_writes_new_yorks_whole_state_block_and_its_schedules(self, tmp_path):
+        _fresh_cache(tmp_path)
+        block = self._ny_filled()
+        _set(tmp_path, "state", block, source=self._NYS)
+        _set(tmp_path, "state.brackets", block["brackets"], source=self._NYS)
+        _set(tmp_path, "state.brackets.c", block["brackets"]["c"],
+             source=self._NYS)
+        assert _read(tmp_path)["state"]["brackets"] == block["brackets"]
+
+    @pytest.mark.parametrize("path", ["state.brackets.a",
+                                      "state.nyc_tax.brackets.a"])
+    @pytest.mark.parametrize("break_it, match", [
+        # A gap between bands, which the generic bracket rule refuses first.
+        (lambda s: s[1].update(min=s[1]["min"] + 100), "contiguous"),
+        # A band with no published base, which the engine refuses to sum.
+        (lambda s: s[2].pop("base"), "has no 'base'"),
+        # A transposed base, more than New York's dollar of rounding off.
+        (lambda s: s[3].update(base=s[3]["base"] + 50), "mis-transcribed"),
+        # Values, not only presence: NaN passes the dollar comparison, every
+        # comparison with it being False, and a string crashed it (§8).
+        (lambda s: s[2].update(base=float("nan")), "must be finite"),
+        (lambda s: s[2].update(base=True), "must be a number"),
+        (lambda s: s[0].update(base=-1), "cannot be negative"),
+        (lambda s: s[2].update(base="1,202"), "must be a number"),
+        # A closed top band, which the engine refuses for every return.
+        (lambda s: s[-1].update(max=s[-1]["min"] + 1), "max must be null"),
+    ])
+    def test_set_refuses_a_schedule_the_return_would_refuse(self, tmp_path,
+                                                             path, break_it, match):
+        """AA28. One schedule written at a time matched no validator and got
+        only "expected a list", so a schedule the return then refused went
+        into the cache as fetched. It now meets the engine's own check."""
+        self._ny_cache(tmp_path)
+        schedule = copy.deepcopy(self._ny_filled()["brackets"]["a"])
+        break_it(schedule)
+        with pytest.raises(TaxLawSetError, match=match):
+            _set(tmp_path, path, schedule, source=self._NYS)
+
+    def test_the_audit_holds_a_stored_schedule_to_the_engines_rule(self, tmp_path):
+        """`set` normalises an inclusive "over X" floor before it writes, and
+        the audit ran the same normalisation on its in-memory copy: a floor a
+        dollar above the band beneath, written into the file by hand, read
+        FRESH while the engine refused it as a gap. The audit now holds the
+        stored schedule to New York's rule, which is also the one path that
+        reaches the engine's own contiguity check."""
+        data = create_empty_tax_law(2026)
+        data["state"] = self._ny_filled()
+        data["state"]["brackets"]["a"][1]["min"] += 1
+        problems = validate_cache(data, 2026)
+        assert any("state.brackets.a" in e and "gap or an overlap" in e
+                   for e in problems), problems
+
+    def test_a_string_base_is_an_audit_finding_not_a_crash(self, tmp_path):
+        data = create_empty_tax_law(2026)
+        data["state"] = self._ny_filled()
+        data["state"]["nyc_tax"]["brackets"]["c"][2]["base"] = "1202"
+        problems = validate_cache(data, 2026)
+        assert any("state.nyc_tax.brackets.c" in e and "must be a number" in e
+                   for e in problems), problems
+
+    def test_set_writes_and_the_audit_reads_the_recapture_tiers(self, tmp_path):
+        """AA28's sibling. The recapture tiers are keyed by schedule as the
+        brackets are, and got only "expected a list"."""
+        from tests.ny_fixtures import ny_state_cache
+        tiers = ny_state_cache()["tax_table_benefit_recapture"]["tiers"]
+        self._ny_cache(tmp_path)
+        _set(tmp_path, "state.tax_table_benefit_recapture.tiers.a",
+             copy.deepcopy(tiers["a"]), source=self._NYS)
+        assert (_read(tmp_path)["state"]["tax_table_benefit_recapture"]
+                ["tiers"]["a"] == tiers["a"])
+        data = create_empty_tax_law(2026)
+        data["state"] = self._ny_filled()
+        data["state"]["tax_table_benefit_recapture"]["tiers"] = copy.deepcopy(tiers)
+        assert not any("tiers" in e for e in validate_cache(data, 2026))
+
+    @pytest.mark.parametrize("break_it, match", [
+        (lambda t: t[0].pop("recapture_base"), "has no 'recapture_base'"),
+        (lambda t: t[1].update(taxable_income_over=t[0]["taxable_income_not_over"] + 1),
+         "gap or an overlap"),
+        (lambda t: t[-1].update(taxable_income_not_over=9_000_000),
+         "must be null"),
+        (lambda t: t[0].update(incremental_benefit=float("nan")), "must be finite"),
+        (lambda t: t.clear(), "non-empty list"),
+    ])
+    def test_set_refuses_recapture_tiers_the_return_would_refuse(self, tmp_path,
+                                                                 break_it, match):
+        """A tier with no base compute_ny_tax read as a KeyError, and a closed
+        top tier left every return above it in no tier at all."""
+        from tests.ny_fixtures import ny_state_cache
+        tiers = copy.deepcopy(
+            ny_state_cache()["tax_table_benefit_recapture"]["tiers"]["a"])
+        break_it(tiers)
+        self._ny_cache(tmp_path)
+        with pytest.raises(TaxLawSetError, match=match):
+            _set(tmp_path, "state.tax_table_benefit_recapture.tiers.a", tiers,
                  source=self._NYS)
 
     def test_a_state_field_needs_the_block_first(self, tmp_path):

@@ -5652,7 +5652,8 @@ def test_ny_refuses_a_taxable_income_no_tier_covers():
     """A tier table whose last entry is CLOSED — a transcription that dropped
     the "and over" row — would otherwise fall out of the loop and return the
     schedule alone, which is the unbounded under-statement compute_bracket_tax
-    already refuses for brackets."""
+    already refuses for brackets. Since AA28 the tier check refuses the closed
+    top before any tier is read, so it names the rule, not the income."""
     closed = {**_NY_2025_RECAPTURE,
               "tiers": {**_NY_2025_RECAPTURE["tiers"],
                         "a": [{"taxable_income_over": 161550,
@@ -5660,7 +5661,7 @@ def test_ny_refuses_a_taxable_income_no_tier_covers():
                                "recapture_base": 333,
                                "incremental_benefit": 807,
                                "nyagi_excess_over": 161550}]}}
-    with pytest.raises(ValueError, match="no fetched recapture tier"):
+    with pytest.raises(ValueError, match="closes its last tier.*must be null"):
         _ny(400000, 420000, recapture=closed)
 
 
@@ -5677,6 +5678,26 @@ def test_ny_refuses_a_bracket_band_with_no_published_base():
     with pytest.raises(ValueError, match="published cumulative base|'base'"):
         _ny(90000, 100000,
             brackets={**_NY_BRACKETS, "a": stripped})
+
+
+def test_ny_refuses_a_schedule_whose_top_band_is_closed():
+    """AA28. The whole schedule is checked before any band is read, so a
+    closed top refuses a return far below it rather than only one that falls
+    off the end. A $50,000 return lands in the first bands either way."""
+    closed = [dict(band) for band in _NY_2025_SCHEDULE_A]
+    closed[-1]["max"] = 30_000_000
+    with pytest.raises(ValueError, match="top band's 'max' must be null"):
+        _ny(50000, 60000, brackets={**_NY_BRACKETS, "a": closed})
+
+
+@pytest.mark.parametrize("bad", [float("nan"), True, -1, "1,202"])
+def test_ny_refuses_a_band_base_that_is_not_a_figure(bad):
+    """§8: a NaN base passed the dollar comparison, every comparison with NaN
+    being False, and the return then crashed rounding it."""
+    broken = [dict(band) for band in _NY_2025_SCHEDULE_A]
+    broken[0 if bad == -1 else 2]["base"] = bad
+    with pytest.raises(ValueError, match="must be|cannot be negative"):
+        _ny(50000, 60000, brackets={**_NY_BRACKETS, "a": broken})
 
 
 def test_ny_uses_the_published_base_not_the_sum_of_the_bands():

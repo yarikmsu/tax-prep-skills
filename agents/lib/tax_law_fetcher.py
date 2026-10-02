@@ -16,6 +16,7 @@ All bracket/deduction/credit amounts are None until fetched from IRS.gov.
 The JSON file (tax_law_<year>.json) is the cache. If missing, skills re-fetch.
 """
 
+import copy
 import json
 import math
 import re
@@ -35,6 +36,8 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402
     _SDI_NO_CEILING_FROM,
 )
 from agents.lib.tax_computations.state.ny import (  # noqa: E402
+    _ny_check_recapture_tiers,
+    _ny_check_schedule,
     _ny_table_bases_entries,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
@@ -1899,6 +1902,11 @@ _STRUCTURAL_BLOCKS = ("federal.se_tax", "federal.niit",
 # elsewhere in the schema must not inherit a validator meant for another.
 _TABLE_VALIDATORS = (
     (re.compile(r"^(federal\.filing_statuses\.[a-z]+|state)\.brackets$"), "brackets"),
+    # New York's brackets are keyed by §601 rate schedule, the State's and the
+    # City's alike, so the table is each schedule and not the block holding them.
+    (re.compile(r"^state\.(nyc_tax\.)?brackets\.[a-z]$"), "ny_schedule"),
+    (re.compile(r"^state\.tax_table_benefit_recapture\.tiers\.[a-z]$"),
+     "ny_recapture_tiers"),
     (re.compile(r"^federal\.underpayment_rates$"), "underpayment_rates"),
     (re.compile(r"^ptet\.[A-Z]{2}\.schedule$"), "ptet_schedule"),
     (re.compile(r"^federal\.irmaa\.tiers\.(single|mfj)$"), "tiers"),
@@ -1967,7 +1975,7 @@ def _check_brackets(dotted: str, value) -> None:
     """
     if not isinstance(value, list):
         raise TaxLawSetError(f"{dotted}: brackets must be a list of "
-                             "{{rate, min, max}} objects")
+                             "{rate, min, max} objects")
     if not value:
         raise TaxLawSetError(f"{dotted}: an empty bracket list is the unfetched "
                              "state, not a figure")
@@ -2034,9 +2042,28 @@ def _check_ascending(dotted: str, value, *, fields: tuple, order_by: str,
                               allow_zero=True)
 
 
-def _check_table(kind: str, dotted: str, value) -> None:
+def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None:
+    """`writing` is False for the freshness audit, which reads a cache as
+    stored: a rule that normalises in place must not let the audit pass a
+    value the file still holds un-normalised."""
     if kind == "brackets":
         _check_brackets(dotted, value)
+    elif kind in ("ny_schedule", "ny_recapture_tiers"):
+        # New York's own rules are the engine's, so the two cannot drift. A
+        # schedule meets the generic bracket rules first, which normalise an
+        # inclusive "over X" floor; the audit then holds the STORED copy to
+        # New York's, because the engine reads the file as it is.
+        schedule = dotted.rsplit(".", 1)[-1]
+        stored = copy.deepcopy(value)
+        if kind == "ny_schedule":
+            _check_brackets(dotted, value)
+        elif not isinstance(value, list) or not value:
+            raise TaxLawSetError(f"{dotted}: expected a non-empty list of tiers")
+        check = _ny_check_schedule if kind == "ny_schedule" else _ny_check_recapture_tiers
+        try:
+            check(value if writing else stored, schedule)
+        except ValueError as exc:
+            raise TaxLawSetError(f"{dotted}: {exc}") from None
     elif kind == "underpayment_rates":
         _check_ascending(dotted, value, fields=("effective_from", "annual_rate"),
                          order_by="effective_from", rate_fields=("annual_rate",),
@@ -2084,8 +2111,12 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
     if not top and isinstance(ref, list) and value == []:
         return
     for pattern, kind in _TABLE_VALIDATORS:
-        if pattern.match(dotted):
-            _check_table(kind, dotted, value)
+        # A table the schema keys by schedule or status (New York's brackets)
+        # is a block of tables, not one: it recurses below, and each table
+        # matches its own pattern. Read as one, every fetched New York cache
+        # failed (AA28). A table validator applies where the seed is a list.
+        if pattern.match(dotted) and not isinstance(ref, dict):
+            _check_table(kind, dotted, value, writing=strict)
             return
     if isinstance(ref, list):
         if not isinstance(value, list):
