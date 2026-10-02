@@ -325,6 +325,66 @@ a figure from a prior year.
     rate → `state.disability_benefits`. **Both are year-aware on purpose**:
     the CA scar is that the SDI wage ceiling DISAPPEARED in TY2024, and a cap
     read as a constant mis-computed every later return.
+- **For NC — the generic one-search fallback is NOT enough either.** Design
+  spec and sources: `docs/superpowers/specs/2026-10-02-nc-state-module-design.md`
+  §3. `set state` to the `create_state_template("NC")` output first, then each
+  figure below. Every source is the North Carolina Department of Revenue
+  (`ncdor.gov` — the D-401 instructions for `{year}` and its rate and
+  estimated-tax pages) or the General Statutes on `ncleg.gov`, and **each page
+  you cite must be the one that names the tax year `{year}`** — a statute page
+  states the rule for every year, so read it for the subsection that covers
+  `{year}`, and a prior year's D-401 is never a source for this year's figure.
+  - Search `"North Carolina individual income tax rate {year} site:ncdor.gov"`
+    → `set state.brackets '[{"rate": <rate>, "min": 0, "max": null}]'` — ONE
+    band, a flat rate, with the top `max` null. **The rate is YEAR-GATED by
+    G.S. 105-153.7**: subsection (a) names a rate per year ("In 2025 …",
+    "After 2025 …") and (a1) cuts it further from TY2027 only when a revenue
+    trigger is met, so neither the statute alone nor last year's cache settles
+    it. Confirm the rate against BOTH the NCDOR page naming `{year}` and the
+    G.S. 105-153.7 text on `ncleg.gov`; if they disagree, STOP and ask. Write
+    the rate only once the page names the tax year: writing `state.brackets`
+    into the `{year}` cache stamps `state.rate_tax_year` itself, and `set`
+    refuses that field on its own — an attestation written apart from the
+    rate could vouch for one carried over, which over-states.
+  - Search `"North Carolina standard deduction {year} D-401 site:ncdor.gov"` →
+    `state.standard_deduction`: `single`, `mfj`, `mfs`, `hoh` and `qss` (QSS
+    equals MFJ on the chart — record it under its own key all the same), plus
+    `state.standard_deduction.mfs_spouse_itemizes`, the amount for a
+    married-filing-separately filer whose spouse itemizes (the chart's zero —
+    G.S. 105-153.5(a)(1)).
+  - Search `"North Carolina child deduction table {year} D-401 site:ncdor.gov"`
+    → `state.child_deduction`, which has **THREE** tables, not one per status:
+    `state.child_deduction.mfj_qss`, `state.child_deduction.hoh` and
+    `state.child_deduction.single_mfs` (G.S. 105-153.5(a1)). Each is a list
+    of `{"agi_up_to", "per_child"}` bands keyed on FEDERAL AGI, ascending; the
+    bound is INCLUSIVE ("Up to X", "Over X - Up to Y" → `agi_up_to: Y`) and the
+    top band's `agi_up_to` is `null`. `set` refuses a closed top, a band out
+    of order, or a per-child amount that rises with AGI.
+  - Search `"North Carolina Schedule A itemized deductions {year} D-401
+    site:ncdor.gov"` → `state.itemized`: the Sch A line 2 real-estate-tax cap
+    `state.itemized.real_estate_tax_cap.default` and its MFS figure
+    `state.itemized.real_estate_tax_cap.mfs`; the line 4 combined
+    mortgage-interest-plus-property-tax cap
+    `state.itemized.mortgage_plus_property_tax_cap` (household-wide even for
+    MFS — G.S. 105-153.5(a2)); the line 7 medical floor
+    `state.itemized.medical_agi_floor_rate` (a decimal of federal AGI); and
+    line 8's claim-of-right worksheet,
+    `state.itemized.claim_of_right.repayment_threshold` and
+    `state.itemized.claim_of_right.agi_rate`. North Carolina's Schedule A is
+    independent of the federal election and has no income- or sales-tax line.
+  - Search `"North Carolina IRC conformity date {year} site:ncleg.gov"` (G.S.
+    105-228.90(b)(7)) and the D-401 Schedule S introduction →
+    `set state.irc_conformity_date '"YYYY-MM-DD"'`, the date of the Code North
+    Carolina reads for `{year}`. It decides whether a federal change reaches
+    the NC return at all, and the General Assembly moves it by session law.
+  - Search `"North Carolina estimated income tax {year} NC-40 site:ncdor.gov"`
+    and G.S. 105-163.15 on `ncleg.gov` → `state.estimated_tax`:
+    `state.estimated_tax.required_threshold` (the tax-due amount at which
+    estimates are required), and the required-annual-payment shares as
+    DECIMALS — `state.estimated_tax.current_year_rate`,
+    `state.estimated_tax.prior_year_rate` and the farmer/fisherman
+    `state.estimated_tax.farmer_rate`. North Carolina has NO high-income
+    prior-year tier; do not carry the federal 110% over.
 - **No-income-tax states (template `type: "none"` — FL):** do NOT search for
   income brackets; there are none, and an empty bracket list would keep the
   cache permanently INCOMPLETE. Record the pre-built FL template and fetch

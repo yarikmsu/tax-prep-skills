@@ -7690,6 +7690,88 @@ class TestOneReaderOfStateBrackets:
             "sweep recognises; the sweep above is now vacuous")
 
 
+class TestTheNorthCarolinaResultSection:
+    """`north_carolina_d400` — Z4 slice 2, spec §4 of
+    docs/superpowers/specs/2026-10-02-nc-state-module-design.md. The engine
+    that fills it is slice 3, so this pins the section against the SPEC's
+    field list; slice 3 adds the engine-emits-a-field check New York has."""
+
+    REPO = Path(__file__).resolve().parents[1]
+
+    # Spec §4, in form order.
+    LINES = (
+        "line_6_federal_agi", "line_7_additions", "line_8", "line_9_deductions",
+        "line_10a_children", "line_10b_child_deduction", "line_11_deduction",
+        "line_11_method", "line_12a", "line_12b", "line_14_nc_taxable_income",
+        "line_15_nc_tax", "line_16_credits", "line_17", "line_18_use_tax",
+        "line_19", "line_20a_withholding", "line_20b_spouse_withholding",
+        "line_21a_estimated", "line_21b_extension_paid", "line_23", "line_25",
+        "line_26a_tax_due", "line_26b", "line_26c", "line_26d", "line_26e",
+        "line_27_amount_due", "line_28_overpayment", "line_29", "line_30",
+        "line_31", "line_32", "line_33", "line_34_refund",
+    )
+
+    def _section(self):
+        template = json.loads(
+            (self.REPO / "agents/templates/result_template.json").read_text())
+        return template["north_carolina_d400"]
+
+    def test_every_spec_line_has_a_field_in_form_order(self):
+        section = self._section()
+        lines = [k for k in section if k.startswith("line_")]
+        assert lines == list(self.LINES)
+        assert section["_include_if"] == "state is NC"
+        assert "_note" in section
+
+    def test_the_part_year_and_amended_lines_are_absent(self):
+        """Lines 13, 21c, 21d, 22 and 24 are Schedule PN, nonresident or
+        amended-return lines; a field for them would read as coverage."""
+        for prefix in ("line_13", "line_21c", "line_21d", "line_22", "line_24"):
+            assert not [k for k in self._section() if k.startswith(prefix)], prefix
+
+    def test_use_tax_ships_null_not_zero(self):
+        """Line 18 is reported ON the income tax return and changes the amount
+        owed, and nothing computes it — the New York line-59 precedent."""
+        section = self._section()
+        assert section["line_18_use_tax"] is None
+        assert "null on purpose" in section["_note_line_18"]
+
+    def test_the_two_circles_are_unanswered_not_false(self):
+        """Without the Federal Extension circle an extended return is
+        delinquent (D-401 p.7); false would assert no extension was taken."""
+        section = self._section()
+        assert section["federal_extension_circle"] is None
+        assert section["out_of_country_circle"] is None
+        assert "Federal Extension" in section["_note_circles"]
+
+    def test_every_other_figure_ships_zero_and_the_method_unset(self):
+        """All-zero scaffold, as `california_540` and `new_york_it201` ship:
+        computed-evidence gating (slice 4) is what tells it from a return."""
+        section = self._section()
+        assert section["line_11_method"] is None
+        for line in self.LINES:
+            if line not in ("line_18_use_tax", "line_11_method"):
+                assert section[line] == 0, line
+
+    def test_the_schedules_carry_the_v1_lines(self):
+        section = self._section()
+        sched_s = [k for k in section["schedule_s"] if k.startswith("line_")]
+        assert [int(k.split("_")[1]) for k in sched_s] == [
+            1, 16, 17, 18, 19, 20, 21, 41]
+        sched_a = [k.split("_")[1] for k in section["schedule_a"]
+                   if k.startswith("line_")]
+        assert sched_a == ["1", "2", "3", "4", "5", "6", "7a", "7b", "7c",
+                           "8", "9", "10"]
+        for block in ("schedule_s", "schedule_a"):
+            assert "_include_if" in section[block]
+            assert all(v == 0 for k, v in section[block].items()
+                       if k.startswith("line_")), block
+
+    def test_the_section_is_not_a_second_california_or_new_york(self):
+        found = TestTheNewYorkResultSection._keys_at_any_depth(self._section())
+        assert not [k for k in found if k.startswith(("ca_", "ny_"))]
+
+
 class TestTheNewYorkResultSection:
     """`new_york_it201` is where the IT-201 lands, and the field names carry
     the FORM's line numbers because that is what `/tax-verify` ties against.

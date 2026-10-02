@@ -32,10 +32,10 @@ template seeds: every one ships `None` and is fetched (AGENTS.md §2).
 | 3 | Credits | **No personal exemption or exemption credit.** Dependents act through the **child DEDUCTION** (line 10, below-AGI), not a credit. Credits = D-400TC (line 16): Part 1 credit for tax paid to another state (p.22-23), Part 2 historic rehab, NC-478 business credits. **No EITC piggyback, no renter's credit** in the D-401 credit list. |
 | 4 | Local income taxes | None (see §1). |
 | 5 | Surtaxes | None found in the D-401 or G.S. 105-153.7. |
-| 6 | Estimated payments | **Form NC-40, EQUAL quarters**: G.S. 105-163.15 "twenty-five percent (25%) of the required annual payment", due Apr 15 / Jun 15 / Sep 15 / Jan 15 (ncdor.gov estimated-income-tax page). Required annual payment = lesser of **90%** current / **100%** prior-year tax; farmers/fishermen 66⅔%, single Jan 15 installment. **No 110% high-income tier** found in the fetched statute text — UNVERIFIED as a negative; re-read §105-163.15(b) in full. Required if tax less withholding and credits ≥ **$1,000** (D-401 p.9); interest-free de minimis is pegged to **IRC §6654(e)** (statute). Jan 15 skippable if return filed and paid by Jan 31 (ncdor.gov). Penalty is INTEREST (Form D-422), line 26e. |
+| 6 | Estimated payments | **Form NC-40, EQUAL quarters**: G.S. 105-163.15 "twenty-five percent (25%) of the required annual payment", due Apr 15 / Jun 15 / Sep 15 / Jan 15 (ncdor.gov estimated-income-tax page). Required annual payment = lesser of **90%** current / **100%** prior-year tax; farmers/fishermen 66⅔%, single Jan 15 installment. **No 110% high-income tier**: §105-163.15(d) defines the required annual payment as the lesser of 90% of this year's tax and 100% of the preceding year's, with no AGI threshold (re-read in full before slice 2). Required if tax less withholding and credits ≥ **$1,000** (D-401 p.9); interest-free de minimis is pegged to **IRC §6654(e)** (statute). Jan 15 skippable if return filed and paid by Jan 31 (ncdor.gov). Penalty is INTEREST (Form D-422), line 26e. |
 | 7 | SDI / PFL-style items | None. No NC payroll disability/PFL program appears in the D-401. |
 | 8 | Withholding-form analogue | **Form NC-4** (NC-4EZ, NC-4P for pensions, NC-4 NRA) — ncdor.gov. Default with no NC-4 on file: "Single" with no allowances. |
-| 9 | Extension | **Automatic with the federal extension** — D-401 p.7: a taxpayer granted an automatic federal extension "will be granted an automatic state extension", but MUST fill in the "Federal Extension" circle on D-400 p.1. Otherwise **Form D-410** by the original due date. **Neither extends payment** (p.7-8); a 90%-paid-by-due-date rule avoids the late-payment penalty (p.9). Extended DATE (Oct 15) — UNVERIFIED in the D-401 text; read D-410 instructions. |
+| 9 | Extension | **Automatic with the federal extension** — D-401 p.7: a taxpayer granted an automatic federal extension "will be granted an automatic state extension", but MUST fill in the "Federal Extension" circle on D-400 p.1. Otherwise **Form D-410** by the original due date. **Neither extends payment** (p.7-8); a 90%-paid-by-due-date rule avoids the late-payment penalty (p.9). The extension is SIX months, to Oct 15 (ncdor.gov's D-410 guidance and its annual "returns with extensions are due Oct. 15" notice; G.S. 105-263 grants the automatic state extension and leaves the length to the Secretary). |
 | 10 | PTET regime + window | **YES — "Taxed PTE"**, G.S. 105-154.1: "Effective for taxable years beginning on or after January 1, 2022" (ncleg.gov page text; confirm against S.L. 2022-6 as the enacting law), election "on its timely filed return" and "may not make or revoke the election after the return is filed" — **no separate prepayment window** like CA's June 15. Rate = the §105-153.7 individual rate. S-corporation election statute (G.S. 105-131.1A?) — UNVERIFIED. NOT in `PTET_WINDOWS` today. |
 | 11 | Community property | NC is NOT in `capabilities._COMMUNITY_PROPERTY_STATES` — correct. |
 | 12 | Itemized deductions | **Own Schedule A, independent of the federal election** (D-401 p.20: "even if you did not claim itemized deductions on your federal return"). Only five items: mortgage interest under §163(h) (Sch A line 1), real-estate tax capped **$10,000 / $5,000 MFS** (line 2), mortgage + property tax combined capped **$20,000**, combined across BOTH spouses even MFS with proration (line 4; G.S. 105-153.5(a2)), charitable under §170 (line 6), medical over **7.5% of federal AGI** (line 7c), claim-of-right repayment (line 8, its own 2%-of-AGI worksheet ≤ $3,000). **No state/local income or sales tax deduction at all.** No high-AGI phase-out. |
@@ -50,8 +50,13 @@ template seeds: every one ships `None` and is fetched (AGENTS.md §2).
   / "Over X - Up to Y": the upper bound is INCLUSIVE.
 - **MFS standard deduction is ZERO if the spouse itemizes** (D-401 p.14 chart),
   and ZERO for anyone "not eligible for the federal standard deduction". No
-  age-65/blind addition (p.14). The dependent-filer limit: UNVERIFIED — the
-  D-401 is silent; read G.S. 105-153.5(a)(1).
+  age-65/blind addition (p.14). The dependent-filer limit: G.S. 105-153.5(a)(1)
+  sets the amount to zero only for a person "not eligible for a standard
+  deduction under section 63 of the Code" and states no dependent limit, and
+  the D-401 is silent. A dependent filer therefore gets the full NC amount on
+  the statute's face; slice 3 asks NCDOR guidance before relying on it, and
+  until then a dependent filer is refused (granting the full amount wrongly
+  would UNDER-state, refusing costs nothing).
 - **QSS ≡ MFJ** for the standard deduction and the child table. Do not map
   by reflex — it happens to hold here, and the test pins it.
 - **Whole-dollar rounding** on every line (D-401 p.4). The engine rounds to
@@ -85,19 +90,29 @@ at template time; `/tax-setup` step 4 gets one WebSearch bullet per row.
 | JSON path (`state.` …) | Kind | TY2025 evidence | Source |
 |---|---|---|---|
 | `code`, `name`, `authority`, `type` | STRUCTURAL | "NC", NCDOR | — |
-| `brackets` = `[{"min": 0, "rate": None}]` | FETCHED per year (statutory, NOT indexed, but trigger-reducible) | 4.25% (TY2026: 3.99%) | D-401 p.7; G.S. 105-153.7(a),(a1) |
-| `rate_tax_year` | FETCHED — the year the rate page names; compute refuses a mismatch | 2025 | NCDOR rate page |
+| `brackets` = `[{"rate": None, "min": 0, "max": None}]` | FETCHED per year (statutory, NOT indexed, but trigger-reducible) | 4.25% (TY2026: 3.99%) | D-401 p.7; G.S. 105-153.7(a),(a1) |
+| `rate_tax_year` | STAMPED by writing `state.brackets` into the year's cache, never set on its own (bias review: an attestation written apart from the rate could vouch for a carried-over one); freshness and compute refuse a mismatch | 2025 | NCDOR rate page |
 | `standard_deduction.{single,mfj,mfs,hoh,qss}` | FETCHED (statutory, unindexed) | 12,750 / 25,500 / 12,750 / 19,125 / 25,500 | D-401 p.14; G.S. 105-153.5(a)(1) |
 | `standard_deduction.mfs_spouse_itemizes` | FETCHED (statutory zero) | 0 | D-401 p.14 |
 | `child_deduction.{mfj_qss,hoh,single_mfs}` = list of `{agi_up_to, per_child}`, last band `agi_up_to: null` | FETCHED (statutory, unindexed) — THREE keys | 7 bands each, $3,000 → $0 in $500 steps; top bands 140k / 105k / 70k | D-401 p.13; G.S. 105-153.5(a1) |
 | `itemized.real_estate_tax_cap.{default,mfs}` | FETCHED (statutory) | 10,000 / 5,000 | D-401 p.20 Sch A line 2 |
 | `itemized.mortgage_plus_property_tax_cap` | FETCHED (statutory; household-wide even MFS) | 20,000 | D-401 p.20 line 4; G.S. 105-153.5(a2) |
 | `itemized.medical_agi_floor_rate` | FETCHED (IRC §213 by conformity) | 0.075 | D-401 p.20 line 7c |
-| `itemized.claim_of_right.{threshold,agi_rate}` | FETCHED | 3,000 / 0.02 | D-401 p.20 line 8 |
+| `itemized.claim_of_right.{repayment_threshold,agi_rate}` | FETCHED | 3,000 / 0.02 | D-401 p.20 line 8 |
 | `irc_conformity_date` | FETCHED — names the Code NC's Sch A and Sch S read; a year whose date is unfetched is refused | 2023-01-01 | D-401 p.17; G.S. 105-228.90(b)(7) |
 | `estimated_tax.required_threshold` | FETCHED | 1,000 | D-401 p.9 |
-| `estimated_tax.{current_year_pct,prior_year_pct,farmer_pct}` | FETCHED | 0.90 / 1.00 / 0.6667 | G.S. 105-163.15 (the p.9 "90%" is the EXTENSION late-payment rule, not this); the no-prior-year-liability exception is D-401 p.15 |
+| `estimated_tax.{current_year_rate,prior_year_rate,farmer_rate}` | FETCHED | 0.90 / 1.00 / 0.6667 | G.S. 105-163.15 (the p.9 "90%" is the EXTENSION late-payment rule, not this); the no-prior-year-liability exception is D-401 p.15 |
 | `use_tax.estimate_table` (bands on line 14) + `use_tax.top_rate` | FETCHED (only if §5's no-records path ships) | 30 bands, then line 14 × .000675 | D-401 p.26 |
+
+**Slice 2 decisions** (the code moved, so the table above did): the band
+carries `max: None` because the bracket validator requires all three keys and
+the walker reads a null top `max` as shape; `claim_of_right` avoids the key
+name `threshold`, which `_EXPECT_STRUCTURED` reads as per-status (a scalar
+there is reported as corruption); the estimated-tax shares end in `_rate` so
+`set` refuses `90` written for `0.90`; and `use_tax` is NOT seeded — §5.7
+makes use tax an input, and a seeded block nobody fetches would nag
+INCOMPLETE on every return. The ingest refuses a `rate_tax_year` other than
+the cache's, and the freshness audit flags one.
 
 `brackets` is a one-element LIST, not per-status: a flat rate has one schedule,
 and `state_brackets_for_status` already reads a list as status-independent.

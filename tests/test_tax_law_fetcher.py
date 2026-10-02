@@ -25,6 +25,42 @@ from agents.lib.tax_law_fetcher import (  # noqa: E402
 )
 
 
+def _nc_child_table(top_bands):
+    """One G.S. 105-153.5(a1) table: $3,000 per child stepping down $500 a band
+    to $0, the bound INCLUSIVE ("Up to X"), the top band open. D-401 p.13."""
+    return [{"agi_up_to": cap, "per_child": amount}
+            for cap, amount in zip(list(top_bands) + [None],
+                                   (3000, 2500, 2000, 1500, 1000, 500, 0))]
+
+
+def _nc_filled(year=2025):
+    """The NC template with its TY2025 D-401 figures in it (spec §3's evidence
+    column). Test data only — the template ships every one of them None."""
+    block = create_state_template("NC")
+    block["brackets"] = [{"rate": 0.0425, "min": 0, "max": None}]
+    block["rate_tax_year"] = year
+    block["standard_deduction"] = {"single": 12750, "mfj": 25500, "mfs": 12750,
+                                   "hoh": 19125, "qss": 25500,
+                                   "mfs_spouse_itemizes": 0}
+    block["child_deduction"] = {
+        "mfj_qss": _nc_child_table((40000, 60000, 80000, 100000, 120000, 140000)),
+        "hoh": _nc_child_table((30000, 45000, 60000, 75000, 90000, 105000)),
+        "single_mfs": _nc_child_table((20000, 30000, 40000, 50000, 60000, 70000)),
+    }
+    block["itemized"] = {
+        "real_estate_tax_cap": {"default": 10000, "mfs": 5000},
+        "mortgage_plus_property_tax_cap": 20000,
+        "medical_agi_floor_rate": 0.075,
+        "claim_of_right": {"repayment_threshold": 3000, "agi_rate": 0.02},
+    }
+    block["irc_conformity_date"] = "2023-01-01"
+    block["estimated_tax"] = {"required_threshold": 1000,
+                              "current_year_rate": 0.90,
+                              "prior_year_rate": 1.00,
+                              "farmer_rate": 0.6667}
+    return block
+
+
 def _write_cache(tmp_path, year, sdi_wage_limit="omit"):
     """A minimal fresh cache: only fields the walker will see. Pass
     sdi_wage_limit="omit" to simulate a legacy cache created before the field
@@ -599,7 +635,7 @@ class TestScalarByDesignThresholds:
             f"field that is a scalar by design. got: {flagged[0]}")
 
     # Every state this repo models a template for.
-    STATES = ("CA", "NY", "NJ", "FL", "TX", "WA")
+    STATES = ("CA", "NY", "NC", "NJ", "FL", "TX", "WA")
 
     def test_no_state_template_trips_the_shape_rule_on_its_own_data(self, tmp_path):
         """The class-level invariant, not just the one field that bit us.
@@ -632,6 +668,20 @@ class TestScalarByDesignThresholds:
             "a gate that fires on correct data teaches the agent to override "
             "it. Either give the field its real dict shape, or add its exact "
             f"path to _SCALAR_BY_DESIGN. {offenders}")
+
+    def test_a_filled_nc_template_raises_no_complaint_at_all(self, tmp_path):
+        """The template-level check with the data FILLED IN. An unfetched
+        template nagging is correct; a correctly fetched one nagging is the
+        false positive this class exists to stop. North Carolina carries two
+        shapes no earlier template had — a one-band schedule and three
+        child-deduction tables whose top band is open — so it is checked
+        against its canonical TY2025 figures, not only its nulls."""
+        data = create_empty_tax_law(2025)
+        data["state"] = _nc_filled(2025)
+        save_tax_law(2025, data, str(tmp_path))
+        state_nulls = [f for f in check_freshness(2025, str(tmp_path))["null_fields"]
+                       if f.startswith("state")]
+        assert state_nulls == [], state_nulls
 
 
 class TestFlSalesTaxAbsentKeyGuard:
@@ -813,7 +863,7 @@ class TestStateTypeAbsentKeyGuard:
                 if f == "state" or f.startswith("state.") or f.startswith("state ")]
 
     _EXPECTED_MSG = ("state.type (key absent — required for modeled states "
-                     "CA/NY (graduated_income) and FL/AK/NV/SD/TX/WY/TN "
+                     "CA/NY/NC (graduated_income) and FL/AK/NV/SD/TX/WY/TN "
                      "(none, once TN's year-aware regime resolves to none))")
 
     def test_fl_missing_type_key_flagged(self, tmp_path):
@@ -841,6 +891,15 @@ class TestStateTypeAbsentKeyGuard:
         ny = create_state_template("NY")
         del ny["type"]
         data["state"] = ny
+        save_tax_law(2025, data, str(tmp_path))
+        nulls = self._state_nulls(check_freshness(2025, str(tmp_path)))
+        assert self._EXPECTED_MSG in nulls
+
+    def test_nc_missing_type_key_flagged(self, tmp_path):
+        data = create_empty_tax_law(2025)
+        nc = _nc_filled(2025)
+        del nc["type"]
+        data["state"] = nc
         save_tax_law(2025, data, str(tmp_path))
         nulls = self._state_nulls(check_freshness(2025, str(tmp_path)))
         assert self._EXPECTED_MSG in nulls
@@ -2687,3 +2746,264 @@ class TestTheNewYorkBlock:
                 assert expected in flagged, (
                     f"{expected} is unfetched and the freshness walker did not "
                     f"name it:\n{flagged}")
+
+
+class TestTheNorthCarolinaBlock:
+    """Z4 slice 2: `create_state_template("NC")`, spec §3 of
+    docs/superpowers/specs/2026-10-02-nc-state-module-design.md.
+
+    Two shapes are new to this cache. The rate is a ONE-band schedule, year-
+    gated by G.S. 105-153.7, so the year the rate page named travels with it.
+    And the child deduction has THREE tables (G.S. 105-153.5(a1)) — MFJ/QSS,
+    HOH, Single/MFS — each open at the top, which the walker must read as the
+    table's shape and not as an unfetched bound."""
+
+    NCDOR = "https://www.ncdor.gov/2025-d-401-individual-income-tax-instructions"
+
+    def _state_nulls(self, tmp_path, block, year=2025):
+        data = create_empty_tax_law(year)
+        data["state"] = block
+        save_tax_law(year, data, str(tmp_path))
+        return [f for f in check_freshness(year, str(tmp_path))["null_fields"]
+                if f.startswith("state")]
+
+    @staticmethod
+    def _fetched_leaves(node, prefix="state"):
+        """Every None or empty-list leaf of the seed: what step 4 must fetch."""
+        if isinstance(node, dict):
+            return [leaf for k, v in node.items()
+                    for leaf in TestTheNorthCarolinaBlock._fetched_leaves(
+                        v, f"{prefix}.{k}")]
+        if isinstance(node, list):
+            return [prefix] if not node or any(
+                v is None for row in node if isinstance(row, dict)
+                for k, v in row.items() if k != "max") else []
+        return [prefix] if node is None else []
+
+    def test_no_figure_is_inlined(self):
+        """AGENTS.md §2: every rate, amount and threshold is fetched — the
+        statutory, unindexed ones included."""
+        leaves = self._fetched_leaves(create_state_template("NC"))
+        assert len(leaves) == 22, leaves
+        nums = []
+
+        def walk(node, path):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    walk(v, f"{path}.{k}")
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    walk(v, f"{path}[{i}]")
+            elif isinstance(node, (int, float)) and not isinstance(node, bool):
+                nums.append((path, node))
+        walk(create_state_template("NC"), "state")
+        # The one band's floor is structural: every schedule starts at zero.
+        assert nums == [("state.brackets[0].min", 0)], nums
+
+    def test_an_unfetched_template_nags_every_fetched_field(self, tmp_path):
+        nulls = self._state_nulls(tmp_path, create_state_template("NC"))
+        flagged = " ".join(nulls)
+        for leaf in self._fetched_leaves(create_state_template("NC")):
+            name = leaf.replace("state.brackets", "state.brackets[0].rate")
+            assert name in flagged, f"{name} unfetched and not flagged: {nulls}"
+        # And nothing beyond the fetched fields: no shape complaint about the
+        # template's own structure (the one-band seed, the open tops).
+        assert not [f for f in nulls if "expected" in f or "must" in f], nulls
+
+    def test_a_filled_block_passes_clean(self, tmp_path):
+        assert self._state_nulls(tmp_path, _nc_filled(2025)) == []
+        data = create_empty_tax_law(2025)
+        data["state"] = _nc_filled(2025)
+        assert validate_cache(data, 2025) == []
+
+    def test_the_one_band_schedule_reads_the_same_for_every_status(self):
+        """A LIST, so the one reader of `state.brackets` returns the band for
+        all five statuses, and bracket math is rate times income."""
+        from agents.lib.tax_computations import (compute_bracket_tax,
+                                                 state_brackets_for_status)
+        block = _nc_filled(2025)
+        for status in ("single", "mfj", "mfs", "hoh", "qss"):
+            assert state_brackets_for_status(block, status) == [
+                {"rate": 0.0425, "min": 0, "max": None}], status
+        # D-400 line 15: line 14 × 4.25% — $50,000 × 0.0425 = $2,125.00.
+        bands = state_brackets_for_status(block, "single")
+        assert compute_bracket_tax(50000, bands)[0] == 2125.00
+
+    @pytest.mark.parametrize("bands, match", [
+        ([{"rate": 0.0425, "min": 0, "max": 100000}], "max must be null"),
+        ([{"rate": 4.25, "min": 0, "max": None}], r"rate must be in \(0, 1\]"),
+        ([{"rate": 0.0425, "min": 0}], "rate, min and max"),
+    ])
+    def test_a_misread_band_is_refused(self, tmp_path, bands, match):
+        _fresh_cache(tmp_path, 2025)
+        _set(tmp_path, "state", create_state_template("NC"), source=self.NCDOR,
+             year=2025)
+        with pytest.raises(TaxLawSetError, match=match):
+            _set(tmp_path, "state.brackets", bands, source=self.NCDOR, year=2025)
+
+    def test_the_block_is_written_through_set_from_its_seed(self, tmp_path):
+        """The documented ingest: paste the template, then each figure. The
+        seed's null band must not make the paste itself a refusal."""
+        _fresh_cache(tmp_path, 2025)
+        _set(tmp_path, "state", create_state_template("NC"), source=self.NCDOR,
+             year=2025)
+        filled = _nc_filled(2025)
+        for key in ("brackets", "standard_deduction",
+                    "child_deduction", "itemized", "irc_conformity_date",
+                    "estimated_tax"):
+            _set(tmp_path, f"state.{key}", filled[key], source=self.NCDOR,
+                 year=2025)
+        stored = _read(tmp_path, 2025)
+        assert stored["state"] == filled
+        assert stored["_sources"]["state.NC"] == self.NCDOR
+        state_nulls = [f for f in check_freshness(2025, str(tmp_path))["null_fields"]
+                       if f.startswith("state") or "state.NC" in f]
+        assert state_nulls == [], state_nulls
+
+    def test_the_rate_must_be_the_filing_years(self, tmp_path):
+        """G.S. 105-153.7(a): "In 2025 4.25%", "After 2025 3.99%". A TY2025
+        rate carried into a TY2026 cache over-states by 0.26 points."""
+        carried = _nc_filled(2025)
+        nulls = self._state_nulls(tmp_path, carried, year=2026)
+        assert any(f.startswith("state.rate_tax_year (2025) is not 2026")
+                   for f in nulls), nulls
+        _fresh_cache(tmp_path, 2026)
+        _set(tmp_path, "state", create_state_template("NC"), source=self.NCDOR)
+        assert _read(tmp_path, 2026)["state"]["rate_tax_year"] is None
+        # Bias review: an attestation set apart from the rate could vouch for
+        # a carried-over one, so it is never set on its own.
+        for year in (2025, 2026):
+            with pytest.raises(TaxLawSetError, match="stamped by writing"):
+                _set(tmp_path, "state.rate_tax_year", year, source=self.NCDOR)
+        _set(tmp_path, "state.brackets",
+             [{"rate": 0.0399, "min": 0, "max": None}], source=self.NCDOR)
+        assert _read(tmp_path, 2026)["state"]["rate_tax_year"] == 2026
+
+    def test_the_conformity_date_is_a_date(self, tmp_path):
+        _fresh_cache(tmp_path, 2025)
+        _set(tmp_path, "state", create_state_template("NC"), source=self.NCDOR,
+             year=2025)
+        for bad in ("01/01/2023", 20230101, "2023-02-30", ""):
+            with pytest.raises(TaxLawSetError, match="irc_conformity_date"):
+                _set(tmp_path, "state.irc_conformity_date", bad,
+                     source=self.NCDOR, year=2025)
+        _set(tmp_path, "state.irc_conformity_date", "2023-01-01",
+             source=self.NCDOR, year=2025)
+
+    # --- the three-key child-deduction table ---------------------------------
+
+    def test_the_child_table_has_three_keys_not_five(self):
+        """MFJ/QSS, HOH, Single/MFS — G.S. 105-153.5(a1), D-401 p.13. An
+        accessor reading `qss` or `mfs` must find nothing, so neither exists."""
+        assert set(create_state_template("NC")["child_deduction"]) == {
+            "mfj_qss", "hoh", "single_mfs"}
+
+    @pytest.mark.parametrize("key", ["qss", "mfs", "mfj", "single"])
+    def test_a_per_status_child_key_is_refused(self, tmp_path, key):
+        _fresh_cache(tmp_path, 2025)
+        _set(tmp_path, "state", create_state_template("NC"), source=self.NCDOR,
+             year=2025)
+        with pytest.raises(TaxLawSetError, match="not in the schema"):
+            _set(tmp_path, f"state.child_deduction.{key}",
+                 _nc_child_table((1, 2, 3, 4, 5, 6)), source=self.NCDOR,
+                 year=2025)
+
+    @pytest.mark.parametrize("key", ["mfj_qss", "hoh", "single_mfs"])
+    def test_a_missing_child_table_is_flagged(self, tmp_path, key):
+        """The walker sees only present keys; a cache that lost one table
+        would otherwise read FRESH for every filer that table serves."""
+        block = _nc_filled(2025)
+        del block["child_deduction"][key]
+        nulls = self._state_nulls(tmp_path, block)
+        assert any(f.startswith(f"state.child_deduction.{key} (key absent")
+                   for f in nulls), nulls
+
+    def test_the_open_top_band_is_shape_not_a_gap(self, tmp_path):
+        nulls = self._state_nulls(tmp_path, _nc_filled(2025))
+        assert not [f for f in nulls if "agi_up_to" in f], nulls
+        # ...but only the TOP band may be open: a null inside is unfetched.
+        block = _nc_filled(2025)
+        block["child_deduction"]["hoh"][2]["agi_up_to"] = None
+        nulls = self._state_nulls(tmp_path, block)
+        assert "state.child_deduction.hoh[2].agi_up_to" in nulls, nulls
+
+    @pytest.mark.parametrize("break_it, match", [
+        (lambda t: t[-1].update(agi_up_to=150000), "top band's agi_up_to must be null"),
+        (lambda t: t[2].update(agi_up_to=t[1]["agi_up_to"]), "ascending"),
+        (lambda t: t[3].update(per_child=2600), "rises with AGI"),
+        (lambda t: t[0].update(per_child=-1), "cannot be negative"),
+        (lambda t: t[0].update(per_child=float("nan")), "finite number"),
+        (lambda t: t[0].update(per_child=True), "finite number"),
+        (lambda t: t[0].pop("per_child"), r"exactly \{agi_up_to, per_child\}"),
+        (lambda t: t[0].update(agi_over=0), r"exactly \{agi_up_to, per_child\}"),
+        (lambda t: t.clear(), "at least two"),
+    ])
+    def test_a_misread_child_table_is_refused(self, tmp_path, break_it, match):
+        _fresh_cache(tmp_path, 2025)
+        _set(tmp_path, "state", create_state_template("NC"), source=self.NCDOR,
+             year=2025)
+        table = _nc_child_table((40000, 60000, 80000, 100000, 120000, 140000))
+        break_it(table)
+        with pytest.raises(TaxLawSetError, match=match):
+            _set(tmp_path, "state.child_deduction.mfj_qss", table,
+                 source=self.NCDOR, year=2025)
+
+    def test_the_audit_holds_a_stored_child_table_to_the_same_rule(self, tmp_path):
+        """A table written by hand around `set` meets the rule at freshness."""
+        block = _nc_filled(2025)
+        block["child_deduction"]["single_mfs"][-1]["agi_up_to"] = 80000
+        nulls = self._state_nulls(tmp_path, block)
+        assert any("single_mfs" in f and "must be null" in f for f in nulls), nulls
+
+    # --- the fetch is wired --------------------------------------------------
+
+    def test_tax_setup_step_4_fetches_every_nc_field(self):
+        """Playbook step 1: one bullet per FETCHED field, mapped to its JSON
+        path — the generic fallback fetches brackets and a standard deduction
+        only, and every other field would then nag INCOMPLETE for ever."""
+        fetch = (REPO / ".agents" / "skills" / "tax-setup" / "references"
+                 / "tax-law-fetch.md").read_text()
+        nc = fetch[fetch.index("**For NC"):]
+        nc = nc[:nc.index("\n- **", 1)]
+        import re
+
+        def named(path):
+            return re.search(rf"(?<![\w.]){re.escape(path)}(?![\w.])", nc)
+        for leaf in self._fetched_leaves(create_state_template("NC")):
+            # Every leaf by its path, except the standard deduction, whose
+            # bullet names the block and lists its five status keys.
+            parent = leaf.rsplit(".", 1)[0]
+            assert named(leaf) or (parent == "state.standard_deduction"
+                                   and named(parent)), (
+                f"{leaf} has no step-4 bullet")
+        for needle in ("ncdor.gov", "ncleg.gov", "G.S. 105-153.7",
+                       "state.rate_tax_year", "names the tax year"):
+            assert needle in nc, needle
+
+
+class TestTheNorthCarolinaChildTableIsWhole:
+    """Bias review: a table read short — one band, or an open top that is not
+    zero — kept a deduction G.S. 105-153.5(a1) phases out, and read FRESH."""
+
+    @pytest.mark.parametrize("table", [
+        [{"agi_up_to": None, "per_child": 3000}],
+        [{"agi_up_to": 20000, "per_child": 3000},
+         {"agi_up_to": None, "per_child": 2500}],
+        [{"agi_up_to": 0, "per_child": 3000},
+         {"agi_up_to": None, "per_child": 0}],
+    ])
+    def test_a_short_table_is_refused(self, table):
+        from agents.lib.tax_law_fetcher import _check_nc_child_table
+        with pytest.raises(TaxLawSetError):
+            _check_nc_child_table("state.child_deduction.hoh", table)
+
+    def test_a_whole_table_passes(self):
+        from agents.lib.tax_law_fetcher import _check_nc_child_table
+        _check_nc_child_table("state.child_deduction.hoh", [
+            {"agi_up_to": 20000, "per_child": 3000},
+            {"agi_up_to": None, "per_child": 0}])
+
+    def test_a_float_rate_year_names_the_problem(self):
+        from agents.lib.tax_law_fetcher import _rate_year_problems
+        assert "integer year" in _rate_year_problems(
+            {"state": {"rate_tax_year": 2025.0}}, 2025)[0]

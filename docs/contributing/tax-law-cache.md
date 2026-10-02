@@ -66,6 +66,21 @@ allowed under IRC §151(c), the DEPENDENT subsection, and does not reference §1
 so it is an affirmative declaration, not an unfetched field, and reporting it as one
 fires on correct data.
 
+## North Carolina's block: one band, three child tables
+
+`state.brackets` for North Carolina is a LIST holding ONE band — a flat rate is a
+one-band schedule, read for every status by `state_brackets_for_status` like
+California's. The rate is set PER YEAR in G.S. 105-153.7, so `state.rate_tax_year`
+is STAMPED by writing the brackets into that year's cache and is never `set` on its
+own; the freshness audit refuses one that is not the cache's year: a carried-over
+rate over-states once the statute cuts it.
+
+`state.child_deduction` has THREE tables — `mfj_qss`, `hoh`, `single_mfs` — not one
+per status, keyed on FEDERAL AGI, each band's `agi_up_to` an INCLUSIVE bound and the
+top band's null. An accessor reading `qss` or `mfs` there finds nothing; map all five
+statuses explicitly. `state.standard_deduction` has the five statuses plus
+`mfs_spouse_itemizes`, the separate filer's amount when the spouse itemizes.
+
 ## Indexed per year, so a carried-over value goes stale silently
 
 - `salt_cap` — not indexed, but it changes every year all the same, so it goes

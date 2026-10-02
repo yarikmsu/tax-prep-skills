@@ -817,6 +817,77 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "paid_family_leave": {"rate": None, "wage_cap": None},
             "disability_benefits": {"employee_rate": None, "weekly_cap": None},
         },
+        "NC": {
+            # Design spec, §3 is this block row by row, with the TY2025 D-401
+            # page and statute behind each field:
+            # docs/superpowers/specs/2026-10-02-nc-state-module-design.md
+            # Every figure is None and FETCHED by /tax-setup step 4 — including
+            # the ones the statute states and does not index (AGENTS.md §2).
+            # Descriptive keys audited against check_freshness's _SKIP_KEYS:
+            # name, authority and conforms_to_federal are already there.
+            "code": "NC",
+            "name": "North Carolina",
+            "authority": "North Carolina Department of Revenue (NCDOR)",
+            "type": "graduated_income",
+            # NOT a piggyback: D-400 starts from federal AGI, but read under
+            # the Code as of `irc_conformity_date`, with every difference
+            # carried on Schedule S and an independent NC Schedule A.
+            "conforms_to_federal": False,
+            # ONE band — a flat rate is a one-band schedule, not a new `type`.
+            # A LIST, so `state_brackets_for_status` reads it for every status;
+            # the band carries all three of {rate, min, max} because the
+            # bracket validator requires them, and the top band's null `max`
+            # is the schedule's shape, which the freshness walker skips.
+            # G.S. 105-153.7 is YEAR-GATED ("In 2025 4.25%", "After 2025
+            # 3.99%") and (a1) can trigger further cuts from TY2027, so the
+            # rate is fetched per year and `rate_tax_year` records the year the
+            # rate page NAMES — a carried-over rate on a later return
+            # over-states, and check_freshness flags a mismatch.
+            "brackets": [{"rate": None, "min": 0, "max": None}],
+            "rate_tax_year": None,
+            # FIVE statuses (QSS equals MFJ here, and the test pins the key
+            # rather than the coincidence), plus the statutory ZERO an MFS
+            # filer gets when the spouse itemizes (D-401 p.14 chart).
+            "standard_deduction": {
+                "single": None,
+                "mfj": None,
+                "mfs": None,
+                "hoh": None,
+                "qss": None,
+                "mfs_spouse_itemizes": None,
+            },
+            # THE KEYING TRAP: G.S. 105-153.5(a1) has THREE tables, not four
+            # or five — married-joint with the surviving spouse, head of
+            # household, and single with married-separate. An accessor reading
+            # `qss` or `mfs` finds nothing. Keyed on FEDERAL AGI (D-400 line 6).
+            # Each table: [{"agi_up_to", "per_child"}, ...] ascending, the
+            # upper bound INCLUSIVE ("Up to X" / "Over X - Up to Y"), the top
+            # band's `agi_up_to` null (open), per_child never rising.
+            "child_deduction": {"mfj_qss": [], "hoh": [], "single_mfs": []},
+            # NC Schedule A, independent of the federal election.
+            "itemized": {
+                # Sch A line 2; `default` covers every status but MFS.
+                "real_estate_tax_cap": {"default": None, "mfs": None},
+                # Sch A line 4 — household-wide, even MFS (G.S. 105-153.5(a2)).
+                "mortgage_plus_property_tax_cap": None,
+                "medical_agi_floor_rate": None,
+                # Sch A line 8. Not named `threshold`: that key name is
+                # per-filing-status everywhere else and a scalar there reads
+                # as corruption (_EXPECT_STRUCTURED).
+                "claim_of_right": {"repayment_threshold": None, "agi_rate": None},
+            },
+            # ISO date (YYYY-MM-DD) of the Code NC's Schedules S and A read —
+            # G.S. 105-228.90(b)(7). Unfetched → compute refuses the year.
+            "irc_conformity_date": None,
+            # Form NC-40, G.S. 105-163.15. Shares are `_rate`-suffixed so the
+            # ingest refuses a percentage written as 90 rather than 0.90.
+            "estimated_tax": {
+                "required_threshold": None,
+                "current_year_rate": None,
+                "prior_year_rate": None,
+                "farmer_rate": None,
+            },
+        },
         "FL": {
             "code": "FL",
             "name": "Florida",
@@ -938,6 +1009,43 @@ _STATE_CODE_TO_NAME = {code: name.title() for name, code in _STATE_NAME_TO_CODE.
 # create_state_template via capabilities._TN_HALL_REPEAL_YEAR.
 _TYPE_NONE_TEMPLATE_ALWAYS = _NO_INCOME_TAX_STATES - {"FL", "TN"}
 
+# States with a pre-built `graduated_income` template, whose regime is
+# therefore KNOWN: a cache for one of them must carry `type`, and must carry
+# this one. Read by `_expected_state_regime` and the absent-type guard in
+# check_freshness, so the two cannot list different states.
+_GRADUATED_MODELED_STATES = ("CA", "NY", "NC")
+
+# North Carolina's child-deduction tables (G.S. 105-153.5(a1)): THREE keys,
+# each a list of {agi_up_to, per_child} bands whose top `agi_up_to` is null.
+_NC_CHILD_TABLE = re.compile(r"^state\.child_deduction\.(mfj_qss|hoh|single_mfs)$")
+
+
+def _open_top_key(path: str) -> "str | None":
+    """The key whose null on a table's LAST row is the table's open top, not an
+    unfetched figure — `max` on a bracket schedule, `agi_up_to` on a North
+    Carolina child-deduction table — or None for a list that has no such row."""
+    if path.endswith("brackets"):
+        return "max"
+    if _NC_CHILD_TABLE.match(path):
+        return "agi_up_to"
+    return None
+
+
+def _absent_keys(ref, node, prefix: str) -> "list[str]":
+    """Dotted paths of every key the seed `ref` carries that `node` lacks,
+    recursing through dicts present in both. Lists are leaves: their rows are
+    data, not schema."""
+    if not isinstance(ref, dict) or not isinstance(node, dict):
+        return []
+    found = []
+    for key, sub in ref.items():
+        path = f"{prefix}.{key}"
+        if key not in node:
+            found.append(path)
+        else:
+            found.extend(_absent_keys(sub, node[key], path))
+    return found
+
 
 def _state_pin_code(state: dict) -> str:
     """The documented `state.<CODE>` pin suffix for a single-state cache block:
@@ -976,7 +1084,7 @@ def _expected_state_regime(code: str, tax_year) -> "str | None":
     matching the conservative "not yet repealed" default `_tn_hall_repealed`
     uses when the year can't be resolved.
     """
-    if code in ("CA", "NY"):
+    if code in _GRADUATED_MODELED_STATES:
         return "graduated_income"
     if code == "TN":
         year = tax_year
@@ -1413,13 +1521,16 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 if path not in _EMPTY_LIST_BY_DESIGN:
                     null_fields.append(f"{path} (empty list)")
             else:
+                open_key = _open_top_key(path)
                 for i, item in enumerate(obj):
                     # A bracket table is open at the top: the LAST bracket's
                     # null `max` is the schedule's shape, not an unfetched
                     # figure (a closed top bracket is what `set` refuses).
-                    if (path.endswith("brackets") and i == len(obj) - 1
-                            and isinstance(item, dict) and item.get("max") is None):
-                        item = {k: v for k, v in item.items() if k != "max"}
+                    # North Carolina's child-deduction tables are the same
+                    # shape under another key (`agi_up_to`).
+                    if (open_key and i == len(obj) - 1
+                            and isinstance(item, dict) and item.get(open_key) is None):
+                        item = {k: v for k, v in item.items() if k != open_key}
                     _walk(item, f"{path}[{i}]")
 
     _walk(data)
@@ -1483,6 +1594,18 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                     "state.sales_tax.county_surtax_rate (key absent — required "
                     "for FL's Schedule A line 5a sales-tax election)")
 
+    # NC absent-key guard, the same class as the FL one above: the walker
+    # visits only PRESENT keys, so a cache missing one of the THREE
+    # child-deduction tables — or any other key the template seeds — reads
+    # FRESH while the compute has nothing to read for that taxpayer. Every
+    # key the template carries is required, the template being the schema.
+    if isinstance(state_block, dict) and _state_pin_code(state_block) == "NC":
+        null_fields.extend(
+            f"{path} (key absent — the North Carolina template seeds it and "
+            "/tax-setup step 4 fetches it)"
+            for path in _absent_keys(create_state_template("NC"), state_block,
+                                     "state"))
+
     # state.type regime-discriminator guard (Codex P2): "type" was removed
     # from _SKIP_KEYS above so a PRESENT-but-null or misspelled value is no
     # longer skipped over silently — a deleted/corrupted discriminator must
@@ -1520,11 +1643,12 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # ISN'T "none", so they're still named explicitly.
     if isinstance(state_block, dict) and "type" not in state_block:
         _absent_type_code = _state_pin_code(state_block)
-        if (_absent_type_code in ("CA", "NY")
+        if (_absent_type_code in _GRADUATED_MODELED_STATES
                 or _none_type_allowed(_absent_type_code, data.get("tax_year"))):
             null_fields.append(
                 "state.type (key absent — required for modeled states "
-                "CA/NY (graduated_income) and FL/AK/NV/SD/TX/WY/TN "
+                f"{'/'.join(_GRADUATED_MODELED_STATES)} (graduated_income) and "
+                "FL/AK/NV/SD/TX/WY/TN "
                 "(none, once TN's year-aware regime resolves to none))")
 
     # state.type vs state.code cross-check (Codex round-3 P1 finding C,
@@ -1911,7 +2035,12 @@ _TABLE_VALIDATORS = (
     (re.compile(r"^ptet\.[A-Z]{2}\.schedule$"), "ptet_schedule"),
     (re.compile(r"^federal\.irmaa\.tiers\.(single|mfj)$"), "tiers"),
     (re.compile(r"^state\.(nyc_tax\.)?tax_table\.table_bases$"), "table_bases"),
+    (_NC_CHILD_TABLE, "nc_child_deduction"),
 )
+# Leaves whose fetched value is an ISO calendar date, not a number. The seed is
+# None (unfetched), which the generic checker otherwise reads as a NUMBER — so
+# `set` refused every date and a correctly fetched one read as malformed.
+_ISO_DATE_PATHS = frozenset({"state.irc_conformity_date"})
 
 
 def _is_number(v) -> bool:
@@ -2042,6 +2171,103 @@ def _check_ascending(dotted: str, value, *, fields: tuple, order_by: str,
                               allow_zero=True)
 
 
+def _check_nc_child_table(dotted: str, value) -> None:
+    """One North Carolina child-deduction table (G.S. 105-153.5(a1)).
+
+    Bands are `{agi_up_to, per_child}`, ascending by `agi_up_to`, whose bound
+    is INCLUSIVE ("Up to X"); the top band's is null, because a closed table
+    leaves every AGI above it with no row at all. The amount per child never
+    RISES with AGI — it is a phase-down — so a rising row is a transposed one.
+    """
+    if not isinstance(value, list) or len(value) < 2:
+        raise TaxLawSetError(f"{dotted}: expected at least two "
+                             "{agi_up_to, per_child} bands — the deduction "
+                             "phases down to an open top band of zero")
+    prev_cap = prev_amount = None
+    for i, band in enumerate(value):
+        if not isinstance(band, dict) or set(band) != {"agi_up_to", "per_child"}:
+            raise TaxLawSetError(
+                f"{dotted}[{i}]: each band is exactly {{agi_up_to, per_child}}")
+        cap, amount = band["agi_up_to"], band["per_child"]
+        last = i == len(value) - 1
+        if cap is None:
+            if not last:
+                raise TaxLawSetError(
+                    f"{dotted}[{i}]: only the top band may have agi_up_to null")
+        else:
+            if last:
+                raise TaxLawSetError(
+                    f"{dotted}[{i}]: the top band's agi_up_to must be null — a "
+                    "closed table leaves every AGI above it with no row")
+            _check_number(f"{dotted}[{i}].agi_up_to", cap, is_rate=False)
+            if cap == 0:  # `state.*` admits zero generally; "Up to $0" is no row
+                raise TaxLawSetError(
+                    f"{dotted}[{i}].agi_up_to: zero is not a band's upper bound")
+            if prev_cap is not None and not cap > prev_cap:
+                raise TaxLawSetError(
+                    f"{dotted}[{i}]: bands must be ascending by agi_up_to")
+            prev_cap = cap
+        _check_number(f"{dotted}[{i}].per_child", amount, is_rate=False,
+                      allow_zero=True)
+        if prev_amount is not None and amount > prev_amount:
+            raise TaxLawSetError(
+                f"{dotted}[{i}]: per_child rises with AGI ({prev_amount} then "
+                f"{amount}) — the deduction phases DOWN; a row was misread")
+        prev_amount = amount
+    # The open top band is where the statute phases the deduction OUT. A
+    # non-zero amount there is a truncated table: everyone above the last
+    # band read keeps a deduction G.S. 105-153.5(a1) has taken to zero, which
+    # UNDER-states the tax.
+    if value[-1]["per_child"] != 0:
+        raise TaxLawSetError(
+            f"{dotted}[{len(value) - 1}]: the open top band's per_child must be "
+            "0 — a non-zero top is a table read short")
+
+
+def _check_iso_date(dotted: str, value) -> None:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        raise TaxLawSetError(f"{dotted}: expected an ISO date YYYY-MM-DD, got {value!r}")
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise TaxLawSetError(f"{dotted}: {value!r} is not a calendar date") from None
+
+
+def _rate_year_problems(data: dict, year: int) -> "list[str]":
+    """A year-gated state rate (North Carolina, G.S. 105-153.7) must have been
+    read from a page naming THIS year. `state.rate_tax_year` records the year
+    the page named; a different one is a carried-over rate, which over-states
+    once the statute has cut it."""
+    state = data.get("state")
+    if not isinstance(state, dict) or state.get("rate_tax_year") is None:
+        return []
+    named = state["rate_tax_year"]
+    if isinstance(named, bool) or not isinstance(named, int):
+        return [f"state.rate_tax_year ({named!r}) must be an integer year"]
+    if named != year:
+        return [f"state.rate_tax_year ({named!r}) is not {year} — the state rate "
+                f"was read from a page for another year; the rate is set by "
+                f"year in statute, so re-fetch it for {year}"]
+    return []
+
+
+def _stamp_rate_year(data: dict, dotted: str, year: int) -> None:
+    """North Carolina's `rate_tax_year` is WRITTEN BY the rate write, never on
+    its own: an attestation set separately could vouch for a rate carried over
+    from another year, and a rate re-written later would keep the old one.
+    Writing the brackets (or the whole block) into THIS year's cache stamps
+    the cache year when the band holds a rate, and clears it when it does not."""
+    state = data.get("state")
+    if not (isinstance(state, dict) and _state_pin_code(state) == "NC"
+            and (dotted == "state" or dotted == "state.brackets"
+                 or dotted.startswith("state.brackets."))):
+        return
+    band = state.get("brackets")
+    rated = (isinstance(band, list) and band and isinstance(band[0], dict)
+             and _is_number(band[0].get("rate")))
+    state["rate_tax_year"] = year if rated else None
+
+
 def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None:
     """`writing` is False for the freshness audit, which reads a cache as
     stored: a rule that normalises in place must not let the audit pass a
@@ -2080,6 +2306,8 @@ def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None
             _ny_table_bases_entries(value, dotted)
         except ValueError as exc:
             raise TaxLawSetError(str(exc)) from None
+    elif kind == "nc_child_deduction":
+        _check_nc_child_table(dotted, value)
     elif kind == "ptet_schedule":
         rows = []
         for i, row in enumerate(value if isinstance(value, list) else []):
@@ -2108,7 +2336,9 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
         if not top and ref is None:
             return
         raise TaxLawSetError(f"{dotted}: null is the unfetched state, not a figure")
-    if not top and isinstance(ref, list) and value == []:
+    # The seed's own unfetched table — `[]`, or a band whose figures are
+    # still null (North Carolina's one-band schedule) — inside a block write.
+    if not top and isinstance(ref, list) and value in ([], ref):
         return
     for pattern, kind in _TABLE_VALIDATORS:
         # A table the schema keys by schedule or status (New York's brackets)
@@ -2145,6 +2375,8 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
     elif isinstance(ref, str):
         if not isinstance(value, str) or not value.strip():
             raise TaxLawSetError(f"{dotted}: expected a non-empty string")
+    elif dotted in _ISO_DATE_PATHS:
+        _check_iso_date(dotted, value)
     else:
         # A None seed (unfetched) or a numeric structural constant.
         parent = dotted.rsplit(".", 1)[0] if "." in dotted else ""
@@ -2335,6 +2567,7 @@ def validate_cache(data: dict, year: int) -> "list[str]":
     except TaxLawSetError as e:
         problems.append(str(e))
     problems.extend(_structural_drift(data, year))
+    problems.extend(_rate_year_problems(data, year))
     # The walker sees only keys that are present. A cache keyed single/mfj
     # (pre-X1) reads None for head of household and separate at the accessor,
     # which then refuses naming /tax-setup — while FRESH said proceed.
@@ -2420,10 +2653,18 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
         raise TaxLawSetError(
             f"the cache declares tax_year {data.get('tax_year')!r} but --year is "
             f"{year} — refusing to write a figure for one year into another's cache")
+    if dotted == "state.rate_tax_year":
+        raise TaxLawSetError(
+            "state.rate_tax_year is stamped by writing state.brackets into this "
+            "year's cache, never set on its own — an attestation written apart "
+            "from the rate can vouch for a rate carried over from another year")
     ref = _reference_for(dotted, data, value, year)
     _check_against(dotted, ref, value)
     _set_path(data, dotted, value, year)
+    _stamp_rate_year(data, dotted, year)
     _sanity(data)
+    for problem in _rate_year_problems(data, year):
+        raise TaxLawSetError(problem)
     pin = _pin_key(dotted, data)
     period = _check_applies_to(pin, dotted, applies_to, year)
     when = (now or datetime.now()).replace(microsecond=0).isoformat()
