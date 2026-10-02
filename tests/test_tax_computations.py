@@ -8182,6 +8182,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ny.py::compute_ny_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_household_credit": "direct",
         "tax_computations/state/ny.py::compute_nyc_taxable_income": "direct",
+        "tax_computations/state/ny.py::ny_household_refusals": "direct",
         "tax_computations/state/ny.py::compute_nyc_resident_tax": "direct",
         "tax_computations/state/ny.py::compute_yonkers_resident_surcharge": "direct",
         "tax_computations/state/ny.py::compute_yonkers_nonresident_earnings_tax": "direct",
@@ -8555,3 +8556,58 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         for cfg in ({}, {"brackets": None}, {"brackets": []}, None):
             assert state_brackets_for_status(cfg, None) == []
             assert state_brackets_for_status(cfg, "Married Filing Separately") == []
+
+
+
+def test_the_gate_and_the_engine_agree_on_the_refused_households():
+    """`ny_household_refusals` is what the capability gate blocks on (AA30);
+    each household it names must be one the engine itself refuses, and each it
+    passes one the engine's residency guards accept — or the gate blocks a
+    computable return, or lets an uncomputable one reach Step 10."""
+    from agents.lib.tax_computations.state import ny
+    refused = [
+        ("single", {"nyc_resident": True, "nyc_resident_full_year": False}),
+        ("MFJ", {"nyc_resident": True, "nyc_resident_spouses": 1}),
+        ("MFJ", {"nyc_resident": True, "nyc_resident_spouses": 0}),
+        ("single", {"yonkers_resident": True,
+                    "yonkers_resident_full_year": False}),
+        ("MFJ", {"yonkers_resident": True, "yonkers_resident_spouses": 1}),
+        ("MFJ", {"yonkers_nonresident_earnings": True}),
+        ("single", {"yonkers_nonresident_earnings": True,
+                    "yonkers_resident": True,
+                    "yonkers_resident_full_year": True}),
+    ]
+    computed = [
+        ("single", {"nyc_resident": True, "nyc_resident_full_year": True}),
+        ("MFJ", {"nyc_resident": True, "nyc_resident_spouses": 2}),
+        ("single", {"yonkers_resident": True,
+                    "yonkers_resident_full_year": True}),
+        ("MFJ", {"yonkers_resident": True, "yonkers_resident_spouses": 2}),
+    ]
+
+    def engine_refuses(status, flags):
+        try:
+            if flags.get("nyc_resident"):
+                ny.compute_nyc_taxable_income(
+                    100000.0, filing_status=status,
+                    nyc_resident_spouses=flags.get("nyc_resident_spouses"),
+                    nyc_resident_full_year=flags.get("nyc_resident_full_year"))
+            if flags.get("yonkers_resident"):
+                ny._yonkers_residency_guard(
+                    ny._ny_status(status),
+                    flags.get("yonkers_resident_spouses"),
+                    flags.get("yonkers_resident_full_year"))
+            if flags.get("yonkers_nonresident_earnings"):
+                ny.compute_yonkers_nonresident_earnings_tax(
+                    {}, status, None, 0.0,
+                    yonkers_resident=bool(flags.get("yonkers_resident")))
+        except ValueError:
+            return True
+        return False
+
+    for status, flags in refused:
+        assert ny.ny_household_refusals(status, flags), (status, flags)
+        assert engine_refuses(status, flags), (status, flags)
+    for status, flags in computed:
+        assert not ny.ny_household_refusals(status, flags), (status, flags)
+        assert not engine_refuses(status, flags), (status, flags)

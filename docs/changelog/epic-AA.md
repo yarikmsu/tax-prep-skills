@@ -1991,3 +1991,56 @@ built from it blocks; and each conditionally asked flag is set `false` in the
 interview where its condition skips it. Mutation checks: one flag back to
 `false` (1 test fails), the fixture no longer answering (2), the ISO
 question's `false` removed (1).
+
+## AA30 — the refused City and Yonkers households, blocked at the gate
+
+### What was wrong
+
+`state/ny.py` refuses a part-year New York City or Yonkers resident, a joint
+return with one (or no) whole-year resident spouse, and Form Y-203 on a joint
+return or beside a Yonkers residence. Those refusals surfaced at /tax-compute
+Step 10, and since AA29 the tie-out fails the return again at Step 12.7 —
+after the work, although every answer that decides it is an interview
+question asked before any.
+
+### What shipped
+
+- **`ny_household_refusals`** in `ny.py`, beside `NY_HOUSEHOLD_LINES`: the
+  refused households, from answered flags. A test runs each case through the
+  engine's own guards, so the gate and the engine cannot drift apart.
+- **`ny_city_or_yonkers_household_unmodeled`**, raised at Step 0.7 on a New
+  York return only — elsewhere the engine never runs, and a Connecticut
+  commuter's Yonkers earnings are `nonresident_source_income`'s. It names the
+  form (IT-360.1, IT-201 lines 50, 51 and 57, Form Y-203).
+- **It can be acknowledged**, as every unsupported situation can (AGENTS.md
+  §4): the City or Yonkers tax is then prepared by hand and recorded in
+  `answers.md`. The note warns against the only other way past it, a false
+  residency answer — a whole year or a second resident spouse OVER-states the
+  tax, and dropping the flag drops it.
+- **The tie-out exempts an acknowledged refused household** from the engine's
+  line 47a, 55 or 56, since the hand figure belongs on line 50, 51 or 57; only
+  those households, and only with the acknowledgement.
+- An unanswered count or full-year answer is left to the engine, which
+  refuses it by name.
+
+The skill hook's test budget is nearly spent: the gate's cases are loops, not
+parametrized tests, and the engine-agreement test lives in a module the hook
+does not run. AA9 and AA24 are where that budget is measured.
+
+### Not done — AA32
+
+The tie-out still checks a household line's value, not its provenance (AA30's
+other half), so a 0 written after the template passes as computed.
+
+### Verified
+
+Seven refused households block on a New York return with the form named, and
+none blocks on a Connecticut one; seven not refused (whole-year, both spouses,
+a single Y-203, unanswered counts) pass; the block acknowledges; the engine
+refuses each case the predicate names and accepts each it passes; the tie-out
+exempts an acknowledged household and still holds an unacknowledged one.
+Mutation checks: the block not scoped to New York (3 tests fail), not
+acknowledgeable (3), the tie-out exemption off (2), the exemption without the
+acknowledgement (3), the predicate refusing two resident spouses (4); and from
+the first round, the block never raised, the Y-203 condition dropped and the
+part-year case unchecked (1 each).

@@ -291,7 +291,10 @@ that computes it; an unflagged one stays null, or takes the 0
 `compute_city_and_yonkers_total` returns for it. At Step 12.7 the tie-out FAILS
 a flagged line still null or absent, and a line 58 below line 54 plus lines
 54e, 55 and 56, whichever way line 58 was assembled. A household the function
-refuses still owes the tax: prepare it by hand, never enter 0.
+refuses still owes the tax: prepare it by hand, never enter 0. Those households
+block at Step 0.7 as `ny_city_or_yonkers_household_unmodeled`; acknowledged, the
+tax goes on line 50, 51 or 57 by hand and the tie-out stops requiring 47a, 55
+or 56 for that household.
 
 ## 10.NY.5 — Sales or use tax (line 59)
 

@@ -1296,8 +1296,12 @@ class TestTheNewYorkModuleIsDone:
             assert flag in template["flags"], flag
 
     def test_neither_yonkers_flag_blocks(self):
+        """For the household the engine computes: a single filer, a whole-year
+        resident. A joint Y-203 and a part-year resident are AA30's blocks."""
         for flag in ("yonkers_resident", "yonkers_nonresident_earnings"):
-            assert C.evaluate(_profile({flag: True})).blocking == (), flag
+            p = _profile({flag: True, "yonkers_resident_full_year": True})
+            p["filing_status"] = "single"
+            assert C.evaluate(p).blocking == (), flag
 
     def test_every_required_gate_flag_is_asked_by_the_interview(self):
         """The registry test covers rule flags; these three have no rule, so
@@ -1886,3 +1890,78 @@ def test_a_conditionally_asked_gate_question_is_answered_when_skipped(flag):
     assert near_false, (
         f"interview.md never says to set `{flag}` false when its condition "
         "skips the question")
+
+
+
+# --------------------------------------------------------------------------
+# AA30: the New York City and Yonkers households the engine refuses are
+# blocked at the gate, where the form can be named before the work, rather
+# than discovered at Step 10 and failed again at the Step 12.7 tie-out.
+# --------------------------------------------------------------------------
+
+def _ny_household(status="single", state="NY", acknowledged=None, **flags):
+    p = _profile(flags, acknowledged=acknowledged, state=state)
+    p["filing_status"] = status
+    return C.evaluate(p)
+
+
+# Loops, not parametrize: every test collected here counts against the skill
+# hook's timeout budget (MEASURED COSTS), and these cases are one claim each.
+_REFUSED_HOUSEHOLDS = (
+    ("single", {"nyc_resident": True, "nyc_resident_full_year": False},
+     "New York City: a resident for only part of the year"),
+    ("MFJ", {"nyc_resident": True, "nyc_resident_spouses": 1},
+     "New York City: a joint return with 1"),
+    ("MFJ", {"nyc_resident": True, "nyc_resident_spouses": 0},
+     "New York City: a joint return with 0"),
+    ("single", {"yonkers_resident": True, "yonkers_resident_full_year": False},
+     "Yonkers: a resident for only part of the year"),
+    ("MFJ", {"yonkers_resident": True, "yonkers_resident_spouses": 1},
+     "Yonkers: a joint return with 1"),
+    ("MFJ", {"yonkers_nonresident_earnings": True}, "Form Y-203"),
+    ("single", {"yonkers_nonresident_earnings": True, "yonkers_resident": True,
+                "yonkers_resident_full_year": True}, "Form Y-203"),
+)
+
+# Not blocked at the gate: the households the engine computes, and the
+# unanswered counts it refuses by name itself at Step 10.
+_NOT_BLOCKED_HOUSEHOLDS = (
+    ("single", {"nyc_resident": True, "nyc_resident_full_year": True}),
+    ("MFJ", {"nyc_resident": True, "nyc_resident_spouses": 2}),
+    ("single", {"yonkers_resident": True, "yonkers_resident_full_year": True}),
+    ("MFJ", {"yonkers_resident": True, "yonkers_resident_spouses": 2}),
+    ("single", {"yonkers_nonresident_earnings": True}),
+    # Unanswered counts are the engine's to refuse, by name, not this block's.
+    ("single", {"nyc_resident": True}),
+    ("MFJ", {"nyc_resident": True}),
+)
+
+
+def test_a_household_the_engine_refuses_blocks_at_the_gate():
+    for status, flags, named in _REFUSED_HOUSEHOLDS:
+        r = _ny_household(status, **flags)
+        assert _blocking_ids(r) == ["ny_city_or_yonkers_household_unmodeled"], \
+            (status, flags)
+        assert named in r.blocking[0].note, (status, flags)
+        assert not r.blocking[0].acknowledged
+
+
+def test_a_household_not_refused_is_not_blocked():
+    for status, flags in _NOT_BLOCKED_HOUSEHOLDS:
+        assert "ny_city_or_yonkers_household_unmodeled" not in _blocking_ids(
+            _ny_household(status, **flags)), (status, flags)
+
+
+def test_the_household_block_is_scoped_to_a_new_york_return_and_acknowledgeable():
+    """Elsewhere the New York engine never runs: a Connecticut commuter's joint
+    Y-203 is nonresident_source_income's, not this block's. On a New York
+    return it can be acknowledged — the City or Yonkers tax is then prepared by
+    hand — because the only other way past it is a false residency answer."""
+    for status, flags, _named in _REFUSED_HOUSEHOLDS:
+        assert "ny_city_or_yonkers_household_unmodeled" not in _blocking_ids(
+            _ny_household(status, state="CT", **flags)), (status, flags)
+    r = _ny_household("single", nyc_resident=True,
+                      nyc_resident_full_year=False,
+                      acknowledged=["ny_city_or_yonkers_household_unmodeled"])
+    assert "ny_city_or_yonkers_household_unmodeled" not in _blocking_ids(r)
+    assert any("prepared by hand" in line for line in r.limitations)

@@ -2854,3 +2854,20 @@ def test_ny_household_cli_reads_the_flags_from_the_profile(tmp_path):
     out = _run_cli(tmp_path, "--json")
     assert out.returncode == 2
     assert json.loads(out.stdout)["ny_city_and_yonkers"]
+
+
+
+def test_an_acknowledged_refused_household_is_not_held_to_the_engines_line():
+    """AA30: a part-year City resident who acknowledged the gate's block
+    prepares the City tax by hand on line 50 (IT-360.1), not 47a. Without the
+    acknowledgement the line is still required."""
+    flags = {"nyc_resident": True, "nyc_resident_full_year": False}
+    profile = {"filing_status": "single", "flags": flags,
+               "acknowledged_limitations":
+                   ["ny_city_or_yonkers_household_unmodeled"]}
+    result = _ny_result(nyc={"line_47a_nyc_resident_tax": None}, line_58=0)
+    exempted = T._flags_for_city_and_yonkers(profile, flags)
+    assert not _ny_report(result, exempted).failed
+    profile["acknowledged_limitations"] = []
+    assert _ny_report(result,
+                      T._flags_for_city_and_yonkers(profile, flags)).failed

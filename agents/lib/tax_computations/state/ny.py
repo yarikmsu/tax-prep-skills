@@ -1822,6 +1822,44 @@ NY_HOUSEHOLD_LINES = (
 )
 
 
+def ny_household_refusals(filing_status, flags: dict) -> "list[tuple[str, str]]":
+    """The household lines this module REFUSES, from ANSWERED flags (AA30).
+
+    `(flag, why)` for each: a part-year City or Yonkers resident (IT-360.1,
+    IT-201 lines 50 and 57), a joint return with one or no whole-year resident
+    spouse (line 51, special condition Y1), and Form Y-203 on a joint return or
+    beside a Yonkers residence. The capability gate reads it to block at Step
+    0.7 what `compute_nyc_taxable_income`, `_yonkers_residency_guard` and
+    `compute_yonkers_nonresident_earnings_tax` refuse at Step 10, and the
+    tie-out to exempt an acknowledged one. An UNANSWERED count or full-year
+    answer is not here: each function refuses it by name.
+    """
+    joint = _ny_status(filing_status) == "mfj"
+    out = []
+    for flag, spouses, full_year, place, line in (
+            ("nyc_resident", "nyc_resident_spouses", "nyc_resident_full_year",
+             "New York City", "IT-201 line 50 or 51"),
+            ("yonkers_resident", "yonkers_resident_spouses",
+             "yonkers_resident_full_year", "Yonkers", "IT-201 line 57")):
+        if flags.get(flag) is not True:
+            continue
+        count = flags.get(spouses)
+        if joint and not isinstance(count, bool) and count in (0, 1):
+            out.append((flag, f"{place}: a joint return with {count} "
+                              f"whole-year resident spouse(s) ({line}, "
+                              "IT-360.1)"))
+        elif not joint and flags.get(full_year) is False:
+            out.append((flag, f"{place}: a resident for only part of the "
+                              f"year ({line}, IT-360.1)"))
+    if flags.get("yonkers_nonresident_earnings") is True and (
+            joint or flags.get("yonkers_resident") is True):
+        out.append(("yonkers_nonresident_earnings",
+                    "Yonkers nonresident earnings: Form Y-203 on a joint "
+                    "return, or beside a Yonkers residence (special condition "
+                    "Y1)"))
+    return out
+
+
 def _flagged_tax(amount, name: str, flag, flag_name: str, line: str) -> float:
     """One of line 58's flag-governed taxes, refused where the household flag
     and the amount disagree. See compute_city_and_yonkers_total."""

@@ -76,8 +76,10 @@ from agents.lib.secure_fs import (  # noqa: E402
     redact,
     secure_path,
 )
+from agents.lib.capabilities import _NY_HOUSEHOLD_RULE_ID  # noqa: E402
 from agents.lib.tax_computations import (  # noqa: E402
     NY_HOUSEHOLD_LINES,
+    ny_household_refusals,
     compute_pfic_1291,
     compute_pfic_excess_distribution,
 )
@@ -327,6 +329,27 @@ def _is_figure(value) -> bool:
     not one, though `isinstance(True, int)` says otherwise."""
     return (not isinstance(value, bool) and isinstance(value, (int, float))
             and math.isfinite(value) and value >= 0)
+
+
+def _flags_for_city_and_yonkers(profile: dict, flags: dict) -> dict:
+    """The household flags the line checks below should hold the return to.
+
+    A household the engine refuses, ACKNOWLEDGED at Step 0.7 (AA30), has its
+    City or Yonkers tax prepared by hand on IT-360.1, line 51 or Form Y-203,
+    not on the engine's line 47a, 55 or 56; demanding that line would send the
+    hand figure to a field with the wrong line number. Only the refused
+    households are exempted, and only with the acknowledgement.
+    """
+    acknowledged = profile.get("acknowledged_limitations")
+    if not (isinstance(acknowledged, list)
+            and _NY_HOUSEHOLD_RULE_ID in acknowledged):
+        return flags
+    try:
+        refusals = ny_household_refusals(profile.get("filing_status"), flags)
+    except ValueError as exc:
+        raise TieOutError(f"taxpayer_profile.json filing_status: {exc}") from None
+    refused = {flag for flag, _why in refusals}
+    return {k: v for k, v in flags.items() if k not in refused}
 
 
 def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
@@ -2097,7 +2120,7 @@ def _main(argv: list) -> int:
             # pipeline, and the loud direction is the safe one if it is.
             _eic_flag = flags.get("may_qualify_for_eic")
             eic_screening = _eic_flag if isinstance(_eic_flag, bool) else None
-            profile_flags = flags
+            profile_flags = _flags_for_city_and_yonkers(prof, flags)
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None

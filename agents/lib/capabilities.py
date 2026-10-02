@@ -544,7 +544,7 @@ def _validated_acknowledged(profile: dict, extra: "set[str] | None") -> "set[str
             "acknowledged_limitations must be a list of rule-id strings"
         )
     acknowledged = {x.strip() for x in raw if x.strip()} | (extra or set())
-    unknown = acknowledged - set(_RULES_BY_ID)
+    unknown = acknowledged - set(_RULES_BY_ID) - _DERIVED_ACKNOWLEDGEABLE
     if unknown:
         raise CapabilityError(
             f"unknown acknowledged_limitations ids: {sorted(unknown)}. "
@@ -597,6 +597,32 @@ def _legacy_residency_change(profile: dict) -> bool:
 _COMMUNITY_PROPERTY_STATES = frozenset(
     {"AZ", "CA", "ID", "LA", "NV", "NM", "TX", "WA", "WI"})
 _COMMUNITY_PROPERTY_RULE_ID = "community_property_mfs"
+_NY_HOUSEHOLD_RULE_ID = "ny_city_or_yonkers_household_unmodeled"
+# Derived findings a user may acknowledge, beside the registry's rule ids.
+_DERIVED_ACKNOWLEDGEABLE = frozenset({_NY_HOUSEHOLD_RULE_ID})
+
+
+def _ny_household_unmodeled(profile: dict) -> "list[str]":
+    """The City and Yonkers households the New York engine refuses (AA30), for
+    a New York return only: elsewhere the engine never runs, and a Connecticut
+    commuter's Yonkers earnings are `nonresident_source_income`'s. The
+    conditions are `ny_household_refusals`', beside the functions that refuse.
+    """
+    if _profile_state(profile) != "NY":
+        return []
+    # Imported HERE: the engine imports irs_dates, which imports this module.
+    from agents.lib.tax_computations.state.ny import ny_household_refusals
+    raw = profile.get("flags")
+    flags: dict = raw if isinstance(raw, dict) else {}
+    if not any(flags.get(flag) is True for flag in (
+            "nyc_resident", "yonkers_resident", "yonkers_nonresident_earnings")):
+        return []
+    try:
+        refusals = ny_household_refusals(profile.get("filing_status"), flags)
+    except ValueError as exc:
+        raise CapabilityError(f"filing_status: {exc}") from None
+    return [why for _flag, why in refusals]
+
 
 # States with NO individual income tax of any kind — the capability note
 # declares this affirmatively instead of the "bracket-based ESTIMATE" text.
@@ -1030,6 +1056,22 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
             "manual note and understate the punitive §1291 tax. This blocker "
             "cannot be acknowledged; answer the question.",
             acknowledged=False))
+
+    unmodeled = _ny_household_unmodeled(profile)
+    if unmodeled:
+        _place(Finding(
+            _NY_HOUSEHOLD_RULE_ID, UNSUPPORTED,
+            "A New York City or Yonkers household the engine does not compute",
+            "IT-360.1 / IT-201 lines 50, 51, 57 / Form Y-203",
+            "; ".join(unmodeled) + ". /tax-compute refuses the City or "
+            "Yonkers tax for each of these, so the gate says so before the "
+            "work. The tax is still owed: acknowledging this means it is "
+            "prepared by hand on the form named, recorded in answers.md, and "
+            "the tie-out stops requiring the engine's line for that household. "
+            "Never answer a residency question untruthfully to get past it: "
+            "a whole year or a second resident spouse OVER-states the tax, and "
+            "dropping the flag drops it.",
+            _NY_HOUSEHOLD_RULE_ID in acknowledged_ids))
 
     # Form 8958 community-property income splitting applies to EVERY MFS
     # filer domiciled in a community-property state — not just marriage-year
