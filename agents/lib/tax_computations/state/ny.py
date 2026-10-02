@@ -17,6 +17,7 @@ import math
 from agents.lib.tax_computations._shared import (
     _amount,
     _normalize_filing_status,
+    _round_half_up,
     _split_remainder_last,
 )
 
@@ -529,8 +530,9 @@ def _ny_round_half_up(value: float) -> int:
     "increase amounts from 50 to 99 cents to the next dollar" (IT-201-I,
     Entering whole dollar amounts). Python's `round` is HALF-EVEN, so it turns
     2,416.50 into 2,416 where the form says 2,417 — a dollar, every time the
-    cents land on a tie, in the direction that under-states."""
-    return math.floor(value + 0.5) if value >= 0 else -math.floor(-value + 0.5)
+    cents land on a tie, in the direction that under-states. The rule is
+    `_shared._round_half_up`, shared with North Carolina's four-place ratio."""
+    return int(_round_half_up(value))
 
 
 def _ny_table_bases(brackets: dict, schedule: str, tax_table: dict,

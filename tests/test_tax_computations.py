@@ -7692,9 +7692,9 @@ class TestOneReaderOfStateBrackets:
 
 class TestTheNorthCarolinaResultSection:
     """`north_carolina_d400` — Z4 slice 2, spec §4 of
-    docs/superpowers/specs/2026-10-02-nc-state-module-design.md. The engine
-    that fills it is slice 3, so this pins the section against the SPEC's
-    field list; slice 3 adds the engine-emits-a-field check New York has."""
+    docs/superpowers/specs/2026-10-02-nc-state-module-design.md. This pins
+    the section against the SPEC's field list; the engine-emits-a-field check
+    New York has is `tests/test_nc_state.py::TestTheResultSectionHoldsEveryKey`."""
 
     REPO = Path(__file__).resolve().parents[1]
 
@@ -7760,8 +7760,10 @@ class TestTheNorthCarolinaResultSection:
             1, 16, 17, 18, 19, 20, 21, 41]
         sched_a = [k.split("_")[1] for k in section["schedule_a"]
                    if k.startswith("line_")]
+        # 7c is the 7.5%-of-AGI floor and 7d the medical deduction after it
+        # (D-401 p.20); slice 2 had folded them into one `line_7c_medical`.
         assert sched_a == ["1", "2", "3", "4", "5", "6", "7a", "7b", "7c",
-                           "8", "9", "10"]
+                           "7d", "8", "9", "10"]
         for block in ("schedule_s", "schedule_a"):
             assert "_include_if" in section[block]
             assert all(v == 0 for k, v in section[block].items()
@@ -8129,9 +8131,9 @@ class TestEveryStateEntryPointValidatesItsFilingStatus:
         # status somewhere, so a run that inspected neither has lost its
         # subject — a renamed directory, a changed predicate — rather than
         # found nothing to report.
-        assert {p.split("::")[0] for p in seen} == {"ca.py", "ny.py"}, (
+        assert {p.split("::")[0] for p in seen} == {"ca.py", "nc.py", "ny.py"}, (
             f"the sweep inspected {sorted(set(p.split('::')[0] for p in seen))} "
-            "— it is meant to read both depth modules, and a module it cannot "
+            "— it is meant to read every depth module, and a module it cannot "
             "see is a module it cannot hold")
         assert not offenders, (
             f"{offenders} take a filing_status and never validate it. A "
@@ -8273,6 +8275,10 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ny.py::compute_yonkers_nonresident_earnings_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_required_annual_payment": "direct",
         "tax_computations/state/ny.py::compute_ny_itemized": "direct",
+        "tax_computations/state/nc.py::compute_nc_child_deduction": "direct",
+        "tax_computations/state/nc.py::compute_nc_d400": "direct",
+        "tax_computations/state/nc.py::compute_nc_deduction_choice": "direct",
+        "tax_computations/state/nc.py::compute_nc_itemized": "direct",
         "withholding.py::build_ny_true_up": "direct",
         "scenario.py::salt_cap_may_move": "direct",
 

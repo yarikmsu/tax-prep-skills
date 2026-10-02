@@ -21,6 +21,7 @@ same amount-parsers and the same two statutory floors the federal side does.
 """
 
 import math
+from decimal import ROUND_HALF_UP, Decimal
 
 import agents.lib  # noqa: F401 — the host-interpreter guard, see agents/lib/__init__.py
 
@@ -53,6 +54,22 @@ def _medical_deductible(expenses: float, agi: float) -> float:
     return round(max(0.0, expenses - _SCHED_A_MEDICAL_FLOOR * max(0.0, agi)), 2)
 
 _CANONICAL_FILING_STATUSES = {"SINGLE", "MFJ", "MFS", "HOH", "QSS"}
+
+
+def _round_half_up(value: "float | Decimal", places: int = 0) -> Decimal:
+    """Round HALF-UP (a tie away from zero) to `places` decimals, the way the
+    forms say to: New York's "increase amounts from 50 to 99 cents to the next
+    dollar" (IT-201-I) and North Carolina's "round to four decimal places"
+    (D-401 p.22, D-400TC line 3). Python's `round` is HALF-EVEN on the BINARY
+    value, so it turns 2,416.50 into 2,416 and 9 / 4,000 into 0.0022 where the
+    forms say 2,417 and 0.0023 — in the direction that under-states.
+
+    A float is read as the decimal it PRINTS as (`repr`), not its binary
+    expansion, so 0.00225 is a tie; a caller holding an exact quotient passes
+    it as a `Decimal` so that no float ever stands between the operands and the
+    tie. Returns a `Decimal`: each caller converts to what its form carries."""
+    exact = value if isinstance(value, Decimal) else Decimal(repr(value))
+    return exact.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
 
 def _split_remainder_last(shortfall: float, weights: "list[float]") -> "list[float]":
     """Split `shortfall` proportionally to `weights`, rounding remainder on

@@ -13,6 +13,7 @@ import errno
 import shutil
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 import pytest
@@ -1687,7 +1688,28 @@ class TestTheNoNetworkClaimIsTrue:
         "xmlrpc", "asyncio.streams",
     })
     NETWORK_SUBMODULES = frozenset({"urllib.request", "urllib.error"})
-    SHELL_FETCHERS = ("curl ", "wget ", "nc ", "ssh ")
+    SHELL_FETCHERS = ("curl", "wget", "nc", "ssh")
+    # Everything the original substring test (`"curl " in line`) caught, less
+    # ONE shape: the fetcher's name as the tail of an identifier — dotted
+    # (`state.nc import`, North Carolina's module, named by its postal code as
+    # the state playbook requires) or word-joined (`spouse_itemizes_nc is`).
+    # So the rule is a NEGATIVE lookbehind — anything but a word character or
+    # a dot may precede — rather than a list of allowed predecessors, which
+    # silently missed `>curl`, `exec:nc`, `[curl` and `!ssh`. The one word
+    # character that may precede is the `n`/`t`/`r` of an ESCAPE written in
+    # source (`"set -e\ncurl -s x"`), a command on the next line of a shell
+    # string. Second alternative: the subprocess LIST form, the fetcher as a
+    # whole quoted token opening a list, tuple or call (`["curl", "-s", url]`),
+    # which the substring test never saw. It is anchored to the opening
+    # bracket on purpose: a bare `"nc"` token is a lowercase postal code
+    # (pdf_render's acronym list already holds "ca" and "ny").
+    _FETCHER_RE = re.compile(
+        r"(?:(?<![\w.])|(?<=\\[ntr]))(?:" + "|".join(SHELL_FETCHERS) + r")\s"
+        r"|[\[(]\s*[\"'](?:" + "|".join(SHELL_FETCHERS) + r")[\"']\s*[,)\]]")
+
+    @classmethod
+    def _shells_out(cls, line: str) -> bool:
+        return cls._FETCHER_RE.search(line) is not None
 
     def _python_sources(self):
         # `agents/`, deliberately WIDER than `agents/lib/`, and so deliberately
@@ -1727,11 +1749,30 @@ class TestTheNoNetworkClaimIsTrue:
                 stripped = line.strip()
                 if stripped.startswith("#"):
                     continue
-                for fetcher in self.SHELL_FETCHERS:
-                    if fetcher in stripped:
-                        offenders.append(f"{source.name}:{lineno}: {stripped[:60]}")
+                if self._shells_out(stripped):
+                    offenders.append(f"{source.name}:{lineno}: {stripped[:60]}")
         assert not offenders, (
             "SECURITY.md promises this code opens no socket: " + "; ".join(offenders))
+
+    def test_the_fetcher_detector_tells_a_command_from_a_module_path(self):
+        """Anti-vacuity both ways: the command forms are caught, and a module
+        path ending in a fetcher's name — `state.nc` — is not."""
+        for caught in ('nc -l 8080', 'subprocess.run("curl https://x")',
+                       "os.system('wget http://x')", 'x=$(ssh host true)',
+                       'a && nc host 80', '/usr/bin/curl -s x',
+                       'CMD=wget http://x', '"{curl x"',
+                       '"set -e\\ncurl -s x"',       # a literal backslash-n
+                       "\tnc host 80",                  # a real tab
+                       ">curl x", "exec:nc x", "[curl x]", "!ssh host",
+                       'subprocess.run(["curl", "-s", url])',
+                       "Popen(('nc', host))"):
+            assert self._shells_out(caught), caught
+        for clean in ("from agents.lib.tax_computations.state.nc import (",
+                      'raise ValueError("spouse_itemizes_nc is required")',
+                      "if spouse_itemizes_nc is None:",
+                      "sync_nc = 1", "encurl = 2",
+                      '"ny", "nyc", "nc",', '{"nc": 1}'):
+            assert not self._shells_out(clean), clean
 
     def test_the_detector_would_catch_a_network_import(self, tmp_path):
         """Anti-vacuity: the walk must fail on a module that does reach out."""

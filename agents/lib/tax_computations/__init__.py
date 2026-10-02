@@ -3585,6 +3585,18 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
 )
 
 
+# North Carolina — the same contract as California and New York above.
+from agents.lib.tax_computations.state.nc import (  # noqa: E402,F401
+    compute_nc_child_deduction,
+    compute_nc_d400,
+    compute_nc_deduction_choice,
+    compute_nc_itemized,
+    compute_nc_other_state_credit,
+    compute_nc_schedule_s,
+    compute_nc_tax,
+)
+
+
 # New York, re-exported so that `tax_computations.<name>` keeps working. The
 # callers are skill MARKDOWN as well as code — an instruction file naming a
 # function is not something a sweep can find and rewrite — so the addresses

@@ -38,7 +38,7 @@ template seeds: every one ships `None` and is fetched (AGENTS.md §2).
 | 9 | Extension | **Automatic with the federal extension** — D-401 p.7: a taxpayer granted an automatic federal extension "will be granted an automatic state extension", but MUST fill in the "Federal Extension" circle on D-400 p.1. Otherwise **Form D-410** by the original due date. **Neither extends payment** (p.7-8); a 90%-paid-by-due-date rule avoids the late-payment penalty (p.9). The extension is SIX months, to Oct 15 (ncdor.gov's D-410 guidance and its annual "returns with extensions are due Oct. 15" notice; G.S. 105-263 grants the automatic state extension and leaves the length to the Secretary). |
 | 10 | PTET regime + window | **YES — "Taxed PTE"**, G.S. 105-154.1: "Effective for taxable years beginning on or after January 1, 2022" (ncleg.gov page text; confirm against S.L. 2022-6 as the enacting law), election "on its timely filed return" and "may not make or revoke the election after the return is filed" — **no separate prepayment window** like CA's June 15. Rate = the §105-153.7 individual rate. S-corporation election statute (G.S. 105-131.1A?) — UNVERIFIED. NOT in `PTET_WINDOWS` today. |
 | 11 | Community property | NC is NOT in `capabilities._COMMUNITY_PROPERTY_STATES` — correct. |
-| 12 | Itemized deductions | **Own Schedule A, independent of the federal election** (D-401 p.20: "even if you did not claim itemized deductions on your federal return"). Only five items: mortgage interest under §163(h) (Sch A line 1), real-estate tax capped **$10,000 / $5,000 MFS** (line 2), mortgage + property tax combined capped **$20,000**, combined across BOTH spouses even MFS with proration (line 4; G.S. 105-153.5(a2)), charitable under §170 (line 6), medical over **7.5% of federal AGI** (line 7c), claim-of-right repayment (line 8, its own 2%-of-AGI worksheet ≤ $3,000). **No state/local income or sales tax deduction at all.** No high-AGI phase-out. |
+| 12 | Itemized deductions | **Own Schedule A, independent of the federal election** (D-401 p.20: "even if you did not claim itemized deductions on your federal return"). Only five items: mortgage interest under §163(h) (Sch A line 1), real-estate tax capped **$10,000 / $5,000 MFS** (line 2), mortgage + property tax combined capped **$20,000**, combined across BOTH spouses even MFS with proration (line 4; G.S. 105-153.5(a2)), charitable under §170 (line 6), medical over **7.5% of federal AGI** (line 7c is the floor, 7d the deduction), claim-of-right repayment (line 8, its own 2%-of-AGI worksheet ≤ $3,000). **No state/local income or sales tax deduction at all.** No high-AGI phase-out. |
 | 13 | Straight bracket math? | **YES.** D-400 line 15: "Multiply Line 14 by 4.25% (0.0425). If zero or less, enter a zero." No tax table, no recapture. **The rate is year-gated**: G.S. 105-153.7(a) "In 2025 4.25%", "After 2025 3.99%", and (a1) **triggers** cut it by 0.50 pts per year (floor 2.49%) from TY2027 when General Fund revenue clears a statutory threshold — so a year's rate is not knowable from the statute alone and MUST be fetched per year from NCDOR's published rate. |
 
 **Further sharp edges found while answering:**
@@ -186,6 +186,68 @@ Withholding (20a/20b) is parse-filled and is NOT evidence.
 7. `compute_nc_d400(...)` — assembles lines 6-34; use tax is an INPUT
    (`nc_use_tax` amount, or `nc_use_tax_certified_none: true`); neither
    given → line 18 `null` + a loud note, payment lines still computed.
+
+**Slice 3 decisions** (`state/nc.py`; the code moved, so this section did):
+
+- **Keyword arguments, not `fed`/`inputs` dicts.** `compute_nc_schedule_s(tax_year,
+  state_cfg, *, ...)` and `compute_nc_itemized(filing_status, federal_agi,
+  state_cfg, *, ...)` name each raw input, so a misspelt key is a `TypeError`
+  rather than a silently absent figure. `compute_nc_d400` takes each as a dict
+  of those keyword arguments. Part 3 lives inside
+  `compute_nc_other_state_credit` (its `line_16`-`line_20`).
+- **The Schedule A BLOCKs the raw inputs cannot settle are CALLER ANSWERS**
+  (`mortgage_over_acquisition_limit`, `home_equity_debt`,
+  `charitable_agi_limit_may_bind`), required whenever the matching amount is
+  non-zero, with `True` or unanswered refusing. The alternative was comparing
+  against the conformity-date Code's dollar and percentage limits, which no
+  cache field carries and §2 forbids inlining. Box 5 premiums refuse on the
+  amount itself.
+- **MFS `paid_by`** takes `filer` (claimed), `spouse` (refused: the item is on
+  the other return) and `joint_account` (refused: p.20's income-share
+  proration is not modelled). The household-wide line 4 limit is prorated by
+  the PERCENTAGE PAID by each spouse, as D-401 p.20 line 4 says ("If the amount
+  of home mortgage interest and real estate property taxes paid by both
+  spouses exceeds twenty thousand dollars ($20,000), the deductions must be
+  prorated based on the percentage paid by each spouse"): mortgage interest
+  plus real-estate tax actually PAID, BEFORE the line 2 real-estate cap — both
+  for the over-$20,000 test and for the share. `spouse_mortgage_and_property_tax`
+  is that paid figure for the spouse, not the spouse's line 3. (An earlier
+  draft prorated on line 3 after the cap; the two differ whenever a spouse's
+  real-estate tax exceeds the MFS cap.)
+- **Schedule S presence flags are REQUIRED booleans**
+  (`government_retirement_1099r`, `uniformed_services_retirement_1099r`): a
+  default of False would silently drop B20/B21. Lines 20+21 are bounded by
+  `government_retirement_taxable` — the taxable amount (box 2a) of the
+  government and uniformed-services 1099-Rs ONLY — required whenever either is
+  claimed and validated whenever passed. Not 1040 lines 4b + 5b: those carry
+  private IRA and 401(k) income the two lines can never deduct.
+- **No zero defaults on Schedule S amounts.** `exempt_interest`,
+  `state_local_refund_in_agi`, `us_obligation_interest`,
+  `us_government_fund_dividends`, `taxable_social_security` and
+  `railroad_tier2_in_agi` are REQUIRED keyword arguments: an omitted deduction
+  over-states NC tax, an omitted line-1 addition under-states it silently.
+- **D-400TC line 3 rounds HALF-UP** to four places from the exact quotient
+  (`_shared._round_half_up`, the rule New York's whole-dollar rounding also
+  uses); Python's half-even `round` gives 0.0022 for 9 / 4,000 where the form
+  gives 0.0023. `other_states` is a list — `None` or `[]` mean no other
+  state, anything else refuses.
+- **A form-year gate**, `_NC_D401_YEARS_READ = {2025}`: Schedule S and D-400
+  refuse a year whose D-401 was not read (§8's last row). `compute_nc_tax`
+  alone is gated only by `rate_tax_year`, so the TY2026 rate test runs.
+- **Schedule A carries line 7d**: the template had folded 7c (the floor) and
+  7d (the deduction) into `line_7c_medical`; it is now `line_7c` +
+  `line_7d_medical`.
+- **Line 18 certification** is the field `use_tax_none_due_circle`; a `0`
+  amount without it refuses, since the D-400 asks for the circle, not a zero.
+  Unanswered, the circle is `null` beside a `null` line 18 — not `false`,
+  which would read as an answer.
+- **Line 28 with 26e larger than the overpayment** carries the excess 26e to
+  line 27 rather than printing a negative overpayment. 26b/26c on an overpaid
+  return stay on line 27, not netted.
+- **Dependent filer** refused at `compute_nc_deduction_choice` (§2), and
+  20b refuses on any status but MFJ (D-401 p.14).
+- **§7's "update the test-invariants count"** is stale: that file no longer
+  restates the suite's size (the `MEASURED COSTS` block owns it).
 
 ## 6. Registrations
 
