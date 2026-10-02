@@ -227,8 +227,8 @@ Grep-verify each of these — they are the places "state" is enumerated:
 | `capabilities._state_note` | upgrade your state from the bracket-estimate note to a depth note — **do this LAST (step 7)** |
 | `retirement_dashboard` sets | `_HSA_NON_CONFORMING_STATES`, `_IRA_DEDUCTION_NONCONFORMING_STATES`, `_RETIREMENT_DEFERRAL_NONCONFORMING_STATES` if your state belongs |
 | `tax_calendar.py` **and** `agents/lib/ptet.py` | weighted estimated-payment events if not equal quarters (CA-ES precedent); PTET: one `PTET_WINDOWS` entry in the state registry, which both modules read (W10) |
-| `withholding.py` / `projection/` | projection has a generic bracket path (`project_state_tax`); **withholding has NO generic state path** — it is federal + CA-only, so either add a state true-up block or list the gap explicitly in your spec's non-goals (an unlisted gap silently drops your state's true-up) |
-| `/tax-extend` | your state's extension mechanics (only CA is modeled today — the skill says so) |
+| `withholding.py` / `projection/` | projection has a generic bracket path (`project_state_tax`); **withholding has NO generic state path** — it is federal plus a `build_<xx>_true_up` per computed state (CA, NY), so either add a state true-up block or list the gap explicitly in your spec's non-goals (an unlisted gap silently drops your state's true-up) |
+| `/tax-extend` and `tax_calendar.events_extension` | your state's extension mechanics (CA's automatic extension with FTB 3519 and NY's required IT-370 are the precedents) |
 
 ## Step 6 — Tests
 
@@ -237,6 +237,12 @@ Grep-verify each of these — they are the places "state" is enumerated:
 - Cover: bracket math, each addition/subtraction, credit ordering,
   presence/scaffold gating, validator rejections (bool/NaN/negative),
   freshness fixtures, and one end-to-end result-section shape test.
+- `tests/test_state_registry.py` goes red until a registry row with
+  `evidence_fields` is wired everywhere a computed state must be: its tie-out
+  withholding category, a "computed in depth" capability note, calendar
+  estimated-tax events, an extension event naming its form, a withholding
+  true-up and a package form. That list is the minimum, not the
+  table in step 5.
 - Update the test-count line in `docs/contributing/test-invariants.md`
   (enforced habit) and keep fixtures under `tests/fixtures/` (PII-scan
   allowlist).

@@ -12,6 +12,8 @@ import ast
 import json
 from pathlib import Path
 
+import pytest
+
 from agents.lib import projection, yoy_diff
 from agents.lib.tax_computations.state import registry
 from agents.lib.tax_computations.state.registry import STATE_SECTIONS
@@ -170,3 +172,52 @@ def test_ptet_window_edges():
     assert active("CA", 2030) and not active("CA", 2031)
     assert not active("NY", 2020) and active("NY", 2099)
     assert not active("NJ", 2019) and active("NJ", 2020)
+
+
+# The per-state BEHAVIOUR stays in the module that owns it, keyed by code (the
+# registry docstring says why). What W10 adds for those modules is that a
+# state the registry says is COMPUTED and one of them never heard of cannot
+# ship: nothing failed when a module was missed, and the filing package's
+# CA-only table proved it — a NY package had no IT-201 (W10, third slice).
+COMPUTED = [s for s in STATE_SECTIONS if s.evidence_fields]
+
+
+def test_the_computed_states_are_ca_and_ny():
+    assert {s.code for s in COMPUTED} == {"CA", "NY"}
+
+
+@pytest.mark.parametrize("s", COMPUTED, ids=lambda s: s.code)
+def test_a_computed_state_is_wired_into_every_module(s):
+    from agents.lib import capabilities, tax_calendar, tie_out, withholding
+    # The tie-out checks the state's W-2 withholding against its section.
+    category = f"state_withholding_{s.code.lower()}"
+    assert tie_out.CATEGORY_TARGETS[category][0] == s.section, category
+    # The capability gate tells the reader the state is computed in depth,
+    # not that it is a bracket estimate.
+    note = capabilities._state_note({"address": {"state": s.code}})
+    assert "computed in depth" in note, (s.code, note)
+    # The calendar schedules the state's own estimated-tax payments.
+    events = tax_calendar.build_events(
+        {"address": {"state": s.code}, "flags": {}}, 2026)
+    assert any(e.category == "state_estimated_tax" for e in events), s.code
+    # An extension names the state return it extends, by the package's form
+    # name ("Form 540", "Form IT-201"), or the October date reads federal-only.
+    title = s.package_forms[0][1]
+    extended = tax_calendar.events_extension(2026, state=s.code)[1]
+    assert title[title.index("Form"):] in extended.description, s.code
+    # Withholding has no generic state path: a state without its own true-up
+    # silently drops out of /tax-withholding.
+    assert callable(getattr(withholding,
+                            f"build_{s.code.lower()}_true_up", None)), s.code
+    # The filing package assembles the state's return.
+    assert s.package_forms and s.package_forms[0][0] == s.section
+
+
+def test_every_state_withholding_category_names_a_registered_state():
+    """The other direction: a category for a state the registry does not
+    know is a section the projection, review and package never see."""
+    from agents.lib import tie_out
+    for category, (section, _fields) in tie_out.CATEGORY_TARGETS.items():
+        if category.startswith("state_withholding_"):
+            code = category.removeprefix("state_withholding_").upper()
+            assert registry.BY_CODE[code].section == section, category

@@ -151,10 +151,12 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   PTET regime windows `/tax-ptet` and `/tax-calendar` each carried are ONE
   registry table by the pull request that records "W10, second slice", and
   the filing package's state forms derive from it by the one recording "W10,
-  third slice" (a NY package had no IT-201). Still
-  per-module: `capabilities._state_note`, the tie-out withholding rows,
-  `tax_calendar`'s estimated-tax and extension branches, and the two generic
-  deferrals below. *Raised by the 2026-09-12 four-angle review.*
+  third slice" (a NY package had no IT-201). The per-state BEHAVIOUR stays
+  in its module by design, and the one recording "W10, fourth slice" makes
+  missing it fail: a test requires each computed state's tie-out category,
+  depth note, estimated-tax and extension events, withholding true-up and
+  package form. **What remains open is
+  the two generic deferrals below.** *Raised by the 2026-09-12 four-angle review.*
   Six parallel per-state tables across four modules: `projection.STATE_SECTION_KEYS`
   and `_STATE_SECTION_CODES`, the two `_*_COMPUTED_EVIDENCE_FIELDS`, `yoy_diff`'s
   three, `capabilities._state_note`'s if/elif chain, `tie_out`'s per-state

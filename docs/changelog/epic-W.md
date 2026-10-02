@@ -979,3 +979,33 @@ These still branch on the state inside their own modules, and are the next slice
   - restoring the CA-only table turns the NY assembly test red;
   - removing the evidence gate turns all three refusal cases red.
 - A two-state test pins the order: CA 540, then Schedule CA, then IT-201.
+
+## W10, fourth slice: a computed state that a module never heard of cannot ship
+
+### What was wrong
+
+After the third slice, every per-state DATA table derived from the registry. The per-state BEHAVIOUR stayed in the module that owns it, keyed by code, by the registry's own design: the capability gate's depth note, the tie-out's withholding categories, and the calendar's estimated-tax dispatch. Nothing tied that behaviour back to the registry, so a third computed state could be added to it and still miss any of them silently. The filing package had just shown what that looks like.
+
+### What shipped
+
+`tests/test_state_registry.py` now requires each registry row with `evidence_fields` (CA and NY) to be wired into four places:
+
+- a `state_withholding_<xx>` tie-out category targeting its section;
+- a capability note that says "computed in depth", not a bracket estimate;
+- `state_estimated_tax` events from `tax_calendar.build_events`;
+- an October extension event naming its form;
+- a `withholding.build_<xx>_true_up`, since withholding has no generic state path;
+- a first package form that is its section.
+
+It also requires every `state_withholding_*` category to name a registered state, and the playbook's step 6 now says so. Two of the playbook's step-5 rows had gone stale and are corrected: they claimed withholding was CA-only and `/tax-extend` modeled CA only, when NY has had both.
+
+### Verified
+
+Mutation checks:
+- dropping NY's estimated-tax dispatch from the calendar turns the wiring test red;
+- dropping NY's October extension form name turns it red;
+- adding a withholding category for an unregistered state turns the reverse test red.
+
+### Still open
+
+The two generic deferrals at the end of `docs/changelog/epic-P.md`: a data-driven `state.modifications` block and a `state.local` block shape. W10 stays open for them.
