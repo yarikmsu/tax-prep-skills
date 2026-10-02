@@ -57,8 +57,8 @@ FL is the worked example. The state template carries `type: "none"` +
 keys (the freshness walker flags every empty list — structure out what you
 will never fetch). The result section is INFORMATIONAL (an affirmative
 no-return statement) with no computed-evidence pair — state that non-goal in
-your spec. Register: `STATE_SECTION_KEYS`, `OPTIONAL_SECTIONS`,
-`capabilities._NO_INCOME_TAX_STATES` (+ `_state_note`). Do NOT register a
+your spec. Register: a registry row with empty `evidence_fields` and an
+`informational_key` (step 5), `capabilities._NO_INCOME_TAX_STATES` (+ `_state_note`). Do NOT register a
 tie-out withholding category (no Box 17 exists — both-halves-or-neither →
 neither) or a withholding true-up block. The federal Schedule A sales-tax
 election is the state's one computation (`compute_sales_tax_deduction` →
@@ -141,10 +141,9 @@ conventions are load-bearing:
 
 - **All-zero scaffold ≠ computed.** Downstream consumers use
   computed-evidence gating so a template copied by `/tax-setup` never
-  reads as a computed $0 return. There is no generic registry: write a
-  `_<XX>_COMPUTED_EVIDENCE_FIELDS` tuple + `_<xx>_section_computed()`
-  pair in `projection/` mirroring the CA pair
-  (`_CA_COMPUTED_EVIDENCE_FIELDS` / `_ca_section_computed`), and consume
+  reads as a computed $0 return. List the fields in your registry row's
+  `evidence_fields` (step 5), add a `_<xx>_section_computed()` wrapper in
+  `projection/` mirroring `_ca_section_computed`, and consume
   it from any state-specific projection/withholding block you add — if
   you add none, say so explicitly in your spec. Give your section a field
   that is ALWAYS non-zero when computed (CA uses the standard deduction).
@@ -221,8 +220,7 @@ Grep-verify each of these — they are the places "state" is enumerated:
 
 | Where | What to add |
 |---|---|
-| `projection.STATE_SECTION_KEYS` | your result-section key (enables the prior-year state gate) |
-| `yoy_diff` | RESTRUCTURE `STATE_MOVER_FIELDS` per-section (it is a flat CA-only list gated on `california_540` in `_state_fields_present` — appending NY fields to it would gate NY movers on CA sections) AND add your section key to `OPTIONAL_SECTIONS` |
+| `agents/lib/tax_computations/state/registry.py` (W10) | ONE `StateSection` row: your code, result-section key, the computed-evidence fields, the year-over-year mover rows and, for a statement-only section, its informational key. `projection.STATE_SECTION_KEYS`/`_STATE_SECTION_CODES`, the evidence tuples and `yoy_diff`'s `OPTIONAL_SECTIONS`, `INFORMATIONAL_SECTIONS` and `STATE_MOVER_FIELDS` all derive from it, and `tests/test_state_registry.py` refuses a literal listing two registered sections anywhere else |
 | `tie_out.CATEGORY_TARGETS` **paired with `.agents/skills/tax-parse/SKILL.md`** | a `state_withholding_<xx>` category → your section's withholding field, AND the matching `W-2 box 17 (<XX>) → state_withholding_<xx>` row in tax-parse.md's step-6.5 category table. **Both halves or neither**: the tie-out only checks categories the ledger EMITS, so a registered-but-never-emitted category is dead protection (the gate passes vacuously with your state's withholding unverified), and a parse subagent improvising the name before registration hard-errors the whole ledger. A doc-sync test enforces the pairing. |
 | `.agents/skills/tax-setup/SKILL.md` step 4 | per-field WebSearch fetch bullets for your block (see step 1 — the generic fallback fetches brackets + standard deduction only) |
 | `capabilities._state_note` | upgrade your state from the bracket-estimate note to a depth note — **do this LAST (step 7)** |

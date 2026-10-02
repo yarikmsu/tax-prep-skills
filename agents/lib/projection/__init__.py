@@ -45,6 +45,10 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_year_arg,
     load_prior,
 )
+from agents.lib.tax_computations.state.registry import (  # noqa: E402
+    BY_CODE as _STATE_REGISTRY,
+    STATE_SECTIONS,
+)
 from agents.lib.tax_computations import (  # noqa: E402
     CAPITAL_LOSS_LIMIT,
     CAPITAL_LOSS_LIMIT_MFS,
@@ -1747,29 +1751,9 @@ def _prior_numeric(v, *, allow_negative: bool):
     return f
 
 
-# Fields whose non-zero values prove /tax-compute step 10 actually RAN —
-# deliberately excludes payment/bookkeeping fields (ca_withholding_box17,
-# ca_sdi_box14, estimated payments): those can be populated from W-2 parsing
-# before the CA return is ever computed, so their presence proves nothing
-# about ca_total_tax/ca_agi being real rather than untouched template zeros.
-# A genuinely computed CA return always carries a non-zero
-# ca_standard_deduction (statutory minimum ~$5K), even at zero income.
-_CA_COMPUTED_EVIDENCE_FIELDS = (
-    "ca_total_tax", "ca_agi", "ca_taxable_income",
-    "ca_standard_deduction", "ca_tax_from_table",
-)
-
-# New York's twin, and the same rule picks the fields: an output of the
-# COMPUTATION, never a figure that can arrive from parsing. Box 17 withholding
-# lands in line 72 before Form IT-201 is computed at all, so line 72 proves
-# nothing. A genuinely computed New York return always carries a non-zero line
-# 34 — the standard deduction has a floor for every filing status, including
-# the filer who can be claimed as a dependent — even at zero income, and line
-# 33 may be NEGATIVE, which is non-zero and therefore evidence too.
-_NY_COMPUTED_EVIDENCE_FIELDS = (
-    "line_46_total_state_tax", "line_33_nyagi", "line_37_taxable_income",
-    "line_34_deduction", "line_39_ny_tax",
-)
+# Which fields prove each state's section was COMPUTED, from the registry (W10).
+_CA_COMPUTED_EVIDENCE_FIELDS = _STATE_REGISTRY["CA"].evidence_fields
+_NY_COMPUTED_EVIDENCE_FIELDS = _STATE_REGISTRY["NY"].evidence_fields
 
 
 def _section_computed(result: dict, section: str,
@@ -1795,13 +1779,13 @@ def _section_computed(result: dict, section: str,
 
 def _ca_section_computed(result: dict) -> bool:
     """True when result's california_540 section shows COMPUTED evidence."""
-    return _section_computed(result, "california_540",
+    return _section_computed(result, _STATE_REGISTRY["CA"].section,
                              _CA_COMPUTED_EVIDENCE_FIELDS)
 
 
 def _ny_section_computed(result: dict) -> bool:
     """True when result's new_york_it201 section shows COMPUTED evidence."""
-    return _section_computed(result, "new_york_it201",
+    return _section_computed(result, _STATE_REGISTRY["NY"].section,
                              _NY_COMPUTED_EVIDENCE_FIELDS)
 
 
@@ -3491,15 +3475,13 @@ def _main(argv: list) -> int:
     return 0
 
 
-# State result sections known to the toolkit; extend as more states are added.
-STATE_SECTION_KEYS = ["california_540", "florida_state", "new_york_it201"]
-
-# Which state CODE each section key represents — keep in sync with
-# STATE_SECTION_KEYS above. Used by _detect_prior_state_code to tell WHICH
-# state a prior section is evidence for, since the two sections are not
-# interchangeable (Codex round-15 P2).
-_STATE_SECTION_CODES: dict = {"california_540": "CA", "florida_state": "FL",
-                              "new_york_it201": "NY"}
+# State result sections known to the toolkit, in detection order, and the
+# state CODE each is evidence for — both derived from the registry (W10), so
+# a state added there reaches both and they cannot drift apart. The CODE is
+# what _detect_prior_state_code needs: the sections are not interchangeable
+# (Codex round-15 P2).
+STATE_SECTION_KEYS = [s.section for s in STATE_SECTIONS]
+_STATE_SECTION_CODES: dict = {s.section: s.code for s in STATE_SECTIONS}
 
 
 def _detect_prior_state(prior_result: dict) -> str | None:

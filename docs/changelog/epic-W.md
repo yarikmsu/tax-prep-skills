@@ -895,3 +895,35 @@ the script hard-coding 3.13 (1), dropping the pass-through arguments (1),
 dropping the floor check (5), dropping `--universal` from the script (1), a
 `uv pip compile` pasted back into an `.in` (1) or into QUICKSTART (1), and the
 matrix read from the bare list only (8).
+
+## W10, first slice — the per-state data tables derive from one registry
+
+### What was wrong
+
+Six parallel per-state tables in four modules each had to be found and extended by hand when a state was added. Nothing failed when one was missed: a projection that could not tell a prior return was computed, or a year-over-year diff that never saw the section appear. `_STATE_SECTION_CODES` carried a comment, "keep in sync with STATE_SECTION_KEYS above", that nothing enforced.
+
+### What shipped
+
+- **`agents/lib/tax_computations/state/registry.py`** holds one frozen `StateSection` per state the toolkit knows (CA, FL, NY), in detection order. Each row carries the state's code, result section, computed-evidence fields, `/tax-review` mover rows, and the informational key of a statement-only section. It lives inside the `state` package, not at the top level, so it needs no preflight roster entry or CLI dispatch. It has no engine imports, so any module reads it without a cycle.
+- **Derived from it:**
+  - `projection.STATE_SECTION_KEYS` and `_STATE_SECTION_CODES`;
+  - `_CA_COMPUTED_EVIDENCE_FIELDS` and `_NY_COMPUTED_EVIDENCE_FIELDS`;
+  - `yoy_diff.OPTIONAL_SECTIONS` (state part), `INFORMATIONAL_SECTIONS` and `STATE_MOVER_FIELDS`.
+- **`tests/test_state_registry.py`** pins three things:
+  - the set of states;
+  - that every derived table is the registry's projection, and every registered field is real in the result template;
+  - that no other engine module carries a literal listing two registered sections, which is what a local copy looks like.
+- **Docs.** The state-module playbook and skill point at the registry.
+- **Hook counts.** A new engine file adds one to `test_secure_fs`'s per-file sweep, so MEASURED COSTS gains one test on each total.
+
+### Verified
+
+- Every existing test of these tables passes unchanged.
+- Mutation check: planting a two-section literal in `yoy_diff` turns the copy test red, naming the file and line.
+
+### Not yet
+
+These still branch on the state inside their own modules, and are the next slices:
+- the behaviour tables: `capabilities._state_note`, the tie-out withholding rows, and `tax_calendar`'s estimated-tax and extension branches;
+- `filing_package`'s CA-only section table;
+- the generic `state.modifications` and `state.local` blocks.

@@ -22,6 +22,9 @@ from agents.lib.rollover import (  # noqa: E402
     load_prior,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.tax_computations.state.registry import (  # noqa: E402
+    STATE_SECTIONS,
+)
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -103,7 +106,8 @@ OPTIONAL_SECTIONS: list[str] = [
     "schedule_c", "schedule_d", "form_8889_hsa", "form_1116_ftc",
     "form_8938_fatca", "fbar_fincen_114", "form_1099r_401k_rollover",
     "form_8959_additional_medicare", "form_8995_qbi", "ira_contribution",
-    "california_540", "florida_state", "new_york_it201",
+    # Every state section the registry knows (W10).
+    *(s.section for s in STATE_SECTIONS),
 ]
 
 # Sections whose real "content" is a fixed affirmative STATEMENT rather than
@@ -119,8 +123,8 @@ OPTIONAL_SECTIONS: list[str] = [
 # section to the ONE key whose non-empty-string value means "this section was
 # actually populated for this year" (not left as a null scaffold default).
 INFORMATIONAL_SECTIONS: dict[str, str] = {
-    "florida_state": "no_income_tax_statement",
-}
+    s.section: s.informational_key for s in STATE_SECTIONS
+    if s.informational_key is not None}
 
 # Movers PER STATE SECTION, not one flat list.
 #
@@ -136,26 +140,10 @@ INFORMATIONAL_SECTIONS: dict[str, str] = {
 # the row appears at all — the two years being compared are the same
 # taxpayer's, so both sections have to be present for the delta to mean
 # anything, and that is what `_state_fields_present` requires.
+# Each state's rows live in the registry (W10), beside its section; a state
+# the toolkit does not compute has none and gets no movers.
 STATE_MOVER_FIELDS: dict[str, list[tuple[str, str]]] = {
-    "california_540": [
-        ("State taxable income", "california_540.ca_taxable_income"),
-        ("State total tax", "california_540.ca_total_tax"),
-        ("State refund", "california_540.ca_refund"),
-    ],
-    # New York's three counterparts. Line 37 is taxable income, line 46 the
-    # STATE total — not line 39, which is the tax before the credits and
-    # before line 45's other New York State taxes — and line 78 the refund.
-    # Line 58's city, Yonkers and MCTMT total is a FOURTH row with no
-    # California counterpart: a New York City resident's year-over-year move
-    # is invisible in the state figures, and it is often the larger one.
-    "new_york_it201": [
-        ("State taxable income", "new_york_it201.line_37_taxable_income"),
-        ("State total tax", "new_york_it201.line_46_total_state_tax"),
-        ("City / Yonkers / MCTMT",
-         "new_york_it201.line_58_total_city_and_yonkers"),
-        ("State refund", "new_york_it201.line_78_refund"),
-    ],
-}
+    s.section: list(s.mover_fields) for s in STATE_SECTIONS if s.mover_fields}
 
 
 def _num(d: dict, dotted: str) -> float:

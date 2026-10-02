@@ -117,9 +117,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   tilts by hand. **The inputs shipped in #204:** the function returns
   `inputs`, `/tax-compute` writes them into `schedule_a`, and
   `rerun_schedule_a` re-prices from them at another AGI. **`/tax-scenario`'s
-  wiring shipped in #205; `/tax-roth-convert`'s and `/tax-harvest`'s are BUILT
-  by the pull request that records "AA23, fourth slice" in
-  `docs/changelog/epic-AA.md`.** What remains is `/tax-project`, whose
+  wiring shipped in #205, `/tax-roth-convert`'s and `/tax-harvest`'s in #206.** What remains is `/tax-project`, whose
   deduction is a declared total and its own §170(p) tilt rather than a
   return's Schedule A, and the cases every tool still holds (an election flip,
   an AGI above the top bracket's floor, whose §68 base needs a QBI deduction
@@ -127,18 +125,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   section was not written (a standard filer far from the margin), keeps the
   held figure and its disclosure. `/tax-project` still
   tilts in its own code (AA22) and moves with that step.
-
-- **AA34 (P2, S): Check the §70111 haircut's base against the statute.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  `compute_schedule_a` takes `top_bracket_income` as the taxable income in the
-  37% bracket. AA23's bias review read new §68 (OBBBA §70111) as measuring it on
-  taxable income "determined without regard to this section and increased by
-  such amount of itemized deductions", which is larger by the itemized total.
-  If so, every top-bracket itemizer's haircut is under-applied and line 12
-  over-stated, the hard-error direction. Read the enacted text and the 2026
-  Schedule A instructions before changing anything. The planning tools price
-  no AGI above the top bracket's floor until it is settled (AA23).
 
 ### W — engineering hygiene
 
@@ -157,7 +143,14 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   the same way, then `exec`s the Python, which lives outside `agents/lib/` so it
   never meets the import guard.
 
-- **W10 (P3, M): a state REGISTRY.** *Raised by the 2026-09-12 four-angle review.*
+- **W10 (P3, M): a state REGISTRY.** **The data tables are BUILT by the pull request that
+  records "W10, first slice" in `docs/changelog/epic-W.md`:**
+  `tax_computations/state/registry.py` holds each state's section, code,
+  computed-evidence fields, movers and informational key; projection's and
+  yoy_diff's tables derive from it, and a test refuses a local copy. Still
+  per-module: `capabilities._state_note`, the tie-out withholding rows,
+  `tax_calendar`'s estimated-tax and extension branches, `filing_package`'s
+  CA-only section table, and the two generic deferrals below. *Raised by the 2026-09-12 four-angle review.*
   Six parallel per-state tables across four modules: `projection.STATE_SECTION_KEYS`
   and `_STATE_SECTION_CODES`, the two `_*_COMPUTED_EVIDENCE_FIELDS`, `yoy_diff`'s
   three, `capabilities._state_note`'s if/elif chain, `tie_out`'s per-state
@@ -519,6 +512,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
 | AA30 | #195 | a household line's 0 still passes as computed (AA32); an acknowledged refused household's City or Yonkers tax is prepared by hand |
+| AA34 | #207 | the planning tools still hold above the top bracket's floor, where §68's base needs the priced point's QBI deduction |
 | AA32 | #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
 | AA10 | #200 | outside MEASURED COSTS the timing rule reads whole-line comments only, and catches no duration in words |

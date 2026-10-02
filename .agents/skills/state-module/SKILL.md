@@ -89,11 +89,12 @@ The PDF and the verify diff are section-generic and pick a new state up for
 free. The modules that ENUMERATE states do not, and a missing registration fails
 silently:
 
-- `STATE_SECTION_KEYS`, `OPTIONAL_SECTIONS`
+- the state REGISTRY, `agents/lib/tax_computations/state/registry.py` — one
+  row that `STATE_SECTION_KEYS`, `OPTIONAL_SECTIONS`, the computed-evidence
+  fields and the YoY movers all derive from (W10)
 - `capabilities` — `_NO_INCOME_TAX_STATES` and `_state_note` for a none-regime
   state; `_COMMUNITY_PROPERTY_STATES` if applicable
 - the projection module, the tie-out categories, any nonconformity set
-- the YoY review's state movers — the one review surface that is NOT generic
 
 Playbook step 5 is the checklist. Walk it item by item; do not judge by whether
 the output looks right, because a state missing from an enumeration produces
