@@ -7,12 +7,7 @@
 # all, only a pdfminer.six change, and pdfminer.six is the engine tax parsing
 # actually depends on.
 #
-# After editing this file, regenerate with the SAME flags (see AGENTS.md §7):
-#   uv pip compile requirements.in --generate-hashes --universal \
-#       --python-version 3.13 -o requirements.txt
-#
-# --python-version 3.13 matches the CI runner; --universal keeps the resolution
-# valid on contributor macOS as well as CI Linux.
+# Regenerate every lock, and commit both files: sh scripts/recompile-locks.sh
 
 pdfplumber==0.11.10
 openpyxl==3.1.5

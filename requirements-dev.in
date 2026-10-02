@@ -2,11 +2,8 @@
 # beside the runtime tree — see `requirements-test.in` for why that separation
 # is structural rather than a matter of install order.
 #
-# GENERATED LOCK: edit this file, never `requirements-dev.txt`. Regenerate with
-# the SAME flags AGENTS.md §7 gives for the runtime lock, and commit both:
-#
-#   uv pip compile requirements-dev.in --generate-hashes --universal \
-#       --python-version 3.13 -o requirements-dev.txt
+# GENERATED LOCK: edit this file, never `requirements-dev.txt`.
+# Regenerate every lock, and commit both files: sh scripts/recompile-locks.sh
 #
 # ruff and mypy are PINNED here as well as in the lock. A linter is the one
 # dependency whose new release adds FINDINGS, so an unpinned one turns an

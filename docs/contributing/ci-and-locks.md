@@ -70,11 +70,17 @@ a toolkit that computes real returns should not carry one.
 So the floor is now ONE number, 3.13, and it is the oldest interpreter CI runs.
 Every file that states it is held as a set by
 `tests/test_ci_workflow.py::TestTheInterpreterFloorIsOneNumber` — `.python-version`,
-both `pyproject.toml` tool targets, the three `.in` recipes, the three generated
-lock headers, `MIN_PYTHON`, the matrix's lower leg, the three single-version job
-pins, the step conditions that select the coverage leg, and the requirement
-sentence in AGENTS.md, README, CONTRIBUTING and QUICKSTART. A prose pin drifts;
-this one goes red.
+both `pyproject.toml` tool targets, the three generated lock headers,
+`MIN_PYTHON`, the matrix's coverage leg, and the requirement sentence in
+AGENTS.md, README, CONTRIBUTING and QUICKSTART. A prose pin drifts; this one
+goes red.
+
+**Three of those copies are no longer copies (W5a).** The single-version jobs
+read `python-version-file: .python-version`; the steps that pick the coverage
+leg ask the leg's own `coverage` flag; and `scripts/recompile-locks.sh` reads
+the floor for every lock it compiles. Moving the floor is `.python-version`,
+the matrix's coverage leg, the tool targets, `MIN_PYTHON` and the prose — and
+the guard names each one that was left behind.
 
 **3.12 WOULD ALSO HAVE CLOSED THE GAP, and cheaper.** It was a CI leg and the
 locks' target, so it was never the untested part — only 3.10 and 3.11 were. The
@@ -161,18 +167,21 @@ dependencies is not pinning: pdfplumber 0.11.10 shipped no pdfplumber code at
 all, only a `pdfminer.six` bump — and `pdfminer.six` is the engine document
 parsing actually runs on. Hashes make pip refuse an artifact that does not
 match, so a version republished with different contents fails the install
-instead of silently parsing a return. After editing the `.in`, regenerate with
-the SAME flags and commit both files:
+instead of silently parsing a return. After editing the `.in`, regenerate every
+lock and commit both files:
 
 ```bash
-uv pip compile requirements.in --generate-hashes --universal \
-    --python-version 3.13 -o requirements.txt
+sh scripts/recompile-locks.sh
 ```
 
-`--python-version 3.13` is the FLOOR (above) and `--universal` keeps the
-resolution valid on macOS and on the Windows job; changing either silently
-changes what the lock covers. A Dependabot PR bumps the lock — mirror the
-version into the `.in` in the same PR, or the next regeneration reverts it.
+The script is the ONE copy of the flags. It compiles each `requirements*.in`
+into its `.txt` with `--python-version` read from `.python-version` — the
+FLOOR, above — and `--universal`, which keeps the resolution valid on macOS
+and on the Windows job; changing either silently changes what the lock covers.
+Arguments after the script name go to every compile, so a refresh of one
+package is `sh scripts/recompile-locks.sh --upgrade-package urllib3`. A
+Dependabot PR bumps the lock — mirror the version into the `.in` in the same
+PR, or the next regeneration reverts it.
 
 **Changing a compile FLAG is not a dependency bump, and uv already keeps it
 from becoming one** — provided `-o` names the lock that already exists. uv

@@ -112,17 +112,15 @@ is enforced, and a module leaves the list by being cleared.
 
 **`requirements.txt` is generated — edit `requirements.in`.** The `.in` file holds the
 direct dependencies; the `.txt` is a compiled lock pinning the whole transitive tree
-with hashes. After editing the `.in`, regenerate with exactly these flags and commit
-both files:
+with hashes. After editing the `.in`, regenerate every lock and commit both files:
 
 ```bash
-uv pip compile requirements.in --generate-hashes --universal \
-    --python-version 3.13 -o requirements.txt
+sh scripts/recompile-locks.sh
 ```
 
-Changing `--python-version` or dropping `--universal` silently changes what the lock
-covers, and `--python-version` is the floor — moving it means moving the floor
-everywhere, which `docs/contributing/ci-and-locks.md` walks through.
+The script holds the flags and reads the interpreter it compiles for from
+`.python-version`, so moving the floor is that file and not this recipe —
+`docs/contributing/ci-and-locks.md` walks through what else moves.
 
 ## The PII gate
 

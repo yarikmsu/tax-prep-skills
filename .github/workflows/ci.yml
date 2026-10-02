@@ -59,7 +59,17 @@ jobs:
         # every `OSError` from `Path.is_symlink()` into False, which the repo
         # fails closed around rather than inheriting. A suite green on one is
         # not evidence about the other, and neither version is the "real" one.
-        python-version: ["3.13", "3.14"]
+        #
+        # Each leg says whether it is the COVERAGE leg, so the steps below ask
+        # that question rather than re-typing the floor in three conditions
+        # that fail silent when the floor moves: a stale `!=` runs pytest on
+        # both legs and a stale `==` runs coverage on neither. Real booleans:
+        # GitHub reads the STRING 'false' as true.
+        include:
+          - python-version: "3.13"
+            coverage: true
+          - python-version: "3.14"
+            coverage: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,10 +100,10 @@ jobs:
       # for. Two runs would produce two reports and no decision about which is
       # the one.
       - name: Run tests
-        if: matrix.python-version != '3.13'
+        if: ${{ !matrix.coverage }}
         run: python -m pytest tests/ -v
       - name: Run tests with coverage
-        if: matrix.python-version == '3.13'
+        if: matrix.coverage
         run: |
           python -m coverage run -m pytest tests/ -v
           python -m coverage xml
@@ -105,7 +115,7 @@ jobs:
       # convenience. The number is on the job summary and the XML is here for
       # anyone who wants to open it.
       - name: Upload coverage
-        if: matrix.python-version == '3.13'
+        if: matrix.coverage
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
@@ -131,7 +141,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Install test tooling
@@ -152,8 +162,9 @@ jobs:
           # takes `python_version` from there too. The pin is for
           # REPRODUCIBILITY — one interpreter, so a lint result repeats — and it
           # is the floor rather than an arbitrary version so nothing here has to
-          # be revisited separately when the floor moves.
-          python-version: "3.13"
+          # be revisited separately when the floor moves. Read from the FILE
+          # that names it, so moving the floor moves this job with it.
+          python-version-file: .python-version
       # From the hashed dev lock, which pins ruff and mypy by version in its own
       # `.in` as well: a linter is the one dependency whose new release adds
       # FINDINGS, so an unpinned one turns an unrelated pull request red on a
@@ -223,7 +234,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
       - name: Install dev tooling
         run: pip install -r requirements-dev.txt
       # BOTH locks. The dev lock installs the test runner and the linters, and a

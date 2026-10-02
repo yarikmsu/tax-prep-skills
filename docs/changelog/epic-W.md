@@ -846,3 +846,52 @@ kept when the port was dropped. The symlink test pins the PROPERTY, not either
 branch: removing `-L` from the cascade or from `advance_stamp` alone leaves it
 green, and only removing both turns it red — the defence is in two places and a
 test can pin what they jointly guarantee, not either one.
+
+## W5a — three copies of the floor become reads of it
+
+#166 made the interpreter floor ONE number by comparing every copy of it to
+`.python-version`. Comparison is right for prose, which nothing generates, and
+one level too low for three machine-readable clusters, each of which could read
+the file instead of restating it.
+
+**What shipped:**
+
+- **The single-version jobs read the file.** Lint, the dependency audit and
+  the Windows job set up Python with `python-version-file: .python-version`.
+  The guard now refuses a literal `python-version` there outright, beside the
+  file or instead of it: setup-python prefers the literal when both are given,
+  so one left beside the file would win silently. Blocked until CI ran again on
+  2026-10-01, because setup-python's resolution of the file is observable only
+  on a runner; this PR's own run is that observation.
+- **The coverage leg is data.** Each matrix leg is an `include:` entry carrying
+  a `coverage:` boolean, and the three steps that split coverage from the plain
+  run ask `matrix.coverage` rather than comparing the version to a hand-typed
+  floor. Those three conditions failed SILENT at a floor move — a stale `!=`
+  runs pytest on both legs, a stale `==` runs coverage on neither — and the
+  floor is now stated once, on the leg. A new test pins that every leg carries
+  a real boolean (GitHub reads the string `'false'` as true) and that exactly
+  one does, the floor. Finding the matrixed job had to learn the `include:`
+  spelling: asked only for the bare list, it found no matrix at all.
+- **`scripts/recompile-locks.sh` is the recipe.** It compiles each
+  `requirements*.in` into its `.txt` with `--python-version` read from
+  `.python-version`, refusing a value that is not a `3.N` release, and passes
+  any further arguments to every compile (`--upgrade-package urllib3`). The
+  five hand-typed recipes — the three `.in` headers, CONTRIBUTING and
+  `ci-and-locks.md` — now name the script, and a test refuses a `uv pip
+  compile` command coming back into any tracked file — swept, not listed, so a
+  recipe pasted into a new document is found too. The recipe PARSER stays: the
+  three `.txt` headers are echoed by uv, a fact about how each lock was made,
+  and they are still checked for the floor, and against the argv the script
+  actually hands uv, so the flags are written in the script and nowhere in the
+  tests.
+
+**Verified.** Running the script reproduces all three committed locks byte for
+byte. The script is tested by running it in a copy of its layout with `uv`
+replaced by a recorder, so what is asserted is the argv it would hand uv.
+Mutation checks, each turning `tests/test_ci_workflow.py` red: a literal pin
+in the lint job (1 test), a literal beside the file (1), coverage on the 3.14
+leg (1), a quoted `"false"` (1), the plain run gated on `matrix.coverage` (1),
+the script hard-coding 3.13 (1), dropping the pass-through arguments (1),
+dropping the floor check (5), dropping `--universal` from the script (1), a
+`uv pip compile` pasted back into an `.in` (1) or into QUICKSTART (1), and the
+matrix read from the bare list only (8).

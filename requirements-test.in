@@ -11,8 +11,7 @@
 # Install order would have hidden it. Two locks make it impossible instead:
 # nothing here shares a dependency with the runtime tree, and a test pins that.
 #
-#   uv pip compile requirements-test.in --generate-hashes --universal \
-#       --python-version 3.13 -o requirements-test.txt
+# Regenerate every lock, and commit both files: sh scripts/recompile-locks.sh
 pytest
 coverage
 # The CI workflow is YAML and the floor guard has to ask STRUCTURAL questions of

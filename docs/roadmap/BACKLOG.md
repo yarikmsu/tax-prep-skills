@@ -75,7 +75,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 | When | What | Why |
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **Now** | **W5a** — all three clusters, the first unblocked now that CI runs. | The only tooling work that DELETES assertions rather than adding them. |
+| **Now** | **W5a** — all three clusters, BUILT; merging. | The only tooling work that DELETES assertions rather than adding them. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
 | **Opportunistic** | **AA9**, **AA10**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, **AA29**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
@@ -224,6 +224,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   never meets the import guard.
 
 - **W5a (P3, S): generate three of the copies instead of asserting about them.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-W.md`;
+  this entry moves to the shipped index the day that merges.**
   The interpreter floor is stated in roughly two dozen places and #166 compares
   them all. Comparison is right for PROSE, which nothing generates; it is one
   level too low for three machine-readable clusters.

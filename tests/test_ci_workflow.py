@@ -67,15 +67,16 @@ WINDOWS_MODULES = ["tests/test_secure_fs.py", "tests/test_host_guard.py"]
 
 PYTHON_VERSION = REPO / ".python-version"
 PYPROJECT = REPO / "pyproject.toml"
-RUNTIME_IN = REPO / "requirements.in"
-RUNTIME_LOCK = REPO / "requirements.txt"
-# The recipe lives in the `.in` and the command line is echoed into the `.txt`
-# uv generated from it, so BOTH state the floor and both can be left behind.
+# uv echoes the command it ran into each `.txt`, so the LOCK states the floor
+# it was compiled for; the recipe is `scripts/recompile-locks.sh` since W5a,
+# which reads the floor rather than carrying a copy of it.
+#
 # DISCOVERED, not listed. A hand-written tuple could not see a fourth lock:
 # adding `requirements-docs.{in,txt}` compiled for 3.12, and a CI step that
 # installs it, left this class green because nothing swept for siblings.
-LOCK_SOURCES = tuple(sorted(REPO.glob("requirements*.in"))
-                     + sorted(REPO.glob("requirements*.txt")))
+LOCK_INPUTS = tuple(sorted(REPO.glob("requirements*.in")))
+LOCKS = tuple(sorted(REPO.glob("requirements*.txt")))
+RECOMPILE = REPO / "scripts" / "recompile-locks.sh"
 # The one requirement sentence in each user-facing document. A reader takes the
 # floor from these and from nothing else.
 FLOOR_PROSE = (REPO / "AGENTS.md", REPO / "README.md",
@@ -89,13 +90,10 @@ FLOOR_CLAIM = re.compile(r"Python (3\.\d+)(?:\+| or newer)")
 # number, in the two documents a contributor is most likely to act on.
 FLOOR_SENTENCES = ((REPO / "CONTRIBUTING.md", "is the one to build with"),
                    (REPO / "CONTRIBUTING.md", "per .python-version"),
-                   (REPO / "requirements.in", "matches the CI runner"),
                    (REPO / "docs" / "contributing" / "ci-and-locks.md",
                     "The floor is"),
                    (REPO / "docs" / "contributing" / "ci-and-locks.md",
-                    "floor is now ONE number"),
-                   (REPO / "docs" / "contributing" / "ci-and-locks.md",
-                    "is the FLOOR"))
+                    "floor is now ONE number"))
 # The sibling claim, which is about the MATRIX rather than the floor and so is
 # checked against the legs instead. It was pinned in the issue template and
 # nowhere else, while three contributor-facing documents restate it — one of
@@ -170,9 +168,14 @@ def _minimum_claims(text: str) -> set:
 # somewhere — so swapping them between "Run tests" and "Run tests with coverage"
 # satisfied the count while coverage ran on the wrong leg and the upload looked
 # for a file that leg never wrote.
-LEG_STEPS = {"Run tests": "!=",
-             "Run tests with coverage": "==",
-             "Upload coverage": "=="}
+#
+# Since W5a the condition asks the leg's own `coverage` flag rather than
+# comparing the version to the floor: three hand-typed copies of the floor were
+# three that failed SILENT when it moved. Which leg carries the flag is pinned
+# by `test_the_floor_leg_and_only_the_floor_leg_runs_coverage`.
+LEG_STEPS = {"Run tests": "!matrix.coverage",
+             "Run tests with coverage": "matrix.coverage",
+             "Upload coverage": "matrix.coverage"}
 # A conditioned step in the matrixed job that is NOT selecting a leg goes here
 # instead. `if: failure()` on a diagnostic upload is ordinary CI and the first
 # draft could not express it: the set check said to add the step to LEG_STEPS,
@@ -189,6 +192,13 @@ NON_LEG_STEPS: frozenset = frozenset()
 # under a green tick. Enumerating the exceptions is the form that fails closed —
 # a new job is red here until someone says which kind it is.
 NO_INTERPRETER_JOBS = frozenset({"pii-scan"})
+
+
+def _release(version) -> tuple:
+    """`3.13` as `(3, 13)`. YAML gives 3.13 as a float and "3.13" as a string;
+    both are how a human writes a version, and only one of them used to parse.
+    """
+    return tuple(int(part) for part in str(version).split("."))
 
 
 def _is_truthy(value) -> bool:
@@ -1029,7 +1039,11 @@ class TestTheInterpreterFloorIsOneNumber:
             f"and the floor is {floor}")
 
     def test_every_lock_is_compiled_for_the_floor(self):
-        """The `.in` recipe and the header uv wrote into the generated `.txt`.
+        """The header uv wrote into each generated `.txt`.
+
+        Echoed BY uv, so it is a fact about how the lock was made rather than a
+        recipe for making the next one — the one copy of the floor W5a could
+        not delete, because the lock carries no other record of it.
 
         A lock compiled for a version OTHER than the floor resolves markers for
         an interpreter nobody runs: too low and it carries backports the tree
@@ -1037,13 +1051,13 @@ class TestTheInterpreterFloorIsOneNumber:
         is missing from a file that installs with `--require-hashes`.
         """
         floor = self._floor()
-        for path in LOCK_SOURCES + RECIPE_SOURCES:
+        assert LOCKS, "no requirements*.txt lock in the repository root"
+        for path in LOCKS:
             commands = _compile_commands(_visible(path.read_text()))
             assert commands, (
-                f"{path.name} holds no `{UV_COMPILE}` command. This file is one "
-                "of the places the regeneration recipe is written down, and a "
-                "check that settled for a stray mention of the flag would pass "
-                "here on a sentence about it")
+                f"{path.name} holds no `{UV_COMPILE}` command in its header. "
+                "uv writes the command it ran there, so a lock without one was "
+                "not generated by it — or had its header edited by hand")
             for argv in commands:
                 version = _flag_value(argv, "--python-version")
                 assert version is not None, (
@@ -1052,9 +1066,134 @@ class TestTheInterpreterFloorIsOneNumber:
                     "interpreter happened to run uv")
                 assert version == floor, (
                     f"{path.name} gives `uv pip compile` {version!r} and the "
-                    f"floor is {floor!r}. Half these files ARE locks and half "
-                    "are the recipe for making one; either way this is the "
-                    "version the lock ends up resolved for")
+                    f"floor is {floor!r}, and this header is uv's record of "
+                    "the version the lock was resolved for")
+
+    def test_the_recipe_is_the_script_and_never_a_copy_of_it(self):
+        """W5a: the places that tell a contributor how to regenerate a lock
+        say to run the script, and NO tracked file carries the command.
+
+        Five hand-typed copies of the floor stood in those recipes. Pointing at
+        the script deleted them; a pasted `uv pip compile ... --python-version`
+        is exactly the copy that is left behind at the next floor move, and a
+        list of documents cannot see one pasted into a new document — so the
+        absence is SWEPT. Exempt: the locks, whose header is uv's own record;
+        the changelog, which is history; and the tests, which quote commands
+        as fixtures.
+        """
+        for path in LOCK_INPUTS + RECIPE_SOURCES:
+            assert "scripts/recompile-locks.sh" in _visible(path.read_text()), (
+                f"{path.name} no longer tells a reader how to regenerate a "
+                "lock: name scripts/recompile-locks.sh")
+        # NUL-separated: a tracked path with a space in it split on whitespace
+        # into names that do not exist, and the read below skipped each one.
+        tracked = subprocess.run(["git", "ls-files", "-z"], cwd=REPO,
+                                 check=True, capture_output=True,
+                                 text=True).stdout.split("\0")
+        copies = []
+        for name in filter(None, tracked):
+            path = REPO / name
+            if path in LOCKS or name.startswith(("tests/", "docs/changelog/")):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            if UV_COMPILE_RE.search(text) and _compile_commands(_visible(text)):
+                copies.append(name)
+        assert not copies, (
+            f"{copies} carry a `{UV_COMPILE}` invocation. The flags and the "
+            "floor live in scripts/recompile-locks.sh; a second copy of the "
+            "command is one more to move by hand")
+
+    @staticmethod
+    def _run_recompile(tmp_path, floor="3.13", inputs=("requirements.in",
+                                                        "requirements-dev.in"),
+                       args=()):
+        """The script run in a COPY of its layout, with `uv` a recorder.
+
+        A copy, so `cd "$(dirname "$0")/.."` lands somewhere a test owns and a
+        real lock is never rewritten; a stub `uv`, because what is under test
+        is what the script ASKS uv for, and that is the argv.
+        """
+        (tmp_path / "scripts").mkdir()
+        script = tmp_path / "scripts" / RECOMPILE.name
+        script.write_text(RECOMPILE.read_text())
+        (tmp_path / ".python-version").write_text(floor + "\n")
+        for name in inputs:
+            (tmp_path / name).write_text("")
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log = tmp_path / "uv.log"
+        stub = bin_dir / "uv"
+        stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "' + str(log) + '"\n')
+        stub.chmod(0o755)
+        result = subprocess.run(
+            ["sh", str(script), *args], capture_output=True, text=True,
+            env={"PATH": f"{bin_dir}:/usr/bin:/bin"})
+        calls = log.read_text().splitlines() if log.exists() else []
+        return result, calls
+
+    def test_the_script_compiles_every_lock_for_the_floor(self, tmp_path):
+        """Each `requirements*.in` once, into its own `.txt`, for the version
+        `.python-version` holds — a version no lock uses, so a script that
+        typed the floor instead of reading it cannot pass."""
+        names = ("requirements", "requirements-dev", "requirements-test")
+        result, calls = self._run_recompile(
+            tmp_path, floor="3.99", inputs=tuple(f"{n}.in" for n in names))
+        assert result.returncode == 0, result.stderr
+        compiled = {}
+        for call in calls:
+            argv = shlex.split(call)
+            assert _flag_value(argv, "--python-version") == "3.99", call
+            compiled[argv[2]] = _flag_value(argv, "-o")
+        assert len(calls) == len(names), calls
+        assert compiled == {f"{n}.in": f"{n}.txt" for n in names}, compiled
+
+    def test_the_script_asks_for_what_every_lock_header_records(self,
+                                                               tmp_path):
+        """The script's argv against the command uv echoed into each lock, with
+        the real inputs and the real floor — the flags live in the script and
+        the headers and nowhere in this test. Different flags would make the
+        first regeneration a silent re-resolution rather than a reproduction.
+        """
+        result, calls = self._run_recompile(
+            tmp_path, floor=self._floor(),
+            inputs=tuple(path.name for path in LOCK_INPUTS))
+        assert result.returncode == 0, result.stderr
+        asked = [["uv", *shlex.split(call)] for call in calls]
+        assert LOCKS, "no requirements*.txt lock in the repository root"
+        for lock in LOCKS:
+            recorded = _compile_commands(lock.read_text())[0]
+            ran = [argv for argv in asked
+                   if _flag_value(argv, "-o") == lock.name]
+            assert len(ran) == 1, (
+                f"scripts/recompile-locks.sh does not produce {lock.name}")
+            assert sorted(ran[0]) == sorted(recorded), (
+                f"{lock.name} was compiled with `{' '.join(recorded)}` and "
+                f"the script runs `{' '.join(ran[0])}`")
+
+    def test_the_script_passes_extra_arguments_to_every_compile(self, tmp_path):
+        result, calls = self._run_recompile(
+            tmp_path, args=("--upgrade-package", "urllib3"))
+        assert result.returncode == 0, result.stderr
+        assert len(calls) == 2 and all(
+            c.endswith(" --upgrade-package urllib3") for c in calls), calls
+
+    @pytest.mark.parametrize("floor", ["", "3", "3.13.1", "python3.13", "4.0"])
+    def test_the_script_refuses_a_floor_that_is_not_a_release(self, tmp_path,
+                                                              floor):
+        """Compiling for `''` lets uv pick an interpreter; `3.13.1` is a patch
+        the headers do not record. Neither reaches uv."""
+        result, calls = self._run_recompile(tmp_path, floor=floor)
+        assert result.returncode == 2, (result.stdout, result.stderr)
+        assert not calls, calls
+        assert ".python-version" in result.stderr
+
+    def test_the_script_refuses_a_tree_with_no_lock_input(self, tmp_path):
+        result, calls = self._run_recompile(tmp_path, inputs=())
+        assert result.returncode == 2
+        assert not calls
 
     def test_the_engine_refuses_below_the_floor_and_not_below_something_else(
             self):
@@ -1122,7 +1261,7 @@ class TestTheInterpreterFloorIsOneNumber:
         deletes the floor leg. Both left every assertion in this class green
         while the floor ran nowhere.
         """
-        floor_release = tuple(int(p) for p in self._floor().split("."))
+        floor_release = _release(self._floor())
         job = self._matrix_job()
         legs = self._legs()
         assert min(legs) == floor_release, (
@@ -1170,11 +1309,40 @@ class TestTheInterpreterFloorIsOneNumber:
         assert jobs, "the workflow declares no jobs"
         return jobs
 
+    @staticmethod
+    def _matrix_versions(job: dict) -> "list[tuple]":
+        """Every interpreter `job`'s matrix runs: the bare list, plus each
+        `include:` leg, minus each `exclude:` — the one reading of a matrix
+        this class has, so "is this job matrixed" and "which legs" cannot
+        disagree.
+
+        Reading the bare list alone let an `include:` entry add a THIRD leg on
+        3.12 — below the floor, running the suite, with `min(legs)` still
+        reading 3.13 off the list and every other assertion still agreeing.
+        Closing `exclude:` and leaving `include:` open was the fix carrying the
+        next defect, which is this repository's most reliable shape. And since
+        W5a this workflow declares its legs through `include:` alone, so a
+        reader that asked only for the list found no matrixed job at all.
+        """
+        matrix = job.get("strategy", {}).get("matrix", {})
+        if not isinstance(matrix, dict):
+            return []
+        legs = [_release(leg) for leg in matrix.get("python-version", []) or []]
+        for entry in matrix.get("include", []) or []:
+            if isinstance(entry, dict) and "python-version" in entry:
+                version = _release(entry["python-version"])
+                if version not in legs:
+                    legs.append(version)
+        for entry in matrix.get("exclude", []) or []:
+            if isinstance(entry, dict) and "python-version" in entry:
+                version = _release(entry["python-version"])
+                if version in legs:
+                    legs.remove(version)
+        return legs
+
     @classmethod
     def _matrix_job(cls) -> dict:
-        matrixed = [j for j in cls._jobs().values()
-                    if j.get("strategy", {}).get("matrix", {}).get(
-                        "python-version")]
+        matrixed = [j for j in cls._jobs().values() if cls._matrix_versions(j)]
         assert len(matrixed) == 1, (
             f"{len(matrixed)} jobs declare a python-version matrix; this class "
             "is written for exactly one and would otherwise assert about "
@@ -1183,31 +1351,8 @@ class TestTheInterpreterFloorIsOneNumber:
 
     @classmethod
     def _legs(cls) -> "list[tuple]":
-        """Every interpreter the matrix actually runs, `include:` included.
-
-        Reading the bare list alone let an `include:` entry add a THIRD leg on
-        3.12 — below the floor, running the suite, with `min(legs)` still
-        reading 3.13 off the list and every other assertion still agreeing.
-        Closing `exclude:` and leaving `include:` open was the fix carrying the
-        next defect, which is this repository's most reliable shape.
-        """
-        matrix = cls._matrix_job()["strategy"]["matrix"]
-        # YAML gives 3.13 as a float and "3.13" as a string; both are how a
-        # human writes a version, and only one of them used to parse.
-        def _v(leg):
-            return tuple(int(part) for part in str(leg).split("."))
-        legs = [_v(leg) for leg in matrix["python-version"]]
-        for entry in matrix.get("include", []) or []:
-            if "python-version" in entry:
-                version = _v(entry["python-version"])
-                if version not in legs:
-                    legs.append(version)
-        for entry in matrix.get("exclude", []) or []:
-            if "python-version" in entry:
-                version = _v(entry["python-version"])
-                if version in legs:
-                    legs.remove(version)
-        return legs
+        """Every interpreter the matrixed job runs."""
+        return cls._matrix_versions(cls._matrix_job())
 
     def test_every_single_version_job_pins_the_floor(self):
         """Lint, Windows and the audit run on ONE interpreter each.
@@ -1224,7 +1369,7 @@ class TestTheInterpreterFloorIsOneNumber:
         floor = self._floor()
         pinned = {}
         for name, job in self._jobs().items():
-            if job.get("strategy", {}).get("matrix", {}).get("python-version"):
+            if self._matrix_versions(job):
                 continue                      # the matrixed job is not a pin
             steps = job.get("steps", [])
             setups = [step for step in steps
@@ -1233,11 +1378,21 @@ class TestTheInterpreterFloorIsOneNumber:
             # EVERY setup step, keyed per step. Keying by job kept the LAST one,
             # so a job that sets up twice could pin anything on the first.
             for i, step in enumerate(setups):
-                version = str(step.get("with", {}).get("python-version", ""))
-                assert version, (
+                with_ = step.get("with", {}) or {}
+                # THE FILE, NOT A COPY OF IT (W5a). A literal here is a second
+                # statement of the floor that has to be moved by hand, and
+                # setup-python takes `python-version` OVER the file when both
+                # are given — so a literal left beside the file wins silently.
+                assert "python-version" not in with_, (
+                    f"{name} sets up Python {with_['python-version']!r} by "
+                    "hand. Single-version jobs read `python-version-file: "
+                    ".python-version`, and setup-python prefers a literal "
+                    "over the file when both are present")
+                source = str(with_.get("python-version-file", ""))
+                assert source, (
                     f"{name} sets up Python without naming a version, so it "
                     "runs whatever the runner defaults to")
-                pinned[f"{name}[{i}]"] = version
+                pinned[f"{name}[{i}]"] = source
             if setups:
                 continue
             # A job with NO setup step contributed nothing and was invisible:
@@ -1251,9 +1406,11 @@ class TestTheInterpreterFloorIsOneNumber:
                 "Add the setup step, or add the job to that set to say it "
                 "needs no interpreter")
         assert pinned, "no job pins a single interpreter any more"
-        wrong = {n: v for n, v in pinned.items() if v.strip("\"' ") != floor}
+        wrong = {n: v for n, v in pinned.items()
+                 if v.strip("\"' ") != PYTHON_VERSION.name}
         assert not wrong, (
-            f"single-version jobs run {wrong} and the floor is {floor}")
+            f"single-version jobs read their interpreter from {wrong}, and "
+            f"the floor ({floor}) is named in {PYTHON_VERSION.name}")
 
     def test_the_documents_that_name_both_legs_name_the_matrix(self):
         """The MATRIX claim, which is not the floor claim and drifts alone.
@@ -1393,8 +1550,7 @@ class TestTheInterpreterFloorIsOneNumber:
             "leg a step belongs on cannot be asked of a step this does not "
             "know. A step gated on something that is NOT the matrix leg "
             "(`if: failure()`, a trigger guard) belongs in NON_LEG_STEPS")
-        for name, operator in LEG_STEPS.items():
-            expected = f"matrix.python-version{operator}'{floor}'"
+        for name, expected in LEG_STEPS.items():
             # Split on top-level `&&`: the leg term must be one of the
             # conjuncts EXACTLY, and every other conjunct must read a real
             # context. That admits `&& github.event_name != 'schedule'`, which
@@ -1405,9 +1561,9 @@ class TestTheInterpreterFloorIsOneNumber:
             conjuncts = _normalise_expr(conditioned[name]).split("&&")
             assert expected in conjuncts, (
                 f"{name!r} is gated on {conditioned[name]!r}, which has no "
-                f"`matrix.python-version {operator} '{floor}'` term. On the "
-                f"floor {floor} that step belongs on "
-                f"{'the floor leg' if operator == '==' else 'every other leg'}")
+                f"`{expected}` term. That step belongs on "
+                f"{'every other leg' if expected.startswith('!') else 'the coverage leg'}"
+                f", and the coverage leg is the floor, {floor}")
             others = [c for c in conjuncts if c != expected]
             unvarying = [c for c in others
                          if not re.match(r"(github|runner|inputs|env|needs|"
@@ -1421,6 +1577,41 @@ class TestTheInterpreterFloorIsOneNumber:
             assert not _is_truthy(step.get("continue-on-error")), (
                 f"step {step.get('name')!r} is continue-on-error inside the "
                 "matrixed job")
+
+    def test_the_floor_leg_and_only_the_floor_leg_runs_coverage(self):
+        """Where the floor went when it left the step conditions (W5a).
+
+        The steps ask `matrix.coverage`, so the floor is stated once, on the
+        leg, and this is what makes that one statement the right one: every leg
+        carries the flag as a real boolean, and exactly one carries `true`.
+        None is the coverage run and its upload executing nowhere under a green
+        tick; two is two reports and no decision about which is the one.
+        """
+        floor = _release(self._floor())
+        matrix = self._matrix_job()["strategy"]["matrix"]
+        flags = {}
+        for entry in matrix.get("include", []) or []:
+            if "python-version" not in entry:
+                continue
+            leg = _release(entry["python-version"])
+            assert "coverage" in entry, (
+                f"the {entry['python-version']} leg carries no `coverage` "
+                "flag, so whether it runs coverage is decided by an absence")
+            assert isinstance(entry["coverage"], bool), (
+                f"the {entry['python-version']} leg's coverage flag is "
+                f"{entry['coverage']!r}, not a boolean; GitHub reads a "
+                "non-empty string as true")
+            flags[leg] = entry["coverage"]
+        legs = self._legs()
+        assert set(flags) == set(legs), (
+            f"the legs are {sorted(legs)} and the coverage flag is set on "
+            f"{sorted(flags)}. A leg from the bare list has no flag, so the "
+            "steps cannot tell which leg it is")
+        covered = [leg for leg, on in flags.items() if on]
+        assert covered == [floor], (
+            f"coverage runs on {covered} and the floor is {floor}. The "
+            "report is for the interpreter the locks are compiled for, and "
+            "on exactly one leg")
 
     def test_the_documents_a_reader_believes_state_the_floor(self):
         """AGENTS.md, README, CONTRIBUTING and QUICKSTART — where 3.10+ lived.
