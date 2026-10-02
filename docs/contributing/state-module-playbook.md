@@ -90,7 +90,7 @@ state before writing code, and record the answers in your spec:
 9. **Extension**: automatic like CA (payment-only via FTB 3519) or
    form-based?
 10. **PTET**: does the state have an elective pass-through tax, and is it
-    already in `_PTET_STATES` / `ptet.py`?
+    already in the registry's `PTET_WINDOWS`?
 11. **Community property**: already handled globally via
     `capabilities._COMMUNITY_PROPERTY_STATES` — is your state in it?
 12. **Itemized deductions**: own schedule (CA Schedule CA) or federal
@@ -225,7 +225,7 @@ Grep-verify each of these — they are the places "state" is enumerated:
 | `.agents/skills/tax-setup/SKILL.md` step 4 | per-field WebSearch fetch bullets for your block (see step 1 — the generic fallback fetches brackets + standard deduction only) |
 | `capabilities._state_note` | upgrade your state from the bracket-estimate note to a depth note — **do this LAST (step 7)** |
 | `retirement_dashboard` sets | `_HSA_NON_CONFORMING_STATES`, `_IRA_DEDUCTION_NONCONFORMING_STATES`, `_RETIREMENT_DEFERRAL_NONCONFORMING_STATES` if your state belongs |
-| `tax_calendar.py` **and** `agents/lib/ptet.py` | weighted estimated-payment events if not equal quarters (CA-ES precedent); PTET: BOTH modules carry independent `_PTET_STATES` + `_PTET_WINDOWS` copies — update both or neither |
+| `tax_calendar.py` **and** `agents/lib/ptet.py` | weighted estimated-payment events if not equal quarters (CA-ES precedent); PTET: one `PTET_WINDOWS` entry in the state registry, which both modules read (W10) |
 | `withholding.py` / `projection/` | projection has a generic bracket path (`project_state_tax`); **withholding has NO generic state path** — it is federal + CA-only, so either add a state true-up block or list the gap explicitly in your spec's non-goals (an unlisted gap silently drops your state's true-up) |
 | `/tax-extend` | your state's extension mechanics (only CA is modeled today — the skill says so) |
 

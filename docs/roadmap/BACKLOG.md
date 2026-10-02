@@ -147,7 +147,9 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   records "W10, first slice" in `docs/changelog/epic-W.md`:**
   `tax_computations/state/registry.py` holds each state's section, code,
   computed-evidence fields, movers and informational key; projection's and
-  yoy_diff's tables derive from it, and a test refuses a local copy. Still
+  yoy_diff's tables derive from it, and a test refuses a local copy. The
+  PTET regime windows `/tax-ptet` and `/tax-calendar` each carried are ONE
+  registry table by the pull request that records "W10, second slice". Still
   per-module: `capabilities._state_note`, the tie-out withholding rows,
   `tax_calendar`'s estimated-tax and extension branches, `filing_package`'s
   CA-only section table, and the two generic deferrals below. *Raised by the 2026-09-12 four-angle review.*

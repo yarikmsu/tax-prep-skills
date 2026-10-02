@@ -927,3 +927,22 @@ These still branch on the state inside their own modules, and are the next slice
 - the behaviour tables: `capabilities._state_note`, the tie-out withholding rows, and `tax_calendar`'s estimated-tax and extension branches;
 - `filing_package`'s CA-only section table;
 - the generic `state.modifications` and `state.local` blocks.
+
+## W10, second slice: one copy of the PTET regime windows
+
+### What was wrong
+
+`ptet._PTET_WINDOWS` and `tax_calendar._PTET_WINDOWS` held the same three regime windows twice: CA from 2021 to 2030 (SB 132's sunset), NY from 2021 and NJ from 2020. Each module also had its own state set. The ptet comment said "MUST stay in sync", and nothing enforced it. If one copy moved, say on an extension of the CA sunset, `/tax-ptet` would price a regime for a year in which `/tax-calendar` scheduled no election, or the reverse.
+
+### What shipped
+
+- **`registry.PTET_WINDOWS`, `PTET_STATES` and `ptet_window_active(code, year)`.** The registry module now holds the windows, with their sources. They are a table separate from the state sections, because NJ has a PTET and no result section. Both modules read this one copy, and the calendar's inline window check is now the shared function.
+- **Read-only table.** `PTET_WINDOWS` is a `MappingProxyType`, so neither module can move a year for the other.
+- **Tests.** `tests/test_state_registry.py` refuses a regime-window table anywhere else in the engine, under any name: a dict mapping two PTET states to a `(year, year|None)` pair. It also pins each regime's edge years.
+
+### Verified
+
+- Every ptet and calendar test passes unchanged.
+- Mutation checks:
+  - a window table planted back in `tax_calendar` turns the copy scan red;
+  - moving every regime's first-year boundary turns five tests red.

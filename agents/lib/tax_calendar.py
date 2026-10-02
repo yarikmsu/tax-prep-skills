@@ -71,6 +71,11 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_subpath,
     _validate_year_arg,
 )
+from agents.lib.tax_computations.state.registry import (  # noqa: E402
+    PTET_STATES,
+    PTET_WINDOWS,
+    ptet_window_active,
+)
 from agents.lib.secure_fs import (  # noqa: E402
     atomic_write,
     redact, year_or_shape,
@@ -209,19 +214,6 @@ def _fl_county_observed_note(statutory: datetime.date) -> str:
 #     weekend — no verified FL rollover rule, see _fl_county_observed_note).
 _PRODID = "-//tax-prep-skills//tax-calendar v5//EN"
 _UID_NAMESPACE = "tax-prep-skills"
-_PTET_STATES = {"CA", "NY", "NJ"}
-# Per-state effective tax-year windows for the PTE elective tax regime.
-# (first_valid_ty, last_valid_ty or None for "no sunset to date"). When a
-# tax_year falls outside its state's window, events_ptet emits an info note
-# instead of actual events. Sources:
-#   CA: AB 150 (2021-2025) + SB 132 (2026-2030) — sunset after TY2030
-#   NY: NY Tax Law §860 — created TY2021, no sunset
-#   NJ: P.L. 2019 c.320 — created TY2020, no sunset
-_PTET_WINDOWS = {
-    "CA": (2021, 2030),
-    "NY": (2021, None),
-    "NJ": (2020, None),
-}
 _VALID_CATEGORIES = frozenset({"federal_estimated_tax", "state_estimated_tax",
                                "extension", "fbar", "rmd", "ptet",
                                "state_property", "note"})
@@ -927,14 +919,14 @@ def events_ptet(tax_year: int, *, state: str | None,
             f"address.state must be a string, got {type(state).__name__}"
         )
     code = state.strip().upper()
-    if code not in _PTET_STATES:
+    if code not in PTET_STATES:
         return []
     # Year-window gating: each state's PTE regime has an effective range.
     # Emitting reminders for a tax year outside the window would mislead
     # the user about an expired (or not-yet-enacted) regime — surface a
     # single info note instead.
-    first_ty, last_ty = _PTET_WINDOWS[code]
-    if tax_year < first_ty or (last_ty is not None and tax_year > last_ty):
+    if not ptet_window_active(code, tax_year):
+        first_ty, last_ty = PTET_WINDOWS[code]
         return [_ptet_year_out_of_range_note(tax_year, code, first_ty, last_ty)]
     out: list[CalendarEvent] = []
     if code == "CA":
@@ -1128,7 +1120,7 @@ def _ptet_year_out_of_range_note(tax_year: int, state: str,
                                   last_ty: "int | None") -> CalendarEvent:
     """Visible note when a tax year falls outside a state's PTE regime window.
 
-    Per the state-specific window in `_PTET_WINDOWS`, emit a single info
+    Per the state-specific window in the registry's `PTET_WINDOWS`, emit a single info
     note rather than reminders for a regime that didn't exist yet or has
     expired. Future legislation may extend the window — the note tells
     the user to verify current law for their tax year.

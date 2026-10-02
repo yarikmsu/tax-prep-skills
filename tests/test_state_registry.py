@@ -113,3 +113,55 @@ def test_the_copy_finder_finds_a_copy():
         'Z = ("california_540",)\n') == [
             (1, ["california_540", "new_york_it201"]),
             (2, ["california_540", "florida_state"])]
+
+
+def _window_copies(source: str) -> "list[int]":
+    """Lines of a dict literal mapping two PTET states to a (year, year|None)
+    pair — the shape of a regime-window table, whatever it is named."""
+    def is_window(v):
+        return (isinstance(v, ast.Tuple) and len(v.elts) == 2
+                and all(isinstance(e, ast.Constant)
+                        and (e.value is None or type(e.value) is int)
+                        for e in v.elts))
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Dict):
+            hits = [k for k, v in zip(node.keys, node.values)
+                    if isinstance(k, ast.Constant)
+                    and k.value in registry.PTET_STATES and is_window(v)]
+            if len(hits) >= 2:
+                found.append(node.lineno)
+    return found
+
+
+def test_ptet_windows_have_one_copy():
+    """`/tax-ptet` and `/tax-calendar` each carried their own PTET windows,
+    commented "MUST stay in sync"; both now read the registry's. A window
+    table anywhere else, under any name, is the next drift."""
+    copies = {engine_relpath(p): hits for p in engine_files()
+              if p.resolve() != Path(registry.__file__).resolve()
+              and (hits := _window_copies(p.read_text(encoding="utf-8")))}
+    assert not copies, f"PTET window tables outside the registry: {copies}"
+    assert registry.PTET_STATES == {"CA", "NY", "NJ"}
+
+
+def test_the_window_finder_finds_a_copy():
+    """Non-vacuity, and the shape it must NOT match: a rate schedule."""
+    assert _window_copies(
+        'W = {"CA": (2021, 2030), "NJ": (2020, None)}\n'
+        'R = {"CA": [(0.0, 0.093, 0.0)], "NY": [(0.0, 0.0685, 0.0)]}\n') == [1]
+
+
+def test_the_shared_windows_are_read_only():
+    import pytest
+    with pytest.raises(TypeError):
+        registry.PTET_WINDOWS["CA"] = (2021, 2035)  # type: ignore[index]
+
+
+def test_ptet_window_edges():
+    """CA's SB 132 sunset after TY2030 and the first year of each regime."""
+    active = registry.ptet_window_active
+    assert not active("CA", 2020) and active("CA", 2021)
+    assert active("CA", 2030) and not active("CA", 2031)
+    assert not active("NY", 2020) and active("NY", 2099)
+    assert not active("NJ", 2019) and active("NJ", 2020)

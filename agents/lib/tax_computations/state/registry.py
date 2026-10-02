@@ -8,6 +8,9 @@ its table from these rows, and `tests/test_state_registry.py` refuses a
 literal that lists two registered sections anywhere else, which is what a
 local copy looks like.
 
+It also holds the PTET regime windows, a table of their own (NJ has a PTET
+and no result section).
+
 DATA ONLY. Behaviour that differs by state — the capability gate's notes, the
 calendar's estimated-tax events, the tie-out's withholding categories — stays
 in the module that owns the question, keyed by `code`; this holds what those
@@ -17,6 +20,7 @@ file), so any engine module can read it without a cycle.
 """
 
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import agents.lib  # noqa: F401 — the host-interpreter guard
 
@@ -84,3 +88,29 @@ STATE_SECTIONS: "tuple[StateSection, ...]" = (
 )
 
 BY_CODE: "dict[str, StateSection]" = {s.code: s for s in STATE_SECTIONS}
+
+
+# Per-state effective tax-year windows of the elective pass-through-entity tax
+# regimes the toolkit models — (first_valid_ty, last_valid_ty or None for "no
+# sunset to date"). A SEPARATE table from the sections above: NJ has a PTET
+# the toolkit prices and no result section. `/tax-ptet` and `/tax-calendar`
+# both read this one copy (W10; they each carried their own, "MUST stay in
+# sync"). A year outside its window means the regime did not exist or has
+# sunset, so neither prices it nor schedules it. Sources:
+#   CA: AB 150 (2021-2025) + SB 132 (2026-2030) — sunset after TY2030
+#   NY: NY Tax Law §860 — created TY2021, no sunset
+#   NJ: P.L. 2019 c.320 — created TY2020, no sunset
+# Read-only: two modules share it, and neither may move a year for the other.
+PTET_WINDOWS: "MappingProxyType[str, tuple[int, int | None]]" = MappingProxyType({
+    "CA": (2021, 2030),
+    "NY": (2021, None),
+    "NJ": (2020, None),
+})
+PTET_STATES: frozenset = frozenset(PTET_WINDOWS)
+
+
+def ptet_window_active(code: str, tax_year: int) -> bool:
+    """True when `code`'s PTET regime exists for `tax_year`; KeyError for a
+    state not in `PTET_WINDOWS`, so a caller tests membership first."""
+    first, last = PTET_WINDOWS[code]
+    return first <= tax_year and (last is None or tax_year <= last)

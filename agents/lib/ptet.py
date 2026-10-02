@@ -73,6 +73,11 @@ from agents.lib.scenario import (  # noqa: E402
 )
 from agents.lib.tax_computations import compute_scenario  # noqa: E402
 from agents.lib.tax_computations.federal import salt  # noqa: E402
+from agents.lib.tax_computations.state.registry import (  # noqa: E402
+    PTET_STATES,
+    PTET_WINDOWS,
+    ptet_window_active,
+)
 from agents.lib.irs_dates import next_business_day_state  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
@@ -87,32 +92,10 @@ class PtetError(Exception):
     """Raised when /tax-ptet cannot safely proceed."""
 
 
-# States with mature elective pass-through-entity tax regimes that the toolkit
-# models. Other states either have no PTET or differ enough that a blanket
-# estimate would mislead — those are surfaced as a "not modeled" note.
-_PTET_STATES = frozenset({"CA", "NY", "NJ"})
-
-# Per-state effective tax-year windows for the PTE elective tax regime —
-# (first_valid_ty, last_valid_ty or None for "no sunset to date"). MUST stay in
-# sync with tax_calendar._PTET_WINDOWS (same sources): a tax_year outside its
-# state's window means the regime didn't exist / has sunset, so we surface a
-# "not modeled" note instead of confidently pricing an expired/not-yet-created
-# regime. Sources:
-#   CA: AB 150 (2021-2025) + SB 132 (2026-2030) — sunset after TY2030
-#   NY: NY Tax Law §860 — created TY2021, no sunset
-#   NJ: P.L. 2019 c.320 — created TY2020, no sunset
-_PTET_WINDOWS = {
-    "CA": (2021, 2030),
-    "NY": (2021, None),
-    "NJ": (2020, None),
-}
-
-
-def _window_active(state: str, tax_year: int) -> bool:
-    first, last = _PTET_WINDOWS[state]
-    if tax_year < first:
-        return False
-    return last is None or tax_year <= last
+# The states with a PTET regime the toolkit models, and each regime's years,
+# are the state registry's PTET_STATES / PTET_WINDOWS, shared with
+# /tax-calendar (W10). Any other state is a "not modeled" note: no PTET, or
+# one too different for a blanket estimate.
 
 # Per-state graduated PTET rate schedules, as (lower_bound, rate,
 # cumulative_tax_at_lower_bound). The tax on `income` is
@@ -478,7 +461,7 @@ def ptet_tax(state: str, qualifying_income: float,
     flat; otherwise the schedule is resolved via `_resolve_schedule` — a fetched
     tax_law.ptet.<state> block (ptet_cfg) is PREFERRED, else the built-in
     statutory schedule for `tax_year` is used. Caller validates the state is in
-    `_PTET_STATES`. The unfetched-schedule warning is surfaced through
+    `PTET_STATES`. The unfetched-schedule warning is surfaced through
     `analyze`'s caveats (see _resolve_schedule); this function returns only the
     rate description so its 2-tuple contract is unchanged.
     """
@@ -647,7 +630,7 @@ def analyze(
         state = _normalize_state(raw_state)
         income = _strict_non_negative(raw_income, f"income[{state}]")
         deadline, deadline_note = _election_deadline(state, tax_year)
-        if state not in _PTET_STATES:
+        if state not in PTET_STATES:
             unmodeled.append(StatePtetResult(
                 state=state, qualifying_income=income, ptet_paid=0.0,
                 rate_desc="not modeled", gross_fed_benefit=0.0,
@@ -658,12 +641,12 @@ def analyze(
                          f"only). Check whether {state} offers an elective PTET.",),
             ))
             continue
-        if not _window_active(state, tax_year):
+        if not ptet_window_active(state, tax_year):
             # The regime didn't exist / has sunset for this tax year — don't price
             # an expired or not-yet-created elective tax (mirrors tax_calendar's
             # out-of-window note). Bias direction: confidently modeling here would
             # OVERSTATE a benefit that legally isn't available.
-            first, last = _PTET_WINDOWS[state]
+            first, last = PTET_WINDOWS[state]
             span = f"TY{first}-{last}" if last is not None else f"TY{first}+"
             unmodeled.append(StatePtetResult(
                 state=state, qualifying_income=income, ptet_paid=0.0,
