@@ -48,7 +48,10 @@
 # Exit codes are the interface:
 #   0  nothing watched changed, or the environment cannot run the checks — silent
 #   1  a signal killed the pass before it finished. It has no verdict to report,
-#      so it says nothing and must not block the tool call
+#      so it says nothing and must not block the tool call. ALSO (AA9): a GREEN
+#      pass that used three quarters or more of its registered timeout — the
+#      stamp has advanced, the warning is on stderr, and it does not block. The
+#      two are told apart by stderr: empty for the signal, the warning for this
 #   2  the checks failed, or could not produce a verdict; stderr is fed back to
 #      the agent for a same-turn fix
 # `+exP` FIRST, in the very first statement, because all three arrive from an
@@ -952,7 +955,7 @@ apply_red_checks
 #   nothing watched changed        no pytest     under a thousandth
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
 #   skill .md edit                1083 tests     about a seventh
-#   cold pass, all seven modules  1362 tests     one
+#   cold pass, all seven modules  1363 tests     one
 #   (for scale) `pytest tests/`   every module  about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
@@ -960,7 +963,7 @@ apply_red_checks
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 252 and runs 250; and
-# the hooks module holds two platform skips, so it collects 187 and runs 185.
+# the hooks module holds two platform skips, so it collects 188 and runs 186.
 #
 # THE SCALE ROW STATES NO COUNT, on purpose (AA8). Its one job since ruling Q13
 # is "about twice" a cold pass, which no exact count serves, and pinning the
@@ -973,7 +976,7 @@ apply_red_checks
 # deselections run_focused_modules passes. WHICH module dominates, and by how
 # much, is the half of a timing that survives a change of machine.
 #
-#   tests/test_claude_hooks.py     185 tests    the dominant row
+#   tests/test_claude_hooks.py     186 tests    the dominant row
 #   tests/test_portability.py      250 tests    about a tenth of the hooks row
 #   tests/test_preflight.py        383 tests    a twelfth to a twentieth of it
 #   tests/test_secure_fs.py        183 tests    under a fiftieth of it
@@ -998,7 +1001,7 @@ apply_red_checks
 # a dependency the lock does not carry.
 #
 # ARITHMETIC, which is the half that is EXACT: 48 + 219 + 183 + 250 + 383 = 1083
-# for a skill edit, plus 94 + 185 = 1362 for a cold pass, both matching the
+# for a skill edit, plus 94 + 186 = 1363 for a cold pass, both matching the
 # trigger table to the test. `test_the_measured_costs_counts_match_live_
 # collection` collects every module and re-derives both sums, the parts
 # included, so a stale count is a red suite rather than a figure a reader has to
@@ -1144,8 +1147,41 @@ run_focused_modules() {
 # suite (measured, not assumed). `pipefail` is set above and would rescue it,
 # which is exactly what makes the form dangerous: it would be correct only by a
 # side effect of a line elsewhere. Capturing does not depend on that line.
+PASS_STARTED=$SECONDS
 out=$(run_focused_modules)
 status=$?
+PASS_SECONDS=$((SECONDS - PASS_STARTED))
+
+# AA9: an overrun of the registered timeout CANCELS this hook, and a cancelled
+# check reads to the agent exactly like a pass. The headroom test guards the half
+# of that the COUNT drives; a per-test cost that climbs while the count stands
+# still is MEASURED COSTS' one blind spot. So the pass times itself and says so,
+# without blocking, when it used THREE QUARTERS of the timeout settings.json
+# registers for it. That is a comparison against a threshold, not a recorded
+# reading (ruling Q13): the seconds printed are this PYTEST pass's own — the
+# selector and the scan around it are small beside it and not counted — and the timeout
+# is read from the file the harness enforces, never restated here. A timeout it
+# cannot read is no warning — the check is advisory, and silence there is the
+# state every pass was in before it existed.
+budget_warning() {
+    local timeout
+    # `contains`, not a regex `test`: that needs a jq built with Oniguruma, and
+    # without it the warning would vanish. The TIGHTEST registered timeout,
+    # numbers only, so one registration without a timeout cannot hide another.
+    timeout=$(jq -r '[.hooks.PostToolUse[]?.hooks[]?
+                       | select((.command // "") | tostring
+                                | contains("skill-invariants.sh"))
+                       | .timeout | numbers] | min // empty' \
+              .claude/settings.json 2>/dev/null) || return 0
+    case "$timeout" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$timeout" -gt 0 ] || return 0
+    [ $((PASS_SECONDS * 4)) -ge $((timeout * 3)) ] || return 0
+    printf '%s\n' "Timing: the skill invariants' pytest pass took ${PASS_SECONDS}s of" \
+        "the ${timeout}s timeout settings.json registers for this hook — three" \
+        "quarters or more. Past the timeout the hook is CANCELLED and a" \
+        "cancelled check reads as a pass. Re-time a cold pass and see the" \
+        "MEASURED COSTS block in .claude/hooks/skill-invariants.sh (AA9)."
+}
 
 # ---------------------------------------------------------------------------
 # What the pass is allowed to remember. Three rules, and each one is the repair
@@ -1275,7 +1311,14 @@ if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then
     advance_stamp
 fi
 
-[ "$status" -eq 0 ] && exit 0
+warning=$(budget_warning)
+if [ "$status" -eq 0 ]; then
+    [ -z "$warning" ] && exit 0
+    # Exit 1 SURFACES it without blocking — the convention harden-runtime-
+    # perms.sh uses — and the verdict above already advanced the stamp.
+    printf '%s\n' "$warning" >&2
+    exit 1
+fi
 
 # pytest exits 1 for "tests ran and some failed" and 2-5 for "no verdict":
 # interrupted or a collection error (2), an internal error (3), a usage error
@@ -1293,5 +1336,8 @@ fi
 {
     echo "$headline"
     printf '%s\n' "$out" | tail -30
+    if [ -n "$warning" ]; then
+        printf '%s\n' "$warning"
+    fi
 } >&2
 exit 2

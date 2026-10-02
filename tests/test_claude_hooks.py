@@ -6802,3 +6802,44 @@ class TestHookRegistration:
                 "Raise the timeout, then re-time ONE cold pass and record it in "
                 "that change's description, per ruling Q13 in the MEASURED "
                 "COSTS block of .claude/hooks/skill-invariants.sh")
+
+
+@needs_jq
+def test_a_pass_near_its_timeout_says_so_without_blocking(tmp_path):
+    """AA9: past the registered timeout the hook is CANCELLED, and a cancelled
+    check reads as a pass. A green pass that used three quarters of the timeout
+    settings.json registers exits 1 — surfaced, not blocking, the stamp
+    advanced — naming the seconds; a red one adds the line beside its failure;
+    a pass under the line, or a workspace whose timeout cannot be read, stays
+    silent. One test, several cases: the hook's own test budget is nearly
+    spent (MEASURED COSTS), and only the slow cases sleep."""
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / "AGENTS.md").write_text("# a watched root\n")
+    settings = tmp_path / ".claude" / "settings.json"
+    stamp = tmp_path / SKILL_STAMP
+
+    def run(timeout, exit_code=0, slow=False):
+        python = _fake_venv(tmp_path, exit_code=exit_code, lines=["288 passed"])
+        if slow:
+            python.write_text(python.read_text().replace(
+                'echo "288 passed"', 'sleep 1\necho "288 passed"'))
+        if timeout is None:
+            settings.unlink(missing_ok=True)
+        else:
+            settings.write_text(json.dumps({"hooks": {"PostToolUse": [
+                {"hooks": [{"type": "command", "timeout": timeout,
+                            "command": "x/.claude/hooks/skill-invariants.sh"}]}]}}))
+        stamp.unlink(missing_ok=True)
+        return _run_skill_hook(tmp_path, str(tmp_path / "AGENTS.md"))
+
+    slow = run(1, slow=True)
+    assert slow.returncode == 1, slow.stderr
+    assert "of\nthe 1s timeout" in slow.stderr and "CANCELLED" in slow.stderr
+    assert stamp.is_file(), "the warning must come after the stamp advanced"
+    red = run(1, exit_code=1, slow=True)
+    assert red.returncode == 2 and "FAILED" in red.stderr
+    assert "CANCELLED" in red.stderr
+    fast = run(3600)
+    assert fast.returncode == 0 and fast.stderr == "", fast.stderr
+    unread = run(None)
+    assert unread.returncode == 0 and unread.stderr == "", unread.stderr

@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA9**, **AA10**, **AA19**, **AA23**, **AA24**, **AA26**, **AA32**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA10**, **AA19**, **AA23**, **AA24**, **AA26**, **AA32**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -86,6 +86,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
 
 - **AA9 (P2, S): The skill hook times itself against its own timeout.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   An overrun of the registered timeout CANCELS the hook, and a cancelled check
   reads to the agent exactly like a pass. The headroom test guards the half of
   that the count drives; what it cannot see is a per-test cost that climbs while

@@ -2044,3 +2044,44 @@ acknowledgeable (3), the tie-out exemption off (2), the exemption without the
 acknowledgement (3), the predicate refusing two resident spouses (4); and from
 the first round, the block never raised, the Y-203 condition dropped and the
 part-year case unchecked (1 each).
+
+## AA9 — the skill hook times itself against its own timeout
+
+### What was wrong
+
+An overrun of the registered timeout CANCELS the hook, and a cancelled check
+reads to the agent exactly like a pass. The headroom test guards the half of
+that the test count drives; a per-test cost that climbs while the count stands
+still is the one blind spot MEASURED COSTS names, and ruling Q13 leaves it to a
+cold pass re-timed only when a threshold moves. Raised by AA3's review rounds
+(#172).
+
+### What shipped
+
+- **The pass times itself** with bash's `SECONDS` around the pytest run, and
+  when it used three quarters or more of the timeout `settings.json` registers
+  for this hook, it says so: on a green pass, exit 1 — surfaced, not blocking,
+  the convention `harden-runtime-perms.sh` already uses — after the stamp has
+  advanced; on a red one, a line beside the failure.
+- **The timeout is read, not restated**: `jq` reads it from `settings.json`,
+  so the check is a comparison against a threshold, inside Q13; a timeout it
+  cannot read is no warning, the state every pass was in before.
+- One test drives a shim that sleeps against a one-second registered timeout,
+  with an ample one and with none, in one test because the hook's own test
+  budget is nearly spent. `docs/contributing/claude-automation.md` says what
+  the warning means.
+
+AA24 asks the same of `harden-runtime-perms.sh` and stays open.
+
+### Verified
+
+The test covers a slow green pass (exit 1, the stamp advanced), a slow red one
+(exit 2 with the line beside the failure), an ample timeout and an unreadable
+one; only the slow cases sleep. The exit-code contract in the hook's header and
+in `claude-automation.md` names exit 1's second meaning, told apart from the
+signal's by its stderr. `jq` matches the registration with `contains`, not a
+regex that needs Oniguruma, and takes the tightest numeric timeout.
+
+Mutation checks, each turning the test red: the threshold never met, the green
+warning exiting 0, a warning at any speed, the red path's line dropped, and
+the warning sent before the stamp advanced.

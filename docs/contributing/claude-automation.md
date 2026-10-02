@@ -50,6 +50,14 @@ without starting pytest when nothing watched moved. That fast path — the first
 `skill-invariants.sh` MEASURED COSTS, under a thousandth of a cold pass — is what stops
 `ls` and `git status` from each buying a pytest run.
 
+**It times its own pass (AA9).** Past its registered timeout the hook is CANCELLED, and
+a cancelled check reads to the agent exactly like a pass. When a pass uses three
+quarters or more of the timeout `settings.json` registers for it, the hook says so —
+exit 1, surfaced and not blocking, after the stamp has advanced — naming that pass's own
+seconds. It reads the timeout from `settings.json` rather than restating it, so it is a
+comparison against a threshold and never a recorded reading; a timeout it cannot read
+is no warning.
+
 It then runs only the CHECKS the changed paths can turn red: seven test modules, or a
 node-id subset of one of them. Two tables decide that, and CLAUDE.md states the rule for
 adding to them; what the rule is protecting:
@@ -71,7 +79,9 @@ Half-covering is the shape to avoid, and its worse direction is a path in
 covered.
 
 Exit 0 silent, 2 blocking with the failing tail, 1 when TERM/INT/HUP killed the pass —
-that last one has no verdict, so it must not block. The hook no-ops without `jq` or a
+that one has no verdict, so it must not block — and 1 also for a green pass that used
+three quarters of its timeout (AA9), with the warning on stderr where the signal's is
+empty. The hook no-ops without `jq` or a
 `.venv`.
 
 ### `harden-runtime-perms.sh` (`Write|Edit|NotebookEdit|Bash`, timeout 60s)
