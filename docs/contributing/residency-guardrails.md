@@ -160,18 +160,24 @@ uses, `capabilities._NO_INCOME_TAX_STATES`.
 **BOTH prongs are required.** Days alone, with hotels and no abode, is not
 statutory residency; an abode alone without the days is not either.
 
-It is DISTINCT from the three rules next to it, and all four can fire at once:
+It is DISTINCT from the four rules next to it, and all five can fire at once:
 
 - `part_year_residency` fires on a mid-year MOVE. A taxpayer who never moved and
   simply kept two homes is not caught by it.
 - `move_abroad` fires on a mid-year move to or from ANOTHER COUNTRY, which is
   not a move between states and so is not `part_year_residency`'s: an emigrant
   answers "no" to the states question truthfully (AA17).
+- `territory_resident` fires on bona fide residence in a US territory (AA18),
+  from the interview's answer, a territory address or a territory
+  `residency.domicile_state`. A territory is not a
+  foreign country, so neither `move_abroad` nor `lives_abroad` reaches it, and
+  the territory income Puerto Rico (§933) and American Samoa (§931) exclude
+  goes back into modified AGI.
 - `nonresident_source_income` fires on income SOURCED elsewhere. Statutory
   residency taxes ALL income, wherever it arose, so the source test misses it
   entirely for a taxpayer whose income is all from their resident state.
 
-`nyc_resident` was a fourth rule until the New York module took on the City
+`nyc_resident` was a fifth rule until the New York module took on the City
 block; it is now the city-tax switch, and `yonkers_resident` is its Yonkers
 twin. Each applies the State's test at its own level, and neither has a day
 count behind it, so City and Yonkers residency stay the taxpayer's assertion.

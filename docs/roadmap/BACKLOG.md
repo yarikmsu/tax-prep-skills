@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA9**, **AA10**, **AA18**, **AA19**, **AA23**, **AA24**, **AA26**, **AA30**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA9**, **AA10**, **AA19**, **AA23**, **AA24**, **AA26**, **AA30**, **AA31**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -114,6 +114,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   next PR that touches these tests.
 
 - **AA18 (P2, S): A territory resident passes the capability gate.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   Since AA16 the compute step says modified AGI adds a §931 or §933
   exclusion, which a bona fide resident of Puerto Rico or American Samoa can
   have without `lives_abroad` (one of Guam or the Northern Marianas files with
@@ -188,16 +190,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   with a control run on a twin tree that must leave it exposed. The rest
   need the same. Found by AA25's review.
 
-- **AA29 (P2, S): Nothing refuses a line 58 typed by hand.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.** AA15 made
-  `compute_city_and_yonkers_total` refuse a flagged tax it was not passed, but
-  that guards only a total computed through the function. An agent that never
-  calls it, or a line 58 typed into `result.json`, still reads a skipped line
-  47a, 55 or 56 as a computed zero, an under-statement of what the return
-  owes. The tie-out gate is the place for it: a household flag set with its
-  line null or absent fails the gate. Recorded as AA15's remainder (#188).
-
 - **AA30 (P2, S): AA29's two remainders.** The tie-out checks a household
   line's VALUE, not its provenance, so a 0 written after the template passes
   as computed — the hazard the null default exists for, one write later. A
@@ -207,6 +199,16 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   return with one resident spouse, Form Y-203 on a joint return — is caught at
   Step 12.7, after the work, where a capability rule at Step 0.7 would block
   it with the form it needs before any. Found by AA29's bias review.
+
+- **AA31 (P2, S): The template pre-answers the gate's required questions.**
+  `taxpayer_profile_template.json` ships every `_REQUIRED_GATE_FLAGS` entry
+  as `false`, and `/tax-setup` builds the profile from it, so a question the
+  interview skipped — a headless run whose `answers.md` lacks it — reads as an
+  answered "no". `unanswered_gate_questions` fires only on an absent or null
+  key, so the guarantee "absence is not a no" holds for a legacy profile and
+  not for a new one. `nyc_resident_spouses` ships `null` for exactly this
+  reason. Shipping the required flags `null` would make an unasked one block;
+  every test fixture already sets them explicitly. Found by AA18's bias review.
 
 ### W — engineering hygiene
 
@@ -580,6 +582,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA14 | #189 | a cache without `table_bases` gets a note, and the row can be a dollar off either way; the TY2026 check rides Y2 |
 | AA27 | #189 | — |
 | AA28 | #190 | the TY2026 `table_bases` check rides Y2 |
+| AA29 | #192 | a 0 written after the template passes as computed, and the refused households are caught at Step 12.7 rather than Step 0.7 (AA30) |
 | AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
 | AA15 | #188 | nothing yet refuses a line 58 typed by hand or an agent that never calls the total (AA29) |
 | Q7 | #156 | — |

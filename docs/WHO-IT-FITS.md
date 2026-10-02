@@ -86,6 +86,10 @@ commutes is one blocked return, so this undercounts joint returns.
   keep a home in another state and spend enough days there to be its resident
   as well. The thresholds and their sources are in
   [residency-guardrails](contributing/residency-guardrails.md).
+- **A resident of a US territory** (`territory_resident`): Puerto Rico,
+  American Samoa, Guam, the Northern Mariana Islands or the US Virgin Islands.
+  Each has its own income-tax relationship to the United States, and none of
+  the tables above is cut by it.
 - **A foreign fund's distribution or sale** (`pfic_taxable_event`), which is
   computed once you accept it (above).
 - **Out-of-state income that is not a commute.** This is the same block as

@@ -138,8 +138,8 @@ the worksheet:
   benefits (8839), **Form 8815 excluded savings-bond interest** (the worksheet
   uses PRE-exclusion Schedule B line 2, not the post-exclusion 1040 line 2b —
   pass the excluded portion here), excluded territory income — REQUIRED for
-  `lives_abroad` taxpayers and Form 8815 filers; omitting them understates
-  line 6b
+  `lives_abroad` taxpayers, Form 8815 filers and an acknowledged
+  `territory_resident`; omitting them understates line 6b
 - `filing_status` is REQUIRED (no default) and MFS filers MUST pass
   `lived_apart_from_spouse_all_year` (hard error otherwise) — it selects
   between the Single-style worksheet and the $0-base 85% path.

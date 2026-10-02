@@ -4,6 +4,10 @@ California Form 540 in depth; New York has its own file; every other state is
 a bracket estimate. A `type: "none"` state is a positive declaration, not an
 empty section.
 
+**A TERRITORY IS NOT A STATE.** When `address.state` is PR, VI, GU, AS or MP,
+the return reached here only by acknowledging `territory_resident`: compute
+NO state return and no estimate. The territory's own return is out of scope.
+
 **NEW YORK IS NOT HERE.** When `tax_law.state.code == "NY"`, run the
 cache-vs-taxpayer cross-check below and then read
 [state-return-ny.md](state-return-ny.md) instead of any branch in this file.

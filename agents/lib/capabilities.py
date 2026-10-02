@@ -118,6 +118,22 @@ RULES: "tuple[Rule, ...]" = (
          "taxpayer who is not a US citizen can also have a "
          "dual-status federal year (Form 1040-NR), which is not modeled "
          "either."),
+    Rule("territory_resident", "bona_fide_territory_resident", UNSUPPORTED,
+         "Bona fide resident of a US territory (Puerto Rico, American Samoa, "
+         "Guam, the Northern Mariana Islands or the US Virgin Islands)",
+         "Puerto Rico §933 / Form 4563 (§931) / Form 8689 (§932) / the "
+         "territory's own return (§935)",
+         "Territory-source income a Puerto Rico (§933) or American Samoa "
+         "(§931) resident excludes has no path into or out of this return, "
+         "and modified AGI adds it back: without it the SALT cap's phasedown "
+         "and Schedule 1-A's phase-outs read AGI alone, which OVER-states the "
+         "deduction. A Guam or Northern Marianas resident files with the "
+         "territory (§935) and a Virgin Islands resident under §932; neither "
+         "is modeled. `lives_abroad` does not reach any of them — a territory "
+         "is not a foreign country — and a territory ADDRESS or "
+         "`residency.domicile_state` blocks here whatever the flag says. "
+         "Acknowledging it means the excluded income is added back into "
+         "modified AGI and provisional income by hand."),
     Rule("statutory_residency_second_state",
          "statutory_resident_of_another_state", UNSUPPORTED,
          "Resident of a second state under its mechanical residency test",
@@ -492,6 +508,7 @@ _REQUIRED_GATE_FLAGS = (
     "has_iso_exercise",
     "moved_states_this_year",
     "moved_abroad_this_year",
+    "bona_fide_territory_resident",
     "nyc_resident",
     "yonkers_resident",
     "yonkers_nonresident_earnings",
@@ -537,15 +554,21 @@ def _validated_acknowledged(profile: dict, extra: "set[str] | None") -> "set[str
     return acknowledged
 
 
-# All USPS state/territory codes (50 states + DC + the five inhabited
-# territories). A 2-letter-shape check alone lets "ZZ" (corrupt) or "CN"
-# (typo for CA) through to a confident bracket-estimate note — this gate is
-# the last validation before meta.limitations, so membership is enforced.
+# The five inhabited territories, each with its own income-tax relationship to
+# the United States (§§931-935). An address in one blocks as territory_resident
+# whatever flags.bona_fide_territory_resident says (AA18): the gate used to take
+# one with no rule at all.
+_TERRITORIES = frozenset({"PR", "VI", "GU", "AS", "MP"})
+
+# All USPS state/territory codes (50 states + DC + the five territories). A
+# 2-letter-shape check alone lets "ZZ" (corrupt) or "CN" (typo for CA) through
+# to a confident bracket-estimate note — this gate is the last validation
+# before meta.limitations, so membership is enforced.
 _USPS_STATES = frozenset(
     "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS "
     "MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV "
-    "WI WY DC PR VI GU AS MP".split()
-)
+    "WI WY DC".split()
+) | _TERRITORIES
 
 
 # Explicit negatives for the legacy free-text residency answer. Anything else
@@ -660,6 +683,7 @@ _NY_ABODE_MONTHS_BEFORE_2022 = 11
 _NY_TEN_MONTH_RULE_YEAR = 2022
 
 _STATUTORY_RESIDENCY_FLAG = "statutory_resident_of_another_state"
+_TERRITORY_FLAG = "bona_fide_territory_resident"
 
 _MAX_DAYS_IN_A_YEAR = 366
 _MAX_MONTHS_IN_A_YEAR = 12
@@ -746,6 +770,10 @@ def _state_note(profile: dict) -> str:
     code = _profile_state(profile)
     if code is None:
         return "State: none configured — no state return computed."
+    if code in _TERRITORIES:
+        return (f"Territory ({code}): not a state, and no state return is "
+                "computed. The territory's own return and its relationship "
+                "to the federal one are out of scope (territory_resident).")
     if code == "CA":
         return "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
     if code == "NY":
@@ -929,12 +957,19 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     # `domicile_state` nobody reads is still a field a later reader will trust,
     # and "Nu York" has to fail where it is written, not where it is used.
     _residency_domicile(profile)
-    ny_derived = _ny_statutory_resident(profile)
+    # Flags the profile's own facts can set whatever the taxpayer answered.
+    # A territory DOMICILE counts as much as a territory address: the address
+    # is where the mail goes, and a Puerto Rico resident with a Florida box
+    # is the case the flag alone leaves to a legal term of art.
+    derived = {_STATUTORY_RESIDENCY_FLAG: _ny_statutory_resident(profile),
+               _TERRITORY_FLAG: bool(
+                   {_profile_state(profile), _residency_domicile(profile)}
+                   & _TERRITORIES)}
 
     for rule in RULES:
-        if not _flag_value(flags, rule.flag):
-            if not (ny_derived and rule.flag == _STATUTORY_RESIDENCY_FLAG):
-                continue
+        # _flag_value FIRST, so a non-bool answer still hard-errors.
+        if not (_flag_value(flags, rule.flag) or derived.get(rule.flag)):
+            continue
         _place(Finding(rule.rule_id, rule.level, rule.situation, rule.form,
                        rule.note, rule.rule_id in acknowledged_ids))
 
@@ -951,8 +986,8 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
             "Ask the taxpayer the missing questions and set each flag "
             "explicitly true/false in taxpayer_profile.json flags: "
             f"{', '.join(missing_flags)}. Absence is not treated as 'no' — an "
-            "existing ISO/NYC/household-employee/kiddie-tax/move-abroad "
-            "situation would "
+            "existing ISO/NYC/household-employee/kiddie-tax/move-abroad/"
+            "territory situation would "
             "otherwise slip through the gate. This blocker cannot be "
             "acknowledged; answer the questions instead.",
             acknowledged=False))

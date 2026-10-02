@@ -106,6 +106,8 @@
     "moved_states_this_year": false,
     "moved_abroad_this_year": false,
     "_comment_moved_abroad_this_year": "A move to or from ANOTHER COUNTRY during the tax year, which moved_states_this_year does not cover: a move abroad is not a move between states. Blocks as move_abroad, because a full-year resident return would tax the months lived outside the country.",
+    "bona_fide_territory_resident": false,
+    "_comment_bona_fide_territory_resident": "Whether the taxpayer (or spouse) was a bona fide resident of Puerto Rico, American Samoa, Guam, the Northern Mariana Islands or the US Virgin Islands for any part of the year. Puerto Rico (\u00a7933) and American Samoa (\u00a7931, Form 4563) exclude territory-source income, which modified AGI adds back for the SALT cap's phasedown and Schedule 1-A; Guam and the Northern Marianas file with the territory (\u00a7935), and the Virgin Islands under \u00a7932 (Form 8689). None of it is modeled, so it BLOCKS as territory_resident, and so does a territory address whatever this says. Not lives_abroad: a territory is not a foreign country.",
     "nyc_resident": false,
     "nyc_resident_spouses": null,
     "_comment_nyc_resident_spouses": "How many spouses were New York City residents for the WHOLE year: 0, 1 or 2. Only meaningful on a joint return, and REQUIRED there \u2014 IT-201 line 47 is not used at all when exactly one spouse was a city resident (that return goes to line 51, a computation this engine does not do). One household boolean cannot carry it: nyc_resident says whether the household owes city tax, and this says whether BOTH spouses are residents. Assuming two over-states the city tax for a mixed-residence couple by the non-resident spouse's whole share.",

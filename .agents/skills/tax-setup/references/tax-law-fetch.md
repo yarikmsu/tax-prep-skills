@@ -344,6 +344,10 @@ a figure from a prior year.
     the required state-block pin).
     If either current-year figure cannot be verified live, STOP under the
     freshness rule rather than retaining the template's `null`.
+- **A territory (PR, VI, GU, AS, MP) is not a state: fetch NO state block.**
+  The capability gate blocks it as `territory_resident`; an acknowledged one
+  computes no state return, so a territory's own rates must never be cached
+  as a `graduated_income` "state".
 - For other states: Search `"{state} {year} income tax rates"`. `type:
   "none"` (the FL pattern — a positive declaration, never an empty bracket
   list) may be assigned ONLY to a state on this closed allowlist: **AK, FL,

@@ -142,6 +142,12 @@ interview never captures is invisible to every downstream check.
   full-year resident return taxing the months they lived abroad. It blocks at
   the same gate, for the same reason; tell the user now. Living abroad all
   year is `lives_abroad` (Group 4), not this.
+- Were you (or your spouse) a bona fide resident of Puerto Rico, American
+  Samoa, Guam, the Northern Mariana Islands or the US Virgin Islands at any
+  point this year? → sets `bona_fide_territory_resident`. A territory is not a
+  foreign country, so `lives_abroad` does not cover it, and the excluded
+  territory income changes modified AGI. It blocks at the gate (and so does a
+  territory address or `residency.domicile_state`); tell the user now.
 - If NY appears anywhere — the address, `residency.domicile_state`, or either
   count above: are you a New York City resident? → sets `nyc_resident`.
   **Not "if state is NY"**: the taxpayer this matters most to has a Florida

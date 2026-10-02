@@ -1902,3 +1902,55 @@ Mutation checks: the findings left out of the verdict (28 tests fail), the
 CLI not passing the flags (1), a non-boolean flag skipped (3), no line-58
 floor (5), the floor ignoring the `mctmt` block (1), a negative accepted (3),
 the template back to 0 (1), and a mislabelled row in the shared table (1).
+
+## AA18 — a territory resident passed the capability gate
+
+### What was wrong
+
+Since AA16 the compute step adds a §931 or §933 exclusion back into modified
+AGI, which a bona fide resident of Puerto Rico or American Samoa can have
+without `lives_abroad`. Nothing collected one: the interview did not ask, the
+profile had no field, and the gate accepted a PR, VI, GU, AS or MP address
+with no rule. Modified AGI went in equal to AGI, so the SALT cap's phasedown
+and Schedule 1-A's phase-outs read the smaller figure — an over-stated
+deduction, the direction AGENTS.md §4 makes a hard error — and the excluded
+income had no path into or out of the return at all.
+
+### What shipped
+
+- **`flags.bona_fide_territory_resident`**, in the profile template and asked
+  in `/tax-setup` Group 2, and a required gate question: unanswered blocks as
+  `unanswered_gate_questions`, never read as a no.
+- **`territory_resident`**, an UNSUPPORTED rule naming each territory's form
+  (§933, Form 4563 for §931, Form 8689 for §932, the territory's own return
+  under §935). It blocks on the flag, and on a territory ADDRESS or
+  `residency.domicile_state` whatever the flag says — the address is where the
+  mail goes, the domicile is the residence. `_TERRITORIES` is the one copy of
+  the five codes; `_USPS_STATES` is built from it. Like `part_year_residency`
+  it can be acknowledged, as AGENTS.md §4 provides for every unsupported rule;
+  the rule note and the provisional-income guidance say the excluded income
+  is then added back by hand.
+- **A territory gets its own state note**, not "bracket-based ESTIMATE": a
+  territory is not a state, and the limitations of an acknowledged return
+  said both.
+- `docs/WHO-IT-FITS.md` names it among the blocks no public table measures,
+  and the residency guardrails place it beside the other residency rules.
+
+### Verified
+
+Tests: the flag blocks; each of the five territory addresses blocks with the
+flag false, and so does a territory domicile behind a stateside address; no
+territory gets a bracket-estimate note; the set is exactly the five; a state
+address with the flag false does not block; an unanswered flag blocks as an
+unanswered gate question; the block can be acknowledged. Mutation checks: no
+address derivation (5 tests fail), the flag not required (1), the rule
+demoted to MANUAL (7), a territory dropped from the set (1), the interview no
+longer asking (2), the template losing the flag (1), the domicile not read
+(1), and the territory note removed (5).
+
+### Not done — AA31
+
+The template ships every required gate flag `false`, so a profile built from
+it carries an answered "no" to a question nobody asked; `unanswered_gate_
+questions` fires only on a key that is absent or null. This item adds one more
+such flag; the fix belongs to all of them.

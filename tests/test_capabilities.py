@@ -70,6 +70,7 @@ def test_iso_exercise_is_manual_not_blocking():
     ("has_marketplace_insurance", "marketplace_insurance"),
     ("moved_states_this_year", "part_year_residency"),
     ("moved_abroad_this_year", "move_abroad"),
+    ("bona_fide_territory_resident", "territory_resident"),
     ("statutory_resident_of_another_state", "statutory_residency_second_state"),
     ("has_nonresident_source_income", "nonresident_source_income"),
     ("has_household_employees", "household_employees"),
@@ -384,9 +385,11 @@ def test_non_usps_two_letter_code_hard_errors():
 
 
 def test_usps_territory_codes_accepted():
+    """A valid code, not a malformed one: it reaches the territory rule (AA18)
+    and its own note, rather than hard-erroring as unknown."""
     r = C.evaluate(_profile(state="PR"))
     assert "(PR)" in r.state_note
-    assert "ESTIMATE only" in r.state_note
+    assert _blocking_ids(r) == ["territory_resident"]
 
 
 # --------------------------------------------------------------------------
@@ -1791,3 +1794,61 @@ def test_who_it_fits_stops_on_a_changed_layout(tmp_path):
     _write_commuting(tmp_path, header=False)
     with pytest.raises(ValueError, match="header"):
         script.commuting(tmp_path, set(), {"Cal": ("06", None, False)})
+
+
+# --------------------------------------------------------------------------
+# AA18: a bona fide resident of a US territory. Excluded territory income adds
+# back into modified AGI, and with nothing collecting it the SALT phasedown and
+# Schedule 1-A read AGI alone: an over-stated deduction. The gate took a
+# territory address with no rule at all.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("state", sorted(C._TERRITORIES))
+def test_a_territory_address_blocks_whatever_the_flag_says(state):
+    r = C.evaluate(_profile({"bona_fide_territory_resident": False},
+                            state=state))
+    assert _blocking_ids(r) == ["territory_resident"]
+
+
+def test_the_territories_are_exactly_the_five_inhabited_ones():
+    """A USPS code missing here passes the gate as a state; one added that is
+    not a territory blocks a state's filer."""
+    assert C._TERRITORIES == {"PR", "VI", "GU", "AS", "MP"}
+
+
+def test_a_state_address_with_the_flag_false_does_not_block():
+    assert "territory_resident" not in _blocking_ids(C.evaluate(_profile()))
+
+
+def test_an_unanswered_territory_question_blocks_until_asked():
+    """Absence is not a no: the question is a required gate flag."""
+    p = _profile()
+    del p["flags"]["bona_fide_territory_resident"]
+    r = C.evaluate(p)
+    assert _blocking_ids(r) == ["unanswered_gate_questions"]
+    assert "bona_fide_territory_resident" in r.blocking[0].note
+
+
+def test_the_territory_block_can_be_acknowledged():
+    """Like part_year_residency: the return may proceed with the limitation
+    recorded, which is the user's decision, not the gate's."""
+    r = C.evaluate(_profile({"bona_fide_territory_resident": True},
+                            acknowledged=["territory_resident"]))
+    assert "territory_resident" not in _blocking_ids(r)
+
+
+@pytest.mark.parametrize("state", sorted(C._TERRITORIES))
+def test_a_territory_gets_no_state_bracket_estimate(state):
+    """An acknowledged territory return carried "PR state tax is
+    bracket-estimated" beside the block saying it is not modeled. A territory
+    is not a state."""
+    note = C._state_note({"address": {"state": state}})
+    assert "ESTIMATE" not in note and "territory_resident" in note
+
+
+def test_a_territory_domicile_blocks_behind_a_stateside_address():
+    """The address is where the mail goes; `residency.domicile_state` is the
+    residence. A Puerto Rico domicile with a Florida box passed."""
+    p = _profile({"bona_fide_territory_resident": False}, state="FL")
+    p["residency"] = {"domicile_state": "PR"}
+    assert _blocking_ids(C.evaluate(p)) == ["territory_resident"]
