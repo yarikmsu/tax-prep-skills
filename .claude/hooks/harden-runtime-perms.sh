@@ -27,7 +27,8 @@
 # NEVER BLOCKS. Exit 2 is the only code that feeds a hook's stderr back as an
 # error the agent must handle, and this hook never uses it: a permissions hook
 # that can derail a session gets switched off, and a switched-off hook protects
-# nothing. It exits 1 when a chmod FAILED, which surfaces the message to the user
+# nothing. It exits 1 when a chmod FAILED, or when the pass used three quarters
+# of its registered timeout (AA24), which surfaces the message to the user
 # and lets the tool call proceed — silence was the wrong way to get never-block,
 # because a chmod that cannot run leaves a return exposed and said so nowhere.
 
@@ -54,6 +55,7 @@ umask 077
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 
+PASS_STARTED=$SECONDS
 failed=0
 warn() {
     printf 'harden-runtime-perms: %s\n' "$*" >&2
@@ -235,7 +237,8 @@ trap cleanup EXIT
 # shell-level code. So this trap is not what rescues the file from a hook
 # timeout. What it adds is promptness and a deterministic status — the removal
 # stops waiting on whatever is currently running, and the pass ends on this
-# hook's own 1, meaning "something was not done" and never "blocked", rather
+# hook's own 1, meaning "something was not done" (or, AA24, "nearly ran out of
+# time") and never "blocked", rather
 # than on 143.
 #
 # It is a mitigation, not a guarantee, and both limits are measured too. A
@@ -1513,6 +1516,40 @@ write_stamp() {
 if [ "$failed" -eq 0 ] && [ -d .claude ] && [ ! -L .claude ] \
    && [ ! -L "$STAMP" ]; then
     write_stamp || warn "could not advance the permissions stamp safely"
+fi
+
+# AA24: an overrun of the registered timeout CANCELS this hook mid-walk, and
+# nothing then hardens what it had not reached. AA4's test pins the walk's SHAPE
+# in chmods; the cost of the per-entry loop, the traversals and the index refresh
+# is what the timeout has to cover, and a regression that slows them without
+# adding a chmod passes every test. So the pass times itself and says so —
+# exit 1, surfaced, never the blocking 2 — when it used THREE QUARTERS of the
+# timeout settings.json registers for it. AFTER the stamp: the timing is not a
+# failed chmod, and holding the stamp over it would re-walk every tree on the
+# next call, which is the cost being warned about. The timeout is read, never
+# restated (ruling Q13), and one that cannot be read is no warning. A pass
+# under a second cannot reach three quarters of any timeout, so the usual call
+# spawns no jq.
+elapsed=$((SECONDS - PASS_STARTED))
+if [ "$elapsed" -gt 0 ] && command -v jq >/dev/null 2>&1; then
+    perms_timeout=$(jq -r '[.hooks.PostToolUse[]?.hooks[]?
+                            | select((.command // "") | tostring
+                                     | contains("harden-runtime-perms.sh"))
+                            | .timeout | numbers] | min // empty' \
+                    .claude/settings.json 2>/dev/null) || perms_timeout=''
+    case "$perms_timeout" in
+        ''|*[!0-9]*) ;;
+        *)
+            if [ "$perms_timeout" -gt 0 ] \
+               && [ $((elapsed * 4)) -ge $((perms_timeout * 3)) ]; then
+                printf 'harden-runtime-perms: %s\n' \
+                    "Timing: this pass took ${elapsed}s of the ${perms_timeout}s timeout" \
+                    "settings.json registers for it — three quarters or more. Past it" \
+                    "the walk is CANCELLED and what it had not reached stays exposed" \
+                    "(AA24)." >&2
+                failed=1
+            fi ;;
+    esac
 fi
 
 exit "$failed"

@@ -90,6 +90,12 @@ Re-asserts AGENTS.md §1's `chmod 600` on the runtime artifacts and its `chmod 7
 the runtime directories. `Bash` is in the matcher because `result.json` is written by a
 script, not by an editor tool.
 
+**It times its own walk (AA24)**, as the skill hook does its pass: when a walk uses
+three quarters or more of the timeout `settings.json` registers for it, it says so after
+hardening and advancing the stamp, with the same non-blocking exit 1. A cancelled walk
+leaves exposed whatever it had not reached, and AA4's test pins the walk's shape in
+chmods, not its cost.
+
 It exits 1 to surface a failed permission change without blocking the call, and never
 the blocking exit code 2: a permission it could not set is a warning to a human, not a
 reason to refuse the edit that prompted it.

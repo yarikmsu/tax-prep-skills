@@ -2085,3 +2085,34 @@ regex that needs Oniguruma, and takes the tightest numeric timeout.
 Mutation checks, each turning the test red: the threshold never met, the green
 warning exiting 0, a warning at any speed, the red path's line dropped, and
 the warning sent before the stamp advanced.
+
+## AA24 — the permissions hook times its own walk
+
+### What was wrong
+
+AA4's test pins the permissions walk's SHAPE — added files spawn no chmod, an
+added directory at most two — and no longer converts that to seconds. What the
+registered timeout has to cover was unmeasured: two chmods per directory, the
+per-entry loop, the traversals and the index refresh, nearly all of the cost in
+a file-heavy archive. A regression that slowed the loop without adding a chmod
+passed every test, and a walk cancelled at the timeout leaves exposed whatever
+it had not reached.
+
+### What shipped
+
+AA9's remedy, applied here. The walk times itself from the start of the pass;
+after hardening and advancing the stamp it reads its own registered timeout
+from `settings.json` with `jq` and, at three quarters or more, says so with
+`harden-runtime-perms:` and exit 1 — the hook's existing non-blocking signal,
+never the blocking 2. After the stamp because the timing is not a failed
+chmod: holding the stamp would re-walk every tree next call, the very cost
+being warned about. An unreadable timeout is no warning. The registered
+timeout stays held by `test_the_permissions_hook_timeout_is_not_cut`.
+
+### Verified
+
+One test: a `chmod` that sleeps stands in for a slow walk against a one-second
+timeout — exit 1, the file hardened, the stamp written — and an ample timeout
+stays silent. Mutation checks, each turning it red: the threshold never met,
+the warning without exit 1, a warning at any speed, and a pass clock that
+started too early.

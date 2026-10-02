@@ -955,7 +955,7 @@ apply_red_checks
 #   nothing watched changed        no pytest     under a thousandth
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
 #   skill .md edit                1083 tests     about a seventh
-#   cold pass, all seven modules  1363 tests     one
+#   cold pass, all seven modules  1364 tests     one
 #   (for scale) `pytest tests/`   every module  about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
@@ -963,7 +963,7 @@ apply_red_checks
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 252 and runs 250; and
-# the hooks module holds two platform skips, so it collects 188 and runs 186.
+# the hooks module holds two platform skips, so it collects 189 and runs 187.
 #
 # THE SCALE ROW STATES NO COUNT, on purpose (AA8). Its one job since ruling Q13
 # is "about twice" a cold pass, which no exact count serves, and pinning the
@@ -976,7 +976,7 @@ apply_red_checks
 # deselections run_focused_modules passes. WHICH module dominates, and by how
 # much, is the half of a timing that survives a change of machine.
 #
-#   tests/test_claude_hooks.py     186 tests    the dominant row
+#   tests/test_claude_hooks.py     187 tests    the dominant row
 #   tests/test_portability.py      250 tests    about a tenth of the hooks row
 #   tests/test_preflight.py        383 tests    a twelfth to a twentieth of it
 #   tests/test_secure_fs.py        183 tests    under a fiftieth of it
@@ -1001,7 +1001,7 @@ apply_red_checks
 # a dependency the lock does not carry.
 #
 # ARITHMETIC, which is the half that is EXACT: 48 + 219 + 183 + 250 + 383 = 1083
-# for a skill edit, plus 94 + 186 = 1363 for a cold pass, both matching the
+# for a skill edit, plus 94 + 187 = 1364 for a cold pass, both matching the
 # trigger table to the test. `test_the_measured_costs_counts_match_live_
 # collection` collects every module and re-derives both sums, the parts
 # included, so a stale count is a red suite rather than a figure a reader has to

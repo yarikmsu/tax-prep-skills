@@ -3383,6 +3383,38 @@ class TestRuntimePermissionsHook:
         leaked = [n for n in names if _mode(tmp_path / n) != 0o600]
         assert not leaked, f"still group/world readable: {leaked}"
 
+    @needs_jq
+    def test_a_walk_near_its_timeout_says_so_without_blocking(self, tmp_path):
+        """AA24: past its registered timeout the walk is CANCELLED and what it
+        had not reached stays exposed. A pass that used three quarters of the
+        timeout settings.json registers exits 1 — never the blocking 2 —
+        after hardening the file and advancing the stamp; an ample timeout
+        stays silent. A `chmod` that sleeps stands in for a slow walk."""
+        (tmp_path / ".claude").mkdir()
+        exposed = tmp_path / "result.json"
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        (shim / "chmod").write_text("#!/bin/sh\nsleep 1\nexec /bin/chmod \"$@\"\n")
+        (shim / "chmod").chmod(0o755)
+        settings = tmp_path / ".claude" / "settings.json"
+
+        def run(timeout):
+            settings.write_text(json.dumps({"hooks": {"PostToolUse": [
+                {"hooks": [{"type": "command", "timeout": timeout,
+                            "command": "x/.claude/hooks/harden-runtime-perms.sh"}]}]}}))
+            exposed.write_text("{}")
+            exposed.chmod(0o644)
+            return self._run(tmp_path, env_extra={
+                "PATH": f"{shim}:{os.environ['PATH']}"})
+
+        slow = run(1)
+        assert slow.returncode == 1, slow.stderr
+        assert "CANCELLED" in slow.stderr and "of the 1s timeout" in slow.stderr
+        assert _mode(exposed) == 0o600
+        assert (tmp_path / ".claude" / ".perms-stamp").is_file()
+        fast = run(3600)
+        assert fast.returncode == 0 and fast.stderr == "", fast.stderr
+
     def test_an_inherited_function_cannot_stand_in_for_chmod(
             self, tmp_path, inherited_function):
         """A function runs ahead of the PATH lookup, and bash takes one from
