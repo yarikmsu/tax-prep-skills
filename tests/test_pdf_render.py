@@ -472,3 +472,19 @@ class TestTheFourthRoundRules:
         assert "generate_tax_pdf.py must exist" not in head
         assert "pdf_render.py" in head
 
+
+
+def test_schedule_a_inputs_stay_off_the_summary():
+    """AA23: the inputs a planning tool re-runs Schedule A from restate
+    figures already on the page under other meanings, and printed the tax
+    year as money ("Tax year $2,026.00"). They are for the tools, not the
+    reader."""
+    from agents.lib.pdf_render import _rows
+    section = {"medical_expenses": 12000, "itemized_total": 16000,
+               "inputs": {"tax_year": 2026, "medical_expenses": 12000,
+                          "standard_deduction": 15750}}
+    rows = _rows(section, "", "schedule_a")
+    labels = [label.strip().lower() for label, _value in rows]
+    assert not any("input" in label or "tax year" in label
+                   for label in labels), rows
+    assert labels.count("medical expenses") == 1, rows

@@ -67,6 +67,12 @@ def _is_commentary(key: str) -> bool:
     return key.startswith("_")
 
 
+# Keys a planning tool reads back and no reader of the summary should: Schedule
+# A's recorded `inputs` (AA23) restate figures already on the page under other
+# meanings, and print its tax year as $2,026.00.
+_MACHINE_KEYS = frozenset({"inputs"})
+
+
 # Sections whose absence is normal and whose presence is decided by the skill
 # (`_include_if`). A section that is present but EMPTY — every figure null —
 # prints nothing rather than a page of em dashes.
@@ -275,7 +281,7 @@ def _rows(node, prefix: str = "", section: str = "") -> "list[tuple[str, str]]":
         return _rows({"": node}, prefix, section)[1:] if node else []
     if isinstance(node, dict):
         for key, value in node.items():
-            if _is_commentary(key):
+            if _is_commentary(key) or key in _MACHINE_KEYS:
                 continue
             label = f"{prefix}{_label(key, section)}"
             if isinstance(value, dict):

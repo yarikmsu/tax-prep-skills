@@ -2281,3 +2281,49 @@ Each guard was mutation-checked: switching it off turns the test red.
 ### Not yet
 
 The pricing itself. `result.json` holds Schedule A's outputs, not the inputs a re-run needs. Until they are recorded and each planning tool re-runs the function, the three disclosures stay. `/tax-project`'s own tilt moves with that step.
+
+## AA23, second slice — Schedule A records the inputs a re-run needs
+
+### What was wrong
+
+`result.json`'s `schedule_a` section held the function's OUTPUTS. These include the deductible SALT after the cap, the mortgage interest after the limit, and the charitable deduction after the caps and floor. A planning tool pricing a moved AGI needs the inputs that produced those outputs, so it could only hold the figures and disclose the drift. That is AA20's own "Not done".
+
+### What shipped
+
+- **`compute_schedule_a` returns `inputs`**: every argument except the three that move with AGI. Those three are `agi`, `modified_agi` and `top_bracket_income`, named in `SCHEDULE_A_AGI_ARGUMENTS`.
+- **`rerun_schedule_a(inputs, agi, modified_agi, top_bracket_income)`** runs it again at another AGI. It refuses a set of inputs that is not exactly what the function records. A missing input would default to $0 and under-state the deduction, and an extra one is a figure nothing reads.
+- **The template and `/tax-compute`** write `inputs` into the section.
+
+### Verified
+
+A hand-computed TY2026 case: $12,000 of medical expenses gives a $4,500 deduction at an AGI of $100,000 and $3,000 at $120,000. The test also covers:
+- the re-run reproducing the return at its own AGI;
+- the JSON round trip;
+- the refusals.
+
+Mutation checks: dropping the set check, or a recorded input, turns the test red.
+
+### Found by the bias review
+
+A re-run could over-state the deduction four ways. Each is now rebuilt or refused, and every change was mutation-checked:
+- **MAGI is AGI plus fixed add-backs** (Form 2555, Form 4563, Puerto Rico). Taking it from a caller who would pass the new AGI dropped the add-back and raised the SALT cap, AA16's failure. The section records `magi_addback`, and the re-run rebuilds MAGI from it.
+- **The §70111 haircut moves with the income in the 37% bracket.** Omitted, it was skipped. The re-run now requires `top_bracket_income` from TY2026 (0 when none).
+- **`investment_interest` is the post-Form 4952 figure**, a min() whose other side the scenario moves. At another AGI the re-run refuses.
+- **The sales-tax election uses an income-keyed table.** At a lower AGI the re-run refuses; at a higher one it degrades with a note. State income taxes paid are held at the return's figure, with a note.
+
+Hand-computed checks:
+- A $130,000 add-back carries to a $550,000 MAGI at a $420,000 AGI.
+- The haircut is $2,000 at $37,000 of 37%-bracket income.
+
+### Found by the general review
+
+- **The summary PDF no longer prints the `inputs` block.** It printed a filled block as a table, with the tax year as "$2,026.00" and three figures twice under other meanings. `pdf_render` now skips the block as machine-only.
+- **A re-run takes `non_itemizer_charitable` as an override.** A return far below the standard deduction records it as None, and a higher AGI can move the election into the window where the function refuses without it. The case is hand-computed: $21,000 itemized at $50,000 of AGI becomes $17,000 at $100,000, which elects standard at −$750 once handed the $2,000.
+
+Both fixes were mutation-checked.
+
+### Not yet
+
+The planning tools do not call `rerun_schedule_a` yet; that is the third slice. Two kinds of return still keep the held figure and its disclosure:
+- a return written before `inputs` existed;
+- a standard filer far from the margin, whose section is not written.

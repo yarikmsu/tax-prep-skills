@@ -140,6 +140,7 @@
     "itemized_total": 0,
     "use_itemized": false,
     "election_margin": 0,
+    "inputs": null,
     "notes": []
   },
 

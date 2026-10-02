@@ -8733,3 +8733,113 @@ def test_schedule_a_weighs_section_170p_on_the_standard_side():
     for bad in (-1, float("nan"), True, "1000"):
         with pytest.raises(ValueError):
             run(non_itemizer_charitable=bad)
+
+
+def test_schedule_a_records_its_inputs_and_reruns_from_them():
+    """AA23: `inputs` is every argument but the three that move with AGI, plus
+    the AGI they were computed at and MAGI's add-back over it, so
+    `rerun_schedule_a` reproduces the return at its own AGI and re-prices it at
+    another. Hand-computed, TY2026 Single, medical $12,000:
+      AGI 100,000: floor 7,500  -> medical deductible 4,500
+      AGI 120,000: floor 9,000  -> medical deductible 3,000"""
+    import inspect
+    from agents.lib.tax_computations import (
+        SCHEDULE_A_AGI_ARGUMENTS, rerun_schedule_a)
+    out = compute_schedule_a(100000, "Single", 2026, 15750, 40400,
+                             medical_expenses=12000, mortgage_interest=14000,
+                             charitable_cash=1000, non_itemizer_charitable=1000,
+                             top_bracket_income=0)
+    assert set(out["inputs"]) == (
+        set(inspect.signature(compute_schedule_a).parameters)
+        - set(SCHEDULE_A_AGI_ARGUMENTS)) | {"agi_at_compute", "magi_addback"}
+    same = rerun_schedule_a(out["inputs"], 100000, top_bracket_income=0)
+    drop = ("notes", "inputs")
+    assert {k: v for k, v in same.items() if k not in drop} == {
+        k: v for k, v in out.items() if k not in drop}
+    assert out["medical_deductible"] == 4500.0
+    moved = rerun_schedule_a(out["inputs"], 120000, top_bracket_income=0)
+    assert moved["medical_deductible"] == 3000.0
+    # Survives the JSON round trip result.json puts it through.
+    assert rerun_schedule_a(json.loads(json.dumps(out["inputs"])), 120000,
+                            top_bracket_income=0) == moved
+    # A missing input would default to $0 and under-state the deduction; an
+    # extra one is a figure nothing reads. Both refuse.
+    for broken in ({k: v for k, v in out["inputs"].items()
+                    if k != "mortgage_interest"},
+                   {**out["inputs"], "agi": 1},
+                   None):
+        with pytest.raises(ValueError, match="schedule_a.inputs"):
+            rerun_schedule_a(broken, 120000, top_bracket_income=0)
+    # The §70111 haircut moves with 37%-bracket income: required from 2026.
+    with pytest.raises(ValueError, match="top_bracket_income is required"):
+        rerun_schedule_a(out["inputs"], 120000)
+
+
+def test_a_schedule_a_rerun_refuses_what_it_would_over_state():
+    """AA23's bias review: each held input that can over-state the deduction
+    at a moved AGI refuses, or is rebuilt rather than held."""
+    from agents.lib.tax_computations import rerun_schedule_a
+
+    # MAGI = AGI + a $130,000 Form 2555 exclusion. Rebuilt from the new AGI,
+    # it keeps the add-back: a caller passing MAGI = AGI would raise the cap.
+    salt = dict(state_local_income_taxes=60000, real_estate_taxes=20000)
+    ret = compute_schedule_a(400000, "MFJ", 2025, 31500, 40000,
+                             modified_agi=530000, **salt)
+    assert ret["inputs"]["magi_addback"] == 130000.0
+    again = rerun_schedule_a(ret["inputs"], 420000, top_bracket_income=0)
+    assert again["modified_agi"] == 550000.0
+    held = compute_schedule_a(420000, "MFJ", 2025, 31500, 40000,
+                              modified_agi=550000, **salt)
+    assert again["salt_deductible"] == held["salt_deductible"]
+    assert again["salt_deductible"] < compute_schedule_a(
+        420000, "MFJ", 2025, 31500, 40000, modified_agi=420000,
+        **salt)["salt_deductible"], "the add-back is what lowers the cap"
+    assert any("income taxes are held" in n for n in again["notes"])
+
+    # Post-Form-4952 investment interest cannot be re-priced at another AGI.
+    inv = compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                             investment_interest=8000, mortgage_interest=9000)
+    rerun_schedule_a(inv["inputs"], 100000, top_bracket_income=0)
+    with pytest.raises(ValueError, match="Form 4952"):
+        rerun_schedule_a(inv["inputs"], 90000, top_bracket_income=0)
+
+    # The SALES-tax table is keyed on income: lower AGI refuses, higher notes.
+    sales = compute_schedule_a(100000, "Single", 2025, 15750, 40000,
+                               state_local_sales_taxes=3000,
+                               mortgage_interest=14000)
+    with pytest.raises(ValueError, match="SALES tax"):
+        rerun_schedule_a(sales["inputs"], 90000, top_bracket_income=0)
+    up = rerun_schedule_a(sales["inputs"], 110000, top_bracket_income=0)
+    assert any("table amount" in n for n in up["notes"])
+
+    # The haircut itself is re-priced: 2/37 of the lesser of the itemized
+    # total and the 37%-bracket income ($37,000 -> $2,000 off $60,000).
+    big = compute_schedule_a(900000, "Single", 2026, 15750, 40400,
+                             modified_agi=900000, mortgage_interest=60000,
+                             top_bracket_income=37000)
+    assert big["obbba_70111_reduction"] == 2000.0
+    re = rerun_schedule_a(big["inputs"], 900000, top_bracket_income=37000)
+    assert re["itemized_total"] == big["itemized_total"] == 58000.0
+
+
+def test_a_schedule_a_rerun_can_be_handed_section_170p():
+    """AA23: a return whose itemized total was far below the standard
+    deduction records §170(p) as None — it could not tip the election there.
+    A higher AGI cuts the medical deduction into the tilt window, where the
+    function refuses without it; the re-run takes it as an override.
+    TY2026 Single, AGI 50,000: medical 20,000 - 3,750 = 16,250, mortgage
+    3,000, cash 2,000 less the 0.5% floor 250 = 1,750: itemized 21,000.
+    At AGI 100,000: medical 20,000 - 7,500 = 12,500; cash 2,000 - 500 = 1,500;
+    itemized 17,000, inside 15,750 < x <= 15,750 + 2,000."""
+    from agents.lib.tax_computations import rerun_schedule_a
+    ret = compute_schedule_a(50000, "Single", 2026, 15750, 40400,
+                             medical_expenses=20000, mortgage_interest=3000,
+                             charitable_cash=2000, top_bracket_income=0)
+    assert ret["itemized_total"] == 21000.0
+    assert ret["inputs"]["non_itemizer_charitable"] is None
+    with pytest.raises(ValueError, match="non_itemizer_charitable is required"):
+        rerun_schedule_a(ret["inputs"], 100000, top_bracket_income=0)
+    moved = rerun_schedule_a(ret["inputs"], 100000, top_bracket_income=0,
+                             non_itemizer_charitable=2000)
+    assert moved["itemized_total"] == 17000.0
+    assert (moved["use_itemized"], moved["election_margin"]) == (False, -750.0)

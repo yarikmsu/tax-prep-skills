@@ -112,13 +112,16 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   them and retire all three. AA20's entry recorded this fix and left with it
   when AA20 shipped; AA21's simplify pass found it gone. The same function
   should own the itemize-or-standard choice with §170(p) on the standard side.
-  **That half is BUILT by the pull request that records "AA23, first slice" in
-  `docs/changelog/epic-AA.md`:** `compute_schedule_a` takes
+  **That half shipped in #203:** `compute_schedule_a` takes
   `non_itemizer_charitable` and elects on it, and `/tax-compute` no longer
-  tilts by hand. What remains is the pricing: `result.json` holds Schedule A's
-  OUTPUTS, so the inputs a re-run needs (the SALT components, gross mortgage
-  interest and points, the charitable cash/noncash split) are recorded first,
-  then each planning tool re-runs it at its priced AGI. `/tax-project` still
+  tilts by hand. **The inputs are BUILT by the pull request that records "AA23,
+  second slice" in `docs/changelog/epic-AA.md`:** the function returns
+  `inputs`, `/tax-compute` writes them into `schedule_a`, and
+  `rerun_schedule_a` re-prices from them at another AGI. What remains is the
+  wiring: each planning tool re-runs it at its priced AGI and the three
+  disclosures retire. A return written before `inputs` existed, or one whose
+  section was not written (a standard filer far from the margin), keeps the
+  held figure and its disclosure. `/tax-project` still
   tilts in its own code (AA22) and moves with that step.
 
 ### W — engineering hygiene

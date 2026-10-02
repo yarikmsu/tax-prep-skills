@@ -705,7 +705,9 @@ persona SALT usually exceeds the OBBBA cap by itself):
   line 12 (the function emits a loud note when the input is absent).
 - Use `use_itemized` for line 12; write the result into the `schedule_a`
   section when itemizing (or when `election_margin` is within $500, or when a
-  note says §170(p) decided the election — document the close call). Copy `notes` verbatim, and surface
+  note says §170(p) decided the election — document the close call), and
+  write its `inputs` there too, unchanged: the planning tools re-run the
+  function from them at their own AGI (`rerun_schedule_a`, AA23). Copy `notes` verbatim, and surface
   `charitable_carryforward` for next year.
 - **§170(p) tilts the election (TY2026+), and `compute_schedule_a` owns it
   (AA23).** A standard-deduction donor ALSO gets the §170(p) line-13c

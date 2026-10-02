@@ -13,6 +13,7 @@ All bracket/threshold/credit values come from tax_law JSON.
 """
 
 import datetime
+import inspect
 import math
 
 # No `sys.path` bootstrap. The line that stood here counted TWO directories up
@@ -2115,6 +2116,28 @@ def compute_schedule_a(
     election margin (against the standard side, §170(p) included),
     charitable carryforward, and notes.
     """
+    # Every input but the three that move with AGI, recorded so a planning
+    # tool can re-run this at its own priced AGI (AA23): result.json held the
+    # OUTPUTS, and a re-run needs what produced them.
+    inputs = {
+        "filing_status": filing_status, "tax_year": tax_year,
+        "standard_deduction": standard_deduction, "salt_cap": salt_cap,
+        "medical_expenses": medical_expenses,
+        "state_local_income_taxes": state_local_income_taxes,
+        "state_local_sales_taxes": state_local_sales_taxes,
+        "real_estate_taxes": real_estate_taxes,
+        "personal_property_taxes": personal_property_taxes,
+        "mortgage_interest": mortgage_interest,
+        "mortgage_points": mortgage_points,
+        "average_mortgage_balance": average_mortgage_balance,
+        "mortgage_pre_dec_16_2017": mortgage_pre_dec_16_2017,
+        "investment_interest": investment_interest,
+        "charitable_cash": charitable_cash,
+        "charitable_noncash": charitable_noncash,
+        "charitable_over_250_substantiated": charitable_over_250_substantiated,
+        "mfs_spouse_itemizes": mfs_spouse_itemizes,
+        "non_itemizer_charitable": non_itemizer_charitable,
+    }
     fs = _normalize_filing_status(filing_status)
     if isinstance(tax_year, bool) or not isinstance(tax_year, int):
         raise ValueError(f"tax_year must be an int, got {tax_year!r}")
@@ -2356,8 +2379,119 @@ def compute_schedule_a(
         # itemized-minus-standard figure it always had for them.
         "election_margin": round(
             itemized_total - std - (0.0 if forced else non_itemizer), 2),
+        # The AGI the inputs were computed at, and MAGI's add-back over it:
+        # the part of MAGI that does NOT move with AGI, so a re-run rebuilds
+        # MAGI rather than taking one that dropped it (AA16's failure).
+        "inputs": {**inputs, "agi_at_compute": float(agi),
+                   "magi_addback": (None if modified_agi is None
+                                    else round(float(modified_agi)
+                                               - float(agi), 2))},
         "notes": notes,
     }
+
+
+# What `compute_schedule_a` takes that moves with AGI, and so is NOT one of
+# its recorded `inputs`; and what it records beside them for a re-run.
+SCHEDULE_A_AGI_ARGUMENTS = ("agi", "modified_agi", "top_bracket_income")
+_SCHEDULE_A_RERUN_KEYS = ("agi_at_compute", "magi_addback")
+
+
+def rerun_schedule_a(inputs: dict, agi: float,
+                     top_bracket_income: "float | None" = None,
+                     non_itemizer_charitable: "float | None" = None) -> dict:
+    """`compute_schedule_a` again, from the `inputs` a return recorded, at a
+    different AGI (AA23).
+
+    The phasedown, the medical floor, the charitable caps and floor, the
+    §70111 haircut and the election all move with AGI; the planning tools held
+    the return's figures and disclosed the drift. This prices them. It REFUSES
+    wherever a held input would over-state the deduction at the new AGI:
+
+    - MAGI is rebuilt, `agi` plus the recorded add-back (Form 2555 lines 45
+      and 50, Form 4563, Puerto Rico) — never taken from a caller who would
+      pass the AGI and drop it, raising the SALT cap.
+    - `top_bracket_income` is REQUIRED from TY2026 for an itemizer: the
+      §70111 haircut moves with the income in the 37% bracket, and omitted it
+      is skipped (0 when none of it is). It is circular with the deduction:
+      price it provisionally, then re-run, as /tax-compute does.
+    - `investment_interest` is the post-Form 4952 figure, a min() whose other
+      side (net investment income) a scenario moves; at another AGI it
+      refuses, since held it can over-state.
+    - The SALES-tax election uses the IRS table, keyed on income, so a lower
+      AGI refuses (held, it over-states) and a higher one degrades with a note.
+    - Income taxes paid are held at the return's figure, with a note: state
+      withholding scales with wages a scenario may move.
+
+    `non_itemizer_charitable` is recorded None where §170(p) could not tip
+    the election at the return's AGI; a moved AGI can bring it into range, and
+    the function then refuses. Pass the provisional figure here to supply it
+    (it has no AGI term); a recorded figure is used otherwise.
+
+    The recorded inputs must be EXACTLY the set `compute_schedule_a` records —
+    one missing would default to zero and under-state the deduction, one extra
+    would be a figure nothing reads — so anything else refuses.
+    """
+    if not isinstance(inputs, dict):
+        raise ValueError(f"schedule_a.inputs must be an object, got {inputs!r}")
+    expected = ((set(inspect.signature(compute_schedule_a).parameters)
+                 - set(SCHEDULE_A_AGI_ARGUMENTS))
+                | set(_SCHEDULE_A_RERUN_KEYS))
+    if set(inputs) != expected:
+        missing = sorted(expected - set(inputs))
+        extra = sorted(set(inputs) - expected)
+        raise ValueError(
+            "schedule_a.inputs is not what compute_schedule_a records "
+            f"(missing {missing}, unexpected {extra}): re-run /tax-compute "
+            "so the section carries the inputs it was computed from")
+    args = {k: v for k, v in inputs.items() if k not in _SCHEDULE_A_RERUN_KEYS}
+    if non_itemizer_charitable is not None:
+        args["non_itemizer_charitable"] = non_itemizer_charitable
+    at = inputs["agi_at_compute"]
+    addback = inputs["magi_addback"]
+    for name, value in (("agi", agi), ("agi_at_compute", at),
+                        ("magi_addback", addback)):
+        if value is None and name == "magi_addback":
+            continue
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)):
+            raise ValueError(f"{name} must be a finite number, got {value!r}")
+    moved = round(float(agi), 2) != round(float(at), 2)
+    notes = []
+    if moved and args.get("investment_interest"):
+        raise ValueError(
+            "schedule_a.inputs.investment_interest is the amount after Form "
+            "4952's net-investment-income limit, a figure that moves with "
+            "the scenario; held at another AGI it can over-state the "
+            "deduction. Re-pricing it needs the gross interest and the NII.")
+    sales = args.get("state_local_sales_taxes") or 0
+    income = args.get("state_local_income_taxes") or 0
+    if moved and sales and sales > income:
+        if agi < at:
+            raise ValueError(
+                "the return deducts state and local SALES tax, whose IRS "
+                "table amount is keyed on income: held at a lower AGI it "
+                "over-states the deduction. Re-supply the table figure for "
+                "this income.")
+        notes.append(
+            "Sales tax is held at the return's table amount, keyed on a lower "
+            "income than this AGI: the SALT deduction may be under-stated.")
+    elif moved and income:
+        notes.append(
+            "State and local income taxes are held at the return's figure; "
+            "withholding that moves with wages is not re-priced.")
+    if (top_bracket_income is None
+            and args.get("tax_year", 0) >= _OBBBA_ITEMIZED_HAIRCUT_FROM):
+        raise ValueError(
+            "top_bracket_income is required from "
+            f"TY{_OBBBA_ITEMIZED_HAIRCUT_FROM}: the §70111 haircut moves with "
+            "the income in the 37% bracket at this AGI, and omitted it is "
+            "skipped, over-stating the deduction. Pass 0 when none is.")
+    out = compute_schedule_a(
+        agi=agi, top_bracket_income=top_bracket_income,
+        modified_agi=None if addback is None else round(agi + addback, 2),
+        **args)
+    out["notes"] = notes + out["notes"]
+    return out
 
 
 # Schedule 1-A structural statutory constants (OBBBA). Amounts (caps, senior
