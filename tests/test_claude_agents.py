@@ -1137,10 +1137,10 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
     # `git show` on a blobless clone is a NETWORK fetch: against a remote that
     # is gone it waits on the transport, and a test that waits inside a
     # PostToolUse hook is a hook cancelled at its own limit, which the caller
-    # cannot tell from a pass. Skill-invariants.sh MEASURED COSTS puts this
-    # whole module among the cheapest rows, a small fraction of a cold pass, so
-    # a bound on ONE git call this far above that can only ever be reached by
-    # something that is not answering the question.
+    # cannot tell from a pass. A BUDGET, which CLAUDE.md's one-owner rule for
+    # timings exempts as a threshold the code compares against: chosen far
+    # above any healthy read rather than derived from MEASURED COSTS, so it is
+    # reached only by something that is not answering the question.
     GIT_TIMEOUT = 60
 
     def _replay_a_body(self):

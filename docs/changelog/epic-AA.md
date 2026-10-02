@@ -2141,3 +2141,33 @@ module's count is unchanged.
 
 Restoring one of the old readings turns the test red, naming it; removing it
 again turns it green.
+
+## AA10 — what AA3's review rounds left
+
+### What was wrong
+
+Leftovers from AA3, each small:
+- `_words_to_int` kept its negative and thousands branches, and a docstring defending them, after the paragraph that needed them was deleted.
+- The counts test flattened the block with its own regex beside `_comment_prose`, and re-implemented `_the_one_statement` for the portability and hooks sentences.
+- One assertion message named the six arms as the only way a count moves.
+- Three places argued an absolute from a ratio: the headroom comment, the GIT_TIMEOUT comment and `agents-compat.md`. A fourth, the retry cost under MEASURED COSTS, stated a ratio the block does not hold.
+
+### What shipped
+
+- `_words_to_int` reads only what its one caller needs.
+- The counts test reuses `_comment_prose` and `_the_one_statement`.
+- The message now names all seven modules.
+- Each budget is described as a threshold the code compares against, the exemption CLAUDE.md names, and the retry cost is described by what it pays rather than by a ratio.
+- The owner question is answered by AA33: the one-owner rule covers `harden-runtime-perms.sh`.
+- The timing test's docstring now records its accepted gaps: whole-line comments only, and neither a duration in words nor a number two words from its unit.
+
+### Verified
+
+Changing the block's hooks figure to 190 turns the counts test red through the new reader, naming 190 against 189; restoring it turns it green. The full suite has only the 7 known root-only failures.
+
+The review found that the first draft had opened a hole. Splitting the
+block's character span dropped its header line, because that line carries no
+comment marker inside the span, so a stale `999 tests` there passed both
+tests. Both tests now slice whole lines through one `_block_prose`, and the
+pair pattern comes from one `_module_pair`. With the same `999 tests` the
+counts test now goes red; the draft's version of it passes.

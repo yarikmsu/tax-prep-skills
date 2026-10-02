@@ -1201,12 +1201,12 @@ budget_warning() {
 #      measurement that was never taken.
 #
 #      What this costs is the repeat rule 2 exists to prevent, so it is worth
-#      pricing rather than asserting: while the checks are unrunnable, every
+#      saying what is repeated: while the checks are unrunnable, every
 #      following tool call retries them. That retry is not the cold pass —
-#      pytest gives up before running a test body, and three runs each of a
+#      pytest gives up before running a test body, as three runs each of a
 #      renamed module (exit 4) and of an import that fails at collection
-#      (exit 2) put it in the same order as the fast path itself. A retry that
-#      size until the checks are repaired, against an edit that is otherwise
+#      (exit 2) showed, so it pays start-up and collection and nothing else.
+#      That, until the checks are repaired, against an edit that is otherwise
 #      never checked again, is not a close trade.
 #
 #   2. A pass that produced a VERDICT advances the stamp, red verdict included.

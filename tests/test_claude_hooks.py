@@ -2555,7 +2555,8 @@ class TestSkillInvariantsHook:
             "here as well as there")
         assert HOOKS_DEPENDENTS_EXCLUDED not in found, (
             f"{HOOKS_DEPENDENTS_EXCLUDED} is selected by the six test-module "
-            "arms again. It goes red the moment a test is ADDED to one of them "
+            "arms again. It goes red the moment a test is ADDED to any of the "
+            "seven modules it counts, those six among them, "
             "and stays red until MEASURED COSTS is refreshed by hand, so "
             "it blocks every tool call of the round that makes the refresh "
             "possible — the gates-that-cry-wolf pattern")
@@ -6076,9 +6077,25 @@ def _measured_costs_span(script: str) -> tuple[int, int]:
     return start, end
 
 
-# The `collects N and runs M` sentences the counts test reads. Shared with the
-# timing test, whose numeral allowlist may trust only a sentence that is read.
-_MODULE_PAIR = r"(portability|hooks)\b[^.]*?collects (\d+) and runs (\d+)"
+def _block_prose(script: str) -> tuple[str, str]:
+    """The comment prose inside MEASURED COSTS and outside it, by WHOLE lines.
+
+    The span starts mid-line, after the header's `# `, so splitting the span
+    itself hands `_comment_prose` a first line with no marker, which it drops —
+    and a stale count on the header line then passed both tests that read it.
+    """
+    start, end = _measured_costs_span(script)
+    lines = script.splitlines()
+    first, last = script.count("\n", 0, start), script.count("\n", 0, end)
+    return (_comment_prose(lines[first:last]),
+            _comment_prose(lines[:first] + lines[last:]))
+
+
+def _module_pair(module: str = "portability|hooks") -> str:
+    """The `collects N and runs M` sentence the counts test reads, for one
+    module or both. ONE source for both tests: the timing test's numeral
+    allowlist may trust only a sentence the counts test reads."""
+    return rf"({module})\b[^.]*?collects (\d+) and runs (\d+)"
 
 
 def _the_one_statement(pattern: str, text: str):
@@ -6150,42 +6167,24 @@ def _words_to_int(text: str):
     KeyError three frames down — a guard whose failure arrives as a different
     error reports the wrong reason for its own red.
 
-    NEGATIVE is readable, and it was not: a module that loses tests moves a
-    count DOWN, and every figure derived from the six could then only be written
-    in a shape this reader rejects. So the guard blocked the honest refresh
-    precisely when a count went the one direction nothing here had ever seen —
-    and the only way out was to edit the test, which is the shape of a gate that
-    gets reasoned past. `minus` is the word the block writes it with.
+    It reads one figure, the hooks module's platform-skip count, which is
+    never negative and never in the thousands, so it reads neither.
     """
-    total = current = 0
+    total = 0
     seen = False
-    sign = 1
     for word in re.findall(r"[a-z]+", text.lower().replace("-", " ")):
         if word == "and":
-            continue
-        if word in ("minus", "negative") and not seen and sign == 1:
-            sign = -1
             continue
         if word == "hundred":
             if not seen:
                 return None             # `hundred and eight` is not a number
-            current *= 100
-        elif word == "thousand":
-            if not seen:
-                return None             # ...and neither is `thousand and one`
-            # BANKED rather than multiplied in place, which is what `total` has
-            # always been for and what nothing until now put anything into: the
-            # hundreds that may follow a thousand belong to a fresh group, so
-            # `three thousand three hundred and four` has to close 3000 before
-            # `hundred` multiplies the 3 beside it.
-            total += current * 1000
-            current = 0
+            total *= 100
         elif word in _NUMBER_WORDS:
-            current += _NUMBER_WORDS[word]
+            total += _NUMBER_WORDS[word]
         else:
             return None
         seen = True
-    return sign * (total + current) if seen else None
+    return total if seen else None
 
 
 def _code_only(source: str) -> str:
@@ -6438,14 +6437,15 @@ class TestHookRegistration:
         Outside the block the same words are ordinary prose (`a second pass`),
         so the rule there is the narrower one: no number in front of a unit, in
         a comment. Code is exempt, because `touch -d '1 second ago'` is
-        behaviour and not a reading.
+        behaviour and not a reading. The same narrower rule covers every
+        comment in `harden-runtime-perms.sh`, which has no block (AA33).
+
+        ACCEPTED GAPS, recorded so a review does not re-find them (AA10):
+        outside the block this reads whole-line comments only, and catches
+        neither a duration spelled in words nor a number two words from its
+        unit.
         """
-        script = SKILL_HOOK.read_text()
-        start, end = _measured_costs_span(script)
-        lines = script.splitlines()
-        first, last = script.count("\n", 0, start), script.count("\n", 0, end)
-        inside = _comment_prose(lines[first:last])
-        outside = _comment_prose(lines[:first] + lines[last:])
+        inside, outside = _block_prose(SKILL_HOOK.read_text())
 
         stated = _DURATION_WORD.findall(inside) + _TIMED_FIGURE.findall(inside)
         assert not stated, (
@@ -6461,7 +6461,7 @@ class TestHookRegistration:
         # a digit after a letter or `#` (`Q13`, `V5`, a PR number) is a name.
         labelled = re.sub(r"\b\d{4}-\d\d-\d\d\b", "", inside)
         counts = set(re.findall(r"(\d+) tests\b", labelled))
-        counts |= {n for m in re.findall(_MODULE_PAIR, labelled) for n in m[1:]}
+        counts |= {n for m in re.findall(_module_pair(), labelled) for n in m[1:]}
         foreign = sorted(set(re.findall(
             r"(?<![\w.#])(?:\d+(?:\.\d+)?|\.\d+)", labelled)) - counts)
         assert not foreign, (
@@ -6505,28 +6505,21 @@ class TestHookRegistration:
         block = SKILL_HOOK.read_text()
         start, end = _measured_costs_span(block)
         costs = block[start:end]
-        # Comment markers stripped BEFORE flattening, so a sentence wrapped
-        # mid-phrase still reads as one; `[^.]*?` in the patterns below keeps a
-        # match inside one sentence.
-        flat = re.sub(r"\s+", " ", re.sub(r"^#[ \t]?", "", costs, flags=re.M))
+        # `[^.]*?` in the patterns below keeps a match inside one sentence.
+        flat, _ = _block_prose(block)
 
         # BOTH halves of each sentence, and EVERY copy of it: the run half
         # restates a table row, and a restatement nothing compares is one
         # quantity with two values.
         stated_collects: dict = {}
         stated_runs: dict = {}
-        for mod, n, ran in re.findall(_MODULE_PAIR, flat):
-            said = (stated_collects.setdefault(mod, int(n)),
-                    stated_runs.setdefault(mod, int(ran)))
-            assert said == (int(n), int(ran)), (
-                f"the block says the {mod} module collects {said[0]} and runs "
-                f"{said[1]}, and elsewhere {n} and {ran} — one quantity, two "
-                "values, and only the first was being compared")
-        assert set(stated_collects) == {"portability", "hooks"}, (
-            "the block's reconciliation sentences for the portability and "
-            "hooks modules no longer parse as `collects N and runs M` (found "
-            f"{sorted(stated_collects)}) — widen the pattern; a sentence this "
-            "test cannot read is a figure nothing checks")
+        for mod in ("portability", "hooks"):
+            said = _the_one_statement(_module_pair(mod), flat)
+            assert said, (
+                f"the block's reconciliation sentence for the {mod} module no "
+                "longer parses as `collects N and runs M` — widen the pattern; "
+                "a sentence this test cannot read is a figure nothing checks")
+            stated_collects[mod], stated_runs[mod] = map(int, said.groups()[1:])
 
         # THE TWO TABLES, found by their boundaries rather than by what a row
         # hopes to say. Five review rounds found five ways for a row to stop
@@ -6773,8 +6766,9 @@ class TestHookRegistration:
     # without anyone remembering to.
     #
     # The two constants below are BUDGETS, not copies of the block: each was
-    # chosen above the measurement rather than read off it, which is why they
-    # survive the rule that keeps the seconds in one place. They also cover
+    # chosen above the measurement rather than read off it, and a threshold the
+    # code compares against is what CLAUDE.md exempts from the one-owner rule
+    # for timings. They also cover
     # different failure shapes. SECONDS_PER_COLLECTED_TEST tracks a suite that
     # grows by many cheap tests; MEASURED_FULL_PASS_FLOOR covers the shape a
     # per-test budget cannot see — few tests, each slow. Which of the two binds

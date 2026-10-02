@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA10**, **AA19**, **AA23**, **AA26**, **AA32**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **AA19**, **AA23**, **AA26**, **AA32**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -86,6 +86,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
 
 - **AA10 (P3, XS): Tidy what AA3's review rounds left.**
+  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
+  this entry moves to the shipped index the day that merges.**
   In `tests/test_claude_hooks.py` unless named: `_words_to_int` keeps negative
   and thousands branches and a docstring for the counts-ahead paragraph AA3
   deleted; the counts test flattens the block with its own regex beside
@@ -152,15 +154,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   exists for, one write later. A witness the computing function co-writes
   (`compute_nyc_resident_tax`'s `regime`, Y-203's `form`) or a receipt binding
   would close it. Split from AA30.
-
-- **AA33 (P3, S): The permissions hook still states absolute timings.**
-  **BUILT by the pull request that records it in `docs/changelog/epic-AA.md`;
-  this entry moves to the shipped index the day that merges.**
-  CLAUDE.md's MEASURED COSTS rule forbids an absolute outside that block, and
-  `test_the_hook_states_no_absolute_timing` reads `skill-invariants.sh` alone,
-  so the readings #73 left in `harden-runtime-perms.sh`'s comments were never
-  checked. Turn them into ratios and extend the test to that script. Found by
-  AA24's review.
 
 ### W — engineering hygiene
 
@@ -541,6 +534,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
 | AA30 | #195 | a household line's 0 still passes as computed (AA32); an acknowledged refused household's City or Yonkers tax is prepared by hand |
+| AA33 | #199 | outside MEASURED COSTS the figure rule still reads whole-line comments only (AA10) |
 | AA24 | #198 | it prices the walk only when the walk ran past a second, and reads its timeout from `settings.json` |
 | AA9 | #197 | it times the pytest pass, not the selector and scan around it |
 | AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
