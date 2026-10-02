@@ -233,7 +233,11 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 ### Z — state coverage
 
-- **Z4 (P3, S): North Carolina D-400.** A `graduated_income` module with a single
+- **Z4 (P3, M): North Carolina D-400.** **Designed:**
+  `docs/superpowers/specs/2026-10-02-nc-state-module-design.md` answers the
+  questionnaire from the TY2025 D-401 and plans five slices; the first is the
+  spec itself. Re-sized from S: the TY2026 rate step-down is joined by an IRC
+  conformity date and five non-goals whose omission would OVER-state the tax. A `graduated_income` module with a single
   bracket per year — the flat rate is on a statutory step-down schedule, so it
   must be year-gated and FETCHED, never inlined — NC standard deduction and child
   deduction, the short Schedule S list (state/local bond interest, Social
