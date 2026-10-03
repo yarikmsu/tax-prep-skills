@@ -99,8 +99,9 @@ and the usual cause is a `web_search` that is not live — Codex ships
 - **Third: §164(b)(7)'s SALT schedule** — the statute NAMES each amount
   ($40,000 TY2025, $40,400 TY2026, 101%/yr to TY2029, $10,000 after; half for
   MFS) and (B)'s phasedown threshold, rate and floor, with no inflation index.
-  Pinned to `tax_computations/federal/salt.py` by test; the cache wins for the
-  amount only.
+  Pinned to `tax_computations/federal/salt.py` by test; the cached amount must
+  match the statutory schedule, allowing its whole-dollar rounding. A mismatch
+  refuses computation; a law change requires updating the schedule.
 - **If live web access is unavailable, cached-only, or you cannot confirm the
   figure is current: STOP.** Ask the user to paste the current figures along with
   the source URL. Never infer a figure from a prior year and never let a
@@ -361,9 +362,7 @@ a parser version the lock does not pin.
   `docs/contributing/tax-law-cache.md`
 
 **Modifying templates**
-- `result_template.json` field names reach the summary PDF through
-  `agents/lib/pdf_render.py`, which is tracked and tested against this template:
-  a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
+- Rendering contract: `docs/contributing/test-invariants.md`.
 - Sections should be conditional — `tax-setup` removes inapplicable ones.
 
 **Modifying skills**

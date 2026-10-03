@@ -87,12 +87,14 @@ statuses explicitly. `state.standard_deduction` has the five statuses plus
   stale the same way. §164(b)(7) steps the cap: $40,000 for TY2025, $40,400 for TY2026,
   101% of the prior year through TY2029, then $10,000. The cache carries the
   amount BEFORE the per-return MAGI phasedown, which `tax_computations/federal/salt.py`
-  applies for both the return's Schedule A and `/tax-ptet`. `ptet._salt_cap` prefers the
-  cache and falls back to that schedule, which is the STATUTE's own and not an
+  applies for both the return's Schedule A and `/tax-ptet`. Both refuse a cached
+  amount that differs from the schedule, allowing its nearest whole dollar
+  (half up). `ptet._salt_cap` falls back when unfetched to that schedule, which
+  is the STATUTE's own and not an
   inference — the section carries no inflation index, which is why AGENTS.md §2
   lists it as an enumerated exception rather than requiring a fetch. The published
-  IRS figure for a stepped year is still authority over arithmetic from an anchor,
-  so a populated cache wins. Fetch it.
+  IRS figure must agree with that schedule before computation; a law change
+  requires updating the schedule. Schedule A still requires a fetched amount.
 - `child_tax_credit.refundable_limit` — the indexed per-child ACTC cap that
   `compute_child_tax_credit`'s refundable split requires.
 

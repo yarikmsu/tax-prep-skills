@@ -291,7 +291,8 @@ def create_empty_tax_law(year: int) -> dict:
             # each year by statute for 2026-2029. It is the amount BEFORE the
             # §164(b)(7)(B) MAGI phasedown, which tax_computations/federal/
             # salt.py applies per return. `ptet._salt_cap` falls back to the
-            # statutory schedule when unset; `compute_schedule_a` takes it as
+            # statutory schedule when unset; both consumers refuse a mismatch
+            # beyond whole-dollar rounding. `compute_schedule_a` takes it as
             # a required input and refuses None, so /tax-setup must fetch it.
             "salt_cap": {"amount": None, "mfs_amount": None},
             # IRC §6621 federal underpayment rate (short-term AFR + 3%), set

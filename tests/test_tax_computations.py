@@ -2439,9 +2439,10 @@ class TestScheduleA:
         over-states the deduction on a return; that refuses. Outside those
         years the cap is the $10,000 floor already and nothing can reduce it,
         so nothing is required."""
-        for year in (2025, 2029):
+        # §164(b)(7)(A): 40,000 in 2025; 40,400 x 1.01^3 in 2029.
+        for year, base in ((2025, 40000), (2029, 41624.16)):
             with pytest.raises(ValueError, match="modified_agi is required"):
-                compute_schedule_a(100000, "Single", year, 15750, 40000,
+                compute_schedule_a(100000, "Single", year, 15750, base,
                                    state_local_income_taxes=30000)
         for bad in (float("nan"), float("inf"), True, "100000"):
             with pytest.raises(ValueError, match="modified_agi"):
@@ -2473,11 +2474,10 @@ class TestScheduleA:
         with pytest.raises(ValueError, match="modified_agi is required"):
             compute_schedule_a(100000, "MFS", 2026, 15750, 20200,
                                real_estate_taxes=5000.01)
-        # An amount at or under the floor is one no MAGI can reduce. (A cache
-        # that low in these years is its own defect, AA19's.)
-        r = compute_schedule_a(100000, "Single", 2026, 15750, 9000,
+        # AA19: an annual base below the floor is corrupt even without MAGI.
+        with pytest.raises(ValueError, match="statutory SALT cap"):
+            compute_schedule_a(100000, "Single", 2026, 15750, 9000,
                                real_estate_taxes=30000)
-        assert r["salt_deductible"] == 9000.00
 
     def test_modified_agi_equal_to_agi_at_cents_stands(self):
         """Compared at cents, the precision both are written at. A MAGI summed
@@ -2527,12 +2527,11 @@ class TestScheduleA:
         assert r["salt_cap_applied"] is None
         assert r["salt_deductible"] == 8000.00
         assert any("SALT cap left unrecorded" in n for n in r["notes"]), r["notes"]
-        # Known wherever the cap cannot move: a MAGI given, a year outside the
-        # phasedown, or a cap already at or under the floor.
+        # Known with MAGI or outside the phasedown years. An annual base below
+        # the statutory amount is refused before it can stand in for the floor.
         for kwargs, cap in (
                 (dict(tax_year=2026, salt_cap=40400, modified_agi=900000), 10000.00),
-                (dict(tax_year=2030, salt_cap=10000), 10000.00),
-                (dict(tax_year=2026, salt_cap=9000), 9000.00)):
+                (dict(tax_year=2030, salt_cap=10000), 10000.00)):
             r = compute_schedule_a(900000, "Single", standard_deduction=15750,
                                    real_estate_taxes=8000, **kwargs)
             assert r["salt_cap_applied"] == cap, kwargs
@@ -3907,7 +3906,8 @@ class TestForm6251:
 
     def test_cache_override_rate_wins_over_schedule(self):
         """federal.amt.phaseout_rate override beats the statutory schedule
-        (the salt_cap precedent): a TY2025 return with an explicit 0.50 rate
+        (SALT separately checks its cached amount): a TY2025 return with an
+        explicit 0.50 rate
         phases out like TY2026, not the 25% default."""
         common = dict(taxable_income=686350, filing_status="Single",
                       regular_tax=150000, salt_deducted=40000,

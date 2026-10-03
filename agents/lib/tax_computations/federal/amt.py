@@ -33,8 +33,7 @@ _AMT_PHASEOUT_RATE_OBBBA_FROM = 2026
 
 def _resolve_amt_phaseout_rate(tax_year: int, override) -> float:
     """Resolve the AMT exemption phase-out rate: an explicit cache-supplied
-    override wins (the ptet._salt_cap precedent — a fetched figure beats the
-    built-in schedule), else the statutory schedule by year. The MFS
+    override wins, else the statutory schedule by year. The MFS
     exemption-recapture ceiling uses this SAME rate — the two must never
     drift (§55(d)(3) drives both, and §70107 changes §55(d)(3)).
     """
@@ -109,8 +108,8 @@ def compute_form_6251(
             25% for a TY2026 ISO exerciser and understate the AMT.
         exemption_phaseout_rate: optional cache override
             (federal.amt.phaseout_rate). When supplied (finite fraction in
-            (0,1]) it WINS over the statutory schedule — the salt_cap
-            precedent — so a fetched figure can correct the built-in schedule
+            (0,1]) it WINS over the statutory schedule, so a fetched figure can
+            correct the built-in schedule
             without a code change. None → statutory schedule by tax_year.
         salt_deducted: Schedule A line 7 as deducted (exclusion item,
             added back). standard_deduction_taken: 1040 line 12 when NOT

@@ -398,7 +398,10 @@ def _salt_cap(tax_year: int, filing_status: str, cfg: "dict | None" = None,
     # corrupt figure is corrupt whether or not the year can use it, and the
     # rule already ignores a MAGI outside the phasedown years.
     magi = None if modified_agi is None else _finite(modified_agi, "modified_agi")
-    return salt.salt_cap(tax_year, mfs, base, magi)
+    try:
+        return salt.salt_cap(tax_year, mfs, base, magi)
+    except ValueError as exc:
+        raise PtetError(str(exc)) from exc
 
 
 def _salt_cap_label(tax_year: int) -> str:
@@ -591,8 +594,8 @@ def analyze(
     # SALT cap headroom. If the taxpayer's other state/local taxes (other_salt)
     # are supplied, derive the unused headroom from the year/status cap; else use
     # salt_room directly (default 0 = assume the cap is exhausted). The fetched
-    # tax_law federal.salt_cap block (salt_cap_cfg) wins over the built-in
-    # statutory schedule when populated.
+    # tax_law federal.salt_cap block (salt_cap_cfg) must match the statutory
+    # schedule, allowing whole-dollar rounding, before the MAGI phasedown.
     salt_cap = _salt_cap(tax_year, filing_status, salt_cap_cfg, modified_agi)
     # Whether §164(b)(6)(B)'s halving applies, resolved ONCE. It was spelled
     # out at four sites under three names, and X8's defect was one site's

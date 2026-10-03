@@ -1982,6 +1982,9 @@ def _schedule_a_salt_cap(agi: float, fs: str, tax_year: int, salt_cap,
     # phasedown cut the cap, not that the rule's rounding trimmed a fraction
     # of a cent off the input.
     base = round(_amount(salt_cap, "salt_cap"), 2)
+    # A corrupt base must not make MAGI seem optional by sitting below the
+    # phasedown floor, so validate it before deciding whether MAGI is needed.
+    _salt_rule.validate_base_cap(tax_year, mfs, base)
     # Validated whenever it is given. What it adds to AGI is never negative,
     # so a figure below AGI is some other number — taxable income, another
     # section's MAGI — and would leave the cap too high, AA16 again by input.

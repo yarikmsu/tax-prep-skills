@@ -75,8 +75,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 | When | What | Why |
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **Oct-Nov** | **Y2** — pre-stage the replay → auditor edit → runbook chain now. | So the gate lifting means execution, not discovery. |
-| **Opportunistic** | **AA19**, **AA23**, X7, Z4-Z6, Z8. | — |
+| **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
+| **Opportunistic** | **AA23**, X7, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -85,22 +85,15 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
 
-- **AA19 (P2, S): Nothing checks the cached SALT cap against the statute.**
-  §164(b)(7)(A) names every year's amount and indexes none, but
-  `compute_schedule_a` and `ptet._salt_cap` take whatever `federal.salt_cap`
-  holds, and AGENTS.md §2 says the cache wins for the amount. The hazard
-  AA16 wrote into `tax-law-fetch.md`, a filer's already-reduced cap fetched as
-  the year's amount and then reduced again, is guarded by that sentence and
-  the season-open auditor alone: $10,000 cached for TY2026 lets a filer with
-  $300,000 of MAGI deduct $10,000 of $30,000 of state and local tax. The
-  auditor would not catch it either. Its check 5
-  says `federal.salt_cap` "indexes roughly 1%/yr" and that an absent value
-  "degrades quietly", both false since AA16 (the amount steps by statute, and
-  the return refuses a missing cap), and it never asks whether the cached
-  figure is a reduced one. Decide first whether a cache that differs from
-  `salt.base_cap` by more than rounding refuses, which amends §2's sentence.
-  The auditor edit rides Y2's chain, since the definition is digest-pinned to
-  a passed acceptance. Found by AA16's second review.
+- **AA19 (P2, S): The auditor's SALT-cap check still awaits Y2.** The engine
+  validation is implemented under Q14: Schedule A and PTET refuse a cached
+  amount that differs from `salt.base_cap`, accepting its exact amount at cents
+  or its nearest whole dollar (half up), before the per-return phasedown.
+  AGENTS.md §2 now requires agreement rather than unconditional cache precedence.
+  The remaining auditor edit rides Y2's chain, since the definition is
+  digest-pinned to a passed acceptance. Its check 5 still says `federal.salt_cap`
+  "indexes roughly 1%/yr" and that an absent value "degrades quietly", and never
+  checks for a stale or already-reduced amount. Found by AA16's second review.
 
 - **AA23 (P2, M): Schedule A is held, not priced, wherever AGI moves.** The
   planning tools hold the return's line 12 (AA20) and `/tax-project` a declared
@@ -427,6 +420,7 @@ for the PR that carried them.
 | Q11 | Y3: package `agents/lib` as a distribution? | No, with a re-open trigger. See Declined above. | 2026-09-13 |
 | Q12 | W3: what runs the hook before the venv exists? | A bash shim of a few lines, and W3 proceeds. Fail-DEFERRED, not fail-open. | 2026-09-13 |
 | Q13 | AA3: what does MEASURED COSTS record, when no sitting on this host can meet its idle-machine precondition? | Counts, ratios and relative ordering; no absolute seconds. The hook timeout and the per-test headroom budget remain as compared thresholds, and one cold pass is re-timed only when either changes. | 2026-09-21 |
+| Q14 | AA19: may the cached SALT cap override a conflicting statutory amount? | Refuse mismatches. Accept the statutory amount at cents or its nearest whole dollar (half up); a law change requires updating the schedule. AGENTS.md §2 changes with the check; the auditor edit stays gated on Y2. | 2026-10-03 |
 
 Q13's "per-test headroom budget" is two constants, the per-test rate and the
 absolute minimum under it. Which constants re-time a cold pass when they change

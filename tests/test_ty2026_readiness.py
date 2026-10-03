@@ -65,8 +65,8 @@ def _ty2026_tax_law():
     fed["charitable_non_itemizer"] = {"amount": 1000, "joint_amount": 2000}
     # §70105 minimum QBI (I4) — indexed floor for a small active trade.
     fed["qbi_minimum"] = {"income_threshold": 1000, "amount": 400}
-    # OBBBA SALT cap (TY2025-2029) — $40,000 / $20,000-MFS.
-    fed["salt_cap"] = {"amount": 40000, "mfs_amount": 20000}
+    # §164(b)(7)(A)(ii): TY2026 is $40,400 / $20,200-MFS.
+    fed["salt_cap"] = {"amount": 40400, "mfs_amount": 20200}
     # AMT exemption phase-out rate — §70107 raises it to 50% for TY2026+ (the
     # cache OVERRIDE; the engine also has the statutory schedule as fallback).
     fed["amt"]["phaseout_rate"] = 0.50
@@ -172,8 +172,8 @@ class TestTY2026GoldenPath:
 
     def test_salt_cap_present_from_cache(self):
         fed = _ty2026_tax_law()["federal"]
-        assert _salt_cap(2026, "Single", fed["salt_cap"]) == 40000.0
-        assert _salt_cap(2026, "MFS", fed["salt_cap"]) == 20000.0
+        assert _salt_cap(2026, "Single", fed["salt_cap"]) == 40400.0
+        assert _salt_cap(2026, "MFS", fed["salt_cap"]) == 20200.0
 
     def test_amt_phaseout_rate_present_is_50pct(self):
         fed = _ty2026_tax_law()["federal"]

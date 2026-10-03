@@ -34,6 +34,9 @@ a figure from a prior year.
   `compute_schedule_a` in `/tax-compute` and `/tax-ptet` apply the phasedown
   per return and would reduce it twice. OBBBA's amount steps 101% a year by
   statute through TY2029, not by an inflation index, and reverts in TY2030.
+  Both consumers refuse a cached amount that disagrees with the statutory
+  schedule, allowing its nearest whole dollar (half up). Re-fetch an incorrect
+  cap; if the law changed, update the engine's statutory schedule first.
 - Search: `"IRS {year} HSA contribution limits"`
 - Search: `"IRS {year} 401k contribution limit"`
 - Search: `"IRS {year} IRA contribution limit phase out"`

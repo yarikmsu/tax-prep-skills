@@ -16,6 +16,7 @@ different people and the rule itself should not choose between them.
 """
 
 import agents.lib  # noqa: F401 — the host-interpreter guard
+from math import floor
 
 # §164(b)(7) as amended by OBBBA (Pub. L. 119-21 §70120). Verified against the
 # section text 2026-09-13. This is a STATUTORY STEP SCHEDULE, not an indexed
@@ -23,8 +24,9 @@ import agents.lib  # noqa: F401 — the host-interpreter guard
 # rest, and no inflation index appears anywhere in the section. That is why
 # these may be constants at all — AGENTS.md §2's third enumerated exception,
 # on the `tax-safe-harbor` terms: pinned to the statute by test. The fetched
-# cache wins for the AMOUNT only (`federal.salt_cap`, the `base` below); the
-# threshold, rate and floor have no cache field, so these are what runs.
+# cache supplies the AMOUNT only (`federal.salt_cap`, the `base` below), and
+# must match this schedule, allowing its whole-dollar rounding. The threshold,
+# rate and floor have no cache field, so these are what runs.
 SALT_CAP_2025 = 40000.0              # (A)(i)
 SALT_CAP_2026 = 40400.0              # (A)(ii)
 SALT_STEP = 1.01                     # (A)(iii), 101% of the preceding year
@@ -50,7 +52,7 @@ def _step_from(base: float, base_year: int, tax_year: int) -> float:
 
     The statute states no rounding for the steps, so none is invented here
     beyond settling the binary representation at cents. The IRS-published
-    figure is what the cache carries, and the cache wins.
+    figure is what the cache carries; whole-dollar rounding is accepted below.
     """
     amount = base
     for _ in range(base_year, tax_year):
@@ -66,6 +68,27 @@ def base_cap(tax_year: int) -> float:
     if tax_year == SALT_FIRST_OBBBA_YEAR:
         return SALT_CAP_2025
     return _step_from(SALT_CAP_2026, 2026, tax_year)
+
+
+def validate_base_cap(tax_year: int, mfs: bool, base: float) -> None:
+    """Refuse a fetched amount that is stale or already reduced per return.
+
+    Callers validate numeric inputs first. At cents, accept the statutory
+    amount or its nearest whole dollar (half up), never an arbitrary tolerance
+    around it. Validate the separate-return amount AFTER halving; it is the
+    `mfs_amount` the cache carries, not the full amount to be halved again.
+    A legislative change requires updating this schedule, not silently trusting
+    a conflicting cache. AA19, AGENTS.md §2.
+    """
+    statutory = round(base_cap(tax_year) / (2 if mfs else 1), 2)
+    if round(base, 2) not in (statutory, float(floor(statutory + 0.5))):
+        field = "mfs_amount" if mfs else "amount"
+        raise ValueError(
+            f"federal.salt_cap.{field} disagrees with the statutory SALT cap "
+            f"for TY{tax_year}: expected ${statutory:,.2f} before the MAGI "
+            "phasedown (whole-dollar rounding allowed). Re-fetch the year's "
+            "unreduced amount; if the law changed, update the statutory "
+            "schedule before computing.")
 
 
 def phasedown_rate(mfs: bool) -> float:
@@ -108,7 +131,8 @@ def salt_cap(tax_year: int, mfs: bool, base: "float | None" = None,
 
     `base` is the year's amount for this kind of return — a fetched
     `federal.salt_cap` figure, already halved when it is `mfs_amount` — or
-    None for the statutory schedule. The cache carries the year's STATUTORY
+    None for the statutory schedule. A fetched amount must match the schedule
+    at cents or its nearest whole dollar. The cache carries the year's STATUTORY
     amount, the same for every taxpayer, and (B) reduces it per RETURN, so the
     reduction applies to whichever base is used. Applying it only on the
     statutory path once made a populated cache the one way to get the
@@ -143,6 +167,9 @@ def salt_cap(tax_year: int, mfs: bool, base: "float | None" = None,
     if base is None:
         statutory = base_cap(tax_year)
         base = statutory / 2 if mfs else statutory
+    else:
+        validate_base_cap(tax_year, mfs, base)
+        base = round(base, 2)
     if modified_agi is not None and phasedown_applies(tax_year):
         excess = max(0.0, modified_agi - magi_threshold(tax_year, mfs))
         # §164(b)(7)(B)(iii) floors the RESULT OF THE REDUCTION, and a floor

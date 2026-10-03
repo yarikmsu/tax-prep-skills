@@ -589,10 +589,11 @@ def test_the_salt_caveat_is_owed_only_where_the_deduction_can_move():
                              agi=520000), law, 2026, "MFJ", 520000, [540000])
     # Nor a delta that leaves AGI where it was.
     assert not may(_itemizer(), law, 2026, "MFJ", 600000, [600000])
-    # The cache's amount, as the return used it: cached at $10,000 the cap
-    # cannot move, where the statute's phases from $11,900 to the floor.
+    # AA19: $10,000 is a corrupt annual base in TY2026, even if it would
+    # appear to hold the deduction at the floor throughout the priced chain.
     cached = {"federal": {"salt_cap": {"amount": 10000}}}
-    assert not may(_itemizer(), cached, 2026, "MFJ", 600000, [650000])
+    with pytest.raises(ValueError, match="statutory SALT cap for TY2026"):
+        may(_itemizer(), cached, 2026, "MFJ", 600000, [650000])
     assert may(_itemizer(), law, 2026, "MFJ", 600000, [650000])
     # A separate return's threshold is halved: $300,000 is past $252,500 on
     # one and nowhere near $505,000 on a joint return.

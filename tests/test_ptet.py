@@ -309,9 +309,8 @@ def test_mfs_is_half_the_limitation_amount_not_a_second_schedule():
         assert ptet._salt_cap(year, "MFS") == round(joint / 2, 2), year
 
 
-def test_salt_cap_prefers_tax_law_cache():
-    """A fetched federal.salt_cap block wins over the built-in schedule — the
-    cache tracks the indexed 2026-2029 amounts the schedule cannot."""
+def test_salt_cap_accepts_matching_tax_law_cache():
+    """§164(b)(7)(A)(ii): TY2026 is $40,400, half for MFS."""
     cfg = {"amount": 40400, "mfs_amount": 20200}
     assert ptet._salt_cap(2026, "MFJ", cfg) == 40400.0
     assert ptet._salt_cap(2026, "MFS", cfg) == 20200.0
@@ -885,12 +884,16 @@ def test_the_magi_phasedown_is_modeled_not_caveated():
         analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                 state_incomes={"CA": 200000}, tax_year=2025,
                 filing_status="MFJ", other_salt=25000, marginal_fed=0.30,
-                salt_cap_cfg={"amount": cap, "mfs_amount": cap / 2},
+                salt_cap_cfg={"amount": 40000, "mfs_amount": 20000},
+                modified_agi=magi,
                 ).total_net_fed_savings
-        for cap in (10000.0, 25000.0, 40000.0, 60000.0)]
+        # §164(b)(7)(B): these MAGIs produce caps 10,000, 25,000, 40,000.
+        for magi in (600000.0, 550000.0, 500000.0)]
     assert savings == sorted(savings, reverse=True), savings
     assert savings[0] > savings[-1], savings
-    assert savings[0] == 5580.0 and savings[-1] == 0.0, savings
+    # 18,600 PTET x 30% = 5,580 gross; at the full cap, (40,000 - 25,000)
+    # x 30% = 4,500 lost SALT offset, leaving 1,080.
+    assert savings[0] == 5580.0 and savings[-1] == 1080.0, savings
 
 
 def test_the_phasedown_threshold_halves_for_a_separate_return():
@@ -1128,11 +1131,13 @@ def test_the_phasedown_note_never_puts_magi_under_a_threshold_it_is_over():
                        filing_status="MFJ", other_salt=5000,
                        modified_agi=magi, salt_cap_cfg=cfg,
                        marginal_fed=0.30).notes
-    for magi, cfg in ((600000.0, {"amount": 10000}), (505000.01, None)):
-        found = [n for n in notes(magi, cfg) if "phasedown" in n]
-        assert len(found) == 1, (magi, found)
-        assert "leaves the cap unchanged" in found[0], (magi, found)
-        assert "at or under" not in found[0], (magi, found)
+    # AA19 now refuses the already-reduced annual amount before any note.
+    with pytest.raises(PtetError, match="statutory SALT cap"):
+        notes(600000.0, {"amount": 10000})
+    found = [n for n in notes(505000.01) if "phasedown" in n]
+    assert len(found) == 1, found
+    assert "leaves the cap unchanged" in found[0], found
+    assert "at or under" not in found[0], found
     assert any("does not bite" in n for n in notes(505000.0))
 
 
@@ -1238,9 +1243,12 @@ def test_the_phasedown_floor_never_RAISES_a_cap():
     review-fix commit.
     """
     low = {"amount": 5000}
-    assert ptet._salt_cap(2026, "MFJ", low) == 5000.0
+    with pytest.raises(PtetError, match="statutory SALT cap"):
+        ptet._salt_cap(2026, "MFJ", low)
     for magi in (0.0, 300000.0, 600000.0, 5000000.0):
-        assert ptet._salt_cap(2026, "MFJ", low, magi) == 5000.0, magi
+        # AA19 refuses this corrupt base before applying the phasedown.
+        with pytest.raises(PtetError, match="statutory SALT cap"):
+            ptet._salt_cap(2026, "MFJ", low, magi)
     # The floor still binds when the base is ABOVE it.
     assert ptet._salt_cap(2026, "MFJ", None, 5000000.0) == 10000.0
     assert ptet._salt_cap(2026, "MFS", None, 5000000.0) == 5000.0
