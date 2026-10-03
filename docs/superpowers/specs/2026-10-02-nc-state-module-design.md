@@ -202,6 +202,23 @@ Withholding (20a/20b) is parse-filled and is NOT evidence.
   against the conformity-date Code's dollar and percentage limits, which no
   cache field carries and §2 forbids inlining. Box 5 premiums refuse on the
   amount itself.
+- **Claim-of-right eligibility is an explicit answer.** A non-zero repayment
+  requires `claim_of_right_eligible: true`, certifying prior-year
+  claim-of-right income, no repayment already deducted in current federal
+  AGI, and no federal §1341(a)(5) credit. False or unanswered BLOCKS; mixed
+  eligible/ineligible repayments require a manual line 8 calculation. See
+  [D-401 p.20](https://www.ncdor.gov/2025-d-401-individual-income-tax-instructions/open)
+  and [G.S. 105-153.5(a)(2)d](https://www.ncleg.gov/enactedlegislation/statutes/html/bysection/chapter_105/gs_105-153.5.html).
+- **Credit jurisdictions have canonical identities.** A US state/DC code or
+  full name normalizes to the code; foreign national taxes use `country:XX`
+  (ISO alpha-2) for the supported UN member/observer countries. `CA` and
+  `country:CA` distinguish California from Canada. No free-text foreign
+  aliases or political subdivisions are accepted; unlisted jurisdictions
+  require manual review. Duplicate canonical identities BLOCK even below
+  the final tax cap. D-401 p.22 excludes city, county and federal taxes.
+- **Child tables share one validator** at ingest, cache audit and compute.
+  It requires at least two exact `{agi_up_to, per_child}` bands, positive
+  ascending closed caps, non-increasing deductions, and an open zero top.
 - **MFS `paid_by`** takes `filer` (claimed), `spouse` (refused: the item is on
   the other return) and `joint_account` (refused: p.20's income-share
   proration is not modelled). The household-wide line 4 limit is prorated by

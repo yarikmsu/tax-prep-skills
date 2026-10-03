@@ -393,7 +393,7 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
     for flag, arg, block, field, line in NY_HOUSEHOLD_LINES:
         flagged = flags.get(flag)
         if flagged is not None and not isinstance(flagged, bool):
-            out.append(f"IT-201 line {line}: flags.{flag} is {flagged!r}, not "
+            out.append(f"IT-201 line {line}: flags.{flag} is not "
                        "true or false, so whether the household owes it is "
                        "unanswered.")
             continue
@@ -404,7 +404,7 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
         if not _is_figure(value):
             out.append(
                 f"IT-201 line {line}: flags.{flag} is set and "
-                f"new_york_it201.{block}.{field} is {value!r}, not a computed "
+                f"new_york_it201.{block}.{field} is not a computed "
                 f"figure, so line 58 would read it as $0. Compute it with "
                 f"compute_{arg} and total line 58 through "
                 "compute_city_and_yonkers_total. Where that function refuses "
@@ -418,8 +418,8 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
         # would raise past the gate's own exit codes rather than report it.
         if not isinstance(method, str) or method not in NY_HOUSEHOLD_METHODS[field]:
             out.append(
-                f"IT-201 line {line}: new_york_it201.{block}.{field} is "
-                f"{value!r} but {field}_method is {method!r}, not the `method` "
+                f"IT-201 line {line}: new_york_it201.{block}.{field}_method "
+                "is not the `method` "
                 f"compute_{arg} returns, so nothing shows the figure was "
                 "computed — a 0 typed over the template's null reads exactly "
                 "like a computed one. Write the line and its method together "
@@ -443,7 +443,7 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
     if floor > 0 and (not _is_figure(line_58)
                       or line_58 < floor - tolerance):
         out.append(
-            f"IT-201 line 58 is {line_58!r}, below {floor:,.2f} — line 54 "
+            f"IT-201 line 58 is invalid or below {floor:,.2f} — line 54 "
             "plus lines 54e, 55 and 56, which no City credit reaches. A term "
             "was left out of the total. Recompute line 58 through "
             "compute_city_and_yonkers_total.")

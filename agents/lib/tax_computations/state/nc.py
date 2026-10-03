@@ -25,6 +25,7 @@ from decimal import Decimal
 
 from agents.lib.tax_computations._shared import (
     _amount,
+    _STATE_NAME_TO_CODE,
     _normalize_filing_status,
     _round_half_up,
 )
@@ -194,42 +195,80 @@ def compute_nc_tax(nc_taxable_income: float, tax_year: int, state_cfg: dict) -> 
 # Line 10 — child deduction
 # ---------------------------------------------------------------------------
 
-def _nc_child_table(state_cfg, key: str) -> list:
-    where = f"state.child_deduction.{key}"
-    table = _nc_cfg_node(state_cfg, ("child_deduction", key))
-    if not isinstance(table, list) or not table:
-        raise ValueError(
-            f"{where} is not fetched (an empty table). G.S. 105-153.5(a1) — "
-            "re-run /tax-setup.")
-    previous_top = None
-    previous_amount = None
-    for i, band in enumerate(table):
-        if not isinstance(band, dict) or "agi_up_to" not in band \
-                or band.get("per_child") is None:
-            raise ValueError(f"{where}[{i}] must carry agi_up_to and per_child, "
-                             f"got {band!r}")
-        amount = _amount(band["per_child"], f"{where}[{i}].per_child")
-        top = band["agi_up_to"]
-        last = i == len(table) - 1
-        if top is None:
+def _nc_check_child_figure(value, dotted: str) -> None:
+    """Validate without formatting cache contents, even in an exception.
+
+    Freshness reports publish these diagnostics verbatim. `_amount` includes
+    rejected values in its errors, so it cannot be used at this boundary.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{dotted} must be a number")
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise ValueError(f"{dotted} must be finite")
+    if value < 0:
+        raise ValueError(f"{dotted} cannot be negative")
+
+
+def _nc_check_child_table(dotted: str, value) -> None:
+    """One North Carolina child-deduction table (G.S. 105-153.5(a1)).
+
+    Bands are `{agi_up_to, per_child}`, ascending by `agi_up_to`, whose bound
+    is INCLUSIVE ("Up to X"); the top band's is null, because a closed table
+    leaves every AGI above it with no row at all. The amount per child never
+    RISES with AGI — it is a phase-down — so a rising row is a transposed one.
+    """
+    if not isinstance(value, list) or len(value) < 2:
+        raise ValueError(f"{dotted}: expected at least two "
+                         "{agi_up_to, per_child} bands — the deduction "
+                         "phases down to an open top band of zero")
+    prev_cap = prev_amount = None
+    for i, band in enumerate(value):
+        if not isinstance(band, dict) or set(band) != {"agi_up_to", "per_child"}:
+            raise ValueError(
+                f"{dotted}[{i}]: each band is exactly {{agi_up_to, per_child}}")
+        cap, amount = band["agi_up_to"], band["per_child"]
+        last = i == len(value) - 1
+        if cap is None:
             if not last:
                 raise ValueError(
-                    f"{where}[{i}] has a null agi_up_to but is not the last "
-                    "band; every band above it would be unreachable")
+                    f"{dotted}[{i}]: only the top band may have agi_up_to null")
         else:
             if last:
                 raise ValueError(
-                    f"{where} closes its last band at {top!r}; the top band's "
-                    "agi_up_to must be null, or every AGI above it finds no band")
-            top = _amount(top, f"{where}[{i}].agi_up_to")
-            if previous_top is not None and top <= previous_top:
-                raise ValueError(f"{where} bands are not ascending at {i}")
-            previous_top = top
-        if previous_amount is not None and amount > previous_amount:
+                    f"{dotted}[{i}]: the top band's agi_up_to must be null — a "
+                    "closed table leaves every AGI above it with no row")
+            _nc_check_child_figure(cap, f"{dotted}[{i}].agi_up_to")
+            if cap == 0:  # `state.*` admits zero generally; "Up to $0" is no row
+                raise ValueError(
+                    f"{dotted}[{i}].agi_up_to: zero is not a band's upper bound")
+            if prev_cap is not None and not cap > prev_cap:
+                raise ValueError(
+                    f"{dotted}[{i}]: bands must be ascending by agi_up_to")
+            prev_cap = cap
+        _nc_check_child_figure(amount, f"{dotted}[{i}].per_child")
+        if prev_amount is not None and amount > prev_amount:
             raise ValueError(
-                f"{where}[{i}] per_child rises with AGI ({amount} after "
-                f"{previous_amount}); the deduction only phases DOWN")
-        previous_amount = amount
+                f"{dotted}[{i}]: per_child rises with AGI — the deduction "
+                "phases DOWN; a row was misread")
+        prev_amount = amount
+    # The open top band is where the statute phases the deduction OUT. A
+    # non-zero amount there is a truncated table: everyone above the last
+    # band read keeps a deduction G.S. 105-153.5(a1) has taken to zero, which
+    # UNDER-states the tax.
+    if value[-1]["per_child"] != 0:
+        raise ValueError(
+            f"{dotted}[{len(value) - 1}]: the open top band's per_child must be "
+            "0 — a non-zero top is a table read short")
+
+
+def _nc_child_table(state_cfg, key: str) -> list:
+    where = f"state.child_deduction.{key}"
+    table = _nc_cfg_node(state_cfg, ("child_deduction", key))
+    _nc_check_child_table(where, table)
     return table
 
 
@@ -460,6 +499,7 @@ def compute_nc_itemized(
     charitable: float = 0.0,
     medical: float = 0.0,
     claim_of_right_repayment: float = 0.0,
+    claim_of_right_eligible: "bool | None" = None,
     mortgage_insurance_premiums: float = 0.0,
     mortgage_over_acquisition_limit: "bool | None" = None,
     home_equity_debt: "bool | None" = None,
@@ -482,6 +522,15 @@ def compute_nc_itemized(
     REQUIRED whenever the matching amount is non-zero: the engine holds no
     copy of the Code's dollar or percentage limits, and an unanswered one is
     not a "no".
+
+    A non-zero `claim_of_right_repayment` also requires
+    `claim_of_right_eligible=True`: the caller certifies the amount was
+    included in an earlier year's federal AGI under an unrestricted right,
+    excludes every dollar already deducted in the current federal AGI, and
+    no federal §1341(a)(5) credit was claimed. False or unanswered refuses;
+    an ineligible repayment must never become a second deduction (D-401
+    p.20; G.S. 105-153.5(a)(2)d). Mixed eligible/ineligible repayments need
+    a manual line 8 calculation rather than passing the gross repayment.
 
     MARRIED FILING SEPARATELY: an item is claimable only by the spouse who was
     obligated for it AND paid it (D-401 p.5, p.20), so `paid_by` names, for
@@ -520,7 +569,8 @@ def compute_nc_itemized(
         for name, value in (
             ("mortgage_over_acquisition_limit", mortgage_over_acquisition_limit),
             ("home_equity_debt", home_equity_debt),
-            ("charitable_agi_limit_may_bind", charitable_agi_limit_may_bind))}
+            ("charitable_agi_limit_may_bind", charitable_agi_limit_may_bind),
+            ("claim_of_right_eligible", claim_of_right_eligible))}
     spouse_paid = None
     if spouse_mortgage_and_property_tax is not None:
         if status != "MFS":
@@ -643,6 +693,14 @@ def compute_nc_itemized(
     repaid = amounts["claim_of_right_repayment"]
     line_8 = 0.0
     if repaid > 0:
+        if answers["claim_of_right_eligible"] is not True:
+            raise ValueError(
+                "claim_of_right_eligible must be explicitly True for a "
+                "non-zero repayment: certify prior-year claim-of-right "
+                "income, no repayment deducted in current federal AGI, "
+                "and no federal section 1341(a)(5) credit. Otherwise "
+                "prepare Schedule A line 8 by hand; claiming the raw "
+                "repayment can deduct it twice.")
         threshold = _nc_cfg_figure(state_cfg, ("itemized", "claim_of_right",
                                                "repayment_threshold"))
         cor_rate = _nc_cfg_figure(state_cfg, ("itemized", "claim_of_right",
@@ -754,6 +812,50 @@ def compute_nc_deduction_choice(
 # Line 16 — D-400TC Part 1 (credit for tax paid to another state) and Part 3
 # ---------------------------------------------------------------------------
 
+# Supported national jurisdictions: ISO alpha-2 identifiers for UN members
+# and observers, excluding the US. Identity data, never tax figures; reference:
+# https://unstats.un.org/unsd/methodology/m49/overview/
+# A country/area code alone does not establish eligibility: ISO also assigns
+# codes to dependencies. Those and other unlisted jurisdictions require manual
+# review rather than assuming they are a qualifying country (D-401 p.22).
+_NC_CREDIT_COUNTRIES = frozenset("""
+    AD AE AF AG AL AM AO AR AT AU AZ BA BB BD BE BF BG BH BI BJ BN BO BR BS BT
+    BW BY BZ CA CD CF CG CH CI CL CM CN CO CR CU CV CY CZ DE DJ DK DM DO DZ EC
+    EE EG ER ES ET FI FJ FM FR GA GB GD GE GH GM GN GQ GR GT GW GY HN HR HT HU
+    ID IE IL IN IQ IR IS IT JM JO JP KE KG KH KI KM KN KP KR KW KZ LA LB LC LI
+    LK LR LS LT LU LV LY MA MC MD ME MG MH MK ML MM MN MR MT MU MV MW MX MY MZ
+    NA NE NG NI NL NO NP NR NZ OM PA PE PG PH PK PL PS PT PW PY QA RO RS RU RW
+    SA SB SC SD SE SG SI SK SL SM SN SO SR SS ST SV SY SZ TD TG TH TJ TL TM TN
+    TO TR TT TV TZ UA UG UY UZ VA VC VE VN VU WS YE ZA ZM ZW
+""".split())
+_NC_CREDIT_STATE_CODES = frozenset(_STATE_NAME_TO_CODE.values())
+
+
+def _nc_credit_jurisdiction(value, where: str) -> str:
+    """Resolve identities before granting or deduplicating any credit.
+
+    Bare codes and full names mean US states/DC; `country:CA` means Canada,
+    while `CA` means California. Foreign country names/aliases are refused so
+    the same country cannot acquire multiple worksheets. No city, county or
+    province can be smuggled in as an arbitrary non-empty label.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{where} has no jurisdiction")
+    key = value.strip().upper()
+    state = _STATE_NAME_TO_CODE.get(key.lower(), key)
+    if state == "NC":
+        raise ValueError("North Carolina is not 'another state' (D-400TC Part 1)")
+    if state in _NC_CREDIT_STATE_CODES:
+        return state
+    if key.startswith("COUNTRY:") and key[8:] in _NC_CREDIT_COUNTRIES:
+        return f"country:{key[8:]}"
+    raise ValueError(
+        f"{where}: jurisdiction must identify another US state/DC by code "
+        "or full name, or a supported national jurisdiction as country:XX "
+        "(ISO alpha-2). City, county, province and federal taxes do not "
+        "qualify; other jurisdictions require a manual D-400TC review.")
+
+
 def compute_nc_other_state_credit(line_15: float,
                                   income_all_sources: "float | None" = None,
                                   other_states: "list | None" = None) -> dict:
@@ -770,6 +872,11 @@ def compute_nc_other_state_credit(line_15: float,
     NC resident, modified by the Schedule S items that relate to gross income —
     and is the same on every worksheet; it is validated whenever passed. Each
     `other_states` row is `{"jurisdiction", "income_taxed", "net_tax_paid"}`.
+    `jurisdiction` accepts another US state's/DC's code or full name, or
+    `country:XX` for a supported country's ISO alpha-2 code. Only national
+    country taxes qualify, never a province/city/county levy. The result
+    carries canonical identities, and duplicate aliases refuse. Unlisted
+    national jurisdictions require manual review.
     `other_states` is a LIST: `None` and `[]` both mean "no other state" (no
     worksheet, no credit), and anything else — `""`, `{}`, a dict for one
     state — refuses rather than being read as an empty claim.
@@ -805,17 +912,13 @@ def compute_nc_other_state_credit(line_15: float,
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             raise ValueError(f"other_states[{i}] must be an object")
-        name = row.get("jurisdiction")
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError(f"other_states[{i}] has no jurisdiction")
-        key = name.strip().upper()
-        if key in ("NC", "NORTH CAROLINA"):
-            raise ValueError("North Carolina is not 'another state' (D-400TC Part 1)")
-        if key in seen:
+        name = _nc_credit_jurisdiction(row.get("jurisdiction"),
+                                       f"other_states[{i}].jurisdiction")
+        if name in seen:
             raise ValueError(
                 f"{name!r} appears twice; one worksheet per state or country, "
                 "and a second one double-counts the credit")
-        seen.add(key)
+        seen.add(name)
         taxed = _amount(row.get("income_taxed"), f"other_states[{i}].income_taxed")
         paid = _amount(row.get("net_tax_paid"), f"other_states[{i}].net_tax_paid")
         assert total_income is not None
@@ -832,7 +935,7 @@ def compute_nc_other_state_credit(line_15: float,
         line_5 = round(tax * ratio, 2)
         credit = round(min(line_5, paid), 2)
         credit_total += credit
-        part_1.append({"jurisdiction": name.strip(), "line_1": round(total_income, 2),
+        part_1.append({"jurisdiction": name, "line_1": round(total_income, 2),
                        "line_2": round(taxed, 2), "line_3": ratio,
                        "line_4": round(tax, 2), "line_5": line_5,
                        "line_6": round(paid, 2), "line_7": credit})
@@ -953,7 +1056,7 @@ def compute_nc_d400(
     tax = compute_nc_tax(line_14, year, state_cfg)
     line_15 = tax["line_15_nc_tax"]
 
-    osc = other_state_credit or {}
+    osc = {} if other_state_credit is None else other_state_credit
     if not isinstance(osc, dict) or set(osc) - {"income_all_sources", "other_states"}:
         raise ValueError("other_state_credit must be {'income_all_sources', "
                          f"'other_states'}}, got {other_state_credit!r}")

@@ -32,9 +32,11 @@ from agents.lib.capabilities import (  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
     atomic_write, first_non_finite, is_reparse_point)
 from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
+from agents.lib.tax_computations._shared import _STATE_NAME_TO_CODE  # noqa: E402
 from agents.lib.tax_computations.state.ca import (  # noqa: E402
     _SDI_NO_CEILING_FROM,
 )
+from agents.lib.tax_computations.state.nc import _nc_check_child_table  # noqa: E402
 from agents.lib.tax_computations.state.ny import (  # noqa: E402
     _ny_check_recapture_tiers,
     _ny_check_schedule,
@@ -976,28 +978,10 @@ _AUTHORITATIVE_NONGOV_DOMAINS = frozenset({
     "floridarevenue.com",
 })
 
-# US state/territory display-name → USPS code, so a legacy state cache with only
-# `name: "California"` (no `code`) normalizes to the documented `state.CA` pin
-# key rather than a bogus `state.California` advisory.
-_STATE_NAME_TO_CODE = {
-    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
-    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
-    "district of columbia": "DC", "florida": "FL", "georgia": "GA",
-    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN",
-    "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
-    "maine": "ME", "maryland": "MD", "massachusetts": "MA", "michigan": "MI",
-    "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT",
-    "nebraska": "NE", "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ",
-    "new mexico": "NM", "new york": "NY", "north carolina": "NC",
-    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR",
-    "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
-    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
-    "vermont": "VT", "virginia": "VA", "washington": "WA",
-    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
-}
-
-# Inverse of the map above (code → display name), for create_state_template's
-# minimal none-template (round-3 finding D). Every code this module ever
+# Inverse of the shared US state/DC map (code → display name). A legacy cache
+# with only `name: "California"` normalizes to the documented `state.CA` pin
+# rather than a bogus `state.California` advisory. Also used for
+# create_state_template's minimal none-template (round-3 finding D). Every code this module ever
 # assigns "name" to via that inverse is a single-word or two-word state name,
 # so a plain .title() is exact (no "district of columbia"-style multi-word
 # capitalization edge case in play — DC is never on the type-none allowlist).
@@ -2172,56 +2156,11 @@ def _check_ascending(dotted: str, value, *, fields: tuple, order_by: str,
 
 
 def _check_nc_child_table(dotted: str, value) -> None:
-    """One North Carolina child-deduction table (G.S. 105-153.5(a1)).
-
-    Bands are `{agi_up_to, per_child}`, ascending by `agi_up_to`, whose bound
-    is INCLUSIVE ("Up to X"); the top band's is null, because a closed table
-    leaves every AGI above it with no row at all. The amount per child never
-    RISES with AGI — it is a phase-down — so a rising row is a transposed one.
-    """
-    if not isinstance(value, list) or len(value) < 2:
-        raise TaxLawSetError(f"{dotted}: expected at least two "
-                             "{agi_up_to, per_child} bands — the deduction "
-                             "phases down to an open top band of zero")
-    prev_cap = prev_amount = None
-    for i, band in enumerate(value):
-        if not isinstance(band, dict) or set(band) != {"agi_up_to", "per_child"}:
-            raise TaxLawSetError(
-                f"{dotted}[{i}]: each band is exactly {{agi_up_to, per_child}}")
-        cap, amount = band["agi_up_to"], band["per_child"]
-        last = i == len(value) - 1
-        if cap is None:
-            if not last:
-                raise TaxLawSetError(
-                    f"{dotted}[{i}]: only the top band may have agi_up_to null")
-        else:
-            if last:
-                raise TaxLawSetError(
-                    f"{dotted}[{i}]: the top band's agi_up_to must be null — a "
-                    "closed table leaves every AGI above it with no row")
-            _check_number(f"{dotted}[{i}].agi_up_to", cap, is_rate=False)
-            if cap == 0:  # `state.*` admits zero generally; "Up to $0" is no row
-                raise TaxLawSetError(
-                    f"{dotted}[{i}].agi_up_to: zero is not a band's upper bound")
-            if prev_cap is not None and not cap > prev_cap:
-                raise TaxLawSetError(
-                    f"{dotted}[{i}]: bands must be ascending by agi_up_to")
-            prev_cap = cap
-        _check_number(f"{dotted}[{i}].per_child", amount, is_rate=False,
-                      allow_zero=True)
-        if prev_amount is not None and amount > prev_amount:
-            raise TaxLawSetError(
-                f"{dotted}[{i}]: per_child rises with AGI ({prev_amount} then "
-                f"{amount}) — the deduction phases DOWN; a row was misread")
-        prev_amount = amount
-    # The open top band is where the statute phases the deduction OUT. A
-    # non-zero amount there is a truncated table: everyone above the last
-    # band read keeps a deduction G.S. 105-153.5(a1) has taken to zero, which
-    # UNDER-states the tax.
-    if value[-1]["per_child"] != 0:
-        raise TaxLawSetError(
-            f"{dotted}[{len(value) - 1}]: the open top band's per_child must be "
-            "0 — a non-zero top is a table read short")
+    """Use the compute-boundary validator for both ingest and cache audit."""
+    try:
+        _nc_check_child_table(dotted, value)
+    except ValueError as exc:
+        raise TaxLawSetError(str(exc)) from None
 
 
 def _check_iso_date(dotted: str, value) -> None:

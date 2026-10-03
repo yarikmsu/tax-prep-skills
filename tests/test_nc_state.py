@@ -186,7 +186,8 @@ class TestChildDeduction:
     def test_the_mapping_reads_the_cache_not_a_coincidence(self):
         # Change only the mfj_qss table: QSS must move with it, MFS must not.
         c = cfg()
-        c["child_deduction"]["mfj_qss"] = [{"agi_up_to": None, "per_child": 7}]
+        c["child_deduction"]["mfj_qss"] = [{"agi_up_to": 100, "per_child": 7},
+                                           {"agi_up_to": None, "per_child": 0}]
         assert compute_nc_child_deduction("QSS", 1, 1, c)["line_10b_child_deduction"] == 7
         assert compute_nc_child_deduction("MFS", 1, 1, c)["line_10b_child_deduction"] == 3000
 
@@ -228,6 +229,27 @@ class TestChildDeduction:
         c["child_deduction"]["single_mfs"] = table
         with pytest.raises(ValueError):
             compute_nc_child_deduction("Single", 50000, 1, c)
+
+    @pytest.mark.parametrize("table", [
+        [{"agi_up_to": None, "per_child": 3000}],
+        [{"agi_up_to": 70000, "per_child": 500},
+         {"agi_up_to": None, "per_child": 500}],
+        [{"agi_up_to": 0, "per_child": 3000},
+         {"agi_up_to": None, "per_child": 0}],
+        [{"agi_up_to": 70000, "per_child": 500, "extra": 1},
+         {"agi_up_to": None, "per_child": 0}],
+    ])
+    def test_compute_and_ingest_both_refuse_incomplete_child_tables(self, table):
+        from agents.lib.tax_law_fetcher import TaxLawSetError, _check_nc_child_table
+
+        c = cfg()
+        c["child_deduction"]["single_mfs"] = table
+        # D-401 p.13: Single AGI above 70,000 has no child deduction.
+        # Importing a cache must not evade the setter's structural checks.
+        with pytest.raises(TaxLawSetError):
+            _check_nc_child_table("state.child_deduction.single_mfs", table)
+        with pytest.raises(ValueError):
+            compute_nc_child_deduction("Single", 100000, 2, c)
 
     @pytest.mark.parametrize("bad", ["married", "", None, 1])
     def test_the_status_is_validated(self, bad):
@@ -315,7 +337,7 @@ class TestStandardDeduction:
 # ---------------------------------------------------------------------------
 
 _ANSWERS = {"mortgage_over_acquisition_limit": False, "home_equity_debt": False,
-            "charitable_agi_limit_may_bind": False}
+            "charitable_agi_limit_may_bind": False, "claim_of_right_eligible": True}
 
 
 def _sched_a(status="Single", agi=100000, c=None, **kw):
@@ -417,6 +439,21 @@ class TestScheduleA:
     def test_claim_of_right(self, repaid, expected):
         assert _sched_a(agi=50000, claim_of_right_repayment=repaid)[
             "line_8_claim_of_right"] == expected
+
+    @pytest.mark.parametrize("eligible", [None, False])
+    def test_repayment_requires_explicit_eligibility(self, eligible):
+        # D-401 p.20: repayment already deducted in federal AGI cannot be
+        # deducted again. With AGI already reduced to 50,000, adding this
+        # 5,000 to the 20,000 mortgage deduction understates NC tax by 212.50.
+        with pytest.raises(ValueError, match="claim_of_right_eligible"):
+            compute_nc_itemized(
+                "Single", 50000, cfg(), mortgage_interest=20000,
+                mortgage_over_acquisition_limit=False, home_equity_debt=False,
+                claim_of_right_repayment=5000, claim_of_right_eligible=eligible)
+
+    def test_zero_repayment_needs_no_eligibility_answer(self):
+        assert compute_nc_itemized("Single", 50000, cfg())[
+            "line_8_claim_of_right"] == 0
 
     def test_no_state_income_or_sales_tax_line_exists(self):
         with pytest.raises(TypeError):
@@ -664,6 +701,42 @@ class TestScheduleS:
 # ---------------------------------------------------------------------------
 
 class TestOtherStateCredit:
+    @pytest.mark.parametrize("name", ["New York City", "NYC", "Queens County",
+                                      "US", "United States", "US-NY", "XX",
+                                      "country:US", "country:XX", "country:CA-QC",
+                                      "country:PR", "Canada"])
+    def test_ineligible_jurisdictions_cannot_receive_a_credit(self, name):
+        # D-401 p.22 excludes cities, counties and the federal government.
+        with pytest.raises(ValueError, match="jurisdiction"):
+            compute_nc_other_state_credit(4250, 100000, [
+                {"jurisdiction": name, "income_taxed": 20000,
+                 "net_tax_paid": 1000}])
+
+    @pytest.mark.parametrize("names", [("VA", "Virginia"),
+                                      (" ny ", "New York"),
+                                      ("country:CA", " Country:ca ")])
+    def test_aliases_cannot_claim_the_same_credit_twice(self, names):
+        # One worksheet per state/country, even if 20% + 20% is below the
+        # final cap. The second row must not turn an 850 credit into 1,700.
+        with pytest.raises(ValueError, match="twice"):
+            compute_nc_other_state_credit(4250, 100000, [
+                {"jurisdiction": name, "income_taxed": 20000,
+                 "net_tax_paid": 1000} for name in names])
+
+    @pytest.mark.parametrize("name,canonical", [("Virginia", "VA"),
+                                               (" country:ca ", "country:CA")])
+    def test_valid_jurisdictions_have_canonical_identities(self, name, canonical):
+        r = compute_nc_other_state_credit(4250, 100000, [
+            {"jurisdiction": name, "income_taxed": 20000, "net_tax_paid": 1000}])
+        assert r["line_7a"] == 850
+        assert r["part_1"][0]["jurisdiction"] == canonical
+
+    def test_california_and_canada_are_distinct_jurisdictions(self):
+        r = compute_nc_other_state_credit(4250, 100000, [
+            {"jurisdiction": name, "income_taxed": 20000, "net_tax_paid": 1000}
+            for name in ("California", "country:CA")])
+        assert r["line_7a"] == 1700  # 850 per separate state/country worksheet.
+
     def test_one_state_net_tax_paid_is_the_lesser(self):
         # D-401 pp.22-23: line 15 = 4,250; 30,000 / 120,000 = 0.25;
         # line 5 = 1,062.50; line 6 = 900 → credit 900.
@@ -780,6 +853,22 @@ def _d400(**kw):
 
 
 class TestD400:
+    @pytest.mark.parametrize("invalid", [False, 0, "", []])
+    def test_credit_container_is_not_coerced_to_an_empty_claim(self, invalid):
+        with pytest.raises(ValueError, match="other_state_credit"):
+            _d400(other_state_credit=invalid)
+
+    def test_repayment_eligibility_reaches_the_assembled_return(self):
+        with pytest.raises(ValueError, match="claim_of_right_eligible"):
+            _d400(itemized={"claim_of_right_repayment": 5000})
+
+    def test_credit_jurisdiction_checks_reach_the_assembled_return(self):
+        with pytest.raises(ValueError, match="jurisdiction"):
+            _d400(other_state_credit={"income_all_sources": 100000,
+                                      "other_states": [{"jurisdiction": "NYC",
+                                                        "income_taxed": 20000,
+                                                        "net_tax_paid": 1000}]})
+
     def test_balance_due(self):
         # MFJ, AGI 90,000 (D-401 pp.12-16):
         #   7 = Sch S line 1, 1,000 non-NC exempt interest; 8 = 91,000

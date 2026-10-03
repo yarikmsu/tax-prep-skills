@@ -2932,8 +2932,8 @@ class TestTheNorthCarolinaBlock:
         (lambda t: t[2].update(agi_up_to=t[1]["agi_up_to"]), "ascending"),
         (lambda t: t[3].update(per_child=2600), "rises with AGI"),
         (lambda t: t[0].update(per_child=-1), "cannot be negative"),
-        (lambda t: t[0].update(per_child=float("nan")), "finite number"),
-        (lambda t: t[0].update(per_child=True), "finite number"),
+        (lambda t: t[0].update(per_child=float("nan")), "must be finite"),
+        (lambda t: t[0].update(per_child=True), "must be a number"),
         (lambda t: t[0].pop("per_child"), r"exactly \{agi_up_to, per_child\}"),
         (lambda t: t[0].update(agi_over=0), r"exactly \{agi_up_to, per_child\}"),
         (lambda t: t.clear(), "at least two"),
@@ -3002,6 +3002,38 @@ class TestTheNorthCarolinaChildTableIsWhole:
         _check_nc_child_table("state.child_deduction.hoh", [
             {"agi_up_to": 20000, "per_child": 3000},
             {"agi_up_to": None, "per_child": 0}])
+
+    @pytest.mark.parametrize("key,status", [("single_mfs", "Single"),
+                                           ("mfj_qss", "MFJ"), ("hoh", "HoH")])
+    @pytest.mark.parametrize("field", ["agi_up_to", "per_child"])
+    @pytest.mark.parametrize("shape", ["text", "list", "object"])
+    def test_rejected_child_table_contents_stay_private(
+            self, tmp_path, key, status, field, shape):
+        from agents.lib.tax_computations import compute_nc_child_deduction
+
+        sentinel = "SYNTHETIC_PRIVATE_CACHE_CONTENT"
+        rejected = {"text": sentinel, "list": [sentinel],
+                    "object": {"private": sentinel}}[shape]
+        data = create_empty_tax_law(2025)
+        data["state"] = _nc_filled(2025)
+        data["state"]["child_deduction"][key][0][field] = rejected
+        save_tax_law(2025, data, str(tmp_path))
+
+        proc = subprocess.run(
+            ["sh", str(REPO / "agents/lib/run.sh"), "-m",
+             "agents.lib.tax_law_fetcher", "freshness", "2025", str(tmp_path)],
+            cwd=REPO, capture_output=True, text=True)
+        assert proc.returncode == 0  # INCOMPLETE prompts a refetch, not a stop.
+        report = json.loads(proc.stdout)
+        assert report["status"] == "INCOMPLETE"
+        path = f"state.child_deduction.{key}[0].{field}"
+        assert any(path in problem for problem in report["null_fields"])
+        assert sentinel not in proc.stdout + proc.stderr
+        assert sentinel not in json.dumps(validate_cache(data, 2025))
+        with pytest.raises(ValueError) as error:
+            compute_nc_child_deduction(status, 100000, 1, data["state"])
+        assert path in str(error.value)
+        assert sentinel not in str(error.value)
 
     def test_a_float_rate_year_names_the_problem(self):
         from agents.lib.tax_law_fetcher import _rate_year_problems

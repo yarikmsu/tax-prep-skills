@@ -2888,6 +2888,38 @@ def test_ny_household_cli_reads_the_flags_from_the_profile(tmp_path):
     assert json.loads(out.stdout)["ny_city_and_yonkers"]
 
 
+@pytest.mark.parametrize("location", ["flag", "figure", "method", "total"])
+@pytest.mark.parametrize("shape", ["text", "list", "object"])
+@pytest.mark.parametrize("output_args", [(), ("--json",)])
+def test_ny_rejected_runtime_contents_stay_private_in_cli(
+        tmp_path, location, shape, output_args):
+    sentinel = "SYNTHETIC_PRIVATE_TEXT"
+    invalid = {"text": sentinel, "list": [sentinel],
+               "object": {"private": sentinel}}[shape]
+    result = _ny_result(**_computed())
+    flags = dict(_NY_FLAGS)
+    if location == "flag":
+        flags["nyc_resident"] = invalid
+    elif location == "figure":
+        result["new_york_it201"]["nyc"]["line_47a_nyc_resident_tax"] = invalid
+    elif location == "method":
+        result["new_york_it201"]["nyc"][
+            "line_47a_nyc_resident_tax_method"] = invalid
+    else:
+        result["new_york_it201"]["line_58_total_city_and_yonkers"] = invalid
+    (tmp_path / "parse_ledger.json").write_text(json.dumps(
+        {"records": [_record()]}))
+    (tmp_path / "documents").mkdir()
+    (tmp_path / "documents" / "W2_Acme.pdf").write_bytes(b"%PDF-1.4\n")
+    (tmp_path / "result.json").write_text(json.dumps(result))
+    (tmp_path / "taxpayer_profile.json").write_text(json.dumps({"flags": flags}))
+
+    out = _run_cli(tmp_path, *output_args)
+    assert out.returncode == 2
+    assert "IT-201 line" in out.stdout
+    assert sentinel not in out.stdout + out.stderr
+
+
 
 def test_an_acknowledged_refused_household_is_not_held_to_the_engines_line():
     """AA30: a part-year City resident who acknowledged the gate's block
