@@ -67,6 +67,33 @@ pytestmark = pytest.mark.slow
 
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Hook input declarations: (priority, path patterns). Lower priority wins.
+# Parsed as literals by the selector; this module is never imported by it.
+WATCHES = (
+    (10, ('.agents/skills', '.agents/skills/*', '.claude/skills', '.claude/skills/*')),
+    (30, ('docs/ops/review-subagent-acceptance.md',)),
+    (90, ('docs/ops/season-open-runbook.md',)),
+    (100, ('docs/ops',)),
+    (140, ('agents/lib/capabilities.py', 'agents/lib/rollover.py')),
+    (150, ('agents/lib/tax_law_fetcher.py',)),
+    (155, ('agents/lib/tie_out.py',)),
+    (160, ('agents/lib/ptet.py',)),
+    (170, ('agents/lib/tax_computations', 'agents/lib/tax_computations/*')),
+    (190, ('agents/lib/secure_fs.py',)),
+    (210, ('agents/lib',)),
+    (220, ('requirements.in', 'requirements.txt')),
+    (230, ('agents/lib/*.sh',)),
+    (240, ('agents/lib/*',)),
+    (250, ('tests/conftest.py',)),
+    (260, ('tests/test_preflight.py',)),
+    (330, ('tests/skill_text.py',)),
+    (340, ('tests/engine_tree.py',)),
+    (350, ('docs/QUICKSTART.md', 'docs/contributing/agents-compat.md')),
+    (360, ('CONTRIBUTING.md', 'README.md')),
+    (400, ('AGENTS.md',)),
+    (410, ('.github/ISSUE_TEMPLATE', '.github/ISSUE_TEMPLATE/bug_report.yml')),
+)
 SKILLS_DIR = REPO / ".agents" / "skills"
 
 

@@ -699,7 +699,7 @@ Future sales and wash-sale chains retain their scope limits.
 Matching and basis authority: [IRS Publication 550](https://www.irs.gov/publications/p550)
 and [Revenue Ruling 2008-5](https://www.irs.gov/pub/irs-drop/rr-08-05.pdf).
 
-## X10 — retirement split, HSA eligibility and state conformity
+## X10 — retirement split, HSA eligibility and state conformity (#224)
 
 The dashboard tracks Roth deferrals within aggregate employee YTD and prices
 only the plan-confirmed pre-tax portion of remaining high-earner catch-up under

@@ -27,6 +27,26 @@ from tests.skill_text import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
+# Hook input declarations: (priority, path patterns). Lower priority wins.
+# Parsed as literals by the selector; this module is never imported by it.
+WATCHES = (
+    (10, ('.agents/skills', '.agents/skills/*', '.claude/skills', '.claude/skills/*')),
+    (40, ('docs/contributing/residency-guardrails.md',)),
+    (50, ('docs/WHO-IT-FITS.md',)),
+    (60, ('scripts/who_it_fits.py',)),
+    (70, ('scripts/who_it_fits_figures.json',)),
+    (140, ('agents/lib/capabilities.py', 'agents/lib/rollover.py')),
+    (150, ('agents/lib/tax_law_fetcher.py',)),
+    (155, ('agents/lib/tie_out.py',)),
+    (190, ('agents/lib/secure_fs.py',)),
+    (210, ('agents/lib',)),
+    (250, ('tests/conftest.py',)),
+    (290, ('agents/templates/taxpayer_profile_template.json',)),
+    (300, ('tests/test_capabilities.py',)),
+    (310, ('agents/templates/result_template.json',)),
+    (330, ('tests/skill_text.py',)),
+)
+
 
 def _profile(flags=None, acknowledged=None, state="CA"):
     """A post-migration profile: the gate-era flags (incl.

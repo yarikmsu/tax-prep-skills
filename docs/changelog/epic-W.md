@@ -1009,3 +1009,22 @@ Mutation checks:
 ### Still open
 
 The two generic deferrals at the end of `docs/changelog/epic-P.md`: a data-driven `state.modifications` block and a `state.local` block shape. W10 stays open for them.
+
+
+## W12 — hook inputs declared by their test modules
+
+The seven hook-selected suites now own literal `WATCHES` declarations. The
+selector parses them without importing tests, combines shared priority groups
+and preserves first-match glob, package-directory and bytecode behavior.
+`WATCHES_DEPENDENTS` in the hooks suite retains the cheap cross-module subset.
+Missing, computed, duplicate, malformed or conflicting declarations refuse
+selection; the existing shell fallback runs every check.
+
+The former hand-kept `WATCHED_SOURCE_PATHS` table is generated from declarations
+and real corpus witnesses. An independent input audit requires recovered
+repository paths and direct engine imports to fall under their own reader's
+WATCHES and actually select it. This caught two old capability-test gaps for
+`tax_law_fetcher.py` and `tie_out.py`; both now select capability tests too.
+Legacy selection data remains behavioral regression evidence and requires no
+edit when a new dependency is declared. Contributor details and audit scope:
+`docs/superpowers/specs/2026-10-03-declared-hook-inputs-design.md`.

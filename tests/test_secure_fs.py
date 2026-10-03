@@ -27,6 +27,29 @@ from tests.engine_tree import GUARD as ENGINE_GUARD, engine_files, engine_relpat
 
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 
+# Hook input declarations: (priority, path patterns). Lower priority wins.
+# Parsed as literals by the selector; this module is never imported by it.
+WATCHES = (
+    (10, ('.agents/skills', '.agents/skills/*', '.claude/skills', '.claude/skills/*')),
+    (60, ('scripts/who_it_fits.py',)),
+    (130, ('scripts/pre-commit-pii-scan.sh',)),
+    (140, ('agents/lib/capabilities.py', 'agents/lib/rollover.py')),
+    (150, ('agents/lib/tax_law_fetcher.py',)),
+    (155, ('agents/lib/tie_out.py',)),
+    (160, ('agents/lib/ptet.py',)),
+    (170, ('agents/lib/tax_computations', 'agents/lib/tax_computations/*')),
+    (190, ('agents/lib/secure_fs.py',)),
+    (200, ('agents', 'scripts')),
+    (210, ('agents/lib',)),
+    (230, ('agents/lib/*.sh',)),
+    (240, ('agents/lib/*',)),
+    (250, ('tests/conftest.py',)),
+    (270, ('tests/test_secure_fs.py',)),
+    (340, ('tests/engine_tree.py',)),
+    (370, ('agents/install.sh',)),
+    (460, ('agents/*.py', 'agents/*.sh', 'scripts/*.py', 'scripts/*.sh')),
+)
+
 # POSIX MODE BITS, and only those. Each of these reads back a `0o600`/`0o700`
 # that NTFS does not have, creates a symlink Windows needs a privilege for,
 # or depends on a case-sensitive filesystem. Skipping them on Windows is not

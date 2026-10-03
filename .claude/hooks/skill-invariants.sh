@@ -296,13 +296,13 @@ cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 #
 # Each module also watches its own file, so editing an assertion runs it.
 #
-# THIS MAPPING GOES STALE, and it is worth saying so plainly rather than
-# discovering it. It is a hand-maintained transcription of what four Python
-# modules happen to read today, and nothing recomputes it: the day
-# tests/test_claude_hooks.py starts asserting against AGENTS.md, an AGENTS.md
-# edit will keep selecting tests/test_portability.py alone and the miss will be
-# silent. What keeps it honest is a test that re-derives the read set from the
-# modules and compares it against the arms.
+# W12: each selected test module declares its inputs in WATCHES. The selector
+# reads these literals without importing tests and builds _ARMS once per scan.
+# The independent input audit checks direct repository reads and engine imports
+# against each reader's declarations; missing or malformed declarations make
+# the selector fail, which selects every check rather than reporting nothing.
+# Priority groups preserve first-match costs, including the cheap HOOKSDEPS
+# subset for other test-file edits. No selector pattern table is maintained.
 #
 # WATCHED_ROOTS is where the Bash branch LOOKS; `_ARMS`, in the port this
 # script runs, is what a path MEANS. Both are needed and they live in separate
@@ -315,7 +315,7 @@ cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 # covers the PII scan. Five such entries had accumulated, each listing a path
 # an ancestor already reached — `find` then walked and printed them twice, and
 # more to the point they read as the thing a new watched file needs, when what
-# it actually needs is its arm in the port's `_ARMS`. A file belongs
+# it actually needs is its reader's WATCHES declaration. A file belongs
 # here only when NO listed directory contains it (`.claude/settings.json`,
 # `docs/QUICKSTART.md`). `tests` became a root when
 # `TestNoTestSpawnsABareInterpreter` began sweeping the whole directory: the
@@ -955,7 +955,7 @@ apply_red_checks
 #   nothing watched changed        no pytest     under a thousandth
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
 #   skill .md edit                1088 tests     about a seventh
-#   cold pass, all seven modules  1369 tests     one
+#   cold pass, all seven modules  1390 tests     one
 #   (for scale) `pytest tests/`   every module  about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
@@ -963,7 +963,7 @@ apply_red_checks
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 252 and runs 250; and
-# the hooks module holds two platform skips, so it collects 189 and runs 187.
+# the hooks module holds two platform skips, so it collects 210 and runs 208.
 #
 # THE SCALE ROW STATES NO COUNT, on purpose (AA8). Its one job since ruling Q13
 # is "about twice" a cold pass, which no exact count serves, and pinning the
@@ -976,7 +976,7 @@ apply_red_checks
 # deselections run_focused_modules passes. WHICH module dominates, and by how
 # much, is the half of a timing that survives a change of machine.
 #
-#   tests/test_claude_hooks.py     187 tests    the dominant row
+#   tests/test_claude_hooks.py     208 tests    the dominant row
 #   tests/test_portability.py      250 tests    about a tenth of the hooks row
 #   tests/test_preflight.py        383 tests    a twelfth to a twentieth of it
 #   tests/test_secure_fs.py        188 tests    under a fiftieth of it
@@ -1001,7 +1001,7 @@ apply_red_checks
 # a dependency the lock does not carry.
 #
 # ARITHMETIC, which is the half that is EXACT: 48 + 219 + 188 + 250 + 383 = 1088
-# for a skill edit, plus 94 + 187 = 1369 for a cold pass, both matching the
+# for a skill edit, plus 94 + 208 = 1390 for a cold pass, both matching the
 # trigger table to the test. `test_the_measured_costs_counts_match_live_
 # collection` collects every module and re-derives both sums, the parts
 # included, so a stale count is a red suite rather than a figure a reader has to

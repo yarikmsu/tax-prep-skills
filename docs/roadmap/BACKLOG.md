@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **X10** — retirement split, HSA eligibility and state conformity. | WA follow-ups are merged. |
+| **Opportunistic** | **W12** — declare hook inputs beside their test modules. | WA and retirement follow-ups are merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -196,30 +196,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   then be a dollar off in either direction.
 
 ### Z — state coverage
-
-- **X10 (P3, S): `/tax-retirement`'s three v1.1 deferrals.** Surfaced in PR #20's
-  review, intentionally caveated rather than modeled, and homeless since the
-  planning-features roadmap was deleted. All three are still caveated in the
-  shipped dashboard, so nothing is silently wrong — and all three are gated on
-  the same thing, richer per-account YTD inputs than the "paste your numbers"
-  path collects:
-  - **Pre-tax/Roth YTD deferral split.** Treas. Reg. §1.414(v)-2(b)(1): a §603
-    high earner's catch-up need be Roth only to the extent prior designated-Roth
-    deferrals are BELOW the catch-up limit, so someone already over it may make a
-    PRE-TAX catch-up. Needs a `roth_401k_ytd` input; the dashboard collects only
-    the total. v1 treats the whole high-earner catch-up as Roth and caveats that
-    the savings may be UNDER-stated — the safe direction.
-  - **HSA eligible-months proration.** §223(b)(2) prorates by eligible months,
-    but §223(b)(8)'s last-month rule lets a December-1-covered participant use
-    the full limit against a 13-month testing period. A naive `× months / 12`
-    would be wrong for the common case, which is why v1 shows the full limit and
-    caveats the assumption.
-  - **The full state retirement-conformity matrix.** v1 models PA, NJ and MA
-    non-conformity; the complete 50-state per-account matrix is open-ended and
-    lower-certainty. Note the bias trap recorded against New York in
-    `docs/changelog/epic-Z.md`: absence from a non-conformity set makes the
-    dashboard CLAIM a state saving, so it is not the safe default an absent
-    figure usually is.
 
 ### Deferred with the work specified, not blocked
 
@@ -382,6 +358,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | X6 | #154 | 2027-2029 SALT figures are computed from the statute's 101% step, not published; the IRS figure wins through the cache |
 | X7 | #218 | future-sale tax and chained wash-sale repricing remain outside the replacement basis plan |
 | X8 | #159 | `return_builder.build` and `withholding.build_ca_true_up` validate one frame down — declared, and probed at both ends |
+| X10 | #224 | Roth catch-up split, confirmed HSA eligibility and fetched per-account state conformity. |
 | Y4 | #112 | — |
 | Y5 | #113 | — |
 | Y6 | #114, #119, #165 | — |

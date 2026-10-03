@@ -34,6 +34,28 @@ from agents.lib.tax_law_fetcher import (
 from tests.skill_text import PARSING_SKILLS, skill_text  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Hook input declarations: (priority, path patterns). Lower priority wins.
+# Parsed as literals by the selector; this module is never imported by it.
+WATCHES = (
+    (10, ('.agents/skills', '.agents/skills/*', '.claude/skills', '.claude/skills/*')),
+    (20, ('.claude/agents', '.claude/agents/*.md')),
+    (30, ('docs/ops/review-subagent-acceptance.md',)),
+    (80, ('docs/contributing/parse-boundary.md',)),
+    (90, ('docs/ops/season-open-runbook.md',)),
+    (100, ('docs/ops',)),
+    (140, ('agents/lib/capabilities.py', 'agents/lib/rollover.py')),
+    (150, ('agents/lib/tax_law_fetcher.py',)),
+    (160, ('agents/lib/ptet.py',)),
+    (170, ('agents/lib/tax_computations', 'agents/lib/tax_computations/*')),
+    (180, ('tests/test_claude_agents.py',)),
+    (190, ('agents/lib/secure_fs.py',)),
+    (210, ('agents/lib',)),
+    (250, ('tests/conftest.py',)),
+    (330, ('tests/skill_text.py',)),
+    (380, ('CLAUDE.md',)),
+    (420, ('.github/workflows/ci.yml',)),
+)
 AGENTS_DIR = REPO / ".claude" / "agents"
 
 # The agents whose output is a JUDGEMENT a human acts on. These are what the

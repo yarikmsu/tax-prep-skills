@@ -30,6 +30,31 @@ from tests.engine_tree import (  # noqa: E402
 from agents.lib import preflight as P  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Hook input declarations: (priority, path patterns). Lower priority wins.
+# Parsed as literals by the selector; this module is never imported by it.
+WATCHES = (
+    (120, ('tests/test_claude_hooks.py',)),
+    (140, ('agents/lib/capabilities.py', 'agents/lib/rollover.py')),
+    (150, ('agents/lib/tax_law_fetcher.py',)),
+    (155, ('agents/lib/tie_out.py',)),
+    (160, ('agents/lib/ptet.py',)),
+    (170, ('agents/lib/tax_computations', 'agents/lib/tax_computations/*')),
+    (180, ('tests/test_claude_agents.py',)),
+    (190, ('agents/lib/secure_fs.py',)),
+    (210, ('agents/lib',)),
+    (240, ('agents/lib/*',)),
+    (250, ('tests/conftest.py',)),
+    (260, ('tests/test_preflight.py',)),
+    (270, ('tests/test_secure_fs.py',)),
+    (280, ('tests/test_host_guard.py',)),
+    (300, ('tests/test_capabilities.py',)),
+    (330, ('tests/skill_text.py',)),
+    (340, ('tests/engine_tree.py',)),
+    (440, ('tests/test_portability.py',)),
+    (450, ('tests',)),
+    (470, ('tests', 'tests/*.py')),
+)
 LIB = REPO / "agents" / "lib"
 
 # A host interpreter, spelled the way `sys` spells it when no venv is active.

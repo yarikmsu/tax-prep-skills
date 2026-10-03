@@ -13,8 +13,8 @@ any port that is not looking for them:
   twice, once early selecting three modules and once late selecting one; so
   does `tests`. An implementation that collected every matching arm, or that
   stored the arms in a dict, would quietly take the wrong one. The arms are a
-  LIST here for that reason, in source order — and `_ARMS` being DATA rather
-  than text is what retired a whole class of test: a scan over `case` arms
+  sequence for that reason, ordered by declared priority. The generated
+  `_ARMS` being DATA rather than text is what retired a whole class of test: a scan over `case` arms
   cannot tell an arm's prose from its code, and it counted
   `# RUN_SECUREFS=1  (temporarily off)` as a selection.
 - **`*` crosses `/`.** In a `case` pattern — unlike filename globbing — `*`
@@ -25,16 +25,16 @@ any port that is not looking for them:
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import os
 import sys
+from pathlib import Path
 
 # The eight flags, in the order `skill-invariants.sh` declares them. Named
 # here so a comparison harness can render a stable vector.
 MODULES = ("PORTABILITY", "CAPABILITIES", "AGENTS", "HOOKS", "HOOKSDEPS",
            "PREFLIGHT", "SECUREFS", "HOSTGUARD")
-
-_EVERY = frozenset(MODULES)
 
 # The first line `main` writes, and the shell refuses an answer without it.
 #
@@ -49,121 +49,97 @@ _EVERY = frozenset(MODULES)
 # it from here and from the script, so the two cannot drift.
 PROTOCOL = "SELECTION1"
 
-# (patterns, modules) in SOURCE ORDER. First match wins, exactly as `case`.
-_ARMS: tuple[tuple[tuple[str, ...], frozenset], ...] = (
-    ((".agents/skills", ".agents/skills/*", ".claude/skills", ".claude/skills/*"),
-     frozenset({"PORTABILITY", "CAPABILITIES", "SECUREFS", "PREFLIGHT", "AGENTS"})),
-    ((".claude/agents", ".claude/agents/*.md"), frozenset({"AGENTS"})),
-    (("docs/ops/review-subagent-acceptance.md",),
-     frozenset({"AGENTS", "PREFLIGHT", "PORTABILITY"})),
-    (("docs/contributing/residency-guardrails.md",), frozenset({"CAPABILITIES"})),
-    (("docs/WHO-IT-FITS.md",), frozenset({"CAPABILITIES"})),
-    (("scripts/who_it_fits.py",), frozenset({"CAPABILITIES", "SECUREFS"})),
-    (("scripts/who_it_fits_figures.json",), frozenset({"CAPABILITIES"})),
-    (("docs/contributing/parse-boundary.md",), frozenset({"AGENTS"})),
-    (("docs/ops/season-open-runbook.md",),
-     frozenset({"PREFLIGHT", "AGENTS", "PORTABILITY"})),
-    (("docs/ops",), frozenset({"PREFLIGHT", "AGENTS", "PORTABILITY"})),
-    # `.claude/hooks/*`, not an extension list. The arm read `*.sh` and was
-    # faithful while the hooks were shell-only; W3 puts Python under
-    # `.claude/hooks/lib/`, and every file this slice adds selected NOTHING —
-    # visible to the stamp scan, matching no arm, reported as a green pass
-    # over an unchecked edit, which CLAUDE.md makes an ALWAYS.
-    #
-    # Widened rather than extended by one more suffix, because this repo has
-    # already paid for the narrow form: three arms were scoped to `*.py`/`*.sh`
-    # to dodge `__pycache__`, and a rule phrased around what it DODGES stops
-    # covering what it is FOR — a directory has no extension and matched none
-    # of them.
-    #
-    # What the prologue excludes is `__pycache__` PATHS, not bytecode in
-    # general: a stray `.pyc` beside the source, or an editor's `.swp`, does
-    # select this module. That is the same exposure `agents/lib/*` has carried
-    # since it was written — `agents/lib/ptet.py.swp` selects four modules
-    # today — so this widening matches the convention rather than departing
-    # from it. Stated because the shorter claim ("bytecode is excluded") was
-    # written here first and is not true.
-    ((".claude/hooks", ".claude/hooks/*", ".claude/settings.json"),
-     frozenset({"HOOKS"})),
-    (("tests/test_claude_hooks.py",), frozenset({"HOOKS", "HOSTGUARD"})),
-    (("scripts/pre-commit-pii-scan.sh",),
-     frozenset({"HOOKS", "PORTABILITY", "SECUREFS"})),
-    (("agents/lib/capabilities.py", "agents/lib/rollover.py"),
-     frozenset({"CAPABILITIES", "AGENTS", "PREFLIGHT", "PORTABILITY",
-                "SECUREFS", "HOSTGUARD"})),
-    (("agents/lib/tax_law_fetcher.py",),
-     frozenset({"AGENTS", "PREFLIGHT", "PORTABILITY", "SECUREFS", "HOSTGUARD"})),
-    (("agents/lib/ptet.py",),
-     frozenset({"AGENTS", "PREFLIGHT", "PORTABILITY", "SECUREFS", "HOSTGUARD"})),
-    (("agents/lib/tax_computations", "agents/lib/tax_computations/*"),
-     frozenset({"AGENTS", "PREFLIGHT", "PORTABILITY", "SECUREFS", "HOSTGUARD"})),
-    (("tests/test_claude_agents.py",),
-     frozenset({"AGENTS", "HOOKSDEPS", "HOSTGUARD"})),
-    (("agents/lib/secure_fs.py",),
-     frozenset({"SECUREFS", "CAPABILITIES", "AGENTS", "PREFLIGHT",
-                "PORTABILITY", "HOSTGUARD"})),
-    (("agents", "scripts"), frozenset({"SECUREFS"})),
-    (("agents/lib",),
-     frozenset({"PREFLIGHT", "CAPABILITIES", "AGENTS", "HOSTGUARD",
-                "SECUREFS", "PORTABILITY"})),
-    (("requirements.in", "requirements.txt"), frozenset({"PREFLIGHT"})),
-    (("agents/lib/*.sh",), frozenset({"PREFLIGHT", "PORTABILITY", "SECUREFS"})),
-    (("agents/lib/*",),
-     frozenset({"PREFLIGHT", "HOSTGUARD", "SECUREFS", "PORTABILITY"})),
-    (("tests/conftest.py",), _EVERY),
-    (("tests/test_preflight.py",),
-     frozenset({"PREFLIGHT", "HOOKSDEPS", "HOSTGUARD"})),
-    (("tests/test_secure_fs.py",),
-     frozenset({"SECUREFS", "HOOKSDEPS", "HOSTGUARD"})),
-    (("tests/test_host_guard.py",),
-     frozenset({"HOSTGUARD", "HOOKSDEPS", "PORTABILITY"})),
-    (("agents/templates/taxpayer_profile_template.json",),
-     frozenset({"CAPABILITIES"})),
-    (("tests/test_capabilities.py",),
-     frozenset({"CAPABILITIES", "HOOKSDEPS", "HOSTGUARD"})),
-    # result_template.json gained CAPABILITIES with the EIC disclosure:
-    # test_capabilities.py reads the template to prove the rule's text carries
-    # no year-specific figure and to derive the EIC lines rather than list them
-    # again. An arm that stayed PORTABILITY-only would report a silent green
-    # over an edit that can turn the capability module red.
-    (("agents/templates/result_template.json",),
-     frozenset({"PORTABILITY", "CAPABILITIES"})),
-    (("agents/templates/projection_inputs_template.json",),
-     frozenset({"PORTABILITY"})),
-    (("tests/skill_text.py",),
-     frozenset({"PORTABILITY", "CAPABILITIES", "PREFLIGHT", "HOSTGUARD",
-                "AGENTS"})),
-    (("tests/engine_tree.py",),
-     frozenset({"PORTABILITY", "HOSTGUARD", "PREFLIGHT", "SECUREFS"})),
-    (("docs/QUICKSTART.md", "docs/contributing/agents-compat.md"),
-     frozenset({"PREFLIGHT", "PORTABILITY"})),
-    (("CONTRIBUTING.md", "README.md"), frozenset({"PORTABILITY", "PREFLIGHT"})),
-    (("agents/install.sh",), frozenset({"PORTABILITY", "SECUREFS"})),
-    (("CLAUDE.md",), frozenset({"PORTABILITY", "AGENTS"})),
-    # pyproject.toml, for a reason that is not ruff or mypy config. Its
-    # `[tool.pytest.ini_options]` section is what stops pytest's rootdir search
-    # before it reaches an ancestor directory's `pytest.ini` — and an ancestor
-    # holding `addopts = --collect-only` makes this gate report a suite that
-    # ran nothing. `test_the_project_inifile_stops_an_ancestor_pytest_ini`
-    # asserts that section is there, so an edit to this file has to be able to
-    # turn the module holding it red.
-    (("pyproject.toml",), frozenset({"HOOKS"})),
-    (("AGENTS.md",), frozenset({"PORTABILITY", "PREFLIGHT"})),
-    ((".github/ISSUE_TEMPLATE", ".github/ISSUE_TEMPLATE/bug_report.yml"),
-     frozenset({"PREFLIGHT"})),
-    ((".github/workflows/ci.yml",), frozenset({"AGENTS"})),
-    (("LICENSE", ".gitignore", ".pii-allowlist", ".vscode/settings.json",
-      "docs/contributing", "docs/contributing/*.md",
-      "docs/ops", "docs/ops/*.md",
-      "docs/roadmap", "docs/roadmap/*.md"),
-     frozenset({"PORTABILITY"})),
-    (("tests/test_portability.py",),
-     frozenset({"PORTABILITY", "HOOKSDEPS", "HOSTGUARD"})),
-    (("tests",), frozenset({"PORTABILITY", "HOSTGUARD"})),
-    (("agents/*.py", "agents/*.sh", "scripts/*.py", "scripts/*.sh"),
-     frozenset({"SECUREFS"})),
-    (("tests", "tests/*.py"), frozenset({"HOSTGUARD"})),
-)
+# This roster is structural: flags name the seven suites the shell can run.
+# Dependency patterns live ONLY in each suite's WATCHES declaration.
+MODULE_FILES = {
+    "PORTABILITY": "tests/test_portability.py",
+    "CAPABILITIES": "tests/test_capabilities.py",
+    "AGENTS": "tests/test_claude_agents.py",
+    "HOOKS": "tests/test_claude_hooks.py",
+    "PREFLIGHT": "tests/test_preflight.py",
+    "SECUREFS": "tests/test_secure_fs.py",
+    "HOSTGUARD": "tests/test_host_guard.py",
+}
+
+
+def _literal_watches(source: str, name: str) -> tuple:
+    """Read one module-level literal without executing a test or its imports.
+
+    Refuse absent, duplicate, computed or malformed declarations. The shell
+    already runs all checks when its selector fails; never report an empty map
+    for a file being saved or for an incomplete checkout.
+    """
+    tree = ast.parse(source)
+    writes = [node for node in ast.walk(tree)
+              if isinstance(node, ast.Name) and node.id == name
+              and isinstance(node.ctx, ast.Store)]
+    if len(writes) != 1:
+        raise ValueError("watch declaration must be a single assignment")
+    values = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            values.append(ast.literal_eval(node.value))
+    if len(values) != 1 or not isinstance(values[0], tuple) or not values[0]:
+        raise ValueError("missing or malformed watch declaration")
+    seen = set()
+    for entry in values[0]:
+        if not isinstance(entry, tuple) or len(entry) != 2:
+            raise ValueError("invalid watch entry")
+        priority, patterns = entry
+        if type(priority) is not int or priority < 0 or priority in seen:
+            raise ValueError("invalid watch priority")
+        seen.add(priority)
+        if not isinstance(patterns, tuple) or not patterns:
+            raise ValueError("invalid watch patterns")
+        for pattern in patterns:
+            if (not isinstance(pattern, str) or not pattern
+                    or pattern.startswith("/") or "\\" in pattern
+                    or any(part in ("", ".", "..", "__pycache__")
+                           for part in pattern.split("/"))):
+                raise ValueError("invalid watch path")
+    return values[0]
+
+
+def load_declarations(root: Path) -> dict:
+    """Load once per selector process, from the checkout beside this script."""
+    declarations = {}
+    for flag, filename in MODULE_FILES.items():
+        source = (root / filename).read_text(encoding="utf-8")
+        declarations[flag] = _literal_watches(source, "WATCHES")
+        if flag == "HOOKS":
+            declarations["HOOKSDEPS"] = _literal_watches(
+                source, "WATCHES_DEPENDENTS")
+    return declarations
+
+
+def build_arms(declarations: dict) -> tuple:
+    """Merge shared priority groups, preserving first-match selection costs.
+
+    A priority identifies one pattern group. Modules sharing it must agree on
+    that group; refusing a collision prevents an added dependency from quietly
+    shadowing another module's declaration. New groups need no selector edit.
+    """
+    groups = {}
+    for flag, watches in declarations.items():
+        for priority, patterns in watches:
+            if priority not in groups:
+                groups[priority] = (patterns, set())
+            group_patterns, flags = groups[priority]
+            if patterns != group_patterns:
+                raise ValueError("conflicting watch priority")
+            flags.add(flag)
+    return tuple((patterns, frozenset(flags))
+                 for _, (patterns, flags) in sorted(groups.items()))
+
+
+DECLARATIONS = load_declarations(Path(__file__).resolve().parents[3])
+_ARMS = build_arms(DECLARATIONS)
 
 
 def select_modules_for(path: str, *, isdir=os.path.isdir) -> frozenset:

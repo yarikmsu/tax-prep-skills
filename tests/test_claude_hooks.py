@@ -43,6 +43,27 @@ pytestmark = pytest.mark.slow
 
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Hook input declarations: (priority, path patterns). Lower priority wins.
+# Parsed as literals by the selector; this module is never imported by it.
+WATCHES = (
+    (110, ('.claude/hooks', '.claude/hooks/*', '.claude/settings.json')),
+    (120, ('tests/test_claude_hooks.py',)),
+    (130, ('scripts/pre-commit-pii-scan.sh',)),
+    (250, ('tests/conftest.py',)),
+    (390, ('pyproject.toml',)),
+)
+
+# These inputs run only the cheap cross-module dependency assertions.
+WATCHES_DEPENDENTS = (
+    (180, ('tests/test_claude_agents.py',)),
+    (250, ('tests/conftest.py',)),
+    (260, ('tests/test_preflight.py',)),
+    (270, ('tests/test_secure_fs.py',)),
+    (280, ('tests/test_host_guard.py',)),
+    (300, ('tests/test_capabilities.py',)),
+    (440, ('tests/test_portability.py',)),
+)
 HOOKS_DIR = REPO / ".claude" / "hooks"
 SETTINGS = REPO / ".claude" / "settings.json"
 SKILL_HOOK = HOOKS_DIR / "skill-invariants.sh"
@@ -131,13 +152,13 @@ def _module_paths(port_modules) -> set:
     """The test files a set of the port's module names stands for."""
     return {m for m in ALL_MODULES if _PORT_NAME[m] in port_modules}
 
-# THE ARMS, PINNED. A second deliberate statement of `hook_selection._ARMS`,
-# in source order, each arm's modules sorted.
+# Legacy selection snapshot, retained as behavioral regression evidence.
+# New dependencies are declared in their reader's WATCHES, not added here.
 #
-# This is what the flip cost and what gets it back. Until W3 slice 2 the arms
-# existed twice — once in bash, once in the port — and a differential required
-# them to agree, so deleting or narrowing one meant editing two files. With one
-# implementation left, an arm deleted from `_ARMS` takes its own coverage
+# Until W3 slice 2 the arms existed in bash and Python, held together by a
+# differential. W12 moves the live inputs beside their tests; this historical
+# baseline guards observable behavior while allowing new declared inputs.
+# An old arm deleted from the declarations takes its own coverage
 # obligation with it and every test here stays green. The obligation lives
 # here now.
 #
@@ -180,7 +201,7 @@ _ARM_SNAPSHOT = (
      ('AGENTS', 'CAPABILITIES', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT',
       'SECUREFS',)),
     (('agents/lib/tax_law_fetcher.py',),
-     ('AGENTS', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
+     ('AGENTS', 'CAPABILITIES', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
     (('agents/lib/ptet.py',),
      ('AGENTS', 'HOSTGUARD', 'PORTABILITY', 'PREFLIGHT', 'SECUREFS',)),
     (('agents/lib/tax_computations', 'agents/lib/tax_computations/*',),
@@ -872,6 +893,69 @@ class TestAPackageDirectoryReadsAsItsInitialiser:
                 "only it names")
 
 
+class TestDeclaredHookInputs:
+    @pytest.mark.parametrize("source", [
+        "", "WATCHES = ()", "WATCHES = []",
+        "WATCHES = ((True, ('x',)),)",
+        "WATCHES = ((-1, ('x',)),)",
+        "WATCHES = ((1, ('x',)), (1, ('x',)))",
+        "WATCHES = ((1, ()),)", "WATCHES = ((1, ('',)),)",
+        "WATCHES = ((1, ('../x',)),)", "WATCHES = ((1, ('/x',)),)",
+        "WATCHES = ((1, ('a//b',)),)",
+        "WATCHES = ((1, ('a/__pycache__/b',)),)",
+        "WATCHES = tuple()",
+        "WATCHES = ((1, ('x',)),)\nWATCHES += ((2, ('y',)),)",
+        "WATCHES = ((1, ('x',)),)\nif True:\n    WATCHES = ()",
+        "WATCHES = ((1, ('x',)),)\nWATCHES = ((2, ('y',)),)",
+    ])
+    def test_invalid_declarations_refuse(self, source):
+        with pytest.raises((ValueError, SyntaxError)):
+            _selection_port()._literal_watches(source, "WATCHES")
+
+    def test_declarations_do_not_execute_test_code(self):
+        source = "raise RuntimeError('never execute')\nWATCHES = ((5, ('x/*',)),)"
+        assert _selection_port()._literal_watches(source, "WATCHES") \
+            == ((5, ("x/*",)),)
+
+    def test_priority_collision_refuses(self):
+        with pytest.raises(ValueError, match="conflicting"):
+            _selection_port().build_arms({
+                "AGENTS": ((1, ("a",)),),
+                "SECUREFS": ((1, ("b",)),),
+            })
+
+    def test_missing_module_refuses(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            _selection_port().load_declarations(tmp_path)
+
+    def test_added_input_needs_no_selector_or_snapshot_edit(self, tmp_path):
+        port = _selection_port()
+        (tmp_path / "tests").mkdir()
+        for filename in port.MODULE_FILES.values():
+            shutil.copyfile(REPO / filename, tmp_path / filename)
+        reader = tmp_path / port.MODULE_FILES["CAPABILITIES"]
+        source = reader.read_text().replace(
+            "WATCHES = (", "WATCHES = (\n    (1, ('docs/new-input.md',)),", 1)
+        reader.write_text(source)
+        arms = port.build_arms(port.load_declarations(tmp_path))
+        answer = next(flags for patterns, flags in arms
+                      if any(fnmatch.fnmatchcase("docs/new-input.md", p)
+                             for p in patterns))
+        assert answer == frozenset({"CAPABILITIES"})
+        assert port.select_modules_for("docs/new-input.md") == frozenset()
+
+    @needs_jq
+    def test_real_selector_refuses_missing_declarations_through_shell(self, tmp_path):
+        # A copied selector has no test declarations beside it. The real shell
+        # must select every module instead of treating that error as "nothing".
+        orphan = TestTheSelectionPortIsTheHooksOwnDecision()._orphan_hook(
+            tmp_path, SELECTION_PORT.read_text())
+        _fake_venv(tmp_path, exit_code=1, lines=["$*"])
+        result = _run_skill_hook(tmp_path, str(tmp_path / "README.md"), script=orphan)
+        assert result.returncode == 2
+        assert set(_selected_modules(result)) == set(ALL_MODULES)
+
+
 @needs_jq
 class TestTheSelectionPortIsTheHooksOwnDecision:
     """W3 slice 2: the port is wired in, and the bash `case` is gone.
@@ -895,8 +979,8 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
     implementations over every path. Nothing here does that, and nothing can.
     What is here instead:
 
-    - `_ARM_SNAPSHOT` pins the arms as DATA, so deleting or narrowing one
-      still takes a deliberate second edit. That is the property the
+    - `_ARM_SNAPSHOT` pins legacy observable behavior, so deleting or
+      narrowing existing coverage still takes a deliberate second edit. That is the property the
       differential was really earning its keep on, and it is the only one of
       these that replaces it rather than adding something new.
     - Four tests drive the REAL HOOK and read the pytest argv it produces —
@@ -1036,9 +1120,9 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
         and their loss "coverage rather than correctness" — both wrong, and
         wrong in the flattering direction.
 
-        `_ARM_SNAPSHOT` is what covers them, and covers every other arm the
-        locator misses: the arms pinned as data, so deleting or narrowing one
-        takes a deliberate second edit. That is the property the differential
+        `_ARM_SNAPSHOT` covers their legacy behavior, including globs the
+        locator misses: narrowing an existing answer takes a deliberate
+        second edit. That is the property the differential
         was really earning its keep on, and it survives the bash it was
         written against.
 
@@ -1078,29 +1162,23 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
             "unreachable but the corpus now reaches them — drop the exemption")
 
     def test_the_arm_table_is_the_one_that_was_pinned(self):
-        """The arms, against their pin — in both directions and in ORDER.
+        """Legacy selection behavior survives moving inputs to declarations.
 
-        `_ARM_SNAPSHOT` exists because the differential could not survive the
-        flip: with the bash gone there is no second answer to compare against,
-        and an arm deleted from `_ARMS` deletes its own obligation. This
-        restores the one property that mattered — changing an arm takes a
-        deliberate second edit — for the price of a table rather than a second
-        implementation.
-
-        Compared as a SEQUENCE, so a reordering is a finding. First match
-        wins, `docs/ops` and `tests` each have two arms, and a set comparison
-        would call swapping them no change at all.
+        The old snapshot is regression evidence, not a second live map. A new
+        dependency may be declared without editing it. Every old pattern must
+        still produce the same answer on a representative path; the dynamic
+        input audit covers newly read paths independently.
         """
-        live = tuple((tuple(patterns), tuple(sorted(modules)))
-                     for patterns, modules in _selection_port()._ARMS)
-        assert live == _ARM_SNAPSHOT, (
-            "the selection arms no longer match their pin. If you MEANT to "
-            "change them, update `_ARM_SNAPSHOT` in the same commit and say "
-            "why in the message — that second edit is the whole point of it. "
-            "If you did not, an arm has been deleted or narrowed, and the "
-            "paths it covered now select nothing:\n  pinned: "
-            f"{[a for a in _ARM_SNAPSHOT if a not in live]}\n  live:   "
-            f"{[a for a in live if a not in _ARM_SNAPSHOT]}")
+        port = _selection_port()
+        for patterns, flags in _ARM_SNAPSHOT:
+            for pattern in patterns:
+                witness = pattern.replace("*", "w12-probe")
+                expected = next(frozenset(selected)
+                                for pats, selected in _ARM_SNAPSHOT
+                                if any(fnmatch.fnmatchcase(witness, p)
+                                       for p in pats))
+                assert port.select_modules_for(witness, isdir=lambda _: False) \
+                    == expected, witness
 
     def test_the_package_rewrite_changes_no_arm(self):
         """Why no differential could have caught dropping the rewrite.
@@ -1970,117 +2048,28 @@ class TestSkillInvariantsHook:
         assert agent_edit.returncode == 2
         assert _selected_modules(agent_edit) == [AGENTS]
 
-    # Every entry here can turn its module red, and not one of them is a `*.md`
-    # under a skill directory — the only shape the previous filter accepted. The
-    # fetcher is the case that names the defect outright: renaming a key there
-    # is precisely what `test_claude_agents.py` exists to catch, since it
-    # resolves every schema path the auditor cites against `create_empty_tax_law`.
-    #
-    # Two entries are here for a dependency no assertion mentions.
-    # `capabilities.py` imports `rollover.py`, so a half-finished edit to
-    # rollover is a COLLECTION error, not a failed assertion; and `skill_text.py`
-    # is how both prose modules reach a skill at all, so its glob decides
-    # whether reference files are read.
-    WATCHED_SOURCE_PATHS = [
-        ("agents/lib/tax_law_fetcher.py", AGENTS),
-        # The SECOND engine module test_claude_agents.py reads. Its OBBBA window
-        # decides whether the acceptance fixture is corrupt at all, so editing
-        # that window is the change those guards exist to catch — and it fell
-        # through to the generic `agents/lib/*` arm, which selects every
-        # module except this one.
-        ("agents/lib/ptet.py", AGENTS),
-        # The THIRD, and the one whose edge is not a path literal anywhere: the
-        # Replay A guard IMPORTS this module and asserts what the shipped
-        # `compute_qbi_deduction` returns on the record's own case. The locator
-        # in the test below recovers `REPO / "..."` reads and finds nothing to
-        # recover here, so this row is the whole of the local signal — without
-        # it a change to the Form 8995 cap left the hook green and turned
-        # test_claude_agents red at CI. W2 made it a PACKAGE, and the path
-        # here is the FEDERAL half specifically — `compute_qbi_deduction` is
-        # in `__init__.py`, and pointing this row at the directory would claim
-        # `state/ny.py` can turn the agents module red, which it cannot.
-        ("agents/lib/tax_computations/__init__.py", AGENTS),
-        ("agents/lib/capabilities.py", CAPABILITIES),
-        ("agents/lib/rollover.py", CAPABILITIES),
-        ("agents/templates/taxpayer_profile_template.json", CAPABILITIES),
-        # The row the negative list's docstring below already claims exists.
-        # `result_template.json` left that list when test_portability began
-        # building a prior-year return out of it, and joined this one only in
-        # prose: the `case` arm was added to the hook, both lists were called
-        # "one claim seen from both directions", and nothing here was touched.
-        # Deleting that arm left the whole suite green while an edit to the
-        # template selected no module at all.
-        ("agents/templates/result_template.json", PORTABILITY),
-        ("AGENTS.md", PORTABILITY),
-        ("CLAUDE.md", PORTABILITY),
-        ("README.md", PORTABILITY),
-        ("LICENSE", PORTABILITY),
-        (".gitignore", PORTABILITY),
-        (".pii-allowlist", PORTABILITY),
-        (".vscode/settings.json", PORTABILITY),
-        ("agents/install.sh", PORTABILITY),
-        ("docs/contributing/agents-compat.md", PORTABILITY),
-        ("tests/skill_text.py", PORTABILITY),
-        ("tests/engine_tree.py", PORTABILITY),
-        ("tests/engine_tree.py", HOSTGUARD),
-        # The W2 tail moved preflight's roster comparison and secure_fs's
-        # unredacted-path roster onto the helper too. Both ask it what the
-        # engine CONTAINS, so narrowing its walk narrows a roster — and a
-        # narrowed roster is the shape that passes green over the files it
-        # stopped seeing.
-        ("tests/engine_tree.py", PREFLIGHT),
-        ("tests/engine_tree.py", SECUREFS),
-        ("scripts/pre-commit-pii-scan.sh", HOOKS),
-        (".claude/settings.json", HOOKS),
-        (".claude/hooks/harden-runtime-perms.sh", HOOKS),
-        ("tests/test_claude_hooks.py", HOOKS),
-        # A path appears once PER MODULE it has to reach. One row per path
-        # pinned only the first module of a multi-module arm, and the arms
-        # below were the ones nothing else covered: the `REPO / "literal"`
-        # locator in the test after this cannot recover a read written over a
-        # loop, and both documents here are read that way. Deleting
-        # `RUN_PREFLIGHT=1` from the QUICKSTART/agents-compat arm used to leave
-        # the whole suite green while an edit dropping the launcher string from
-        # either turned test_preflight red at CI only.
-        ("docs/contributing/agents-compat.md", PREFLIGHT),
-        ("docs/QUICKSTART.md", PREFLIGHT),
-        ("docs/QUICKSTART.md", PORTABILITY),
-        ("requirements.in", PREFLIGHT),
-        ("agents/lib/run.sh", PREFLIGHT),
-        ("agents/lib/run.sh", PORTABILITY),
-        ("agents/lib/run.sh", SECUREFS),
-        ("tests/skill_text.py", PREFLIGHT),
-        ("tests/skill_text.py", CAPABILITIES),
-        # conftest.py runs before EVERY module below and can end the run before
-        # one test of any of them executes, so its arm selects all seven and
-        # every one of them is pinned here. It was watched one by one before
-        # `tests` became a root, and until it was listed the file that can stop
-        # collection reached `nothing_selected` and an edit to it got no local
-        # signal at all. Reported against PR #82, which is the commit that added
-        # the file.
-        ("tests/conftest.py", PORTABILITY),
-        ("tests/conftest.py", CAPABILITIES),
-        ("tests/conftest.py", AGENTS),
-        ("tests/conftest.py", HOOKS),
-        ("tests/conftest.py", PREFLIGHT),
-        ("tests/conftest.py", SECUREFS),
-        ("tests/conftest.py", HOSTGUARD),
-        ("scripts/pre-commit-pii-scan.sh", PORTABILITY),
-        ("scripts/pre-commit-pii-scan.sh", SECUREFS),
-        # EVERY module in tests/ is source behind
-        # `TestNoTestSpawnsABareInterpreter`, which globs the directory whole.
-        # The seven with arms of their own are the easy half; the ~forty
-        # without were the gap, and the locator in the test below cannot see it
-        # — it recovers `REPO / "literal"` reads and a glob is not one. Three
-        # shapes are pinned: a module with a rich arm, the hooks module (whose
-        # arm was split off `.claude/hooks` for this), and one with no arm at
-        # all, which reaches the catch-all or nothing.
-        ("tests/test_preflight.py", HOSTGUARD),
-        ("tests/test_claude_hooks.py", HOSTGUARD),
-        ("tests/skill_text.py", HOSTGUARD),
-        ("tests/test_scenario.py", HOSTGUARD),
-        ("tests/test_tax_computations.py", HOSTGUARD),
-    ]
+    @property
+    def WATCHED_SOURCE_PATHS(self):
+        """One real witness per effective declared pattern, with its reader.
+
+        This used to be a second hand-kept dependency table. The declarations
+        own that information now; the input audit below independently checks
+        what the suites read, and this loop checks the shell wiring.
+        """
+        port = _selection_port()
+        corpus = TestTheSelectionPortIsTheHooksOwnDecision()._corpus()
+        pairs = set()
+        for flag, entries in port.DECLARATIONS.items():
+            module = HOOKS if flag == "HOOKSDEPS" else port.MODULE_FILES[flag]
+            for _, patterns in entries:
+                for pattern in patterns:
+                    witnesses = sorted(p for p in corpus
+                                       if fnmatch.fnmatchcase(p, pattern)
+                                       and flag in port.select_modules_for(
+                                           p, isdir=lambda _: False))
+                    if witnesses:
+                        pairs.add((witnesses[0], module))
+        return sorted(pairs)
 
     def test_every_watched_source_path_reaches_its_module(
             self, quiescent_workspace):
@@ -2658,31 +2647,19 @@ class TestSkillInvariantsHook:
 
     def test_the_watched_set_still_covers_what_the_modules_read(
             self, quiescent_workspace):
-        """The staleness pin the hook's own comment says it needs.
+        """Audit each reader's own declarations against independent inputs.
 
-        `WATCHED_ROOTS` and `select_modules_for` are a hand transcription of
-        what four Python modules happen to read today, and nothing recomputes
-        it. The drift mode is silent in the direction that matters: the day
-        `test_claude_hooks.py` starts asserting against AGENTS.md, an AGENTS.md
-        edit keeps selecting `test_portability.py` alone and the miss shows up
-        nowhere. So re-derive the read set from the modules themselves and drive
-        the real hook once per path.
-
-        Two shapes are recoverable: a `REPO / "…"` literal, and a module-level
-        CONSTANT holding a tuple of paths that a loop then joins to REPO. The
-        second was added because the first cannot see the shape that actually
-        grew — `test_preflight.DOCUMENTS`, seven documents swept for a
-        bare-interpreter engine call, read as `REPO / rel` over a variable. Two
-        of its entries reached CI with no local signal at all: AGENTS.md
-        selected the portability module alone, and `.github/ISSUE_TEMPLATE` was
-        neither watched nor mapped. The hand list above was the compensating
-        mechanism and its own comment says so; a hand list only compensates for
-        what somebody remembers to add to it, and nobody did.
-
-        An import edge (`test_claude_agents.py` reaching `tax_law_fetcher.py`)
-        and a glob inside `skill_text()` stay invisible here, which is why that
-        list still exists alongside this.
+        Recover repository path chains, path constants and direct engine
+        imports from source. Require its WATCHES to cover every recovered
+        input, then exercise the real shell to catch shadowed declarations or
+        scan roots that do not reach the path. Dynamic imports and glob sweeps
+        retain deliberately broad declarations and legacy behavior controls.
         """
+        assert _engine_import_inputs("from agents.lib import tie_out") \
+            == {"agents/lib/tie_out.py"}
+        assert _engine_import_inputs("from agents.lib.tax_law_fetcher import x") \
+            == {"agents/lib/tax_law_fetcher.py"}
+        assert not _engine_import_inputs("s = 'from agents.lib import tie_out'")
         # TWO spellings, because the modules use two. `REPO / "a" / "b"` is the
         # chain; `Path(REPO_ROOT, "a", "b")` is what test_secure_fs writes
         # throughout, and matching only the first recovered ZERO paths from that
@@ -2693,7 +2670,10 @@ class TestSkillInvariantsHook:
                            r'|Path\(\s*REPO_ROOT\s*,((?:\s*"[^"]+"\s*,?)+)\)')
         reads: dict[str, set[str]] = {}
         for module in ALL_MODULES:
-            for rel in _path_constants((REPO / module).read_text()):
+            source = (REPO / module).read_text()
+            for rel in _engine_import_inputs(source):
+                reads.setdefault(rel, set()).add(module)
+            for rel in _path_constants(source):
                 reads.setdefault(rel, set()).add(module)
             for match in chain.finditer(
                     _code_only((REPO / module).read_text())):
@@ -2715,6 +2695,20 @@ class TestSkillInvariantsHook:
         assert len(reads) >= 15, (
             f"the locator stopped finding path literals: {sorted(reads)}")
 
+        port = _selection_port()
+        undeclared = []
+        for rel, readers in reads.items():
+            for module in readers:
+                flag = _PORT_NAME[module]
+                entries = list(port.DECLARATIONS[flag])
+                if module == HOOKS:
+                    entries += list(port.DECLARATIONS["HOOKSDEPS"])
+                if not any(fnmatch.fnmatchcase(rel, pattern)
+                           for _, patterns in entries for pattern in patterns):
+                    undeclared.append(f"{module}: {rel}")
+        assert not undeclared, (
+            f"repository inputs outside their module's WATCHES: {undeclared}")
+
         _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
         unwatched = []
         for rel, readers in sorted(reads.items()):
@@ -2733,8 +2727,8 @@ class TestSkillInvariantsHook:
                           if not _selects(m, selected)]
         assert not unwatched, (
             f"these modules read a path that does not select them: {unwatched}. "
-            "Add the path to WATCHED_ROOTS and to select_modules_for — both, "
-            "since one without the other is half-covered")
+            "Declare the input in its reader\'s WATCHES and ensure a scan root "
+            "contains it")
 
     @needs_jq
     def test_an_unrunnable_check_is_named_as_such(self, tmp_path):
@@ -6110,6 +6104,34 @@ def _code_only(source: str) -> str:
         out.append(token.string)
         last = (erow, ecol)
     return "".join(out)
+
+
+def _engine_import_inputs(source: str) -> set[str]:
+    """Direct engine import files, including package initializers.
+
+    Parse executable imports rather than quoted examples in this lint suite.
+    Dynamic discovery and transitive imports remain guarded by the declared
+    engine-wide sweeps and the legacy behavior pin.
+    """
+    names = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module == "agents.lib":
+                names.update(f"{node.module}.{a.name}" for a in node.names)
+            else:
+                names.add(node.module)
+    paths = set()
+    for name in names:
+        if not name.startswith("agents.lib"):
+            continue
+        relative = name.replace(".", "/")
+        for candidate in (relative + ".py", relative + "/__init__.py"):
+            if (REPO / candidate).is_file():
+                paths.add(candidate)
+                break
+    return paths
 
 
 def _path_constants(source: str) -> list[str]:
