@@ -160,6 +160,7 @@ Read each reference file when you reach its steps; do not read them all up front
 | 6 – 9.5 | Tax, AMT, credits, other taxes, payments, estimated-tax penalty (1040 lines 16-38) | [references/tax-and-credits.md](references/tax-and-credits.md) |
 | 10 | State return — California, no-income-tax states, the generic bracket estimate | [references/state-return.md](references/state-return.md) |
 | 10 | State return — **New York** (Form IT-201, full-year resident) | [references/state-return-ny.md](references/state-return-ny.md) |
+| 10 | State return — **North Carolina** (Form D-400, full-year resident, TY2025) | [references/state-return-nc.md](references/state-return-nc.md) |
 | 11 – 11.5 | International compliance and the optimization discovery engine | [references/international-and-optimization.md](references/international-and-optimization.md) |
 | 12, 13 | Write result files and produce the summary | [references/finalize.md](references/finalize.md) |
 
@@ -284,4 +285,3 @@ Prove every parsed document landed on the return — the CP2000 killer:
 3. This gate exists because `/tax-review` audits the already-aggregated
    result.json and structurally cannot see a document that dropped during
    aggregation — only the ledger-to-result comparison can.
-

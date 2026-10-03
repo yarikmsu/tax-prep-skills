@@ -91,6 +91,24 @@ class CapabilityReport:
 # /tax-setup interview is what sets them, so a rule keyed on a flag the
 # interview never asks is dead (the D1 lesson from expected_sources).
 RULES: "tuple[Rule, ...]" = (
+    Rule("nc_business_adjustments", "nc_has_business_adjustments", UNSUPPORTED,
+         "NC bonus depreciation or section 179 adjustments", "D-400 Schedule S A3/A4",
+         "NC business add-backs are not modeled; prepare the year's Schedule S manually."),
+    Rule("nc_recovery_deductions", "nc_has_recovery_deductions", UNSUPPORTED,
+         "NC prior-year recovery deductions", "D-400 Schedule S B23/B24/B34-B37",
+         "Omitting prior-year recovery deductions OVER-states NC tax; they require a manual worksheet."),
+    Rule("nc_nol", "nc_has_nol", UNSUPPORTED,
+         "NC or federal net operating loss adjustments", "D-400 Schedule S A7/B39 / NC-NOL",
+         "Federal NOL add-backs and NC NOL deductions are not modeled."),
+    Rule("nc_taxed_pte", "nc_has_taxed_pte", UNSUPPORTED,
+         "NC Taxed-PTE owner income or loss", "D-400 Schedule S A14/B38",
+         "An NC Taxed-PTE owner's deduction or loss add-back requires a manual return."),
+    Rule("nc_other_deductions", "nc_has_other_schedule_s_deductions", UNSUPPORTED,
+         "NC Schedule S deductions outside lines 17-21", "D-400 Schedule S B22/B25-B33",
+         "Omitting these deductions OVER-states NC tax; record each applicable line and prepare it manually."),
+    Rule("nc_other_credits", "nc_has_other_credits", UNSUPPORTED,
+         "NC historic rehabilitation, credit carryovers or business credits", "D-400TC Part 2 / NC-478",
+         "Only D-400TC Part 1 is computed; omitted credits OVER-state NC tax."),
     # --- UNSUPPORTED: the engine would produce a materially wrong return ---
     Rule("rental_income", "has_rental_income", UNSUPPORTED,
          "Rental real estate income", "Schedule E / Form 8582",
@@ -829,6 +847,18 @@ def _state_note(profile: dict) -> str:
             "IT-196 lines 1-45 and IT-201 line 45's other taxes. Line 59's "
             "sales or use tax is ASKED, never assumed to be zero. Part-year "
             "and nonresident returns (IT-203) are not modeled.")
+    if code == "NC":
+        return (
+            "State (NC): Form D-400 computed in depth for a full-year resident "
+            "under the source-verified TY2025 D-401; other form years refuse. "
+            "Includes Schedule S lines 1 and 17-21, independent NC Schedule A, "
+            "the child deduction and D-400TC Part 1 from supplied inputs. "
+            "Use tax is ASKED; D-422 interest and penalties are inputs. "
+            "Business adjustments, recovery deductions, NOLs, Taxed-PTE owner "
+            "items, other Schedule S deductions and other credits are gated. "
+            "Schedule PN part-year/nonresident returns and dependent filers "
+            "are not modeled. NC-40 farmer and annualized-income rules and "
+            "NC legal-holiday dates need manual confirmation.")
     no_tax = code in _NO_INCOME_TAX_STATES and (
         code != "TN" or _tn_hall_repealed(profile)
     )
@@ -993,6 +1023,8 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
                    & _TERRITORIES)}
 
     for rule in RULES:
+        if rule.rule_id.startswith("nc_") and _profile_state(profile) != "NC":
+            continue
         # _flag_value FIRST, so a non-bool answer still hard-errors.
         if not (_flag_value(flags, rule.flag) or derived.get(rule.flag)):
             continue
@@ -1004,6 +1036,9 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     # NULL (partially migrated profile) mean the taxpayer never answered the
     # load-bearing question — neither is 'no'. flags.get() maps both to None.
     missing_flags = [f for f in _REQUIRED_GATE_FLAGS if flags.get(f) is None]
+    if _profile_state(profile) == "NC":
+        missing_flags.extend(rule.flag for rule in RULES
+                             if rule.rule_id.startswith("nc_") and flags.get(rule.flag) is None)
     if missing_flags:
         _place(Finding(
             _MIGRATION_RULE_ID, UNSUPPORTED,

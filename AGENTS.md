@@ -223,8 +223,9 @@ are plain Markdown instructions and are written to be executable that way.
   one that UNDER-states it degrades with a loud banner. Never guess a value that
   changes a return.
 
-**Two states are computed in depth**: CA Form 540 and NY Form IT-201, the
-latter for a FULL-YEAR RESIDENT only. FL, AK, NV, SD, TX, WY and TN (2021+)
+**Three states are computed in depth**: CA Form 540, NY Form IT-201 and
+NC Form D-400 (source-verified TY2025 only), for FULL-YEAR RESIDENTS.
+FL, AK, NV, SD, TX, WY and TN (2021+)
 are `type: "none"`, the rest bracket-estimate only, and part-year /
 nonresident returns are modeled for neither. What each depth module covers, and how to add one:
 `docs/contributing/state-module-playbook.md`, with the spec template at

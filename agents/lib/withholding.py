@@ -17,8 +17,9 @@ the prior-year baseline + path/year validation.
 
 import datetime
 import json
+import math
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -49,6 +50,8 @@ from agents.lib.projection import (  # noqa: E402
     _ca_notes,
     _ca_section_computed,
     _ny_section_computed,
+    _nc_section_computed,
+    _VoucherCalendar,
     _ca_status,
     _federal_status,
     _money,
@@ -84,6 +87,7 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_year_arg,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.irs_dates import next_business_day_state  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -221,6 +225,23 @@ class NyTrueUp:
 
 
 @dataclass(frozen=True)
+class NcTrueUp:
+    """NC-40 excludes use tax; the D-400 balance includes it."""
+    liability: float
+    balance_tax: float
+    projected_paid: float
+    required_annual_payment: float
+    shortfall: float
+    zero_shortfall: float
+    nc4_penalty: W4Adjustment
+    nc4_zero: W4Adjustment
+    vouchers_penalty: "list[Voucher]"
+    vouchers_zero: "list[Voucher]"
+    notes: "tuple[str, ...]"
+    voucher_dates_note: "str | None" = None
+
+
+@dataclass(frozen=True)
 class TrueUpReport:
     year: int
     as_of: str
@@ -238,6 +259,8 @@ class TrueUpReport:
     w4_zero: W4Adjustment
     ca: "CaTrueUp | None" = None
     ny: "NyTrueUp | None" = None
+    nc: "NcTrueUp | None" = None
+    nc_cache_missing: bool = False
     # A computed New York return with no tax-law cache to measure it against.
     # Said out loud rather than left as an absent section: the §685(c) shares
     # are fetched, so without the cache there is no New York requirement to
@@ -546,6 +569,116 @@ def build_ny_true_up(result: dict, proj_inputs: dict, prior,
     )
 
 
+def _nc_observed_due(statutory: datetime.date) -> datetime.date:
+    return next_business_day_state(statutory, "NC")
+
+
+def _nc4_adjustment(shortfall: float, paychecks_left: int) -> W4Adjustment:
+    # NC-4 line 2 specifies whole dollars; rounding down misses the target.
+    adjustment = compute_w4_4c(shortfall, paychecks_left)
+    amount = float(math.ceil(shortfall / paychecks_left)) if paychecks_left > 0 else 0.0
+    return replace(adjustment, per_paycheck=amount)
+
+
+def build_nc_true_up(result: dict, proj_inputs: dict, prior,
+                     filing_status: "str | None", as_of: datetime.date,
+                     paychecks_left: int, year: int, tax_law: "dict | None",
+                     today: "datetime.date | None" = None) -> "NcTrueUp | None":
+    """G.S. 105-163.15: fetched NC shares and explicit prior-year evidence."""
+    _canonical_status(filing_status, "NC true-up")
+    if not _nc_section_computed(result) or not tax_law:
+        return None
+    _validate_tax_law_year(tax_law, year)
+    state = tax_law.get("state")
+    if not isinstance(state, dict) or state.get("code") != "NC":
+        raise WithholdingError("NC true-up requires the covered year's NC cache")
+    cfg = state.get("estimated_tax")
+    if not isinstance(cfg, dict):
+        raise WithholdingError("Fetch state.estimated_tax before the NC true-up")
+    figures = {}
+    for name in ("required_threshold", "current_year_rate", "prior_year_rate"):
+        if isinstance(cfg.get(name), bool) or not isinstance(cfg.get(name), (int, float)):
+            raise WithholdingError(f"Fetch state.estimated_tax.{name}")
+        value = _nonneg_num(cfg[name], f"state.estimated_tax.{name}")
+        if value <= 0 or (name.endswith("_rate") and value > 1):
+            raise WithholdingError(f"Invalid fetched NC estimated-tax {name}")
+        figures[name] = value
+    farmer = proj_inputs.get("nc_farmer_fisherman")
+    if not isinstance(farmer, bool):
+        raise WithholdingError("Answer nc_farmer_fisherman before choosing an NC-40 schedule")
+    if farmer:
+        raise WithholdingError("Qualifying NC farmers/fishermen require the separate "
+                               "January/March worksheet; quarterly targets are refused")
+    sec = result["north_carolina_d400"]
+    for field in ("line_17", "line_19"):
+        if sec.get(field) is None:
+            raise WithholdingError(f"Computed D-400 requires {field}")
+    tax = _nonneg_num(sec["line_17"], "D-400.line_17")
+    balance_tax = _nonneg_num(sec["line_19"], "D-400.line_19")
+    use_tax = sec.get("line_18_use_tax")
+    if use_tax is not None:
+        use_tax = _nonneg_num(use_tax, "D-400.line_18_use_tax")
+    if abs(balance_tax - round(tax + (use_tax or 0.0), 2)) > 0.01:
+        raise WithholdingError("D-400 line 19 must equal line 17 plus answered use tax")
+    frac = elapsed_fraction(as_of)
+    if frac <= 0:
+        raise WithholdingError("NC true-up elapsed fraction must be positive")
+    ytd = proj_inputs.get("ytd")
+    estimates_block = proj_inputs.get("estimated_payments_made")
+    if not isinstance(ytd, dict) or ytd.get("state_withholding") is None:
+        raise WithholdingError("Record ytd.state_withholding explicitly for NC")
+    if not isinstance(estimates_block, dict) or estimates_block.get("state") is None:
+        raise WithholdingError("Record estimated_payments_made.state explicitly for NC")
+    withholding = _nonneg_num(ytd["state_withholding"], "ytd.state_withholding")
+    withholding = round(withholding / frac, 2)
+    estimates = _nonneg_num(estimates_block["state"], "estimated_payments_made.state")
+    paid = round(withholding + estimates, 2)
+    current = round(tax * figures["current_year_rate"], 2)
+    required = current
+    notes = ["NC-40 uses income tax after credits (D-400 line 17); use tax "
+             "is included only in the balance target (line 19)."]
+    prior_result = (getattr(prior, "result", None) or {}) if prior is not None else {}
+    confirmed = _confirmed_flag(proj_inputs.get("nc_prior_year_return_filed_12_months_confirmed"),
+                                "nc_prior_year_return_filed_12_months_confirmed")
+    no_liability = _confirmed_flag(proj_inputs.get("nc_prior_year_no_liability_confirmed"),
+                                   "nc_prior_year_no_liability_confirmed")
+    prior_tax = None
+    if _nc_section_computed(prior_result):
+        prior_tax = _prior_numeric(prior_result["north_carolina_d400"].get("line_17"),
+                                   allow_negative=False)
+    if no_liability:
+        if prior_tax is not None and prior_tax > 0:
+            raise WithholdingError("NC no-liability confirmation contradicts the prior D-400")
+        required = 0.0
+        notes.append("Confirmed no NC liability for the preceding year: subsection (f) exception.")
+    elif confirmed and prior_tax is not None:
+        required = min(current, round(prior_tax * figures["prior_year_rate"], 2))
+    else:
+        notes.append("Prior NC filed twelve-month return not confirmed or unavailable; "
+                     "current-year share only. This can overstate the payment target.")
+    if tax - withholding < figures["required_threshold"]:
+        required = 0.0
+        notes.append("Income tax less projected withholding is below the fetched NC threshold.")
+    shortfall = round(max(0.0, required - paid), 2)
+    zero = round(max(0.0, balance_tax - paid), 2)
+    vp = compute_estimated_vouchers(shortfall, as_of, estimates, observed=_nc_observed_due)
+    vz = compute_estimated_vouchers(zero, as_of, estimates, observed=_nc_observed_due)
+    notes.append("NC-40 dates roll weekends only here; confirm NC legal-holiday dates "
+                 "with NCDOR. These annual targets do not erase earlier underpayments: "
+                 "D-422 tracks cumulative equal quarters. Reconcile payment dates and pay "
+                 "catch-up amounts promptly. Annualized-income and farmer rules are not modeled.")
+    if sec.get("line_18_use_tax") is None:
+        notes.append("D-400 use tax is unanswered; the balance target may be understated.")
+    calendar = _VoucherCalendar(
+        form="NC-40", accrual="G.S. 105-163.15(b)", bill="on Form D-422 or the NCDOR bill",
+        step="the NC worksheet", observed_due=_nc_observed_due,
+        due_date_caveat=" Confirm NC's return deadline with NCDOR; this lookup is federal.")
+    return NcTrueUp(tax, balance_tax, paid, required, shortfall, zero,
+                    _nc4_adjustment(shortfall, paychecks_left), _nc4_adjustment(zero, paychecks_left),
+                    vp, vz, tuple(notes),
+                    _voucher_dates_note(calendar, [vp], year, today, balance_schedules=[vz]))
+
+
 def build_ca_true_up(result: dict, proj_inputs: dict, prior,
                      filing_status: "str | None", as_of: datetime.date,
                      paychecks_left: int, year: int,
@@ -690,6 +823,8 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
     # first spelling and disagreed with it: an EMPTY dict produced no New York
     # block and no explanation either, which is the silent-omission case this
     # flag exists to prevent.
+    nc_up = build_nc_true_up(result, proj_inputs, prior, filing_status, as_of,
+                          inputs.paychecks_remaining, year, tax_law, today=today)
     ny_cache_missing = (ny is None and not tax_law
                         and read_ny_inputs(result) is not None)
 
@@ -702,7 +837,8 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
         inputs=inputs, safe_harbor=safe_harbor,
         penalty_target=penalty_target, zero_target=zero_target,
         vouchers_penalty=vouchers_penalty, vouchers_zero=vouchers_zero,
-        w4_penalty=w4_penalty, w4_zero=w4_zero, ca=ca, ny=ny,
+        w4_penalty=w4_penalty, w4_zero=w4_zero, ca=ca, ny=ny, nc=nc_up,
+        nc_cache_missing=nc_up is None and not tax_law and _nc_section_computed(result),
         ny_cache_missing=ny_cache_missing,
         voucher_catchup_note=_voucher_catchup_note(
             _FEDERAL_CATCHUP, vouchers_penalty, safe_harbor, as_of),
@@ -721,7 +857,8 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
         w4_lever_note=_w4_lever_note(
             inputs.paychecks_remaining, year, zero_shortfall,
             max(ca.zero_shortfall if ca is not None else 0.0,
-                ny.zero_shortfall if ny is not None else 0.0)),
+                ny.zero_shortfall if ny is not None else 0.0,
+                nc_up.zero_shortfall if nc_up is not None else 0.0)),
     )
 
 
@@ -934,6 +1071,23 @@ def render_markdown(r: TrueUpReport) -> str:
             lines += ["", n.voucher_dates_note]
         if n.voucher_catchup_note:
             lines += ["", n.voucher_catchup_note]
+    if r.nc is not None:
+        nc_report = r.nc
+        lines += ["", "## North Carolina true-up (Form D-400)", "",
+                  f"- Income tax after credits: **{_money(nc_report.liability)}**",
+                  f"- Required annual NC payment: **{_money(nc_report.required_annual_payment)}**",
+                  f"- Projected withholding and estimates: **{_money(nc_report.projected_paid)}**",
+                  f"- NC-4 additional withholding per paycheck: "
+                  f"**{_money(nc_report.nc4_penalty.per_paycheck)}** to meet the requirement, "
+                  f"**{_money(nc_report.nc4_zero.per_paycheck)}** to reach zero balance.", "",
+                  "### NC-40 schedule (equal quarters)", "",
+                  "| Installment | Due | Requirement shortfall | Zero balance |",
+                  "|---|---|---:|---:|"]
+        for vp, vz in zip(nc_report.vouchers_penalty, nc_report.vouchers_zero):
+            lines.append(f"| Q{vp.quarter} | {vp.due_date} | {_money(vp.amount)} | {_money(vz.amount)} |")
+        lines.extend(f"- {note}" for note in nc_report.notes)
+        if nc_report.voucher_dates_note:
+            lines += ["", nc_report.voucher_dates_note]
     lines += ["",
               "## Caveats",
               "- This is a planning projection, not a filed return. Re-run after any "
@@ -958,10 +1112,13 @@ def render_markdown(r: TrueUpReport) -> str:
                      "liability exceeds $80,000, ALL subsequent CA payments must be "
                      "electronic (FTB Web Pay) — a 1% penalty applies to paper "
                      "payments.")
-    elif r.ny is None and not r.ny_cache_missing:
+    elif r.ny is None and not r.ny_cache_missing and r.nc is None and not r.nc_cache_missing:
         lines.append("- Federal only; no california_540 or new_york_it201 section in "
                      "result.json — the state withholding true-up is covered for CA "
                      "and NY returns.")
+    if r.nc_cache_missing:
+        lines.append("- **No NC true-up computed:** the completed D-400 requires "
+                     "the covered year's fetched NC cache. This does not mean no NC payment is due.")
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -983,6 +1140,8 @@ def _report_to_dict(r: TrueUpReport) -> dict:
         "stale_as_of_note": r.stale_as_of_note,
         "w4_penalty": vars(r.w4_penalty), "w4_zero": vars(r.w4_zero),
         "ny_cache_missing": r.ny_cache_missing,
+        "nc_cache_missing": r.nc_cache_missing,
+        "nc": asdict(r.nc) if r.nc is not None else None,
         "ny": (None if r.ny is None else {
             "liability": r.ny.liability,
             "nyagi": r.ny.nyagi,

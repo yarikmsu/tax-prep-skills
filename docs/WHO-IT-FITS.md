@@ -230,3 +230,9 @@ published.
 - **The gate itself**: the blocking rules are `RULES` in
   `agents/lib/capabilities.py`, and a test holds this page to that list, so a
   block added there fails until it is sized here.
+
+North Carolina adds six state-specific blocks: `nc_business_adjustments`,
+`nc_recovery_deductions`, `nc_nol`, `nc_taxed_pte`, `nc_other_deductions` and
+`nc_other_credits`. They apply only to NC residents. The NC percentages above measure the
+previous common blocks and exclude these additional situations. No population frequency has been measured for
+these NC Schedule S and credit situations; their overlap is unknown.

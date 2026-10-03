@@ -674,6 +674,9 @@ asks the follow-up that the coupling turns on.
 
 ## X7 — planning-tool carry-forwards
 
+Merged as PR #218 on 2026-10-03 after local review, 5,952 passing full-suite
+tests, a subsequent 399-test final focused run and all six CI checks passing.
+
 The PTET SALT-offset probe reduces the deduction directly rather than adding
 ordinary income, so AGI-gated credits cannot contaminate the estimated rate.
 The existing keystone deduction parameter supplies the knob V1 left open.

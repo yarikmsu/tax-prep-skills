@@ -16,6 +16,10 @@ flat list, so the generic path below does not even read it correctly — and
 plain bracket math there UNDER-states the tax by the whole benefit of the
 graduated schedule above the §601(d-x) recapture threshold.
 
+**NORTH CAROLINA:** after the same cache-vs-taxpayer cross-check, when
+`tax_law.state.code == "NC"`, read [state-return-nc.md](state-return-nc.md).
+Its D-400 branch replaces the generic bracket estimate below.
+
 ## Contents
 
 - [Step 10: State Return](#step-10-state-return)

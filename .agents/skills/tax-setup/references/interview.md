@@ -72,6 +72,27 @@ a rule keyed on a flag nothing sets is dead code, and a test enforces it.
   ```
 
 **Group 1.5 — Life events THIS tax year (H1):**
+For a North Carolina resident, also ask every NC screening question below and
+record explicit true/false answers; legacy missing answers block computation.
+Read the covered year's D-401 Schedule S and D-400TC with the taxpayer.
+
+- Bonus depreciation or section 179 adjustments? → `nc_has_business_adjustments`.
+- Recovery deductions from prior-year NC add-backs (B23/B24/B34-B37)? → `nc_has_recovery_deductions`.
+- A federal NOL add-back or NC NOL deduction? → `nc_has_nol`.
+- Income or loss as an owner of an NC Taxed PTE? → `nc_has_taxed_pte`.
+- Any other Schedule S deduction outside supported B17-B21, including B22/B25-B33? → `nc_has_other_schedule_s_deductions`.
+- Historic rehabilitation, carried-over or NC-478 business credits? → `nc_has_other_credits`.
+
+Each yes names an unsupported worksheet at the capability gate. Other Schedule S
+ADDITIONS are reviewed manually and disclosed on `meta.limitations`; do not
+omit them silently. Ask about a government/military 1099-R, Bailey and
+uniformed-services eligibility; retain the taxable amount and the asserted
+deduction separately for compute. Ask whether the filer can be claimed as a
+dependent, and for MFS whether the spouse itemizes NC, who paid each expense,
+and the spouse's mortgage/property deduction. Ask about raw NC Schedule A
+expenses even when federal standard deduction was elected. Record these
+answers in `answers.md`; a missing answer is never a zero.
+
 Most yes answers set a profile flag the `/tax-compute` capability gate (C1)
 turns into a limitations-manifest line — ask ALL of these; a life event the
 interview never captures is invisible to every downstream check.
@@ -769,4 +790,3 @@ Return to `../SKILL.md` and continue at **Step 9.5**, which auto-invokes
 Estimated taxes**, which lives there rather than here on purpose: the rollover
 pre-fills the prior-year overpayment Group 10 asks about, so asking it first
 would have the taxpayer recall from memory a figure the next step supplies.
-

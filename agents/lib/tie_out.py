@@ -226,6 +226,8 @@ CATEGORY_TARGETS = {
     "city_withholding_nyc": ("new_york_it201",
                              ["refundable_credits_and_payments."
                               "line_73_city_withholding"]),
+    "state_withholding_nc": ("north_carolina_d400",
+                             ["line_20a_withholding", "line_20b_spouse_withholding"]),
 }
 
 # Categories where the return may legitimately report MORE than the ledger

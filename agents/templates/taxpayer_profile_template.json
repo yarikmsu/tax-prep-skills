@@ -3,6 +3,7 @@
   "_security": "NEVER store full SSNs. Use last 4 digits only. If version-controlled, add taxpayer_profile.json to .gitignore before first commit.",
   "_validation": "All fields must be sanitized: state must be a 2-letter US state code (e.g. CA, NY); ssn_last4 must be exactly 4 digits; names must contain only letters, hyphens, apostrophes, and spaces; zip must be 5 or 9 digits. Reject values containing shell metacharacters ($, `, !, ;, |, &) or control characters.",
   "tax_year": null,
+  "north_carolina_inputs": null,
   "filing_status": null,
   "primary": {
     "first_name": null,
@@ -46,6 +47,12 @@
     }
   ],
   "flags": {
+    "nc_has_business_adjustments": null,
+    "nc_has_recovery_deductions": null,
+    "nc_has_nol": null,
+    "nc_has_taxed_pte": null,
+    "nc_has_other_schedule_s_deductions": null,
+    "nc_has_other_credits": null,
     "has_foreign_accounts": false,
     "signature_authority_foreign_accounts": false,
     "has_foreign_mutual_funds": false,

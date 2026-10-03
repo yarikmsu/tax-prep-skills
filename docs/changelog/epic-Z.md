@@ -377,3 +377,23 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   city-level counts have no field; and Z8's part-year/nonresident returns are what an
   acknowledged block hands to a preparer today.
 
+
+## Z4 — North Carolina final pipeline integration
+
+The existing fetched-law schema and parameterized tax functions now reach the
+return pipeline: a state registry row, NC withholding ledger category, D-400
+compute reference and recorded raw inputs, Schedule S capability screening,
+NC-40 reminders, extension-circle instructions, filing-package attachments
+and an NC withholding true-up. Scope is the source-verified TY2025 full-year
+D-400. Other form years refuse; generic NC projections skip rather than omit
+state deductions. Farmer and annualized-income estimated-payment worksheets
+and NC holiday dates remain explicit manual work. The true-up excludes use
+tax from its income-tax requirement while keeping it in the balance target.
+
+Sources re-read live on 2026-10-03: [TY2025 D-401](https://www.ncdor.gov/2025-d-401-individual-income-tax-instructions/open),
+[G.S. 105-163.15](https://www.ncleg.gov/EnactedLegislation/Statutes/HTML/BySection/Chapter_105/GS_105-163.15.html)
+and [NCDOR estimated-tax guidance](https://www.ncdor.gov/taxes-forms/individual-income-tax/estimated-income-tax).
+
+NC-4 line 2 accepts whole dollars, so the NC per-paycheck recommendation rounds
+up to the next dollar to cover the target. Authority re-read live:
+[NC-4](https://www.ncdor.gov/employees-withholding-allowance-certificate-0/open).

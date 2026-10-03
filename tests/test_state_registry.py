@@ -35,8 +35,8 @@ def _get(d, dotted):
 def test_the_registry_holds_the_states_the_toolkit_knows():
     """California and New York computed in depth, Florida's statement — a
     state added or dropped is a decision, so the set is pinned exactly."""
-    assert [s.code for s in STATE_SECTIONS] == ["CA", "FL", "NY"]
-    assert set(registry.BY_CODE) == {"CA", "FL", "NY"}
+    assert [s.code for s in STATE_SECTIONS] == ["CA", "FL", "NY", "NC"]
+    assert set(registry.BY_CODE) == {"CA", "FL", "NY", "NC"}
     assert registry.BY_CODE["NY"].section == "new_york_it201"
 
 
@@ -57,7 +57,7 @@ def test_every_derived_table_is_the_registry_projection():
     assert yoy_diff.INFORMATIONAL_SECTIONS == {"florida_state":
                                                "no_income_tax_statement"}
     assert set(yoy_diff.STATE_MOVER_FIELDS) == {"california_540",
-                                                "new_york_it201"}
+                                                "new_york_it201", "north_carolina_d400"}
     for s in STATE_SECTIONS:
         assert yoy_diff.STATE_MOVER_FIELDS.get(s.section, []) == list(
             s.mover_fields), s.code
@@ -182,8 +182,8 @@ def test_ptet_window_edges():
 COMPUTED = [s for s in STATE_SECTIONS if s.evidence_fields]
 
 
-def test_the_computed_states_are_ca_and_ny():
-    assert {s.code for s in COMPUTED} == {"CA", "NY"}
+def test_the_computed_states_are_ca_ny_and_nc():
+    assert {s.code for s in COMPUTED} == {"CA", "NY", "NC"}
 
 
 @pytest.mark.parametrize("s", COMPUTED, ids=lambda s: s.code)

@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **X7**, Z4-Z6, Z8. | — |
+| **Opportunistic** | **Z4**, Z5-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -160,13 +160,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 ### X — tax correctness
 
-- **X7 (P3, S): Planning carry-forwards — implementation awaiting merge.**
-  The PTET marginal probe now changes only the deduction. The scenario
-  keystone excludes the recorded deducted SE-tip portion from QBI, and
-  tipped business returns require the source split. Harvest's existing
-  replacement matcher emits basis increases for known taxable purchases,
-  permanent losses for the seller's own IRA, and unresolved records for missing quantities or
-  account classifications. Local review, tests and delivery remain.
 
 ### Y — distribution and product
 
@@ -204,7 +197,11 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 ### Z — state coverage
 
-- **Z4 (P3, M): North Carolina D-400.** **Designed:**
+- **Z4 (P3, M): North Carolina D-400 — final integration awaiting merge.**
+  Registry, withholding tie-out, calendar, NC true-up, filing package and
+  compute/interview gates are wired. The completed return is limited to the
+  source-verified TY2025 form; NC projections skip the generic bracket path.
+  Final review and delivery remain. **Designed:**
   `docs/superpowers/specs/2026-10-02-nc-state-module-design.md` answers the
   questionnaire from the TY2025 D-401 and plans five slices; the first is the
   spec itself. Re-sized from S: the TY2026 rate step-down is joined by an IRC
@@ -212,7 +209,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   bracket per year — the flat rate is on a statutory step-down schedule, so it
   must be year-gated and FETCHED, never inlined — NC standard deduction and child
   deduction, the short Schedule S list (state/local bond interest, Social
-  Security subtraction, no §179 conformity gap for individuals), NC-40 estimates.
+  Security subtraction; business §179 adjustments remain gated), NC-40 estimates.
   Smallest possible state module; a good first outside contribution once public,
   and a proving ground for the playbook on a flat-tax regime.
 
@@ -463,6 +460,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | X4 | #110, #142 | — |
 | X5 | #143, #144, #155 | the line-break blind spot is X9, open above |
 | X6 | #154 | 2027-2029 SALT figures are computed from the statute's 101% step, not published; the IRS figure wins through the cache |
+| X7 | #218 | future-sale tax and chained wash-sale repricing remain outside the replacement basis plan |
 | X8 | #159 | `return_builder.build` and `withholding.build_ca_true_up` validate one frame down — declared, and probed at both ends |
 | Y4 | #112 | — |
 | Y5 | #113 | — |

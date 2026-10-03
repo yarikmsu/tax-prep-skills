@@ -1871,6 +1871,12 @@ def _ny_section_computed(result: dict) -> bool:
                              _NY_COMPUTED_EVIDENCE_FIELDS)
 
 
+def _nc_section_computed(result: dict) -> bool:
+    """Parsed withholding alone is not a completed D-400."""
+    row = _STATE_REGISTRY["NC"]
+    return _section_computed(result, row.section, row.evidence_fields)
+
+
 def _prior_ca_tax_agi(prior):
     """Extract (prior CA total tax, prior CA AGI) from the archived
     california_540 section, or (None, None) when absent, scaffold-only,
@@ -2361,6 +2367,13 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     # Left as the generic "no baseline" skip, a New York taxpayer reads that a
     # projection was unavailable, when what happened is that the only available
     # one was wrong in the refund-inflating direction.
+    elif (state is None and _tn_resolved == "NC"
+            and not no_income_tax and cache_mismatch is None):
+        state_unsupported_note = (
+            "NC is not projected from generic brackets: Schedule S, the child "
+            "deduction and NC Schedule A require inputs this forecast does not "
+            "collect. Run /tax-compute for D-400 and /tax-withholding for its "
+            "NC-40 payment targets. No NC liability or refund is estimated here.")
     elif (state is None and _st_cfg.get("tax_table_benefit_recapture")
             and not no_income_tax and cache_mismatch is None):
         state_unsupported_note = (
@@ -3653,6 +3666,8 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
     if _cache_state_code_present_but_invalid(state_cfg):
         return None
     _regime_code = _normalize_state_code(state_cfg.get("code"))
+    if (_regime_code or _normalize_state_code(resident_state)) == "NC":
+        return None
     if _regime_code is not None and _none_type_allowed(
             _regime_code, tax_law.get("tax_year")):
         return None

@@ -94,6 +94,17 @@ STATE_SECTIONS: "tuple[StateSection, ...]" = (
             ("State refund", "new_york_it201.line_78_refund"),
         ),
     ),
+    StateSection(
+        code="NC", section="north_carolina_d400",
+        package_forms=(("north_carolina_d400", "North Carolina Form D-400"),),
+        evidence_fields=("line_15_nc_tax", "line_14_nc_taxable_income",
+                         "line_12b", "line_11_deduction"),
+        mover_fields=(
+            ("State taxable income", "north_carolina_d400.line_14_nc_taxable_income"),
+            ("State total tax", "north_carolina_d400.line_19"),
+            ("State refund", "north_carolina_d400.line_34_refund"),
+        ),
+    ),
 )
 
 BY_CODE: "dict[str, StateSection]" = {s.code: s for s in STATE_SECTIONS}

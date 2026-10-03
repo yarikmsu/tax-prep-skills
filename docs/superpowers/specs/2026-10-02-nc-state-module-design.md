@@ -344,3 +344,26 @@ spec moves with the code when a slice proves an answer above wrong.
 
 Before slice 2: resolve every UNVERIFIED row above, the §2 TY2026
 conformity trap first, since it decides whether §5.3 refuses or computes.
+
+## Final integration decisions (2026-10-03)
+
+Slices 4 and 5 travel together: the depth note is written only after every
+registration and honesty surface is present. NC projections deliberately skip
+the generic bracket path: this forecast lacks Schedule S, the child deduction
+and NC Schedule A inputs and cannot safely omit them. NC true-up instead reads
+the completed D-400, excluding use tax from the estimated income-tax harbor
+and including it in the balance target. Positive prior-year-prong use requires
+a filed twelve-month-return confirmation; the separate no-liability exception
+is recorded independently and refuses contradictory archived tax.
+
+NC-40's general quarters are implemented. Qualifying farmers/fishermen and
+annualized-income worksheets are manual, with the farmer answer required before
+a quarterly true-up. `next_business_day_state(..., "NC")` currently rolls
+weekends only; the NC legal-holiday set is not inferred from federal holidays.
+Calendar events and true-up notes tell the reader to verify NCDOR dates.
+
+NC screening fields live in the profile template and interview; absent answers
+block for NC alone. The raw compute keyword inputs live at
+`taxpayer_profile.north_carolina_inputs`, keeping all taxpayer facts in an
+existing ignored and secured runtime file. The documented launcher command is
+executed by a synthetic-workspace integration test.

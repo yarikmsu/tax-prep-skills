@@ -465,7 +465,7 @@ _CA_ES_DUE = [
 # which has no September instalment at all. The shares are statutory-structural
 # like the federal quarters above; the SAFE HARBOUR percentages are fetched and
 # live in the tax-law cache, so none appears here.
-_NY_ES_DUE = [
+_EQUAL_STATE_ES_DUE = [
     ("Q1", (4, 15), 0),
     ("Q2", (6, 15), 0),
     ("Q3", (9, 15), 0),
@@ -493,7 +493,7 @@ def events_ny_es(tax_year: int) -> list[CalendarEvent]:
     """
     _validate_tax_year(tax_year)
     out: list[CalendarEvent] = []
-    for label, (m, d), year_offset in _NY_ES_DUE:
+    for label, (m, d), year_offset in _EQUAL_STATE_ES_DUE:
         statutory = datetime.date(tax_year + year_offset, m, d)
         date = _state_due(tax_year + year_offset, m, d, "NY")
         out.append(CalendarEvent(
@@ -519,6 +519,36 @@ def events_ny_es(tax_year: int) -> list[CalendarEvent]:
             ),
             category="state_estimated_tax",
             quarter_label=label,
+        ))
+    return out
+
+
+def events_nc_es(tax_year: int) -> list[CalendarEvent]:
+    """NC-40 equal quarters, G.S. 105-163.15(c)-(d).
+
+    Holiday dates use the conservative state calendar; its caveat remains
+    visible until NC's holiday set has been implemented and verified.
+    """
+    _validate_tax_year(tax_year)
+    out: list[CalendarEvent] = []
+    for label, (m, d), offset in _EQUAL_STATE_ES_DUE:
+        statutory = datetime.date(tax_year + offset, m, d)
+        date = _state_due(tax_year + offset, m, d, "NC")
+        out.append(CalendarEvent(
+            uid=f"nc40-{label.lower()}-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"NC-40 {label} estimated tax due — equal quarter (TY{tax_year})",
+            date=date,
+            description=(
+                f"North Carolina Form NC-40 for TY{tax_year}: four equal "
+                "quarterly installments under G.S. 105-163.15. Run "
+                "/tax-withholding using the year's fetched NC shares and "
+                "threshold; federal high-income percentages do not apply. "
+                "The January installment may be skipped if the return is filed "
+                "and fully paid by January 31. Qualifying farmers/fishermen "
+                "use the separate January/March rules; these general reminders "
+                "do not determine their installments."
+                + _observed_note(statutory, date, state="NC")),
+            category="state_estimated_tax", quarter_label=label,
         ))
     return out
 
@@ -614,6 +644,14 @@ def events_extension(tax_year: int, *, state: "str | None" = None) -> list[Calen
         extended_state_form = " and CA Form 540"
     elif ny:
         extended_state_form = " and NY Form IT-201"
+    elif state == "NC":
+        apr_desc += (
+            " North Carolina Form D-400: an automatic federal extension also "
+            "extends NC ONLY if the Federal Extension circle is filled on "
+            "D-400. Without a federal extension, file Form D-410 by the "
+            "original deadline. Neither extends payment; pay the NC balance "
+            "by the original due date. Confirm NC's observed date with NCDOR.")
+        extended_state_form = " and NC Form D-400 (with a valid federal or D-410 extension)"
     else:
         extended_state_form = ""
     oct_desc = (
@@ -1249,6 +1287,8 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
         events.extend(events_ca_es(tax_year))
     elif resident_state == "NY":
         events.extend(events_ny_es(tax_year))
+    elif resident_state == "NC":
+        events.extend(events_nc_es(tax_year))
 
     # /tax-extend sets flags.filed_extension when the taxpayer extends —
     # the regenerated calendar then carries the April pay-by date and the

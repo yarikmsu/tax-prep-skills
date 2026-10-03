@@ -354,6 +354,8 @@ Rules:
   | W-2 box 14 / employer statement / 1099-NEC-MISC (Part III line 14b) — OBBBA overtime PREMIUM | `qualified_overtime_premium` (informational — the FLSA §7 premium portion ONLY, the "half" of time-and-a-half, NOT gross overtime; feeds Schedule 1-A line 13b). Primarily W-2, but Schedule 1-A Part III line 14b also accepts qualified overtime reported on **1099-NEC/MISC** — do not categorically reject a 1099 source. The FLSA-eligibility screen still applies: only overtime actually required under FLSA §7 qualifies (a true independent contractor's pay generally is not FLSA overtime), so confirm eligibility rather than treating all 1099 pay as overtime |
   | W-2 box 17 (CA) | `state_withholding_ca` |
   | W-2 box 17 (NY) | `state_withholding_ny` |
+  | W-2 box 17 (NC) | `state_withholding_nc` |
+  | 1099-R box 14 or other 1099 state-withholding box, when its state is NC | `state_withholding_nc` |
   | W-2 boxes 18-20, locality NYC | `city_withholding_nyc` (box 19, the LOCAL income tax withheld, where box 20 names a New York City locality). **Two categories, not one** — New York City withholding is IT-201 line 73 and the state's is line 72, two lines and two refunds, so a city amount dropped into the state category still ties while leaving the city withholding unclaimed on a return that owes city tax. **Yonkers withholding (line 74) has no category**: it is rare enough that no gate watches it, so record it in the summary markdown and in `answers.md` rather than assuming a zero |
   | 1099-INT box 1 (+3) | `taxable_interest`; box 8 → `tax_exempt_interest` |
   | 1099-DIV box 1a / 1b | `ordinary_dividends` / `qualified_dividends` |

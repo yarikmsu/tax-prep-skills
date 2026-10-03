@@ -1,6 +1,6 @@
 # Adding a state module — contributor playbook (E5)
 
-TWO states are computed in depth; every other state is a bracket-based estimate
+THREE states are computed in depth; every other state is a bracket-based estimate
 behind an honest capability note. That is a product decision (2026-07-12), not
 a technical limit — the two modules are a worked pattern this playbook writes
 down.
@@ -38,6 +38,15 @@ that is what CA's own features took, per the roadmap history this playbook
 cites. Open this file and
 `docs/superpowers/specs/TEMPLATE-state-module.md` in your session and tell
 Claude which state you're building.
+
+North Carolina's Form D-400 is the third module, for a full-year resident under
+the source-verified TY2025 D-401. It computes Schedule S lines 1 and 17-21,
+raw-input NC Schedule A, the child deduction and D-400TC Part 1. It gates other
+Schedule S deductions, business/recovery/NOL/Taxed-PTE items and other credits.
+NC-40 true-up uses fetched shares; farmer and annualized-income worksheets are
+manual, and holiday dates conservatively roll weekends only. Other form years
+refuse until their conformity rules are verified. Spec:
+`docs/superpowers/specs/2026-10-02-nc-state-module-design.md`.
 
 ## The pattern in one paragraph
 

@@ -4239,6 +4239,7 @@ class TestTheSkillsReadWhatTheEngineEmits:
         # need a bullet.
         "ny", "nyagi", "required_annual_payment", "options", "shortfall",
         "covered", "it2104_penalty", "it2104_zero",
+        "nc",
     })
 
     def _payload_keys(self, name):

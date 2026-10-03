@@ -60,6 +60,10 @@ Work down this ladder and TELL the user which rung was used:
      is already line 60's total taxes less line 76's total payments. **Line 60,
      not line 46** — the New York balance a taxpayer must pay to hold the
      extension includes the City tax, the Yonkers surcharge and the MCTMT.
+   - NC payment (if `north_carolina_d400` computed) = `line_27_amount_due`.
+     Relay an unanswered line-18 use-tax warning. A federal automatic
+     extension extends D-400 only when the Federal Extension circle is filled;
+     without it request D-410 by the original deadline. Neither extends payment.
 2. **Projection** — no computed return: run `/tax-project` (or
    `sh agents/lib/run.sh -m agents.lib.projection ... --json`)
    and use `federal.balance` / `state.balance` (positive = owed). Label the figures

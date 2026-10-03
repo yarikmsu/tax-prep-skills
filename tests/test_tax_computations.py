@@ -8280,6 +8280,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/nc.py::compute_nc_deduction_choice": "direct",
         "tax_computations/state/nc.py::compute_nc_itemized": "direct",
         "withholding.py::build_ny_true_up": "direct",
+        "withholding.py::build_nc_true_up": "direct",
         "scenario.py::salt_cap_may_move": "direct",
 
         "ptet.py::analyze": "delegates: _salt_cap",

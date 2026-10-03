@@ -368,6 +368,24 @@ def attachment_checklist(result: dict) -> list:
                 "enclose a check or money order payable to 'New York State "
                 "Income Tax' — last four SSN digits and '{tax year} Income "
                 "Tax' on it — with Form IT-201-V, at the payment address.")
+    if _section_present(result, "north_carolina_d400"):
+        lines += [
+            "North Carolina Form D-400 files separately from the federal "
+            "paper return. Refund returns use PO Box R; returns without a "
+            "refund use PO Box 25000. Confirm the current address in the "
+            "covered year's D-401 instructions on ncdor.gov.",
+            "D-400 attachments: W-2s and 1099s showing NC withholding; "
+            "Schedule S, Schedule A and D-400TC when used; a copy of each "
+            "other-state or country return supporting the Part 1 credit; "
+            "1099-R for Bailey, and DD-214, 1099-R or similar proof for the "
+            "uniformed-services deduction. Attach the federal return unless "
+            "it shows an NC address or was filed electronically.",
+            "D-400 balance due: pay through NCDOR or include a personalized "
+            "D-400V and payment payable to North Carolina Department of "
+            "Revenue. An automatic federal extension requires the Federal "
+            "Extension circle on D-400; otherwise request D-410. Payment "
+            "is still due at the original deadline.",
+        ]
     # FBAR: never a categorical all-clear — absence of the section only
     # means /tax-fbar hasn't run (review P1: gating on the wrong signal
     # printed 'nothing files outside this package' for a foreign-account

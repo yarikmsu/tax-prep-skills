@@ -79,6 +79,21 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
 ### Procedure
 
+**North Carolina:** a computed D-400 adds an NC true-up using the year's
+`state.estimated_tax` block. Record `nc_farmer_fisherman` explicitly in
+`projection_inputs.json`; a qualifying farmer/fisherman is referred to the
+separate January/March worksheet instead of ordinary quarters. Record
+`nc_prior_year_return_filed_12_months_confirmed` only after confirming that the
+archived NC return was actually filed for a twelve-month year. Separately ask
+about no NC liability for the preceding year and record
+`nc_prior_year_no_liability_confirmed`. These are NC answers, never copied from
+the federal confirmations. `ytd.state_withholding` and state estimates are all
+NC amounts. Relay `nc.notes`, `nc.voucher_dates_note` and `nc_cache_missing`;
+the latter means the fetched-law cache is missing, not that no payment is due.
+NC-4 accepts an additional amount per pay period; NC-40 uses equal quarters.
+Use tax belongs to the D-400 balance target, not the income-tax harbor. Confirm
+NC legal-holiday dates; the engine rolls weekends only conservatively.
+
 1. **Validate prerequisites.** Confirm `result.json`, `projection_inputs.json`, and
    `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24, stop and tell
    the user to run `/tax-compute`. If you create `projection_inputs.json` from the
@@ -164,7 +179,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
    **`as_of_date` must be null, not empty, to mean "absent".** In an OPEN year every PRESENT value is validated and a malformed one is refused outright — the run produces no report at all, because substituting today's date would silently relabel the YTD figures beside it. A workspace created from an older template may carry `"as_of_date": ""` (or `0`), which used to fall through to today's date and now blocks: edit it to `null`, to the MM-DD the YTD figures are current to, or pass `--as-of MM-DD` for this run.
 
-   **Read these eleven things out of the payload before you summarize anything.** The
+   **Read these thirteen things out of the payload before you summarize anything.** The
    markdown in the next step carries them in prose, but the audit line below is written
    from HERE, and `safe_harbor.covered` alone is not the verdict:
 
@@ -246,6 +261,12 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      `ca.safe_harbor.prior_based`. Unlike the /tax-project field of the same name it drives
      no warning of its own here — this report annualizes no income, so there is no
      `recurring_from_prior` to have silently defaulted to $0.
+   - **`nc_cache_missing`** — true means no NC true-up was computed because its
+     fetched-law cache was missing. Ask for the covered year's NC cache; never
+     summarize this as no NC payment due.
+   - **`nc.notes`** and **`nc.voucher_dates_note`** — relay all NC scope,
+     prior-year, use-tax and calendar warnings beside the NC targets. Closed
+     schedules name balance payments, not upcoming estimated vouchers.
    - **`ny_cache_missing`** — true means result.json carries a COMPUTED Form IT-201
      but no tax-law cache reached this run, so `ny` is null and NO New York true-up
      was computed. Report it as a missing input, never as a finding: the Tax Law
