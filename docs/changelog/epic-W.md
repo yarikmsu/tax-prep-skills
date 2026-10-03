@@ -1062,3 +1062,31 @@ priced from a state income proxy. Dedicated state modules retain their paths.
 Whole-block writes attest coverage and year; partial edits cannot re-attest
 old rules. Schema, input, provenance and projection refusals are tested.
 Design: `docs/superpowers/specs/2026-10-03-generic-state-rules-design.md`.
+
+
+## W3 remaining stamp runtime — 2026-10-03
+
+The abandoned round-trip port left the Bash flags in place. This implementation
+removes them, along with the parallel red-token lists, pytest invocation, and
+stamp writer. One `hook_runtime.py::CHECKS` mapping owns names, persisted tokens,
+and test paths; the selector reads that mapping as a literal without executing
+the runtime. Bash retains only environment/payload handling and Q12's cheap
+change boundary before it execs Python. A Bash call with no watched changes still
+starts no interpreter. A watched Write/Edit includes other pending watched
+changes; an unrelated edit leaves them pending.
+
+The runtime keeps the existing verdict rules: green clears memory, red advances
+and remembers every selected check, and pytest 2–5 leave the old stamp intact.
+It preserves the pass-start marker, revalidates symlinks after pytest, atomically
+replaces a tracked candidate on the same filesystem, and defers signal cleanup
+until a foreground command returns. Byte parsing removes NUL while retaining CR,
+so red tokens retain Bash's command-substitution semantics and CRLF versions
+remain untrusted. The harmless Bash discarded-NUL warning disappears from the
+Python red reader; selection and memory remain identical.
+
+Local review compared 96 cases against the saved old hook, checking subprocess
+status, stdout, stderr and stamp bodies rather than treating empty output as a
+pass. New tests exercise byte formats, every persisted token, a missing runtime,
+and the no-interpreter fast path. Existing signal, symlink, concurrent-write,
+carry-forward and environment-hardening tests still drive the complete hook.
+The design is `docs/superpowers/specs/2026-10-03-hook-stamp-runtime-design.md`.

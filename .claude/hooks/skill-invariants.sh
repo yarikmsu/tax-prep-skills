@@ -176,15 +176,8 @@ umask 077
 # were removing a guard. `test_the_project_inifile_stops_an_ancestor_pytest_ini`
 # is what makes it deliberate.
 #
-# RUN_ FLAGS, which this slice adds to the list because this slice is what
-# makes them reachable. `select_modules_from` accepts a module name from the
-# port by asking whether `RUN_<NAME>` exists — the check that keeps the roster
-# from being copied a seventh time into this file — and "does the variable
-# exist" is a question an EXPORTED `RUN_NEWMODULE=0` answers yes to. Reproduced
-# against selector output `SELECTION1\nNEWMODULE`: the guard passed, the flag
-# was set on a module nothing declares, and the hook exited 0 having run
-# nothing. The loop below is what makes that check mean what its comment says
-# it means — after it, a `RUN_` variable exists only if THIS FILE declared it.
+# Selection state is local Python data now; inherited RUN_* variables cannot
+# declare checks. Keep the shell environment cleanup for subprocesses too.
 # ---------------------------------------------------------------------------
 CDPATH=''
 unset PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONOPTIMIZE
@@ -204,124 +197,12 @@ file=$(printf '%s' "$payload" \
     | jq -r '.tool_input.file_path // empty' 2>/dev/null) || exit 0
 unset payload
 
-# The port the two selection call sites run, resolved beside THIS SCRIPT and
-# ABSOLUTIZED, before the `cd` below moves away from the frame `$0` is relative
-# to.
-#
-# The `cd` is why the absolutize is not decoration. Assigning a RELATIVE string
-# ahead of a `cd` pins nothing: invoked as `bash .claude/hooks/skill-invariants.sh`
-# from a sibling directory with CLAUDE_PROJECT_DIR set elsewhere, the plain
-# `dirname "$0"` form leaves a relative path that resolves against the PROJECT
-# after the `cd` — a different file, or none. The comment here claimed the
-# capture pinned it and the capture did not; `pwd` is what does.
-#
-# Script-relative, where the rest of this file is PWD-relative, and the honest
-# reason is worth stating because it is not the one that sounds best. In
-# PRODUCTION the two coincide: `.claude/settings.json` invokes this script
-# inside CLAUDE_PROJECT_DIR, so `dirname "$0"` and `.claude/hooks` are the same
-# directory, and `dirname` being textual they stay the same through a symlinked
-# `.claude`. Where they DIVERGE is a copy of this script run against some other
-# project, and there script-relative is the worse answer — it fails closed into
-# running every module forever, where CWD-relative would have found that
-# project's own selector. What it buys instead is the TEST HARNESS: sixty-odd
-# tests drive the real script against synthetic workspaces holding no
-# `.claude/hooks/lib/`, and under CWD resolution every one of them would
-# measure the fail-closed branch rather than the selection it is asserting
-# about. That is a harness debt paid in production code, and it is recorded as
-# one rather than dressed up as a design property.
-SELECTOR="$(cd -- "$(dirname -- "$0")" >/dev/null && pwd)/lib/hook_selection.py"
-
+# Resolve beside the script before moving to the project; synthetic hook tests
+# and calls from another working directory must use the same runtime.
+RUNTIME="$(cd -- "$(dirname -- "$0")" >/dev/null && pwd)/lib/hook_runtime.py"
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
+[ -x .venv/bin/python ] || exit 0
 
-# ---------------------------------------------------------------------------
-# The watched set, and which of the seven modules each watched path can turn red.
-#
-# DERIVED by reading those seven modules, not guessed. A guessed set is wrong in
-# the direction that is invisible: a path left out produces no local signal,
-# which is indistinguishable from a path that has no invariants to begin with.
-# The previous filter accepted only `*.md` under the two skill directories and
-# the agent directory, so editing agents/lib/tax_law_fetcher.py — the very
-# change tests/test_claude_agents.py exists to catch, since it resolves every
-# schema path the auditor names against create_empty_tax_law — signalled
-# nothing, and neither did AGENTS.md, which tests/test_portability.py now reads.
-# Both were reachable only through the unfiltered Bash branch, by accident.
-#
-# What each module actually reads, and therefore what has to select it:
-#
-#   tests/test_portability.py   .agents/skills/** and the .claude/skills
-#                               symlinks (layout, frontmatter, the line and
-#                               description caps, the reference-depth rule,
-#                               `bash -n` over every fenced block), plus
-#                               AGENTS.md, CLAUDE.md, README.md,
-#                               docs/contributing/*.md, LICENSE, .gitignore,
-#                               .pii-allowlist, .vscode/settings.json,
-#                               agents/install.sh and
-#                               scripts/pre-commit-pii-scan.sh.
-#   tests/test_capabilities.py  agents/lib/capabilities.py,
-#                               agents/templates/taxpayer_profile_template.json,
-#                               and the tax-setup skill through skill_text() —
-#                               every capability rule's flag must exist in the
-#                               template AND be asked by the interview.
-#   tests/test_claude_agents.py .claude/agents/*.md and
-#                               agents/lib/tax_law_fetcher.py.
-#   tests/test_claude_hooks.py  .claude/hooks/*.sh, .claude/settings.json, and
-#                               the sensitive-filename case of
-#                               scripts/pre-commit-pii-scan.sh, which it parses
-#                               and compares against the permissions hook's list.
-#   tests/test_preflight.py     .agents/skills/** through skill_text() (the gate
-#                               heading, its fail-closed sentence, and the
-#                               chained activation on every engine invocation),
-#                               and EVERY module in agents/lib/ — check()
-#                               imports all twenty-one and executes one, so a
-#                               SyntaxError in any of them turns this module red.
-#                               The directory itself is watched too: the roster
-#                               is pinned against `agents/lib/*.py`, and an ADD
-#                               shows up as the directory's own timestamp moving
-#                               rather than as a path beneath it.
-#   tests/test_host_guard.py    agents/lib/__init__.py — the host-interpreter
-#                               guard — and the directory again, for the
-#                               opposite reason preflight watches it: the
-#                               coverage assertion is that every module under
-#                               agents/lib/ except two IMPORTS the package, so
-#                               an ADD is what can turn it red, and an add is
-#                               the directory's own timestamp moving.
-#
-# agents/lib/rollover.py is watched for a reason none of those files names
-# directly: capabilities.py imports it and tax_law_fetcher.py imports
-# capabilities.py, so a syntax error in rollover.py is a COLLECTION error in two
-# modules. An import edge is a dependency whether or not an assertion mentions
-# it. tests/skill_text.py is watched for the mirror-image reason: portability
-# and capabilities both reach skill prose through it, so its glob decides
-# whether reference files are seen at all.
-#
-# Each module also watches its own file, so editing an assertion runs it.
-#
-# W12: each selected test module declares its inputs in WATCHES. The selector
-# reads these literals without importing tests and builds _ARMS once per scan.
-# The independent input audit checks direct repository reads and engine imports
-# against each reader's declarations; missing or malformed declarations make
-# the selector fail, which selects every check rather than reporting nothing.
-# Priority groups preserve first-match costs, including the cheap HOOKSDEPS
-# subset for other test-file edits. No selector pattern table is maintained.
-#
-# WATCHED_ROOTS is where the Bash branch LOOKS; `_ARMS`, in the port this
-# script runs, is what a path MEANS. Both are needed and they live in separate
-# files, so a path added to one and not the other is half-covered: missing from
-# the roots it is invisible to a Bash call, missing from the arms it selects
-# nothing when edited directly.
-#
-# These are `find` ROOTS, so a directory here already covers everything beneath
-# it: `agents` covers `agents/lib` and `agents/templates/*.json`, `scripts`
-# covers the PII scan. Five such entries had accumulated, each listing a path
-# an ancestor already reached — `find` then walked and printed them twice, and
-# more to the point they read as the thing a new watched file needs, when what
-# it actually needs is its reader's WATCHES declaration. A file belongs
-# here only when NO listed directory contains it (`.claude/settings.json`,
-# `docs/QUICKSTART.md`). `tests` became a root when
-# `TestNoTestSpawnsABareInterpreter` began sweeping the whole directory: the
-# nine modules that were listed one by one are all under it, and listing them
-# beside it is the double-walk this paragraph is about.
-# ---------------------------------------------------------------------------
 WATCHED_ROOTS='
 .agents/skills
 .claude/agents
@@ -351,480 +232,47 @@ scripts
 tests
 '
 
-RUN_PORTABILITY=0
-RUN_CAPABILITIES=0
-RUN_AGENTS=0
-RUN_HOOKS=0
-RUN_HOOKSDEPS=0
-RUN_PREFLIGHT=0
-RUN_SECUREFS=0
-RUN_HOSTGUARD=0
-
-# The assertions in tests/test_claude_hooks.py that an edit to one of the OTHER
-# six TEST modules can turn red — the ones that read those modules' source, or
-# name one of them. A check in its own right, wired through every one of the
-# seven name lists beside the seven module flags, because a narrowing that is not
-# a check cannot be carried forward when it goes red.
-#
-# It replaces `RUN_HOOKS=1` on the six test-module arms, and the paragraph that
-# argued for the whole module — "a partial run reported as a module's verdict is
-# how a check comes to mean less than it says" — was right about the wrong
-# thing. That sentence is about reporting a SUBSET as the hooks module's verdict;
-# this is a subset reported as its own. The WIN is the module it replaces, which
-# dominates every total in MEASURED COSTS. The subset is not free, and the
-# sentence that stood here implied it was by quoting the preflight-to-hooks
-# ratio — a ratio about the module the narrowing SPARES, which says nothing
-# about what replaced it. THE TRIGGER WITH NO ROW, in MEASURED COSTS, is where
-# the subset's own cost is now stated.
-#
-# WHAT IS DELIBERATELY ABSENT is `test_the_measured_costs_counts_match_live_
-# collection`, and leaving it out is the same judgement the `--deselect` pair in
-# `run_focused_modules` records. It goes red the instant a test is ADDED to one
-# of the seven modules, and stays red until the MEASURED COSTS tables, its two
-# derived rows, the ARITHMETIC sentence and the reconciliation sentences have
-# all been refreshed — a hand edit in several places that can only be made
-# coherently once a round's tests are final. Selected here it blocked every
-# tool call in between, on correct in-progress work, and the red carry-forward
-# re-blocked on each one until the refresh landed: the gates-that-cry-wolf
-# pattern, arriving through a check that is factually RIGHT and firing at a
-# moment nothing can be done about it. It still runs in CI, in the review, and
-# on every edit that takes `RUN_HOOKS` — which is every edit to the file the
-# block itself lives in.
-#
-# PINNED by `test_the_hooks_dependents_are_real_and_complete` as a SET and in
-# both directions, the way the deselect pair beside it is pinned: every id here
-# resolves to a test that exists, and the membership is exact, so neither a
-# rename nor a quiet addition nor a quiet removal can move it without that test
-# being edited too. A renamed id would otherwise select nothing at all and read
-# exactly like an arm that never fired.
-HOOKS_DEPENDENTS=(
-    "tests/test_claude_hooks.py::TestSkillInvariantsHook::test_the_watched_set_still_covers_what_the_modules_read"
-    "tests/test_claude_hooks.py::TestSkillInvariantsHook::test_every_watched_source_path_reaches_its_module"
-    # ...and the deselect pin, which was missing while this list claimed to be
-    # "the whole of what an edit to one of those modules can turn red". It
-    # ast-parses tests/test_portability.py to prove both `--deselect` ids still
-    # resolve, and pytest ignores a `--deselect` that matches nothing — so
-    # renaming either of those two tests puts the registry pair silently back
-    # inside the gate for every skill edit, with tests/test_claude_hooks.py the
-    # only thing red and CI the only place it shows.
-    "tests/test_claude_hooks.py::TestHookRegistration::test_only_the_registry_pair_is_deselected_and_both_ids_resolve"
-    # ...and the third direction, added with it: a watched module that GROWS an
-    # import of a shared test helper must be selected by that helper's arm. The
-    # edit that invalidates it is an edit to one of the five — the import lands
-    # in a test module, not in the helper — so without this row the assertion
-    # written to end a CI-only failure would itself have had CI as its only
-    # signal. It costs one file read and seven `ast.parse` calls.
-    "tests/test_claude_hooks.py::TestSkillInvariantsHook::test_every_watched_module_that_reads_a_shared_helper_is_in_its_arm"
-)
-
-# Turns on the modules a set of changed paths can break. Reads them
-# NUL-delimited on stdin and hands the whole set to the port in ONE process:
-# `find -print0` is already what the scan produces, a repository path may
-# contain a newline, and an interpreter start paid once per pass is a cost the
-# same start paid once per path would not survive.
-#
-# W3 slice 2. What stood here was 218 lines of `case`, ported to Python in
-# slice 1 and held to this script by a differential over every tracked path
-# until this commit spent it. `.claude/hooks/lib/hook_selection.py` is the
-# decision now.
-#
-# THE ARMS MOVED AND THEIR REASONING DID NOT, which an earlier draft of this
-# sentence claimed the opposite of. Counted: the deleted function carried 456
-# comment lines and `_ARMS` carries 19. The arms became DATA, and data does not
-# hold a paragraph about why an arm selects what it selects — that is the trade
-# this slice made, and it is a real cost rather than a formatting change.
-# Everything above says why the arms are data; this says what the arms stopped
-# being able to say. The deleted reasoning is in the history of this file at
-# the commit before the flip, which is where a reader asking "why does this arm
-# exist" now has to go.
-#
-# FAIL CLOSED, which is why this is a function with a status rather than an
-# inline pipe. Every way of not knowing returns 1 — the selector is missing,
-# the interpreter is gone, the port raised, it answered without its protocol
-# line, it named a flag this script does not declare — and every caller
-# answers a 1 by selecting EVERY module. A selector that cannot answer must
-# never be able to answer "nothing", which is the same trade `scan_changed_paths`
-# below already makes for `find`.
-#
-# THE PROTOCOL LINE IS THE HALF THE EXIT STATUS CANNOT REACH. An EMPTY file is
-# valid Python: it runs clean, prints nothing, and without this check the loop
-# below would run zero times and the pass would go quiet over a path that can
-# turn five modules red. The hook fires on every Write, this selector included,
-# so a truncated save while someone edits it is the reachable case rather than
-# the exotic one. `SELECTION1` is the port's own `PROTOCOL` constant and a test
-# reads both, so the two cannot drift.
-select_modules_from() {
-    local module name first=1 answer
-
-    # NO PATHS ON ARGV — they go in on stdin, and that is a PRIVACY property
-    # rather than a style one. This script runs with CWD inside a directory
-    # that may hold `documents/`, `summaries/` and a taxpayer profile, and
-    # `$relative` can name one of them; argv is world-readable through `ps`,
-    # so `python "$SELECTOR" "$relative"` would publish a taxpayer's document
-    # name to every user on the machine. The same rule is why this hook's own
-    # messages use a generic label. `test_the_selector_is_launched_with_no_paths_on_argv`
-    # pins it, because nothing else about the code says so.
-    #
-    # `read` in a loop, not `for module in $out`. Unquoted word splitting also
-    # does PATHNAME EXPANSION, so a `*` on the selector's stdout would make
-    # bash list the workspace root and bind a taxpayer's filename to `$module`.
-    # It fails closed today — the charset check below refuses any such name —
-    # but that is the validator carrying a hazard the loop should not create.
-    #
-    # CAPTURED, then walked from a HERE-STRING. A here-string is a redirection,
-    # so the loop stays in THIS shell and the flags it sets survive it; piping
-    # the interpreter straight into `while` would put the loop in a subshell,
-    # which is the same defect the call sites avoid with a process
-    # substitution. Named `answer` rather than `out`: the global `out` two
-    # hundred lines down holds pytest's output and is the one thing in this
-    # script that reaches the agent, and two variables of one name in one file
-    # is how a dropped `local` becomes a disclosure.
-    answer=$(.venv/bin/python "$SELECTOR" 2>/dev/null) || return 1
-    while IFS= read -r module; do
-        if [ "$first" = 1 ]; then
-            first=0
-            # THE PROTOCOL LINE IS THE HALF THE EXIT STATUS CANNOT REACH. An
-            # EMPTY file is valid Python: it runs clean, prints nothing, and
-            # without this the loop would end here and the pass would go quiet
-            # over a path that can turn five modules red. This hook fires on
-            # every Write, the selector included, so a truncated save while
-            # someone edits it is the reachable case rather than the exotic
-            # one. `SELECTION1` is the port's own `PROTOCOL` and a test reads
-            # both, so the two cannot drift.
-            [ "$module" = SELECTION1 ] || return 1
-            continue
-        fi
-        # The same charset the declarations use, digits included. Narrower here
-        # than there, a module named `RUN_FORM8949` would satisfy every roster
-        # test and be refused at this line — fail-closed, but "closed" means
-        # every hook fire runs the whole suite, silently and for good.
-        case "$module" in *[!A-Z0-9_]*) return 1 ;; esac
-        name=RUN_$module
-        # Checked against the DECLARATIONS, so this is not one more copy of
-        # the roster — and it is only that check because every inherited `RUN_`
-        # variable was unset at the top of this file. Without that, this line
-        # asks "does a variable of this name EXIST", which an exported
-        # `RUN_NEWMODULE=0` answers for a module nothing here declares. A
-        # suffix the script never declared means the port and this file
-        # disagree about which modules exist, and `set -u` catches that
-        # everywhere else in this script; here it has to be asked for.
-        [ "${!name+set}" = set ] || return 1
-        # `printf -v`, not `eval`: it assigns to a name without re-entering the
-        # parser at all, so the charset check above stops being the only thing
-        # between the selector's stdout and arbitrary execution.
-        #
-        # `builtin`, and the OUTCOME checked rather than the status. An
-        # exported shell function named `printf` — inherited from a profile,
-        # which this hook has no control over — shadows the builtin, and one
-        # forwarding to `/usr/bin/printf` takes every other `printf` in this
-        # script and rejects `-v`: reproduced on bash 3.2, assignment refused,
-        # flag left at 0, and this function returning 0 over it. That is the
-        # silent-green shape exactly. `builtin` removes the shadow and the
-        # comparison removes the trust: the flag is read back, so any way of
-        # the assignment not happening ends in the fail-closed branch.
-        builtin printf -v "$name" 1
-        [ "${!name}" = 1 ] || return 1
-    done <<< "$answer"
-    # An EMPTY answer reaches the loop as one empty line, which is not the
-    # protocol line, so the branch above has already refused it. This covers
-    # the other shape: an answer that never entered the loop at all.
-    [ "$first" = 0 ] || return 1
-    # Explicit, never the fall-through: the last command in this function is a
-    # test, so without it the status would be that test's. `remember_red_checks`
-    # carries the same line for the same reason, and it got it the hard way.
-    return 0
-}
-
-select_every_module() {
-    RUN_PORTABILITY=1
-    RUN_CAPABILITIES=1
-    RUN_AGENTS=1
-    RUN_HOOKS=1
-    RUN_HOOKSDEPS=1
-    RUN_PREFLIGHT=1
-    RUN_SECUREFS=1
-    RUN_HOSTGUARD=1
-}
-
-nothing_selected() {
-    [ "$RUN_PORTABILITY" -eq 0 ] && [ "$RUN_CAPABILITIES" -eq 0 ] \
-        && [ "$RUN_AGENTS" -eq 0 ] && [ "$RUN_HOOKS" -eq 0 ] \
-        && [ "$RUN_HOOKSDEPS" -eq 0 ] \
-        && [ "$RUN_PREFLIGHT" -eq 0 ] && [ "$RUN_SECUREFS" -eq 0 ] \
-        && [ "$RUN_HOSTGUARD" -eq 0 ]
-}
-
-# Turns the stamp's red carry-forward back into selection flags. A check named
-# there is one an earlier pass FAILED, and it stays selected on every pass that
-# runs at all until it comes back green. Where this is called from matters more
-# than what it does — see the call site.
-#
-# The unrecognized token is DROPPED, silently and on purpose, and that is what
-# answers "what if a red module no longer exists?". The stamp records which CHECK
-# was red, never where that check's file lives, so the module path exists in
-# exactly one place in this script (run_focused_modules) and a stale stamp cannot
-# resurrect a renamed or deleted one. Storing the path instead would put a name
-# this hook wrote days ago straight into pytest's argv, where a since-renamed
-# module answers with exit 4 — a usage error, a no-verdict pass, and now that a
-# no-verdict pass no longer advances the stamp, a wedge that never clears itself.
-apply_red_checks() {
-    local check
-
-    [ -n "$KNOWN_RED" ] || return 0
-    while IFS= read -r check; do
-        case "$check" in
-            portability) RUN_PORTABILITY=1 ;;
-            capabilities) RUN_CAPABILITIES=1 ;;
-            agents) RUN_AGENTS=1 ;;
-            hooks) RUN_HOOKS=1 ;;
-            hooksdeps) RUN_HOOKSDEPS=1 ;;
-            preflight) RUN_PREFLIGHT=1 ;;
-            securefs) RUN_SECUREFS=1 ;;
-            hostguard) RUN_HOSTGUARD=1 ;;
-        esac
-    done <<< "$KNOWN_RED"
-    return 0
-}
-
-# The mirror image, run after the verdict: which checks does this pass hand to
-# the next one as still-red. Both directions read the same RUN_* flags,
-# which are frozen from apply_red_checks until the process exits — so "what ran"
-# and "what is recorded as red" cannot disagree without an edit that moves one of
-# them across that line.
-remember_red_checks() {
-    NEW_RED=''
-    [ "$RUN_PORTABILITY" -eq 1 ] && NEW_RED="${NEW_RED}portability"$'\n'
-    [ "$RUN_CAPABILITIES" -eq 1 ] && NEW_RED="${NEW_RED}capabilities"$'\n'
-    [ "$RUN_AGENTS" -eq 1 ] && NEW_RED="${NEW_RED}agents"$'\n'
-    [ "$RUN_HOOKS" -eq 1 ] && NEW_RED="${NEW_RED}hooks"$'\n'
-    [ "$RUN_HOOKSDEPS" -eq 1 ] && NEW_RED="${NEW_RED}hooksdeps"$'\n'
-    [ "$RUN_PREFLIGHT" -eq 1 ] && NEW_RED="${NEW_RED}preflight"$'\n'
-    [ "$RUN_SECUREFS" -eq 1 ] && NEW_RED="${NEW_RED}securefs"$'\n'
-    [ "$RUN_HOSTGUARD" -eq 1 ] && NEW_RED="${NEW_RED}hostguard"$'\n'
-    # `return 0` explicitly, never the fall-through. With the LAST flag in the
-    # chain above unset — whichever it is; naming the module here went stale the
-    # same day the next check was appended, twice — the function ENDS on a false
-    # condition, so its status would report a failure to a caller that never
-    # asked about that module at all.
-    return 0
-}
-
-# A Write or Edit names its exact file, so the payload is authoritative about
-# what THIS call did and the filter can short-circuit before any other work.
-# That ordering is the point: without it every unrelated Python edit in the
-# repository would pay for a pytest run, and a hook that slow on unrelated work
-# gets deleted. A Bash payload is a command string and can rewrite anything, so
-# it gets no textual filter at all — the stamp scan below is its filter.
-#
-# A contributor with no virtualenv gets silence rather than a session that fails
-# on every edit. AGENTS.md §7 makes the venv the documented way to run the suite,
-# so its absence means the checks are unavailable, not that they failed. This
-# check precedes every stamp write below, so an environment that never ran the
-# checks never advances the boundary that says they were run.
-#
-# It moved ABOVE the textual pre-filter when that filter became a Python call,
-# and the move changes no observable behaviour: with no interpreter this script
-# exited 0 in silence whether the filter selected something or nothing, so both
-# orders answer a venv-less checkout identically. What it buys is that the
-# filter may now assume the interpreter it is about to run.
-[ -x .venv/bin/python ] || exit 0
-
-# Use a generic label in every message. A runtime path such as
-# documents/skills/<taxpayer>.md must never reach hook output, and neither must
-# the Bash command, which can carry identity data in an argument.
-if [ "$tool_name" = Bash ]; then
-    display_target='a Bash tool call'
-else
-    case "$file" in
-        "$PWD"/*) relative=${file#"$PWD"/} ;;
-        # A path in another clone, or in ~/.claude/skills, would otherwise run
-        # THIS repository's suite and report failures against a file those
-        # assertions say nothing about.
-        *) relative='' ;;
-    esac
-    # An empty `relative` is a file outside the project, which the `case`
-    # above has already decided selects nothing. Saying so here rather than
-    # asking the port costs one comparison and saves an interpreter start on
-    # a branch that runs for every Write and Edit in the session.
-    if [ -n "$relative" ]; then
-        # A process substitution rather than a pipe: `x | select_modules_from`
-        # runs the function in a SUBSHELL, where every flag it sets dies with
-        # it and this branch reads back the eight zeros it started with — a
-        # silent green over an edit that had just selected five modules.
-        # Measured: rewritten as a pipe, thirty tests in this module go red.
-        select_modules_from < <(printf '%s\0' "$relative") || select_every_module
-    fi
-    nothing_selected && exit 0
-    case "$relative" in
-        .agents/skills/*|.claude/skills/*|.claude/agents/*)
-            display_target='a repository skill or agent definition' ;;
-        *)
-            display_target='a watched repository source file' ;;
-    esac
-fi
-
-# ---------------------------------------------------------------------------
-# The change boundary. Mirrors harden-runtime-perms.sh, including the two
-# properties that are easy to leave out and expensive to leave out:
-#
-#   - The boundary is a FILE created by this pass, not the local clock rendered
-#     as text. If the clock moved backwards, every new file looks older than the
-#     old stamp and would be skipped forever. Backdate it by a second while it
-#     still represents the pass START: a strict `-newer` predicate otherwise
-#     misses a write that shares a coarse filesystem timestamp tick with it.
-#
-#   - The new stamp carries the pass START time, not its end. That matters far
-#     more here than in the permissions hook, because the pass is a whole
-#     pytest run rather than a directory walk: an end-time stamp would make
-#     every file written DURING the run look older than the stamp, so the
-#     change that landed while the checks were running would never be checked
-#     at all.
-#
-# A symlinked stamp or a symlinked .claude is refused rather than followed — the
-# hook must not write through a link out of the workspace — and a refusal forces
-# the full run, which is correct and merely slower.
-# ---------------------------------------------------------------------------
+# Q12 bootstrap: retain the FILE boundary and the no-interpreter Bash fast path.
+# The marker is the pass START, backdated one second for coarse timestamp ticks.
+# CTIME against stamp MTIME catches chmod and writes that preserve mtime.
+# Deleted watched roots remain the documented CI-only gap: scanning the clone
+# root would turn every taxpayer runtime write into a cold contributor pass.
 STAMP=".claude/.skill-invariants-stamp"
-# Line 1 is the format version; every line after it names a CHECK that came back
-# red in the pass which wrote the stamp (see "what the pass is allowed to
-# remember"). The names are NOT listed here: this sentence enumerated four of
-# them and stayed at four when the fifth and sixth arrived, and
-# `test_the_check_name_lists_agree` parses the seven CODE lists as sets and
-# cannot see a comment. A reader debugging a stamp then reads `preflight` or
-# `securefs` as corruption and "repairs" it by deleting the carry-forward the
-# red-remembering design depends on. `read_red_checks` below holds the real
-# list, in one place. Version 1 carried the
-# version line alone, so a v1 stamp read by this code would parse as "nothing is
-# red": a well-formed, plausible answer that is wrong for precisely the check the
-# previous pass failed on. Bumping the version makes every older stamp UNTRUSTED
-# instead, which forces a full pass — slower, and the only direction that cannot
-# hide a failing invariant.
 STAMP_VERSION='2'
 FORCE_FULL=0
 STAMP_WRITABLE=1
-# The checks the stamp carries forward as red, newline-terminated, one per line.
-# Empty when the stamp is absent, untrusted or clean — all harmless, because an
-# untrusted stamp already forces every module to run.
-KNOWN_RED=''
-
-TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/skill-invariants.XXXXXX" 2>/dev/null) \
-    || TEMP_DIR=''
-if [ -n "$TEMP_DIR" ]; then
-    CHANGED_LIST="$TEMP_DIR/changed"
-    NOW_MARKER="$TEMP_DIR/now"
-else
-    CHANGED_LIST=''
-    NOW_MARKER=''
-fi
-
-# The stamp candidate is created by mktemp INSIDE .claude/, because it has to
-# land on the same filesystem as the file it atomically replaces. That makes it
-# the one scratch file $TEMP_DIR's removal cannot cover, so track it separately
-# and let the trap remove it if this pass never reaches its `mv`. The permissions
-# hook carries the same pair for the same class of file; this script had only
-# half of it, which is the half that leaves litter exactly when the pass is
-# killed.
-INREPO_TEMP_FILES=()
-track_inrepo_temp() {
-    INREPO_TEMP_FILES[${#INREPO_TEMP_FILES[@]}]=$1
-}
-
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/skill-invariants.XXXXXX" 2>/dev/null) || TEMP_DIR=''
+CHANGED_LIST="${TEMP_DIR:+$TEMP_DIR/changed}"
+NOW_MARKER="${TEMP_DIR:+$TEMP_DIR/now}"
 cleanup() {
     [ -n "$TEMP_DIR" ] && rm -rf "$TEMP_DIR" 2>/dev/null || true
-    # Only ever the candidate of a pass that died between mktemp and mv:
-    # advance_stamp UNTRACKS the name the instant `mv` consumes it, so an
-    # installed stamp is unreachable from here. Leaving it tracked and relying on
-    # "mv renamed the file, so this rm finds nothing" would be relying on an
-    # absence — one refactor that copies instead of renaming, or one mktemp name
-    # reused after a wrap, and this trap deletes the stamp the pass just wrote.
-    if [ "${#INREPO_TEMP_FILES[@]}" -gt 0 ]; then
-        rm -f "${INREPO_TEMP_FILES[@]}" 2>/dev/null || true
-    fi
 }
 trap cleanup EXIT
-# An EXIT trap alone does not cover the case that motivates tracking the in-repo
-# candidate at all: bash runs EXIT for a signal only when that signal is itself
-# trapped, and the registered hook timeout TERMINATES this process rather than
-# letting it return. That is the routine case here, not the exotic one, because
-# the pass being interrupted is a whole pytest run, the one thing in this hook
-# long enough for a timeout to land inside. Exit 1 — not 0, which would claim a
-# clean check, and not 2, which would block a tool call over a pass that
-# produced no verdict at all. SIGKILL is uncoverable by any trap, which is why
-# .gitignore matching `.skill-invariants-stamp*` is the other half of the fix
-# rather than a belt-and-braces duplicate of this one.
 trap 'cleanup; exit 1' TERM INT HUP
 
-# Reads the red carry-forward out of a stamp already established as trustworthy:
-# right version, not in the future, not a symlink. Copying the file's lines
-# through unfiltered would be the shorter form and it is wrong in the direction
-# that does not announce itself — apply_red_checks would ignore the junk, so a
-# stamp that had been mangled by a crashed write would read as "nothing is red"
-# and look exactly like a clean pass. Recognizing the known tokens here means the
-# only thing an unreadable stamp can cost is a re-run.
-#
-# THIS LIST IS THE THIRD COPY of the check names — `apply_red_checks` and
-# `remember_red_checks` hold the other two — and it is the one that fails
-# SILENTLY when they drift. Adding `preflight` to those two and not to this one
-# left the hook writing `preflight` into the stamp and then declining to read it
-# back: the check was recorded red, the next pass dropped the token as junk, and
-# a still-red module reported clean. Add a name to all three or to none.
-read_red_checks() {
-    local line
-    while IFS= read -r line; do
-        case "$line" in
-            portability|capabilities|agents|hooks|preflight|securefs|hooksdeps|hostguard)
-                KNOWN_RED="${KNOWN_RED}${line}"$'\n' ;;
-        esac
-    done <<< "$(sed -n '2,$p' "$STAMP" 2>/dev/null)"
-    return 0
-}
-
 backdate_marker() {
-    touch -A -000001 "$1" 2>/dev/null \
-        || touch -d '1 second ago' "$1" 2>/dev/null
+    touch -A -000001 "$1" 2>/dev/null || touch -d '1 second ago' "$1" 2>/dev/null
 }
 
-if [ -L .claude ] || [ ! -d .claude ]; then
-    # Never CREATE .claude/: in a taxpayer workspace that is infrastructure this
-    # hook has no business inventing. No stamp means every pass is a full pass,
-    # which is the safe direction.
-    STAMP_WRITABLE=0
-    FORCE_FULL=1
-elif [ -L "$STAMP" ]; then
+# Trust belongs to the cheap bootstrap. Raw sed + command substitution removes
+# NULs but RETAINS CR: a CRLF version is untrusted, never normalized to version 2.
+# Refusal forces all checks; unsafe directories/links also forbid stamp writes.
+if [ -L .claude ] || [ ! -d .claude ] || [ -L "$STAMP" ]; then
     STAMP_WRITABLE=0
     FORCE_FULL=1
 elif [ -z "$NOW_MARKER" ] || ! : > "$NOW_MARKER" 2>/dev/null \
      || ! backdate_marker "$NOW_MARKER"; then
     STAMP_WRITABLE=0
     FORCE_FULL=1
-elif [ ! -f "$STAMP" ]; then
+elif [ ! -f "$STAMP" ] \
+     || [ "$(sed -n '1p' "$STAMP" 2>/dev/null)" != "$STAMP_VERSION" ] \
+     || [ "$STAMP" -nt "$NOW_MARKER" ]; then
     FORCE_FULL=1
-elif [ "$(sed -n '1p' "$STAMP" 2>/dev/null)" != "$STAMP_VERSION" ]; then
-    FORCE_FULL=1
-elif [ "$STAMP" -nt "$NOW_MARKER" ]; then
-    FORCE_FULL=1
-else
-    # Reached only when the stamp is trusted, which is also the only case where
-    # the red set matters: every branch above forces all seven modules anyway.
-    read_red_checks
 fi
 
-# `-newercm` compares each entry's CTIME against the stamp's mtime, so it catches
-# a mode change and a metadata-only rewrite as well as a write, and unlike mtime
-# it cannot be back-set by a tool that preserves timestamps.
-#
-# KNOWN GAP, stated rather than implied: a watched path that is DELETED outright
-# is invisible here, because a vanished root is dropped from the scan instead of
-# reading as a change. Deleting AGENTS.md is caught at CI, not locally. Closing
-# it would mean scanning the repository root, whose mtime also moves every time
-# result.json or a generated PDF is written. A root that reads as changed picks
-# every module, so the trade is a rare miss against a frequent false COLD pass —
-# not the cheap end of MEASURED COSTS but the expensive one, which is the worse
-# side of the trade for a gate.
 scan_changed_paths() {
     local root
     local -a roots=()
-
     [ -n "$CHANGED_LIST" ] || return 1
     while IFS= read -r root; do
         [ -n "$root" ] || continue
@@ -832,48 +280,63 @@ scan_changed_paths() {
             roots[${#roots[@]}]=$root
         fi
     done <<< "$WATCHED_ROOTS"
-    # Guard the expansion rather than trusting the list to be non-empty: under
-    # `set -u`, bash 3.2 — still /bin/bash on macOS — errors on "${roots[@]}"
-    # for an empty array, and the error would land on the fallback path that is
-    # supposed to be the safe one.
     [ "${#roots[@]}" -gt 0 ] || return 1
     find "${roots[@]}" -newercm "$STAMP" -print0 > "$CHANGED_LIST" 2>/dev/null
 }
 
-if [ "$FORCE_FULL" -eq 1 ]; then
-    select_every_module
-elif ! scan_changed_paths; then
-    # find could not run the comparison, so what changed is unknown. Run
-    # everything: an unnecessary cold pass is only a wait, and a skipped one
-    # costs the signal the hook exists to give.
-    select_every_module
-else
-    # `-s` FIRST, and it is the fast path rather than an optimisation. `find`
-    # exits 0 having printed nothing when no watched path is newer than the
-    # stamp, which is the commonest outcome in a session — every `ls`, every
-    # `git status`. An empty list selects nothing whoever is asked, so asking
-    # spawns an interpreter to be told so. The row this protects is the first
-    # one in MEASURED COSTS.
-    if [ -s "$CHANGED_LIST" ]; then
-        select_modules_from < "$CHANGED_LIST" || select_every_module
+if [ "$FORCE_FULL" -eq 0 ] && ! scan_changed_paths; then
+    FORCE_FULL=1
+fi
+if [ "$tool_name" = Bash ]; then
+    display_target='a Bash tool call'
+    relative_path=''
+    if [ "$FORCE_FULL" -eq 0 ] && [ ! -s "$CHANGED_LIST" ]; then
+        # No interpreter start, and red checks do not turn ls into a retry.
+        exit 0
     fi
+
+else
+    case "$file" in "$PWD"/*) relative=${file#"$PWD"/} ;; *) exit 0 ;; esac
+    relative_path=$relative
+    case "$relative" in
+        .agents/skills/*|.claude/skills/*|.claude/agents/*)
+            display_target='a repository skill or agent definition' ;;
+        *) display_target='a watched repository source file' ;;
+    esac
 fi
 
-# Only reachable from the Bash branch — the Write/Edit branch already exited on
-# an empty selection. This is the fast path that makes `ls` and `git status`
-# cost the fast-path row of MEASURED COSTS instead of a pytest run. Nothing
-# ran, so the stamp stays where it is; it already covers everything up to the
-# last completed pass.
-nothing_selected && exit 0
+# No edited path (or tool command) on argv: this pipe carries NUL-framed private
+# input. exec transfers both verdict and signal cleanup to the runtime, including
+# ownership of TEMP_DIR. The fallback is a visible no-verdict block, never green.
+# An unrelated Write/Edit exits after exact-path selection. Watched edits union
+# the pending filesystem scan; without a reliable boundary they run all checks.
+[ -s "$RUNTIME" ] || {
+    echo 'Skill invariant checks could not RUN — the hook runtime is unavailable' >&2
+    exit 2
+}
+shopt -s execfail
+# Compile/load failures and a truncated runtime are NO VERDICT, not a green
+# Python process that never called main. The entry guard contains no decisions.
+HOOK_RUNTIME_SCRATCH=$TEMP_DIR exec .venv/bin/python -c '
+import os, runpy, shutil, sys
+try:
+    sys.exit(runpy.run_path(sys.argv[1])["main"]())
+except Exception:
+    print("Skill invariant checks could not RUN — the hook runtime failed", file=sys.stderr)
+    sys.exit(2)
+finally:
+    scratch = os.environ.pop("HOOK_RUNTIME_SCRATCH", "")
+    if scratch:
+        shutil.rmtree(scratch, ignore_errors=True)
+' "$RUNTIME" < <(
+    printf '%s\0' "$tool_name" "$FORCE_FULL" "$STAMP_WRITABLE" \
+        "$TEMP_DIR" "$STAMP_VERSION" "$display_target" "$relative_path"
+    [ "$FORCE_FULL" -eq 0 ] && cat "$CHANGED_LIST"
+)
+echo 'Skill invariant checks could not RUN — the hook runtime is unavailable' >&2
+exit 2
 
-# ONLY NOW are the checks a previous pass left red folded in, and the ordering is
-# the whole design rather than a detail. Applied above this line, a red check
-# would be re-run on every `ls`, every `git status` and every pytest invocation —
-# a gate that fires on every tool call, which is what teaches an agent to read
-# past its output and is the defect the change boundary exists to remove. Applied
-# below it, the union costs nothing until something the hook watches actually
-# changes, and then it costs one extra module on that pass.
-apply_red_checks
+
 
 # An explicit module list, in the same spirit as EXPECTED_SKILLS: additions are a
 # prompt rather than busywork, and `tests/` wholesale is far too slow to pay on
@@ -955,7 +418,7 @@ apply_red_checks
 #   nothing watched changed        no pytest     under a thousandth
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
 #   skill .md edit                1099 tests     about a seventh
-#   cold pass, all seven modules  1401 tests     one
+#   cold pass, all seven modules  1405 tests     one
 #   (for scale) `pytest tests/`   every module  about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
@@ -963,7 +426,7 @@ apply_red_checks
 #
 # COUNTS ARE WHAT RUNS, not what collects. Two places bite: `run_focused_modules`
 # passes two `--deselect` flags, so portability collects 262 and runs 260; and
-# the hooks module holds two platform skips, so it collects 210 and runs 208.
+# the hooks module holds two platform skips, so it collects 214 and runs 212.
 #
 # THE SCALE ROW STATES NO COUNT, on purpose (AA8). Its one job since ruling Q13
 # is "about twice" a cold pass, which no exact count serves, and pinning the
@@ -976,7 +439,7 @@ apply_red_checks
 # deselections run_focused_modules passes. WHICH module dominates, and by how
 # much, is the half of a timing that survives a change of machine.
 #
-#   tests/test_claude_hooks.py     208 tests    the dominant row
+#   tests/test_claude_hooks.py     212 tests    the dominant row
 #   tests/test_portability.py      260 tests    about a tenth of the hooks row
 #   tests/test_preflight.py        383 tests    a twelfth to a twentieth of it
 #   tests/test_secure_fs.py        189 tests    under a fiftieth of it
@@ -1001,7 +464,7 @@ apply_red_checks
 # a dependency the lock does not carry.
 #
 # ARITHMETIC, which is the half that is EXACT: 48 + 219 + 189 + 260 + 383 = 1099
-# for a skill edit, plus 94 + 208 = 1401 for a cold pass, both matching the
+# for a skill edit, plus 94 + 212 = 1405 for a cold pass, both matching the
 # trigger table to the test. `test_the_measured_costs_counts_match_live_
 # collection` collects every module and re-derives both sums, the parts
 # included, so a stale count is a red suite rather than a figure a reader has to
@@ -1102,242 +565,3 @@ apply_red_checks
 # the hook reports a failure on correct in-progress work for every edit until
 # three more edits land, which is the gates-that-cry-wolf pattern that teaches an
 # agent to reason past a gate's output. CI and the review still enforce both.
-# They are passed unconditionally: pytest ignores a `--deselect` whose module is
-# not in the selection, so this stays one literal list rather than a second
-# conditional that could disagree with the first.
-#
-# This function is the ONE place a module's path is written. The red
-# carry-forward deliberately records a check's name rather than its file, so
-# renaming a module here cannot leave a stale path behind in a stamp on disk to
-# be handed back to pytest days later.
-run_focused_modules() {
-    local -a modules=()
-
-    [ "$RUN_PORTABILITY" -eq 1 ] \
-        && modules[${#modules[@]}]=tests/test_portability.py
-    [ "$RUN_CAPABILITIES" -eq 1 ] \
-        && modules[${#modules[@]}]=tests/test_capabilities.py
-    [ "$RUN_AGENTS" -eq 1 ] \
-        && modules[${#modules[@]}]=tests/test_claude_agents.py
-    [ "$RUN_HOOKS" -eq 1 ] \
-        && modules[${#modules[@]}]=tests/test_claude_hooks.py
-    # ...or the assertions in it that a test-module edit can reach, when
-    # nothing asked for the whole thing. The RUN_HOOKS guard comes first so a
-    # pass that wants both does not hand pytest the same node ids twice.
-    [ "$RUN_HOOKS" -eq 0 ] && [ "$RUN_HOOKSDEPS" -eq 1 ] \
-        && modules+=("${HOOKS_DEPENDENTS[@]}")
-    [ "$RUN_PREFLIGHT" -eq 1 ] \
-        && modules[${#modules[@]}]=tests/test_preflight.py
-    [ "$RUN_SECUREFS" -eq 1 ] \
-        && modules[${#modules[@]}]=tests/test_secure_fs.py
-    [ "$RUN_HOSTGUARD" -eq 1 ] \
-        && modules[${#modules[@]}]=tests/test_host_guard.py
-    [ "${#modules[@]}" -gt 0 ] || return 1
-
-    .venv/bin/python -m pytest "${modules[@]}" \
-        --deselect tests/test_portability.py::TestSkillLayout::test_all_expected_skills_present \
-        --deselect tests/test_portability.py::TestClaudeSymlinks::test_one_symlink_per_skill \
-        -q 2>&1
-}
-
-# Capture first, then branch on the command's OWN status. The tempting form,
-# `pytest ... | tail -20 || exit 2`, is a pipeline, and a pipeline's status is
-# its LAST command's unless `pipefail` is set — `tail` all but always succeeds,
-# so without pipefail the failure branch never runs and the hook exits 0 on a red
-# suite (measured, not assumed). `pipefail` is set above and would rescue it,
-# which is exactly what makes the form dangerous: it would be correct only by a
-# side effect of a line elsewhere. Capturing does not depend on that line.
-PASS_STARTED=$SECONDS
-out=$(run_focused_modules)
-status=$?
-PASS_SECONDS=$((SECONDS - PASS_STARTED))
-
-# AA9: an overrun of the registered timeout CANCELS this hook, and a cancelled
-# check reads to the agent exactly like a pass. The headroom test guards the half
-# of that the COUNT drives; a per-test cost that climbs while the count stands
-# still is MEASURED COSTS' one blind spot. So the pass times itself and says so,
-# without blocking, when it used THREE QUARTERS of the timeout settings.json
-# registers for it. That is a comparison against a threshold, not a recorded
-# reading (ruling Q13): the seconds printed are this PYTEST pass's own — the
-# selector and the scan around it are small beside it and not counted — and the timeout
-# is read from the file the harness enforces, never restated here. A timeout it
-# cannot read is no warning — the check is advisory, and silence there is the
-# state every pass was in before it existed.
-budget_warning() {
-    local timeout
-    # `contains`, not a regex `test`: that needs a jq built with Oniguruma, and
-    # without it the warning would vanish. The TIGHTEST registered timeout,
-    # numbers only, so one registration without a timeout cannot hide another.
-    timeout=$(jq -r '[.hooks.PostToolUse[]?.hooks[]?
-                       | select((.command // "") | tostring
-                                | contains("skill-invariants.sh"))
-                       | .timeout | numbers] | min // empty' \
-              .claude/settings.json 2>/dev/null) || return 0
-    case "$timeout" in ''|*[!0-9]*) return 0 ;; esac
-    [ "$timeout" -gt 0 ] || return 0
-    [ $((PASS_SECONDS * 4)) -ge $((timeout * 3)) ] || return 0
-    printf '%s\n' "Timing: the skill invariants' pytest pass took ${PASS_SECONDS}s of" \
-        "the ${timeout}s timeout settings.json registers for this hook — three" \
-        "quarters or more. Past the timeout the hook is CANCELLED and a" \
-        "cancelled check reads as a pass. Re-time a cold pass and see the" \
-        "MEASURED COSTS block in .claude/hooks/skill-invariants.sh (AA9)."
-}
-
-# ---------------------------------------------------------------------------
-# What the pass is allowed to remember. Three rules, and each one is the repair
-# of a distinct way this hook has gone quiet:
-#
-#   1. A pass that produced NO VERDICT does not touch the stamp. pytest exits 1
-#      for "tests ran and some failed" but 2-5 for interrupted, collection
-#      error, internal error, usage error and nothing-collected — cases where
-#      NOTHING was measured. Advancing the boundary there is the worst of both
-#      worlds: the hook says "the checks themselves are broken", the agent
-#      repairs them, and the edit that was sitting on disk throughout the outage
-#      is now older than the boundary and is never checked again. This is the
-#      harden-runtime-perms.sh property, held for the same reason its write_stamp
-#      states — a failed pass must leave the OLD stamp in place, or the file
-#      whose chmod failed looks old to every later incremental pass. It differs
-#      only in what "failed" means: there, work that did not happen; here, a
-#      measurement that was never taken.
-#
-#      What this costs is the repeat rule 2 exists to prevent, so it is worth
-#      saying what is repeated: while the checks are unrunnable, every
-#      following tool call retries them. That retry is not the cold pass —
-#      pytest gives up before running a test body, as three runs each of a
-#      renamed module (exit 4) and of an import that fails at collection
-#      (exit 2) showed, so it pays start-up and collection and nothing else.
-#      That, until the checks are repaired, against an edit that is otherwise
-#      never checked again, is not a close trade.
-#
-#   2. A pass that produced a VERDICT advances the stamp, red verdict included.
-#      Holding the boundary back until the suite goes green is the tempting
-#      alternative and it recreates the defect this hook was rewritten to
-#      remove: while the agent is midway through a repair, every following tool
-#      call re-runs the suite and re-reports the same failure, landing on the
-#      very `git diff` and `pytest` calls needed to diagnose it. A gate that
-#      cries wolf on every call is a gate that gets reasoned past.
-#
-#   3. ...but a red verdict is REMEMBERED in the stamp and unioned into the next
-#      pass that runs. Rule 2 alone means the boundary moves past a failure, so
-#      an agent-definition edit a minute later selects tests/test_claude_agents.py
-#      alone, passes, and exits 0 in silence while the portability invariant is
-#      still red on disk. That is coverage the old run-everything-every-time
-#      behaviour had and the change boundary took away; carrying the red set
-#      forward gives it back without giving back the cry-wolf half, because the
-#      union is applied only after the "nothing changed" fast path has already
-#      exited.
-#
-# The attribution is deliberately blunt: one pytest invocation returns one
-# status, so a red verdict marks EVERY check in this pass, not the one that
-# actually failed. The exact alternative is to read the failing module names out
-# of pytest's output, and it is worse where it counts — it makes the gate's
-# memory depend on a report format that `-q` abbreviates and that no assertion
-# here pins, and a parse that silently stops matching yields an EMPTY red set,
-# which is this defect back again with no symptom. Over-attribution fails the
-# other way: a check that was already green is re-run on the next watched change
-# until the red one clears, which is wasted work and can hide nothing.
-# ---------------------------------------------------------------------------
-NEW_RED=''
-
-# The red lines follow the version line, so an older reader that only ever looked
-# at line 1 sees a version it does not recognize and distrusts the whole file —
-# which is why the version was bumped rather than the format extended quietly.
-# `if`/`fi` rather than `[ -n … ] && printf`: the latter is the last command in
-# the group, so an EMPTY red set would make the redirection group exit non-zero
-# and advance_stamp would treat a perfectly good stamp as a failed write.
-write_stamp_body() {
-    {
-        printf '%s\n' "$STAMP_VERSION"
-        if [ -n "$NEW_RED" ]; then
-            printf '%s' "$NEW_RED"
-        fi
-    } > "$1" 2>/dev/null
-}
-
-advance_stamp() {
-    local candidate
-
-    [ "$STAMP_WRITABLE" -eq 1 ] || return 0
-    # RE-VALIDATED HERE, not merely at entry, and the distance between the two
-    # checks is the whole reason. STAMP_WRITABLE was decided before the pytest
-    # pass; the pass is a whole pytest run, and `.claude` can be replaced by a
-    # symlink pointing outside the workspace at any point in it.
-    # Both `mktemp` and `mv` FOLLOW that link, so a pass that validated a real
-    # directory would create its candidate and install its stamp under the
-    # link's target — a hook write outside the clone, which is the one thing the
-    # entry check exists to forbid. Constructed and observed: with this line
-    # removed, an external directory substituted mid-pass gains a
-    # `.skill-invariants-stamp`; with it, nothing is created there at all.
-    # harden-runtime-perms.sh asserts the same three conditions immediately
-    # before its own write_stamp for the same reason — the difference is only
-    # that its window is a few statements wide and this one is a whole pytest
-    # pass, which makes the race here the reachable one rather than the
-    # theoretical one.
-    #
-    # It narrows the window rather than closing it; closing it needs an
-    # openat/O_NOFOLLOW handle that POSIX shell does not have. Refusing costs
-    # exactly one thing — the next call repeats this pass — so failing closed is
-    # free, and the checks were already RUN, so nothing is skipped by refusing.
-    [ -d .claude ] && [ ! -L .claude ] && [ ! -L "$STAMP" ] || return 0
-    candidate=$(mktemp ".claude/.skill-invariants-stamp.XXXXXX" 2>/dev/null) \
-        || return 0
-    track_inrepo_temp "$candidate"
-    if write_stamp_body "$candidate" \
-       && touch -r "$NOW_MARKER" "$candidate" 2>/dev/null \
-       && mv -f "$candidate" "$STAMP" 2>/dev/null; then
-        # `mv` CONSUMED the candidate name, so untrack it: the EXIT trap must not
-        # be able to reach a stamp that was successfully installed. This hook
-        # creates exactly one in-repo candidate per pass, which is what makes
-        # clearing the whole list precise rather than approximate.
-        INREPO_TEMP_FILES=()
-        return 0
-    fi
-    rm -f "$candidate" 2>/dev/null || true
-    INREPO_TEMP_FILES=()
-    # Deliberately silent, and deliberately not an error. A stamp that could not
-    # be written costs one thing only: the next call repeats this pass. Turning
-    # that into stderr would make a PASSING check noisy, and a hook that narrates
-    # successful edits is noise the user learns to ignore — after which they miss
-    # the one that matters.
-    return 0
-}
-
-if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then
-    # A green verdict clears the red set by writing none, and it is entitled to:
-    # every check carried as red was folded into THIS pass by apply_red_checks,
-    # so exit 0 is a statement about all of them and not only about the paths
-    # that changed.
-    [ "$status" -eq 1 ] && remember_red_checks
-    advance_stamp
-fi
-
-warning=$(budget_warning)
-if [ "$status" -eq 0 ]; then
-    [ -z "$warning" ] && exit 0
-    # Exit 1 SURFACES it without blocking — the convention harden-runtime-
-    # perms.sh uses — and the verdict above already advanced the stamp.
-    printf '%s\n' "$warning" >&2
-    exit 1
-fi
-
-# pytest exits 1 for "tests ran and some failed" and 2-5 for "no verdict":
-# interrupted or a collection error (2), an internal error (3), a usage error
-# such as a renamed module (4), nothing collected (5). Say which happened.
-# Reporting a usage error as "invariants FAILED" sends the agent hunting for a
-# skill bug that does not exist, which is how a gate loses its credibility even
-# while firing correctly.
-if [ "$status" -eq 1 ]; then
-    headline="Skill invariants FAILED after ${display_target}"
-else
-    headline="Skill invariant checks could not RUN after ${display_target}"
-    headline="${headline} (pytest exit ${status}) — the checks themselves are"
-    headline="${headline} broken, not necessarily the edit"
-fi
-{
-    echo "$headline"
-    printf '%s\n' "$out" | tail -30
-    if [ -n "$warning" ]; then
-        printf '%s\n' "$warning"
-    fi
-} >&2
-exit 2

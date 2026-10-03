@@ -31,35 +31,33 @@ import os
 import sys
 from pathlib import Path
 
-# The eight flags, in the order `skill-invariants.sh` declares them. Named
-# here so a comparison harness can render a stable vector.
-MODULES = ("PORTABILITY", "CAPABILITIES", "AGENTS", "HOOKS", "HOOKSDEPS",
-           "PREFLIGHT", "SECUREFS", "HOSTGUARD")
-
-# The first line `main` writes, and the shell refuses an answer without it.
-#
-# A SELECTOR THAT CANNOT ANSWER MUST NOT BE ABLE TO ANSWER "NOTHING", and an
-# exit status alone does not buy that: an EMPTY file is valid Python, runs
-# clean and prints nothing, which the shell would read as "no module can break
-# that path" and report as a silent green. That is not a hypothetical shape —
-# the hook fires on every Write, this file included, so the reachable case is a
-# save that leaves it truncated while someone is editing the selector itself.
-# The sentinel makes "the port ran" a POSITIVE claim rather than the absence of
-# a complaint. `test_the_shell_and_the_port_agree_on_the_protocol_line` reads
-# it from here and from the script, so the two cannot drift.
 PROTOCOL = "SELECTION1"
 
-# This roster is structural: flags name the seven suites the shell can run.
-# Dependency patterns live ONLY in each suite's WATCHES declaration.
-MODULE_FILES = {
-    "PORTABILITY": "tests/test_portability.py",
-    "CAPABILITIES": "tests/test_capabilities.py",
-    "AGENTS": "tests/test_claude_agents.py",
-    "HOOKS": "tests/test_claude_hooks.py",
-    "PREFLIGHT": "tests/test_preflight.py",
-    "SECUREFS": "tests/test_secure_fs.py",
-    "HOSTGUARD": "tests/test_host_guard.py",
-}
+
+def _check_roster():
+    """Read the runtime's single structural roster without executing it."""
+    tree = ast.parse(Path(__file__).with_name("hook_runtime.py").read_text())
+    entries = [node.value for node in tree.body if isinstance(node, ast.Assign)
+               and any(isinstance(t, ast.Name) and t.id == "CHECKS"
+                       for t in node.targets)]
+    if len(entries) != 1:
+        raise ValueError("missing check roster")
+    checks = ast.literal_eval(entries[0])
+    if not isinstance(checks, dict) or not checks:
+        raise ValueError("invalid check roster")
+    for name, row in checks.items():
+        if (not isinstance(name, str) or not name
+                or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in name)
+                or not isinstance(row, tuple) or len(row) != 2
+                or row[0] != name.lower()
+                or (row[1] is not None and not isinstance(row[1], str))):
+            raise ValueError("invalid check entry")
+    return checks
+
+
+_CHECKS = _check_roster()
+MODULES = tuple(_CHECKS)
+MODULE_FILES = {name: row[1] for name, row in _CHECKS.items() if row[1] is not None}
 
 
 def _literal_watches(source: str, name: str) -> tuple:

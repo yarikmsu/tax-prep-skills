@@ -73,6 +73,7 @@ PERMS_HOOK = HOOKS_DIR / "harden-runtime-perms.sh"
 # script rather than against the repository — but the Python side reads it
 # here and nowhere else.
 SELECTION_PORT = HOOKS_DIR / "lib" / "hook_selection.py"
+RUNTIME_PORT = HOOKS_DIR / "lib" / "hook_runtime.py"
 SKILL_STAMP = Path(".claude") / ".skill-invariants-stamp"
 
 
@@ -126,8 +127,8 @@ HOSTGUARD = "tests/test_host_guard.py"
 # decoration is what it is because a deleted text scanner searched an arm's
 # BODY for that exact line; nothing reads an arm body now — `_ARMS` is data —
 # and `_PORT_NAME` below strips both ends back off. Kept in this shape because
-# the DECORATED form is still what the script declares and what
-# `test_the_check_name_lists_agree` matches on; the strip is stated once.
+# a historical label used by the selection-vector helpers; the runtime no
+# longer declares shell flags. The strip is stated once.
 _RUN_FLAG = {
     PORTABILITY: "RUN_PORTABILITY=1",
     CAPABILITIES: "RUN_CAPABILITIES=1",
@@ -404,6 +405,14 @@ def _selection_port():
     return port
 
 
+@functools.cache
+def _runtime_port():
+    spec = importlib.util.spec_from_file_location("hook_runtime", RUNTIME_PORT)
+    runtime = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime)
+    return runtime
+
+
 def _first_arm(path: str):
     """The `(pattern, modules)` of the FIRST arm matching `path`, or None.
 
@@ -613,7 +622,7 @@ def _fake_venv(root: Path, exit_code: int, lines=()):
     body = ["#!/bin/sh",
             "for a in \"$@\"; do",
             "  case \"$a\" in",
-            f"    *hook_selection.py) exec {sys.executable} \"$@\" ;;",
+            f"    *hook_selection.py|*hook_runtime.py) exec {sys.executable} \"$@\" ;;",
             "  esac",
             "done"]
     body += [f'echo "{line}"' for line in lines] + [f"exit {exit_code}"]
@@ -1002,16 +1011,8 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
     """
 
     def _flags(self):
-        """The RUN_ flags, from their DECLARATIONS at the top of the script.
-
-        The declarations are where a new module has to appear for `set -u` to
-        survive one, which makes them the definition. They are also what
-        `select_modules_from` validates the port's output against, so a flag
-        the port names and this script does not declare is refused there
-        rather than silently `eval`ed into existence.
-        """
-        flags = re.findall(r"^(RUN_[A-Z0-9_]+)=0$",
-                           SKILL_HOOK.read_text(encoding="utf-8"), re.M)
+        """Runtime check names, rendered as legacy selection-vector labels."""
+        flags = ["RUN_" + name for name in _runtime_port().CHECKS]
         assert len(flags) > 5, flags
         assert len(set(flags)) == len(flags), f"duplicate flags: {flags}"
         return flags
@@ -1333,7 +1334,7 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
         the shape of all of them.
         """
         orphan = self._orphan_hook(tmp_path, None)
-        assert not (orphan.parent / "lib").exists()
+        assert not (orphan.parent / "lib" / "hook_selection.py").exists()
         r = self._drive(orphan, tmp_path)
         assert r.returncode == 2, (
             "a hook that cannot select exited quietly — the one direction a "
@@ -1407,8 +1408,9 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
         hooks.mkdir()
         (hooks / "skill-invariants.sh").write_text(
             SKILL_HOOK.read_text(encoding="utf-8"), encoding="utf-8")
+        (hooks / "lib").mkdir()
+        shutil.copyfile(RUNTIME_PORT, hooks / "lib" / "hook_runtime.py")
         if port is not None:
-            (hooks / "lib").mkdir()
             (hooks / "lib" / "hook_selection.py").write_text(port)
         return hooks / "skill-invariants.sh"
 
@@ -1433,16 +1435,14 @@ class TestTheSelectionPortIsTheHooksOwnDecision:
         # left this green, which is this repository's recorded "gate that
         # reads its own comments" in its smallest form. A line whose first
         # non-blank character is `#` is prose, whatever it says.
-        shell = re.search(r'^[ \t]*\[ "\$module" = (\w+) \] \|\| return 1',
-                          SKILL_HOOK.read_text(encoding="utf-8"), re.M)
-        assert shell, (
-            "`select_modules_from` no longer checks a protocol line — without "
-            "it an EMPTY selector file exits 0 saying nothing and the hook "
-            "reads that as `no module can break this path`. A commented-out "
-            "guard reaches this message too, which is the point of the anchor")
-        assert shell.group(1) == _selection_port().PROTOCOL, (
-            f"the script accepts {shell.group(1)!r} and the port writes "
-            f"{_selection_port().PROTOCOL!r} — one of them has moved")
+        tree = ast.parse(RUNTIME_PORT.read_text())
+        compared = [node.comparators[0].value for node in ast.walk(tree)
+                    if isinstance(node, ast.Compare)
+                    and isinstance(node.left, ast.Subscript)
+                    and isinstance(node.left.value, ast.Name)
+                    and node.left.value.id == "lines"
+                    and isinstance(node.comparators[0], ast.Constant)]
+        assert compared == [_selection_port().PROTOCOL.encode()], compared
 
     def test_a_selector_that_says_nothing_at_all_runs_everything(self, tmp_path):
         """An EMPTY selector is valid Python: it runs clean and prints nothing.
@@ -2500,8 +2500,8 @@ class TestSkillInvariantsHook:
         can turn red" with the deselect pin — the one assertion here that names
         a test module by path — left out of it.
         """
-        script = (HOOKS_DIR / "skill-invariants.sh").read_text()
-        listed = re.findall(r'^\s*"(tests/test_claude_hooks\.py::[^"]+)"$',
+        script = RUNTIME_PORT.read_text()
+        listed = re.findall(r'^\s*"(tests/test_claude_hooks\.py::[^"]+)",?$',
                             script, re.M)
         assert len(listed) >= 3, (
             f"the HOOKS_DEPENDENTS list stopped parsing: {listed}")
@@ -2922,8 +2922,8 @@ class TestSkillInvariantsHook:
         late = tmp_path / "AGENTS.md"
         python = _fake_venv(tmp_path, exit_code=0)
         python.write_text(
-            "#!/bin/sh\n"
-            "/bin/sleep 2\n"
+            python.read_text().split("exit 0")[0]
+            + "/bin/sleep 2\n"
             f'printf "written mid-pass\\n" > "{late}"\n'
             "exit 0\n")
         python.chmod(0o755)
@@ -3047,74 +3047,25 @@ class TestSkillInvariantsHook:
         assert PORTABILITY in _selected_modules(repaired)
 
     def test_the_check_name_lists_agree(self):
-        """The check names are enumerated in SIX places, and the two that were
-        left out of the first version of this test fail silently forever.
+        """One roster binds persisted tokens to the actual pytest selection.
 
-        `apply_red_checks` turns a stamp token back into a flag,
-        `remember_red_checks` turns a flag back into a token, `read_red_checks`
-        decides which tokens are not junk, `run_focused_modules` maps a flag to
-        the module pytest actually runs, `select_every_module` forces them all,
-        and `nothing_selected` decides whether anything runs at all.
-
-        Comparing only the first three — which is how this shipped — misses the
-        two that cannot announce themselves. Omit a check from
-        `run_focused_modules` and its flag is set by every trigger, written to
-        the stamp on every red verdict, restored on every later pass, and never
-        handed to pytest: it can never go green, so it is carried red forever
-        while its assertions never run. Omit it from `nothing_selected` and the
-        flag is set, the fast path still exits 0, and a Bash call never runs it.
+        The old shell needed seven synchronized name lists. Compare the derived
+        selector roster and drive every runtime entry, including HOOKSDEPS;
+        an omitted or mispaired check must still fail against the independent
+        whole-suite and subset expectations below.
         """
-        import re as _re
-        script = (HOOKS_DIR / "skill-invariants.sh").read_text()
-
-        def flags(pattern):
-            return {m.upper() for m in _re.findall(pattern, script, _re.M)}
-
-        initialised = flags(r"^RUN_(\w+)=0$")
-        applied = flags(r"^\s*\w+\) RUN_(\w+)=1 ;;$")
-        remembered = flags(r'\[ "\$RUN_(\w+)" -eq 1 \] && NEW_RED=')
-        forced = flags(r"^    RUN_(\w+)=1$")
-        nothing = flags(r'\[ "\$RUN_(\w+)" -eq 0 \]')
-        runs = flags(r'\[ "\$RUN_(\w+)" -eq 1 \] \\')
-        reader = _re.search(r'case "\$line" in\n\s*([\w|]+)\)', script)
-        assert reader, "read_red_checks' token list not found — has it moved?"
-        recognised = {t.upper() for t in reader.group(1).split("|")}
-
-        lists = {"initialised": initialised, "apply": applied,
-                 "remember": remembered, "read": recognised,
-                 "select_every": forced, "nothing_selected": nothing,
-                 "run_focused": runs}
-        assert len(set(map(frozenset, lists.values()))) == 1, (
-            "the check-name lists have drifted: "
-            + "; ".join(f"{k}={sorted(v)}" for k, v in sorted(lists.items())))
-        assert "PREFLIGHT" in applied, "the new module is not wired at all"
-
-        # SETS ARE NOT ENOUGH: the two directions have to agree PAIRWISE. The
-        # `applied` regex above discards the stamp token and keeps only the flag,
-        # so swapping two pairings — `preflight) RUN_SECUREFS=1` next to
-        # `securefs) RUN_PREFLIGHT=1` — leaves all seven sets identical and this
-        # test green, while a red `test_preflight.py` is carried forward under
-        # the other module's name and re-selects the wrong one on the next pass.
-        # The still-red check then never runs again and reports clean, which is
-        # the exact failure the docstring above says this test exists to catch.
-        pairs_applied = {token.upper(): flag.upper() for token, flag in
-                         _re.findall(r"^\s*(\w+)\) RUN_(\w+)=1 ;;$", script,
-                                     _re.M)}
-        pairs_remembered = {token.upper(): flag.upper() for flag, token in
-                            _re.findall(
-                                r'\[ "\$RUN_(\w+)" -eq 1 \] && '
-                                r'NEW_RED="\$\{NEW_RED\}(\w+)"', script)}
-        assert pairs_applied, "apply_red_checks' pairings no longer parse"
-        assert pairs_remembered, "remember_red_checks' pairings no longer parse"
-        assert pairs_applied == pairs_remembered, (
-            f"a stamp token and its flag are paired differently in the two "
-            f"directions, so a red check is carried forward under another "
-            f"module's name: apply={pairs_applied} remember={pairs_remembered}")
-        for token, flag in pairs_applied.items():
-            assert token == flag, (
-                f"the stamp token {token!r} sets RUN_{flag} — they are the same "
-                f"check and must share a name, or the mapping needs a third "
-                f"place to be kept in step")
+        runtime = _runtime_port()
+        checks = runtime.CHECKS
+        assert tuple(checks) == _selection_port().MODULES
+        assert {name: row[1] for name, row in checks.items() if row[1]} == \
+            _selection_port().MODULE_FILES
+        assert all(token == name.lower() for name, (token, _) in checks.items())
+        assert len({row[0] for row in checks.values()}) == len(checks)
+        assert runtime.pytest_paths(set(checks)) == list(ALL_MODULES)
+        for name, (_, path) in checks.items():
+            expected = [path] if path else list(runtime.HOOKS_DEPENDENTS)
+            assert runtime.pytest_paths({name}) == expected
+        assert runtime.pytest_paths(set()) == []
 
     @needs_jq
     def test_a_red_check_is_recarried_until_it_goes_green(self, tmp_path):
@@ -6282,7 +6233,7 @@ class TestHookRegistration:
         fully green and CI never notices. Nothing else pins script → test file;
         every test in this module shims the interpreter, so no assertion
         otherwise exercises the real argument list."""
-        script = SKILL_HOOK.read_text()
+        script = RUNTIME_PORT.read_text()
         paths = sorted(set(re.findall(r"tests/[\w./-]+\.py", script)))
         assert paths, "the hook names no test modules — it checks nothing"
         missing = [p for p in paths if not (REPO / p).is_file()]
@@ -6310,8 +6261,8 @@ class TestHookRegistration:
             ("tests/test_portability.py", "TestClaudeSymlinks",
              "test_one_symlink_per_skill"),
         }
-        found = set(re.findall(r"--deselect\s+(\S+?)::(\w+)::(\w+)",
-                               SKILL_HOOK.read_text()))
+        found = {tuple(node.split("::")) for node in _runtime_port().DESELECT}
+
         assert found == expected, (
             f"the hook deselects {sorted(found)}; deselecting anything beyond "
             "the registry pair silently removes a real lint from the gate")
@@ -6526,8 +6477,7 @@ class TestHookRegistration:
 
         # Portability's gap is the hook's own --deselect flags: derivable, so
         # it is derived rather than trusted from the prose.
-        deselects = len(re.findall(r"--deselect\s+tests/test_portability\.py",
-                                   block))
+        deselects = len(_runtime_port().DESELECT)
         missing = sorted(p for p in rows if p not in live)
         assert not missing, (
             f"the decomposition names {missing}, which the collection did not "
@@ -6716,9 +6666,8 @@ class TestHookRegistration:
         # `tests/*.py` string in the file: two more are named in the KNOWN GAP
         # comment precisely because they are too slow to run here, and counting
         # those would demand headroom for a pass that never happens.
-        modules = sorted(set(re.findall(
-            r"modules\[\$\{#modules\[@\]\}\]=(tests/[\w./-]+\.py)",
-            SKILL_HOOK.read_text())))
+        runtime = _runtime_port()
+        modules = runtime.pytest_paths(set(runtime.CHECKS))
         assert modules, (
             "no module list found — the hook either checks nothing or builds "
             "its argv some other way, and this floor is measuring neither")
@@ -6777,7 +6726,7 @@ def test_a_pass_near_its_timeout_says_so_without_blocking(tmp_path):
         stamp.unlink(missing_ok=True)
         return _run_skill_hook(tmp_path, str(tmp_path / "AGENTS.md"))
 
-    slow = run(1, slow=True)
+    slow = run(1.0, slow=True)
     assert slow.returncode == 1, slow.stderr
     assert "of\nthe 1s timeout" in slow.stderr and "CANCELLED" in slow.stderr
     assert stamp.is_file(), "the warning must come after the stamp advanced"
@@ -6788,3 +6737,57 @@ def test_a_pass_near_its_timeout_says_so_without_blocking(tmp_path):
     assert fast.returncode == 0 and fast.stderr == "", fast.stderr
     unread = run(None)
     assert unread.returncode == 0 and unread.stderr == "", unread.stderr
+
+
+@needs_jq
+class TestStampRuntimeBytes:
+    def test_byte_tokens_retain_bash_red_memory(self, quiescent_workspace):
+        stamp = quiescent_workspace / SKILL_STAMP
+        old_time = stamp.stat().st_mtime_ns
+        _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
+        edited = str(quiescent_workspace / ".claude/agents/example.md")
+        for body, expected in (
+            (b"2\npreflight\0\n", {AGENTS, PREFLIGHT}),
+            (b"2\npreflight\r\n", {AGENTS}),
+            (b"2\npreflight\n", {AGENTS, PREFLIGHT}),
+            (b"2\r\npreflight\n", set(ALL_MODULES)),
+            (b"2\0\npreflight\n", {AGENTS, PREFLIGHT}),
+        ):
+            stamp.write_bytes(body)
+            os.utime(stamp, ns=(old_time, old_time))
+            result = _run_skill_hook(quiescent_workspace, edited)
+            assert result.returncode == 2, result.stderr
+            assert set(_selected_modules(result)) == expected, (body, result.stderr)
+
+    def test_the_unchanged_bash_fast_path_starts_no_interpreter(self, quiescent_workspace):
+        python = _fake_venv(quiescent_workspace, exit_code=1, lines=["$*"])
+        log = quiescent_workspace / "interpreter-starts.log"
+        python.write_text(python.read_text().replace(
+            "#!/bin/sh\n", f"#!/bin/sh\necho started >> '{log}'\n", 1))
+        result = _run_skill_hook_bash(quiescent_workspace)
+        assert result.returncode == 0 and result.stderr == "", result.stderr
+        assert not log.exists(), "an unchanged Bash call started the interpreter"
+
+    def test_a_missing_runtime_is_a_visible_no_verdict(self, tmp_path):
+        hook = TestTheSelectionPortIsTheHooksOwnDecision()._orphan_hook(tmp_path, "")
+        runtime = hook.parent / "lib" / "hook_runtime.py"
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        for source in (None, "", "# truncated save\n", "this is invalid python!", "raise RuntimeError()"):
+            if source is None:
+                runtime.unlink(missing_ok=True)
+            else:
+                runtime.write_text(source)
+            result = _run_skill_hook(tmp_path, str(tmp_path / "AGENTS.md"), script=hook,
+                                     env_extra={"TMPDIR": str(scratch)})
+            assert result.returncode == 2 and "could not RUN" in result.stderr, (source, result.stderr)
+            assert not (tmp_path / SKILL_STAMP).exists()
+            assert not os.listdir(scratch), "a failed runtime load leaked scratch files"
+
+    def test_each_token_selects_its_own_persisted_check(self, tmp_path, monkeypatch):
+        runtime = _runtime_port()
+        stamp = tmp_path / "stamp"
+        monkeypatch.setattr(runtime, "STAMP", stamp)
+        for name, (token, _) in runtime.CHECKS.items():
+            stamp.write_bytes(b"2\n" + token.encode() + b"\0\nunknown\n")
+            assert runtime.read_red_checks() == {name}

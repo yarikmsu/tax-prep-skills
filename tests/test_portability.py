@@ -6370,7 +6370,7 @@ class TestTheBacklogSaysWhatIsOpen:
         declined = text[text.index("\n## Declined,"):text.index("\n## Rulings\n")]
 
         scheduled = set(re.findall(rf"\*\*({self._ID})\*\*", plan))
-        assert len(scheduled) >= 4, (
+        assert scheduled and len(scheduled) == len(re.findall(r"\*\*[A-Z]+\d+\*\*", plan)), (
             f"the plan table names {sorted(scheduled)} — it is read by id and "
             "a reword that stops matching checks nothing")
         stale = sorted(scheduled - opened)
