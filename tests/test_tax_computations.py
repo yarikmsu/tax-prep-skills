@@ -8241,13 +8241,13 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ny_nonresident.py::compute_nyc_part_year": "direct",
         "tax_computations/state/nc.py::compute_nc_deduction_choice": "direct",
         "tax_computations/state/nc.py::compute_nc_itemized": "direct",
+        "withholding.py::build_ca_true_up": "direct",
         "withholding.py::build_ny_true_up": "direct",
         "withholding.py::build_nc_true_up": "direct",
         "scenario.py::salt_cap_may_move": "direct",
 
         "ptet.py::analyze": "delegates: _salt_cap",
         "return_builder.py::build": "delegates: _context",
-        "withholding.py::build_ca_true_up": "delegates: compute_ca_safe_harbor",
 
         "projection/__init__.py::compute_safe_harbor": (
             "conditional: the status picks the 110% factor on the PRIOR-YEAR "

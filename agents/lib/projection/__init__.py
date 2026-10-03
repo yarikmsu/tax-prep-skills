@@ -2680,9 +2680,9 @@ def _voucher_catchup_note(catchup: _CatchupNote, vouchers, harbor,
     one place naming it: it reached /tax-project's markdown and not its
     `--json`, and both consuming skills read `--json` first.
 
-    `harbor` is a SafeHarbor or a CaSafeHarbor, duck-typed over the four
-    fields they share, with the jurisdiction checked by label — see
-    `_CatchupNote`.
+    `harbor` carries the shared payment fields, with jurisdiction checked by
+    label — see `_CatchupNote`. Federal/CA floor flags are optional: NY's
+    requirement calculator already applies its own fetched floor.
 
     The note claims the earliest still-open deadline can need MORE than the
     share printed beside it, and that a missed instalment accrues until PAID.
@@ -2815,7 +2815,8 @@ def _voucher_catchup_note(catchup: _CatchupNote, vouchers, harbor,
     # $12,000 withholding against a $10,000 requirement, plus a $1,000
     # estimate) was told not to conclude no penalty applies, which is false.
     if (harbor.estimates_paid > 0
-            and not (harbor.de_minimis or _prior_year_floor_applied(harbor))
+            and not (getattr(harbor, "de_minimis", False)
+                     or _prior_year_floor_applied(harbor))
             and harbor.withholding < harbor.required_annual):
         return (catchup.timing_scheduled if scheduled
                 else catchup.timing_settled)

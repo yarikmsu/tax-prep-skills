@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **W12** — declare hook inputs beside their test modules. | WA and retirement follow-ups are merged. |
+| **Opportunistic** | **W11** — unify state withholding true-ups. | Test-owned hook inputs are merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -146,17 +146,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   two render blocks and a three-way caveat chain. `projection._section_computed`
   is the right move made once and stopped one level short; a third state
   duplicates all of it again.
-
-- **W12 (P3, S): let a test module DECLARE its inputs.** *Same review, restated
-  against what the hook is now.* The cross-module test dependencies live in
-  `_ARMS` in `.claude/hooks/lib/hook_selection.py` — the shell `case` this item
-  was originally written against was ported in #163 and deleted in #164, so the
-  language changed and the shape did not: the map is still in a different file
-  from the tests that have the dependencies, and still hand-maintained. A
-  `WATCHES = (...)` at module level, with the hook building its map from those
-  declarations and a test asserting every path a module opens is under its own
-  `WATCHES`, collapses two hand-kept lists into one — and a test that grows a new
-  input could not then go unselected.
 
 ### X — tax correctness
 
@@ -350,6 +339,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | W5 | #90, #166 | W5a, below |
 | W5a | #191 | the matrix legs, the tool targets, `MIN_PYTHON` and the prose still state the floor, compared rather than read; the lock headers are uv's record and stay |
 | W6 | #105 | — |
+| W12 | #225 | Test-owned hook input declarations and independent read/import audit. |
 | X1 | #89 | the auditor's keying note is WRONG, not pending; only the Y2 replay can correct it |
 | X2 | #86 | — |
 | X3 | #88 | — |
@@ -357,7 +347,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | X5 | #143, #144, #155 | the line-break blind spot is X9, open above |
 | X6 | #154 | 2027-2029 SALT figures are computed from the statute's 101% step, not published; the IRS figure wins through the cache |
 | X7 | #218 | future-sale tax and chained wash-sale repricing remain outside the replacement basis plan |
-| X8 | #159 | `return_builder.build` and `withholding.build_ca_true_up` validate one frame down — declared, and probed at both ends |
+| X8 | #159 | Engine entry-point status validation: direct checks or declared delegation probed at both ends |
 | X10 | #224 | Roth catch-up split, confirmed HSA eligibility and fetched per-account state conformity. |
 | Y4 | #112 | — |
 | Y5 | #113 | — |

@@ -1011,7 +1011,7 @@ Mutation checks:
 The two generic deferrals at the end of `docs/changelog/epic-P.md`: a data-driven `state.modifications` block and a `state.local` block shape. W10 stays open for them.
 
 
-## W12 — hook inputs declared by their test modules
+## W12 — hook inputs declared by their test modules (#225)
 
 The seven hook-selected suites now own literal `WATCHES` declarations. The
 selector parses them without importing tests, combines shared priority groups
@@ -1028,3 +1028,19 @@ WATCHES and actually select it. This caught two old capability-test gaps for
 Legacy selection data remains behavioral regression evidence and requires no
 edit when a new dependency is declared. Contributor details and audit scope:
 `docs/superpowers/specs/2026-10-03-declared-hook-inputs-design.md`.
+
+
+## W11 — one state withholding true-up specification
+
+CA, NY and NC now bind state policy and presentation to `StateTrueUpSpec`.
+Shared readers, annualization, target/voucher assembly, rendering, serialization
+and missing-cache/balance handling replace parallel state paths. Section names
+come from the existing registry. Public builders and report fields remain
+compatible, including NY's JSON note list and NC's rounding and use-tax basis.
+
+The comparison against the pre-refactor implementation passed 2,490 report,
+JSON and Markdown cases. It also exposed 210 NY payment combinations that
+previously crashed on an absent `de_minimis` adapter field; the shared timing
+helper now reads that optional field safely, with two explicit regressions.
+The federal-only coverage note now includes NC. Design and scope:
+`docs/superpowers/specs/2026-10-03-state-true-up-spec-design.md`.

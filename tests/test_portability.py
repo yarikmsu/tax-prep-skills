@@ -6170,7 +6170,12 @@ class TestTheBacklogSaysWhatIsOpen:
         guards too; this one covers the two slices they share."""
         opened = set(self.ENTRY.findall(self._open_section()))
         shipped = set(self.ROW.findall(self._shipped_section()))
-        assert len(opened) >= 8, f"the Open section parses as {sorted(opened)}"
+        # Completing work shrinks this set. Its size is not evidence that the
+        # parser still works; every bold bullet entry must be recognized.
+        headings = re.findall(r"^- \*\*[^*]+\*\*", self._open_section(), re.M)
+        assert headings and len(opened) == len(headings), (
+            f"the Open section parses {len(opened)} ids from {len(headings)} "
+            f"headings: {sorted(opened)}")
         assert len(shipped) >= 20, (
             f"the shipped index parses as {sorted(i for i, _, _ in shipped)}")
 

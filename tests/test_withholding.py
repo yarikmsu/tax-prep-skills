@@ -1,6 +1,5 @@
 """Tests for agents/lib/withholding.py — federal withholding true-up."""
 import datetime
-import textwrap
 import json
 import sys
 from pathlib import Path
@@ -673,7 +672,7 @@ def test_build_report_ca_none_without_section():
     assert r.ca is None
     md = wh.render_markdown(r)
     assert "California true-up" not in md
-    assert "covered for CA and NY returns" in md
+    assert "covered for CA, NY and NC returns" in md
 
 
 def test_build_report_ca_high_income_90_only():
@@ -746,7 +745,7 @@ def test_read_ca_inputs_scaffold_section_skipped():
     r = wh.build_report(result, _ca_proj_inputs(), None, 2026,
                         datetime.date(2026, 6, 30))
     assert r.ca is None
-    assert "covered for CA and NY returns" in wh.render_markdown(r)
+    assert "covered for CA, NY and NC returns" in wh.render_markdown(r)
 
 
 def test_read_ca_inputs_zero_tax_computed_return_still_counts():
@@ -1602,19 +1601,39 @@ class TestWhatTheReviewPassFoundInTheTrueUp:
         assert (proj._NY_CATCHUP.instalment_fraction
                 is not proj._CA_CATCHUP.instalment_fraction)
 
-    def test_the_status_key_is_the_canonical_one(self):
-        """`.lower()` and `_full_status_key` agree on every status except QSS,
-        which the hand-rolled form left as "qss" and the helper maps to "mfj".
-        Harmless today, and the one that silently misses the day the function
-        grows an MFJ-keyed lookup."""
-        import ast
-        import inspect
-        source = inspect.getsource(wh.build_ny_true_up)
-        assert '_full_status_key(filing_status, "NY estimated tax")' in source
-        # The CODE, not the source text — the comment beside the call explains
-        # the change and contains the very spelling it replaced, so a substring
-        # check over the whole source can never go red.
-        tree = ast.parse(textwrap.dedent(source))
-        called = {n.func.attr for n in ast.walk(tree)
-                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
-        assert "lower" not in called
+    def test_the_status_key_is_the_canonical_one(self, monkeypatch):
+        """QSS must reach New York's requirement calculator as mfj."""
+        seen = []
+        original = wh.compute_ny_required_annual_payment
+
+        def record(tax, prior_tax, prior_agi, status, cache):
+            seen.append(status)
+            return original(tax, prior_tax, prior_agi, status, cache)
+
+        monkeypatch.setattr(wh, "compute_ny_required_annual_payment", record)
+        fixture = TestTheNewYorkTrueUp()
+        result = fixture._result()
+        result["meta"]["filing_status"] = "QSS"
+        fixture._build(result=result)
+        assert seen == ["mfj"]
+
+
+@pytest.mark.parametrize('withholding, estimates, timing_note', [
+    (6000.0, 7000.0, True),
+    (10000.0, 100.0, False),
+])
+def test_ny_estimates_after_a_deadline_do_not_require_a_federal_floor(
+        withholding, estimates, timing_note):
+    """NY's required-payment engine owns its floor; the timing adapter has none.
+
+    At June 30, 6,000 YTD annualizes to 12,099.45; 7,000 estimates cover the
+    18,000 annual requirement but their undated timing still needs a note.
+    10,000 annualizes to 20,165.75, so withholding alone covers that requirement.
+    Both formerly crashed on the shared helper's direct de_minimis lookup.
+    """
+    fixture = TestTheNewYorkTrueUp()
+    report = fixture._build(inputs=fixture._inputs(withholding, estimates))
+    assert report.ny.covered and report.ny.shortfall == 0
+    assert bool(report.ny.voucher_catchup_note) is timing_note
+    assert wh._report_to_dict(report)['ny']['voucher_catchup_note'] \
+        == report.ny.voucher_catchup_note
