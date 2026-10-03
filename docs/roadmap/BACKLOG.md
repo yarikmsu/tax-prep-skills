@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **Z8**, Z6. | — |
+| **Opportunistic** | **Z6** — WA harvest/crypto and WFTC follow-ups. | Z5 is merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -198,7 +198,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 ### Z — state coverage
 
 - **Z6 (P3, S): WA harvest and crypto synergy, the WFTC reminder.** Three small
-  items that only pay off once Z5 exists, and the first is a correctness
+  follow-ups to the shipped Z5 module, and the first is a correctness
   inversion rather than a feature:
   - **`/tax-harvest` WA mode.** LT-loss harvesting has a direct state payoff
     above the deduction; **ST harvesting saves nothing state-side** — the exact
@@ -213,12 +213,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   - **WFTC** is a SEPARATE application (workingfamiliescredit.wa.gov), not a
     return line, and ITIN filers qualify. An EITC-eligible WA resident who never
     applies simply loses it — which is the same population AA1 is about.
-
-- **Z8 (P3, L): IT-203 part-year and nonresident.** Final integration under
-  local review: TY2025 reviewed allocation plan, NYC IT-360.1 and variant-aware
-  payment gates. Other taxable-state returns/credits, MFS, mixed spouse periods,
-  special IT-230 ratios and IT-203 Yonkers tax remain manual/refused. NY forecast
-  true-ups are explicitly skipped. Shipped status follows the green merge.
 
 - **X10 (P3, S): `/tax-retirement`'s three v1.1 deferrals.** Surfaced in PR #20's
   review, intentionally caveated rather than modeled, and homeless since the
@@ -411,13 +405,14 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Y7 | #120 | no Windows coverage — the Windows job runs two modules |
 | Z4 | #219 | TY2025 full-year D-400; other form years and farmer/annualized NC-40 worksheets remain manual |
 | Z5 | #220 | TY2025 excise; separate households, special federal normalization and Z6 harvest pricing remain out of scope |
-| Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states, statutory residency in a second state, or income sourced to another state that taxes it BLOCKS until Z8 (AA7), the City resident tax (line 47a) came later with AA13, a part-year City resident is refused (AA11), and the Yonkers lines 55-56 came later with AA12, for a whole-year Yonkers resident or a nonresident who does not file jointly (special condition Y1 and a joint Form Y-203 are refused); within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
+| Z8 | #221 | TY2025 NY source allocations and NYC IT-360.1; other-state returns/credits, MFS, mixed spouses, IT-230 ratios and IT-203 Yonkers remain manual/refused; NY forecasts are skipped |
+| Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states needs a supported IT-203 plan (#221; AA7), while statutory second residency and other taxable-state returns retain their gates, the City resident tax (line 47a) came later with AA13, a part-year City resident is refused (AA11), and the Yonkers lines 55-56 came later with AA12, for a whole-year Yonkers resident or a nonresident who does not file jointly (special condition Y1 and a joint Form Y-203 are refused); within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
 | Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; the City resident tax, line 47a, came later with AA13, and Yonkers lines 55-56 with AA12 |
 | Z3 | #131 | — |
 | Z7 | #121 | domicile as a GATE is deliberately not modeled |
 | AA1 | #171 | the EIC is DISCLOSED, not computed — out of persona by the 2026-07-12 ruling |
 | AA3 | #172 | the whole-suite count stays pinned (AA8); the hook does not yet time itself (AA9); small leftovers and the timing test's accepted limits (AA10) |
-| AA7 | #174 | the scope it states still BLOCKS part-year, second-state and other-state-income returns until Z8 |
+| AA7 | #174 | IT-201 remains resident-only; IT-203 uses the declared plan in #221, while other taxable-state obligations retain their gates |
 | AA13 | #175 | a part-year City return (IT-360.1, line 50) is refused, not modeled |
 | AA11 | #175 | — |
 | AA12 | #176 | a part-year Yonkers resident (IT-360.1, line 57), special condition Y1 and a joint Form Y-203 are refused, not modeled; the zero default on the line-58 total is AA15 |

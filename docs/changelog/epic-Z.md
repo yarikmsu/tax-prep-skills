@@ -402,7 +402,7 @@ up to the next dollar to cover the target. Authority re-read live:
 
 A dedicated excise regime and fetched block price classified Schedule D LT gains, excluded losses/carryforwards, qualifying deductions and substantiated same-asset credits. WA ordinary brackets stay empty and the shared reader prevents wage taxation even with corrupt legacy data. The result, setup/compute instructions, separate My DOR package and annual April reminder are wired; there are no quarterly wage-tax events. TY2025 only. Separate household allocations and special federal normalization refuse. Z6 harvest repricing remains open under an explicit unpriced banner.
 
-## Z8 — NY IT-203 and NYC IT-360.1
+## Z8 — NY IT-203 and NYC IT-360.1 (#221)
 
 TY2025 part-year/nonresident returns use an explicit NY filing plan and
 reviewed disjoint residence/source allocations. All-source AGI ties to the
