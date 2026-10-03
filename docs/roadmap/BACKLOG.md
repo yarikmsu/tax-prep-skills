@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **Z6** — WA harvest/crypto and WFTC follow-ups. | Z5 is merged. |
+| **Opportunistic** | **X10** — retirement split, HSA eligibility and state conformity. | WA follow-ups are merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -196,23 +196,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   then be a dollar off in either direction.
 
 ### Z — state coverage
-
-- **Z6 (P3, S): WA harvest and crypto synergy, the WFTC reminder.** Three small
-  follow-ups to the shipped Z5 module, and the first is a correctness
-  inversion rather than a feature:
-  - **`/tax-harvest` WA mode.** LT-loss harvesting has a direct state payoff
-    above the deduction; **ST harvesting saves nothing state-side** — the exact
-    INVERSE of the "ordinary rate × Δ taxable income" model every other state
-    uses. The deduction is a cliff: losses only pay once gains exceed it. Today
-    real WA savings are reported as zero under a banner blaming missing data,
-    which is the safe direction and still wrong.
-  - **Crypto.** DOR treats crypto as intangible under a **domicile-at-time-of-sale**
-    test, so `/tax-parse-crypto`'s LT rows are exactly the WA base and its ST and
-    staking rows are irrelevant to it. Mid-year movers need per-transaction
-    domicile, never proration.
-  - **WFTC** is a SEPARATE application (workingfamiliescredit.wa.gov), not a
-    return line, and ITIN filers qualify. An EITC-eligible WA resident who never
-    applies simply loses it — which is the same population AA1 is about.
 
 - **X10 (P3, S): `/tax-retirement`'s three v1.1 deferrals.** Surfaced in PR #20's
   review, intentionally caveated rather than modeled, and homeless since the
@@ -405,6 +388,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Y7 | #120 | no Windows coverage — the Windows job runs two modules |
 | Z4 | #219 | TY2025 full-year D-400; other form years and farmer/annualized NC-40 worksheets remain manual |
 | Z5 | #220 | TY2025 excise; separate households, special federal normalization and Z6 harvest pricing remain out of scope |
+| Z6 | #223 | WA excise harvest pricing, crypto domicile workpapers and separate WFTC reminder. |
 | Z8 | #221 | TY2025 NY source allocations and NYC IT-360.1; other-state returns/credits, MFS, mixed spouses, IT-230 ratios and IT-203 Yonkers remain manual/refused; NY forecasts are skipped |
 | Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states needs a supported IT-203 plan (#221; AA7), while statutory second residency and other taxable-state returns retain their gates, the City resident tax (line 47a) came later with AA13, a part-year City resident is refused (AA11), and the Yonkers lines 55-56 came later with AA12, for a whole-year Yonkers resident or a nonresident who does not file jointly (special condition Y1 and a joint Form Y-203 are refused); within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
 | Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; the City resident tax, line 47a, came later with AA13, and Yonkers lines 55-56 with AA12 |

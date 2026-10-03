@@ -698,3 +698,28 @@ Future sales and wash-sale chains retain their scope limits.
 
 Matching and basis authority: [IRS Publication 550](https://www.irs.gov/publications/p550)
 and [Revenue Ruling 2008-5](https://www.irs.gov/pub/irs-drop/rr-08-05.pdf).
+
+## X10 — retirement split, HSA eligibility and state conformity
+
+The dashboard tracks Roth deferrals within aggregate employee YTD and prices
+only the plan-confirmed pre-tax portion of remaining high-earner catch-up under
+Treas. Reg. §1.414(v)-2(b)(1). Missing split or payroll confirmation retains
+Roth-only savings. The indexed high-earner threshold is fetched for every
+covered year; the former annual literal/default is removed.
+
+HSA capacity requires confirmed first-of-month eligible months and December
+eligibility, or a twelve-month tier schedule. Tier changes and catch-ups are
+prorated; a separately confirmed last-month election takes the greater limit
+and carries the following-year testing-period reminder. A joint spouse's
+separate catch-up uses its own eligibility inputs without doubling the family
+base. Previously eligible coverage remains visible even if current coverage
+is none. Missing eligibility blocks capacity recommendations.
+
+A year/source-bound per-account matrix covers all 50 states and DC. Its law
+values are fetched on demand from current-year primary guidance; it contains
+no implicit conformity findings. Absent, stale, unpinned and partial treatment
+shows zero state savings with an unverified note. False and true are explicit,
+independent account findings. The setter binds complete rows to the cache year;
+partial edits invalidate that binding. Historical exception sets no longer make
+absence read as a deduction. See the retirement-inputs design spec for sources
+and scope; synthetic matrix tests are arithmetic examples, not legal findings.

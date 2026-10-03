@@ -5945,23 +5945,23 @@ class TestTheNewYorkExtensionAndConformityGaps:
         body = skill_text("tax-extend")
         assert "10%" in body and "MCTMT" in body
 
-    def test_the_retirement_conformity_gap_is_named_rather_than_silent(self):
-        """Absence from the three non-conforming sets makes the dashboard
-        CLAIM state savings — the over-stating-a-BENEFIT direction — so it is
-        not the safe default an absent figure usually is."""
-        source = (self.REPO / "agents" / "lib"
-                  / "retirement_dashboard.py").read_text()
-        assert "NEW YORK IS IN NONE OF THE THREE SETS" in source
-        assert "has NOT been researched here" in source
-        assert "IT-225-I" in source
-
-    def test_new_york_is_still_absent_from_every_conformity_set(self):
-        """The note records a gap; it must not have quietly become a claim."""
+    def test_unknown_state_conformity_never_claims_a_saving(self):
+        """X10: replace assumed conformity with a year/source-bound matrix."""
         from agents.lib import retirement_dashboard as rd
-        for name in ("_HSA_NON_CONFORMING_STATES",
-                     "_RETIREMENT_DEFERRAL_NONCONFORMING_STATES",
-                     "_IRA_DEDUCTION_NONCONFORMING_STATES"):
-            assert "NY" not in getattr(rd, name), name
+        from agents.lib.tax_law_fetcher import create_empty_tax_law
+        law = create_empty_tax_law(2025)
+        for account in ("employee_401k", "traditional_ira", "hsa"):
+            conforming, note = rd._retirement_state_treatment(law, "NY", 2025, account)
+            assert conforming is False
+            assert "unverified" in note and "$0" in note
+
+    def test_the_matrix_includes_every_state_without_implicit_law(self):
+        from agents.lib.tax_law_fetcher import create_retirement_conformity_template
+        from agents.lib.capabilities import _USPS_STATES, _TERRITORIES
+        matrix = create_retirement_conformity_template()
+        assert set(matrix) == _USPS_STATES - _TERRITORIES
+        assert len(matrix) == 51
+        assert all(value is None for row in matrix.values() for value in row.values())
 
     def test_the_cache_doc_carries_new_yorks_keying_gotchas(self):
         """The freshness auditor is told to work from the schema, and

@@ -51,9 +51,12 @@
     "ordinary_dividends": null,
     "qualified_dividends": null
   },
-  "estimated_payments_made": { "federal": 0, "state": 0 },
+  "estimated_payments_made": {
+    "federal": 0,
+    "state": 0
+  },
   "retirement_ytd": {
-    "_comment": "Year-to-date retirement contributions for /tax-retirement dashboard. hsa_coverage is 'none'|'self_only'|'family'. plan_allows_after_tax_401k gates Mega Backdoor emission. plan_offers_roth_401k (default true) is load-bearing only for the §603 high-earner case: if a high earner's catch-up MUST be Roth but the plan has no designated Roth source, set this false — affected high earners then cannot make catch-up at all (the dashboard shows base-only, no phantom catch-up). prior_year_fica_wages drives SECURE 2.0 §603 mandatory-Roth-catchup detection (TY2026+): if > $150k indexed, 401(k) catch-up MUST be Roth — supply the FICA wages your PLAN uses for its Roth-catch-up determination per IRC §414(v)(7)(A) (generally the sponsoring employer's, though related common-law employers in the same controlled group may be aggregated under the final regs — confirm with the plan administrator; not your total W-2 across unrelated employers); set to null when unknown to receive a warning rather than silently overstate savings. taxable_compensation caps IRA pool per IRC §219(b)(1)(A) — a retiree with $0 wages has $0 IRA capacity regardless of statutory limit; null triggers a warning. spouse_taxable_compensation enables the §219(c) MFJ spousal IRA exception (non-working spouse can use working spouse's compensation when filing jointly).",
+    "_comment": "Year-to-date retirement contributions for /tax-retirement dashboard. hsa_coverage is 'none'|'self_only'|'family'. plan_allows_after_tax_401k gates Mega Backdoor emission. plan_offers_roth_401k (default true) is load-bearing only for the §603 high-earner case: if a high earner's catch-up MUST be Roth but the plan has no designated Roth source, set this false — affected high earners then cannot make catch-up at all (the dashboard shows base-only, no phantom catch-up). prior_year_fica_wages drives SECURE 2.0 §603 mandatory-Roth-catchup detection (TY2026+): if above the year's fetched indexed threshold, 401(k) catch-up MUST be Roth — supply the FICA wages your PLAN uses for its Roth-catch-up determination per IRC §414(v)(7)(A) (generally the sponsoring employer's, though related common-law employers in the same controlled group may be aggregated under the final regs — confirm with the plan administrator; not your total W-2 across unrelated employers); set to null when unknown to receive a warning rather than silently overstate savings. taxable_compensation caps IRA pool per IRC §219(b)(1)(A) — a retiree with $0 wages has $0 IRA capacity regardless of statutory limit; null triggers a warning. spouse_taxable_compensation enables the §219(c) MFJ spousal IRA exception (non-working spouse can use working spouse's compensation when filing jointly). Roth YTD is part of employee_401k, not additional. Confirm payroll permits pre-tax catch-up after Roth requirement is met. HSA requires eligible_months and december_eligible for unchanged tier, or twelve first-of-month monthly_coverage entries for tier changes; last-month election needs December eligibility and testing-period acknowledgement. A joint spouse catch-up requires independent spouse eligibility inputs.",
     "employee_401k": 0,
     "employer_match": 0,
     "ira_traditional": 0,
@@ -66,7 +69,19 @@
     "plan_offers_roth_401k": true,
     "prior_year_fica_wages": null,
     "taxable_compensation": null,
-    "spouse_taxable_compensation": null
+    "spouse_taxable_compensation": null,
+    "roth_401k_ytd": null,
+    "plan_allows_pretax_catchup_after_roth": false,
+    "hsa_eligible_months": null,
+    "hsa_december_eligible": null,
+    "hsa_monthly_coverage": null,
+    "hsa_last_month_rule": false,
+    "hsa_testing_period_acknowledged": false,
+    "hsa_spouse_eligible_months": null,
+    "hsa_spouse_december_eligible": null,
+    "hsa_spouse_monthly_coverage": null,
+    "hsa_spouse_last_month_rule": false,
+    "hsa_spouse_testing_period_acknowledged": false
   },
   "_paystub_parser_hook": "Future: a /tax-parse-paystub feature may populate the ytd block automatically. Keep ytd as the stable interface."
 }

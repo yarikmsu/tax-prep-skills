@@ -38,7 +38,7 @@ the enacting statute; state figures come from the state tax authority.
 | `schedule_1a` (tips/overtime/car-loan/senior caps + phase-out starts) | OBBBA §§224/225/70103/70203 + annual indexing | **FAIL-CLOSED**: a nonzero Schedule 1-A input with this unfetched hard-errors |
 | `charitable_non_itemizer` `{amount, joint_amount}` | §170(p) (OBBBA §70424) | **FAIL-CLOSED** on nonzero cash gift; $1,000/$2,000-MFJ |
 | `qbi_minimum` `{income_threshold, amount}` | §70105 | loud-degrade (taxpayer-favorable) — fetch so the floor applies |
-| `retirement_401k.secure_2_0_high_earner_threshold` | IRC §414(v)(7)(A) indexed | **FAIL-CLOSED for the year AFTER the built-in default's year** — the $150K built-in is TY2026-only; TY2027+ MUST fetch |
+| `retirement_401k.secure_2_0_high_earner_threshold` | IRC §414(v)(7)(A) indexed | **FAIL-CLOSED for every covered year** — X10 removed the annual default; fetch the indexed threshold whenever the TY2026+ catch-up rule is evaluated |
 | `underpayment_rates` (§6621 quarterly) | IRS quarterly interest-rate news releases | see the two-window note below |
 
 ### The `underpayment_rates` two-window rule (M3)

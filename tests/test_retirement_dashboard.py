@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import retirement_dashboard as rd
+from agents.lib.tax_law_fetcher import create_retirement_conformity_template
 
 
 # ---------------------------------------------------------------------------
@@ -28,9 +29,16 @@ def _tax_law_2026():
     return {
         "tax_year": 2026,
         "_meta": {"tax_year": 2026, "fetched": "2026-01-01"},
+        # Synthetic account treatments exercise pricing, not current tax law.
+        "retirement_conformity": {code: dict(tax_year=2026,
+            employee_401k=code != "PA", traditional_ira=code not in {"PA", "NJ", "MA"},
+            hsa=code not in {"CA", "NJ"}) for code in create_retirement_conformity_template()},
+        "_sources": {f"retirement_conformity.{code}": "https://www.irs.gov/"
+                     for code in create_retirement_conformity_template()},
         "federal": {
             "retirement_401k": {
                 "elective_deferral": 23500,
+                "secure_2_0_high_earner_threshold": 150000,
                 "catch_up_50_plus": 7500,
                 "catch_up_60_63": 11250,
                 "total_annual_limit": 70000,
@@ -85,10 +93,16 @@ def _inputs(**overrides):
             "hsa_employee": 0,
             "hsa_employer": 0,
             "hsa_coverage": "none",
+            "hsa_eligible_months": 12,
+            "hsa_december_eligible": True,
+            "hsa_spouse_eligible_months": 12,
+            "hsa_spouse_december_eligible": True,
             "after_tax_401k": 0,
             "plan_allows_after_tax_401k": False,
         },
     }
+    if overrides.get("hsa_monthly_coverage") is not None:
+        base["retirement_ytd"].update(hsa_eligible_months=None,hsa_december_eligible=None)
     base["retirement_ytd"].update(overrides)
     return base
 
@@ -1771,24 +1785,14 @@ def test_hsa_self_only_ignores_spouse_55_flag():
     assert hsa.annual_limit == 5300
 
 
-def test_hsa_note_caveats_partial_year_eligibility():
-    """The HSA limit assumes full-year HDHP coverage; v1 doesn't model the
-    Pub 969 eligible-months proration. The HSA row must carry a caveat so a
-    mid-year HDHP start isn't shown ~2x the legal capacity without warning,
-    and so the last-month-rule exception is surfaced (Codex P2)."""
-    profile = _profile()
-    inputs = _inputs(hsa_coverage="self_only")
-    law = _tax_law_2026()
-    report = rd.build_dashboard(
-        profile, inputs, law,
-        marginal_fed_rate=0.24, marginal_state_rate=0.0,
-        modified_agi=80000,
-    )
+def test_hsa_limit_prices_confirmed_partial_year_eligibility():
+    # Pub 969 monthly worksheet: six self-only eligible months × 4300/12.
+    report = rd.build_dashboard(_profile(),
+        _inputs(hsa_coverage="self_only", hsa_eligible_months=6), _tax_law_2026(),
+        marginal_fed_rate=.24, marginal_state_rate=0, modified_agi=80000)
     hsa = next(a for a in report.accounts if a.name == "HSA")
-    note = hsa.note.lower()
-    assert "full-year" in note
-    assert "pub 969" in note and "prorate" in note
-    assert "last-month rule" in note
+    assert hsa.annual_limit == 2150
+    assert "first-of-month eligibility" in hsa.note
 
 
 def test_hsa_partial_year_caveat_absent_when_no_coverage():
@@ -3152,7 +3156,7 @@ def test_catchup_roth_note_caveats_prior_roth_deferrals():
         if a.name == "401(k) catch-up (Roth required)"
     )
     assert "1.414(v)-2(b)(1)" in catchup.note
-    assert "UNDERSTATED" in catchup.note
+    assert "UNDERSTATE" in catchup.note
 
 
 def test_pa_401k_and_ira_show_zero_state_savings():
@@ -3176,7 +3180,7 @@ def test_pa_401k_and_ira_show_zero_state_savings():
     assert k401.marginal_state_saved == 0.0
     assert trad.marginal_state_saved == 0.0
     assert k401.marginal_fed_saved > 0  # federal benefit still applies
-    assert "PA taxes" in k401.note
+    assert "State PA does not allow" in k401.note
 
 
 def test_conforming_state_still_shows_401k_state_savings():
@@ -3219,7 +3223,7 @@ def test_nj_ma_disallow_ira_deduction_but_allow_401k_state_savings():
         trad = next(a for a in report.accounts if a.name == "Traditional IRA")
         assert k401.marginal_state_saved > 0, state  # 401(k) deferral allowed
         assert trad.marginal_state_saved == 0.0, state  # IRA deduction disallowed
-        assert "does not allow a state deduction for" in trad.note
+        assert "does not allow the federal treatment of Traditional IRA deduction" in trad.note
 
 
 def test_401k_missing_wage_warning_caveats_plan_sponsor():
@@ -3612,7 +3616,8 @@ def test_high_earner_threshold_post_2026_requires_indexed_override():
     law = _tax_law_2026()
     law["tax_year"] = 2027
     law["_meta"]["tax_year"] = 2027
-    # no secure_2_0_high_earner_threshold in the cache
+    del law["federal"]["retirement_401k"]["secure_2_0_high_earner_threshold"]
+    # The indexed value is required for every covered year.
     with pytest.raises(
         rd.RetirementError, match="secure_2_0_high_earner_threshold"
     ):
@@ -3635,7 +3640,8 @@ def test_under_50_post_2026_no_threshold_error_when_no_catchup():
     law = _tax_law_2026()
     law["tax_year"] = 2027
     law["_meta"]["tax_year"] = 2027
-    # no secure_2_0_high_earner_threshold in the cache — must NOT error here
+    del law["federal"]["retirement_401k"]["secure_2_0_high_earner_threshold"]
+    # The indexed value is required for every covered year. — must NOT error here
     report = rd.build_dashboard(
         profile, inputs, law,
         marginal_fed_rate=0.24, marginal_state_rate=0.0,
@@ -4267,3 +4273,166 @@ def test_the_state_domain_is_the_shared_usps_set_not_a_local_copy():
     from agents.lib.capabilities import _USPS_STATES as CANONICAL
     assert rd._USPS_STATES is CANONICAL
     assert {"DC", "PR", "GU", "VI", "AS", "MP"} <= rd._USPS_STATES
+
+
+@pytest.mark.parametrize('roth,already_catch,pretax', [
+    (0,0,0), (2500,0,2500), (7500,0,7500), (10000,0,7500),
+    (7500,3000,4500), (3000,3000,0),
+])
+def test_prior_roth_prices_only_remaining_permitted_pretax_catchup(roth, already_catch, pretax):
+    # §1.414(v)-2(b)(1): remaining C-U minus mandatory Roth max(0,C-R).
+    p = _profile(age_50_plus_primary=True)
+    y = _inputs(employee_401k=23500+already_catch, roth_401k_ytd=roth,
+        prior_year_fica_wages=200000, plan_allows_pretax_catchup_after_roth=True)
+    report = rd.build_dashboard(p,y,_tax_law_2026(),marginal_fed_rate=.24,
+                               marginal_state_rate=.05,modified_agi=100000)
+    catch = next(a for a in report.accounts if 'catch-up' in a.name)
+    assert catch.remaining == 7500-already_catch
+    assert catch.marginal_fed_saved == pretax*.24
+    assert catch.marginal_state_saved == pretax*.05
+    assert catch.marginal_eligible_dollars == pretax
+
+
+def test_roth_split_requires_plan_permission_and_valid_aggregate():
+    p = _profile(age_50_plus_primary=True)
+    y = _inputs(employee_401k=23500,roth_401k_ytd=7500,prior_year_fica_wages=200000)
+    report = rd.build_dashboard(p,y,_tax_law_2026(),marginal_fed_rate=.24,
+                               marginal_state_rate=0,modified_agi=100000)
+    catch = next(a for a in report.accounts if 'catch-up' in a.name)
+    assert catch.marginal_fed_saved == 0
+    for bad in (23501,True,-1,float('nan'),float('inf')):
+        y['retirement_ytd']['roth_401k_ytd'] = bad
+        with pytest.raises(rd.RetirementError):
+            rd.build_dashboard(p,y,_tax_law_2026(),marginal_fed_rate=.24,
+                               marginal_state_rate=0,modified_agi=100000)
+
+
+@pytest.mark.parametrize('monthly,last,expected', [
+    (['none']*6+['self_only']*6,False,2150),
+    (['none']*6+['self_only']*6,True,4300),
+    (['family']*6+['self_only']*6,False,6425),
+    (['family']*6+['self_only']*6,True,6425),  # Greater monthly limit retained.
+    (['self_only']*6+['family']*6,True,8550),
+])
+def test_hsa_monthly_tiers_and_last_month_greater_limit(monthly,last,expected):
+    # Pub 969 monthly worksheet, with synthetic 4300 self / 8550 family limits.
+    y = _inputs(hsa_coverage='family',hsa_monthly_coverage=monthly,
+                hsa_last_month_rule=last,hsa_testing_period_acknowledged=last)
+    report = rd.build_dashboard(_profile(),y,_tax_law_2026(),marginal_fed_rate=.24,
+                               marginal_state_rate=0,modified_agi=100000)
+    hsa = next(a for a in report.accounts if a.name == 'HSA')
+    assert hsa.annual_limit == expected
+    if last:
+        assert 'following tax year' in hsa.note
+
+
+def test_hsa_catchups_use_independent_spouse_months():
+    p = _profile(age_55_plus_primary=True,age_55_plus_spouse=True)
+    p['filing_status'] = 'MFJ'
+    y = _inputs(hsa_coverage='family',hsa_eligible_months=6,
+                hsa_spouse_eligible_months=3)
+    report = rd.build_dashboard(p,y,_tax_law_2026(),marginal_fed_rate=.24,
+                               marginal_state_rate=0,modified_agi=100000)
+    hsa = next(a for a in report.accounts if a.name == 'HSA')
+    assert hsa.annual_limit == 5025  # 8550/2 + 1000/2 + 1000/4; no second base.
+    assert 'SECOND HSA' in hsa.note
+
+
+@pytest.mark.parametrize('kw', [
+    dict(hsa_eligible_months=None),dict(hsa_eligible_months=True),
+    dict(hsa_eligible_months=13),dict(hsa_eligible_months=0),
+    dict(hsa_eligible_months=12,hsa_december_eligible=False),
+    dict(hsa_last_month_rule=True),
+    dict(hsa_monthly_coverage=['self_only']*11),
+    dict(hsa_monthly_coverage=['none']*12,hsa_last_month_rule=True,
+         hsa_testing_period_acknowledged=True),
+])
+def test_hsa_missing_or_contradictory_eligibility_refuses(kw):
+    y = _inputs(hsa_coverage='self_only',**kw)
+    with pytest.raises(rd.RetirementError):
+        rd.build_dashboard(_profile(),y,_tax_law_2026(),marginal_fed_rate=.24,
+                           marginal_state_rate=0,modified_agi=100000)
+
+
+@pytest.mark.parametrize('code', sorted(create_retirement_conformity_template()))
+def test_each_jurisdiction_requires_explicit_account_treatment(code):
+    # Matrix values are synthetic test inputs; this makes no legal finding.
+    law = _tax_law_2026()
+    for account in ('employee_401k','traditional_ira','hsa'):
+        row = law['retirement_conformity'][code]
+        row[account] = True
+        assert rd._retirement_state_treatment(law,code,2026,account) == (True,'')
+        row[account] = False
+        assert rd._retirement_state_treatment(law,code,2026,account)[0] is False
+        row[account] = None
+        ok,note = rd._retirement_state_treatment(law,code,2026,account)
+        assert ok is False and 'unverified' in note
+
+
+@pytest.mark.parametrize('bad', ['year','source','missing','string','nan'])
+def test_unverified_matrix_cannot_claim_state_savings(bad):
+    p = _profile();p['address']['state']='NY'
+    law = _tax_law_2026()
+    row = law['retirement_conformity']['NY']
+    if bad == 'year': row['tax_year']=2025
+    elif bad == 'source': law['_sources']['retirement_conformity.NY']='https://example.com/'
+    elif bad == 'missing': del law['retirement_conformity']['NY']
+    elif bad == 'string': row['employee_401k']='true'
+    else: row['employee_401k']=float('nan')
+    kwargs=dict(marginal_fed_rate=.24,marginal_state_rate=.06,modified_agi=100000)
+    if bad in {'string','nan'}:
+        with pytest.raises(rd.RetirementError): rd.build_dashboard(p,_inputs(),law,**kwargs)
+    else:
+        report=rd.build_dashboard(p,_inputs(),law,**kwargs)
+        assert report.total_potential_state_saved == 0
+        assert 'unverified' in rd.render_markdown(report)
+
+
+def test_hsa_previous_coverage_is_not_hidden_by_current_none():
+    # First six months self-only, no December eligibility: 4300 × 6/12.
+    y = _inputs(hsa_coverage='none',hsa_monthly_coverage=['self_only']*6+['none']*6)
+    report = rd.build_dashboard(_profile(),y,_tax_law_2026(),marginal_fed_rate=.24,
+                               marginal_state_rate=0,modified_agi=100000)
+    assert next(a for a in report.accounts if a.name=='HSA').annual_limit == 2150
+
+
+def test_covered_year_cannot_use_an_annual_default_threshold():
+    law = _tax_law_2026()
+    del law['federal']['retirement_401k']['secure_2_0_high_earner_threshold']
+    with pytest.raises(rd.RetirementError,match='secure_2_0_high_earner_threshold'):
+        rd.build_dashboard(_profile(age_50_plus_primary=True),_inputs(),law,
+            marginal_fed_rate=.24,marginal_state_rate=0,modified_agi=100000)
+
+
+def test_conflicting_hsa_answers_and_invalid_prior_catchup_refuse():
+    with pytest.raises(rd.RetirementError,match='conflicts'):
+        rd.build_dashboard(_profile(),_inputs(hsa_coverage='self_only',
+            hsa_monthly_coverage=['none']*6+['self_only']*6,hsa_eligible_months=12),
+            _tax_law_2026(),marginal_fed_rate=.24,marginal_state_rate=0,modified_agi=100000)
+    with pytest.raises(rd.RetirementError,match='already-used mandatory catch-up'):
+        rd.build_dashboard(_profile(age_50_plus_primary=True),
+            _inputs(employee_401k=26500,roth_401k_ytd=2500,prior_year_fica_wages=200000,
+                    plan_allows_pretax_catchup_after_roth=True),_tax_law_2026(),
+            marginal_fed_rate=.24,marginal_state_rate=0,modified_agi=100000)
+
+
+def test_spouse_catchup_after_family_coverage_ended_uses_own_eligibility():
+    # Six family months base (4275), three spouse catch-up months (250).
+    p=_profile(age_55_plus_spouse=True);p['filing_status']='MFJ'
+    y=_inputs(hsa_coverage='none',hsa_monthly_coverage=['family']*6+['none']*6,
+              hsa_spouse_eligible_months=3,hsa_spouse_december_eligible=False)
+    report=rd.build_dashboard(p,y,_tax_law_2026(),marginal_fed_rate=.24,
+                             marginal_state_rate=0,modified_agi=100000)
+    assert next(a for a in report.accounts if a.name=='HSA').annual_limit == 4525
+
+
+def test_unknown_residency_cannot_claim_a_forged_conformity_entry():
+    law=_tax_law_2026()
+    law['retirement_conformity']['']=dict(tax_year=2026,employee_401k=True,
+        traditional_ira=True,hsa=True)
+    law['_sources']['retirement_conformity.']='https://www.irs.gov/'
+    p=_profile();p['address']['state']=None
+    report=rd.build_dashboard(p,_inputs(),law,marginal_fed_rate=.24,
+                             marginal_state_rate=.05,modified_agi=100000)
+    assert report.total_potential_state_saved == 0
+    assert 'no supported jurisdiction' in rd.render_markdown(report)

@@ -3039,3 +3039,32 @@ class TestTheNorthCarolinaChildTableIsWhole:
         from agents.lib.tax_law_fetcher import _rate_year_problems
         assert "integer year" in _rate_year_problems(
             {"state": {"rate_tax_year": 2025.0}}, 2025)[0]
+
+
+def test_conformity_rows_are_year_bound_source_pinned_and_partial_edits_invalidate(tmp_path):
+    _fresh_cache(tmp_path)
+    row = dict(tax_year=2026, employee_401k=True, traditional_ira=False, hsa=None)
+    _set(tmp_path, 'retirement_conformity.CA', row, source='https://www.ftb.ca.gov/')
+    law = _read(tmp_path)
+    assert law['_sources']['retirement_conformity.CA'] == 'https://www.ftb.ca.gov/'
+    assert 'retirement_conformity.CA' not in verify_source_pinning(law)['unpinned']
+    _set(tmp_path, 'retirement_conformity.CA.employee_401k', False,
+         source='https://www.ftb.ca.gov/')
+    assert _read(tmp_path)['retirement_conformity']['CA']['tax_year'] is None
+    assert any('retirement_conformity.CA.tax_year' in x
+               for x in check_freshness(2026,str(tmp_path))['null_fields'])
+    with pytest.raises(TaxLawSetError):
+        _set(tmp_path, 'retirement_conformity.CA.tax_year', 2026)
+    _set(tmp_path, 'retirement_conformity.CA', row, source='https://www.ftb.ca.gov/')
+    assert _read(tmp_path)['retirement_conformity']['CA']['tax_year'] == 2026
+
+
+@pytest.mark.parametrize('bad', [dict(tax_year=2025,employee_401k=True,traditional_ira=False,hsa=None),
+    dict(tax_year=2026,employee_401k='true',traditional_ira=False,hsa=None),
+    dict(tax_year=2026,employee_401k=1,traditional_ira=False,hsa=None)])
+def test_invalid_conformity_row_refuses_without_writing(tmp_path,bad):
+    _fresh_cache(tmp_path)
+    before = _read(tmp_path)
+    with pytest.raises(TaxLawSetError):
+        _set(tmp_path,'retirement_conformity.CA',bad)
+    assert _read(tmp_path) == before

@@ -46,7 +46,7 @@ filing a return for. Same logic applies to `/tax-project` and
   guess. (For Single / MFJ / HoH / QSS the flag is unused and may be
   absent.)
 - `projection_inputs.json` has a `retirement_ytd` block (see template) with
-  YTD contributions and HSA coverage type
+  YTD contributions and confirmed HSA first-of-month eligibility
 - `tax_law_<year>.json` has `federal.retirement_401k`, `federal.ira_limits`,
   `federal.hsa_limits` populated (fetched by `/tax-setup`)
 
@@ -120,6 +120,16 @@ Confirm with the user (or read from profile):
 - Does the 401(k) plan permit after-tax contributions + in-service
   rollover? (drives `retirement_ytd.plan_allows_after_tax_401k` — gates
   Mega Backdoor emission)
+- Collect the aggregate and designated Roth employee YTD amounts from the
+  sponsoring plan, plus its permission for pre-tax catch-up after satisfying
+  the Roth requirement. Collect HSA first-of-month eligibility and December
+  coverage (or a monthly tier schedule), and the separate spouse catch-up
+  inputs where applicable. Explain the last-month testing period before
+  recording its election and acknowledgement. Use the detailed schema below;
+  missing required eligibility is unanswered, never a full-year default.
+- Fetch and source-pin the current-year per-account state conformity row below
+  before quoting state savings. The federal dashboard may continue with a
+  visible unverified state note when that research cannot be completed.
 
 ### 3. Run the dashboard
 
@@ -153,7 +163,7 @@ Print the rendered markdown. Then summarize for the user:
 | 401(k) employee deferral | `retirement_401k.elective_deferral` + catch-ups | pre-tax (fed + state) |
 | Traditional IRA | `ira_limits.contribution_limit` + 50+ catch-up; deductibility per MAGI + employer-plan-coverage | pre-tax × deductible-fraction |
 | Roth IRA | shared IRA limit × Roth-MAGI fraction | $0 current-year |
-| HSA | `hsa_limits.self_only` or `family` + 55+ catch-up | pre-tax (fed + state, except CA / NJ) |
+| HSA | fetched tier limits and catch-ups × eligible months; confirmed last-month election | federal + verified per-account state savings |
 | Mega Backdoor | `total_annual_limit` − non-catchup portion of employee deferral − employer match (per IRC §415(c) / §414(v)) | $0 current-year (tax-free growth not modeled) |
 
 ## Caveats (v1)
@@ -169,9 +179,9 @@ Print the rendered markdown. Then summarize for the user:
   $0-$10K phase-out window for both Traditional IRA deduction (when
   covered) and Roth IRA contribution; lived-apart uses Single's wider
   windows. The flag is load-bearing — hard-error if missing for MFS.
-- **HSA non-conforming states are CA / NJ only** — Alabama was historically non-conforming but Ala. Code §40-18-15.6 (effective 2018-01-01) allows the deduction; other states (e.g.
-  TN, WI) have had non-conformity in the past; if the user lives in a
-  questionable state, cross-check with state DOR.
+- **State conformity is per account and per year** — fetch the current DOR
+  treatment in the matrix above. No state deduction is assumed from a state's
+  general federal conformity or its absence from a historical exception list.
 - **No employer-match-vesting math** — `employer_match` is treated as
   contributed dollars; the user should verify whether matched dollars are
   vested before counting on them.
@@ -183,12 +193,24 @@ Print the rendered markdown. Then summarize for the user:
 ```json
 "retirement_ytd": {
   "employee_401k": 0,
+  "roth_401k_ytd": null,
+  "plan_allows_pretax_catchup_after_roth": false,
   "employer_match": 0,
   "ira_traditional": 0,
   "ira_roth": 0,
   "hsa_employee": 0,
   "hsa_employer": 0,
   "hsa_coverage": "none",
+  "hsa_eligible_months": null,
+  "hsa_december_eligible": null,
+  "hsa_monthly_coverage": null,
+  "hsa_last_month_rule": false,
+  "hsa_testing_period_acknowledged": false,
+  "hsa_spouse_eligible_months": null,
+  "hsa_spouse_december_eligible": null,
+  "hsa_spouse_monthly_coverage": null,
+  "hsa_spouse_last_month_rule": false,
+  "hsa_spouse_testing_period_acknowledged": false,
   "after_tax_401k": 0,
   "plan_allows_after_tax_401k": false,
   "prior_year_fica_wages": null,
@@ -200,6 +222,48 @@ Print the rendered markdown. Then summarize for the user:
 `hsa_coverage` is one of `none` / `self_only` / `family`. All numeric fields
 are strictly validated (truthy strings, negatives, and `bool` for numeric
 fields all hard-error).
+
+For HSA capacity, collect **eligible months on the first of the month** (integer
+0–12) and explicit December eligibility for an unchanged tier. For tier changes,
+instead supply `hsa_monthly_coverage`, twelve January–December values from
+`none|self_only|family` reflecting eligibility, including Medicare/disqualifying
+coverage. No full-year assumption is made. If electing the last-month rule,
+confirm December eligibility and set `hsa_testing_period_acknowledged: true`
+after explaining eligibility must continue through the following tax year;
+failure requires income inclusion and additional tax. The engine uses the
+greater of the monthly calculation and December's annual limit. A joint
+spouse's separate catch-up needs independently confirmed spouse eligibility
+fields and its own last-month election/acknowledgement; contribute it to the
+spouse's separate HSA. No shared family base is counted twice.
+
+`roth_401k_ytd` is included in `employee_401k`, never added to it. Obtain it from
+the sponsoring plan's records. Confirm with payroll that the plan permits
+pre-tax catch-up once prior designated Roth deferrals meet the catch-up
+requirement, then set `plan_allows_pretax_catchup_after_roth: true`. The final
+regulations generally apply from 2027 and allow early application; plan terms
+may still require Roth. The dashboard prices only the legally available,
+plan-confirmed pre-tax portion of remaining catch-up. Without either input,
+it retains conservative Roth-only savings with a named caveat.
+
+State savings require an explicit current-year per-account conformity entry.
+The fetched `tax_law.retirement_conformity` matrix covers all states plus DC;
+null/absent never means conforming. Fetch the resident state's current-year
+DOR return instructions for elective 401(k) deferrals, Traditional IRA and HSA
+contributions. Only set true when the federal treatment applies to this
+taxpayer's account; partial, capped or unresolved state treatment stays null
+with zero state savings and a visible unverified note. False means the federal
+treatment is unavailable. Pin the source and year with the normal setter:
+
+```bash
+sh agents/lib/run.sh -m agents.lib.tax_law_fetcher set retirement_conformity.{STATE} '{"tax_year": {year}, "employee_401k": true, "traditional_ira": false, "hsa": null}' --source {verified_DOR_URL} --year {year}
+```
+
+The example is a shape, not a state's legal treatment: replace every value
+from live current-year primary guidance, and confirm the page names the year.
+If live access is unavailable, stop the fetch and ask the user to paste the
+current guidance with its source URL; the federal dashboard may continue with
+state savings visibly unpriced. Keep public-employee 414(h) pick-ups separate
+from elective deferrals; their NY add-back does not establish generic conformity.
 
 `prior_year_fica_wages` (TY2026+) drives **SECURE 2.0 §603 mandatory Roth
 catch-up detection**. Per IRC §414(v)(7)(A), participants whose prior-year

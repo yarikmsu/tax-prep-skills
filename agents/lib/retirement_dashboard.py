@@ -65,64 +65,9 @@ class RetirementError(Exception):
     """Raised when /tax-retirement cannot safely proceed."""
 
 
-# States that do NOT conform to federal HSA treatment (HSA contributions
-# remain state-taxable). Each entry is per-state-citation-verified — adding
-# or removing a state requires citing the specific tax law / DOR guidance.
-#
-#   CA — does NOT conform. R&TC §17215.4 limits HSA contribution deduction
-#        to itemized-deduction context only; CA does not allow the above-
-#        the-line deduction available federally. Contributions and earnings
-#        are state-taxable.
-#   NJ — does NOT conform. NJ has not adopted IRC §223; HSA contributions
-#        and earnings are state-taxable.
-#
-# Previously included AL on the basis of general guidance, but Ala. Code
-# §40-18-15.6(b) (effective 2018-01-01) allows AL residents to deduct HSA
-# contributions aligned with federal §223 limits. AL DOES conform —
-# removed per Codex review.
-_HSA_NON_CONFORMING_STATES = {"CA", "NJ"}
-
-# State retirement-contribution conformity is PER-ACCOUNT: 401(k)/403(b)
-# elective-deferral treatment and Traditional IRA deduction treatment differ
-# by state, so they need SEPARATE sets (a single set conflated them — Codex
-# PR #20).
-#
-# States that tax pre-tax 401(k)/403(b) ELECTIVE DEFERRALS (no state
-# deduction → $0 state savings on the 401(k) row). PA is the established
-# case: the PA PIT taxes 401(k)/403(b) deferrals when contributed (PA DOR —
-# "not excludable from the employee's Pennsylvania income") and exempts
-# qualified distributions (contribution-taxed, not deduction-taxed — the
-# inverse of federal).
-_RETIREMENT_DEFERRAL_NONCONFORMING_STATES = {"PA"}
-# States that do NOT allow a state deduction for TRADITIONAL IRA
-# contributions (no state savings on the Traditional IRA row). PA (taxes all
-# retirement contributions), NJ (no IRA deduction — tracks basis so already-
-# taxed contributions aren't re-taxed at distribution), MA (no IRA
-# deduction — same basis tracking). NJ/MA allow the 401(k) deferral
-# exclusion, so they are NOT in the 401(k) set above — the per-account
-# distinction is the whole point. v1 models these three; other states'
-# narrower nuances are caveated, since the dashboard's state savings is a
-# simplified federal-piggyback estimate.
-_IRA_DEDUCTION_NONCONFORMING_STATES = {"PA", "NJ", "MA"}
-
-# NEW YORK IS IN NONE OF THE THREE SETS, AND THAT IS NOT A CONFORMITY FINDING.
-# Absence from these sets makes the dashboard CLAIM state savings, which is the
-# over-stating-a-BENEFIT direction AGENTS.md §4 calls a hard error — so it is
-# not a safe default the way an absent figure usually is. New York's treatment
-# of HSA contributions, 401(k)/403(b) elective deferrals and the Traditional
-# IRA deduction has NOT been researched here; the sources to read are Form
-# IT-225-I's addition codes and the IT-201 instructions for lines 20-24. The
-# Z-epic spec carries this as an open row rather than a guess.
-#
-# One New York item IS established, from the state module's own fetched block,
-# and it is not one of these rows: PUBLIC-EMPLOYEE 414(h) retirement
-# contributions and IRC §125 cafeteria-plan amounts for NYS and NYC public
-# employees are ADDED BACK on IT-201 (line 21 and an IT-225 code). For those
-# taxpayers a contribution that is pre-tax federally does NOT reduce New York
-# tax. The 414(h) pension pick-up is not a row this dashboard models at all —
-# it is neither an elective deferral nor an IRA — so nothing here over-states
-# it today; it is recorded so the next person adding a New York row knows the
-# add-back exists before they price one.
+# State account treatment is fetched in the complete per-jurisdiction matrix.
+# An absent entry never claims conformity (including New York). Public-employee
+# 414(h) pick-ups are not elective deferrals; their add-back is a return worksheet.
 
 # MFS IRA phase-out window per IRS Pub 590-A. Statutory constant —
 # unchanged since 1997 (Roth IRA introduction), not inflation-indexed.
@@ -135,15 +80,6 @@ _IRA_DEDUCTION_NONCONFORMING_STATES = {"PA", "NJ", "MA"}
 _MFS_IRA_PHASEOUT_START = 0
 _MFS_IRA_PHASEOUT_END = 10_000
 
-# SECURE 2.0 §603 (codified at IRC §414(v)(7)(A)): participants whose
-# prior-year FICA wages exceed this threshold MUST make 401(k) catch-up
-# contributions as designated Roth (no current-year deduction). Statute
-# specifies $145,000 indexed to 2023; projected to $150,000 for TY2026
-# per IRS guidance. Effective TY2026 per Notice 2023-62 (originally
-# 2024, delayed). v1 uses a fixed default; tax_law can override via
-# federal.retirement_401k.secure_2_0_high_earner_threshold for future
-# years' indexed values.
-_SECURE_2_0_HIGH_EARNER_THRESHOLD_DEFAULT = 150_000.0
 # §603 mandatory-Roth-catchup designation for high earners — effective
 # TY2026 (delayed from 2024 by Notice 2023-62).
 _SECURE_2_0_EFFECTIVE_YEAR = 2026
@@ -283,6 +219,8 @@ def _require_tax_law_amount(law: dict, *path: str) -> float:
             f"tax_law value at {'.'.join(path)} must be a finite number, "
             f"got {cur}"
         )
+    if cur < 0:
+        raise RetirementError(f"tax_law value at {'.'.join(path)} must be nonnegative")
     return float(cur)
 
 
@@ -306,44 +244,12 @@ def compute_401k_employee_limit(tax_law: dict, *, age_50_plus: bool,
 def _get_secure_2_0_high_earner_threshold(
     tax_law: dict, *, effective_year: "int | None" = None
 ) -> float:
-    """SECURE 2.0 §603 mandatory-Roth-catchup threshold. The built-in
-    default ($150k) is the TY2026 indexed value (projected from IRC
-    §414(v)(7)(A)'s $145k indexed-to-2023 base). The threshold INDEXES
-    annually, so the default is valid ONLY for TY2026 — later years must
-    supply the year-specific indexed amount via
-    federal.retirement_401k.secure_2_0_high_earner_threshold. For a
-    post-2026 year without that override the cache is stale/incomplete:
-    falling back to the TY2026 $150k would wrongly classify earners between
-    $150k and the real (higher) indexed threshold as high earners and split
-    them into a mandatory-Roth catch-up row (Codex PR #20). Pre-2026 years
-    don't use the threshold (the §603 split is gated off), so the default is
-    harmless there."""
-    federal = tax_law.get("federal") if isinstance(tax_law, dict) else None
-    retirement = (
-        federal.get("retirement_401k") if isinstance(federal, dict) else None
-    )
-    override = (
-        retirement.get("secure_2_0_high_earner_threshold")
-        if isinstance(retirement, dict) else None
-    )
-    if override is None:
-        if effective_year is not None and effective_year > _SECURE_2_0_EFFECTIVE_YEAR:
-            raise RetirementError(
-                "tax_law.federal.retirement_401k."
-                "secure_2_0_high_earner_threshold is required for "
-                f"TY{effective_year}: the built-in ${_SECURE_2_0_HIGH_EARNER_THRESHOLD_DEFAULT:,.0f} "
-                "default is the TY2026 value and the §603 threshold indexes "
-                "annually — re-fetch the year's law via /tax-setup so "
-                "$150k-and-up earners aren't misclassified into mandatory-Roth "
-                "catch-up."
-            )
-        return _SECURE_2_0_HIGH_EARNER_THRESHOLD_DEFAULT
-    if isinstance(override, bool) or not isinstance(override, (int, float)):
-        raise RetirementError(
-            f"tax_law.federal.retirement_401k.secure_2_0_high_earner_threshold "
-            f"must be numeric, got {type(override).__name__}"
-        )
-    return float(override)
+    """Read the year's indexed threshold; no built-in annual default."""
+    amount = _require_tax_law_amount(
+        tax_law, "federal", "retirement_401k", "secure_2_0_high_earner_threshold")
+    if amount <= 0:
+        raise RetirementError("secure_2_0_high_earner_threshold must be positive")
+    return amount
 
 
 def compute_401k_catchup_amount(tax_law: dict, *, age_50_plus: bool,
@@ -399,6 +305,82 @@ def compute_hsa_limit(tax_law: dict, *, coverage: str,
         )
         return base + catchup
     return base
+
+
+def _hsa_eligibility_limit(tax_law, ytd, coverage, age_55, *, spouse=False):
+    """Monthly limit, or last-month election with explicit testing-period consent."""
+    prefix = "hsa_spouse_" if spouse else "hsa_"
+    monthly = ytd.get(prefix + "monthly_coverage")
+    if monthly is not None:
+        if (not isinstance(monthly, list) or len(monthly) != 12
+                or any(x not in ("none", "self_only", "family") for x in monthly)):
+            raise RetirementError(prefix + "monthly_coverage requires twelve first-of-month tiers")
+        months = ytd.get(prefix + "eligible_months")
+        december = ytd.get(prefix + "december_eligible")
+        if months is not None and (type(months) is not int
+                or months != sum(tier != "none" for tier in monthly)):
+            raise RetirementError(prefix + "eligible_months conflicts with monthly_coverage")
+        if december is not None and (type(december) is not bool
+                or december != (monthly[-1] != "none")):
+            raise RetirementError(prefix + "december_eligible conflicts with monthly_coverage")
+    else:
+        months = ytd.get(prefix + "eligible_months")
+        if type(months) is not int or not 0 <= months <= 12:
+            raise RetirementError(prefix + "eligible_months requires an explicit integer 0–12")
+        december = ytd.get(prefix + "december_eligible")
+        if type(december) is not bool:
+            raise RetirementError(prefix + "december_eligible requires true/false")
+        if (december and months == 0) or (not december and months == 12):
+            raise RetirementError(prefix + "eligible_months contradicts December eligibility")
+        # No month-dependent law beyond the tier: the count is enough when
+        # coverage is unchanged. Place an eligible month at Dec only if confirmed.
+        monthly = [coverage] * (months - int(december)) + ["none"] * (12 - months)
+        monthly += [coverage] if december else []
+        if len(monthly) != 12:
+            raise RetirementError("Inconsistent HSA eligibility schedule")
+    last_month = _strict_bool(ytd, prefix + "last_month_rule")
+    testing = _strict_bool(ytd, prefix + "testing_period_acknowledged")
+    if last_month and (monthly[-1] == "none" or not testing):
+        raise RetirementError("HSA last-month rule requires December eligibility and testing-period acknowledgement")
+    if spouse:
+        catch = _require_tax_law_amount(tax_law, "federal", "hsa_limits", "catch_up_55_plus")
+        limits = [catch if tier != "none" else 0.0 for tier in monthly]
+    else:
+        limits = [compute_hsa_limit(tax_law, coverage=tier, age_55_plus=age_55)
+                  for tier in monthly]
+    prorated = sum(limits) / 12
+    allowed = max(prorated, limits[-1]) if last_month else prorated
+    note = "HSA limit uses confirmed first-of-month eligibility; coverage tiers are not calendar-day prorated."
+    if last_month:
+        note += " Last-month rule elected: retain eligibility through the end of the following tax year; failure requires income inclusion and additional tax (Pub 969)."
+    return round(allowed, 2), note
+
+
+def _retirement_state_treatment(tax_law, code, year, account):
+    """Only a year-matched, source-pinned true value earns state savings."""
+    from agents.lib.tax_law_fetcher import _source_host_authoritative, create_retirement_conformity_template
+    label = {"employee_401k": "401(k) deferrals", "traditional_ira": "Traditional IRA deduction",
+             "hsa": "HSA contributions"}[account]
+    matrix = tax_law.get("retirement_conformity")
+    if matrix is not None and not isinstance(matrix, dict):
+        raise RetirementError("retirement_conformity must be a per-state object")
+    if code not in create_retirement_conformity_template():
+        return False, f" State {code or 'unknown'} {label} treatment is unverified: no supported jurisdiction; state savings shown as $0."
+    row = matrix.get(code) if isinstance(matrix, dict) else None
+    if row is not None and not isinstance(row, dict):
+        raise RetirementError("retirement_conformity state row must be an object")
+    value = row.get(account) if isinstance(row, dict) else None
+    if value is not None and type(value) is not bool:
+        raise RetirementError("retirement_conformity account value must be true/false/null")
+    sources = tax_law.get("_sources")
+    source = sources.get(f"retirement_conformity.{code}") if isinstance(sources, dict) else None
+    if (not isinstance(row, dict) or type(row.get("tax_year")) is not int
+            or row["tax_year"] != year or value is None
+            or not isinstance(source, str) or not _source_host_authoritative(source)):
+        return False, f" State {code or 'unknown'} {label} treatment is unverified for this year: state savings shown as $0; fetch and pin the current DOR worksheet."
+    if value is False:
+        return False, f" State {code} does not allow the federal treatment of {label}: state savings shown as $0."
+    return True, ""
 
 
 # ---------------------------------------------------------------------------
@@ -955,6 +937,10 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
         )
 
     ytd_401k = _strict_num(ytd, "employee_401k")
+    roth_ytd = _optional_non_negative_num(ytd, "roth_401k_ytd")
+    if roth_ytd is not None and roth_ytd > ytd_401k:
+        raise RetirementError("roth_401k_ytd cannot exceed employee_401k")
+    plan_pretax_catchup = _strict_bool(ytd, "plan_allows_pretax_catchup_after_roth")
     ytd_match = _strict_num(ytd, "employer_match")
     ytd_ira_trad = _strict_num(ytd, "ira_traditional")
     ytd_ira_roth = _strict_num(ytd, "ira_roth")
@@ -977,6 +963,8 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
     plan_offers_roth_401k = _strict_bool(
         ytd, "plan_offers_roth_401k", default=True
     )
+    if roth_ytd and not plan_offers_roth_401k:
+        raise RetirementError("Positive roth_401k_ytd contradicts plan_offers_roth_401k false")
     # SECURE 2.0 §603 (TY2026+): if prior-year FICA wages exceed the
     # high-earner threshold ($150k indexed), 401(k) catch-up MUST be
     # designated Roth (no current-year deduction). Per IRC §414(v)(7)(A)
@@ -1054,36 +1042,17 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
             f"would silently miss the CA/NJ HSA non-conformity check and "
             f"overstate state savings."
         )
-    hsa_kind: AccountKind = (
-        "hsa_non_conforming" if state_code in _HSA_NON_CONFORMING_STATES
-        else "hsa_conforming"
-    )
-    # State savings is $0 where the state doesn't allow the deduction — but
-    # 401(k) and IRA conformity differ by state, so use SEPARATE rates
-    # (Codex PR #20). 401(k)/403(b): PA. Traditional IRA: PA, NJ, MA. Apply
-    # retirement_state_rate to the 401(k) rows and ira_state_rate to the
-    # Traditional IRA row. Roth/after-tax rows already yield $0 state savings
-    # via `kind`; HSA via hsa_kind.
-    retirement_deferral_nonconforming = (
-        state_code in _RETIREMENT_DEFERRAL_NONCONFORMING_STATES
-    )
-    retirement_state_rate = (
-        0.0 if retirement_deferral_nonconforming else state_rate
-    )
-    retirement_nonconforming_note = (
-        f" State {state_code} taxes pre-tax 401(k)/403(b) contributions "
-        f"(no state deduction) — state savings shown as $0; the federal "
-        f"benefit still applies."
-    ) if retirement_deferral_nonconforming else ""
-    ira_deduction_nonconforming = (
-        state_code in _IRA_DEDUCTION_NONCONFORMING_STATES
-    )
-    ira_state_rate = 0.0 if ira_deduction_nonconforming else state_rate
-    ira_nonconforming_note = (
-        f" State {state_code} does not allow a state deduction for "
-        f"Traditional IRA contributions — state savings shown as $0; the "
-        f"federal deduction (if any) still applies."
-    ) if ira_deduction_nonconforming else ""
+    year_for_treatment = tax_year if tax_year is not None else profile_year
+    retirement_conforms, retirement_nonconforming_note = _retirement_state_treatment(
+        tax_law, state_code, year_for_treatment, "employee_401k")
+    ira_conforms, ira_nonconforming_note = _retirement_state_treatment(
+        tax_law, state_code, year_for_treatment, "traditional_ira")
+    hsa_conforms, hsa_state_note = _retirement_state_treatment(
+        tax_law, state_code, year_for_treatment, "hsa")
+    retirement_state_rate = state_rate if retirement_conforms else 0.0
+    ira_state_rate = state_rate if ira_conforms else 0.0
+    hsa_state_rate = state_rate if hsa_conforms else 0.0
+    hsa_kind: AccountKind = "hsa_conforming" if hsa_conforms else "hsa_non_conforming"
 
     accounts: list[AccountStatus] = []
 
@@ -1179,6 +1148,8 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
         # catch-up (matches IRS treatment: catch-up only applies
         # once the base elective limit is filled).
         ytd_base = min(ytd_401k, base_elective)
+        if roth_ytd is not None and roth_ytd < min(catchup_amount, max(0.0, ytd_401k - base_elective)):
+            raise RetirementError("Recorded Roth deferrals are below already-used mandatory catch-up; reconcile with the plan administrator")
         ytd_catchup_portion = max(0.0, ytd_401k - base_elective)
         accounts.append(AccountStatus(
             name="401(k) employee (base)",
@@ -1193,42 +1164,32 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
                 "FICA wages above the high-earner threshold)."
             ) + retirement_nonconforming_note,
         ))
+        remaining_catchup = max(0.0, catchup_amount - ytd_catchup_portion)
+        pretax_remaining = 0.0
+        if roth_ytd is not None and plan_pretax_catchup:
+            required_roth = max(0.0, catchup_amount - roth_ytd)
+            pretax_remaining = max(0.0, remaining_catchup - required_roth)
         accounts.append(AccountStatus(
-            name="401(k) catch-up (Roth required)",
+            name=("401(k) catch-up (Roth/pre-tax)" if pretax_remaining
+                  else "401(k) catch-up (Roth required)"),
             ytd_contributed=ytd_catchup_portion,
             annual_limit=catchup_amount,
             marginal_fed_rate=fed_rate,
-            marginal_state_rate=state_rate,
-            kind="roth",
+            marginal_state_rate=retirement_state_rate,
+            kind="pre_tax" if pretax_remaining else "roth",
+            marginal_eligible_dollars=pretax_remaining,
             note=(
-                f"SECURE 2.0 §603 (effective TY2026 per IRS Notice "
-                f"2023-62): prior-year FICA wages "
-                f"${prior_year_fica_wages:,.0f} exceed the "
-                f"${high_earner_threshold:,.0f} threshold — catch-up "
-                f"contributions MUST be designated Roth (no "
-                f"current-year deduction). Tax-free growth via "
-                f"in-plan / in-service Roth treatment. NOTE: the "
-                f"threshold is keyed to the FICA wages your PLAN uses for "
-                f"its Roth-catch-up determination (IRC §414(v)(7)(A)) — "
-                f"generally the sponsoring employer's, though related "
-                f"common-law employers in the same controlled group may be "
-                f"aggregated per the final regs. If you changed jobs or had "
-                f"unrelated employers, use the sponsoring plan's figure, not "
-                f"your total W-2 wages; confirm with the plan administrator. "
-                f"This row assumes the FULL catch-up must be Roth, but per "
-                f"the final regs (Treas. Reg. §1.414(v)-2(b)(1)) the Roth "
-                f"requirement is satisfied only to the extent your prior "
-                f"designated-Roth 401(k) deferrals this year are BELOW the "
-                f"catch-up limit — if you've already made Roth deferrals at "
-                f"least equal to the catch-up amount, additional catch-up "
-                f"dollars may be PRE-TAX (state/federal-deductible). v1 "
-                f"doesn't track the pre-tax/Roth YTD split, so the $0 "
-                f"current-year savings shown here may be UNDERSTATED for "
-                f"such savers. This catch-up also REQUIRES the plan to offer "
-                f"a designated Roth source — if it doesn't, set "
-                f"`plan_offers_roth_401k` to false (affected high earners "
-                f"then cannot make catch-up at all)."
-            ),
+                f"SECURE 2.0 §603: the plan-determined prior-year FICA wages exceed "
+                f"the fetched ${high_earner_threshold:,.0f} threshold. Related "
+                "common-law employers in the same controlled group may be aggregated; "
+                "confirm the sponsoring plan's figure with its administrator. "
+                f"Of remaining catch-up capacity, ${pretax_remaining:,.2f} may be "
+                "pre-tax under Treas. Reg. §1.414(v)-2(b)(1) after crediting prior "
+                "designated-Roth deferrals, only where the plan permits this treatment. "
+                "Missing roth_401k_ytd or plan confirmation retains Roth-only savings "
+                "and may UNDERSTATE the benefit. Catch-up REQUIRES a designated Roth "
+                "source; plan_offers_roth_401k false makes it unavailable."
+            ) + retirement_nonconforming_note,
         ))
     else:
         limit_401k = base_elective + catchup_amount
@@ -1481,53 +1442,30 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
     # all-excess contributions — silently skipping the row hides the
     # corrective-action signal this dashboard is meant to surface.
     hsa_ytd_total = ytd_hsa_employee + ytd_hsa_employer
-    if hsa_coverage in ("self_only", "family") or hsa_ytd_total > 0:
-        if hsa_coverage in ("self_only", "family"):
-            hsa_limit = compute_hsa_limit(
-                tax_law, coverage=hsa_coverage, age_55_plus=age_55
-            )
-        else:
-            # Contradiction: YTD > 0 but no HDHP coverage declared.
-            # Every dollar contributed is excess (no allowed contribution).
-            hsa_limit = 0.0
-        # Per IRS Pub 969: HSA catch-up is per-individual, not per-HDHP.
-        # For FAMILY coverage + spouse also 55+, the spouse can make a
-        # separate $1,000 catch-up contribution into their own HSA. The
-        # dashboard tracks the household-combined limit (separation
-        # across two HSAs is operational, not a dashboard concern).
-        # For SELF-ONLY coverage the spouse has no HDHP, so spouse
-        # catch-up is irrelevant — skip.
+    monthly_coverage = ytd.get("hsa_monthly_coverage")
+    if monthly_coverage is not None and (not isinstance(monthly_coverage, list)
+            or len(monthly_coverage) != 12
+            or any(x not in ("none", "self_only", "family") for x in monthly_coverage)):
+        raise RetirementError("hsa_monthly_coverage requires twelve first-of-month tiers")
+    hsa_has_eligibility = hsa_coverage in ("self_only", "family") or (
+        isinstance(monthly_coverage, list) and any(x != "none" for x in monthly_coverage))
+    if hsa_has_eligibility or hsa_ytd_total > 0:
         hsa_extra_note = ""
-        # Spouse HSA catch-up is added only on a JOINT return (MFJ).
-        # `age_55_plus_spouse` is an entity-property flag (about the
-        # spouse), and can persist in a profile stale from a prior MFJ
-        # year after divorce or hand-edit. Single/HoH have no spouse by
-        # definition; QSS (Qualifying Surviving Spouse) has a DECEASED
-        # spouse who cannot make HSA contributions (PR #20 round-12
-        # finding 2). MFS DOES have a living spouse, but each MFS spouse
-        # files a SEPARATE return — the spouse's $1k catch-up belongs on
-        # the spouse's own return (their own dashboard run), so it must
-        # NOT inflate the MFS primary's own contribution capacity. Only
-        # MFJ's single household return legitimately combines both
-        # spouses' catch-ups.
-        spouse_catchup_on_this_return = _status(filing_status) == "MFJ"
-        if (
-            hsa_coverage == "family"
-            and age_55_spouse
-            and spouse_catchup_on_this_return
-        ):
-            spouse_catchup = _require_tax_law_amount(
-                tax_law, "federal", "hsa_limits", "catch_up_55_plus"
-            )
+        if hsa_has_eligibility:
+            hsa_limit, hsa_extra_note = _hsa_eligibility_limit(
+                tax_law, ytd, hsa_coverage, age_55)
+        else:
+            hsa_limit = 0.0
+        family_during_year = hsa_coverage == "family" or (
+            isinstance(monthly_coverage, list) and "family" in monthly_coverage)
+        if family_during_year and age_55_spouse and _status(filing_status) == "MFJ":
+            spouse_catchup, spouse_note = _hsa_eligibility_limit(
+                tax_law, ytd, "family", True, spouse=True)
             hsa_limit += spouse_catchup
-            hsa_extra_note = (
-                "Includes a separate spouse age-55+ catch-up — per IRS "
-                "Pub 969 this must go into a SECOND HSA in the spouse's "
-                "name (cannot be combined with primary's account)."
-            )
+            hsa_extra_note += " Includes a separate spouse catch-up: contribute to a SECOND HSA in the spouse's name. " + spouse_note
         hsa_ytd = hsa_ytd_total
         hsa_note = ""
-        if hsa_coverage == "none" and hsa_ytd_total > 0:
+        if not hsa_has_eligibility and hsa_ytd_total > 0:
             # Data-vs-flag contradiction: corrective action required.
             hsa_note = (
                 "HSA contributions reported but `hsa_coverage` is 'none' "
@@ -1537,41 +1475,15 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
                 "eligible, withdraw the excess before April 15 to avoid "
                 "the 6% excise tax per year on the excess."
             )
-        if hsa_kind == "hsa_non_conforming":
-            hsa_kind_note = (
-                f"State {state_code} does not conform to federal HSA "
-                f"treatment — HSA contributions remain state-taxable."
-            )
-            hsa_note = _join_note(hsa_note, hsa_kind_note)
+        hsa_note = _join_note(hsa_note, hsa_state_note)
         if hsa_extra_note:
             hsa_note = _join_note(hsa_note, hsa_extra_note)
-        if hsa_coverage in ("self_only", "family"):
-            # Partial-year eligibility caveat. IRS Pub 969 §223(b)(2)
-            # prorates the HSA limit by eligible months (limit ÷ 12 × months
-            # HSA-eligible on the 1st) for a mid-year HDHP gain/loss or tier
-            # change — UNLESS the §223(b)(8) last-month rule applies (covered
-            # on Dec 1 → full-year limit, but a 13-month testing period must
-            # be met). v1 shows the full annual limit; proration + the
-            # last-month rule's testing period are out of scope, so warn
-            # rather than silently show ~2x capacity for a partial year
-            # (Codex PR #20).
-            hsa_note = _join_note(hsa_note, (
-                "Limit assumes FULL-YEAR HDHP coverage. If you gained/lost "
-                "HDHP coverage or changed tiers mid-year, IRS Pub 969 "
-                "prorates the limit by eligible months (limit ÷ 12 × months "
-                "eligible) UNLESS the last-month rule applies (HDHP-covered "
-                "on Dec 1 → full-year limit, but you must stay HSA-eligible "
-                "through all of the next year or the extra is taxed + 20% "
-                "penalty). v1 does not model partial-year proration — if you "
-                "weren't covered all year, your actual limit (and any "
-                "excess) may be lower than shown."
-            ))
         accounts.append(AccountStatus(
             name="HSA",
             ytd_contributed=hsa_ytd,
             annual_limit=hsa_limit,
             marginal_fed_rate=fed_rate,
-            marginal_state_rate=state_rate,
+            marginal_state_rate=hsa_state_rate,
             kind=hsa_kind,
             note=hsa_note,
         ))
@@ -1822,8 +1734,8 @@ def render_markdown(report: DashboardReport) -> str:
         "- IRA Traditional deductibility depends on whether you or your spouse",
         "  are covered by an employer retirement plan (set",
         "  `flags.has_employer_retirement_plan` in `taxpayer_profile.json`).",
-        "- HSA non-conforming states (CA / NJ) tax the contribution at",
-        "  the state level — federal benefit still applies.",
+        "- State savings require current-year, source-pinned per-account conformity.",
+        "  Unverified or non-conforming treatment shows $0; federal benefit still applies.",
         "- Roth contributions yield $0 current-year deduction (the benefit",
         "  is tax-free growth + withdrawal, not modeled here). Mega Backdoor",
         "  after-tax contributions are similar.",

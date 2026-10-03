@@ -253,9 +253,8 @@ def create_empty_tax_law(year: int) -> dict:
                 "total_annual_limit": None,
                 # SECURE 2.0 §603 mandatory-Roth-catchup prior-year-FICA-wage
                 # threshold ($145k indexed from 2023; ~$150k for TY2026).
-                # Indexes annually — /tax-retirement's built-in $150k default
-                # is TY2026-only and hard-errors for TY2027+ if this is unset,
-                # so /tax-setup must fetch + populate it for post-2026 years.
+                # Indexes annually; every covered planning year requires a
+                # fetched value, with no built-in annual default.
                 "secure_2_0_high_earner_threshold": None,
             },
             "foreign_tax_credit_simplified": {
@@ -396,6 +395,13 @@ def create_empty_tax_law(year: int) -> dict:
         # a seeded key would move that digest and demand the fresh-session
         # replay, for a block the auditor is not yet scored on.
     }
+
+
+def create_retirement_conformity_template():
+    """All 50 states plus DC; law deliberately unfetched, never inferred."""
+    from agents.lib.capabilities import _USPS_STATES, _TERRITORIES
+    return {code: dict(tax_year=None, employee_401k=None, traditional_ira=None, hsa=None)
+            for code in sorted(_USPS_STATES - _TERRITORIES)}
 
 
 def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
@@ -1262,6 +1268,12 @@ def _expected_pins(data: dict) -> "list[tuple[str, str]]":
     # scales reported USD foreign income / FBAR values — audit it too.
     if _block_populated(data, "exchange_rates"):
         expected.append(("exchange_rates", "exchange_rates"))
+    conformity = data.get("retirement_conformity")
+    if isinstance(conformity, dict):
+        for code, row in conformity.items():
+            if isinstance(row, dict) and any(type(row.get(k)) is bool
+                    for k in ("employee_401k", "traditional_ira", "hsa")):
+                expected.append((f"retirement_conformity.{code}", f"retirement_conformity.{code}"))
     ptet = data.get("ptet")
     if isinstance(ptet, dict):
         for code, block in ptet.items():
@@ -1378,7 +1390,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # See the explicit state.type validation below the walk.
     _SKIP_KEYS = {"note", "hsa_note", "name", "authority",
                   "conforms_to_federal", "no_city_income_tax", "twenty_pct_above",
-                  "applies", "hsa_conformity", "no_income_tax"}
+                  "applies", "hsa_conformity", "no_income_tax", "retirement_conformity"}
 
     # Keys whose values must be dicts or lists, never scalars.
     # A scalar value here (int, float, str, bool) indicates either data corruption
@@ -2310,6 +2322,10 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
         if pattern.match(dotted) and not isinstance(ref, dict):
             _check_table(kind, dotted, value, writing=strict)
             return
+    if re.fullmatch(r"retirement_conformity\.[A-Z]{2}\.(employee_401k|traditional_ira|hsa)", dotted):
+        if type(value) is not bool:
+            raise TaxLawSetError(f"{dotted}: expected true or false")
+        return
     if isinstance(ref, list):
         if not isinstance(value, list):
             raise TaxLawSetError(f"{dotted}: expected a list")
@@ -2363,6 +2379,10 @@ def _dynamic_ref(parent: str):
 def _seed_root(dotted: str, data: dict, year: int):
     """The schema tree `dotted` is resolved in, and the segments under it."""
     segs = dotted.split(".")
+    # Optional planning blocks materialize only on their own fetch. Adding one
+    # must not change a core return scaffold or the pinned auditor fixture.
+    if segs[0] == "retirement_conformity" and len(segs) > 1:
+        return create_retirement_conformity_template(), segs[1:], "retirement_conformity"
     if segs[0] == "state" and len(segs) > 1:
         current = data.get("state")
         if not isinstance(current, dict) or not isinstance(current.get("code"), str):
@@ -2380,7 +2400,7 @@ def _reference_for(dotted: str, data: dict, value, year: int):
         raise TaxLawSetError(
             f"{dotted}: identity and metadata are not figures — tax_year is set "
             "by `create`, and _sources/_provenance are written by this command")
-    if dotted in ("federal", "ptet"):
+    if dotted in ("federal", "ptet", "retirement_conformity"):
         raise TaxLawSetError(
             f"{dotted}: too coarse — every block under it is pinned and dated on "
             f"its own, so write `{dotted}.<block>` (or a leaf) one at a time")
@@ -2413,10 +2433,12 @@ def _set_path(data: dict, dotted: str, value, year: int) -> None:
     SCHEMA rather than as `{}`: an empty parent hides every sibling the
     freshness walker would otherwise report absent."""
     import copy
-    seed, segs, _ = _seed_root(dotted, data, year)
+    seed, segs, root = _seed_root(dotted, data, year)
     node = data
-    if dotted.startswith("state.") and segs is not dotted.split("."):
-        node = data["state"]
+    if root:
+        if not isinstance(data.get(root), dict):
+            data[root] = {}
+        node = data[root]
     for seg in segs[:-1]:
         nxt = node.get(seg)
         if not isinstance(nxt, dict):
@@ -2431,7 +2453,7 @@ def _set_path(data: dict, dotted: str, value, year: int) -> None:
 def _pin_key(dotted: str, data: dict) -> str:
     """The `_sources` / `_provenance` pin a dotted path belongs to."""
     segs = dotted.split(".")
-    if segs[0] in ("federal", "ptet"):
+    if segs[0] in ("federal", "ptet", "retirement_conformity"):
         return ".".join(segs[:2])
     if segs[0] == "state":
         code = _state_pin_code(data.get("state") or {})
@@ -2528,6 +2550,24 @@ def validate_cache(data: dict, year: int) -> "list[str]":
         _sanity(data)
     except TaxLawSetError as e:
         problems.append(str(e))
+    matrix = data.get("retirement_conformity")
+    if matrix is not None:
+        if not isinstance(matrix, dict):
+            problems.append("retirement_conformity must be an object")
+        else:
+            schema = create_retirement_conformity_template()
+            for code, row in matrix.items():
+                if code not in schema or not isinstance(row, dict):
+                    problems.append(f"retirement_conformity.{code}: unknown jurisdiction or invalid row")
+                    continue
+                try:
+                    _check_against(f"retirement_conformity.{code}", schema[code], row,
+                                   top=False, strict=False)
+                except TaxLawSetError as e:
+                    problems.append(str(e))
+                if any(row.get(k) is not None for k in ("employee_401k", "traditional_ira", "hsa")):
+                    if type(row.get("tax_year")) is not int or row["tax_year"] != year:
+                        problems.append(f"retirement_conformity.{code}.tax_year must match this year")
     problems.extend(_structural_drift(data, year))
     problems.extend(_rate_year_problems(data, year))
     # The walker sees only keys that are present. A cache keyed single/mfj
@@ -2615,6 +2655,8 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
         raise TaxLawSetError(
             f"the cache declares tax_year {data.get('tax_year')!r} but --year is "
             f"{year} — refusing to write a figure for one year into another's cache")
+    if re.fullmatch(r"retirement_conformity\.[A-Z]{2}\.tax_year", dotted):
+        raise TaxLawSetError("Write the complete conformity row with its year and source")
     if dotted == "state.wa_capital_gains.tax_year":
         raise TaxLawSetError("Write the complete WA parameters block with its year and source; never a separate year attestation")
     if dotted == "state.rate_tax_year":
@@ -2632,6 +2674,14 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
             raise TaxLawSetError("WA parameters must explicitly name this cache year")
     elif dotted.startswith("state.wa_capital_gains."):
         data["state"]["wa_capital_gains"]["tax_year"] = None
+    if dotted.startswith("retirement_conformity."):
+        parts = dotted.split(".")
+        row = data["retirement_conformity"][parts[1]]
+        if len(parts) == 2:
+            if type(row.get("tax_year")) is not int or row["tax_year"] != year:
+                raise TaxLawSetError("Conformity row must explicitly name this cache year")
+        else:
+            row["tax_year"] = None  # Partial edits cannot re-attest siblings.
     _sanity(data)
     for problem in _rate_year_problems(data, year):
         raise TaxLawSetError(problem)

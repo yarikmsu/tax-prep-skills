@@ -426,7 +426,7 @@ foreign moves and statutory second residency retain refusals/gates. Credit,
 modification, City itemized and special-accrual worksheets remain verified
 inputs. Hand-computed source worksheets and the documented launcher are tested.
 
-## Z6 — WA harvest pricing, crypto allocation and WFTC reminder
+## Z6 — WA harvest pricing, crypto allocation and WFTC reminder (#223)
 
 The harvest scanner now reprices the existing confirmed TY2025 excise worksheet
 before and after allowed WA-taxable LT losses, including annual deduction and

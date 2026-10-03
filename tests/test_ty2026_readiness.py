@@ -14,9 +14,8 @@ user. This file is that integration test, run now instead:
 2. ABSENCE MATRIX: each block's DECLARED absence behavior (fail-closed /
    loud-degrade / statutory-fallback — see the 2026-07-20 review, Part 1) is
    pinned by a deliberately-absent variant RUN AT A YEAR WHERE THE BEHAVIOR IS
-   REACHABLE. The §603 threshold's absence case must run at TY2027 — at TY2026
-   the absent-cache path returns the built-in $150K statutory default by design,
-   so a TY2026-only test would vacuously pass.
+   REACHABLE. X10 removed the annual §603 threshold default, so its
+   absence cases require the fetched indexed amount in both TY2026 and TY2027.
 
 SCOPE HONESTY (per the review's M1 note): a fixture proves WIRING and
 COMPUTATION, not FETCHABILITY. /tax-setup's law fetch is an interactive
@@ -269,18 +268,12 @@ class TestTY2026AbsenceMatrix:
         assert tc._resolve_amt_phaseout_rate(2026, None) == 0.50
         assert tc._resolve_amt_phaseout_rate(2025, None) == 0.25
 
-    def test_secure_603_absent_is_default_at_2026_but_fails_closed_at_2027(self):
-        """THE reachability point: at TY2026 the absent cache returns the
-        built-in $150K default (so a TY2026 absence test would vacuously pass);
-        the hard-error only arms for post-2026 indexed years. Pin BOTH."""
+    @pytest.mark.parametrize("year", [2026, 2027])
+    def test_secure_603_absent_fails_closed_for_every_covered_year(self, year):
+        """X10 removes the annual default: every covered year is fetched."""
         no_threshold = {"federal": {"retirement_401k": {}}}
-        # TY2026: default, no error (the vacuous case we must NOT rely on).
-        assert _get_secure_2_0_high_earner_threshold(
-            no_threshold, effective_year=2026) == 150000
-        # TY2027: the declared fail-closed behavior is reachable.
-        with pytest.raises(RetirementError):
-            _get_secure_2_0_high_earner_threshold(
-                no_threshold, effective_year=2027)
+        with pytest.raises(RetirementError, match="secure_2_0_high_earner_threshold"):
+            _get_secure_2_0_high_earner_threshold(no_threshold, effective_year=year)
 
     def test_underpayment_rates_absent_degrades_not_computed(self):
         """M3: absent rates → interest not computed (never a guessed rate)."""

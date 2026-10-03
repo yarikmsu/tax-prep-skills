@@ -15,6 +15,15 @@ map goes stale in a way the schema cannot.
   `{magi_threshold, annual_surcharge_per_person}`
 - `federal.salt_cap` — `{amount, mfs_amount}`
 - `state.{brackets,standard_deduction}`
+- `retirement_conformity.<STATE>.{tax_year,employee_401k,traditional_ira,hsa}` —
+  optional planning matrix for all 50 states and DC. Each account is true,
+  false or unfetched null, independently of the state's general conformity.
+  Source pin `retirement_conformity.<STATE>`; write a whole year-matched row
+  with the setter. Leaf edits invalidate the row's year. Unknown/unsupported
+  treatment earns zero state savings with a visible note; no law is inferred
+  from absence. Only a verified true, current-year, source-pinned entry earns
+  a state saving. This optional matrix does not require every jurisdiction
+  to be fetched for a single return.
 
 ## The keying is not uniform, and the wrong guess reads a real number
 
