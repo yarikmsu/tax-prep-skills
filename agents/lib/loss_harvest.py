@@ -13,7 +13,8 @@ capital_gains/other_income delta, the keystone applies the $3K ordinary offset
 cap correctly, and the absolute tax at the harvested rung is ANCHORED to the real
 result.json line 24 — so the rendered fed_savings is the Δ around the real number.
 
-State savings is a simplified estimate: state_marginal_rate × (federal_loss_used),
+For WA, confirmed LT excise worksheets are repriced before/after the harvest.
+Other state savings is a simplified estimate: state_marginal_rate × (federal_loss_used),
 under the v1 assumption that the state taxes capital gains as ordinary income
 (true for CA, NJ; near-true for most non-conforming states). Degrades to
 "state not modeled" when tax_law.state.brackets is empty.
@@ -993,6 +994,7 @@ class HarvestReport:
     # sides are unknown).
     state_cache_mismatch: "str | None" = None
     state_excise_unpriced: bool = False
+    state_excise_note: "str | None" = None
     # Codex round-23 P2 (the harvest twin of projection.ProjectionReport.
     # nonresident_income_warning, round-8 finding F there): set whenever
     # profile flags.has_nonresident_source_income is True, REGARDLESS of
@@ -1051,6 +1053,62 @@ def _nonresident_income_flag(profile: dict) -> bool:
 # --------------------------------------------------------------------------
 # Core build
 # --------------------------------------------------------------------------
+
+def _wa_harvest_pricer(result, profile, tax_law, holdings, year, lots, as_of):
+    """Return a reviewed excise-difference callable, or an explicit degrade note."""
+    from agents.lib.tax_computations import compute_wa_capital_gains
+    review = holdings.get("wa_harvest")
+    args = profile.get("washington_inputs")
+    stored = result.get("washington_ltcg_excise")
+    if not isinstance(review, dict) or review.get("deductions_unchanged") is not True:
+        return None, "Confirm unchanged WA deductions in holdings.wa_harvest."
+    if not isinstance(args, dict) or not isinstance(stored, dict):
+        return None, "Run /tax-compute with the reviewed washington_inputs worksheet first."
+    taxable = review.get("taxable_lots")
+    lt_lots = [l for l in lots if l.allowed_loss > 0 and not l.tax_advantaged
+               and l.holding_period == "long"]
+    if (not isinstance(taxable, dict) or set(taxable) != {l.id for l in lt_lots}
+            or any(type(v) is not bool for v in taxable.values())):
+        return None, "Classify every eligible LT lot with a boolean in wa_harvest.taxable_lots."
+    if as_of.year != year:
+        return None, "WA harvest trade date must be in the computed tax year."
+    # The legacy federal planner uses 365 days; WA savings must not call a
+    # leap-year anniversary sale long-term. Exact anniversaries are still ST.
+    for lot in lt_lots:
+        try:
+            anniversary = lot.acquired.replace(year=lot.acquired.year + 1)
+        except ValueError:  # Feb 29 acquisition, next year is not leap.
+            anniversary = lot.acquired.replace(year=lot.acquired.year + 1, day=28)
+        if taxable[lot.id] and as_of <= anniversary:
+            return None, "Confirm actual long-term holding periods; an anniversary sale is short-term."
+    if args.get("other_jurisdiction_credits") or args.get("b_o_tax_paid_on_same_gains"):
+        return None, "WA credit allocations must be repriced for the proposed sales; not modeled."
+    sd = result.get("schedule_d")
+    sd = sd.get("part_ii_long_term") if isinstance(sd, dict) else None
+    if not isinstance(sd, dict):
+        return None, "WA pricing requires explicit Schedule D line 15; rerun /tax-compute."
+    try:
+        net_lt = _required_num(sd, "line_15_net_long_term", "Schedule D", allow_negative=True)
+        baseline = compute_wa_capital_gains(year, profile.get("filing_status"), net_lt,
+                                           tax_law.get("state"), **args)
+        for key in ("computed_tax_year", "federal_net_long_term", "adjusted_wa_gain",
+                    "standard_deduction", "business_deduction", "charitable_deduction",
+                    "taxable_wa_gain", "credits", "total_tax"):
+            if type(stored.get(key)) not in (int, float) or stored[key] != baseline[key]:
+                return None, "WA baseline differs from the current worksheet/cache; rerun /tax-compute."
+        def price(selected):
+            loss = sum(l.allowed_loss for l in selected
+                       if l.holding_period == "long" and taxable.get(l.id) is True)
+            after = compute_wa_capital_gains(year, profile.get("filing_status"), net_lt - loss,
+                                            tax_law["state"], **args)
+            return round(max(0.0, baseline["total_tax"] - after["total_tax"]), 2)
+        # Verify the combined scenario too: a business deduction can exceed the
+        # reduced base, which requires its own eligibility worksheet.
+        price(lt_lots)
+    except (ValueError, TypeError, LossHarvestError):
+        return None, "WA worksheet or annual law is incomplete/unsupported; rerun /tax-compute."
+    return price, "WA excise repriced from allowed, classified LT losses; ST losses save no WA tax. Deductions held unchanged; no credits."
+
 
 def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
                   year: int, *, name: str, today: datetime.date) -> HarvestReport:
@@ -1169,6 +1227,12 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         if state_modeled and (tax_law.get("state") or {}).get(
             "tax_table_benefit_recapture")
         else None)
+    wa_price, excise_note = None, None
+    if resident_code == "WA" and cache_mismatch is None:
+        wa_price, excise_note = _wa_harvest_pricer(
+            result, profile, tax_law, holdings, year, lots, as_of)
+        state_modeled = wa_price is not None
+        state_mtr = None
     state_rate_for_ranking = state_mtr or 0.0
 
     # Fill est_value_per_dollar — ST losses rank above LT losses because they can
@@ -1181,7 +1245,9 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
             value_per_dollar = 0.0
         else:
             fed_rate = ord_mtr if lot.holding_period == "short" else ltcg_mtr
-            value_per_dollar = round(fed_rate + state_rate_for_ranking, 4)
+            wa_rate = (wa_price([lot]) / lot.allowed_loss
+                       if wa_price is not None and not lot.tax_advantaged else 0.0)
+            value_per_dollar = round(fed_rate + state_rate_for_ranking + wa_rate, 4)
         enriched.append(HoldingLot(
             **{**lot.__dict__, "est_value_per_dollar": value_per_dollar}))
 
@@ -1291,7 +1357,9 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     # so the state taxable-income reduction ≈ federal cap-gain AGI reduction,
     # priced at the state ordinary marginal rate. Falls back to the keystone's
     # full taxable-income delta when available (cleaner second-order treatment).
-    if state_modeled:
+    if wa_price is not None:
+        state_savings = wa_price(eligible)
+    elif state_modeled:
         if delta["capital_gains"] == 0 and delta["other_income"] == 0:
             ti_reduction = 0.0
         else:
@@ -1321,7 +1389,8 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         state_modeled=state_modeled, state_mtr=state_mtr,
         state_savings=state_savings,
         state_rate_floor_note=state_rate_floor_note,
-        state_excise_unpriced=((tax_law.get("state") or {}).get("code") == "WA"),
+        state_excise_unpriced=((tax_law.get("state") or {}).get("code") == "WA" and wa_price is None),
+        state_excise_note=excise_note,
         total_savings=round(fed_savings + state_savings, 2),
         fed_ordinary_mtr=ord_mtr, fed_ltcg_mtr=ltcg_mtr,
         state_no_income_tax=no_income_tax,
@@ -1375,6 +1444,7 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "state_savings": r.state_savings, "total_savings": r.total_savings,
         "state_rate_floor_note": r.state_rate_floor_note,
         "state_excise_unpriced": r.state_excise_unpriced,
+        "state_excise_note": r.state_excise_note,
         "fed_ordinary_mtr": r.fed_ordinary_mtr, "fed_ltcg_mtr": r.fed_ltcg_mtr,
         "state_no_income_tax": r.state_no_income_tax,
         "state_cache_mismatch": r.state_cache_mismatch,
@@ -1437,6 +1507,8 @@ def render_markdown(r: HarvestReport) -> str:
                       "(no income tax, or `/tax-setup` did not fetch state brackets). The "
                       "fed_savings figure is correct, but a state-tax taxpayer is leaving "
                       "additional savings on the table. Run `/tax-setup` to fetch them.", ""]
+    if r.state_excise_note:
+        lines += [f"> **WA excise:** {r.state_excise_note}", ""]
     if not r.niit_modeled:
         lines += [f"> **⚠ NIIT NOT MODELED** — no `federal.niit.threshold` in "
                   f"`tax_law_{r.tax_year}.json`. The 3.8% surtax (§1411) is **excluded "

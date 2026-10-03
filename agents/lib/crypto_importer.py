@@ -516,7 +516,8 @@ def _fmt_qty(q: float) -> str:
 
 def build_crypto_import(transactions: 'list[dict]', *,
                         tax_year: 'int | None' = None,
-                        per_account: bool = False) -> dict:
+                        per_account: bool = False,
+                        wa_domicile_by_date: "dict | None" = None) -> dict:
     """Build the full crypto-import result from a list of normalized transaction dicts.
 
     Returns a dict with form_8949 (short/long row lists), schedule_d totals,
@@ -595,7 +596,7 @@ def build_crypto_import(transactions: 'list[dict]', *,
     # a year with no actual digital-asset activity. (rows are disposals; incomes is filtered.)
     digital_asset = "Yes" if (rows or incomes) else "No"
 
-    return {
+    result = {
         "schema": SCHEMA,
         "digital_asset_question": digital_asset,
         "form_8949": {
@@ -625,6 +626,43 @@ def build_crypto_import(transactions: 'list[dict]', *,
         "needs_basis": needs_basis,
         "caveats": _caveats(needs_basis, off_year=off_year, tax_year=tax_year),
     }
+
+    if wa_domicile_by_date is not None:
+        result["washington_allocation"] = washington_crypto_allocation(
+            result, wa_domicile_by_date)
+    return result
+
+
+def washington_crypto_allocation(result: dict, domicile_by_date: dict) -> dict:
+    """LT crypto domicile workpaper; no tax/deduction or return-scope inference.
+
+    Signed nonallocated rows are already in federal LT totals. A later LT sale
+    of staking coins is included; staking income upon receipt is not.
+    """
+    from agents.lib.projection import _normalize_state_code
+    rows = result["form_8949"]["part_ii_long_term"]
+    dates = {row["date_sold"] for row in rows}
+    if not isinstance(domicile_by_date, dict) or set(domicile_by_date) != dates:
+        raise CryptoImportError("WA domicile map must cover exactly every LT disposal date; never prorate.")
+    states = {}
+    for date, state in domicile_by_date.items():
+        code = _normalize_state_code(state)
+        if code is None:
+            raise CryptoImportError("Every LT sale date needs a valid explicit domicile state.")
+        states[date] = code
+    allocated = 0.0
+    adjustments = []
+    for i, row in enumerate(rows):
+        gain = _num(row["gain_loss"], "LT crypto gain/loss", allow_negative=True)
+        if states[row["date_sold"]] == "WA":
+            allocated += gain
+        else:
+            adjustments.append(dict(id=f"crypto-lt-{i}", reason="nonallocated", gain_loss=gain))
+    return {"allocated_lt_gain_loss": _money(allocated), "adjustments": adjustments,
+            "domicile_by_date": states,
+            "note": "LT crypto only, domicile at disposal. ST and receipt income excluded. "
+                    "Merge federal LT totals first; do not add this base again. "
+                    "Part-year/nonresident WA returns remain unsupported."}
 
 
 def _totals(rows: 'list[Form8949Row]') -> dict:
@@ -1180,6 +1218,10 @@ def render_markdown(result: dict) -> str:
             lines.append(f"- {nb['description']} sold {nb['date_sold']} "
                          f"for ${nb['proceeds']:,.2f}")
         lines.append("")
+    if "washington_allocation" in result:
+        wa = result["washington_allocation"]
+        lines += [f"## WA allocated LT crypto gain/(loss): ${wa['allocated_lt_gain_loss']:,.2f}",
+                  "", wa["note"], ""]
     lines += ["## Caveats", ""]
     lines += [f"- {c}" for c in result["caveats"]]
     return "\n".join(lines) + "\n"
@@ -1270,8 +1312,12 @@ def _cli_compute(argv: 'list[str]') -> int:
             year = int(raw_year)
         except ValueError:
             raise CryptoImportError(f"--year must be an integer, got {raw_year!r}")
+    if isinstance(data, dict) and "wa_domicile_by_date" in data and not isinstance(data["wa_domicile_by_date"], dict):
+        raise CryptoImportError("wa_domicile_by_date must be an explicit object when supplied.")
     per_account = "--per-account" in argv
-    result = build_crypto_import(txns, tax_year=year, per_account=per_account)
+    result = build_crypto_import(txns, tax_year=year, per_account=per_account,
+                                 wa_domicile_by_date=(data.get("wa_domicile_by_date")
+                                                     if isinstance(data, dict) else None))
     if "--markdown" in argv:
         print(render_markdown(result))
     else:

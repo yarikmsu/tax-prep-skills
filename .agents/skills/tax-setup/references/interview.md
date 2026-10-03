@@ -80,6 +80,10 @@ absent/null blocks. Record all `washington_inputs` in tax-compute's WA reference
 including reviewed asset exemptions, carryforward history, deduction eligibility
 and same-asset credit worksheets. Confirm full-year WA domicile. There is no
 wage income tax; excise zero requires reviewing ALL long-term gains.
+Also ask whether the filer has checked the separate Working Families Tax Credit
+application at https://workingfamiliescredit.wa.gov/eligibility. ITIN filers may
+qualify under its EITC-equivalent rules. Record the application decision in
+answers.md; no WFTC amount is inferred or included in the excise return.
 
 For a North Carolina resident, ask every NC screening question below and
 record explicit true/false answers; legacy missing answers block computation.

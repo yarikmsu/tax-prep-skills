@@ -2,6 +2,10 @@
 
 No individual wage income tax. This separate excise uses Schedule D line 15
 LONG-TERM net gains, never line 16; short-term losses cannot reduce it.
+Crypto LT disposals are intangibles allocated by domicile at disposal. Use the
+crypto importer's reviewed `washington_allocation` workpaper; ST disposals and
+staking/reward receipt income do not enter this base. Federal LT totals already
+include the crypto rows: do not add them again.
 Full-year WA domicile only. Separate spouses and registered domestic partners
 require community/household allocations and refuse. Special federal gains
 (section 1256, QOF, other departures under RCW 82.87.020) require a separate
@@ -68,3 +72,13 @@ Payment remains due at the original April deadline; federal extension alone
 does not extend WA. Request separately through My DOR with a federal extension.
 If a final federal change affects WA gains or liability, amend WA within
 90 days under RCW 82.87.110(8). A generated summary does not submit either return.
+
+Remind WA filers to check the separate
+[Working Families Tax Credit application](https://workingfamiliescredit.wa.gov/apply).
+Eligibility resembles federal EITC with program-specific differences; ITIN
+filers may qualify when they would meet EITC requirements except for the ITIN.
+Verify [current eligibility](https://workingfamiliescredit.wa.gov/eligibility),
+including residency, age/children and income rules, even if federal EIC is zero
+or not computed. Record the application decision in answers.md. WFTC is neither
+a federal return line nor an offset against the WA capital-gains excise; do not
+invent an amount or imply this toolkit submits the separate application.

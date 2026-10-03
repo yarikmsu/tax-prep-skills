@@ -163,6 +163,6 @@ def compute_wa_capital_gains(
         "notes": [
             "TY2025 WA excise computed from confirmed classifications and eligibility worksheets; separate My DOR filing with federal return copy.",
             "No required quarterly estimates. April payment is not extended; request a WA filing extension separately through My DOR with a federal extension.",
-            "Separate spouse/RDP allocations, special federal gains and midyear domicile changes are not modeled. Harvest excise pricing and WFTC application remain separate.",
+            "Separate spouse/RDP allocations, special federal gains and midyear domicile changes are not modeled. WFTC requires a separate application at https://workingfamiliescredit.wa.gov/apply; check current eligibility, including ITIN filers who would meet federal EITC requirements except for their ITIN. No WFTC credit is included in this excise return.",
         ],
     }

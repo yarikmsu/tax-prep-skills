@@ -1013,3 +1013,23 @@ def test_read_csv_is_the_parse_utils_boundary(tmp_path):
     (tmp_path / "export.txt").write_text("a,b\n")
     with pytest.raises(ValueError, match="Unexpected file type"):
         ci._read_csv(str(tmp_path / "export.txt"))
+
+
+def test_wa_allocation_flows_through_import_and_markdown():
+    # 1.5 BTC: 75k proceeds - 75 fee - (20050 + 14025) FIFO basis = 40850 LT.
+    baseline = ci.build_crypto_import(_txns(), tax_year=2024)
+    dates = {r['date_sold']: 'WA' for r in baseline['form_8949']['part_ii_long_term']}
+    assert dates  # The integration assertion must exercise actual LT rows.
+    result = ci.build_crypto_import(_txns(), tax_year=2024, wa_domicile_by_date=dates)
+    assert result['washington_allocation']['allocated_lt_gain_loss'] == 40850
+    assert result['washington_allocation']['adjustments'] == []
+    assert result['schedule_d'] == baseline['schedule_d']
+    assert 'WA allocated LT crypto' in ci.render_markdown(result)
+
+
+def test_cli_rejects_explicit_null_wa_domicile_map(tmp_path, monkeypatch):
+    path = tmp_path / 'input.json'
+    path.write_text(json.dumps(dict(transactions=[], wa_domicile_by_date=None)))
+    monkeypatch.setenv('TAX_WORKSPACE', str(tmp_path))
+    with pytest.raises(ci.CryptoImportError, match='explicit object'):
+        ci._cli_compute(['input.json', '--year', '2025'])

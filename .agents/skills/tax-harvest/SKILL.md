@@ -31,6 +31,18 @@ of three states depending on `tax_law.state`:
 - **Not fetched** — `state.brackets` is empty and `state.type` is not `"none"`:
   degrades to "state savings not modeled" with a warning to run `/tax-setup`.
 
+**Washington exception:** the separate LT excise uses the fetched WA annual
+law and computed `washington_ltcg_excise` baseline with reviewed profile
+`washington_inputs`. Add `holdings.wa_harvest` with `deductions_unchanged: true`
+only after review, and `taxable_lots: {"L1": true, "L2": false}` covering exactly
+every eligible LT lot. True means allocated to WA and not exempt; false means
+exempt/nonallocated. Only allowed LT losses reduce the excise. ST losses save
+no WA tax. The scanner reprices deduction and rate crossings, including the
+combined harvest; lot ranking is a standalone estimate, not additive savings.
+Missing classifications, stale baseline, changed deductions, credit allocations
+or unsupported scope show **WA excise savings not modeled** with the reason.
+Full-year WA domicile remains required; no ordinary state rate applies.
+
 Read-only with respect to the baseline: never modifies `result.json` or
 `taxpayer_profile.json`. Writes a single `scenarios/<name>.json` with owner-only
 permissions through the same guarded writer `/tax-scenario` uses.

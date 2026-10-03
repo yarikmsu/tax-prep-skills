@@ -425,3 +425,22 @@ MFS, mixed joint residence periods, special IT-230 ratios, IT-203 Yonkers tax,
 foreign moves and statutory second residency retain refusals/gates. Credit,
 modification, City itemized and special-accrual worksheets remain verified
 inputs. Hand-computed source worksheets and the documented launcher are tested.
+
+## Z6 — WA harvest pricing, crypto allocation and WFTC reminder
+
+The harvest scanner now reprices the existing confirmed TY2025 excise worksheet
+before and after allowed WA-taxable LT losses, including annual deduction and
+rate-band crossings. ST losses and classified exempt/nonallocated losses have
+no WA payoff. Per-lot ranking prices standalone differences; the combined plan
+is repriced separately so overlapping deduction relief is not counted twice.
+Missing classifications, a stale computed baseline, unsupported domicile or
+household scope, changed deductions and credit allocations remain visibly
+unpriced. No baseline or holdings data is changed.
+
+Crypto imports accept an explicit domicile map for every LT disposal date and
+emit a signed allocation workpaper. Nonallocated losses are removed just like
+nonallocated gains; ST disposals and receipt income are excluded. This does not
+expand the full-year WA return engine to movers. Setup and compute remind WA
+filers about the separate WFTC application, including possible ITIN eligibility;
+no guessed credit enters a return. Source reads and hand worksheet expectations
+are recorded in `2026-10-03-wa-planning-design.md`.

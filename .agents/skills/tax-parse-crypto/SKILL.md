@@ -256,6 +256,20 @@ This prints a JSON result (`--markdown` for a human summary). Review:
 
 ### 5. Merge into result.json
 
+For WA sourcing, optionally add `wa_domicile_by_date` to the normalized input
+object: `{"2025-07-01": "WA", "2025-11-01": "TX"}`. Cover exactly every LT
+disposal date with the reviewed domicile at that sale/exchange; never infer from
+mailing address or prorate by days. The importer emits `washington_allocation`
+with allocated signed LT gains/losses and nonallocated adjustment rows. Its ST
+rows and ordinary staking/reward receipts do not enter the excise base; a later
+LT sale of coins acquired as rewards does. Resolve missing basis first.
+Merge federal Schedule D totals normally, then carry the workpaper's signed
+adjustments into `washington_inputs.adjustments` with unique IDs alongside
+other asset groups. Do not add the allocated gain a second time. Review all
+classifications and deductions in the WA compute reference before confirming
+`classification_complete`. The workpaper supports per-sale domicile review;
+the WA return engine still refuses part-year/nonresident domicile changes.
+
 Update `result.json` from the main session only — never from a delegated sub-task:
 1. **`form_1040.digital_asset_question`** ← result `digital_asset_question`. This is mandatory
    and independent of the dollars.

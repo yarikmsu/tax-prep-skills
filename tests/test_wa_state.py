@@ -173,3 +173,123 @@ def test_documented_launcher_executes(tmp_path):
         env=os.environ|dict(TAX_WORKSPACE=str(tmp_path)),capture_output=True,text=True)
     assert proc.returncode == 0, proc.stderr
     assert json.loads((tmp_path/"result.json").read_text())["washington_ltcg_excise"]["total_tax"] == 15540
+
+
+def harvest_case(gain=500000, loss=10000, *, short_loss=0, taxable=True):
+    import datetime
+    from agents.lib import loss_harvest as lh
+    fix = ROOT / 'tests/fixtures/harvest'
+    r = json.loads((fix / 'result.json').read_text())
+    p = json.loads((fix / 'taxpayer_profile.json').read_text())
+    law = json.loads((fix / 'tax_law_2026.json').read_text())
+    r['meta']['tax_year'] = 2025
+    law['tax_year'] = 2025
+    law['state'] = config()
+    p.update(address=dict(state='WA'), filing_status='MFJ', washington_inputs=inputs())
+    r['form_1040']['line_7_capital_gain'] = gain
+    r['schedule_d']['part_i_short_term']['line_7_net_short_term'] = 0
+    r['schedule_d']['part_ii_long_term']['line_15_net_long_term'] = gain
+    r['schedule_d']['line_16_combined'] = gain
+    r['washington_ltcg_excise'] = compute(gain, status='MFJ')
+    h = dict(as_of='2025-12-15', lots=[dict(id='LT', ticker='ABC', account='Taxable',
+        acquired='2023-01-01', quantity=100, cost_basis=loss+100, current_value=100)],
+        wa_harvest=dict(deductions_unchanged=True, taxable_lots=dict(LT=taxable)))
+    if short_loss:
+        h['lots'].append(dict(id='ST', ticker='DEF', account='Taxable', acquired='2025-06-01',
+                             quantity=100, cost_basis=short_loss+100, current_value=100))
+    def build():
+        return lh.build_harvest(r, p, law, h, 2025, name='wa', today=datetime.date(2025,12,15))
+    return build, r, p, law, h
+
+
+@pytest.mark.parametrize('gain,loss,expected', [
+    (500000,10000,700),  # 10k × .07, independent of federal netting.
+    (277000,10000,0), (280000,10000,140),  # Only 2k above deduction.
+    (1283000,10000,845),  # 5k × .099 + 5k × .07 across second band.
+])
+def test_wa_harvest_exact_excise_difference(gain, loss, expected):
+    from agents.lib import loss_harvest as lh
+    build, r, p, law, h = harvest_case(gain, loss)
+    original = copy.deepcopy((r,p,law,h))
+    report = build()
+    assert report.state_savings == expected
+    assert report.state_modeled and report.state_mtr is None
+    assert not report.state_excise_unpriced
+    assert 'ST losses save no WA tax' in lh.render_markdown(report)
+    assert lh._report_to_dict(report)['state_excise_note']
+    assert (r,p,law,h) == original
+
+
+def test_wa_harvest_st_exempt_and_allowed_wash_loss():
+    build, _, _, _, h = harvest_case(short_loss=100000)
+    assert build().state_savings == 700  # ST loss does not change WA LT base.
+    h['wa_harvest']['taxable_lots']['LT'] = False
+    assert build().state_savings == 0  # Exempt/nonallocated loss removed.
+    h['wa_harvest']['taxable_lots']['LT'] = True
+    h['recent_transactions'] = [dict(ticker='ABC', account='Other',
+        date='2025-12-01', kind='buy', quantity=50)]
+    assert build().state_savings == 350  # 50/100 allowed shares × 10k × .07.
+
+
+def test_wa_harvest_combined_loss_not_sum_of_independent_cliff_estimates():
+    build, _, _, _, h = harvest_case(280000, 1500)
+    h['lots'].append(dict(h['lots'][0], id='LT2', ticker='XYZ'))
+    h['wa_harvest']['taxable_lots']['LT2'] = True
+    report = build()
+    assert report.state_savings == 140  # Combined 3k loss uses only 2k taxable base.
+    assert report.lt_loss_harvested == 3000
+
+
+@pytest.mark.parametrize('problem', ['missing', 'classification', 'deduction', 'credit',
+                                   'baseline', 'year', 'scope', 'anniversary'])
+def test_wa_harvest_missing_or_unverified_inputs_visibly_degrade(problem):
+    from agents.lib import loss_harvest as lh
+    build, r, p, law, h = harvest_case()
+    if problem == 'missing':
+        del p['washington_inputs']
+    elif problem == 'classification':
+        h['wa_harvest']['taxable_lots']['LT'] = 'true'
+    elif problem == 'deduction':
+        h['wa_harvest']['deductions_unchanged'] = False
+    elif problem == 'credit':
+        p['washington_inputs']['other_jurisdiction_credits'] = [dict(
+            jurisdiction='OR',tax_paid=100,wa_tax_on_same_gains=100)]
+    elif problem == 'baseline':
+        r['washington_ltcg_excise']['total_tax'] += 1
+    elif problem == 'year':
+        law['state']['wa_capital_gains']['tax_year'] = 2024
+    elif problem == 'scope':
+        p['washington_inputs']['full_year_wa_domicile'] = False
+    elif problem == 'anniversary':
+        h['lots'][0]['acquired'] = '2024-01-15'
+        h['as_of'] = '2025-01-15'  # 366 days but exactly one year: still ST.
+    report = build()
+    assert report.state_savings == 0 and report.state_excise_unpriced
+    assert not report.state_modeled
+    assert report.state_excise_note in lh.render_markdown(report)
+
+
+def test_crypto_wa_domicile_workpaper_includes_signed_lt_only():
+    from agents.lib import crypto_importer as ci
+    # LT capital gain and loss already federally included; ST and staking excluded.
+    rows = dict(form_8949=dict(part_ii_long_term=[
+        dict(date_sold='2025-03-01',gain_loss=20000),
+        dict(date_sold='2025-11-01',gain_loss=-5000)],
+        part_i_short_term=[dict(date_sold='2025-03-01',gain_loss=99999)]),
+        ordinary_income=dict(total=10000))
+    out = ci.washington_crypto_allocation(rows, {'2025-03-01':'WA','2025-11-01':'TX'})
+    assert out['allocated_lt_gain_loss'] == 20000
+    assert out['adjustments'] == [dict(id='crypto-lt-1',reason='nonallocated',gain_loss=-5000)]
+    # Federal LT 15k minus removed -5k = WA 20k (not federal combined + staking).
+    assert 15000 - out['adjustments'][0]['gain_loss'] == 20000
+    for bad in (None, {}, {'2025-03-01':'WA','2025-11-01':'ZZ'},
+                {'2025-03-01':True,'2025-11-01':'WA'}):
+        with pytest.raises(ci.CryptoImportError):
+            ci.washington_crypto_allocation(rows, bad)
+
+
+def test_wftc_is_separate_application_in_computed_notes():
+    notes = ' '.join(compute(0)['notes'])
+    assert 'workingfamiliescredit.wa.gov/apply' in notes
+    assert 'ITIN' in notes and 'separate application' in notes
+    assert 'No WFTC credit' in notes
