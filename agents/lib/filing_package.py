@@ -368,6 +368,8 @@ def attachment_checklist(result: dict) -> list:
                 "enclose a check or money order payable to 'New York State "
                 "Income Tax' — last four SSN digits and '{tax year} Income "
                 "Tax' on it — with Form IT-201-V, at the payment address.")
+    if _section_present(result, "washington_ltcg_excise"):
+        lines.append("WA excise files separately through My DOR with the federal return copy. Filing is required after a WA extension request or payment even if tax is zero. Final federal changes affecting WA gains or tax require a WA amendment within 90 days. No quarterly vouchers.")
     if _section_present(result, "north_carolina_d400"):
         lines += [
             "North Carolina Form D-400 files separately from the federal "

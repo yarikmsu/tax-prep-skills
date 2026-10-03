@@ -47,6 +47,8 @@
     }
   ],
   "flags": {
+    "wa_has_special_gain_rules": null,
+    "wa_has_separate_household": null,
     "nc_has_business_adjustments": null,
     "nc_has_recovery_deductions": null,
     "nc_has_nol": null,

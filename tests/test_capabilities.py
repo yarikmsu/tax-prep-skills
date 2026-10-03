@@ -860,11 +860,12 @@ class TestNoIncomeTaxStateNote:
         from agents.lib.capabilities import _state_note
         assert "ESTIMATE" in _state_note(self._profile("NH"))
 
-    def test_wa_keeps_estimate_note(self):
+    def test_wa_has_excise_depth_note(self):
         # WA is deliberately NOT in the no-income-tax set: the capital-gains
         # excise (RCW 82.87) means "no tax at all" would be a false promise.
         from agents.lib.capabilities import _state_note
-        assert "ESTIMATE" in _state_note(self._profile("WA"))
+        assert "capital-gains excise computed in depth" in _state_note(self._profile("WA"))
+        assert "No individual wage income tax" in _state_note(self._profile("WA"))
 
     def test_ca_note_unchanged(self):
         from agents.lib.capabilities import _state_note

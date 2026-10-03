@@ -378,7 +378,7 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
   acknowledged block hands to a preparer today.
 
 
-## Z4 — North Carolina final pipeline integration
+## Z4 — North Carolina final pipeline integration (#219)
 
 The existing fetched-law schema and parameterized tax functions now reach the
 return pipeline: a state registry row, NC withholding ledger category, D-400
@@ -397,3 +397,7 @@ and [NCDOR estimated-tax guidance](https://www.ncdor.gov/taxes-forms/individual-
 NC-4 line 2 accepts whole dollars, so the NC per-paycheck recommendation rounds
 up to the next dollar to cover the target. Authority re-read live:
 [NC-4](https://www.ncdor.gov/employees-withholding-allowance-certificate-0/open).
+
+## Z5 — Washington LT capital-gains excise
+
+A dedicated excise regime and fetched block price classified Schedule D LT gains, excluded losses/carryforwards, qualifying deductions and substantiated same-asset credits. WA ordinary brackets stay empty and the shared reader prevents wage taxation even with corrupt legacy data. The result, setup/compute instructions, separate My DOR package and annual April reminder are wired; there are no quarterly wage-tax events. TY2025 only. Separate household allocations and special federal normalization refuse. Z6 harvest repricing remains open under an explicit unpriced banner.

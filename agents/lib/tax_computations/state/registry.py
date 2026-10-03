@@ -46,6 +46,7 @@ class StateSection:
     mover_fields: "tuple[tuple[str, str], ...]" = ()
     informational_key: "str | None" = None
     package_forms: "tuple[tuple[str, str], ...]" = ()
+    regime: str = "graduated_income"
 
 
 # In DETECTION order: `projection._detect_prior_state` takes the first section
@@ -68,7 +69,7 @@ STATE_SECTIONS: "tuple[StateSection, ...]" = (
         ),
     ),
     StateSection(
-        code="FL", section="florida_state",
+        code="FL", section="florida_state", regime="none",
         # Florida's section is a no-income-tax STATEMENT plus zero/bool
         # scaffold, so the generic non-empty scan would read a populated one
         # as absent; this string is what proves it was written.
@@ -106,6 +107,14 @@ STATE_SECTIONS: "tuple[StateSection, ...]" = (
         ),
     ),
 )
+
+STATE_SECTIONS += (StateSection(
+    code="WA", section="washington_ltcg_excise", regime="capital_gains_excise",
+    evidence_fields=("computed_tax_year",),
+    mover_fields=(("State excise taxable gain", "washington_ltcg_excise.taxable_wa_gain"),
+                  ("State excise total tax", "washington_ltcg_excise.total_tax")),
+    package_forms=(("washington_ltcg_excise", "Washington capital-gains excise (My DOR)"),),
+),)
 
 BY_CODE: "dict[str, StateSection]" = {s.code: s for s in STATE_SECTIONS}
 

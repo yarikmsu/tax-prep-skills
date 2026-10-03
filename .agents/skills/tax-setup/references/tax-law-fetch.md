@@ -434,9 +434,16 @@ a figure from a prior year.
   **WA is NEVER `type: "none"`**: WA is commonly (and misleadingly)
   described as having no income tax, but it levies a real capital-gains
   excise tax on long-term gains (RCW 82.87) — declaring WA `type: "none"`
-  would silently zero that liability. Keep WA on the generic
-  estimate/unmodeled path until a dedicated WA capital-gains-excise module
-  exists. **NH is excluded** pending confirmation that its repealed
+  would silently zero that liability. Use `capital_gains_excise` with
+  `state.brackets: []`. Fetch the covered year's `state.wa_capital_gains`
+  COMPLETE block: `tax_year`, indexed `standard_deduction`, indexed
+  `charitable_minimum`, indexed `charitable_cap`, and `rates` as min/max/rate
+  bands with the final max null. Read DOR's capital-gains page and that year's
+  tier notice live, confirming the named year; never extrapolate deductions.
+  Write the whole block through the cache setter with its source and covered
+  period, not a separate year attestation. Partial updates clear the year.
+  Pin DOR and RCW 82.87 sources in `_sources`. TY2025 is the module's verified
+  form year; other form years stop. **NH is excluded** pending confirmation that its repealed
   interest-and-dividends tax (RSA 77, repeal effective TY2025) leaves no
   residual filing obligation for every year this tool targets — NH keeps
   the estimate note until that's verified and its own module lands.

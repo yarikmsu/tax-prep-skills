@@ -784,5 +784,25 @@
     "_note_california_refund": "CA-only legacy field — /tax-setup removes it for non-CA taxpayers; other states' balances live in their own state section.",
     "net_refund": 0,
     "note": null
+  },
+  "washington_ltcg_excise": {
+    "computed_tax_year": 0,
+    "federal_net_long_term": 0,
+    "excluded_carryforward_addback": 0,
+    "removed_gain_loss": 0,
+    "adjusted_wa_gain": 0,
+    "standard_deduction": 0,
+    "business_deduction": 0,
+    "charitable_deduction": 0,
+    "taxable_wa_gain": 0,
+    "tax_before_credits": 0,
+    "credits": 0,
+    "total_tax": 0,
+    "payments": 0,
+    "balance_due": 0,
+    "refund": 0,
+    "return_required": false,
+    "no_wage_income_tax_statement": "",
+    "notes": []
   }
 }

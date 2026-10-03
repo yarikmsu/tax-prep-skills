@@ -35,8 +35,8 @@ def _get(d, dotted):
 def test_the_registry_holds_the_states_the_toolkit_knows():
     """California and New York computed in depth, Florida's statement — a
     state added or dropped is a decision, so the set is pinned exactly."""
-    assert [s.code for s in STATE_SECTIONS] == ["CA", "FL", "NY", "NC"]
-    assert set(registry.BY_CODE) == {"CA", "FL", "NY", "NC"}
+    assert [s.code for s in STATE_SECTIONS] == ["CA", "FL", "NY", "NC", "WA"]
+    assert set(registry.BY_CODE) == {"CA", "FL", "NY", "NC", "WA"}
     assert registry.BY_CODE["NY"].section == "new_york_it201"
 
 
@@ -57,7 +57,7 @@ def test_every_derived_table_is_the_registry_projection():
     assert yoy_diff.INFORMATIONAL_SECTIONS == {"florida_state":
                                                "no_income_tax_statement"}
     assert set(yoy_diff.STATE_MOVER_FIELDS) == {"california_540",
-                                                "new_york_it201", "north_carolina_d400"}
+                                                "new_york_it201", "north_carolina_d400", "washington_ltcg_excise"}
     for s in STATE_SECTIONS:
         assert yoy_diff.STATE_MOVER_FIELDS.get(s.section, []) == list(
             s.mover_fields), s.code
@@ -183,13 +183,23 @@ COMPUTED = [s for s in STATE_SECTIONS if s.evidence_fields]
 
 
 def test_the_computed_states_are_ca_ny_and_nc():
-    assert {s.code for s in COMPUTED} == {"CA", "NY", "NC"}
+    assert {s.code for s in COMPUTED} == {"CA", "NY", "NC", "WA"}
 
 
 @pytest.mark.parametrize("s", COMPUTED, ids=lambda s: s.code)
 def test_a_computed_state_is_wired_into_every_module(s):
     from agents.lib import capabilities, tax_calendar, tie_out, withholding
     # The tie-out checks the state's W-2 withholding against its section.
+    if s.regime == "capital_gains_excise":
+        assert s.code == "WA"
+        assert "state_withholding_wa" not in tie_out.CATEGORY_TARGETS
+        assert "computed in depth" in capabilities._state_note({"address": {"state": "WA"}})
+        events = tax_calendar.build_events({"address": {"state": "WA"}, "flags": {}}, 2025)
+        assert not any(e.category == "state_estimated_tax" for e in events)
+        assert any("WA capital-gains" in e.summary for e in events)
+        assert not hasattr(withholding, "build_wa_true_up")
+        assert s.package_forms[0][0] == s.section
+        return
     category = f"state_withholding_{s.code.lower()}"
     assert tie_out.CATEGORY_TARGETS[category][0] == s.section, category
     # The capability gate tells the reader the state is computed in depth,

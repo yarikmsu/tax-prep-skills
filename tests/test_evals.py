@@ -71,7 +71,7 @@ _INAPPLICABLE_SECTIONS = (
     "ira_contribution",
     # ...and the other state sections. The case is a California resident,
     # so an IT-201 or a D-400 no more exists for it than a Florida section does.
-    "new_york_it201", "north_carolina_d400",
+    "new_york_it201", "north_carolina_d400", "washington_ltcg_excise",
 )
 
 

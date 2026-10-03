@@ -954,8 +954,8 @@ apply_red_checks
 #   ---------------------------------------------------------------------------
 #   nothing watched changed        no pytest     under a thousandth
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
-#   skill .md edit                1086 tests     about a seventh
-#   cold pass, all seven modules  1367 tests     one
+#   skill .md edit                1087 tests     about a seventh
+#   cold pass, all seven modules  1368 tests     one
 #   (for scale) `pytest tests/`   every module  about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
@@ -979,7 +979,7 @@ apply_red_checks
 #   tests/test_claude_hooks.py     187 tests    the dominant row
 #   tests/test_portability.py      250 tests    about a tenth of the hooks row
 #   tests/test_preflight.py        383 tests    a twelfth to a twentieth of it
-#   tests/test_secure_fs.py        186 tests    under a fiftieth of it
+#   tests/test_secure_fs.py        187 tests    under a fiftieth of it
 #   tests/test_host_guard.py        94 tests    under a fiftieth of it
 #   tests/test_capabilities.py     219 tests    under a fiftieth of it
 #   tests/test_claude_agents.py     48 tests    under a fiftieth of it
@@ -1000,8 +1000,8 @@ apply_red_checks
 # list and not the timeout; parallelism is the honest lever left, and it needs
 # a dependency the lock does not carry.
 #
-# ARITHMETIC, which is the half that is EXACT: 48 + 219 + 186 + 250 + 383 = 1086
-# for a skill edit, plus 94 + 187 = 1367 for a cold pass, both matching the
+# ARITHMETIC, which is the half that is EXACT: 48 + 219 + 187 + 250 + 383 = 1087
+# for a skill edit, plus 94 + 187 = 1368 for a cold pass, both matching the
 # trigger table to the test. `test_the_measured_costs_counts_match_live_
 # collection` collects every module and re-derives both sums, the parts
 # included, so a stale count is a red suite rather than a figure a reader has to

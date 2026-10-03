@@ -644,6 +644,9 @@ def events_extension(tax_year: int, *, state: "str | None" = None) -> list[Calen
         extended_state_form = " and CA Form 540"
     elif ny:
         extended_state_form = " and NY Form IT-201"
+    elif state == "WA":
+        apr_desc += (" Washington capital-gains excise: pay by the original deadline and request a WA extension separately through My DOR, with a federal extension. A federal extension alone does NOT extend WA. No required quarterly estimates.")
+        extended_state_form = " and WA capital-gains excise ONLY with a separately approved My DOR extension"
     elif state == "NC":
         apr_desc += (
             " North Carolina Form D-400: an automatic federal extension also "
@@ -1287,6 +1290,13 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
         events.extend(events_ca_es(tax_year))
     elif resident_state == "NY":
         events.extend(events_ny_es(tax_year))
+    elif resident_state == "WA" and tax_year >= 2022:
+        events.append(CalendarEvent(
+            uid=f"wa-excise-{tax_year}@{_UID_NAMESPACE}",
+            summary=f"WA capital-gains excise filing and payment (TY{tax_year})",
+            date=_state_due(tax_year + 1, 4, 15, "WA"),
+            description="Separate electronic My DOR return with federal copy. No required quarterly estimates. Pay by the original deadline; a federal extension alone is insufficient. Request WA extension separately through My DOR. Confirm WA holiday adjustment with DOR.",
+            category="note"))
     elif resident_state == "NC":
         events.extend(events_nc_es(tax_year))
 

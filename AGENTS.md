@@ -216,20 +216,19 @@ are plain Markdown instructions and are written to be executable that way.
   (exit 2) whenever one exists, preflight excepted so it can still report the
   defect. Why: `docs/contributing/agents-compat.md`.
 - **State regimes are typed** — `tax_law state.type` (`graduated_income` |
-  `none`): a no-income-tax state is a POSITIVE declaration, never an empty
+  `capital_gains_excise` | `none`): a no-income-tax state is a POSITIVE declaration, never an empty
   section. See `docs/contributing/state-module-playbook.md`.
 - **Bias direction decides severity.** When data is missing or ambiguous, a
   silent fallback that OVER-states the number the user acts on is a hard error;
   one that UNDER-states it degrades with a loud banner. Never guess a value that
   changes a return.
 
-**Three states are computed in depth**: CA Form 540, NY Form IT-201 and
-NC Form D-400 (source-verified TY2025 only), for FULL-YEAR RESIDENTS.
-FL, AK, NV, SD, TX, WY and TN (2021+)
-are `type: "none"`, the rest bracket-estimate only, and part-year /
-nonresident returns are modeled for neither. What each depth module covers, and how to add one:
-`docs/contributing/state-module-playbook.md`, with the spec template at
-`docs/superpowers/specs/TEMPLATE-state-module.md`.
+**In-depth income returns:** CA 540, NY IT-201 and NC D-400 (TY2025 only),
+full-year residents only. WA's separate TY2025 `capital_gains_excise` uses EMPTY
+ordinary brackets; no wage income tax. FL/AK/NV/SD/TX/WY/TN (2021+) are `none`;
+others bracket-estimate only. Part-year/nonresident returns remain gated.
+Coverage and additions: `docs/contributing/state-module-playbook.md`;
+spec: `docs/superpowers/specs/TEMPLATE-state-module.md`.
 
 ## 5. Directory structure
 

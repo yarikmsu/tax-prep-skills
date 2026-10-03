@@ -8131,7 +8131,7 @@ class TestEveryStateEntryPointValidatesItsFilingStatus:
         # status somewhere, so a run that inspected neither has lost its
         # subject — a renamed directory, a changed predicate — rather than
         # found nothing to report.
-        assert {p.split("::")[0] for p in seen} == {"ca.py", "nc.py", "ny.py"}, (
+        assert {p.split("::")[0] for p in seen} == {"ca.py", "nc.py", "ny.py", "wa.py"}, (
             f"the sweep inspected {sorted(set(p.split('::')[0] for p in seen))} "
             "— it is meant to read every depth module, and a module it cannot "
             "see is a module it cannot hold")
@@ -8277,6 +8277,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ny.py::compute_ny_itemized": "direct",
         "tax_computations/state/nc.py::compute_nc_child_deduction": "direct",
         "tax_computations/state/nc.py::compute_nc_d400": "direct",
+        "tax_computations/state/wa.py::compute_wa_capital_gains": "direct",
         "tax_computations/state/nc.py::compute_nc_deduction_choice": "direct",
         "tax_computations/state/nc.py::compute_nc_itemized": "direct",
         "withholding.py::build_ny_true_up": "direct",

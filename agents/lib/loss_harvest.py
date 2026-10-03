@@ -992,6 +992,7 @@ class HarvestReport:
     # None when there's nothing to warn about (codes match, or one/both
     # sides are unknown).
     state_cache_mismatch: "str | None" = None
+    state_excise_unpriced: bool = False
     # Codex round-23 P2 (the harvest twin of projection.ProjectionReport.
     # nonresident_income_warning, round-8 finding F there): set whenever
     # profile flags.has_nonresident_source_income is True, REGARDLESS of
@@ -1320,6 +1321,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         state_modeled=state_modeled, state_mtr=state_mtr,
         state_savings=state_savings,
         state_rate_floor_note=state_rate_floor_note,
+        state_excise_unpriced=((tax_law.get("state") or {}).get("code") == "WA"),
         total_savings=round(fed_savings + state_savings, 2),
         fed_ordinary_mtr=ord_mtr, fed_ltcg_mtr=ltcg_mtr,
         state_no_income_tax=no_income_tax,
@@ -1372,6 +1374,7 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "state_modeled": r.state_modeled, "state_mtr": r.state_mtr,
         "state_savings": r.state_savings, "total_savings": r.total_savings,
         "state_rate_floor_note": r.state_rate_floor_note,
+        "state_excise_unpriced": r.state_excise_unpriced,
         "fed_ordinary_mtr": r.fed_ordinary_mtr, "fed_ltcg_mtr": r.fed_ltcg_mtr,
         "state_no_income_tax": r.state_no_income_tax,
         "state_cache_mismatch": r.state_cache_mismatch,
@@ -1421,6 +1424,8 @@ def render_markdown(r: HarvestReport) -> str:
                       "state's tax on this income is not modeled here, so "
                       "the fed_savings figure alone understates what a "
                       "harvest decision should weigh.", ""]
+        elif r.state_excise_unpriced:
+            lines += ["> **WA excise savings not modeled:** there is no individual wage income tax. Only qualifying long-term gains/losses affect the separate excise; this scanner reports federal savings and does not price WA excise savings.", ""]
         elif r.state_no_income_tax:
             lines += ["> **State savings: $0 — correct and complete.** This "
                       "state levies no individual income tax "

@@ -20,6 +20,10 @@ graduated schedule above the §601(d-x) recapture threshold.
 `tax_law.state.code == "NC"`, read [state-return-nc.md](state-return-nc.md).
 Its D-400 branch replaces the generic bracket estimate below.
 
+**WASHINGTON:** after that cross-check, `state.code == "WA"` routes to
+[state-return-wa.md](state-return-wa.md). Use its `capital_gains_excise`
+regime and LONG-TERM base; never an ordinary-income bracket estimate.
+
 ## Contents
 
 - [Step 10: State Return](#step-10-state-return)

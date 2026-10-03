@@ -6,6 +6,12 @@ license: Apache-2.0
 
 # /tax-extend — Extension (Form 4868 + state)
 
+Washington capital-gains excise: federal extension is a prerequisite but does
+not itself extend WA. Request a separate extension electronically through
+My DOR by the original April deadline; payment is still due then. Filing is
+required after an extension request or payment even when tax is zero. Confirm
+WA holidays with DOR. No required quarterly WA estimates exist.
+
 Prepare the April extension decision: how much to pay with Form 4868, how the
 resident state handles extensions (CA: automatic, payment-only via FTB 3519;
 NY: Form IT-370 REQUIRED — the federal 4868 does not extend it),

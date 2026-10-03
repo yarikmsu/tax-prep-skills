@@ -73,6 +73,9 @@ def state_brackets_for_status(state_cfg: dict,
     cache whose SHAPE cannot be read raises instead: that is corruption, and
     degrading it to "no state tax" would publish a zero liability.
     """
+    if ((state_cfg or {}).get("code") == "WA"
+            or (state_cfg or {}).get("type") == "capital_gains_excise"):
+        return []  # Excise bands must never tax ordinary wages.
     brackets = (state_cfg or {}).get("brackets")
     if not brackets:
         # No bands at all — a `type: "none"` state, or a cache not fetched yet.
@@ -3607,6 +3610,8 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
 
 
 # North Carolina — the same contract as California and New York above.
+from agents.lib.tax_computations.state.wa import compute_wa_capital_gains  # noqa: E402,F401
+
 from agents.lib.tax_computations.state.nc import (  # noqa: E402,F401
     compute_nc_child_deduction,
     compute_nc_d400,

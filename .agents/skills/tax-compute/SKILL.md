@@ -161,6 +161,7 @@ Read each reference file when you reach its steps; do not read them all up front
 | 10 | State return — California, no-income-tax states, the generic bracket estimate | [references/state-return.md](references/state-return.md) |
 | 10 | State return — **New York** (Form IT-201, full-year resident) | [references/state-return-ny.md](references/state-return-ny.md) |
 | 10 | State return — **North Carolina** (Form D-400, full-year resident, TY2025) | [references/state-return-nc.md](references/state-return-nc.md) |
+| 10 | State return — **Washington** (LT capital-gains excise, TY2025) | [references/state-return-wa.md](references/state-return-wa.md) |
 | 11 – 11.5 | International compliance and the optimization discovery engine | [references/international-and-optimization.md](references/international-and-optimization.md) |
 | 12, 13 | Write result files and produce the summary | [references/finalize.md](references/finalize.md) |
 

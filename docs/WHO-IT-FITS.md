@@ -236,3 +236,5 @@ North Carolina adds six state-specific blocks: `nc_business_adjustments`,
 `nc_other_credits`. They apply only to NC residents. The NC percentages above measure the
 previous common blocks and exclude these additional situations. No population frequency has been measured for
 these NC Schedule S and credit situations; their overlap is unknown.
+
+WA-specific screening: `wa_special_gains` and `wa_separate_household` are unmeasured scope blocks; their prevalence is not estimated. Each must be answered for WA.

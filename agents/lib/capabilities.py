@@ -91,6 +91,8 @@ class CapabilityReport:
 # /tax-setup interview is what sets them, so a rule keyed on a flag the
 # interview never asks is dead (the D1 lesson from expected_sources).
 RULES: "tuple[Rule, ...]" = (
+    Rule("wa_special_gains", "wa_has_special_gain_rules", UNSUPPORTED, "WA special federal gain rules", "RCW 82.87.020 normalization", "Section 1256/QOF and other special rules require a WA gain worksheet not modeled here."),
+    Rule("wa_separate_household", "wa_has_separate_household", UNSUPPORTED, "WA separate spouse/RDP household", "RCW 82.87.120 allocation", "One household shares all WA deductions and credits; separate allocations are not modeled."),
     Rule("nc_business_adjustments", "nc_has_business_adjustments", UNSUPPORTED,
          "NC bonus depreciation or section 179 adjustments", "D-400 Schedule S A3/A4",
          "NC business add-backs are not modeled; prepare the year's Schedule S manually."),
@@ -847,6 +849,10 @@ def _state_note(profile: dict) -> str:
             "IT-196 lines 1-45 and IT-201 line 45's other taxes. Line 59's "
             "sales or use tax is ASKED, never assumed to be zero. Part-year "
             "and nonresident returns (IT-203) are not modeled.")
+    if code == "WA":
+        return ("State (WA): capital-gains excise computed in depth for TY2025 from confirmed LT classifications and worksheets. "
+                "No individual wage income tax. Short-term losses do not reduce the base. Separate spouses/RDPs, special federal gains and midyear domicile changes refuse. "
+                "Separate My DOR filing with federal copy; no required quarterly estimates. Federal extension alone does not extend WA filing.")
     if code == "NC":
         return (
             "State (NC): Form D-400 computed in depth for a full-year resident "
@@ -1023,6 +1029,8 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
                    & _TERRITORIES)}
 
     for rule in RULES:
+        if rule.rule_id.startswith("wa_") and _profile_state(profile) != "WA":
+            continue
         if rule.rule_id.startswith("nc_") and _profile_state(profile) != "NC":
             continue
         # _flag_value FIRST, so a non-bool answer still hard-errors.
@@ -1039,6 +1047,9 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     if _profile_state(profile) == "NC":
         missing_flags.extend(rule.flag for rule in RULES
                              if rule.rule_id.startswith("nc_") and flags.get(rule.flag) is None)
+    if _profile_state(profile) == "WA":
+        missing_flags.extend(rule.flag for rule in RULES
+                             if rule.rule_id.startswith("wa_") and flags.get(rule.flag) is None)
     if missing_flags:
         _place(Finding(
             _MIGRATION_RULE_ID, UNSUPPORTED,

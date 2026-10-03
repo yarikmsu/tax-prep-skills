@@ -72,7 +72,16 @@ a rule keyed on a flag nothing sets is dead code, and a test enforces it.
   ```
 
 **Group 1.5 — Life events THIS tax year (H1):**
-For a North Carolina resident, also ask every NC screening question below and
+For Washington, ask whether special federal
+gain rules (section 1256, QOF, other RCW 82.87.020 normalization) apply →
+`wa_has_special_gain_rules`; and whether there are registered domestic partners
+or separately filed spouses → `wa_has_separate_household`. Set both true/false;
+absent/null blocks. Record all `washington_inputs` in tax-compute's WA reference,
+including reviewed asset exemptions, carryforward history, deduction eligibility
+and same-asset credit worksheets. Confirm full-year WA domicile. There is no
+wage income tax; excise zero requires reviewing ALL long-term gains.
+
+For a North Carolina resident, ask every NC screening question below and
 record explicit true/false answers; legacy missing answers block computation.
 Read the covered year's D-401 Schedule S and D-400TC with the taxpayer.
 

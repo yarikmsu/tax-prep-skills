@@ -919,6 +919,12 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             },
         },
     }
+    state_templates["WA"] = {
+        "code": "WA", "name": "Washington", "authority": "Department of Revenue",
+        "type": "capital_gains_excise", "brackets": [],
+        "wa_capital_gains": {"tax_year": None, "standard_deduction": None,
+            "charitable_minimum": None, "charitable_cap": None, "rates": []},
+    }
     if state in state_templates:
         return state_templates[state]
 
@@ -1009,7 +1015,7 @@ def _open_top_key(path: str) -> "str | None":
     """The key whose null on a table's LAST row is the table's open top, not an
     unfetched figure — `max` on a bracket schedule, `agi_up_to` on a North
     Carolina child-deduction table — or None for a list that has no such row."""
-    if path.endswith("brackets"):
+    if path.endswith("brackets") or path == "state.wa_capital_gains.rates":
         return "max"
     if _NC_CHILD_TABLE.match(path):
         return "agi_up_to"
@@ -1069,6 +1075,8 @@ def _expected_state_regime(code: str, tax_year) -> "str | None":
     matching the conservative "not yet repealed" default `_tn_hall_repealed`
     uses when the year can't be resolved.
     """
+    if code == "WA":
+        return "capital_gains_excise"
     if code in _GRADUATED_MODELED_STATES:
         return "graduated_income"
     if code == "TN":
@@ -1414,6 +1422,10 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         "state.nyc_tax.tax_table.table_bases",
     }
 
+    if (isinstance(data.get("state"), dict) and data["state"].get("code") == "WA"
+            and data.get("state", {}).get("type") == "capital_gains_excise"):
+        _EMPTY_LIST_BY_DESIGN.add("state.brackets")
+
     def _walk(obj, path=""):
         if isinstance(obj, dict):
             for k, v in obj.items():
@@ -1591,6 +1603,15 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
             for path in _absent_keys(create_state_template("NC"), state_block,
                                      "state"))
 
+    if isinstance(state_block, dict) and _state_pin_code(state_block) == "WA":
+        null_fields.extend(f"{p} (key absent — required for WA excise)"
+                           for p in _absent_keys(create_state_template("WA"), state_block, "state"))
+        if state_block.get("brackets") != []:
+            null_fields.append("state.brackets (WA excise requires EMPTY ordinary brackets)")
+        cfg = state_block.get("wa_capital_gains", {})
+        if not isinstance(cfg, dict) or type(cfg.get("tax_year")) is not int or cfg.get("tax_year") != data.get("tax_year"):
+            null_fields.append("state.wa_capital_gains.tax_year (fetch parameters for this year)")
+
     # state.type regime-discriminator guard (Codex P2): "type" was removed
     # from _SKIP_KEYS above so a PRESENT-but-null or misspelled value is no
     # longer skipped over silently — a deleted/corrupted discriminator must
@@ -1603,10 +1624,10 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # deliberately NOT flagged here.
     if (isinstance(state_block, dict) and "type" in state_block
             and state_block["type"] is not None
-            and state_block["type"] not in ("graduated_income", "none")):
+            and state_block["type"] not in ("graduated_income", "none", "capital_gains_excise")):
         null_fields.append(
             "state.type (unrecognized regime — expected "
-            "graduated_income|none)")
+            "graduated_income|capital_gains_excise|none)")
 
     # Inverse of the guard above (Codex round-2 P2): deleting the "type" key
     # ENTIRELY still passed the previous guard, because it only fires when
@@ -1628,7 +1649,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # ISN'T "none", so they're still named explicitly.
     if isinstance(state_block, dict) and "type" not in state_block:
         _absent_type_code = _state_pin_code(state_block)
-        if (_absent_type_code in _GRADUATED_MODELED_STATES
+        if (_absent_type_code == "WA" or _absent_type_code in _GRADUATED_MODELED_STATES
                 or _none_type_allowed(_absent_type_code, data.get("tax_year"))):
             null_fields.append(
                 "state.type (key absent — required for modeled states "
@@ -1658,7 +1679,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # expected regime is "none"). An unmodeled code (CO) typed
     # graduated_income stays unconstrained.
     if (isinstance(state_block, dict)
-            and state_block.get("type") in ("graduated_income", "none")):
+            and state_block.get("type") in ("graduated_income", "none", "capital_gains_excise")):
         _regime_code = _state_pin_code(state_block)
         _type = state_block["type"]
         if _type == "none":
@@ -1698,7 +1719,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                     f'cache)')
         else:
             _expected = _expected_state_regime(_regime_code, data.get("tax_year"))
-            if _expected is not None and _type != _expected:
+            if (_expected is not None and _type != _expected) or (_type == "capital_gains_excise" and _regime_code != "WA"):
                 null_fields.append(
                     f'state.type ("{_type}" conflicts with '
                     f'state.code "{_regime_code}" — expected {_expected})')
@@ -2010,6 +2031,7 @@ _STRUCTURAL_BLOCKS = ("federal.se_tax", "federal.niit",
 # PATH, never the bare leaf name: a future key called `schedule` or `brackets`
 # elsewhere in the schema must not inherit a validator meant for another.
 _TABLE_VALIDATORS = (
+    (re.compile(r"^state\.wa_capital_gains\.rates$"), "brackets"),
     (re.compile(r"^(federal\.filing_statuses\.[a-z]+|state)\.brackets$"), "brackets"),
     # New York's brackets are keyed by §601 rate schedule, the State's and the
     # City's alike, so the table is each schedule and not the block holding them.
@@ -2593,6 +2615,8 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
         raise TaxLawSetError(
             f"the cache declares tax_year {data.get('tax_year')!r} but --year is "
             f"{year} — refusing to write a figure for one year into another's cache")
+    if dotted == "state.wa_capital_gains.tax_year":
+        raise TaxLawSetError("Write the complete WA parameters block with its year and source; never a separate year attestation")
     if dotted == "state.rate_tax_year":
         raise TaxLawSetError(
             "state.rate_tax_year is stamped by writing state.brackets into this "
@@ -2602,6 +2626,12 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
     _check_against(dotted, ref, value)
     _set_path(data, dotted, value, year)
     _stamp_rate_year(data, dotted, year)
+    if dotted == "state" or dotted == "state.wa_capital_gains":
+        wa_cfg = data.get("state", {}).get("wa_capital_gains")
+        if data.get("state", {}).get("code") == "WA" and (not isinstance(wa_cfg, dict) or type(wa_cfg.get("tax_year")) is not int or wa_cfg["tax_year"] != year):
+            raise TaxLawSetError("WA parameters must explicitly name this cache year")
+    elif dotted.startswith("state.wa_capital_gains."):
+        data["state"]["wa_capital_gains"]["tax_year"] = None
     _sanity(data)
     for problem in _rate_year_problems(data, year):
         raise TaxLawSetError(problem)

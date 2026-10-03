@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **Z4**, Z5-Z6, Z8. | — |
+| **Opportunistic** | **Z5**, Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -196,22 +196,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   then be a dollar off in either direction.
 
 ### Z — state coverage
-
-- **Z4 (P3, M): North Carolina D-400 — final integration awaiting merge.**
-  Registry, withholding tie-out, calendar, NC true-up, filing package and
-  compute/interview gates are wired. The completed return is limited to the
-  source-verified TY2025 form; NC projections skip the generic bracket path.
-  Final review and delivery remain. **Designed:**
-  `docs/superpowers/specs/2026-10-02-nc-state-module-design.md` answers the
-  questionnaire from the TY2025 D-401 and plans five slices; the first is the
-  spec itself. Re-sized from S: the TY2026 rate step-down is joined by an IRC
-  conformity date and five non-goals whose omission would OVER-state the tax. A `graduated_income` module with a single
-  bracket per year — the flat rate is on a statutory step-down schedule, so it
-  must be year-gated and FETCHED, never inlined — NC standard deduction and child
-  deduction, the short Schedule S list (state/local bond interest, Social
-  Security subtraction; business §179 adjustments remain gated), NC-40 estimates.
-  Smallest possible state module; a good first outside contribution once public,
-  and a proving ground for the playbook on a flat-tax regime.
 
 - **Z5 (P3, M): Washington capital-gains excise.** A different tax BASE, not a
   different bracket table. WA is deliberately NOT in `_NO_INCOME_TAX_STATES`
@@ -466,6 +450,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Y5 | #113 | — |
 | Y6 | #114, #119, #165 | — |
 | Y7 | #120 | no Windows coverage — the Windows job runs two modules |
+| Z4 | #219 | TY2025 full-year D-400; other form years and farmer/annualized NC-40 worksheets remain manual |
 | Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states, statutory residency in a second state, or income sourced to another state that taxes it BLOCKS until Z8 (AA7), the City resident tax (line 47a) came later with AA13, a part-year City resident is refused (AA11), and the Yonkers lines 55-56 came later with AA12, for a whole-year Yonkers resident or a nonresident who does not file jointly (special condition Y1 and a joint Form Y-203 are refused); within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
 | Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; the City resident tax, line 47a, came later with AA13, and Yonkers lines 55-56 with AA12 |
 | Z3 | #131 | — |

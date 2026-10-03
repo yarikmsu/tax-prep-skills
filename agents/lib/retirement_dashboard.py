@@ -1027,6 +1027,8 @@ def build_dashboard(profile: dict, projection_inputs: dict, tax_law: dict,
         )
     raw_state = state_code
     state_code = state_code.strip().upper()
+    if state_code == "WA" and state_rate:
+        raise RetirementError("WA has no individual wage income tax; marginal_state_rate must be zero. The separate capital-gains excise is not a retirement deduction rate.")
     # Require a real 2-letter USPS postal code (or "" for no state). A full
     # name like "California" uppercases to "CALIFORNIA", misses
     # _HSA_NON_CONFORMING_STATES, and would silently report CA/NJ HSA

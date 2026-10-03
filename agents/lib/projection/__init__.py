@@ -2367,6 +2367,9 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     # Left as the generic "no baseline" skip, a New York taxpayer reads that a
     # projection was unavailable, when what happened is that the only available
     # one was wrong in the refund-inflating direction.
+    elif (state is None and _tn_resolved == "WA"
+            and not no_income_tax and cache_mismatch is None):
+        state_unsupported_note = ("WA has no individual wage income tax. Its separate LT capital-gains excise is not projected here; run /tax-compute with asset classifications. No quarterly WA estimates are required.")
     elif (state is None and _tn_resolved == "NC"
             and not no_income_tax and cache_mismatch is None):
         state_unsupported_note = (

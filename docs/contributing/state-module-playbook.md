@@ -283,3 +283,5 @@ with your withholding category; the capability note tells the truth; the
 `docs/contributing/test-invariants.md` test count + your state's depth
 description in `AGENTS.md` updated; spec written from
 `docs/superpowers/specs/TEMPLATE-state-module.md`.
+
+Washington (Z5) is `capital_gains_excise`, with empty ordinary brackets and its own fetched LT-gain bands. It has no wage-withholding ledger or quarterly true-up. TY2025 only; separate households, special federal gain normalization and midyear domicile changes refuse. See the 2026-10-03 WA design spec.

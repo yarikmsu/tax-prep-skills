@@ -6,6 +6,11 @@ license: Apache-2.0
 
 # /tax-amend — Amended return (Form 1040-X)
 
+For a WA excise filer, a final federal change affecting WA capital gains or
+liability also requires a separate amended My DOR return with the federal copy
+within 90 days (RCW 82.87.110(8)). Recompute the WA section through tax-compute;
+the federal 1040-X does not submit a Washington amendment.
+
 A corrected 1099 arrives after filing; the lifecycle must not jump from
 verify → archive. This skill snapshots the return AS FILED, pushes the
 corrections through the SAME parse/compute pipeline (no side math), and

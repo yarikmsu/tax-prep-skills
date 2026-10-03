@@ -822,7 +822,7 @@ class TestStateTypeFreshnessGuard:
         save_tax_law(2025, data, str(tmp_path))
         nulls = self._state_nulls(check_freshness(2025, str(tmp_path)))
         assert ("state.type (unrecognized regime — expected "
-                "graduated_income|none)") in nulls
+                "graduated_income|capital_gains_excise|none)") in nulls
 
     def test_legacy_block_without_type_key_unflagged(self, tmp_path):
         # A generic/legacy state block never carried a "type" key at all
