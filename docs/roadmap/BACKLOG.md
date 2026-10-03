@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **W11** — unify state withholding true-ups. | Test-owned hook inputs are merged. |
+| **Opportunistic** | **W10** — finish generic state adjustment and local-tax rule blocks. | State true-up consolidation is merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -139,13 +139,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   `state.local` block shape. New York shipped both NY-specifically, so the
   generic versions are open engine work that belongs to this item rather than
   to one of their own.
-
-- **W11 (P3, M): one `StateTrueUpSpec` in `withholding.py`.** *Same review.*
-  `CaTrueUp`/`NyTrueUp`, `read_ca_inputs`/`read_ny_inputs`,
-  `_prior_ca_tax_agi`/`_prior_ny_tax_nyagi`, `build_ca_true_up`/`build_ny_true_up`,
-  two render blocks and a three-way caveat chain. `projection._section_computed`
-  is the right move made once and stopped one level short; a third state
-  duplicates all of it again.
 
 ### X — tax correctness
 
@@ -339,6 +332,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | W5 | #90, #166 | W5a, below |
 | W5a | #191 | the matrix legs, the tool targets, `MIN_PYTHON` and the prose still state the floor, compared rather than read; the lock headers are uv's record and stay |
 | W6 | #105 | — |
+| W11 | #226 | Shared state true-up specification; public report behavior retained and NY timing-note crash fixed. |
 | W12 | #225 | Test-owned hook input declarations and independent read/import audit. |
 | X1 | #89 | the auditor's keying note is WRONG, not pending; only the Y2 replay can correct it |
 | X2 | #86 | — |

@@ -365,6 +365,30 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    return, not from {state}.
 
 **Other states:** Follow state-specific rules from `tax_law_{year}.json`.
+For a generic income-tax estimate, require the reviewed `state.modifications`
+and `state.local` blocks described in `docs/contributing/tax-law-cache.md`;
+fetch missing blocks through `/tax-setup`, never assume federal conformity or
+no local obligation. Through `sh agents/lib/run.sh`, import these helpers from
+`agents.lib.tax_computations`:
+
+- `state_rules_for_year(tax_law, year, "modifications")` validates the block,
+  its covered year and its independent primary source. Collect each rule's
+  reviewed worksheet amount, applying the fetched eligibility/caps first;
+  record explicit zeroes for inapplicable rules in `answers.md`.
+- `compute_state_modifications(federal_agi, amounts, rules, year)` derives
+  state AGI and its additions/subtractions workpaper. Use that state AGI for
+  the existing state deduction and bracket estimate; retain the workpaper.
+- `state_rules_for_year(tax_law, year, "local")`, then
+  `state_local_requirements(rules, applicability, year)`, require explicit
+  applicability for every jurisdiction. If `manual_forms` is nonempty, STOP
+  the generic state calculation and complete the named form through a
+  dedicated module or manual preparation. Never subtract combined state/local
+  withholding from a liability that omits an applicable local tax.
+
+These are generic workpapers, not a complete state filing module. Retain the
+capability gate's bracket-estimate limitation and verify the state's remaining
+credits, recapture and form-specific rounding manually. Existing dedicated
+return paths above retain their own adjustment and local computations.
 **EXCEPTION — NY:** never reaches this branch; see the pointer at the top of
 this file.
 **EXCEPTION — pre-2021 TN (Hall tax):** do NOT bracket-estimate a TN return

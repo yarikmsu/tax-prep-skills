@@ -416,6 +416,20 @@ a figure from a prior year.
   The capability gate blocks it as `territory_resident`; an acknowledged one
   computes no state return, so a territory's own rates must never be cached
   as a `graduated_income` "state".
+- **Generic income-tax estimates — adjustments and local obligations:** After
+  fetching the state's base template, fetch its covered-year adjustment
+  instructions and local-tax obligations from primary authorities. Use
+  `create_state_modifications_template()` and `create_state_local_template()`
+  from `agents.lib.tax_law_fetcher` through `sh agents/lib/run.sh`. Fill their
+  complete reviewed lists, covered `tax_year`, and `coverage_confirmed: true`;
+  write each whole block with the normal setter at `state.modifications` or
+  `state.local`. They receive independent `state.<CODE>.modifications` and
+  `state.<CODE>.local` source pins. Do not copy a prior-year list or attest one
+  by changing its year. A verified empty list declares no adjustments or local
+  obligations; absence declares neither. Rule and jurisdiction fields are
+  specified in `docs/contributing/tax-law-cache.md`. All local methods remain
+  manual without a dedicated module; recording a fetched rate does not add
+  city return support. CA/NY/NC/WA retain their dedicated return paths.
 - For other states: Search `"{state} {year} income tax rates"`. `type:
   "none"` (the FL pattern — a positive declaration, never an empty bracket
   list) may be assigned ONLY to a state on this closed allowlist: **AK, FL,

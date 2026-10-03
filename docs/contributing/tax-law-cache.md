@@ -15,6 +15,23 @@ map goes stale in a way the schema cannot.
   `{magi_threshold, annual_surcharge_per_person}`
 - `federal.salt_cap` — `{amount, mfs_amount}`
 - `state.{brackets,standard_deduction}`
+- `state.modifications` — optional `{tax_year, coverage_confirmed, rules}`.
+  Each rule is `{id, description, direction}` with direction `add` or `subtract`.
+  Ids are unique lower-case identifiers. Amounts are taxpayer worksheet outputs,
+  held outside the law cache, and must answer every id exactly (zero included).
+- `state.local` — optional `{tax_year, coverage_confirmed, jurisdictions}`.
+  Each jurisdiction is `{id, name, form, tax_base, method, rate, brackets}`.
+  Bases: `local_taxable_income`, `wages`, `state_tax`; methods: `rate`, `brackets`,
+  `manual`. Rate methods need a fetched fraction and empty brackets; bracket
+  methods need a fetched contiguous schedule and null rate; manual methods need
+  null rate and empty brackets. Only income bases permit brackets. Generic
+  routing names manual forms for applicable jurisdictions and computes no local
+  liability. A dedicated module is required for that form's computation.
+  Both optional blocks require a covered year and `coverage_confirmed: true`.
+  An empty confirmed list is valid. Source pins are independently
+  `state.<CODE>.modifications` and `state.<CODE>.local`; the setter accepts whole
+  blocks only. Core scaffold output stays unchanged. Absence never certifies
+  conformity or no local obligation. No rates or annual limits are seeded.
 - `retirement_conformity.<STATE>.{tax_year,employee_401k,traditional_ira,hsa}` —
   optional planning matrix for all 50 states and DC. Each account is true,
   false or unfetched null, independently of the state's general conformity.

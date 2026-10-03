@@ -82,6 +82,9 @@ class ProjectedInputs:
     # None preserves the declared-total path for older workspaces.
     schedule_a_inputs: "dict | None" = None
     schedule_a_charitable_limits_confirmed: bool = False
+    # Confirmed full-year worksheet outputs and jurisdiction answers (W10).
+    state_modification_amounts: "dict | None" = None
+    state_local_applicability: "dict | None" = None
 
 
 @dataclass(frozen=True)
@@ -122,7 +125,7 @@ class StateProjection:
     estimates_paid: float
     balance: float
     # Projected state AGI (income before the state deduction; state
-    # adjustments are not modeled in v1). Feeds the R&TC §19136.3
+    # optional confirmed modification worksheet amounts apply). Feeds R&TC §19136.3's
     # high-income test, which is on CURRENT-year CA AGI.
     agi: float = 0.0
     deduction: float = 0.0       # the larger of the standard and the declared itemized

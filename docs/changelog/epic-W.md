@@ -1030,7 +1030,7 @@ edit when a new dependency is declared. Contributor details and audit scope:
 `docs/superpowers/specs/2026-10-03-declared-hook-inputs-design.md`.
 
 
-## W11 — one state withholding true-up specification
+## W11 — one state withholding true-up specification (#226)
 
 CA, NY and NC now bind state policy and presentation to `StateTrueUpSpec`.
 Shared readers, annualization, target/voucher assembly, rendering, serialization
@@ -1044,3 +1044,21 @@ previously crashed on an absent `de_minimis` adapter field; the shared timing
 helper now reads that optional field safely, with two explicit regressions.
 The federal-only coverage note now includes NC. Design and scope:
 `docs/superpowers/specs/2026-10-03-state-true-up-spec-design.md`.
+
+
+## W10 — generic state adjustment and local-tax rule blocks
+
+The remaining Epic P deferrals have optional year-bound cache schemas and
+independent primary-authority pins. Complete reviewed modification lists drive
+an arithmetic workpaper from federal AGI; every amount is explicit, including
+zeroes, with eligibility and caps resolved before input. Generic projections
+consume confirmed full-year outputs and use the adjusted AGI for state tax and
+the existing CA harbor. Legacy scaffold output is unchanged.
+
+The local block describes jurisdictions, forms, bases and fetched parameters.
+Every jurisdiction needs an explicit applicability answer. Applicable local
+taxes block generic estimates and name their manual forms; no city return is
+priced from a state income proxy. Dedicated state modules retain their paths.
+Whole-block writes attest coverage and year; partial edits cannot re-attest
+old rules. Schema, input, provenance and projection refusals are tested.
+Design: `docs/superpowers/specs/2026-10-03-generic-state-rules-design.md`.

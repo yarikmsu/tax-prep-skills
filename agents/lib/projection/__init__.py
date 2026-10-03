@@ -50,6 +50,9 @@ from agents.lib.tax_computations.state.registry import (  # noqa: E402
     STATE_SECTIONS,
 )
 from agents.lib.tax_computations import (  # noqa: E402
+    compute_state_modifications,
+    state_local_requirements,
+    state_rules_for_year,
     CAPITAL_LOSS_LIMIT,
     CAPITAL_LOSS_LIMIT_MFS,
     DE_MINIMIS_BALANCE,
@@ -1033,6 +1036,22 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
             "qualified_dividends cannot exceed ordinary_dividends "
             "(Form 1099-DIV box 1b is the qualified part of box 1a)")
 
+    def state_answers(field, *, boolean=False):
+        answers = overrides.get(field)
+        if answers is None:
+            return None
+        if not isinstance(answers, dict) or any(
+                not isinstance(k, str) for k in answers):
+            raise ProjectionError(f"forecast_overrides.{field} must be an object of rule answers")
+        if boolean:
+            if any(type(v) is not bool for v in answers.values()):
+                raise ProjectionError(f"forecast_overrides.{field} needs explicit true/false answers")
+            return dict(answers)
+        if any(v is None for v in answers.values()):
+            raise ProjectionError(f"forecast_overrides.{field} needs explicit amounts, including zeroes")
+        return {k: _nonneg_num(v, f"forecast_overrides.{field}")
+                for k, v in answers.items()}
+
     return ProjectedInputs(
         wages=wages,
         federal_withholding=ann("federal_withholding"),
@@ -1053,6 +1072,8 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
         schedule_a_inputs=overrides.get("schedule_a_inputs"),
         schedule_a_charitable_limits_confirmed=overrides.get(
             "schedule_a_charitable_limits_confirmed", False),
+        state_modification_amounts=state_answers("state_modification_amounts"),
+        state_local_applicability=state_answers("state_local_applicability", boolean=True),
         qualified_dividends=qualified,
         ordinary_dividends=ordinary,
         taxable_interest=_num(recurring.get("taxable_interest"), "taxable_interest"),
@@ -3750,6 +3771,21 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
         has_prior_state = prior_state_code is not None
     if not has_prior_state and (resident is None or resident != code):
         return None
+    if proj.state_modification_amounts is not None and "modifications" not in state_cfg:
+        raise ProjectionError("Fetch state.modifications before using state modification answers")
+    if proj.state_local_applicability is not None and "local" not in state_cfg:
+        raise ProjectionError("Fetch state.local before using local applicability answers")
+    if "local" in state_cfg:
+        try:
+            local = state_rules_for_year(tax_law, tax_law.get("tax_year"), "local")
+            requirements = state_local_requirements(
+                local, proj.state_local_applicability, tax_law["tax_year"])
+        except ValueError as exc:
+            raise ProjectionError(str(exc)) from None
+        if requirements["manual_forms"]:
+            raise ProjectionError("Generic projection cannot include applicable local taxes; "
+                                  "complete the dedicated module or manual forms: "
+                                  + ", ".join(requirements["manual_forms"]))
     # A state whose cache declares a BENEFIT RECAPTURE gets NO PROJECTION.
     # Keyed on the BLOCK's presence and not on a state name: a cache declaring
     # a recapture is a cache whose plain bracket math is incomplete, whoever it
@@ -3824,6 +3860,14 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
     state_agi = (proj.wages + cap_in_income + proj.ordinary_dividends
                  + proj.taxable_interest + proj.other_income
                  + proj.self_employment_net - se_deduction)
+    if "modifications" in state_cfg:
+        try:
+            rules = state_rules_for_year(tax_law, tax_law.get("tax_year"), "modifications")
+            state_agi = compute_state_modifications(
+                state_agi, proj.state_modification_amounts, rules,
+                tax_law["tax_year"])["state_agi"]
+        except ValueError as exc:
+            raise ProjectionError(str(exc)) from None
     state_ti = max(0.0, state_agi - state_deduction)
     tax, _ = compute_bracket_tax(state_ti, brackets)
     # CA mental-health services tax: 1% of taxable income over $1M is part

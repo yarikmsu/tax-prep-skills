@@ -404,6 +404,16 @@ def create_retirement_conformity_template():
             for code in sorted(_USPS_STATES - _TERRITORIES)}
 
 
+def create_state_modifications_template() -> dict:
+    """Optional reviewed rule list; materialized only by its own fetch."""
+    return {"tax_year": None, "coverage_confirmed": None, "rules": []}
+
+
+def create_state_local_template() -> dict:
+    """Optional local jurisdictions; an empty fetched list declares none."""
+    return {"tax_year": None, "coverage_confirmed": None, "jurisdictions": []}
+
+
 def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
     """Create empty state tax law structure. Filled from a web search.
 
@@ -1253,6 +1263,9 @@ def _expected_pins(data: dict) -> "list[tuple[str, str]]":
         code = _state_pin_code(state)
         src_key = f"state.{code}" if code != "state" else "state"
         expected.append((src_key, "state"))
+        for kind in ("modifications", "local"):
+            if kind in state:
+                expected.append((f"{src_key}.{kind}", f"state.{kind}"))
         # FL fetches two independent figures from two DOR publications. The
         # general rate retains the primary `state.FL` pin; the taxpayer's
         # county rate requires its own provenance. Besides making the audit
@@ -1439,6 +1452,10 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         _EMPTY_LIST_BY_DESIGN.add("state.brackets")
 
     def _walk(obj, path=""):
+        # These optional tagged blocks have their own complete validators;
+        # empty confirmed lists and inactive null parameters are valid data.
+        if path in ("state.modifications", "state.local"):
+            return
         if isinstance(obj, dict):
             for k, v in obj.items():
                 if k.startswith("_") or k in _SKIP_KEYS:
@@ -2306,6 +2323,17 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
     audit runs this over caches it did not write, so it validates the keys that
     are present and leaves absence to the walker.
     """
+    if dotted in ("state.modifications", "state.local"):
+        from agents.lib.tax_computations.state.generic import (
+            validate_state_local, validate_state_modifications,
+        )
+        validator = (validate_state_modifications if dotted.endswith("modifications")
+                     else validate_state_local)
+        try:
+            validator(value)
+        except ValueError as exc:
+            raise TaxLawSetError(str(exc)) from None
+        return
     if value is None:
         if not top and ref is None:
             return
@@ -2389,13 +2417,22 @@ def _seed_root(dotted: str, data: dict, year: int):
             raise TaxLawSetError(
                 f"{dotted}: no state block yet — set `state` to the "
                 "create_state_template output first, then its fields")
-        return create_state_template(current["code"], tax_year=year), segs[1:], "state"
+        schema = create_state_template(current["code"], tax_year=year)
+        schema["modifications"] = create_state_modifications_template()
+        schema["local"] = create_state_local_template()
+        return schema, segs[1:], "state"
     return create_empty_tax_law(year), segs, ""
 
 
 def _reference_for(dotted: str, data: dict, value, year: int):
     """The seed node at `dotted`, or a TaxLawSetError naming why there is none."""
     segs = dotted.split(".")
+    if len(segs) > 2 and segs[:2] in (["state", "modifications"], ["state", "local"]):
+        raise TaxLawSetError("Write the complete optional state rule block with its year and source")
+    if segs[:2] in (["state", "modifications"], ["state", "local"]):
+        state = data.get("state")
+        if not isinstance(state, dict) or state.get("code") not in _STATE_NAME_TO_CODE.values():
+            raise TaxLawSetError("Optional rule blocks require a valid state code")
     if any(seg.startswith("_") for seg in segs) or dotted == "tax_year":
         raise TaxLawSetError(
             f"{dotted}: identity and metadata are not figures — tax_year is set "
@@ -2457,6 +2494,8 @@ def _pin_key(dotted: str, data: dict) -> str:
         return ".".join(segs[:2])
     if segs[0] == "state":
         code = _state_pin_code(data.get("state") or {})
+        if len(segs) >= 2 and segs[1] in ("modifications", "local"):
+            return f"state.{code}.{segs[1]}"
         if code == "FL" and dotted == "state.sales_tax.county_surtax_rate":
             return "state.FL.county_surtax_rate"
         return f"state.{code}"
@@ -2534,6 +2573,18 @@ def validate_cache(data: dict, year: int) -> "list[str]":
     its seed (unfetched leaves allowed), then the cross-field orderings. One
     string per violation, for `check_freshness` to report as INCOMPLETE."""
     problems = []
+    state = data.get("state")
+    if isinstance(state, dict):
+        from agents.lib.tax_computations.state.generic import (
+            validate_state_local, validate_state_modifications,
+        )
+        for kind, validator in (("modifications", validate_state_modifications),
+                                ("local", validate_state_local)):
+            if kind in state:
+                try:
+                    validator(state[kind], year)
+                except ValueError as exc:
+                    problems.append(f"state.{kind}: {exc}")
     for _pin, path in _expected_pins(data):
         value = _get_path(data, path)
         if not _has_real_data(value):
@@ -2666,6 +2717,8 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
             "from the rate can vouch for a rate carried over from another year")
     ref = _reference_for(dotted, data, value, year)
     _check_against(dotted, ref, value)
+    if dotted in ("state.modifications", "state.local") and value.get("tax_year") != year:
+        raise TaxLawSetError("Optional state rule block must explicitly name this cache year")
     _set_path(data, dotted, value, year)
     _stamp_rate_year(data, dotted, year)
     if dotted == "state" or dotted == "state.wa_capital_gains":

@@ -67,6 +67,16 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    each forecast expense rather than copying a prior year's figures. The engine
    rebuilds MAGI from the recorded add-back, prices the AGI floors and phasedown,
    computes provisional QBI before the haircut, and makes the itemization election.
+   If the state's cache carries `state.modifications`, collect the reviewed
+   full-year amount for every rule, including explicit zeroes, in
+   `forecast_overrides.state_modification_amounts`. Fetch eligibility and caps
+   before entering these worksheet outputs; they are not YTD values and are
+   not annualized. For `state.local`, answer every jurisdiction with an explicit
+   boolean in `forecast_overrides.state_local_applicability`. An applicable
+   local tax blocks generic projection and names its manual form, preventing
+   combined withholding from producing a refund against omitted local tax.
+   Missing, stale or unpinned blocks refuse these answers. Dedicated NY/NC/WA
+   projection paths retain their existing scope and gates.
    Confirm the public-charity cash and appreciated-property noncash classifications
    before setting `schedule_a_charitable_limits_confirmed` true; binding charitable
    caps refuse otherwise. Investment-interest or lower-income sales-tax forecasts

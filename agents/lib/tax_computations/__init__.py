@@ -3616,6 +3616,12 @@ from agents.lib.tax_computations.state.ny_nonresident import (  # noqa: E402,F40
 
 from agents.lib.tax_computations.state.wa import compute_wa_capital_gains  # noqa: E402,F401
 
+from agents.lib.tax_computations.state.generic import (  # noqa: E402,F401
+    compute_state_modifications,
+    state_local_requirements,
+    state_rules_for_year,
+)
+
 from agents.lib.tax_computations.state.nc import (  # noqa: E402,F401
     compute_nc_child_deduction,
     compute_nc_d400,
