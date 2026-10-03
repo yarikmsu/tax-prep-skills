@@ -136,6 +136,7 @@
     "investment_interest": 0,
     "charitable_deductible": 0,
     "charitable_carryforward": 0,
+    "charitable_limits_confirmed": false,
     "obbba_70111_reduction": 0,
     "itemized_total": 0,
     "use_itemized": false,

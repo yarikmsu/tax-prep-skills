@@ -452,10 +452,8 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
     (base_out, scen_out), repriced, held_notes = reprice_outcomes(
         result, rate_kwargs, return_agi,
         [(base_inputs, {}), (base_inputs, deltas)], [base_out, scen_out])
-    # ALWAYS, re-priced or not: the re-run assumes a public charity and
-    # appreciated property, which the return does not record, so a binding
-    # charitable cap still cannot be priced.
-    refuse_where_the_charity_cap_moves(result, return_agi, priced)
+    # Binding caps can be re-priced only with confirmed donation classes.
+    refuse_where_the_charity_cap_moves(result, return_agi, priced, repriced=repriced)
 
     # Anchor is constant across a stack: original result.json line 24 + the zero-delta
     # recompute of the ORIGINAL inputs. For base=result.json we establish it here.
@@ -670,103 +668,94 @@ def medical_floor_may_move(result: dict, keystone_agi: float,
     return _held_deduction_may_move(result, keystone_agi, priced_agis, deduction_at)
 
 
-def schedule_a_pricer(result: dict, brackets: "list[dict]", keystone_agi: float,
-                      ) -> "Callable[[float], tuple[float, float, list[str]]] | None":
-    """Schedule A priced at a keystone AGI, from the inputs the return recorded
-    (AA23), or None where it cannot be — and then the tools hold the return's
-    figures and owe the disclosures, exactly as before.
-
-    The returned function maps a priced keystone AGI to (line 12, the
-    below-AGI deduction lines 13b + 13c, the re-run's own held-input notes).
-    Line 12 is the return's plus how far `rerun_schedule_a` moves between the
-    return's AGI and the priced one, so at the return's AGI it is line 12
-    exactly, whatever add-on or rounding it carries. That offset belongs to
-    ONE regime, itemized or standard, so the function REFUSES (ValueError, and
-    the caller holds) wherever the election would flip: carried across it, an
-    age-65 add-on lands on an itemizer, and a §170(p) the section did not
-    record is dropped from a new standard filer.
-
-    The §70111 haircut is priced only where it is zero: §68(a)(2)'s base is
-    taxable income plus the itemized deductions, at most AGI, over the top
-    bracket's floor (AA34). Above that floor the base needs the priced
-    point's QBI deduction and line 13b, which this does not re-price, so it
-    refuses too.
-
-    None — the held figures — where the section is absent (a standard filer
-    far from the margin) or predates `inputs`, or the re-run refuses at the
-    return's own AGI. Each refusal is an over-statement the re-run would not
-    make.
-    """
-    sched = result.get("schedule_a")
-    inputs = sched.get("inputs") if isinstance(sched, dict) else None
-    if not isinstance(inputs, dict):
-        return None
-    f = result.get("form_1040", {}) or {}
-    line_12 = return_deduction(result)
-    line_13b = _known_amount(f.get("line_13b_schedule_1a_deductions")) or 0.0
-    line_13c = _known_amount(f.get("line_13c_charitable_non_itemizer")) or 0.0
-    return_agi, _ = _return_frame(result, keystone_agi, [])
-    top = max(brackets, key=lambda b: b.get("rate", 0), default=None)
-    top_min = _known_amount(top.get("min")) if isinstance(top, dict) else None
-    if top_min is None:
-        return None
-    override = None
-    if inputs.get("non_itemizer_charitable") is None and line_13c > 0:
-        # A standard filer's line 13c IS the §170(p) allowed, which has no
-        # AGI term; the section recorded None only because it could not tip
-        # the election at the return's AGI.
-        override = line_13c
-
-    def at(agi: float) -> "tuple[bool, float, float, list[str]]":
-        if agi > top_min:
-            raise ValueError("the §70111 haircut can apply at this AGI")
-        out = rerun_schedule_a(inputs, agi, top_bracket_income=0.0,
-                               non_itemizer_charitable=override)
-        if out["use_itemized"]:
-            return True, out["itemized_total"], 0.0, out["rerun_notes"]
-        weighed = out["non_itemizer_charitable_weighed"]
-        return (False, out["standard_deduction"],
-                line_13c if weighed is None else weighed, out["rerun_notes"])
-
-    try:
-        regime, d_return, c_return, _ = at(return_agi)
-    except ValueError:
-        return None
-
-    def priced(keystone: float) -> "tuple[float, float, list[str]]":
-        itemizes, d, c, notes = at(return_agi + (keystone - keystone_agi))
-        if itemizes != regime:
-            raise ValueError("the itemize-or-standard election flips here")
-        return (round(line_12 + d - d_return, 2),
-                round(line_13b + line_13c + c - c_return, 2), notes)
-    return priced
-
-
 def reprice_outcomes(result: dict, rate_kwargs: dict, keystone_agi: float,
                      runs: "list[tuple[dict, dict]]", held: "list[dict]",
                      ) -> "tuple[list[dict], bool, list[str]]":
-    """Each `compute_scenario` run again on a Schedule A priced at its own AGI
-    (AA23), or the held outcomes unchanged.
+    """Price complete Schedule A inputs at every run's AGI, or hold all runs.
 
-    `runs` are the (inputs, deltas) pairs `held` was computed from, priced on
-    the return's line 12 — `held[i]` must be `compute_scenario(*runs[i],
-    **rate_kwargs)`, which every caller builds it as. AGI does not depend on the deduction, so each run is
-    priced again at the AGI it already has. All or nothing: anywhere
-    `schedule_a_pricer` refuses, every run stays held and the report owes the
-    disclosures, so one report never mixes a priced deduction with a held one.
-    Returns (outcomes, re-priced, what the re-pricing still held).
+    Provisional QBI is computed before the §68 haircut, then final QBI is
+    recomputed after it. An election change uses the recorded standard side
+    rather than carrying an itemizer's offset into it. Legacy offsets whose
+    regime cannot be identified still refuse a flip. Binding charitable caps
+    require explicit confirmation of the engine's donation classifications.
     """
-    pricer = schedule_a_pricer(result, rate_kwargs["brackets"], keystone_agi)
-    if pricer is None:
+    sched = result.get("schedule_a")
+    if not isinstance(sched, dict):
         return held, False, []
+    inputs = sched.get("inputs")
+    if not isinstance(inputs, dict):
+        return held, False, []
+    meta = result.get("meta", {}) or {}
+    if (inputs.get("tax_year") != meta.get("tax_year")
+            or _full_status_key(inputs.get("filing_status"), "Schedule A")
+            != _full_status_key(meta.get("filing_status"), "return")):
+        raise ScenarioError("Schedule A inputs must match the return's year and filing status")
+    if (sched.get("charitable_carryforward", 0)
+            and sched.get("charitable_limits_confirmed") is not True):
+        return held, False, []
+    brackets = rate_kwargs["brackets"]
+    top = max(brackets, key=lambda b: b.get("rate", 0), default=None)
+    top_min = _known_amount(top.get("min")) if isinstance(top, dict) else None
+    if top_min is None:
+        return held, False, []
+    f = result.get("form_1040", {}) or {}
+    line_12 = return_deduction(result)
+    line_13c = _known_amount(f.get("line_13c_charitable_non_itemizer")) or 0.0
+    return_agi, _ = _return_frame(result, keystone_agi, [])
+    charity = inputs.get("non_itemizer_charitable")
+    if charity is None and line_13c > 0:
+        charity = line_13c
+
+    def deductions(out: dict) -> tuple[float, float]:
+        if (not out["use_itemized"] and inputs.get("charitable_cash")
+                and out["non_itemizer_charitable_weighed"] is None):
+            raise ScenarioError("A standard-deduction outcome needs the provisional §170(p) "
+                                "amount; re-run /tax-compute to record it in Schedule A inputs.")
+        return (out["itemized_total"] if out["use_itemized"] else out["standard_deduction"],
+                0.0 if out["use_itemized"] else
+                (out["non_itemizer_charitable_weighed"] or 0.0))
+
+    def at(income: dict, delta: dict, raw: dict, offset: float = 0.0,
+           regime: "bool | None" = None) -> tuple[dict, dict, float]:
+        agi = return_agi + raw["agi"] - keystone_agi
+        unreduced = rerun_schedule_a(inputs, agi, top_bracket_income=0.0,
+                                    non_itemizer_charitable=charity)
+        if (unreduced["charitable_carryforward"]
+                and sched.get("charitable_limits_confirmed") is not True):
+            raise ScenarioError("The projected charitable cap binds; confirm public-charity "
+                                "cash and appreciated-property noncash gifts with /tax-compute.")
+        d, c = deductions(unreduced)
+        # The normalized input bundles lines 13b and 13c. Replace only 13c;
+        # retain explicit below-AGI deltas once, in the caller's delta dict.
+        below = _coerce_numeric(income.get("schedule_1a_deduction"), default=0) - line_13c
+        provisional = compute_scenario(
+            {**income, "schedule_1a_deduction": below + c}, delta,
+            **{**rate_kwargs, "deduction": d + (offset if regime == unreduced["use_itemized"] else 0)})
+        base = max(0.0, agi - provisional["qbi_deduction"] - below
+                   - _coerce_numeric(delta.get("schedule_1a_deduction"), default=0) - top_min)
+        out = rerun_schedule_a(inputs, agi, top_bracket_income=base,
+                              non_itemizer_charitable=charity)
+        d, c = deductions(out)
+        if regime is not None and out["use_itemized"] != regime and offset != 0:
+            raise ValueError("an unclassified line-12 offset cannot cross the election")
+        applied = d + (offset if out["use_itemized"] == regime else 0.0)
+        computed = compute_scenario(
+            {**income, "schedule_1a_deduction": below + c}, delta,
+            **{**rate_kwargs, "deduction": applied})
+        return computed, out, d
+
     try:
-        sides = [pricer(out["agi"]) for out in held]
+        baseline_inputs = extract_baseline_inputs(result)
+        raw_base = compute_scenario(baseline_inputs, {}, **rate_kwargs)
+        _, original, original_d = at(baseline_inputs, {}, raw_base)
+        offset = round(line_12 - original_d, 2)
+        regime = original["use_itemized"]
+        priced = [at(i, d, raw, offset, regime)
+                  for (i, d), raw in zip(runs, held)]
     except ValueError:
         return held, False, []
-    outs = [compute_scenario({**inputs, "schedule_1a_deduction": side[1]},
-                             deltas, **{**rate_kwargs, "deduction": side[0]})
-            for (inputs, deltas), side in zip(runs, sides)]
-    return outs, True, list(dict.fromkeys(n for side in sides for n in side[2]))
+    notes = list(dict.fromkeys(n for _, out, _ in priced for n in out["rerun_notes"]))
+    return [out for out, _, _ in priced], True, notes
 
 
 def schedule_a_caveat(repriced: bool, held_notes: "list[str]") -> "list[str]":
@@ -779,15 +768,15 @@ def schedule_a_caveat(repriced: bool, held_notes: "list[str]") -> "list[str]":
                 "itemized, held at the baseline."]
     return (["- The deduction is the return's own line 12, re-priced at each "
              "AGI from the inputs its Schedule A recorded: the medical floor, "
-             "the SALT phasedown and the charitable deduction below its cap "
+             "the SALT phasedown and confirmed charitable AGI caps "
              "(as gifts to public charities, as the return computed them) "
-             "move with it. It is priced only where the election does not flip "
-             "and no AGI reaches the top bracket; elsewhere it is held."]
+             "move with it, including the itemize-or-standard election and the "
+             "top-bracket haircut. Legacy inputs that cannot price a change stay held."]
             + [f"- {note}" for note in held_notes])
 
 
 def refuse_where_the_charity_cap_moves(result: dict, keystone_agi: float,
-                                       priced_agis: "list[float]") -> None:
+                                       priced_agis: "list[float]", *, repriced: bool = False) -> None:
     """Refuse wherever a charitable deduction capped at a share of AGI moves.
 
     §170(b) caps a gift at a share of AGI, and a carryforward above zero is the
@@ -808,7 +797,7 @@ def refuse_where_the_charity_cap_moves(result: dict, keystone_agi: float,
         raise ScenarioError(
             "result.json schedule_a.charitable_carryforward must be a finite, "
             f"non-negative number, got {type(carry).__name__}")
-    if carry == 0:
+    if carry == 0 or (repriced and sched.get("charitable_limits_confirmed") is True):
         return
     return_agi, in_play = _return_frame(result, keystone_agi, priced_agis)
     if any(a != return_agi for a in in_play):

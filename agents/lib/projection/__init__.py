@@ -60,12 +60,14 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_additional_medicare,
     compute_bracket_tax,
     compute_charitable_non_itemizer,
+    choose_schedule_a_deduction,
     compute_child_tax_credit,
     compute_niit,
     compute_qbi_deduction,
     compute_qdcg_tax,
     qdcg_worksheet_applies,
     compute_se_tax,
+    rerun_schedule_a,
     net_capital_gains,
     _split_remainder_last,
     state_brackets_for_status,
@@ -364,8 +366,14 @@ def _itemized_deduction_note(federal, state) -> "str | None":
     Parts of it move with income and the projection holds them, so a total
     worked out at another income reads the tax high or low (AA21). Plain
     prose, a payload field first, like `_state_bracket_estimate_note`."""
-    if not (federal.itemized or (state is not None and state.itemized)):
+    federal_held = federal.itemized and not getattr(federal, "schedule_a_repriced", False)
+    state_held = state is not None and state.itemized
+    if not (federal_held or state_held):
         return None
+    if getattr(federal, "schedule_a_repriced", False) and not federal_held:
+        return ("The state itemized total is held as entered; its state-specific "
+                "limits are not re-worked at projected income. Federal Schedule A "
+                "is re-priced from its forecast inputs.")
     return ("This projection prices the itemized deductions you declared as "
             "entered. Parts of them move with income, the SALT cap's phasedown "
             "and the medical-expense floor among them, and are not re-worked "
@@ -854,8 +862,8 @@ def _projected_deduction(standard: float, declared: "float | None",
             "its place over-states an itemizer's tax and the payments it "
             "recommends. Enter the year's expected itemized deductions, or 0 "
             f"to take {standard_name}.")
-    return ((declared, True) if declared > standard + non_itemizer
-            else (standard, False))
+    deduction, itemized, _ = choose_schedule_a_deduction(declared, standard, non_itemizer)
+    return deduction, itemized
 
 
 def _cache_year(tax_law: dict, requested_year: "int | None") -> "int | None":
@@ -930,6 +938,52 @@ def _federal_deduction(declared: "float | None", gifts: "float | None",
     return deduction, itemized, 0.0 if itemized else line_13c
 
 
+def _schedule_a_deductions(schedule_a: dict) -> tuple[float, bool, float]:
+    itemized = schedule_a["use_itemized"]
+    return (schedule_a["itemized_total"] if itemized else schedule_a["standard_deduction"],
+            itemized, 0.0 if itemized else
+            (schedule_a["non_itemizer_charitable_weighed"] or 0.0))
+
+
+def _forecast_schedule_a(proj: ProjectedInputs, agi: float, fs: str,
+                         year: "int | None", standard: float, fed: dict,
+                         haircut_base: float = 0.0) -> dict:
+    """Price a complete, explicitly supplied forecast; never borrow prior-year law."""
+    inputs = proj.schedule_a_inputs
+    if not isinstance(inputs, dict):
+        raise ProjectionError("forecast_overrides.schedule_a_inputs must be an object")
+    if not isinstance(proj.schedule_a_charitable_limits_confirmed, bool):
+        raise ProjectionError("schedule_a_charitable_limits_confirmed must be a boolean")
+    if (year is None or isinstance(inputs.get("tax_year"), bool)
+            or inputs.get("tax_year") != year
+            or _canonical_status(inputs.get("filing_status"), "Schedule A forecast") != fs):
+        raise ProjectionError("Schedule A forecast inputs must name this tax year and filing status")
+    if inputs.get("standard_deduction") != standard:
+        raise ProjectionError("Schedule A forecast standard deduction differs from this year's fetched amount")
+    cap_key = "mfs_amount" if fs == "MFS" else "amount"
+    cap = (fed.get("salt_cap") or {}).get(cap_key)
+    if inputs.get("salt_cap") != _fetched_num(cap, f"federal.salt_cap.{cap_key}"):
+        raise ProjectionError("Schedule A forecast SALT cap differs from this year's fetched amount")
+    try:
+        # Supply the capped §170(p) figure to the election even when the
+        # return recorded None because the gift could not tip its old election.
+        gifts = proj.charitable_cash_gifts
+        if year >= _CHARITABLE_NONITEMIZER_FROM and gifts is None:
+            raise ProjectionError("forecast_overrides.charitable_cash_gifts is not set")
+        caps = fed.get("charitable_non_itemizer") or {}
+        charity = compute_charitable_non_itemizer(
+            0.0 if gifts is None else gifts, fs, year, itemizes=False,
+            amount=caps.get("amount"), joint_amount=caps.get("joint_amount"))["allowed"]
+        out = rerun_schedule_a(inputs, agi, top_bracket_income=haircut_base,
+                              non_itemizer_charitable=charity)
+        if out["charitable_carryforward"] and proj.schedule_a_charitable_limits_confirmed is not True:
+            raise ProjectionError("Binding charitable caps require confirmation that cash gifts "
+                                  "are to public charities and noncash gifts are appreciated property")
+        return out
+    except ValueError as exc:
+        raise ProjectionError(f"Cannot re-price Schedule A forecast: {redact(exc)}") from None
+
+
 def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
               overrides: dict, recurring: dict, estimates: dict) -> ProjectedInputs:
     frac = elapsed_fraction(as_of)
@@ -996,6 +1050,9 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
         state_itemized_deductions=_declared_answer(
             overrides, "state_itemized_deductions"),
         charitable_cash_gifts=_declared_answer(overrides, "charitable_cash_gifts"),
+        schedule_a_inputs=overrides.get("schedule_a_inputs"),
+        schedule_a_charitable_limits_confirmed=overrides.get(
+            "schedule_a_charitable_limits_confirmed", False),
         qualified_dividends=qualified,
         ordinary_dividends=ordinary,
         taxable_interest=_num(recurring.get("taxable_interest"), "taxable_interest"),
@@ -1040,9 +1097,11 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
     std = _fetched_num(fstatus.get("standard_deduction"),
                        f"federal.filing_statuses.{full_key}.standard_deduction")
     proj_year = _cache_year(tax_law, requested_year)
-    deduction, itemized, charitable = _federal_deduction(
-        proj.itemized_deductions, proj.charitable_cash_gifts, std, fs,
-        proj_year, fed)
+    schedule_a = None
+    if proj.schedule_a_inputs is None:
+        deduction, itemized, charitable = _federal_deduction(
+            proj.itemized_deductions, proj.charitable_cash_gifts, std, fs,
+            proj_year, fed)
 
     # ST/LT netting with character preservation (shared net_capital_gains). The
     # legacy combined `capital_gains` field is treated as LONG-term; short-term
@@ -1068,6 +1127,10 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
              + proj.taxable_interest + proj.other_income + proj.self_employment_net)
     adjustments = se["deductible_half"]
     agi = max(0.0, gross - adjustments)
+
+    if proj.schedule_a_inputs is not None:
+        schedule_a = _forecast_schedule_a(proj, agi, fs, proj_year, std, fed)
+        deduction, itemized, charitable = _schedule_a_deductions(schedule_a)
 
     net_ltcg = max(0.0, cap_input)
     # QBI needs taxable income BEFORE QBI and net capital gain (qualified
@@ -1148,6 +1211,23 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         qbi_over_threshold = bool(qbi_res.get("over_threshold"))
     else:
         qbi = 0.0
+    if schedule_a is not None:
+        # §68's base uses QBI computed WITHOUT the haircut. Re-price with
+        # that provisional deduction, then re-compute QBI against final line 12.
+        top = max(brackets, key=lambda b: b.get("rate", 0))
+        base = max(0.0, agi - sch1a - qbi - _num(top.get("min"), "top bracket"))
+        schedule_a = _forecast_schedule_a(proj, agi, fs, proj_year, std, fed, base)
+        deduction, itemized, charitable = _schedule_a_deductions(schedule_a)
+        ti_before_qbi = max(0.0, agi - deduction - sch1a - charitable)
+        if qbi_base > 0:
+            qbi_res = compute_qbi_deduction(
+                qbi_base, 0.0, rate=fed.get("qbi_deduction_rate", 0.20),
+                taxable_income_before_qbi=ti_before_qbi,
+                net_capital_gain=net_capital_gain,
+                threshold=(fed.get("qbi_threshold") or {}).get(bin_key),
+                half_se_tax=se["deductible_half"])
+            qbi = qbi_res["total_deduction"]
+            qbi_over_threshold = bool(qbi_res.get("over_threshold"))
     taxable_income = max(0.0, ti_before_qbi - qbi)
 
     cg_zero, cg_fifteen = capital_gains_limits(tax_law, fs, "federal projection")
@@ -1220,6 +1300,8 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         deduction=round(deduction, 2), itemized=itemized,
         schedule_1a_deduction=round(sch1a, 2), qbi_deduction=round(qbi, 2),
         charitable_non_itemizer_deduction=round(charitable, 2),
+        schedule_a_repriced=schedule_a is not None,
+        schedule_a_notes=[] if schedule_a is None else schedule_a["notes"],
     )
 
 
@@ -2321,7 +2403,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         state_mfs_deduction_note=state_mfs_deduction_note,
         itemized_deduction_note=_itemized_deduction_note(federal, state),
         charitable_gifts_note=_charitable_gifts_note(
-            federal, proj.itemized_deductions))
+            federal, None if federal.schedule_a_repriced else proj.itemized_deductions))
 
 
 

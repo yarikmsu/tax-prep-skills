@@ -78,6 +78,10 @@ class ProjectedInputs:
     # The year's expected cash gifts to charity (AA22), read from TY2026 for
     # §170(p)'s deduction for non-itemizers. None refuses there, as above.
     charitable_cash_gifts: "float | None" = None
+    # Full Schedule A inputs for this projected year, confirmed as forecasts.
+    # None preserves the declared-total path for older workspaces.
+    schedule_a_inputs: "dict | None" = None
+    schedule_a_charitable_limits_confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,8 @@ class FederalProjection:
     schedule_1a_deduction: float = 0.0
     qbi_deduction: float = 0.0
     charitable_non_itemizer_deduction: float = 0.0  # §170(p), line 13c
+    schedule_a_repriced: bool = False
+    schedule_a_notes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

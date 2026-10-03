@@ -1257,22 +1257,13 @@ def test_an_itemizer_with_recorded_inputs_is_repriced_not_held():
     assert "held at the baseline." in sc.render_markdown(held)
 
 
-def test_schedule_a_is_held_wherever_re_pricing_could_over_state():
-    """AA23's bias review: re-pricing stands down — the deduction held, the
-    disclosures back — wherever it could over-state.
-
-    - The election flips. Hand-computed, TY2026 MFJ: medical $20,000 less
-      $12,525 = $7,475 plus mortgage $23,000 = $30,475, itemized by $475 over
-      the $30,000 standard deduction; wages=10000 cuts medical to $6,725 and
-      itemizing to $29,725, so the standard deduction would win. Line 12's
-      offset from the re-run is an itemizer's, and carried across the flip it
-      would land on a standard filer (an age-65 add-on, the other way).
-    - An AGI above the top bracket's floor: §68(a)(2)'s base needs the
-      priced point's QBI deduction, which the pricer does not track, so the
-      haircut is priced only where the base is provably not positive.
-    - A binding charitable cap: the re-run assumes a public charity and
-      appreciated property, which the return does not record, so the refusal
-      stands whether or not the rest re-prices."""
+def test_schedule_a_prices_elections_and_haircuts_but_requires_donation_classification():
+    """Complete inputs now price election flips and top-bracket haircuts.
+    Donation classifications still must be confirmed for a binding cap.
+    Medical $20,000 - $12,525 plus mortgage $23,000 = $30,475; at
+    wages +$10,000 the medical deduction falls $750, standard wins at
+    $30,000, and taxable income therefore rises $10,475.
+    """
     from agents.lib.tax_computations import compute_schedule_a
     base = json.loads((FIX / "result.json").read_text())
     profile = json.loads((FIX / "taxpayer_profile.json").read_text())
@@ -1294,8 +1285,8 @@ def test_schedule_a_is_held_wherever_re_pricing_could_over_state():
     assert flip["itemized_total"] == 30475.0
     r = build(with_schedule_a(flip, 30475.0))
     assert (r.schedule_a_repriced, r.diff.delta_taxable_income) == (
-        False, 10000.0)
-    assert r.medical_floor_may_move is True
+        True, 10475.0)
+    assert r.medical_floor_may_move is False
 
     stays = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
                                medical_expenses=20000, mortgage_interest=30000,
@@ -1304,7 +1295,10 @@ def test_schedule_a_is_held_wherever_re_pricing_could_over_state():
     assert build(result).schedule_a_repriced is True
     # The fixture's MFJ top bracket starts at $200,000: a delta that carries
     # AGI past it holds.
-    assert build(result, ("wages=40000",)).schedule_a_repriced is False
+    above = build(result, ("wages=40000",))
+    # $34,475 before §68, reduced by $7,000 × 2/37 = $378.38.
+    assert above.schedule_a_repriced is True
+    assert above.diff.delta_taxable_income == 43378.38
 
     capped = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
                                 charitable_cash=150000, top_bracket_income=0,
@@ -1312,6 +1306,51 @@ def test_schedule_a_is_held_wherever_re_pricing_could_over_state():
     assert capped["charitable_carryforward"] > 0
     with pytest.raises(sc.ScenarioError, match="capped at a share of AGI"):
         build(with_schedule_a(capped, capped["itemized_total"]))
+    capped["charitable_limits_confirmed"] = True
+    confirmed = build(with_schedule_a(capped, capped["itemized_total"]))
+    # $10k extra AGI allows $6k extra cash, with $50 extra charitable floor.
+    assert confirmed.schedule_a_repriced is True
+    assert confirmed.diff.delta_taxable_income == 4050
+    # An unknown extra line-12 amount may be a standard-only age add-on;
+    # it cannot migrate across an election change.
+    unknown_offset = build(with_schedule_a(flip, 30500))
+    assert unknown_offset.schedule_a_repriced is False
+    approaching = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                                     charitable_cash=100000, top_bracket_income=0,
+                                     non_itemizer_charitable=0)
+    assert approaching["charitable_carryforward"] == 0
+    with pytest.raises(sc.ScenarioError, match="projected charitable cap binds"):
+        build(with_schedule_a(approaching, approaching["itemized_total"]), ("wages=-10000",))
+    unknown_gifts = compute_schedule_a(167000, "MFJ", 2026, 30000, 40400,
+                                       medical_expenses=20000, mortgage_interest=26000,
+                                       charitable_cash=3000, top_bracket_income=0)
+    assert unknown_gifts["non_itemizer_charitable_weighed"] is None
+    with pytest.raises(sc.ScenarioError, match="provisional §170"):
+        build(with_schedule_a(unknown_gifts, unknown_gifts["itemized_total"]), ("wages=80000",))
+
+
+def test_scenario_haircut_uses_provisional_qbi_and_keeps_its_anchor():
+    from agents.lib.tax_computations import compute_schedule_a
+    result = json.loads((FIX / "result.json").read_text())
+    profile = json.loads((FIX / "taxpayer_profile.json").read_text())
+    law = json.loads((FIX / "tax_law_2026.json").read_text())
+    law["federal"]["social_security"]["wage_base"] = 1000000
+    result["schedule_c"] = {"line_31_net": 80000}
+    # Fixture gross $167k + $80k SE, less $5,651.82 half SE tax.
+    # QBI $14,869.64: §68 base $26,478.54, haircut $1,431.27.
+    result["form_1040"]["line_11_agi"] = 241348.18
+    sched = compute_schedule_a(241348.18, "MFJ", 2026, 30000, 40400,
+                               mortgage_interest=45000, top_bracket_income=26478.54)
+    assert sched["itemized_total"] == 43568.73
+    result["schedule_a"] = sched
+    result["form_1040"]["line_12_standard_deduction"] = 43568.73
+    r = sc.build_report(result, profile, law, 2026, "t", {"wages": 10000}, None,
+                        datetime.date(2026, 5, 26))
+    # The extra $10k §68 base takes $540.54 more off the deduction.
+    assert r.schedule_a_repriced
+    assert r.base_outcome.taxable_income == 182909.81
+    assert r.diff.delta_taxable_income == 10540.54
+    assert r.diff.baseline_anchored_total_tax == result["form_1040"]["line_24_total_tax"]
 
 
 def test_what_a_re_priced_schedule_a_still_holds_is_said():
@@ -1361,5 +1400,7 @@ def test_a_stack_prices_its_schedule_a_one_way_throughout():
     assert first.anchor["schedule_a_repriced"] is True
     saved = sc._report_to_dict(first)
     assert build(["wages=5000"], saved).schedule_a_repriced is True
+    assert build(["wages=40000"], saved).schedule_a_repriced is True
+    saved["anchor"]["schedule_a_repriced"] = False
     with pytest.raises(sc.ScenarioError, match="one way throughout"):
         build(["wages=40000"], saved)

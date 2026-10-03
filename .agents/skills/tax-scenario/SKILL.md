@@ -70,7 +70,10 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    pass `--base scenarios/<other>.json`. A base priced on a different line 12, or saved
    before the anchor recorded one, is refused: re-run it from `result.json` first. A
    return whose charitable deduction hit its AGI limit (`schedule_a.charitable_carryforward`
-   above zero) is refused too: moving AGI moves that limit, which the tool holds.
+   above zero) refuses unless complete inputs re-price it and
+   `schedule_a.charitable_limits_confirmed` explicitly confirms public-charity
+   cash gifts and appreciated-property noncash gifts. Re-run `/tax-compute` to
+   record those classifications; never set the flag to bypass a refusal.
 
 3. **Compute.** Run:
    ```bash

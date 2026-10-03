@@ -2026,6 +2026,20 @@ def _schedule_a_salt_cap(agi: float, fs: str, tax_year: int, salt_cap,
     return base, applied, magi, known
 
 
+def choose_schedule_a_deduction(itemized: float, standard: float,
+                               non_itemizer: float = 0.0,
+                               forced: bool = False) -> tuple[float, bool, float]:
+    """One election for returns and projections, including the standard-side gift."""
+    itemized = _sched_a_amount(itemized, "itemized_total")
+    standard = _sched_a_amount(standard, "standard_deduction")
+    non_itemizer = _sched_a_amount(non_itemizer, "non_itemizer_charitable")
+    if not isinstance(forced, bool):
+        raise ValueError("forced must be a boolean")
+    use_itemized = forced or itemized > standard + non_itemizer
+    return (itemized if use_itemized else standard, use_itemized,
+            0.0 if use_itemized else non_itemizer)
+
+
 def compute_schedule_a(
     agi: float,
     filing_status: str,
@@ -2351,7 +2365,7 @@ def compute_schedule_a(
                 "fund or §509(a)(3) gifts). The figure must be the PROVISIONAL "
                 "allowed, from itemizes=False — the finalized call returns $0 "
                 "for an itemizer and would confirm itemizing on its own.")
-        use_itemized = itemized_total > std + non_itemizer
+        _, use_itemized, _ = choose_schedule_a_deduction(itemized_total, std, non_itemizer)
         if non_itemizer and std < itemized_total <= std + non_itemizer:
             notes.append(
                 f"§170(p) decides the election: itemizing ({itemized_total:,.2f}) "
@@ -3267,6 +3281,7 @@ def compute_scenario(
         "ctc": round(ctc, 2),
         "se_tax": round(se["se_tax"], 2),
         "additional_medicare": round(addl, 2),
+        "qbi_deduction": round(qbi, 2),
         "total_federal_tax": round(total, 2),
         "used_qdcg": used_qdcg,
     }

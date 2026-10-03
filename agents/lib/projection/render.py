@@ -939,6 +939,9 @@ def render_markdown(r: ProjectionReport) -> str:
         lines.append("- State estimated-payment scheduling is informational; state rules vary.")
     if r.itemized_deduction_note:
         lines.append(f"- **Declared itemized deductions:** {r.itemized_deduction_note}")
+    if f.schedule_a_repriced:
+        lines.append("- Federal Schedule A is re-priced at projected AGI from its forecast inputs.")
+        lines.extend(f"- {note}" for note in f.schedule_a_notes)
     if r.charitable_gifts_note:
         lines.append(f"- **Declared cash gifts:** {r.charitable_gifts_note}")
     if f.qbi_over_threshold:

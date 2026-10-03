@@ -6677,6 +6677,77 @@ def test_the_shipped_template_refuses_until_every_declaration_is_answered(
     assert P._main(args + ["--year", "2026"]) == 0
 
 
+def _schedule_a_forecast(agi=167000, **expenses):
+    return TC.compute_schedule_a(
+        agi, "MFJ", 2026, 30000, 40400, modified_agi=agi,
+        top_bracket_income=0, non_itemizer_charitable=0, **expenses)["inputs"]
+
+
+def _forecast_law():
+    law = _tax_law_2026()
+    law["federal"]["salt_cap"] = {"amount": 40400, "mfs_amount": 20200}
+    law["federal"]["charitable_non_itemizer"] = {"amount": 1000, "joint_amount": 2000}
+    return law
+
+
+@pytest.mark.parametrize("wages,expected", [(167000, 30475), (177000, 30000)])
+def test_schedule_a_forecast_prices_a_standard_election(wages, expected):
+    # Schedule A: medical $20,000 less 7.5% AGI, plus $23,000 mortgage.
+    # At $177,000 the itemized $29,725 loses to standard $30,000.
+    inputs = _schedule_a_forecast(medical_expenses=20000, mortgage_interest=23000)
+    f = P.project_federal_tax(_proj(wages=wages, itemized_deductions=None,
+                                    schedule_a_inputs=inputs), _profile_mfj(), _forecast_law())
+    assert f.deduction == expected
+    assert f.taxable_income == wages - expected
+    assert f.schedule_a_repriced
+    assert P._itemized_deduction_note(f, None) is None
+
+
+def test_schedule_a_forecast_prices_qbi_before_the_haircut():
+    # $80k SE × .9235 × .153 / 2 = $5,651.82 half-SE adjustment.
+    # QBI ($80k - $5,651.82) × .2 = $14,869.64; §68 base
+    # $224,348.18 - $14,869.64 - $200k = $9,478.54.
+    # Haircut $9,478.54 × 2/37 = $512.35 off $45k mortgage.
+    inputs = _schedule_a_forecast(mortgage_interest=45000)
+    f = P.project_federal_tax(
+        _proj(wages=150000, ss_wages=0, self_employment_net=80000, schedule_a_inputs=inputs),
+        _profile_mfj(), _forecast_law())
+    assert f.agi == 224348.18
+    assert f.qbi_deduction == 14869.64
+    assert f.deduction == 44487.65
+    assert f.taxable_income == 164990.89
+
+
+def test_schedule_a_forecast_rebuilds_magi_with_its_addback():
+    inputs = _schedule_a_forecast(state_local_income_taxes=30000, mortgage_interest=30000)
+    inputs["magi_addback"] = 500000
+    # At AGI $100k, MAGI $600k: $40,400 - .30 × ($600k-$505k) = $11,900.
+    f = P.project_federal_tax(_proj(schedule_a_inputs=inputs), _profile_mfj(), _forecast_law())
+    assert f.deduction == 41900
+    assert any("phasedown" in n for n in f.schedule_a_notes)
+
+
+@pytest.mark.parametrize("field,value", [("tax_year", 2025), ("filing_status", "Single"),
+                                        ("standard_deduction", 31000), ("salt_cap", 40000)])
+def test_schedule_a_forecast_refuses_wrong_year_status_or_law(field, value):
+    inputs = _schedule_a_forecast(mortgage_interest=45000)
+    inputs[field] = value
+    with pytest.raises(P.ProjectionError):
+        P.project_federal_tax(_proj(schedule_a_inputs=inputs), _profile_mfj(), _forecast_law())
+
+
+def test_schedule_a_forecast_requires_explicit_binding_gift_classifications():
+    inputs = _schedule_a_forecast(charitable_cash=150000)
+    p = _proj(schedule_a_inputs=inputs, charitable_cash_gifts=150000)
+    with pytest.raises(P.ProjectionError, match="Binding charitable caps"):
+        P.project_federal_tax(p, _profile_mfj(), _forecast_law())
+    from dataclasses import replace
+    f = P.project_federal_tax(replace(p, schedule_a_charitable_limits_confirmed=True),
+                              _profile_mfj(), _forecast_law())
+    # Schedule A's public-charity cash cap $100k × .60, less .5% AGI floor.
+    assert f.deduction == 59500
+
+
 def test_a_declared_itemized_total_is_flagged_as_held():
     """The declared total is priced as entered, while its SALT phasedown and
     medical floor move with the projected AGI: a total worked out at another

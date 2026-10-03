@@ -264,8 +264,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   keystone.
 - **Where the return's Schedule A recorded its `inputs` (AA23)**, the federal side is
   re-priced at the harvested AGI instead — medical floor, SALT phasedown and the
-  charitable deduction below its cap — unless the election would flip, the AGI reaches
-  the top bracket, or the re-run refuses; the report says which. The state estimate
+  confirmed charitable caps, the election and the haircut after provisional QBI.
+  Missing inputs or a re-run refusal hold the deduction; the report says which. The state estimate
   keeps the held deduction either way, and says so. Otherwise:
 - **The deduction is the return's own line 12, held at the baseline**, so a harvest is
   priced from where the return actually sits, standard or itemized. Two parts of an
@@ -273,10 +273,11 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   and for TY2025-2029 the SALT cap's phasedown above the §164(b)(7)(B) threshold. A
   harvest lowers AGI, so it can save more than shown; the output says so wherever either
   can move.
-- **A charitable deduction at its AGI limit refuses.** Where
-  `schedule_a.charitable_carryforward` is above zero the gift hit its share-of-AGI
-  cap, and moving AGI moves the cap while the tool holds the deduction, so the
-  figure would read high. The tool stops; price the change with `/tax-compute`.
+- **Binding charitable caps require confirmed classifications.** Complete
+  Schedule A inputs re-price the AGI cap only when
+  `schedule_a.charitable_limits_confirmed` is true, confirming public-charity
+  cash and appreciated-property noncash gifts. Otherwise the tool refuses
+  an AGI change; re-run `/tax-compute` to record the classifications.
 - A planning estimate, not a filed return.
 
 ## Security & safety

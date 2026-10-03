@@ -113,18 +113,19 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 - MAGI approximated as AGI (no tax-exempt-interest / foreign-EI add-backs).
 - Second-order Social Security taxability is not re-computed.
 - Where the return's Schedule A recorded its `inputs` (AA23), every rung re-prices it
-  at the rung's AGI, all rungs or none: one rung that flips the election, reaches the
-  top bracket or makes the re-run refuse holds the whole ladder. Otherwise:
+  at the rung's AGI, including election changes and the haircut after provisional
+  QBI, all rungs or none. Missing inputs or a re-run refusal hold the whole ladder. Otherwise:
 - The deduction is the return's own line 12, standard or itemized, held at the
   baseline. Two parts of an itemizer's deduction move with AGI and are not
   re-computed: the medical-expense floor, and for TY2025-2029 the SALT cap's phasedown
   on modified AGI (§164(b)(7)(B)). A conversion can cost more than shown; the output
   says so wherever either can move.
 - MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` is keyed `single`/`mfj` only).
-- **A charitable deduction at its AGI limit refuses.** Where
-  `schedule_a.charitable_carryforward` is above zero the gift hit its share-of-AGI
-  cap, and moving AGI moves the cap while the tool holds the deduction, so the
-  figure would read high. The tool stops; price the change with `/tax-compute`.
+- **Binding charitable caps require confirmed classifications.** Complete
+  Schedule A inputs re-price the AGI cap only when
+  `schedule_a.charitable_limits_confirmed` is true, confirming public-charity
+  cash and appreciated-property noncash gifts. Otherwise the tool refuses
+  an AGI change; re-run `/tax-compute` to record the classifications.
 - A planning estimate, not a filed return.
 
 ## Security & safety

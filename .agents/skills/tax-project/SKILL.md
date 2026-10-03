@@ -61,6 +61,17 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    and — for TY2025-2028 — the OBBBA **Schedule 1-A** total via `forecast_overrides.schedule_1a`,
    estimated with `compute_schedule_1a`: tips + overtime premium + car-loan + senior, a
    below-AGI deduction that lowers projected taxable income but not AGI).
+   For a Schedule A forecast, collect the year's full expense inputs and run
+   `compute_schedule_a` with this year's fetched standard deduction and SALT cap.
+   Store its complete `inputs` in `forecast_overrides.schedule_a_inputs`; confirm
+   each forecast expense rather than copying a prior year's figures. The engine
+   rebuilds MAGI from the recorded add-back, prices the AGI floors and phasedown,
+   computes provisional QBI before the haircut, and makes the itemization election.
+   Confirm the public-charity cash and appreciated-property noncash classifications
+   before setting `schedule_a_charitable_limits_confirmed` true; binding charitable
+   caps refuse otherwise. Investment-interest or lower-income sales-tax forecasts
+   require updated worksheet inputs when the engine refuses their held values.
+   Older workspaces can still supply a declared total, with its held-input warning.
    Ask for the year's deductions too, with step 3's archive defaults and its questions in
    the same pass; each is REQUIRED where it is read, and the engine refuses a file that
    leaves one unanswered: `forecast_overrides.itemized_deductions`, the itemized
@@ -291,6 +302,9 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      income, so the tax and payments can read high or low. Surface it verbatim, and
      where the total was worked out at a different income than this projection's AGI,
      re-work it with the taxpayer and re-run.
+     With Schedule A forecast inputs, the federal deduction is re-priced and its
+     `federal.schedule_a_repriced` is true; read `federal.schedule_a_notes` too.
+     A state total remains held and keeps its own warning.
    - **`charitable_gifts_note`** — non-null wherever the projection took the charitable
      deduction for non-itemizers, which it prices on the declared gifts as entered. Only
      some gifts qualify, and ones that do not make the tax and payments read LOW. Where

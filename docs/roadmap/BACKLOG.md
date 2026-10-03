@@ -95,29 +95,14 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   "indexes roughly 1%/yr" and that an absent value "degrades quietly", and never
   checks for a stale or already-reduced amount. Found by AA16's second review.
 
-- **AA23 (P2, M): Schedule A is held, not priced, wherever AGI moves.** The
-  planning tools hold the return's line 12 (AA20) and `/tax-project` a declared
-  itemized total (AA21), while the §164(b)(7)(B) phasedown, the medical floor,
-  the §70111 haircut and an itemize-or-standard switch all move with AGI. Each
-  is disclosed rather than priced: `salt_phasedown_caveat`,
-  `medical_floor_caveat` and `itemized_deduction_note`. Taking Schedule A's
-  inputs and re-running `compute_schedule_a` at each priced AGI would price
-  them and retire all three. AA20's entry recorded this fix and left with it
-  when AA20 shipped; AA21's simplify pass found it gone. The same function
-  should own the itemize-or-standard choice with §170(p) on the standard side.
-  **That half shipped in #203:** `compute_schedule_a` takes
-  `non_itemizer_charitable` and elects on it, and `/tax-compute` no longer
-  tilts by hand. **The inputs shipped in #204:** the function returns
-  `inputs`, `/tax-compute` writes them into `schedule_a`, and
-  `rerun_schedule_a` re-prices from them at another AGI. **`/tax-scenario`'s
-  wiring shipped in #205, `/tax-roth-convert`'s and `/tax-harvest`'s in #206.** What remains is `/tax-project`, whose
-  deduction is a declared total and its own §170(p) tilt rather than a
-  return's Schedule A, and the cases every tool still holds (an election flip,
-  an AGI above the top bracket's floor, whose §68 base needs a QBI deduction
-  the pricer does not track, a binding charitable cap). A return written before `inputs` existed, or one whose
-  section was not written (a standard filer far from the margin), keeps the
-  held figure and its disclosure. `/tax-project` still
-  tilts in its own code (AA22) and moves with that step.
+- **AA23 (P2, M): Schedule A repricing — final implementation awaiting merge.**
+  The earlier slices shipped in #203-#206. The final change adds complete
+  `/tax-project` forecast inputs, centralizes its deduction election, and
+  prices election changes, provisional-QBI-aware §68 haircuts and confirmed
+  charitable AGI caps in the shared scenario repricer. Legacy returns without
+  complete inputs retain their disclosures; unknown donation classifications
+  refuse a binding cap. Local review, validation and the PR merge are the
+  remaining delivery steps. Implementation detail lives in `epic-AA.md`.
 
 ### W — engineering hygiene
 

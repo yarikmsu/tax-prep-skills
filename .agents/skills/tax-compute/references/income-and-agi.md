@@ -673,6 +673,11 @@ persona SALT usually exceeds the OBBBA cap by itself):
   STANDARD deduction — cash gifts feed the §170(p) line-13c deduction, and
   unasked it is silently zero. Surface the carryforward figure for
   /tax-rollover if nonzero.
+  Also confirm whether all cash gifts are to public charities and all noncash
+  gifts are appreciated property, the classifications this engine models.
+  Record `schedule_a.charitable_limits_confirmed` as true only when both are
+  confirmed (an absent gift category qualifies); otherwise false. Planning
+  tools require this confirmation before re-pricing a binding charitable cap.
 - MFS: ask whether the spouse itemizes; record it as
   `- **[mfs_spouse_itemizes]** the answer`. The answer binds BOTH ways —
   §63(c)(6)(A) zeroes the standard deduction of both spouses once either
@@ -800,4 +805,3 @@ Use `compute_qbi_deduction()` from `agents/lib/tax_computations/`:
   the simplified path is kept and the `warning` is surfaced: the deduction may
   be overstated (an SSTB phases to $0) — verify against Form 8995-A / tax
   software before filing, or supply the trade's wages/UBIA to compute it.
-

@@ -392,7 +392,7 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
         prev_amount = amt
 
     priced = [x.agi for x in rungs]
-    refuse_where_the_charity_cap_moves(result, base_out["agi"], priced)
+    refuse_where_the_charity_cap_moves(result, base_out["agi"], priced, repriced=repriced)
     return LadderReport(
         schema=SCHEMA, name=name, tax_year=year, created=today.isoformat(),
         filing_status=filing_status, max_amount=round(float(amounts[-1]), 2),

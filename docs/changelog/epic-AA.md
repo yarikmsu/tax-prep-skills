@@ -2436,3 +2436,27 @@ The test also pins the step's wording.
 - **The base needs a provisional QBI deduction.** §68(a)(2) measures taxable income "without regard to this section", so the QBI deduction inside the base is the one computed against the un-reduced line 12. The final Form 8995 then uses the reduced one. The step now says so in both places, with the base written as AGI less that QBI, line 13b and the threshold, unfloored.
 - **The step names the threshold's cache path.**
 - **`rerun_schedule_a`'s docstring and refusal no longer describe the old reading**, nor do the constant's comment, a test docstring, the backlog or `/tax-project`'s skill. `/tax-project`'s skill now says the haircut reaches a filer below the 37% bracket.
+
+
+## AA23, final slice — forecast Schedule A and price the remaining AGI changes
+
+`/tax-project` accepts complete current-year Schedule A forecast inputs, checked
+against the projected year, status and fetched standard deduction and SALT cap.
+It rebuilds MAGI from the recorded add-back and re-runs the existing engine at
+projected AGI. Provisional QBI precedes the §68 haircut; final QBI uses the
+reduced deduction. The declared-total path remains for older workspaces and
+retains its warning. Return and projection elections use one shared helper.
+
+The scenario, Roth and harvest repricer now prices election flips and §68
+haircuts, using the keystone's provisional QBI at each income point. It retains
+the line-12 anchor within its regime and refuses a flip carrying an unclassified
+offset. Binding charitable caps require explicit confirmation that cash gifts
+are to public charities and noncash gifts are appreciated property. A newly
+binding cap also refuses without that confirmation. The tax-compute interview
+records it; PTET continues its existing refusal because it does not re-price
+Schedule A. Sales-tax table and investment-interest limits retain their guards.
+
+Validation adds hand-computed election, haircut, QBI, MAGI and gift-cap cases,
+including incompatible forecast law and an unknown legacy offset. The initial
+local review found that a cap newly binding at lower AGI also needed the
+classification gate, and a regression case now covers it.

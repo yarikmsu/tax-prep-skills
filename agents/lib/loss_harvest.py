@@ -1230,7 +1230,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     else:
         state_savings = 0.0
 
-    refuse_where_the_charity_cap_moves(result, base_out["agi"], [harvested_agi])
+    refuse_where_the_charity_cap_moves(result, base_out["agi"], [harvested_agi], repriced=repriced)
     return HarvestReport(
         schema=SCHEMA, name=name, tax_year=year, created=today.isoformat(),
         as_of=as_of.isoformat(), filing_status=filing_status, anchor=anchor,
