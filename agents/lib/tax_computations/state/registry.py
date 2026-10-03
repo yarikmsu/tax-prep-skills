@@ -11,11 +11,11 @@ local copy looks like.
 It also holds the PTET regime windows, a table of their own (NJ has a PTET
 and no result section).
 
-DATA ONLY. Behaviour that differs by state — the capability gate's notes, the
+Shared metadata and variant selection. Behaviour that differs by state — the capability gate's notes, the
 calendar's estimated-tax events, the tie-out's withholding categories — stays
 in the module that owns the question, keyed by `code`; this holds what those
 modules would otherwise each restate. It imports only the `agents.lib`
-package (the host-interpreter guard `test_host_guard` requires of every engine
+package and standard library (the host-interpreter guard `test_host_guard` requires of every engine
 file), so any engine module can read it without a cycle.
 """
 
@@ -47,6 +47,7 @@ class StateSection:
     informational_key: "str | None" = None
     package_forms: "tuple[tuple[str, str], ...]" = ()
     regime: str = "graduated_income"
+    variant: str | None = None
 
 
 # In DETECTION order: `projection._detect_prior_state` takes the first section
@@ -116,7 +117,46 @@ STATE_SECTIONS += (StateSection(
     package_forms=(("washington_ltcg_excise", "Washington capital-gains excise (My DOR)"),),
 ),)
 
-BY_CODE: "dict[str, StateSection]" = {s.code: s for s in STATE_SECTIONS}
+STATE_SECTIONS += (StateSection(
+    code="NY", section="new_york_it203", variant="IT203",
+    evidence_fields=("computed_tax_year", "line_33_deduction"),
+    mover_fields=(("State taxable income", "new_york_it203.line_37_taxable_income"),
+                  ("State allocated tax", "new_york_it203.line_50_state_tax"),
+                  ("City / MCTMT", "new_york_it203.line_55_city_and_mctmt"),
+                  ("State refund", "new_york_it203.line_68_refund")),
+    package_forms=(("new_york_it203", "New York Form IT-203"),),
+),)
+
+# Primary full-year rows retain their identities. Variants cannot overwrite them.
+BY_CODE: "dict[str, StateSection]" = {s.code: s for s in STATE_SECTIONS if s.variant is None}
+BY_SECTION: dict[str, StateSection] = {s.section: s for s in STATE_SECTIONS}
+
+
+def selected_ny_return(result: dict) -> str | None:
+    """Refuse competing NY computation evidence; select one filing form."""
+    import math
+    rows = [s for s in STATE_SECTIONS if s.code == "NY"]
+    computed: list[str] = []
+    for row in rows:
+        node = result.get(row.section) or {}
+        if not isinstance(node, dict):
+            raise ValueError("NY return section must be an object")
+        for path in row.evidence_fields:
+            value: object = node
+            for part in path.split("."):
+                value = value.get(part) if isinstance(value, dict) else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value != 0:
+                computed.append(row.variant or "IT201")
+                break
+    meta = result.get("meta") or {}
+    if not isinstance(meta, dict):
+        raise ValueError("Result metadata must be an object")
+    selected = meta.get("ny_return_type")
+    if selected is not None and (not isinstance(selected, str) or selected not in {"IT201", "IT203"}):
+        raise ValueError("Unknown NY return variant")
+    if len(computed) > 1 or (selected and computed and selected != computed[0]):
+        raise ValueError("Competing NY return variants; select and compute one return")
+    return selected or (computed[0] if computed else None)
 
 
 # Per-state effective tax-year windows of the elective pass-through-entity tax

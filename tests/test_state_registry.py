@@ -35,7 +35,7 @@ def _get(d, dotted):
 def test_the_registry_holds_the_states_the_toolkit_knows():
     """California and New York computed in depth, Florida's statement — a
     state added or dropped is a decision, so the set is pinned exactly."""
-    assert [s.code for s in STATE_SECTIONS] == ["CA", "FL", "NY", "NC", "WA"]
+    assert [s.code for s in STATE_SECTIONS] == ["CA", "FL", "NY", "NC", "WA", "NY"]
     assert set(registry.BY_CODE) == {"CA", "FL", "NY", "NC", "WA"}
     assert registry.BY_CODE["NY"].section == "new_york_it201"
 
@@ -57,7 +57,7 @@ def test_every_derived_table_is_the_registry_projection():
     assert yoy_diff.INFORMATIONAL_SECTIONS == {"florida_state":
                                                "no_income_tax_statement"}
     assert set(yoy_diff.STATE_MOVER_FIELDS) == {"california_540",
-                                                "new_york_it201", "north_carolina_d400", "washington_ltcg_excise"}
+                                                "new_york_it201", "north_carolina_d400", "washington_ltcg_excise", "new_york_it203"}
     for s in STATE_SECTIONS:
         assert yoy_diff.STATE_MOVER_FIELDS.get(s.section, []) == list(
             s.mover_fields), s.code
@@ -198,6 +198,17 @@ def test_a_computed_state_is_wired_into_every_module(s):
         assert not any(e.category == "state_estimated_tax" for e in events)
         assert any("WA capital-gains" in e.summary for e in events)
         assert not hasattr(withholding, "build_wa_true_up")
+        assert s.package_forms[0][0] == s.section
+        return
+    if s.variant == "IT203":
+        from tests.test_ny_it203 import profile
+        r = {"meta":{"ny_return_type":"IT203"},s.section:{"computed_tax_year":2025}}
+        assert tie_out._category_target(r,"state_withholding_ny")[0] == s.section
+        assert "computed in depth" in capabilities._state_note(profile())
+        events = tax_calendar.build_events(profile(),2025)
+        assert any(e.category == "state_estimated_tax" for e in events)
+        extended = tax_calendar.events_extension(2025,state="NY",ny_return_type="IT203")[1]
+        assert "IT-203" in extended.description
         assert s.package_forms[0][0] == s.section
         return
     category = f"state_withholding_{s.code.lower()}"

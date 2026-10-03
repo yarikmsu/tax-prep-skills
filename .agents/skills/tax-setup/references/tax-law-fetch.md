@@ -160,8 +160,13 @@ a figure from a prior year.
   only these indexed figures are fetched. Unfetched HARD-ERRORS at compute for a
   CA ISO exerciser (never a guessed exemption that would zero the CA AMT). Leave
   all-null for a non-ISO CA return.
-- **For NY — the generic one-search fallback is NOT enough.** It fetches
-  brackets and a standard deduction, which leaves the regimes that actually
+- **For NY — the generic one-search fallback is NOT enough.**
+  The validated IT203 filing plan also selects this entire NY schema regardless
+  of mailing address. TY2025 IT203/IT360.1 additionally require live covered-year
+  IT-203-I and IT-360.1-I source checks pinned in `_sources`; their household
+  table and City schedules share the existing NY fields. Do not use IT-201's
+  City tax table for the IT-360.1 part-year worksheet.
+  A generic fetch of brackets and a standard deduction leaves the regimes that actually
   decide a New York return unset, and the block then reads as fetched. Design
   spec and sources:
   `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`.

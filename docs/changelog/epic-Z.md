@@ -398,6 +398,30 @@ NC-4 line 2 accepts whole dollars, so the NC per-paycheck recommendation rounds
 up to the next dollar to cover the target. Authority re-read live:
 [NC-4](https://www.ncdor.gov/employees-withholding-allowance-certificate-0/open).
 
-## Z5 — Washington LT capital-gains excise
+## Z5 — Washington LT capital-gains excise (#220)
 
 A dedicated excise regime and fetched block price classified Schedule D LT gains, excluded losses/carryforwards, qualifying deductions and substantiated same-asset credits. WA ordinary brackets stay empty and the shared reader prevents wage taxation even with corrupt legacy data. The result, setup/compute instructions, separate My DOR package and annual April reminder are wired; there are no quarterly wage-tax events. TY2025 only. Separate household allocations and special federal normalization refuse. Z6 harvest repricing remains open under an explicit unpriced banner.
+
+## Z8 — NY IT-203 and NYC IT-360.1
+
+TY2025 part-year/nonresident returns use an explicit NY filing plan and
+reviewed disjoint residence/source allocations. All-source AGI ties to the
+federal return. Annual deductions precede all-source table/schedule/recapture
+and the four-decimal source percentage, which may exceed one. State childcare
+and EIC precede allocation; IT-203-ATT credits and other NY taxes follow it.
+NYC IT-360.1 uses actual period income, rounded months, prorated deductions and
+exemptions, and the rate schedule even below the full-year table ceiling.
+
+The registry keeps IT-201 as NY's primary and adds a separate variant. Setup
+selects NY law independently of mailing address; a complete inventory clears
+move/source gates only for other no-income-tax states needing no return.
+Other taxable-state returns and credits still require manual preparation.
+State/NYC/Yonkers withholding ties to the selected form. Competing NY variants
+refuse; City/MCTMT totals and IT-360.1 evidence are checked. Calendar, extension,
+filing attachments, PDF and YoY use the selected form. Ordinary projections and
+IT-203 withholding true-ups skip with explicit reasons.
+
+MFS, mixed joint residence periods, special IT-230 ratios, IT-203 Yonkers tax,
+foreign moves and statutory second residency retain refusals/gates. Credit,
+modification, City itemized and special-accrual worksheets remain verified
+inputs. Hand-computed source worksheets and the documented launcher are tested.

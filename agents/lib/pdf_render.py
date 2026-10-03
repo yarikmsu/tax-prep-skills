@@ -112,6 +112,8 @@ _AMOUNT_ANYWAY = ("carryforward", "basis", "balance", "amount", "deduction",
 
 def _is_money(key: str) -> bool:
     low = key.lower()
+    if low.endswith("_percentage"):
+        return False
     if any(word in low for word in _AMOUNT_ANYWAY):
         return not any(word in low for word in ("currency",))
     last = low.rsplit("_", 1)[-1]
@@ -121,6 +123,8 @@ def _is_money(key: str) -> bool:
 def _is_amount(key: str) -> bool:
     """Money or another currency — either way, two decimal places."""
     low = key.lower()
+    if low.endswith("_percentage"):
+        return False
     if any(word in low for word in _AMOUNT_ANYWAY):
         return True
     return low.rsplit("_", 1)[-1] not in _NOT_MONEY
@@ -143,7 +147,7 @@ def _title(key: str) -> str:
                       # "New York It201" through the generic capitalisation,
                       # and a form number is not a word.
                       "ny", "nyc", "nyagi", "mctmt", "ptet",
-                      "it196", "it201", "it225"):
+                      "it196", "it201", "it203", "it225", "it3601"):
             words.append(word.upper())
         else:
             words.append(word.capitalize())
@@ -505,6 +509,11 @@ def render(result: dict, out_path: Path, *,
     and not arithmetic. AGENTS.md §8's rule for every parse boundary applies to
     the boundary where a figure is PRINTED too.
     """
+    from agents.lib.tax_computations.state.registry import selected_ny_return
+    try:
+        selected_ny_return(result)
+    except ValueError as exc:
+        raise PdfRenderError(str(exc)) from None
     bad = first_non_finite(result)
     if bad is not None:
         raise PdfRenderError(

@@ -238,3 +238,11 @@ previous common blocks and exclude these additional situations. No population fr
 these NC Schedule S and credit situations; their overlap is unknown.
 
 WA-specific screening: `wa_special_gains` and `wa_separate_household` are unmeasured scope blocks; their prevalence is not estimated. Each must be answered for WA.
+
+TY2025 IT-203 now covers reviewed NY part-year/nonresident allocations and NYC
+IT-360.1 for that variant. The population estimates above still describe the
+resident-only gate baseline, not a re-estimated adoption rate. A complete NY
+plan clears move/source blocks only for covered no-income-tax states needing
+no return. NJ and other taxable-state resident returns and their credits still
+need separate preparation. A City move within full-year NY remains the
+unmodeled IT-201 part-year City branch; this IT203 addition does not clear it.

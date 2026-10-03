@@ -628,6 +628,13 @@ def _ny_household_unmodeled(profile: dict) -> "list[str]":
     commuter's Yonkers earnings are `nonresident_source_income`'s. The
     conditions are `ny_household_refusals`', beside the functions that refuse.
     """
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    try:
+        plan = ny_it203_plan(profile)
+    except ValueError as exc:
+        raise CapabilityError(f"NY filing plan: {exc}") from None
+    if plan:
+        return []  # Plan rejects Yonkers/mixed spouses and supplies IT360.1.
     if _profile_state(profile) != "NY":
         return []
     # Imported HERE: the engine imports irs_dates, which imports this module.
@@ -820,6 +827,17 @@ def _state_note(profile: dict) -> str:
         return (f"Territory ({code}): not a state, and no state return is "
                 "computed. The territory's own return and its relationship "
                 "to the federal one are out of scope (territory_resident).")
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    try:
+        ny_plan = ny_it203_plan(profile)
+    except ValueError as exc:
+        raise CapabilityError(f"NY filing plan: {exc}") from None
+    if ny_plan:
+        return ("State (NY): Form IT-203 computed in depth for TY2025 from reviewed source allocations, "
+                "the all-source tax table/recapture and IT-196 deduction, and the four-decimal income percentage. "
+                "NYC part-year IT-360.1 uses resident-period income and prorated deductions. Credit and modification "
+                "worksheets are inputs. Other-state returns/credits, mixed spouses, MFS, IT-230 special ratios and IT-203 Yonkers tax remain manual. "
+                "Ordinary state projections and IT-203 withholding forecasts are not modeled.")
     if code == "CA":
         return "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
     if code == "NY":
@@ -832,7 +850,7 @@ def _state_note(profile: dict) -> str:
         # lines 1-45 are an INPUT, line 45's other taxes (the IT-230 lump-sum
         # tax among them) are inputs, each refundable credit's AMOUNT is an input, line
         # 59's sales-or-use tax is asked rather than computed, and IT-203 is
-        # not modeled at all. Those are on `meta.limitations` where the return
+        # modeled only through the declared IT203 variant. Those are on `meta.limitations` where the return
         # itself can carry them; this note names the ones a reader is most
         # likely to assume away — the credits and the part-year return.
         return (
@@ -848,7 +866,7 @@ def _state_note(profile: dict) -> str:
             "taken as an input from its own worksheet, not computed; so are "
             "IT-196 lines 1-45 and IT-201 line 45's other taxes. Line 59's "
             "sales or use tax is ASKED, never assumed to be zero. Part-year "
-            "and nonresident returns (IT-203) are not modeled.")
+            "and nonresident returns require a separate declared IT-203 plan.")
     if code == "WA":
         return ("State (WA): capital-gains excise computed in depth for TY2025 from confirmed LT classifications and worksheets. "
                 "No individual wage income tax. Short-term losses do not reduce the base. Separate spouses/RDPs, special federal gains and midyear domicile changes refuse. "
@@ -1028,7 +1046,16 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
                    {_profile_state(profile), _residency_domicile(profile)}
                    & _TERRITORIES)}
 
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    try:
+        ny_plan = ny_it203_plan(profile)
+    except ValueError as exc:
+        raise CapabilityError(f"NY filing plan: {exc}") from None
     for rule in RULES:
+        if (ny_plan and ny_plan["fully_covered"] and rule.rule_id in
+                {"part_year_residency", "nonresident_source_income"}):
+            _flag_value(flags, rule.flag)  # Still reject malformed flag values.
+            continue
         if rule.rule_id.startswith("wa_") and _profile_state(profile) != "WA":
             continue
         if rule.rule_id.startswith("nc_") and _profile_state(profile) != "NC":
@@ -1036,8 +1063,14 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         # _flag_value FIRST, so a non-bool answer still hard-errors.
         if not (_flag_value(flags, rule.flag) or derived.get(rule.flag)):
             continue
-        _place(Finding(rule.rule_id, rule.level, rule.situation, rule.form,
-                       rule.note, rule.rule_id in acknowledged_ids))
+        form, note = rule.form, rule.note
+        if ny_plan and rule.rule_id == "earned_income_credit":
+            form = "Form 1040 line 27; IT-203 line 43 / IT-203-ATT refundable EIC and NYC EIC"
+            note = ("EIC eligibility and source shares are not computed. Supply reviewed federal, "
+                    "NY pre-allocation state EIC and IT-203-ATT refundable-credit worksheets. "
+                    "Omitting a credit understates the refund or overstates the tax owed.")
+        _place(Finding(rule.rule_id, rule.level, rule.situation, form,
+                       note, rule.rule_id in acknowledged_ids))
 
     # Migration guard (fail closed): the gate-era flags must be explicitly
     # answered true/false. Both an ABSENT key (legacy profile) and a present

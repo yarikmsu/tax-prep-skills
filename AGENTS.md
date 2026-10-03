@@ -223,12 +223,11 @@ are plain Markdown instructions and are written to be executable that way.
   one that UNDER-states it degrades with a loud banner. Never guess a value that
   changes a return.
 
-**In-depth income returns:** CA 540, NY IT-201 and NC D-400 (TY2025 only),
-full-year residents only. WA's separate TY2025 `capital_gains_excise` uses EMPTY
-ordinary brackets; no wage income tax. FL/AK/NV/SD/TX/WY/TN (2021+) are `none`;
-others bracket-estimate only. Part-year/nonresident returns remain gated.
-Coverage and additions: `docs/contributing/state-module-playbook.md`;
-spec: `docs/superpowers/specs/TEMPLATE-state-module.md`.
+**In-depth:** CA 540, NY IT-201/IT-203, NC D-400 and WA excise.
+IT-203/NYC IT-360.1 require a reviewed TY2025 filing plan and allocations;
+other-state returns stay gated. WA has EMPTY ordinary brackets and no wage tax.
+No-tax regimes and depth limits: `docs/contributing/state-module-playbook.md`;
+adding a state: `docs/superpowers/specs/TEMPLATE-state-module.md`.
 
 ## 5. Directory structure
 

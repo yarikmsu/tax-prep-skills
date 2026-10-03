@@ -5,6 +5,8 @@ Expected values are hand-computed from IRS worksheets and publications.
 Tolerance: $0.01 (exact match after rounding to 2 decimal places).
 """
 
+from tests.ny_fixtures import _NYC_2025_SCHEDULES, _NY_2025_MCTMT, _NY_2025_HOUSEHOLD_TABLE
+
 import ast
 import json
 import pytest
@@ -6481,26 +6483,6 @@ def test_ny_itemized_second_fraction_caps_if_the_band_and_its_range_diverge():
 # Table 1 (single) and table 2 (MFJ/HOH/QSS) as published, first bands only —
 # the arithmetic under test is the band selection and the over-7 increment,
 # not the whole table.
-_NY_2025_HOUSEHOLD_TABLE = {
-    "single": [
-        {"agi_over": None, "agi_not_over": 5000, "amount": 75},
-        {"agi_over": 5000, "agi_not_over": 6000, "amount": 60},
-        {"agi_over": 6000, "agi_not_over": 7000, "amount": 50},
-    ],
-    "mfj_hoh_qss": [
-        {"agi_over": None, "agi_not_over": 5000,
-         "by_exemptions": [90, 105, 120, 135, 150, 165, 180],
-         "each_additional": 15},
-        {"agi_over": 5000, "agi_not_over": 6000,
-         "by_exemptions": [75, 90, 105, 120, 135, 150, 165],
-         "each_additional": 15},
-    ],
-    "mfs": [
-        {"agi_over": None, "agi_not_over": 5000,
-         "by_exemptions": [45, 53, 60, 68, 75, 83, 90],
-         "each_additional": 8},
-    ],
-}
 
 
 def _hh(agi=4000.0, status="single", exemptions=1, **kw):
@@ -6753,35 +6735,12 @@ def test_ny_settlement_refuses_a_malformed_figure(bad):
 #
 # Form IT-201 (2025) p.3 lines 47-58, and IT-201-I (2025) pp.13 and 17.
 
-_NY_2025_MCTMT = {
-    "zone_1": {"rate": 0.0060,
-               "counties": ["New York", "Bronx", "Kings", "Queens",
-                            "Richmond"]},
-    "zone_2": {"rate": 0.0034,
-               "counties": ["Rockland", "Nassau", "Suffolk", "Orange",
-                            "Putnam", "Dutchess", "Westchester"]},
-    "net_earnings_threshold_per_zone": 50000,
-}
 
 # IT-201-I (2025) p.40, "New York City tax rate schedule": the same three
 # groups as the State's schedules (a = joint and surviving spouse, b = head of
 # household, c = single and separate), and the same PUBLISHED-base shape, so
 # `_ny_schedule_tax` reads them. Every base below is the published one; each
 # is within a dollar of the bands beneath it, which that function checks.
-_NYC_2025_SCHEDULES = {
-    "a": [{"min": 0, "max": 21600, "rate": 0.03078, "base": 0},
-          {"min": 21600, "max": 45000, "rate": 0.03762, "base": 665},
-          {"min": 45000, "max": 90000, "rate": 0.03819, "base": 1545},
-          {"min": 90000, "max": None, "rate": 0.03876, "base": 3264}],
-    "b": [{"min": 0, "max": 14400, "rate": 0.03078, "base": 0},
-          {"min": 14400, "max": 30000, "rate": 0.03762, "base": 443},
-          {"min": 30000, "max": 60000, "rate": 0.03819, "base": 1030},
-          {"min": 60000, "max": None, "rate": 0.03876, "base": 2176}],
-    "c": [{"min": 0, "max": 12000, "rate": 0.03078, "base": 0},
-          {"min": 12000, "max": 25000, "rate": 0.03762, "base": 369},
-          {"min": 25000, "max": 50000, "rate": 0.03819, "base": 858},
-          {"min": 50000, "max": None, "rate": 0.03876, "base": 1813}],
-}
 # The 2025 New York City Tax Table (tax.ny.gov/pit/file/tax-tables/
 # it201i-2025.htm), used while line 47 is under $65,000. Its bottom rows are
 # $0-18 and $18-25, NOT the State table's $0-13 and $13-25: each table starts
@@ -8131,7 +8090,7 @@ class TestEveryStateEntryPointValidatesItsFilingStatus:
         # status somewhere, so a run that inspected neither has lost its
         # subject — a renamed directory, a changed predicate — rather than
         # found nothing to report.
-        assert {p.split("::")[0] for p in seen} == {"ca.py", "nc.py", "ny.py", "wa.py"}, (
+        assert {p.split("::")[0] for p in seen} == {"ca.py", "nc.py", "ny.py", "wa.py", "ny_nonresident.py"}, (
             f"the sweep inspected {sorted(set(p.split('::')[0] for p in seen))} "
             "— it is meant to read every depth module, and a module it cannot "
             "see is a module it cannot hold")
@@ -8278,6 +8237,8 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/nc.py::compute_nc_child_deduction": "direct",
         "tax_computations/state/nc.py::compute_nc_d400": "direct",
         "tax_computations/state/wa.py::compute_wa_capital_gains": "direct",
+        "tax_computations/state/ny_nonresident.py::compute_ny_it203": "direct",
+        "tax_computations/state/ny_nonresident.py::compute_nyc_part_year": "direct",
         "tax_computations/state/nc.py::compute_nc_deduction_choice": "direct",
         "tax_computations/state/nc.py::compute_nc_itemized": "direct",
         "withholding.py::build_ny_true_up": "direct",

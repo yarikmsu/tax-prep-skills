@@ -2281,7 +2281,12 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     federal = project_federal_tax(proj, profile, tax_law, requested_year=year)
     address = profile.get("address")
     resident_state = address.get("state") if isinstance(address, dict) else None
-    state = project_state_tax(proj, prior, tax_law, fs,
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    try:
+        ny_plan = ny_it203_plan(profile)
+    except ValueError as exc:
+        raise ProjectionError(f"NY filing plan: {exc}") from None
+    state = None if ny_plan else project_state_tax(proj, prior, tax_law, fs,
                               resident_state=resident_state)
 
     prior_tax, prior_agi = _prior_tax_agi(
@@ -2387,6 +2392,10 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
             "such a return is the withholding for ALL of them. Netting the "
             "two would show a refund that is not there. Run /tax-withholding, "
             "which prices the whole return against the same figure.")
+    if ny_plan:
+        no_income_tax, cache_mismatch = False, None
+        state_unsupported_note = ("NY IT-203 source allocations and residency changes are not projected. "
+                                  "No NY liability/refund is estimated; compute IT-203 from actual allocations and handle IT-2105 targets with the applicable worksheet.")
     mfs_deduction_note, state_mfs_deduction_note = _mfs_deduction_notes(
         fs, federal, state)
 

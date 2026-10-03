@@ -83,6 +83,11 @@ def _refuse_uncomputed_states(result: dict) -> None:
     the balance-due line, a confident under-statement. Present is not
     computed (`projection._section_computed`), so refuse, as the package does
     an uncomputed Form 1040."""
+    from agents.lib.tax_computations.state.registry import selected_ny_return
+    try:
+        selected_ny_return(result)
+    except ValueError as exc:
+        raise FilingPackageError(str(exc)) from None
     for s in STATE_SECTIONS:
         if not s.evidence_fields:
             continue
@@ -368,6 +373,8 @@ def attachment_checklist(result: dict) -> list:
                 "enclose a check or money order payable to 'New York State "
                 "Income Tax' — last four SSN digits and '{tax year} Income "
                 "Tax' on it — with Form IT-201-V, at the payment address.")
+    if _section_present(result, "new_york_it203"):
+        lines += ["IT-203 files separately from the federal paper return. Attach IT-2/IT-1099-R, IT-203-B allocation schedules, IT-225, IT-196, IT-203-ATT and supporting credit forms when used; IT-360.1 for part-year NYC. Do not attach federal W-2; use IT-2. Confirm current mailing address at tax.ny.gov. Pay NY balance online or with IT-201-V; extension requires separate IT-370."]
     if _section_present(result, "washington_ltcg_excise"):
         lines.append("WA excise files separately through My DOR with the federal return copy. Filing is required after a WA extension request or payment even if tax is zero. Final federal changes affecting WA gains or tax require a WA amendment within 90 days. No quarterly vouchers.")
     if _section_present(result, "north_carolina_d400"):

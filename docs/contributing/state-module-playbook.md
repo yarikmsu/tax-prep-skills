@@ -1,8 +1,9 @@
 # Adding a state module — contributor playbook (E5)
 
-THREE states are computed in depth; every other state is a bracket-based estimate
+CA, NY and NC have resident income-tax modules; WA has a separate excise.
+Other states receive a bracket-based estimate
 behind an honest capability note. That is a product decision (2026-07-12), not
-a technical limit — the two modules are a worked pattern this playbook writes
+a technical limit — the resident modules are a worked pattern this playbook writes
 down.
 
 - **California, Form 540** — the first, and the one this playbook's examples
@@ -16,14 +17,18 @@ down.
   to that surcharge, on a return that is not joint (AA12). The `nyc_resident`
   capability rule was deleted when the City block landed and the flag became its
   switch, so a City taxpayer sees no gate. The scope is a full-year resident of
-  New York alone: a move between states BLOCKS (`part_year_residency`), so does
-  statutory residency in a second state (`statutory_residency_second_state`),
-  and so does income sourced to any state outside the no-income-tax list
-  (`nonresident_source_income`), because part-year and nonresident returns
-  (IT-203) and the resident credit for tax paid to another state (IT-112-R) are
-  not modeled — Z8. A City resident for only part of the year who stayed in the
-  state is REFUSED at compute time, single or joint: the part-year City line 50
-  (IT-360.1) is not modeled (AA11). Within that scope, IT-196 lines 1-45, IT-201
+  New York alone for this IT-201 branch. A declared TY2025 IT-203 variant also
+  computes part-year/nonresident NY and NYC IT-360.1 from reviewed actual source
+  allocations. Its filing plan selects NY law independently of mailing address;
+  a complete inventory clears move/source blocks only when every other state is
+  a covered no-income-tax state requiring no return. Other taxable-state returns,
+  foreign moves and statutory second residency retain gates. IT-112-R and other
+  credit worksheets are verified inputs, not automatic credits. MFS, differing
+  joint periods, special IT-230 ratios and IT-203 Yonkers tax refuse. Ordinary
+  NY projections/IT203 withholding forecasts skip with a named reason. A City
+  move while NY residency remains full-year still requires the unmodeled IT201
+  part-year City branch. See `2026-10-03-ny-it203-design.md` under the specs.
+  Within the IT-201 scope, IT-196 lines 1-45, IT-201
   line 45's other taxes, the AMOUNT of each refundable credit and line 59's
   sales and use tax are not computed either — each taken as an input or asked,
   and each NAMED on `meta.limitations`. The design spec is
@@ -271,7 +276,8 @@ Grep-verify each of these — they are the places "state" is enumerated:
 - Don't map QSS→MFJ by reflex — check YOUR state's grouping (federal Form
   8863 groups QSS with Single; states vary).
 - Don't reuse `california_540` for a second state or overload its fields.
-- Don't model part-year/nonresident allocation — that's the gated
+- New resident modules keep part-year/nonresident allocation gated; NY IT203
+  is the declared, reviewed exception. The general multi-state work is the gated
   community track (`moved_states_this_year` blocks at C1) and a much
   bigger design.
 

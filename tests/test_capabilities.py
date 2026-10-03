@@ -1350,7 +1350,7 @@ class TestTheNewYorkModuleIsDone:
         agent to leave the lines out."""
         note = C.evaluate(_profile(state="NY")).state_note
         assert "IT-213" in note and "not computed" in note
-        assert "IT-203" in note and "not modeled" in note
+        assert "IT-203" in note and "separate declared" in note
         assert "ASKED" in note and "zero" in note
         assert "NOT computed" not in note, (
             "a tax line is back on the not-computed list")

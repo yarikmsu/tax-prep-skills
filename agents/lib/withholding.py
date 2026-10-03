@@ -268,6 +268,7 @@ class TrueUpReport:
     # estimated tax is due", which is the over-stating direction for a refund
     # and the under-stating one for a payment.
     ny_cache_missing: bool = False
+    ny_it203_manual: bool = False
     # The federal schedule's catch-up note (None when it is not true of the
     # table). Only the PENALTY column can carry it: the note is about
     # instalments, and an instalment is measured against the safe harbor.
@@ -759,6 +760,11 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
     the renderer SAYS the cache was missing rather than leaving a New York
     taxpayer's report silently state-less.
     """
+    from agents.lib.tax_computations.state.registry import selected_ny_return
+    try:
+        ny_form = selected_ny_return(result)
+    except ValueError as exc:
+        raise WithholdingError(str(exc)) from None
     pay_frequency = validate_pay_frequency(proj_inputs.get("pay_frequency", "biweekly"))
     liability = read_liability(result, year)
     inputs = build_inputs(proj_inputs, as_of, pay_frequency)
@@ -840,6 +846,7 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
         w4_penalty=w4_penalty, w4_zero=w4_zero, ca=ca, ny=ny, nc=nc_up,
         nc_cache_missing=nc_up is None and not tax_law and _nc_section_computed(result),
         ny_cache_missing=ny_cache_missing,
+        ny_it203_manual=ny_form == "IT203",
         voucher_catchup_note=_voucher_catchup_note(
             _FEDERAL_CATCHUP, vouchers_penalty, safe_harbor, as_of),
         voucher_dates_note=_voucher_dates_note(
@@ -1098,6 +1105,8 @@ def render_markdown(r: TrueUpReport) -> str:
                      "City locality, and any Yonkers amount together — because "
                      "one Form IT-2105 voucher is measured against all of them. "
                      "Entering the state figure alone over-states the shortfall.")
+    if r.ny_it203_manual:
+        lines += ["> **NY IT-203 payment targets require manual worksheets:** future NY withholding, residency changes and prior-year resident eligibility cannot be inferred from mixed-state YTD totals. No NY target or refund is forecast here.", ""]
     if r.ny_cache_missing:
         lines.append("- **No New York true-up was computed**: result.json carries a "
                      "computed IT-201 but no tax-law cache was supplied, and the "
@@ -1112,7 +1121,7 @@ def render_markdown(r: TrueUpReport) -> str:
                      "liability exceeds $80,000, ALL subsequent CA payments must be "
                      "electronic (FTB Web Pay) — a 1% penalty applies to paper "
                      "payments.")
-    elif r.ny is None and not r.ny_cache_missing and r.nc is None and not r.nc_cache_missing:
+    elif r.ny is None and not r.ny_it203_manual and not r.ny_cache_missing and r.nc is None and not r.nc_cache_missing:
         lines.append("- Federal only; no california_540 or new_york_it201 section in "
                      "result.json — the state withholding true-up is covered for CA "
                      "and NY returns.")
@@ -1140,6 +1149,7 @@ def _report_to_dict(r: TrueUpReport) -> dict:
         "stale_as_of_note": r.stale_as_of_note,
         "w4_penalty": vars(r.w4_penalty), "w4_zero": vars(r.w4_zero),
         "ny_cache_missing": r.ny_cache_missing,
+        "ny_it203_manual": r.ny_it203_manual,
         "nc_cache_missing": r.nc_cache_missing,
         "nc": asdict(r.nc) if r.nc is not None else None,
         "ny": (None if r.ny is None else {

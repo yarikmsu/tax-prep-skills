@@ -226,6 +226,7 @@ CATEGORY_TARGETS = {
     "city_withholding_nyc": ("new_york_it201",
                              ["refundable_credits_and_payments."
                               "line_73_city_withholding"]),
+    "city_withholding_yonkers": ("new_york_it201", ["refundable_credits_and_payments.line_74_yonkers_withholding"]),
     "state_withholding_nc": ("north_carolina_d400",
                              ["line_20a_withholding", "line_20b_spouse_withholding"]),
 }
@@ -324,6 +325,11 @@ def _eic_lines_still_zero(result: dict) -> "tuple[str, ...]":
         value = node.get(path[-1])
         if not _is_figure(value) or value == 0:
             out.append(label)
+    variant = _section(result, ("new_york_it203",))
+    if variant is not None and (variant.get("computed_tax_year") or (result.get("meta") or {}).get("ny_return_type") == "IT203"):
+        if not _is_figure(variant.get("line_43_earned_income")) or variant.get("line_43_earned_income") == 0:
+            out.append("IT-203 line43 state EIC (IT-215 worksheet input)")
+        out.append("IT-203-ATT refundable EIC/NYC EIC must be checked separately; line61 aggregate does not prove eligibility was reviewed")
     return tuple(out)
 
 
@@ -343,6 +349,12 @@ def _flags_for_city_and_yonkers(profile: dict, flags: dict) -> dict:
     hand figure to a field with the wrong line number. Only the refused
     households are exempted, and only with the acknowledgement.
     """
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    try:
+        if ny_it203_plan(profile):
+            return flags  # A legacy IT201 acknowledgement cannot waive modeled IT203 City tax.
+    except ValueError as exc:
+        raise TieOutError(f"NY filing plan: {exc}") from None
     acknowledged = profile.get("acknowledged_limitations")
     if not (isinstance(acknowledged, list)
             and _NY_HOUSEHOLD_RULE_ID in acknowledged):
@@ -388,6 +400,29 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
     verdict; the finding says so instead of pointing at a function that will
     refuse again.
     """
+    variant = _section(result, ("new_york_it203",))
+    if (result.get("meta") or {}).get("ny_return_type") == "IT203" or (variant and variant.get("computed_tax_year")):
+        if not variant or not _is_figure(variant.get("computed_tax_year")) or not variant.get("computed_tax_year"):
+            return ("IT-203 is selected but has no computation evidence",)
+        problems = []
+        if isinstance(flags, dict) and flags.get("nyc_resident") is True:
+            city = variant.get("nyc_it3601")
+            if (not isinstance(city, dict) or city.get("method") != "rate_schedule_part_year"
+                    or not _is_figure(city.get("line_55_nyc_tax"))
+                    or not _is_figure(variant.get("line_51_nyc_tax"))
+                    or abs(city["line_55_nyc_tax"]-variant["line_51_nyc_tax"]) > tolerance):
+                problems.append("IT-203 NYC resident needs the computed IT-360.1 tax and method")
+        for key in ("line_51_nyc_tax", "line_52_nyc_child_care", "line_52f_mctmt", "line_53_yonkers_nonresident_tax", "line_54_yonkers_part_year_tax", "line_55_city_and_mctmt", "line_50_state_tax", "line_56_use_tax", "line_57_voluntary", "line_58_total_taxes"):
+            if not _is_figure(variant.get(key)):
+                problems.append(f"IT-203 requires a computed {key}")
+        if not problems:
+            minimum = max(0.0,variant["line_51_nyc_tax"]-variant["line_52_nyc_child_care"]) + sum(variant[k] for k in ("line_52f_mctmt", "line_53_yonkers_nonresident_tax", "line_54_yonkers_part_year_tax"))
+            if abs(variant["line_55_city_and_mctmt"]-minimum) > tolerance:
+                problems.append("IT-203 line55 drops City/MCTMT/Yonkers tax")
+            total = sum(variant[k] for k in ("line_50_state_tax","line_55_city_and_mctmt","line_56_use_tax","line_57_voluntary"))
+            if abs(variant["line_58_total_taxes"]-total) > tolerance:
+                problems.append("IT-203 line58 disagrees with computed State/City/MCTMT/use tax")
+        return tuple(problems)
     ny = _section(result, ("new_york_it201",))
     if ny is None or not isinstance(flags, dict):
         return ()
@@ -671,6 +706,28 @@ def foreign_payers(ledger: "list[LedgerRecord]") -> "list[str]":
     return sorted({r.payer for r in ledger if r.foreign})
 
 
+def _category_target(result: dict, category: str):
+    from agents.lib.projection import _section_computed
+    from agents.lib.tax_computations.state.registry import BY_CODE, BY_SECTION
+    row = BY_SECTION["new_york_it203"]
+    from agents.lib.tax_computations.state.registry import selected_ny_return
+    try:
+        selected = selected_ny_return(result) == "IT203"
+    except ValueError as exc:
+        raise TieOutError(str(exc)) from None
+    if selected:
+        primary = BY_CODE["NY"]
+        if _section_computed(result, primary.section, primary.evidence_fields):
+            raise TieOutError("Both NY return variants are computed; select one return")
+        if category == "state_withholding_ny":
+            return row.section, ["line_62_state_withholding"]
+        if category == "city_withholding_nyc":
+            return row.section, ["line_63_city_withholding"]
+        if category == "city_withholding_yonkers":
+            return row.section, ["line_64_yonkers_withholding"]
+    return CATEGORY_TARGETS[category]
+
+
 def _result_total(result: dict, category: str) -> "float | None":
     """Sum the mapped result-side fields. None ONLY when the section itself
     is absent, or for capital_proceeds without non-zero detail rows — the
@@ -679,7 +736,7 @@ def _result_total(result: dict, category: str) -> "float | None":
     as 0, so a return that never filled the line (form_1040 present, no
     line_2b_taxable_interest) produces a $0-vs-ledger MISMATCH instead of
     demoting the dropped 1099 to an unverifiable warning."""
-    section_name, fields = CATEGORY_TARGETS[category]
+    section_name, fields = _category_target(result, category)
     section = result.get(section_name)
     if not isinstance(section, dict):
         return None
@@ -1402,7 +1459,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
             # schedule_c means no SE tax was computed; warning was too soft).
             # Only a PRESENT section whose comparable figures are unavailable
             # (zero-scaffold Schedule D proceeds detail) degrades to a warning.
-            section_name = CATEGORY_TARGETS[cat][0]
+            section_name = _category_target(result, cat)[0]
             if isinstance(result.get(section_name), dict):
                 unverifiable.append(cat)
             else:

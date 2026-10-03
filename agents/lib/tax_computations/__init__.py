@@ -3610,6 +3610,10 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
 
 
 # North Carolina — the same contract as California and New York above.
+from agents.lib.tax_computations.state.ny_nonresident import (  # noqa: E402,F401
+    compute_ny_it203, compute_nyc_part_year, ny_it203_plan,
+)
+
 from agents.lib.tax_computations.state.wa import compute_wa_capital_gains  # noqa: E402,F401
 
 from agents.lib.tax_computations.state.nc import (  # noqa: E402,F401

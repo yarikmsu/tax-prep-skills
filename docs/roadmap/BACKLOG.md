@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **Z5**, Z6, Z8. | — |
+| **Opportunistic** | **Z8**, Z6. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -197,46 +197,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 ### Z — state coverage
 
-- **Z5 (P3, M): Washington capital-gains excise.** A different tax BASE, not a
-  different bracket table. WA is deliberately NOT in `_NO_INCOME_TAX_STATES`
-  because of RCW 82.87, so a wage-only WA filer gets the ESTIMATE note where an
-  FL filer gets an affirmative "nothing is owed" — and if a fetch ever populates
-  `state.brackets`, projection and harvest would tax ORDINARY income, a phantom
-  liability. So: a `state.wa_capital_gains` block with `state.brackets` left
-  EMPTY, `compute_wa_capital_gains`, a `washington_ltcg_excise` result section,
-  the April event, and the affirmative statement.
-
-  **The durable half — structure and authority, no figures.** Every amount is
-  FETCHED per AGENTS.md §2; what does not go stale is which statute says what,
-  and these are the correctness traps a prior fact-check hardened:
-  - The base is federal net **LONG-TERM** gain in the §1222(7) sense. **Short-term
-    losses do NOT offset it** — start from Schedule D's LT net, NOT line 16.
-  - Remove non-WA-allocated gains **and losses**; **add back pre-2022 LT loss
-    carryforwards**.
-  - **ONE combined deduction per return, whatever the filing status.** Doubling
-    it for MFS-shaped logic UNDER-states the tax, which §4's bias taxonomy makes
-    a hard error rather than a banner.
-  - The deduction is indexed and published annually by DOR; **never extrapolate
-    the next year from the last**. The second tier is a surcharge over one
-    million dollars that is **FIXED, not indexed** (ESSB 5813, effective TY2025),
-    which is why it is a different kind of figure from the deduction beside it.
-  - A charitable offset applies above a threshold, with a cap; both indexed.
-  - Per-disposal exemptions (RCW 82.87.050): real estate, retirement-account
-    assets, condemnation, qualifying farm livestock (>50% farming income), and
-    depreciable trade-or-business property. v1 is flags and caveats, not
-    auto-classification.
-  - **Filing mechanics that differ from every state modeled so far**: the WA
-    return is NOT part of the federal e-file (a separate My DOR filing), an
-    extension extends FILING only with payment still due in April, and **no
-    quarterly estimates exist** — emitting 1040-ES-shaped state events would
-    invent a deadline. SSB 5314 (2025) added mandatory amended returns when the
-    federal return changes, and **flipped the B&O credit's direction** (before:
-    a credit against B&O; after: against the capital-gains tax) — the same
-    hardcoded-law drift the PTET P1s taught.
-  - Legal status is settled: Quinn (2023), cert denied 2024, the I-2109 repeal
-    failed November 2024. Anchors: RCW 82.87 (.050 exemptions, .070 small-business
-    deduction, .100 other-jurisdiction credit), ESSB 5813, SSB 5314.
-
 - **Z6 (P3, S): WA harvest and crypto synergy, the WFTC reminder.** Three small
   items that only pay off once Z5 exists, and the first is a correctness
   inversion rather than a feature:
@@ -254,12 +214,11 @@ Everything merged on one local interpreter from #155 on is now covered by it.
     return line, and ITIN filers qualify. An EITC-eligible WA resident who never
     applies simply loses it — which is the same population AA1 is about.
 
-- **Z8 (P3, L): IT-203 part-year and nonresident.** Relaxes the single-state
-  assumption in `address.state`. Until then `moved_states_this_year` and
-  `has_nonresident_source_income` keep BLOCKING, which is the correct bias — two
-  resident states tax the same income and the credit between them is not
-  modeled. It is the completion condition for the NYC persona, which the README,
-  the Z1 row and the state-module playbook now say (AA7).
+- **Z8 (P3, L): IT-203 part-year and nonresident.** Final integration under
+  local review: TY2025 reviewed allocation plan, NYC IT-360.1 and variant-aware
+  payment gates. Other taxable-state returns/credits, MFS, mixed spouse periods,
+  special IT-230 ratios and IT-203 Yonkers tax remain manual/refused. NY forecast
+  true-ups are explicitly skipped. Shipped status follows the green merge.
 
 - **X10 (P3, S): `/tax-retirement`'s three v1.1 deferrals.** Surfaced in PR #20's
   review, intentionally caveated rather than modeled, and homeless since the
@@ -451,6 +410,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | Y6 | #114, #119, #165 | — |
 | Y7 | #120 | no Windows coverage — the Windows job runs two modules |
 | Z4 | #219 | TY2025 full-year D-400; other form years and farmer/annualized NC-40 worksheets remain manual |
+| Z5 | #220 | TY2025 excise; separate households, special federal normalization and Z6 harvest pricing remain out of scope |
 | Z1 | #123, #124-#137 | scope is a FULL-YEAR resident of New York alone: a move between states, statutory residency in a second state, or income sourced to another state that taxes it BLOCKS until Z8 (AA7), the City resident tax (line 47a) came later with AA13, a part-year City resident is refused (AA11), and the Yonkers lines 55-56 came later with AA12, for a whole-year Yonkers resident or a nonresident who does not file jointly (special condition Y1 and a joint Form Y-203 are refused); within it, IT-196 lines 1-45, IT-201 line 45's other taxes, each refundable credit's AMOUNT, line 59's sales/use tax, part-year City and Yonkers lines 50/57 and city-level day counts — all NAMED on `meta.limitations` |
 | Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; the City resident tax, line 47a, came later with AA13, and Yonkers lines 55-56 with AA12 |
 | Z3 | #131 | — |

@@ -590,7 +590,7 @@ def events_ca_es(tax_year: int) -> list[CalendarEvent]:
     return out
 
 
-def events_extension(tax_year: int, *, state: "str | None" = None) -> list[CalendarEvent]:
+def events_extension(tax_year: int, *, state: "str | None" = None, ny_return_type: str = "IT201") -> list[CalendarEvent]:
     """Extension deadlines for a taxpayer who filed (or will file) Form 4868.
 
     Both events land in {tax_year + 1} — the filing season for tax_year.
@@ -640,10 +640,14 @@ def events_extension(tax_year: int, *, state: "str | None" = None) -> list[Calen
             "the New York City tax, the Yonkers surcharge and the MCTMT "
             "together. Filing IT-370 also extends Form Y-203."
         )
+    if ny_return_type not in {"IT201", "IT203"}:
+        raise CalendarError("NY extension form must be IT201 or IT203")
+    if ny and ny_return_type == "IT203":
+        apr_desc = apr_desc.replace("IT-201 line 80", "IT-203 line 70")
     if ca:
         extended_state_form = " and CA Form 540"
     elif ny:
-        extended_state_form = " and NY Form IT-201"
+        extended_state_form = " and NY Form IT-203" if ny_return_type == "IT203" else " and NY Form IT-201"
     elif state == "WA":
         apr_desc += (" Washington capital-gains excise: pay by the original deadline and request a WA extension separately through My DOR, with a federal extension. A federal extension alone does NOT extend WA. No required quarterly estimates.")
         extended_state_form = " and WA capital-gains excise ONLY with a separately approved My DOR extension"
@@ -1286,9 +1290,15 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
     events.extend(events_1040es(tax_year))
 
     resident_state = _strict_state_str(address, "state")
-    if resident_state == "CA":
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    try:
+        ny_plan = ny_it203_plan(profile)
+    except ValueError as exc:
+        raise CalendarError(f"NY filing plan: {exc}") from None
+    filing_state = "NY" if ny_plan else resident_state
+    if filing_state == "CA":
         events.extend(events_ca_es(tax_year))
-    elif resident_state == "NY":
+    elif filing_state == "NY":
         events.extend(events_ny_es(tax_year))
     elif resident_state == "WA" and tax_year >= 2022:
         events.append(CalendarEvent(
@@ -1304,7 +1314,8 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
     # the regenerated calendar then carries the April pay-by date and the
     # October extended filing deadline (both in tax_year + 1).
     if _strict_bool(flags, "filed_extension"):
-        events.extend(events_extension(tax_year, state=resident_state))
+        events.extend(events_extension(tax_year, state=filing_state,
+                                       ny_return_type="IT203" if ny_plan else "IT201"))
 
     # Signature authority over someone else's foreign account (an employer's,
     # a parent's) triggers FBAR Part IV even with no financial interest — a

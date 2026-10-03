@@ -6,6 +6,11 @@ license: Apache-2.0
 
 # /tax-withholding — Federal Withholding True-Up
 
+An IT203 filing gets a named manual NY forecast banner: actual-source future
+income/withholding and prior-year resident-period eligibility require separate
+IT-2105 worksheets. The federal true-up remains available; never apply the
+full-year IT201 target or another state's withholding to this NY return.
+
 Compares YTD federal withholding + estimated payments (projected to year-end at the
 current pace) against the **actual** computed liability in result.json, then recommends
 a W-4 line 4(c) per-paycheck adjustment and/or a 1040-ES voucher schedule to hit the
@@ -179,7 +184,7 @@ NC legal-holiday dates; the engine rolls weekends only conservatively.
 
    **`as_of_date` must be null, not empty, to mean "absent".** In an OPEN year every PRESENT value is validated and a malformed one is refused outright — the run produces no report at all, because substituting today's date would silently relabel the YTD figures beside it. A workspace created from an older template may carry `"as_of_date": ""` (or `0`), which used to fall through to today's date and now blocks: edit it to `null`, to the MM-DD the YTD figures are current to, or pass `--as-of MM-DD` for this run.
 
-   **Read these thirteen things out of the payload before you summarize anything.** The
+   **Read these fourteen things out of the payload before you summarize anything.** The
    markdown in the next step carries them in prose, but the audit line below is written
    from HERE, and `safe_harbor.covered` alone is not the verdict:
 
@@ -267,6 +272,10 @@ NC legal-holiday dates; the engine rolls weekends only conservatively.
    - **`nc.notes`** and **`nc.voucher_dates_note`** — relay all NC scope,
      prior-year, use-tax and calendar warnings beside the NC targets. Closed
      schedules name balance payments, not upcoming estimated vouchers.
+   - **`ny_it203_manual`** — true means the selected IT203 return has no NY
+     withholding forecast. Relay that source-specific future income, withholding
+     and prior-year residence eligibility require reviewed IT-2105 worksheets;
+     a skipped NY forecast is no estimate of NY liability or refund.
    - **`ny_cache_missing`** — true means result.json carries a COMPUTED Form IT-201
      but no tax-law cache reached this run, so `ny` is null and NO New York true-up
      was computed. Report it as a missing input, never as a finding: the Tax Law

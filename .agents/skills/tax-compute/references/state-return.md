@@ -32,6 +32,13 @@ regime and LONG-TERM base; never an ordinary-income bracket estimate.
 
 ### Step 10: State Return
 
+**Declared NY filing first:** validate `ny_it203_plan(profile)` through the
+launcher. A valid IT203 plan selects NY law regardless of mailing address:
+require `tax_law.state.code == "NY"` and matching year, then read
+[state-return-ny-nonresident.md](state-return-ny-nonresident.md) and return to
+Step 11. Do not compute a resident return for the mailing-address state.
+Malformed plans hard-stop. With no NY plan, the cross-check below still applies.
+
 **Cache-vs-taxpayer cross-check — BEFORE any state branching, for ALL
 regimes (round-4 finding E):** `tax_law.state.code` MUST equal the
 taxpayer's validated `taxpayer_profile.json address.state`. The round-3/

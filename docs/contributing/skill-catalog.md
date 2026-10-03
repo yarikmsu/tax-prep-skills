@@ -1194,3 +1194,9 @@ the multi-agent move.
   figure exactly as it governs a federal one. Model-invocable on purpose — it
   has no side effects, and a contributor asking "add Washington" should get it
   without knowing its name.
+
+NY IT203's declared TY2025 plan is the reviewed exception to the general
+part-year/nonresident block: all other state obligations remain gated unless
+covered no-income-tax states require no return. City IT360.1, variant payment
+tie-out and refusal of competing NY returns are included; credit/modification
+worksheets remain inputs. IT203 NY forecasts are skipped explicitly.

@@ -168,3 +168,73 @@ def ny_state_cache(**over):
     }
     cache.update(over)
     return cache
+
+# IT-203/IT-360.1 share the published TY2025 local schedules and household bands.
+_NY_2025_HOUSEHOLD_TABLE = {
+    "single": [
+        {"agi_over": None, "agi_not_over": 5000, "amount": 75},
+        {"agi_over": 5000, "agi_not_over": 6000, "amount": 60},
+        {"agi_over": 6000, "agi_not_over": 7000, "amount": 50},
+    ],
+    "mfj_hoh_qss": [
+        {"agi_over": None, "agi_not_over": 5000,
+         "by_exemptions": [90, 105, 120, 135, 150, 165, 180],
+         "each_additional": 15},
+        {"agi_over": 5000, "agi_not_over": 6000,
+         "by_exemptions": [75, 90, 105, 120, 135, 150, 165],
+         "each_additional": 15},
+    ],
+    "mfs": [
+        {"agi_over": None, "agi_not_over": 5000,
+         "by_exemptions": [45, 53, 60, 68, 75, 83, 90],
+         "each_additional": 8},
+    ],
+}
+
+_NY_2025_MCTMT = {
+    "zone_1": {"rate": 0.0060,
+               "counties": ["New York", "Bronx", "Kings", "Queens",
+                            "Richmond"]},
+    "zone_2": {"rate": 0.0034,
+               "counties": ["Rockland", "Nassau", "Suffolk", "Orange",
+                            "Putnam", "Dutchess", "Westchester"]},
+    "net_earnings_threshold_per_zone": 50000,
+}
+
+_NYC_2025_SCHEDULES = {
+    "a": [{"min": 0, "max": 21600, "rate": 0.03078, "base": 0},
+          {"min": 21600, "max": 45000, "rate": 0.03762, "base": 665},
+          {"min": 45000, "max": 90000, "rate": 0.03819, "base": 1545},
+          {"min": 90000, "max": None, "rate": 0.03876, "base": 3264}],
+    "b": [{"min": 0, "max": 14400, "rate": 0.03078, "base": 0},
+          {"min": 14400, "max": 30000, "rate": 0.03762, "base": 443},
+          {"min": 30000, "max": 60000, "rate": 0.03819, "base": 1030},
+          {"min": 60000, "max": None, "rate": 0.03876, "base": 2176}],
+    "c": [{"min": 0, "max": 12000, "rate": 0.03078, "base": 0},
+          {"min": 12000, "max": 25000, "rate": 0.03762, "base": 369},
+          {"min": 25000, "max": 50000, "rate": 0.03819, "base": 858},
+          {"min": 50000, "max": None, "rate": 0.03876, "base": 1813}],
+}
+
+
+def ny_it203_cache():
+    """Published TY2025 Single fixtures, IT-203-I pp.20, 29–40.
+
+    Other household-table groups retain the partial low bands above; tests of
+    this fixture price Single returns. Annual amounts never live in the engine.
+    """
+    import copy
+    table = copy.deepcopy(_NY_2025_HOUSEHOLD_TABLE)
+    table["single"] += [
+        {"agi_over": 7000, "agi_not_over": 20000, "amount": 45},
+        {"agi_over": 20000, "agi_not_over": 25000, "amount": 40},
+        {"agi_over": 25000, "agi_not_over": 28000, "amount": 20},
+    ]
+    return copy.deepcopy(ny_state_cache(
+        standard_deduction={"single":8000,"single_dependent":3100,"mfj":16050,
+                            "mfs":8000,"hoh":11200,"qss":16050},
+        dependent_exemption={"amount":1000},
+        credits={"household":{"table":table}},
+        nyc_tax={"brackets":_NYC_2025_SCHEDULES},mctmt=_NY_2025_MCTMT,
+        subtractions={"pension_annuity_exclusion":{"amount":20000}},
+    ))

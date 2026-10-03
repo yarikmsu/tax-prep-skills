@@ -356,7 +356,8 @@ Rules:
   | W-2 box 17 (NY) | `state_withholding_ny` |
   | W-2 box 17 (NC) | `state_withholding_nc` |
   | 1099-R box 14 or other 1099 state-withholding box, when its state is NC | `state_withholding_nc` |
-  | W-2 boxes 18-20, locality NYC | `city_withholding_nyc` (box 19, the LOCAL income tax withheld, where box 20 names a New York City locality). **Two categories, not one** — New York City withholding is IT-201 line 73 and the state's is line 72, two lines and two refunds, so a city amount dropped into the state category still ties while leaving the city withholding unclaimed on a return that owes city tax. **Yonkers withholding (line 74) has no category**: it is rare enough that no gate watches it, so record it in the summary markdown and in `answers.md` rather than assuming a zero |
+  | W-2 boxes 18-20, locality NYC | `city_withholding_nyc` (box 19 LOCAL tax withheld; box 20 confirms NYC). Separate from state withholding: IT-201 lines 72/73, or selected IT-203 lines 62/63. Never combine them. |
+  | W-2 box 19, locality Yonkers | `city_withholding_yonkers`: IT-201 line 74 or selected IT-203 line 64. Confirm box 20 locality; do not infer it from employer address. |
   | 1099-INT box 1 (+3) | `taxable_interest`; box 8 → `tax_exempt_interest` |
   | 1099-DIV box 1a / 1b | `ordinary_dividends` / `qualified_dividends` |
   | 1099-DIV box 2a | `capital_gain_distributions` (→ Schedule D line 13) |

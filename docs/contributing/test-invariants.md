@@ -170,3 +170,10 @@ a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
 - When adding tests, update the test count reference on the line above
 - Test fixtures under `tests/fixtures/` are allowlisted from the PII **filename** scan because synthetic fixtures must share filenames with real workspace files; new fixtures MUST live under that path. They are **not** exempt from the content scan — add a synthetic SSN-shaped value to `.pii-allowlist` if one is genuinely needed
 - Fixture files sharing a runtime filename (`result.json`, `taxpayer_profile.json`, `tax_law_*.json`, `projection_inputs.json`) match `.gitignore`'s unanchored rules — add new ones with `git add -f` (existing fixtures are already tracked)
+
+- **NY nonresident/part-year (`test_ny_it203.py`):** published TY2025 worksheets
+  pin annual deduction before source allocation, signed losses and ratios above
+  one, pre/post allocation credits, City rate schedules and rounded-month
+  exemptions, MCTMT isolation, jurisdiction-specific payments and actual-date
+  plan validation. The documented launcher is executed; malformed plans,
+  incomplete worksheets, competing NY variants and dropped City totals refuse.

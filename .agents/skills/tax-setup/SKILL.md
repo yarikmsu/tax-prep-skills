@@ -169,6 +169,12 @@ sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json
 
 ### 4. Fetch Current Tax Law
 
+For a validated `state_filings.NY` IT203 plan, fetch NY as the selected filing
+state even if the mailing address is elsewhere. Seed/replace `state` with
+`create_state_template("NY", tax_year=year)` through the fetcher's `set` command,
+then fetch its complete annual schema. Do not fetch another state's block over
+it; those states' returns keep their capability gates and require separate work.
+
 Seed the cache first, then write every fetched figure through the ingest
 command — never by editing the JSON:
 
@@ -195,6 +201,10 @@ STOP rule above binds every fetch in it.
   - Populate `taxpayers` section from profile
   - Populate `dependents` from profile
   - **Remove sections that don't apply** (e.g., remove `schedule_c` if no self-employment)
+  - Validated NY IT203 plan: set `meta.ny_return_type: IT203`, remove
+    `new_york_it201`, retain `new_york_it203`. Otherwise remove `new_york_it203`.
+    Never retain both computed NY variants or initialize an unsupported state's
+    zero-tax declaration merely because that state receives the taxpayer's mail.
 
 - Copy `agents/templates/answers_template.md` → `answers.md`
   - Replace all `{{PLACEHOLDER}}` values with actual taxpayer data

@@ -6,6 +6,11 @@ license: Apache-2.0
 
 # /tax-amend — Amended return (Form 1040-X)
 
+For a selected NY IT203 return, rerun its actual-source allocation and City
+worksheets through tax-compute and review IT-203-X separately. A federal 1040-X
+does not amend NY. Check the covered year's NY amended-return instructions for
+reporting final federal changes; preserve both filed columns and periods.
+
 For a WA excise filer, a final federal change affecting WA capital gains or
 liability also requires a separate amended My DOR return with the federal copy
 within 90 days (RCW 82.87.110(8)). Recompute the WA section through tax-compute;

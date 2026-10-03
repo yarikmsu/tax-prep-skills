@@ -205,5 +205,6 @@
     "dividend_payers": [],
     "brokerages": [],
     "foreign_accounts": []
-  }
+  },
+  "state_filings": {}
 }

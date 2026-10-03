@@ -242,6 +242,17 @@ interview never captures is invisible to every downstream check.
 
   Both are required-present for the same reason `nyc_resident` is: absence
   reads as False and drops a real liability.
+- Before finalizing state scope, ask whether NY residence changed during the
+  year or nonresident NY-source income exists. For TY2025 IT203, record the
+  complete `state_filings.NY` plan: actual continuous NY/NYC residence dates,
+  resident and source state inventories, every other state's return obligation,
+  same-period confirmation for joint spouses, convenience-of-employer and
+  special-accrual worksheet review, no Yonkers tax and no special condition A6.
+  The required plan fields are detailed in tax-compute's
+  `references/state-return-ny-nonresident.md`; call `ny_it203_plan` through the
+  launcher to validate them before selecting NY law. Ask City/Yonkers questions
+  even when the mailing address is elsewhere. Keep move/source flags true when
+  they apply. A supported filing plan, never a false flag, clears covered gates.
 - **Ask EVERY taxpayer, whatever their address:** "What state do you consider
   your permanent home — the one you intend to return to?" → sets
   `residency.domicile_state`. There is exactly ONE, and it need not be the
