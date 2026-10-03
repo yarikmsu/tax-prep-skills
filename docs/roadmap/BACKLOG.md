@@ -53,7 +53,7 @@ accurate history, and git resolves it.
 
 ## Status
 
-**Engineering: drained.** Epics V, W and X are complete but for P3 filler, and
+**Engineering: drained.** Epics V, W and X are complete, and
 `main` is green locally. The suite's size is stated nowhere: since AA8 the
 MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` counts only the
 seven modules that hook selects, and a count restated here would be the mirror
@@ -76,7 +76,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **W3** — refactor the hook stamp state machine. | Generic state rules and wrapped figure lint are merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -97,21 +96,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 
 ### W — engineering hygiene
-
-- **W3 (P3, L): the hook stamp state machine.** *Selection shipped in #163/#164;
-  slice 3 was attempted and abandoned 2026-09-19.* What remains is the stamp
-  trust cascade and the red carry-forward. It is worth doing for the READING,
-  which is the item's own argument, and it is NOT urgent: mutating
-  `read_red_checks` to drop one token turns two tests red, so the round trip
-  already has coverage and a port adds a second implementation of well-pinned
-  logic rather than closing a gap. **Before attempting it again, read the
-  abandoned slice's post-mortem in `docs/changelog/epic-W.md`** — the NUL
-  divergence in `$(sed …)`, the `newline=""` requirement at the trust cascade,
-  the differential that was half vacuous, and the interpreter start that must
-  stay below `nothing_selected && exit 0`. Q12 ruled the bootstrap: a bash shim
-  that makes the same `[ -x .venv/bin/python ]` check, holds the change boundary
-  the same way, then `exec`s the Python, which lives outside `agents/lib/` so it
-  never meets the import guard.
 
 ### X — tax correctness
 
@@ -291,7 +275,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | V11 | #95 | — |
 | W1 | #90 | — |
 | W2 | #148, #149, #150, #151, #152 | — |
-| W3 | #163, #164 | OPEN: the stamp state machine, above |
+| W3 | #163, #164, #230 | Single invariant-pass runtime; cheap Bash change boundary and red memory preserved. |
 | W4 | #90, #118 | the MEASURED COSTS seconds were retired by Q13 rather than re-measured |
 | W5 | #90, #166 | W5a, below |
 | W5a | #191 | the matrix legs, the tool targets, `MIN_PYTHON` and the prose still state the floor, compared rather than read; the lock headers are uv's record and stay |

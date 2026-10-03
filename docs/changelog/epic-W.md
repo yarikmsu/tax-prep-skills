@@ -1064,7 +1064,7 @@ old rules. Schema, input, provenance and projection refusals are tested.
 Design: `docs/superpowers/specs/2026-10-03-generic-state-rules-design.md`.
 
 
-## W3 remaining stamp runtime — 2026-10-03
+## W3 remaining stamp runtime — PR #230, 2026-10-03
 
 The abandoned round-trip port left the Bash flags in place. This implementation
 removes them, along with the parallel red-token lists, pytest invocation, and
