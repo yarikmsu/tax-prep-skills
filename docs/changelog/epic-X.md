@@ -699,7 +699,7 @@ Future sales and wash-sale chains retain their scope limits.
 Matching and basis authority: [IRS Publication 550](https://www.irs.gov/publications/p550)
 and [Revenue Ruling 2008-5](https://www.irs.gov/pub/irs-drop/rr-08-05.pdf).
 
-## X9 — figure lint across Markdown wraps
+## X9 — figure lint across Markdown wraps (#228)
 
 The shared ordinary/safe-harbor detector normalizes prose wraps within Markdown
 blocks and pairs inline backtick runs by length. Identifier and CLI text cannot

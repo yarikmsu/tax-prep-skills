@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **X9** — close the figure-lint line-break blind spot. | Generic state rule blocks are merged. |
+| **Opportunistic** | **W3** — refactor the hook stamp state machine. | Generic state rules and wrapped figure lint are merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -151,15 +151,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   then be a dollar off in either direction.
 
 ### Z — state coverage
-
-### Deferred with the work specified, not blocked
-
-- **X9 (P3, S): the figure-lint detector's line-break blind spot.** Its scope is
-  derived now, but `[^.\n]` between the
-  limit word and the amount cannot cross a LINE BREAK, so a figure that markdown
-  wrapped is invisible — which is how "~$510" survived in `/tax-extend`. Every
-  fix measured so far trades one blind spot for another; the measurements are in
-  `docs/ops/season-open-runbook.md` under the X6 entry.
 
 ---
 
@@ -312,10 +303,11 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | X2 | #86 | — |
 | X3 | #88 | — |
 | X4 | #110, #142 | — |
-| X5 | #143, #144, #155 | the line-break blind spot is X9, open above |
+| X5 | #143, #144, #155 | Wrapped and paired limit detection completed under X9. |
 | X6 | #154 | 2027-2029 SALT figures are computed from the statute's 101% step, not published; the IRS figure wins through the cache |
 | X7 | #218 | future-sale tax and chained wash-sale repricing remain outside the replacement basis plan |
 | X8 | #159 | Engine entry-point status validation: direct checks or declared delegation probed at both ends |
+| X9 | #228 | Wrapped and paired amounts, Markdown block boundaries, code/CLI handling and shared figure gates. |
 | X10 | #224 | Roth catch-up split, confirmed HSA eligibility and fetched per-account state conformity. |
 | Y4 | #112 | — |
 | Y5 | #113 | — |
