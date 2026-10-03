@@ -568,6 +568,12 @@ BELOW-AGI deductions; they never touch line 10/11.
   deductions** (Schedule 1-A line 5 per the final instructions) — v1 does NOT
   model the cap, so a low/negative-profit tipped business would otherwise
   overstate the deduction. Surface the function's caveat.
+  Record `schedule_1a.se_tips_deducted`, the portion of `tips.allowed` that
+  belongs to self-employment after the cap and phaseout, from the worked
+  Schedule 1-A/Form 8995 source split. Record 0 for employee-only tips.
+  Never substitute raw tips or infer the split on a mixed employee/business
+  return. Planning tools need this amount to exclude deducted SE tips from
+  QBI and refuse a tipped business return without the recorded split.
 - The `total` goes to `form_1040.line_13b_schedule_1a_deductions` and the
   `schedule_1a` result section. **AGI (line 11) is unchanged** — verify the
   IRA phase-out, taxable SS, NIIT, and education-credit MAGI you already

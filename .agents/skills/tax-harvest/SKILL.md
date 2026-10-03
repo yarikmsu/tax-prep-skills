@@ -85,6 +85,8 @@ permissions through the same guarded writer `/tax-scenario` uses.
       "date": "2026-12-01",
       "kind": "buy",
       "quantity": 5,
+      "account_type": "taxable",
+      "cost_basis": 525,
       "amount": 525
     }
   ]
@@ -116,6 +118,17 @@ permissions through the same guarded writer `/tax-scenario` uses.
   + transactions) so the wash-sale pool is correct, but mark the IRA lots
   `tax_advantaged: true` so their losses don't get recommended. Same goes for HSAs and
   Roth accounts.
+- **Replacement basis plan:** give each buy's `account_type` (`taxable`, `ira`,
+  `roth_ira`, or `other_tax_advantaged`) and its actual quantity. Taxable purchases
+  receive the matched disallowed loss as a basis increase. For IRA/Roth-IRA
+  purchases also confirm `owner_is_taxpayer: true`: the seller's own IRA loses
+  the loss permanently under Rev. Rul. 2008-5; a spouse's IRA requires manual
+  treatment. Missing quantities, ownership or classifications leave the basis
+  unresolved, as do other tax-advantaged regimes. Optional `cost_basis` is the
+  full purchase's actual basis, including fees, and permits matched before/after
+  basis amounts. List same-day fills in trade order. This is a hypothetical plan
+  for sales of the full losing lots, adds no current-year savings, and never
+  changes `holdings.json`; reconcile with broker records after actual trades.
 - **`recent_transactions`**: only BUYS within ±30 days of `as_of` matter for wash-sale
   detection. Include ALL accounts §1091 reaches (your IRAs, your spouse's accounts,
   controlled trusts). Future-dated buys (≤ 30 days after `as_of`) also poison a loss —

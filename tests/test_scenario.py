@@ -1329,6 +1329,43 @@ def test_schedule_a_prices_elections_and_haircuts_but_requires_donation_classifi
         build(with_schedule_a(unknown_gifts, unknown_gifts["itemized_total"]), ("wages=80000",))
 
 
+@pytest.mark.parametrize("split,extra_taxable", [(0, 0), (20000, 4000), (40000, 4000)])
+def test_deducted_se_tips_reduce_qbi_without_changing_se_tax(split, extra_taxable):
+    from agents.lib.tax_computations import compute_scenario
+    inputs = {"wages": 300000, "self_employment_net": 100000,
+              "schedule_1a_deduction": 20000}
+    kw = {"brackets": [{"min": 0, "max": None, "rate": .3}],
+          "deduction": 30000, "ss_wage_base": 1000000}
+    base = compute_scenario(inputs, {}, **kw)
+    got = compute_scenario({**inputs, "schedule_1a_se_tips": split}, {}, **kw)
+    # Form 8995 excludes the deducted tip portion, bounded by the $20k
+    # applied deduction: .2 × $20k = $4k less QBI, same SE tax and AGI.
+    assert got["taxable_income"] == base["taxable_income"] + extra_taxable
+    assert got["se_tax"] == base["se_tax"]
+    assert got["agi"] == base["agi"]
+
+
+def test_tipped_business_returns_require_the_recorded_source_split():
+    r = {"schedule_1a": {"tips": {"allowed": 1000}}}
+    with pytest.raises(sc.ScenarioError, match="source\u0020split|SE-tip split"):
+        sc._deducted_se_tips(r, 20000)
+    r["schedule_1a"]["se_tips_deducted"] = 500
+    assert sc._deducted_se_tips(r, 20000) == 500
+    r["schedule_1a"]["se_tips_deducted"] = 0
+    assert sc._deducted_se_tips(r, 20000) == 0
+    r["schedule_1a"]["se_tips_deducted"] = 1001
+    with pytest.raises(sc.ScenarioError):
+        sc._deducted_se_tips(r, 20000)
+
+
+@pytest.mark.parametrize("bad", [True, -1, float("nan"), float("inf"), "broken"])
+def test_invalid_deducted_se_tips_refuse(bad):
+    from agents.lib.tax_computations import compute_scenario
+    with pytest.raises(ValueError):
+        compute_scenario({"schedule_1a_se_tips": bad}, {}, deduction=0,
+                         brackets=[{"min": 0, "max": None, "rate": .3}])
+
+
 def test_scenario_haircut_uses_provisional_qbi_and_keeps_its_anchor():
     from agents.lib.tax_computations import compute_schedule_a
     result = json.loads((FIX / "result.json").read_text())

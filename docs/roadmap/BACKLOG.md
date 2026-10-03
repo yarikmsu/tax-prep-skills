@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **AA23**, X7, Z4-Z6, Z8. | — |
+| **Opportunistic** | **X7**, Z4-Z6, Z8. | — |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -95,14 +95,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   "indexes roughly 1%/yr" and that an absent value "degrades quietly", and never
   checks for a stale or already-reduced amount. Found by AA16's second review.
 
-- **AA23 (P2, M): Schedule A repricing — final implementation awaiting merge.**
-  The earlier slices shipped in #203-#206. The final change adds complete
-  `/tax-project` forecast inputs, centralizes its deduction election, and
-  prices election changes, provisional-QBI-aware §68 haircuts and confirmed
-  charitable AGI caps in the shared scenario repricer. Legacy returns without
-  complete inputs retain their disclosures; unknown donation classifications
-  refuse a binding cap. Local review, validation and the PR merge are the
-  remaining delivery steps. Implementation detail lives in `epic-AA.md`.
 
 ### W — engineering hygiene
 
@@ -168,12 +160,13 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 ### X — tax correctness
 
-- **X7 (P3, S): the O3 planning-tool carry-forwards.** Deduction-only marginal
-  probe for `_est_marginal_fed`; scenario-keystone SE-tips threading (the §63(f)
-  add-on rides in the return's line 12 since AA20);
-  `/tax-harvest` §1091 basis-shift modeling. The first two are absorbed by V1 if
-  the orchestrator exposes a deduction knob on `compute_scenario`; sequence them
-  after it rather than as separate work.
+- **X7 (P3, S): Planning carry-forwards — implementation awaiting merge.**
+  The PTET marginal probe now changes only the deduction. The scenario
+  keystone excludes the recorded deducted SE-tip portion from QBI, and
+  tipped business returns require the source split. Harvest's existing
+  replacement matcher emits basis increases for known taxable purchases,
+  permanent losses for the seller's own IRA, and unresolved records for missing quantities or
+  account classifications. Local review, tests and delivery remain.
 
 ### Y — distribution and product
 
@@ -444,6 +437,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 
 | Item | PRs | Not done |
 |---|---|---|
+| AA23 | #203, #204, #205, #206, #217 | — |
 | V0 | #85 | — |
 | V1 | #109, #110, #111 | — |
 | V2 | #108 | — |

@@ -670,3 +670,28 @@ Feeding the federal boolean to `compute_ca_itemized` barred this filer from
 itemizing on a CA return where the spouse had in fact itemized: $6,294 again,
 a third time, in the third direction. The question now asks per return, and
 asks the follow-up that the coupling turns on.
+
+
+## X7 — planning-tool carry-forwards
+
+The PTET SALT-offset probe reduces the deduction directly rather than adding
+ordinary income, so AGI-gated credits cannot contaminate the estimated rate.
+The existing keystone deduction parameter supplies the knob V1 left open.
+
+The scenario keystone now excludes the deducted self-employed tip portion from
+QBI, bounded by applied Schedule 1-A and business income. `tax-compute` records
+`se_tips_deducted` from the worked source split. An older tipped business return
+without the split refuses, rather than inferring employee or business tips.
+Scenario, Roth, PTET and harvest carry the normalized input through their runs.
+
+Harvest retains each replacement purchase in its existing FIFO matcher and
+emits a read-only basis plan per sold lot. Known taxable replacements gain the
+disallowed loss and the sold holding period; the seller's own IRA/Roth-IRA replacements
+lose it permanently. Missing quantities, account classifications or IRA ownership leave the
+basis unresolved. Spouse IRAs and other retirement regimes require manual treatment. Purchase costs, where supplied, price the matched shares'
+before/after basis. Rounded allocations conserve the lot's disallowed loss.
+The plan adds no current-year savings and never mutates the input holdings.
+Future sales and wash-sale chains retain their scope limits.
+
+Matching and basis authority: [IRS Publication 550](https://www.irs.gov/publications/p550)
+and [Revenue Ruling 2008-5](https://www.irs.gov/pub/irs-drop/rr-08-05.pdf).

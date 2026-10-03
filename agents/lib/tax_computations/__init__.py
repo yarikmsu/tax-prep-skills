@@ -3186,6 +3186,9 @@ def compute_scenario(
         raise ValueError(
             "scenario input 'schedule_1a_deduction' must be a finite "
             "non-negative number")
+    # The deducted SE-tip portion is excluded from QBI; an employee's tips
+    # are not. It is a held below-AGI input, not an income delta (X7).
+    se_tips = _sched_a_amount(baseline.get("schedule_1a_se_tips", 0), "schedule_1a_se_tips")
 
     # The return's line 12, validated as the fixed input beside it is: NaN
     # keeps `max(0.0, agi - nan)` at 0.0, a silent $0 of tax, and a negative
@@ -3235,7 +3238,7 @@ def compute_scenario(
         # inputs). Omitting it overstates the QBI deduction and understates the
         # scenario tax for a self-employed filer.
         qbi = compute_qbi_deduction(
-            se_net, 0.0, rate=qbi_rate,
+            max(0.0, se_net - min(se_tips, se_net, schedule_1a_deduction)), 0.0, rate=qbi_rate,
             taxable_income_before_qbi=ti_before_qbi,
             net_capital_gain=net_capital_gain,
             half_se_tax=se["deductible_half"],

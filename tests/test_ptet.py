@@ -428,6 +428,15 @@ def test_marginal_probe_excludes_additional_medicare():
     assert r.est_marginal_fed == 0.30
 
 
+def test_deduction_probe_does_not_cross_an_agi_credit_cliff():
+    # $399,950 AGI is $50 below the CTC phaseout. Increasing income $100
+    # loses a $50 credit, but losing a $100 SALT deduction leaves AGI fixed.
+    kw = dict(RATE_KW, num_ctc_children=1, ctc_per_child=2000, ctc_phase_out_start=400000)
+    assert ptet._est_marginal_fed({"wages": 399950}, kw) == .30
+    assert ptet._est_marginal_fed({"wages": 399950}, dict(kw, deduction=50)) == .30
+    assert ptet._est_marginal_fed({"wages": 399950}, dict(kw, deduction=0)) == 0
+
+
 @pytest.mark.parametrize("bad", [-0.1, 1.5, float("nan"), float("inf"), True])
 def test_analyze_rejects_bad_marginal_fed(bad):
     # Codex P2: argparse type=float accepts -1/nan/inf/1.5, corrupting the offset.

@@ -176,6 +176,28 @@ def read_tax_year(result: dict, year: int) -> None:
 _net_capital_gains = net_capital_gains
 
 
+def _deducted_se_tips(result: dict, se_net: float) -> float:
+    section = result.get("schedule_1a") or {}
+    if not isinstance(section, dict):
+        raise ScenarioError("schedule_1a must be an object")
+    tips = section.get("tips") or {}
+    if not isinstance(tips, dict):
+        raise ScenarioError("schedule_1a.tips must be an object")
+    allowed = _num(tips.get("allowed"), "tips.allowed")
+    if allowed < 0:
+        raise ScenarioError("tips.allowed must be non-negative")
+    raw = section.get("se_tips_deducted")
+    if raw is None:
+        if se_net > 0 and allowed > 0:
+            raise ScenarioError("Record schedule_1a.se_tips_deducted with /tax-compute: "
+                                "a tipped return with business income needs its deducted SE-tip split")
+        return 0.0
+    deducted = _num(raw, "se_tips_deducted")
+    if deducted < 0 or deducted > allowed:
+        raise ScenarioError("se_tips_deducted must be non-negative and no greater than tips.allowed")
+    return round(deducted, 2)
+
+
 def extract_baseline_inputs(result: dict) -> dict:
     """Map a computed result.json into the normalized income input set."""
     f = result.get("form_1040", {}) or {}
@@ -232,6 +254,7 @@ def extract_baseline_inputs(result: dict) -> dict:
                  "schedule_1a_deduction")
             + _num(f.get("line_13c_charitable_non_itemizer"),
                    "charitable_non_itemizer"), 2),
+        "schedule_1a_se_tips": _deducted_se_tips(result, se_net),
     }
 
 
@@ -430,6 +453,11 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
     if base["anchor"] is not None:
         _require_the_same_deduction(base["anchor"], rate_kwargs["deduction"])
     base_inputs = base["inputs"]
+    if (base_scenario is not None
+            and base_inputs.get("schedule_1a_se_tips", 0)
+            != extract_baseline_inputs(result)["schedule_1a_se_tips"]):
+        raise ScenarioError("The base scenario used a different deducted SE-tip split; "
+                            "re-run it from result.json before stacking")
 
     # Deltas are applied verbatim (no derived adjustments), so every delta is exactly
     # reversible when stacking. `qualified_dividends` is the qualified SPLIT of ordinary
@@ -885,9 +913,10 @@ def render_markdown(r: ScenarioReport) -> str:
               "MAGI-increasing delta that would phase OUT more of the tips/overtime/car-loan/"
               "senior deduction near a threshold is not re-computed, so the marginal cost "
               "there may read slightly low.",
-              "- Self-employed §224 tips are not removed from the QBI base, and the "
-              "§70105 minimum QBI deduction (TY2026+ small active trade) is not applied "
-              "(both held from the baseline result.json); marginal pricing near a "
+              "- Deducted self-employed §224 tips are removed from QBI using the recorded "
+              "source split, held with Schedule 1-A; changes to its eligibility are not re-priced. The "
+              "§70105 minimum QBI deduction (TY2026+ small active trade) is not applied; "
+              "marginal pricing near a "
               "threshold may read slightly off. The filed /tax-compute return handles "
               "them exactly.",
               "- NIIT, IRMAA, and AMT thresholds are not flagged in v1 (see backlog #6)."]

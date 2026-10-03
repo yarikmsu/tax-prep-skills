@@ -105,6 +105,7 @@
     "note": "OBBBA Schedule 1-A deductions, BELOW AGI (line 13b). Copy compute_schedule_1a's NESTED per-provision objects here VERBATIM (each carries allowed / disallowed_by_cap / disallowed_by_phaseout) and ALSO record the raw input amount + magi, so the Schedule 1-A worksheet (lines 4-38) can be reconstructed/audited from result.json — not just the allowed totals. total → form_1040.line_13b_schedule_1a_deductions; senior.allowed → form_6251.senior_deduction (AMT addback). NOT in line 10 — these do not reduce AGI or any MAGI-gated computation.",
     "magi": 0,
     "tips": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},
+    "se_tips_deducted": null,
     "overtime": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},
     "car_loan": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},
     "senior": {"raw": 0, "allowed": 0, "disallowed_by_cap": 0, "disallowed_by_phaseout": 0},

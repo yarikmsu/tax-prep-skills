@@ -813,6 +813,108 @@ def test_tax_advantaged_lot_excluded_from_eligible():
     assert r.total_loss_harvested == 2000  # only the taxable ABC lot
 
 
+def test_wash_sale_basis_plan_separates_taxable_and_ira_replacements():
+    h = _holdings_with(
+        lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
+               "acquired": "2024-01-01", "quantity": 10,
+               "cost_basis": 1000, "current_value": 500}],
+        txns=[{"ticker": "ABC", "date": "2026-12-02", "quantity": 2,
+               "account": "Retirement", "account_type": "ira", "owner_is_taxpayer": True},
+              {"ticker": "ABC", "date": "2026-12-01", "quantity": 3,
+               "account": "Broker", "account_type": "taxable", "cost_basis": 240}])
+    before = json.loads(json.dumps(h))
+    r = _build(holdings=h)
+    lot = next(l for l in r.lots if l.id == "sale")
+    # $500 / 10 shares = $50 loss/share; 3 taxable shares defer $150,
+    # 2 IRA shares permanently lose $100. Current allowed loss stays $250.
+    assert (lot.disallowed_loss, lot.allowed_loss) == (250, 250)
+    taxable, ira = lot.wash_sale_adjustments
+    assert taxable["replacement_purchase_index"] == 1  # earlier buy matched first
+    assert taxable["basis_increase"] == 150
+    assert taxable["matched_basis_before"] == 240
+    assert taxable["matched_basis_after"] == 390
+    assert ira["basis_increase"] == 0 and ira["permanent_loss"] == 100
+    assert all(a["complete"] for a in lot.wash_sale_adjustments)
+    assert h == before
+    assert "replacement basis plan" in lh.render_markdown(r)
+    assert lh._report_to_dict(r)["lots"][0]["wash_sale_adjustments"]
+
+
+def test_basis_plan_consumes_replacement_shares_once_across_lots():
+    h = _holdings_with(
+        lots=[{"id": "first", "ticker": "ABC", "account": "Broker",
+               "acquired": "2023-01-01", "quantity": 10,
+               "cost_basis": 1000, "current_value": 500},
+              {"id": "second", "ticker": "ABC", "account": "Broker",
+               "acquired": "2024-01-01", "quantity": 10,
+               "cost_basis": 2000, "current_value": 1000}],
+        txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": 15,
+               "account_type": "taxable", "cost_basis": 1200}])
+    r = _build(holdings=h)
+    plans = {l.id: l.wash_sale_adjustments[0] for l in r.lots}
+    # First 10 shares defer $500; next 5 defer $500. The $1,200 purchase
+    # basis splits $800/$400, so matched bases become $1,300/$900.
+    assert plans["first"]["matched_basis_after"] == 1300
+    assert plans["second"]["matched_basis_after"] == 900
+    assert sum(a["matched_quantity"] for a in plans.values()) == 15
+    assert sum(a["basis_increase"] for a in plans.values()) == 1000
+
+
+@pytest.mark.parametrize("kind,quantity", [(None, 5), ("taxable", None),
+                                        ("other_tax_advantaged", 5), ("ira", 5)])
+def test_missing_replacement_facts_never_claim_future_basis(kind, quantity):
+    h = _holdings_with(
+        lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
+               "acquired": "2024-01-01", "quantity": 10,
+               "cost_basis": 1000, "current_value": 500}],
+        txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": quantity,
+               "account_type": kind}])
+    r = _build(holdings=h)
+    a = r.lots[0].wash_sale_adjustments[0]
+    assert a["basis_increase"] is None and a["permanent_loss"] is None
+    assert not a["complete"]
+    assert "Replacement basis is unresolved" in lh.render_markdown(r)
+
+
+def test_basis_plan_conserves_cents_across_replacement_purchases():
+    h = _holdings_with(
+        lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
+               "acquired": "2024-01-01", "quantity": 3,
+               "cost_basis": 1, "current_value": 0}],
+        txns=[{"ticker": "ABC", "date": f"2026-12-0{day}", "quantity": 1,
+               "account_type": "taxable"} for day in (1, 2, 3)])
+    a = _build(holdings=h).lots[0].wash_sale_adjustments
+    # Three shares divide a $1 disallowance: carry the rounding cent rather
+    # than independently rounding thirds and dropping a cent.
+    assert [p["basis_increase"] for p in a] == [.33, .34, .33]
+
+
+@pytest.mark.parametrize("field,value", [("account_type", "guessed"),
+                                        ("cost_basis", True), ("cost_basis", -1),
+                                        ("cost_basis", float("nan")),
+                                        ("cost_basis", float("inf"))])
+def test_invalid_replacement_basis_metadata_refuses(field, value):
+    h = _holdings_with(
+        lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
+               "acquired": "2024-01-01", "quantity": 10,
+               "cost_basis": 1000, "current_value": 500}],
+        txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": 5,
+               field: value}])
+    with pytest.raises(lh.LossHarvestError):
+        _build(holdings=h)
+
+
+def test_replacement_classification_must_agree_with_the_listed_account():
+    h = _holdings_with(
+        lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
+               "acquired": "2024-01-01", "quantity": 10,
+               "cost_basis": 1000, "current_value": 500}],
+        txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": 5,
+               "account": "Broker", "account_type": "ira"}])
+    with pytest.raises(lh.LossHarvestError, match="conflicts"):
+        _build(holdings=h)
+
+
 def test_tax_advantaged_lot_excluded_even_with_wash_signal():
     # A wash buy of the same IRA-held ticker does NOT bring the IRA lot into
     # blocked or eligible — it stays "clear" because the loss isn't deductible

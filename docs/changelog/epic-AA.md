@@ -2440,6 +2440,8 @@ The test also pins the step's wording.
 
 ## AA23, final slice — forecast Schedule A and price the remaining AGI changes
 
+**PR #217**, merged 2026-10-03 after the complete CI matrix passed.
+
 `/tax-project` accepts complete current-year Schedule A forecast inputs, checked
 against the projected year, status and fetched standard deduction and SALT cap.
 It rebuilds MAGI from the recorded add-back and re-runs the existing engine at

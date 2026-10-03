@@ -243,6 +243,7 @@ class HoldingLot:
     wash_sale_reason: 'str | None'  # joined human-readable description of in-window buys
 
     est_value_per_dollar: float  # heuristic for ranking (set later, after rates)
+    wash_sale_adjustments: list[dict] = field(default_factory=list)
 
 
 def _required_str(d: dict, key: str, label: str) -> str:
@@ -405,9 +406,9 @@ def _apply_wash_sale_prorate(
     # is intentionally bypassed for here (it aggregates qty without preserving
     # per-buy date/account info needed for own-acquisition matching).
     # check_wash_sale stays as the right primitive for non-prorate callers/tests.
-    in_window_buys: 'dict[str, list[tuple[datetime.date, float, str, str]]]' = (
+    in_window_buys: 'dict[str, list[dict]]' = (
         defaultdict(list))
-    for txn in recent_txns or []:
+    for txn_index, txn in enumerate(recent_txns or []):
         if (txn.get("kind") or "buy").lower() != "buy":
             continue
         tk = (txn.get("ticker") or "").strip().upper()
@@ -443,7 +444,30 @@ def _apply_wash_sale_prorate(
         buy_account = (txn.get("account") or "").strip().lower()
         reason = (f"buy of {tk} on {tdate.isoformat()} "
                   f"({days}d from sale, {qty_label})")
-        in_window_buys[tk].append((tdate, qty, reason, buy_account))
+        account_type = txn.get("account_type")
+        if account_type not in (None, "taxable", "ira", "roth_ira", "other_tax_advantaged"):
+            raise LossHarvestError("replacement account_type must be taxable, ira, "
+                                   "roth_ira, other_tax_advantaged, or null")
+        owner_is_taxpayer = txn.get("owner_is_taxpayer")
+        if owner_is_taxpayer is not None and not isinstance(owner_is_taxpayer, bool):
+            raise LossHarvestError("replacement owner_is_taxpayer must be a boolean or null")
+        if buy_account and account_type is not None:
+            states = {lot.tax_advantaged for lot in lots
+                      if (lot.account or "").strip().lower() == buy_account}
+            if len(states) > 1 or (states and (account_type != "taxable") not in states):
+                raise LossHarvestError("replacement account_type conflicts with its listed account lots")
+        basis = txn.get("cost_basis")
+        if basis is not None:
+            try:
+                basis = _coerce_numeric(basis, default=None)
+            except TypeError:
+                raise LossHarvestError("replacement cost_basis must be numeric") from None
+            if basis is None or not math.isfinite(basis) or basis < 0:
+                raise LossHarvestError("replacement cost_basis must be finite and non-negative")
+        in_window_buys[tk].append({
+            "date": tdate, "quantity": qty, "reason": reason, "account": buy_account,
+            "index": txn_index, "account_type": account_type, "cost_basis": basis,
+            "owner_is_taxpayer": owner_is_taxpayer})
 
     # Per-ticker: compute lot-aware replacement pool with BUDGET CONSUMPTION
     # across same-key buys. Group buys by (date, account); each group has ONE
@@ -465,17 +489,19 @@ def _apply_wash_sale_prorate(
     # order-independent for mixed groups.
     pool_by_ticker: 'dict[str, float]' = {}
     reasons_by_ticker: 'dict[str, list[str]]' = {}
+    replacements_by_ticker: dict[str, list[dict]] = {}
     for ticker, buys in in_window_buys.items():
         # Group buys by (date, account) within this ticker. defaultdict's
         # insertion order is preserved (Python 3.7+), so the iteration order
         # tracks input order for stable output.
-        by_group: 'dict[tuple[datetime.date, str], list[tuple[float, str]]]' = (
+        by_group: 'dict[tuple[datetime.date, str], list[dict]]' = (
             defaultdict(list))
-        for buy_date, buy_qty, reason, buy_account in buys:
-            by_group[(buy_date, buy_account)].append((buy_qty, reason))
+        for buy in buys:
+            by_group[(buy["date"], buy["account"])].append(buy)
 
         net_pool = 0.0
         kept_reasons: 'list[str]' = []
+        kept_buys = []
         for (buy_date, buy_account), group_buys in by_group.items():
             # Budget for THIS (date, account) group, computed ONCE.
             budget = sum(
@@ -488,8 +514,9 @@ def _apply_wash_sale_prorate(
             )
             # qty-known buys first (deterministic for mixed groups). Stable sort
             # preserves input order within each category.
-            group_buys.sort(key=lambda b: math.isinf(b[0]))
-            for buy_qty, reason in group_buys:
+            group_buys.sort(key=lambda b: math.isinf(b["quantity"]))
+            for buy in group_buys:
+                buy_qty, reason = buy["quantity"], buy["reason"]
                 if math.isinf(buy_qty):
                     if budget > 0:
                         # Qty-less buy claims remaining self-acquisition slot.
@@ -506,9 +533,13 @@ def _apply_wash_sale_prorate(
                 if contribution > 0:
                     net_pool += contribution
                     kept_reasons.append(reason)
+                    kept_buys.append({**buy, "remaining": contribution})
         if net_pool > 0:
             pool_by_ticker[ticker] = net_pool
             reasons_by_ticker[ticker] = kept_reasons
+            # Pub 550: match replacement purchases in acquisition order.
+            # Input order supplies the order of separate fills on the same date.
+            replacements_by_ticker[ticker] = sorted(kept_buys, key=lambda b: (b["date"], b["index"]))
 
     # ONLY taxable losing lots compete for the pool. A tax-advantaged lot has no
     # deductible loss for §1091 to disallow — its wash-sale status is moot — so
@@ -534,6 +565,40 @@ def _apply_wash_sale_prorate(
             matched = min(pool, lot.quantity)
             ratio = matched / lot.quantity  # safe: lot.quantity > 0 enforced above
             disallowed = round(ratio * lot.unrealized_loss, 2)
+            adjustments = []
+            shares_left, allocated_shares, allocated_loss = matched, 0.0, 0.0
+            for buy in replacements_by_ticker[ticker]:
+                if shares_left <= 0:
+                    break
+                take = min(shares_left, buy["remaining"])
+                if take <= 0:
+                    continue
+                allocated_shares += take
+                cumulative = round(disallowed * allocated_shares / matched, 2)
+                part_loss = round(cumulative - allocated_loss, 2)
+                allocated_loss = cumulative
+                known = math.isfinite(buy["quantity"])
+                kind = buy["account_type"]
+                taxable = known and kind == "taxable"
+                # Rev. Rul. 2008-5 covers the seller's OWN IRA. Do not infer
+                # that treatment for a spouse's IRA or another retirement regime.
+                ira = known and kind in ("ira", "roth_ira") and buy["owner_is_taxpayer"] is True
+                before = (round(buy["cost_basis"] * take / buy["quantity"], 2)
+                          if taxable and buy["cost_basis"] is not None else None)
+                adjustments.append({
+                    "replacement_purchase_index": buy["index"],
+                    "replacement_acquired": buy["date"].isoformat(),
+                    "replacement_account": buy["account"], "account_type": kind,
+                    "owner_is_taxpayer": buy["owner_is_taxpayer"],
+                    "matched_quantity": take, "disallowed_loss": part_loss,
+                    "basis_increase": part_loss if taxable else 0.0 if ira else None,
+                    "permanent_loss": part_loss if ira else 0.0 if taxable else None,
+                    "matched_basis_before": before,
+                    "matched_basis_after": None if before is None else round(before + part_loss, 2),
+                    "holding_period_days_added": (as_of - lot.acquired).days if taxable else None,
+                    "complete": taxable or ira})
+                buy["remaining"] -= take
+                shares_left -= take
             # Boundary: matched >= lot.quantity → fully blocked. An inf pool
             # (quantity-less txn) reliably trips this branch.
             status = "fully_blocked" if matched >= lot.quantity else "partial"
@@ -541,6 +606,7 @@ def _apply_wash_sale_prorate(
                 "disallowed_loss": disallowed,
                 "wash_sale_status": status,
                 "wash_sale_reasons": list(reasons),
+                "wash_sale_adjustments": adjustments,
             }
             pool -= matched
 
@@ -551,10 +617,12 @@ def _apply_wash_sale_prorate(
             disallowed = d["disallowed_loss"]
             status = d["wash_sale_status"]
             reason_str = "; ".join(d["wash_sale_reasons"]) or None
+            adjustments = d["wash_sale_adjustments"]
         else:
             disallowed = 0.0
             status = "clear"
             reason_str = None
+            adjustments = []
         allowed = round(lot.unrealized_loss - disallowed, 2)
         enriched.append(HoldingLot(
             **{**lot.__dict__,
@@ -562,7 +630,8 @@ def _apply_wash_sale_prorate(
                "allowed_loss": allowed,
                "wash_sale_status": status,
                "wash_sale_blocked": (status == "fully_blocked"),
-               "wash_sale_reason": reason_str},
+               "wash_sale_reason": reason_str,
+               "wash_sale_adjustments": adjustments},
         ))
     return enriched
 
@@ -1451,9 +1520,29 @@ def render_markdown(r: HarvestReport) -> str:
                       "a same-ticker buy in the ±30-day §1091 window matches part of the "
                       "sold quantity. Per IRC §1091, only the matched share count is "
                       "disallowed; the rest of the loss is fully harvestable. The disallowed "
-                      "portion shifts to the basis of the replacement shares (recovered in a "
-                      "future year when those shares are sold)._"]
+                      "portion may shift to taxable replacement basis; an IRA/Roth replacement "
+                      "loses it permanently. See the replacement basis plan._"]
     lines.append("")
+
+    adjustments = [(lot, a) for lot in r.lots for a in lot.wash_sale_adjustments]
+    if adjustments:
+        lines += ["## Wash-sale replacement basis plan", "",
+                  "If the full losing lots are sold as priced, these adjustments apply "
+                  "to matched replacement shares. They add no current-year savings. "
+                  "The source holdings remain unchanged; reconcile the plan with "
+                  "broker records after the actual trades.", "",
+                  "| Sold lot | Replacement date | Account | Shares | Basis increase | Permanent loss |",
+                  "|---|---|---|---:|---:|---:|"]
+        for lot, a in adjustments:
+            increase = "Unresolved" if a["basis_increase"] is None else _money(a["basis_increase"])
+            permanent = "Unresolved" if a["permanent_loss"] is None else _money(a["permanent_loss"])
+            lines.append(f"| {lot.id} | {a['replacement_acquired']} | {a['replacement_account']} | "
+                         f"{a['matched_quantity']:g} | {increase} | {permanent} |")
+        if any(not a["complete"] for _, a in adjustments):
+            lines += ["", "> **⚠ Replacement basis is unresolved:** supply actual purchase quantities "
+                      "and account types, and confirm ownership of IRA replacements. "
+                      "Other tax-advantaged accounts require manual treatment."]
+        lines.append("")
 
     # Wash-sale blocked lots — ONLY fully blocked (status == "fully_blocked").
     # Partial-block lots are in the eligible table above with a disallowance row.
@@ -1464,13 +1553,13 @@ def render_markdown(r: HarvestReport) -> str:
                   "share count in the ±30-day §1091 window — 100% of the loss is "
                   "disallowed this year. Wait 31 days past the last/next buy, or harvest "
                   "other lots instead._", "",
-                  "_**The disallowed loss is DEFERRED, not lost** (§1091(d)): it is added "
+                  "_**For taxable replacements, the disallowed loss is DEFERRED, not lost** (§1091(d)): it is added "
                   "to the cost basis of the replacement shares, and the original holding "
                   "period tacks on (§1223), so the tax benefit is recovered when those "
                   "replacement shares are later sold in a non-wash transaction. This "
-                  "future-year basis adjustment is NOT modeled here (it affects a later "
-                  "Schedule D). **Exception:** if the replacement was bought inside an "
-                  "IRA/Roth (Rev. Rul. 2008-5), the loss is PERMANENTLY lost — an IRA has "
+                  "basis plan above records the adjustment where its inputs are known. "
+                  "Future-year tax savings depend on later trades. **Exception:** if the replacement was bought inside an "
+                  "seller's own IRA/Roth (Rev. Rul. 2008-5), the loss is PERMANENTLY lost — an IRA has "
                   "no adjustable basis to absorb it._", "",
                   "| Lot | Ticker | Account | Loss | Blocked by |",
                   "|---|---|---|---:|---|"]
@@ -1554,12 +1643,11 @@ def render_markdown(r: HarvestReport) -> str:
               "each buy is consumed by its own matching lot, so IRS's "
               "each-lot-is-the-other's-replacement effect is under-counted. Rare; "
               "documented v1 simplification.",
-              "- **Disallowed-loss basis shift NOT modeled in v1.** Per §1091, the "
-              "disallowed portion is added to the basis of the replacement shares (and "
-              "their holding period is inherited from the sold lot), which means you "
-              "recover the disallowed loss WHEN you sell the replacement shares in a "
-              "future year. This skill reports only the current-year impact; it does not "
-              "adjust replacement-share basis for future Schedule D netting.",
+              "- **Replacement basis is a plan, not a current-year deduction.** Known "
+              "taxable replacements receive the disallowed loss and the sold lot's "
+              "holding period; the seller's own IRA/Roth-IRA permanently loses that loss. "
+              "Unknown quantities or account types remain unresolved. Future-year "
+              "Schedule D tax and chained wash sales are not priced here.",
               "- After harvesting, do NOT buy the same security (in any pooled account, "
               "including IRAs and your spouse's accounts) for 31 days.",
               "- **Tax-advantaged-account lots are excluded from harvest** (`tax_advantaged: "

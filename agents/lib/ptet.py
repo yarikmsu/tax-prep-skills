@@ -519,30 +519,24 @@ class PtetReport:
     notes: "tuple[str, ...]" = field(default_factory=tuple)
 
 
-_MARGINAL_PROBE = 100.0  # small, to stay local near AGI cliffs (O3)
+_MARGINAL_PROBE = 100.0  # small, local taxable-income probe (O3/X7)
 
 
 def _est_marginal_fed(baseline_inputs: dict, rate_kwargs: dict) -> float:
-    """Probe the keystone with a SMALL bump of ORDINARY non-wage income to
-    estimate the marginal rate at which a forgone SALT itemized deduction dollar
-    is valued.
+    """Value a forgone deduction by reducing line 12, leaving AGI unchanged.
 
-    Probing `other_income` (not `wages`) deliberately: a lost SALT itemized
-    deduction only changes taxable income, NOT Medicare wages, so a wage probe
-    would fold the 0.9% Additional Medicare Tax into the rate for high earners and
-    overstate the offset (understating PTET savings). other_income carries no
-    payroll/Medicare component, giving the clean ordinary-bracket rate.
-
-    The probe is a SMALL $100 (O3) rather than $1,000 so it stays LOCAL near an
-    AGI cliff (CTC/education-credit/IRA/NIIT phase-outs) — a large probe can jump
-    the cliff and overstate the marginal rate (understating PTET savings). It is
-    still an estimate; near a cliff, pass an explicit --marginal-fed (caveated in
-    the output)."""
+    An income probe also moves AGI-gated credits and misprices a SALT dollar.
+    The existing keystone deduction parameter is the deduction-only knob (X7).
+    Bound the probe by the deduction so it never prices a negative line 12.
+    """
+    probe = min(_MARGINAL_PROBE, rate_kwargs["deduction"])
+    if probe <= 0:
+        return 0.0
     base = compute_scenario(baseline_inputs, {}, **rate_kwargs)["total_federal_tax"]
     bumped = compute_scenario(
-        baseline_inputs, {"other_income": _MARGINAL_PROBE}, **rate_kwargs
+        baseline_inputs, {}, **{**rate_kwargs, "deduction": rate_kwargs["deduction"] - probe}
     )["total_federal_tax"]
-    return max(0.0, round((bumped - base) / _MARGINAL_PROBE, 4))
+    return max(0.0, round((bumped - base) / probe, 4))
 
 
 def analyze(
@@ -848,8 +842,8 @@ def analyze(
         if marginal_auto_estimated:
             notes.append(
                 "The SALT-offset marginal rate was AUTO-ESTIMATED from a small "
-                "$100 income probe. Near an AGI cliff (CTC / education-credit / "
-                "IRA / NIIT phase-outs) the true marginal rate can differ — pass "
+                "$100 deduction-only probe; AGI and its credit phaseouts stay "
+                "fixed. Near a taxable-income breakpoint the rate can differ — pass "
                 "an explicit --marginal-fed for a precise offset.")
     if itemizes and salt.phasedown_applies(tax_year):
         # This note used to say the phasedown was "not modeled here" and quote
