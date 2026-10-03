@@ -131,18 +131,20 @@ statutorily NAMED and FETCHED?** Stating it is what let X6 replace a wrong flat
 number; not stating it is what stops TY2027 reading "$40,400 for TY2026" as
 current.
 
-**DETECTOR — measured, deferred.** `[^.\n]` between the limit word and the
-amount cannot cross a LINE BREAK, so any figure that markdown happened to wrap
-onto the next line is invisible — which is exactly why "~$510" survived. Adding
-floor words (`minimum`, `floor`) alone changes nothing, because distance was
-never the problem. Allowing the wrap reveals it, and also makes the detector
-read backticked CACHE FIELD NAMES (`min`/`max`) as limit words, firing on a
-worked example in `/tax-setup` that is correct. Blanking backticked spans fixes
-that and LOSES two detections — one a false positive worth losing (`--max` read
-as the word "maximum") and one a real §121 hit that must be kept. Masking only
-the LETTERS inside backticks preserves distances and keeps §121, but backtick
-MIS-PAIRING across a line leaves both artifacts standing. This is its own slice
-with its own cry-wolf validation in both directions, not a regex tweak.
+**DETECTOR — X9.** Wrapped prose is normalized within each Markdown block;
+paragraphs, list entries, headings and table rows remain separate. Backtick
+spans pair by delimiter length. Code identifiers and CLI flags cannot supply
+limit words, while dollar amounts and their K/M multipliers remain visible.
+The bounded sentence window checks every amount in a matched clause, including
+both halves of §121 exclusions and joint/separate thresholds. Ordinary skills
+and the safe-harbor closed registry share this detector.
+
+The earlier experiments simply removed `\n` from the regex and mis-paired
+backticks, trading a schema-field false positive for a lost §121 detection.
+Regression tests now cover both directions: the original wrapped penalty
+floor refuses, both home-sale exclusions survive, and the CLI `--max` false
+alarm disappears. This remains a bounded prose lint, not a tax-law parser;
+source freshness and the season's fetched figures still need the gates below.
 
 ---
 

@@ -76,7 +76,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Now** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Opportunistic** | **W10** — finish generic state adjustment and local-tax rule blocks. | State true-up consolidation is merged. |
+| **Opportunistic** | **X9** — close the figure-lint line-break blind spot. | Generic state rule blocks are merged. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -112,33 +112,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   that makes the same `[ -x .venv/bin/python ]` check, holds the change boundary
   the same way, then `exec`s the Python, which lives outside `agents/lib/` so it
   never meets the import guard.
-
-- **W10 (P3, M): a state REGISTRY.** **The data tables are BUILT by the pull request that
-  records "W10, first slice" in `docs/changelog/epic-W.md`:**
-  `tax_computations/state/registry.py` holds each state's section, code,
-  computed-evidence fields, movers and informational key; projection's and
-  yoy_diff's tables derive from it, and a test refuses a local copy. The
-  PTET regime windows `/tax-ptet` and `/tax-calendar` each carried are ONE
-  registry table by the pull request that records "W10, second slice", and
-  the filing package's state forms derive from it by the one recording "W10,
-  third slice" (a NY package had no IT-201). The per-state BEHAVIOUR stays
-  in its module by design, and the one recording "W10, fourth slice" makes
-  missing it fail: a test requires each computed state's tie-out category,
-  depth note, estimated-tax and extension events, withholding true-up and
-  package form. **What remains open is
-  the two generic deferrals below.** *Raised by the 2026-09-12 four-angle review.*
-  Six parallel per-state tables across four modules: `projection.STATE_SECTION_KEYS`
-  and `_STATE_SECTION_CODES`, the two `_*_COMPUTED_EVIDENCE_FIELDS`, `yoy_diff`'s
-  three, `capabilities._state_note`'s if/elif chain, `tie_out`'s per-state
-  withholding rows, and `tax_calendar`'s `if CA / elif NY`. Adding a state means
-  finding all six and NOTHING fails if one is missed. One
-  `agents/lib/state_registry.py` keyed by code, each module deriving its table,
-  and a test forbidding a local copy. Gates Z4 and Z5 in practice.
-  **Fold in the two generic deferrals recorded at the end of
-  `docs/changelog/epic-P.md`** — a data-driven `state.modifications` block and a
-  `state.local` block shape. New York shipped both NY-specifically, so the
-  generic versions are open engine work that belongs to this item rather than
-  to one of their own.
 
 ### X — tax correctness
 
@@ -332,6 +305,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | W5 | #90, #166 | W5a, below |
 | W5a | #191 | the matrix legs, the tool targets, `MIN_PYTHON` and the prose still state the floor, compared rather than read; the lock headers are uv's record and stay |
 | W6 | #105 | — |
+| W10 | #208, #209, #210, #211, #227 | Registry and wiring; generic year-bound adjustment workpapers and explicit local-tax routing. |
 | W11 | #226 | Shared state true-up specification; public report behavior retained and NY timing-note crash fixed. |
 | W12 | #225 | Test-owned hook input declarations and independent read/import audit. |
 | X1 | #89 | the auditor's keying note is WRONG, not pending; only the Y2 replay can correct it |

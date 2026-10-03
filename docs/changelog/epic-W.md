@@ -1046,7 +1046,7 @@ The federal-only coverage note now includes NC. Design and scope:
 `docs/superpowers/specs/2026-10-03-state-true-up-spec-design.md`.
 
 
-## W10 — generic state adjustment and local-tax rule blocks
+## W10 — generic state adjustment and local-tax rule blocks (#227)
 
 The remaining Epic P deferrals have optional year-bound cache schemas and
 independent primary-authority pins. Complete reviewed modification lists drive

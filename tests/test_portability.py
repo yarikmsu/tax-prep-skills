@@ -4569,16 +4569,58 @@ class TestTheSkillsReadWhatTheEngineEmits:
 # Words that turn an amount into a stated legal ceiling. Shared by every skill
 # the lint covers, because the question each one is being asked is the same:
 # was this figure written down as LAW, or narrated as an illustration?
-_LIMIT_WORDS = (r"per child|per person|cap(?:ped)?|limit|threshold|"
-                r"maximum|max\b|ceiling|exclusion|up to")
+_LIMIT_WORDS = (r"per child|per person|caps?|capped|limit(?:s|ed|ing|ations?)?|thresholds?|"
+                r"maximum|max|minimum|min|floor|ceiling|exclusions?|up to")
 # The multiplier is part of the figure. Without the suffix "$200K" tokenised as
 # "$200", and a registry holding "$200" let "$200M" through while refusing the
 # spelled-out "$200,000" — a registry describing how a figure was abbreviated.
 _AMOUNT = r"\$[0-9][0-9,]*(?:\.[0-9]+)?(?:[KkMm]\b)?"
+_AMOUNT_SEQUENCE = rf"{_AMOUNT}(?:\s*(?:/|or|and)\s*{_AMOUNT})*"
 _LIMIT_PATTERN = re.compile(
-    rf"(?:{_LIMIT_WORDS})[^.\n]{{0,40}}?({_AMOUNT})"
-    rf"|({_AMOUNT})[^.\n]{{0,40}}?(?:{_LIMIT_WORDS})",
+    rf"\b(?:{_LIMIT_WORDS})\b[^.]{{0,40}}?({_AMOUNT_SEQUENCE})"
+    rf"|({_AMOUNT_SEQUENCE})[^.]{{0,40}}?\b(?:{_LIMIT_WORDS})\b",
     re.I)
+
+
+def _limit_paragraphs(body: str):
+    """Normalize prose wraps without joining Markdown blocks or code tokens.
+
+    Inline delimiters pair only with a run of the same length in one block.
+    Code spans without money and CLI flags cannot supply prose limit words.
+    Mask them at equal width so they cannot shorten the forty-character window;
+    dollar amounts remain readable to the lint, including K/M suffixes.
+    """
+    body = re.sub(r"(?m)^(?=[ \t]*(?:\||#{1,6} |[-*+] |[0-9]+[.)] ))", "\n", body)
+    body = re.sub(r"(?m)^([ \t]*\|.*)$", r"\1\n", body)
+    body = re.sub(r"(?m)^([ \t]*#{1,6} .*)$", r"\1\n", body)
+    for paragraph in re.split(r"\n[ \t]*\n", body):
+        tokens = list(re.finditer(r"`+", paragraph))
+        masked = list(paragraph)
+        i = 0
+        while i < len(tokens):
+            opening = tokens[i]
+            before = paragraph[:opening.start()]
+            if (len(before) - len(before.rstrip("\\"))) % 2:
+                # Markdown escapes an opening backtick, but backslashes do
+                # not escape the closing delimiter inside a real code span.
+                i += 1
+                continue
+            closing = next((j for j in range(i + 1, len(tokens))
+                            if tokens[j].group() == opening.group()), None)
+            if closing is None:
+                i += 1
+                continue
+            start, end = opening.end(), tokens[closing].start()
+            code = paragraph[start:end]
+            if not re.search(_AMOUNT, code) or re.search(r"(?:^|\s)--[A-Za-z]", code):
+                money_positions = {k for figure in re.finditer(_AMOUNT, code)
+                                   for k in range(start + figure.start(), start + figure.end())}
+                for k in range(start, end):
+                    if not masked[k].isspace() and k not in money_positions:
+                        masked[k] = "x"
+            i = closing + 1
+        yield (re.sub(r"[ \t\r\n]+", " ", "".join(masked)),
+               re.sub(r"[ \t\r\n]+", " ", paragraph))
 
 
 def _quoted_limits(body: str) -> "set[tuple[str, str]]":
@@ -4590,14 +4632,77 @@ def _quoted_limits(body: str) -> "set[tuple[str, str]]":
     limit WORDS are what turn an amount into a stated ceiling.
     """
     out = set()
-    for match in _LIMIT_PATTERN.finditer(body):
-        # A trailing comma is punctuation, not part of the figure. Without
-        # this, "up to $2,500," and "$2,500 max" are two different strings and
-        # a registry has to hold both — which is a registry describing where a
-        # comma happened to fall.
-        amount = (match.group(1) or match.group(2)).rstrip(",")
-        out.add((amount, match.group(0).strip()[:70]))
+    for masked, display in _limit_paragraphs(body):
+        for match in _LIMIT_PATTERN.finditer(masked):
+            # Every amount in a matched clause, including paired exclusions
+            # or joint/separate thresholds. finditer alone consumed the second
+            # amount while recording only the first one. Keep original prose
+            # for diagnostics; masking preserves its normalized offsets.
+            context = display[match.start():match.end()].strip()
+            for figure in re.finditer(_AMOUNT, context):
+                out.add((figure.group().rstrip(","), context[:70]))
     return out
+
+
+class TestWrappedFigureLint:
+    def amounts(self, body):
+        return {amount for amount, _ in _quoted_limits(body)}
+
+    def test_wraps_and_formatting_do_not_hide_a_limit(self):
+        for body in ("minimum penalty floor is\n  ~$510", "$510\n maximum",
+                     "**threshold**:\n `$510`", "up\n to $510", "cap\r\n$510"):
+            assert self.amounts(body) == {"$510"}, body
+
+    def test_every_paired_amount_is_checked_with_its_multiplier(self):
+        assert self.amounts("$250K/$500K-MFJ exclusion") == {"$250K", "$500K"}
+        assert self.amounts("exclusion $250K/\n$500K") == {"$250K", "$500K"}
+        assert self.amounts("cap $510 or $600") == {"$510", "$600"}
+        assert self.amounts("$150,000/$75,000 threshold") == {"$150,000", "$75,000"}
+        assert self.amounts("ceiling $1.25M") == {"$1.25M"}
+
+    def test_schema_identifiers_and_cli_flags_are_not_limit_words(self):
+        for body in ("`{min, max, rate}`\n example income $12,345",
+                     "`state.max` example $510", "`--min $0` to `--max`",
+                     "``literal `max` token`` example $510"):
+            assert self.amounts(body) == set(), body
+
+    def test_inline_money_claims_and_unmatched_delimiters_remain_visible(self):
+        assert self.amounts("`maximum $510`") == {"$510"}
+        assert self.amounts(r"\`cap\` $510") == {"$510"}
+        assert self.amounts("threshold\n `$510") == {"$510"}
+        assert self.amounts("`min` then §121\n $250K/$500K exclusion") == {"$250K", "$500K"}
+
+    def test_inline_code_can_wrap_and_preserves_the_distance(self):
+        assert self.amounts("`min,\n max` example $510") == set()
+        assert self.amounts("threshold `" + "x" * 45 + "` $510") == set()
+
+    def test_unrelated_blocks_and_sentences_do_not_share_limit_words(self):
+        for body in ("threshold\n\nExample $510", "threshold. Example $510",
+                     "- threshold\n- Example $510", "| threshold |\n| Example $510 |",
+                     "# threshold\n# Example $510", "# threshold\nExample $510"):
+            assert self.amounts(body) == set(), body
+
+    def test_word_boundaries_and_wrapped_distance_are_bounded(self):
+        assert self.amounts("capabilities $510") == set()
+        assert self.amounts("limit " + "x" * 41 + " $510") == set()
+        assert self.amounts("limited\n to $510") == {"$510"}
+
+    def test_corpus_retains_home_sale_exclusions_and_removes_cli_false_alarm(self):
+        assert {"$250K", "$500K"} <= self.amounts(skill_text("tax-setup"))
+        assert "$0" not in self.amounts(skill_text("tax-roth-convert"))
+
+    def test_registered_skill_gate_rejects_the_original_wrapped_defect(self, monkeypatch):
+        monkeypatch.setitem(globals(), "skill_text", lambda _: "minimum penalty floor\n ~$510")
+        with pytest.raises(AssertionError, match="\\$510"):
+            test_the_taxpayer_facing_skills_quote_no_indexed_tax_figure("tax-extend")
+
+    def test_safe_harbor_gate_uses_the_same_wrapped_detector(self, monkeypatch, tmp_path):
+        skill = tmp_path / "tax-safe-harbor"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("maximum refundable cap\n $510", encoding="utf-8")
+        monkeypatch.setitem(globals(), "SKILLS_DIR", tmp_path)
+        with pytest.raises(AssertionError, match="\\$510"):
+            test_the_safe_harbor_skill_quotes_no_indexed_tax_figure()
 
 
 # Per skill, the dollar figures it may state as a limit — every one STATUTORY
@@ -4619,7 +4724,7 @@ def _quoted_limits(body: str) -> "set[tuple[str, str]]":
 _FIGURE_REGISTRY = {
     # §121's home-sale exclusion. $250,000/$500,000 since the Taxpayer Relief
     # Act of 1997 and never indexed.
-    "tax-setup": {"$250K", "$250,000", "$500,000"},
+    "tax-setup": {"$250K", "$500K", "$250,000", "$500,000"},
     # Nothing. Both thresholds it used to quote were about how many FORMS to
     # expect, and the instruction — ask about platform and gig income whatever
     # arrived — is the same at any figure, so the figures went rather than
@@ -4636,8 +4741,7 @@ _FIGURE_REGISTRY = {
     #   $2,000  Lifetime Learning Credit, §25A(c)
     #   $3,000  capital-loss cap, §1211(b)
     #   $150,000  the §6654(d)(1)(C) prior-year AGI threshold
-    #   $1 / $500  CALIFORNIA's pre-TCJA $1M mortgage limit, halved for MFS —
-    #              the regex sees the leading digits of "$1M" and "$500K"
+    #   $1M / $500K  CALIFORNIA's pre-TCJA mortgage limit, halved for MFS
     #   $0  not a figure that can go stale
     #
     # What went: the SALT cap (indexed, and the exact figure `/tax-review`
@@ -4648,7 +4752,7 @@ _FIGURE_REGISTRY = {
     # their end dates and a credit claimed after termination is disallowed on
     # examination rather than merely mis-sized.
     "tax-compute": {"$0", "$1M", "$500K", "$1,000", "$2,000", "$2,500",
-                    "$3,000", "$150,000"},
+                    "$3,000", "$150,000", "$75,000"},
     # X6 brought the rest in. Every figure below is statutory and unindexed,
     # and the four that are not figures at all — `$0` outcomes — are here
     # because the detector counts them and nothing about a zero can go stale.
@@ -4657,13 +4761,11 @@ _FIGURE_REGISTRY = {
     #   $150,000  §6654(d)(1)(C)'s prior-year AGI threshold
     #   $200K     §3102(f)'s employer withholding threshold
     "tax-harvest": {"$0", "$3K"},
-    "tax-project": {"$150,000"},
+    # Both §6654(d)(1)(C) statuses and the federal/CA de-minimis floors,
+    # already stated in these skills and pinned to the engine by other tests.
+    "tax-project": {"$150,000", "$75,000", "$1,000", "$500"},
     "tax-retirement": {"$0"},
-    # `$0` here is `--min $0` to `--max` — a CLI FLAG the detector reads as the
-    # word "max". Registered rather than chased: the alternative is teaching
-    # the detector that a backticked identifier is not prose, which was tried
-    # and loses a real §121 detection to backtick mis-pairing (runbook).
-    "tax-roth-convert": {"$0"},
+    "tax-roth-convert": set(),
     "tax-verify": {"$200K"},
     # Q10, ruled 2026-09-13. §164(b)(7) is a statutory STEP SCHEDULE, not an
     # indexed figure — the statute NAMES $40,000 and $40,400 and gives a formula
@@ -4675,7 +4777,7 @@ _FIGURE_REGISTRY = {
     # a flat figure across TY2025-2029, and an allowance nothing uses is one
     # the next flat figure would pass under.
     "tax-ptet": {"$10,000", "$500,000"},
-    "tax-withholding": {"$150,000"},
+    "tax-withholding": {"$150,000", "$75,000", "$1,000", "$500"},
     # Empty, and each verified empty rather than assumed. An empty entry is not
     # a formality: it is what puts the skill UNDER the lint, so the first
     # dollar figure any of them grows has to be defended. `tax-extend` is the
@@ -5003,11 +5105,12 @@ def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
     assert everything == {"$0", "$1M", "$3K", "$10,000", "$200K",
                           "$250K", "$250,000", "$500K", "$500,000",
                           "$1,000", "$2,000", "$2,500", "$3,000",
-                          "$150,000"}, (
+                          "$150,000", "$75,000", "$500"}, (
         "a figure joined the registry without this test being edited. Each one "
         "here is flat statutory law — §121's exclusion, §1211(b)'s capital-loss "
         "cap, §221(b)(1)'s student-loan "
-        "cap, §25A's two education ceilings, §6654(d)(1)(C)'s threshold, "
+        "cap, §25A's two education ceilings, §6654(d)(1)(C)'s thresholds, "
+        "§6654(e)(1)'s floor and the CA estimated-tax floor, "
         "§3102(f)'s never-indexed $200,000 employer withholding threshold "
         "for Additional Medicare Tax, CA's pre-TCJA mortgage limit, and "
         "§164(b)(7)'s SALT schedule — and an "
@@ -5024,6 +5127,13 @@ def test_the_registry_is_not_a_place_to_put_an_indexed_figure():
         "the /tax-ptet entry changed. Its figures are §164(b)(7)'s, pinned to "
         "the engine constants by "
         "`test_the_ptet_skill_figures_match_the_engine_constants`")
+    # X9 newly sees both halves of paired thresholds and the word "floor".
+    # Their allowances must remain bound to the figures the engines use.
+    TC, PROJ = _tax_computations(), _projection()
+    for skill in ("tax-project", "tax-withholding"):
+        for value in (TC.prior_year_agi_threshold(True), TC.DE_MINIMIS_BALANCE,
+                      PROJ.CA_ES_DE_MINIMIS):
+            assert f"${value:,.0f}" in _FIGURE_REGISTRY[skill]
 
 
 def test_the_lint_would_still_catch_the_defect_it_was_written_for():
@@ -5085,18 +5195,7 @@ AGENTS.md §2 permits that for statutory, UNINDEXED figures, and the
                # and never indexed, and pinned to the engine's own
                # SE_TAX_THRESHOLD by TestTheAdvisorySkillRestatesTheEnginesLawExactly.
                "$400"}
-    # Words that turn an amount into a stated legal ceiling.
-    limit_words = (r"per child|per person|cap(?:ped)?|limit|threshold|"
-                   r"maximum|max\b|ceiling|exclusion|up to")
-    pattern = re.compile(
-        rf"(?:{limit_words})[^.\n]{{0,40}}?(\$[0-9][0-9,]*(?:\.[0-9]+)?)"
-        rf"|(\$[0-9][0-9,]*(?:\.[0-9]+)?)[^.\n]{{0,40}}?(?:{limit_words})",
-        re.I)
-    offenders = set()
-    for match in pattern.finditer(body):
-        amount = match.group(1) or match.group(2)
-        if amount not in allowed:
-            offenders.add((amount, match.group(0).strip()[:70]))
+    offenders = {pair for pair in _quoted_limits(body) if pair[0] not in allowed}
     assert not offenders, (
         "tax-safe-harbor states a dollar amount as a LIMIT that is not one of "
         f"the unindexed statutory figures this `allowed` registry holds: "

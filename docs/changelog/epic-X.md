@@ -699,6 +699,22 @@ Future sales and wash-sale chains retain their scope limits.
 Matching and basis authority: [IRS Publication 550](https://www.irs.gov/publications/p550)
 and [Revenue Ruling 2008-5](https://www.irs.gov/pub/irs-drop/rr-08-05.pdf).
 
+## X9 — figure lint across Markdown wraps
+
+The shared ordinary/safe-harbor detector normalizes prose wraps within Markdown
+blocks and pairs inline backtick runs by length. Identifier and CLI text cannot
+supply limit words; amounts and K/M suffixes remain visible. The bounded
+sentence window records every amount in a matched clause, protecting paired
+exclusions and joint/separate thresholds as well as wrapped floors.
+
+The corpus comparison retained all legitimate former amounts and removed the
+CLI `--max` false alarm. Newly visible allowances are already-stated statutory
+figures, with thresholds/floors pinned to engine constants. Ten regression
+tests cover both false-negative and false-positive cases and exercise both
+actual gates. No new tax-law amount enters a skill. Design:
+`docs/superpowers/specs/2026-10-03-wrapped-figure-lint-design.md`.
+
+
 ## X10 — retirement split, HSA eligibility and state conformity (#224)
 
 The dashboard tracks Roth deferrals within aggregate employee YTD and prices
