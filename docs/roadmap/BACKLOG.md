@@ -53,8 +53,10 @@ accurate history, and git resolves it.
 
 ## Status
 
-**Engineering: drained.** Epics V, W and X are complete, and
-`main` is green locally. The suite's size is stated nowhere: since AA8 the
+**Engineering: the original V, W and X queue is complete.** The 2026-10-03
+review of `docs/superpowers/` recovered useful, unimplemented extensions;
+AA35-AA46 below now carry that scope instead of relying on historical plans.
+The suite's size is stated nowhere: since AA8 the
 MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` counts only the
 seven modules that hook selects, and a count restated here would be the mirror
 this file was collapsed to remove.
@@ -76,6 +78,8 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
+| **Next, in entry order** | AA35-AA43 — bounded carryforward, intake, scenario and projection extensions recovered from the historical specs. | These remain absent in the current engine; old follow-ups that already shipped are excluded. |
+| **Later** | AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. | Larger product extensions; the existing single-year engines remain their starting point. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -93,6 +97,132 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   digest-pinned to a passed acceptance. Its check 5 still says `federal.salt_cap`
   "indexes roughly 1%/yr" and that an absent value "degrades quietly", and never
   checks for a stale or already-reduced amount. Found by AA16's second review.
+
+### Recovered design follow-ups — reviewed against the engine on 2026-10-03
+
+These are extensions, not unfinished portions of the shipped v1 deliveries.
+The historical specs supply their origin; the scope stated here governs the
+work. The split capital-loss carryforward, Form 1040 line 36 rollover, IRA and
+AMT basis rollover, NIIT projection, full-status capital-gains cache and
+CA/NY/NC withholding true-ups already exist and are not reopened.
+
+- **AA35 (P2, M): Carry charitable deductions across years with a vintage ledger.**
+  `compute_schedule_a` and `compute_ca_itemized` emit charitable carryforward
+  totals, but `rollover.FIELD_MAP` carries neither and the rollover skill still
+  requests manual entry. Preserve origin year, contribution category, jurisdiction,
+  used amount and remaining amount; feed a verified ledger through setup,
+  computation and rollover without treating an aggregate as proof of its age or
+  eligibility. Missing prior worksheets require an explicit manual resolution.
+  Origin: `docs/superpowers/specs/2026-05-24-tax-rollover-design.md` §Out of scope.
+
+- **AA36 (P2, M): Parse paystubs into the existing projection input contract.**
+  Projection still consumes manually supplied YTD amounts; no paystub importer
+  populates `projection_inputs.json`. Extract supported paystub formats locally,
+  preserve source/as-of/pay-period evidence, distinguish YTD from current-period
+  figures, and reconcile multiple jobs before populating the stable `ytd` block.
+  Ambiguous labels or unsupported formats stay explicit asks. Apply the existing
+  masked-identity, parser-boundary and owner-only filesystem rules.
+  Origin: `docs/superpowers/specs/2026-05-25-tax-project-design.md` §Open follow-ups.
+
+- **AA37 (P2, M): Recompute taxable Social Security in income scenarios and Roth sweeps.**
+  `scenario.extract_baseline_inputs` includes baseline taxable Social Security
+  in fixed `other_income`; both planners explicitly hold it unchanged. Retain
+  the gross-benefit and other required income evidence, then recompute its
+  taxable portion at each delta/rung and feed the difference into the existing
+  anchored comparison. Require the necessary inputs instead of inferring gross
+  benefits from the already-taxable amount. Share the existing computation.
+  Origin: `docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md` §Out of scope.
+
+- **AA38 (P2, L): Add state effects to scenarios and Roth conversion sweeps.**
+  Both tools still label their tax effects federal-only. Start with the existing
+  full-year CA/NY/NC engines, explicit state inputs and covered-year law; reprice
+  deductions and applicable local components rather than multiplying the federal
+  delta by a bracket rate. Keep state results separate from the federal anchor.
+  Unsupported allocation, residency or excise cases retain named limitations;
+  retirement conformity metadata alone is not a computed state return.
+  Origin: `docs/superpowers/specs/2026-05-26-tax-scenario-design.md` §Open follow-ups
+  and `2026-05-26-roth-conversion-ladder-design.md` §Out of scope.
+
+- **AA39 (P2, M): Track Form 8606 basis separately for each spouse.**
+  The current profile/result/rollover path exposes one IRA basis and one Form
+  8606 result. Add individual ownership through intake, IRA balances,
+  computation, tie-out, PDF and rollover so a joint return can retain both
+  spouses' independent worksheets. Aggregate only the appropriate individual's
+  traditional/SEP/SIMPLE IRAs; preserve existing single-individual inputs with
+  an explicit migration rule. This does not add inherited-IRA or Roth-distribution
+  ordering support.
+  Origin: `docs/superpowers/specs/2026-05-27-form-8606-basis-tracker-design.md` §Out of scope.
+
+- **AA40 (P2, L): Make crypto FIFO account-aware within one import.**
+  `--per-account` already handles an isolated account's sends, but cross-account
+  work requires separate runs and manually annotated destination basis. Add
+  explicit account identifiers, segregated lot queues and reconciled transfer
+  links carrying original basis/acquisition evidence. Do not duplicate lots or
+  borrow another account's lots; unmatched transfers remain unresolved inputs.
+  FIFO stays the supported method; specific identification is separate scope.
+  Origin: `docs/superpowers/specs/2026-05-31-crypto-importer-design.md` §Out of scope.
+
+- **AA41 (P2, M): Reconcile crypto imports with Form 1099-DA.**
+  The importer and skill still disclose that broker forms are not reconciled
+  and default Form 8949 rows to Box C/F. Compare broker proceeds and reported
+  basis with matched disposals, select the covered year's appropriate reporting
+  treatment from explicit evidence, and surface unresolved differences before
+  the crypto result feeds the return. Keep adjustments and their source evidence
+  in the ledger rather than silently replacing the FIFO result.
+  Origin: `docs/superpowers/specs/2026-05-31-crypto-importer-design.md` §Out of scope.
+
+- **AA42 (P2, L): Add AMT and IRMAA exposure to the mid-year projection.**
+  NIIT projection is already implemented. The federal projection total still
+  omits AMT, and the report has no IRMAA layer. Reuse the existing AMT and Roth
+  premium computations with explicit projected inputs and covered-year fetched
+  law, including a named boundary for unsupported AMT preference items. Report
+  IRMAA as a per-beneficiary premium estimate with its lookback, separate from
+  income tax. Never reuse current law as a verified future-year figure.
+  Origin: `docs/superpowers/specs/2026-05-25-tax-project-design.md` §Open follow-ups.
+
+- **AA43 (P2, M): Extend projection estimated-payment schedules beyond CA.**
+  CA weighted projection vouchers and CA/NY/NC computed-return true-ups already
+  exist. Projection currently models only CA's state voucher weighting. Add
+  bounded full-year NY/NC projection schedules using their fetched safe-harbor
+  inputs and existing deadline helpers, with state/local liability and
+  withholding on the same footing. Incomplete City/Yonkers or allocation inputs
+  retain a refusal instead of producing a combined payment or refund estimate.
+  Origin: `docs/superpowers/specs/2026-05-25-tax-project-design.md` §Open follow-ups.
+
+- **AA44 (P3, L): Import a prior return PDF for first-time rollover users.**
+  `load_prior` reads toolkit archive JSON, not a software-exported prior return;
+  `/tax-verify` is a comparison flow rather than an archive importer. Start with
+  documented TurboTax/FreeTaxUSA PDF forms, explicit year and worksheet mappings,
+  masked identity and user-reviewed provenance. Missing carryover worksheets
+  stay unresolved instead of being reconstructed from summary lines. Proprietary
+  software formats require a separate supported-format decision.
+  Origin: `docs/superpowers/specs/2026-05-24-tax-rollover-design.md` §Open follow-ups.
+
+- **AA45 (P3, L): Model multi-year Roth conversion plans.**
+  The ladder currently sweeps one tax year. Add explicit annual income/balance
+  assumptions and basis carry between years, preserve each year's computation
+  inputs, and distinguish fetched covered-year law from hypothetical future-law
+  assumptions. Show tax, Medicare premiums and distribution effects separately;
+  a future-year forecast must not masquerade as a filing computation.
+  Origin: `docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md` §Out of scope.
+
+- **AA46 (P3, M): Extend YoY reports to multi-year, saved and PDF outputs.**
+  `yoy_diff` still compares two years and renders inline Markdown. Reuse its
+  curated movers for optional additional archive columns, a secured standalone
+  deliverable and an explicitly ordered PDF embed. Any narrative must follow
+  the measured changes without asserting unsupported causes. Keep arbitrary
+  recursive field diffs out; a separate `/tax-diff` skill is demand-gated.
+  Origin: `docs/superpowers/specs/2026-05-25-yoy-diff-design.md` §Open follow-ups.
+
+Other explicit historical boundaries remain demand-gated scope candidates:
+NOL computation/rollover; ISO dual-basis and unsold-lot rollover; crypto
+specific identification, NFT/DeFi/business classification; Roth distribution
+ordering and inherited IRAs; PFIC QEF/MTM/transition elections and broader
+Form 8938 computation; NC business/recovery/Taxed-PTE work and additional NY
+credit worksheets. The current capability gates and manual-input contracts
+continue to describe those limits. These are not evidence that the shipped
+v1 features failed their definitions of done. The existing declined packaging
+and vendor-CI rulings remain closed.
 
 
 ### Y — distribution and product
