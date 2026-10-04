@@ -712,7 +712,7 @@ CLI `--max` false alarm. Newly visible allowances are already-stated statutory
 figures, with thresholds/floors pinned to engine constants. Ten regression
 tests cover both false-negative and false-positive cases and exercise both
 actual gates. No new tax-law amount enters a skill. Design:
-`docs/superpowers/specs/2026-10-03-wrapped-figure-lint-design.md`.
+[2026-10-03-wrapped-figure-lint-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-10-03-wrapped-figure-lint-design.md).
 
 
 ## X10 — retirement split, HSA eligibility and state conformity (#224)

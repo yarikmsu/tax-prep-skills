@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """North Carolina Form D-400 — `agents/lib/tax_computations/state/nc.py`.
 
-Z4 slice 3, spec §5 and §7 of
-`docs/superpowers/specs/2026-10-02-nc-state-module-design.md`.
+Z4 slice 3; raw-input and verification contracts in
+`docs/contributing/state-module-nc.md`.
 
 Every expected value is HAND-COMPUTED from the TY2025 NCDOR D-401 instructions
 and cites the page. The cache figures below are TEST DATA transcribed from those

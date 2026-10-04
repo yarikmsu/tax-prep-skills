@@ -1027,7 +1027,7 @@ WATCHES and actually select it. This caught two old capability-test gaps for
 `tax_law_fetcher.py` and `tie_out.py`; both now select capability tests too.
 Legacy selection data remains behavioral regression evidence and requires no
 edit when a new dependency is declared. Contributor details and audit scope:
-`docs/superpowers/specs/2026-10-03-declared-hook-inputs-design.md`.
+[2026-10-03-declared-hook-inputs-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-10-03-declared-hook-inputs-design.md).
 
 
 ## W11 — one state withholding true-up specification (#226)
@@ -1043,7 +1043,7 @@ JSON and Markdown cases. It also exposed 210 NY payment combinations that
 previously crashed on an absent `de_minimis` adapter field; the shared timing
 helper now reads that optional field safely, with two explicit regressions.
 The federal-only coverage note now includes NC. Design and scope:
-`docs/superpowers/specs/2026-10-03-state-true-up-spec-design.md`.
+[2026-10-03-state-true-up-spec-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-10-03-state-true-up-spec-design.md).
 
 
 ## W10 — generic state adjustment and local-tax rule blocks (#227)
@@ -1061,7 +1061,7 @@ taxes block generic estimates and name their manual forms; no city return is
 priced from a state income proxy. Dedicated state modules retain their paths.
 Whole-block writes attest coverage and year; partial edits cannot re-attest
 old rules. Schema, input, provenance and projection refusals are tested.
-Design: `docs/superpowers/specs/2026-10-03-generic-state-rules-design.md`.
+Design: [2026-10-03-generic-state-rules-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-10-03-generic-state-rules-design.md).
 
 
 ## W3 remaining stamp runtime — PR #230, 2026-10-03
@@ -1089,4 +1089,4 @@ status, stdout, stderr and stamp bodies rather than treating empty output as a
 pass. New tests exercise byte formats, every persisted token, a missing runtime,
 and the no-interpreter fast path. Existing signal, symlink, concurrent-write,
 carry-forward and environment-hardening tests still drive the complete hook.
-The design is `docs/superpowers/specs/2026-10-03-hook-stamp-runtime-design.md`.
+The design is [2026-10-03-hook-stamp-runtime-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-10-03-hook-stamp-runtime-design.md).

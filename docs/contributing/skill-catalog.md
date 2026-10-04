@@ -1187,7 +1187,7 @@ the multi-agent move.
   neutralization lint cannot see either of these, since it matches bare tool
   names; a Claude-only *path* or *frontmatter key* passes it untouched.
 - `state-module` — gates and ordering only; the detail stays in
-  `state-module-playbook.md` and `TEMPLATE-state-module.md`, so there is one
+  `state-module-playbook.md` and `state-module-template.md`, so there is one
   copy to keep current rather than two that drift. Registered in
   `WEB_DEPENDENT`: filling a fetched-law block means looking up a state's
   current schedules, and AGENTS.md §2's STOP-and-paste rule governs a state

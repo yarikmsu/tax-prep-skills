@@ -167,9 +167,8 @@ a figure from a prior year.
   table and City schedules share the existing NY fields. Do not use IT-201's
   City tax table for the IT-360.1 part-year worksheet.
   A generic fetch of brackets and a standard deduction leaves the regimes that actually
-  decide a New York return unset, and the block then reads as fetched. Design
-  spec and sources:
-  `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`.
+  decide a New York return unset, and the block then reads as fetched. Maintained
+  contract and sources: `docs/contributing/state-module-ny.md`.
   - Search `"New York State {year} tax rate schedules site:tax.ny.gov"` →
     populate `state.brackets`, keyed by **SCHEDULE** (`a`/`b`/`c`), not by
     filing status: Tax Law §601(a) covers married-filing-jointly AND the
@@ -333,9 +332,9 @@ a figure from a prior year.
     rate → `state.disability_benefits`. **Both are year-aware on purpose**:
     the CA scar is that the SDI wage ceiling DISAPPEARED in TY2024, and a cap
     read as a constant mis-computed every later return.
-- **For NC — the generic one-search fallback is NOT enough either.** Design
-  spec and sources: `docs/superpowers/specs/2026-10-02-nc-state-module-design.md`
-  §3. `set state` to the `create_state_template("NC")` output first, then each
+- **For NC — the generic one-search fallback is NOT enough either.** Maintained
+  contract and sources: `docs/contributing/state-module-nc.md` (fetched-law block).
+  `set state` to the `create_state_template("NC")` output first, then each
   figure below. Every source is the North Carolina Department of Revenue
   (`ncdor.gov` — the D-401 instructions for `{year}` and its rate and
   estimated-tax pages) or the General Statutes on `ncleg.gov`, and **each page

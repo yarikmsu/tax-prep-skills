@@ -8,7 +8,7 @@ enumerates `agents/lib/` had to learn to descend in the same change, and a
 smaller first move is a cheaper place to find out that one of them did not.
 
 Every figure is an argument. The design and its sources are in
-`docs/superpowers/specs/2026-09-10-ny-state-module-design.md`; the cache keys a
+`docs/contributing/state-module-ny.md`; the cache keys a
 reader needs are in `docs/contributing/tax-law-cache.md`.
 """
 

@@ -2484,8 +2484,8 @@ class TestEveryGateCliUsesOneExitContract:
 # found the shape inadequate against the statute, in the UNDER-statement
 # direction. They are written as the corrections, not as decoration.
 #
-# Design spec and sources:
-# docs/superpowers/specs/2026-09-10-ny-state-module-design.md
+# Maintained contract and sources:
+# docs/contributing/state-module-ny.md
 
 
 class TestTheNewYorkBlock:
@@ -2749,8 +2749,8 @@ class TestTheNewYorkBlock:
 
 
 class TestTheNorthCarolinaBlock:
-    """Z4 slice 2: `create_state_template("NC")`, spec §3 of
-    docs/superpowers/specs/2026-10-02-nc-state-module-design.md.
+    """Z4 slice 2: `create_state_template("NC")`, fetched-law contract in
+    docs/contributing/state-module-nc.md.
 
     Two shapes are new to this cache. The rate is a ONE-band schedule, year-
     gated by G.S. 105-153.7, so the year the rate page named travels with it.

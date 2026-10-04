@@ -491,8 +491,8 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "no_city_income_tax": True,
         },
         "NY": {
-            # Design spec, with the sources and what is still OPEN:
-            # docs/superpowers/specs/2026-09-10-ny-state-module-design.md
+            # Maintained contract, sources and scope limits:
+            # docs/contributing/state-module-ny.md
             "code": "NY",
             "name": "New York",
             "authority": "Department of Taxation and Finance",
@@ -837,9 +837,8 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "disability_benefits": {"employee_rate": None, "weekly_cap": None},
         },
         "NC": {
-            # Design spec, §3 is this block row by row, with the TY2025 D-401
-            # page and statute behind each field:
-            # docs/superpowers/specs/2026-10-02-nc-state-module-design.md
+            # Maintained fetched-law contract and TY2025 D-401 sources:
+            # docs/contributing/state-module-nc.md
             # Every figure is None and FETCHED by /tax-setup step 4 — including
             # the ones the statute states and does not index (AGENTS.md §2).
             # Descriptive keys audited against check_freshness's _SKIP_KEYS:

@@ -58,7 +58,7 @@ epic.story ids. Every story here follows `docs/contributing/state-module-playboo
 
 ## Z1-Z3 — the spec, written 2026-09-10
 
-**Z1-Z3 — SPEC WRITTEN 2026-09-10**, `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`,
+**Z1-Z3 — SPEC WRITTEN 2026-09-10**, [2026-09-10-ny-state-module-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-09-10-ny-state-module-design.md),
   from the playbook's step-0 questionnaire. Live-verified: NY starts from federal AGI;
   IT-196 itemizing is INDEPENDENT of the federal election and runs on PRE-TCJA federal
   rules; §615 imposes two high-AGI reductions plus a separate charitable limitation; and

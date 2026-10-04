@@ -2,8 +2,8 @@
 """North Carolina — Form D-400, full-year resident, with Schedule S (Parts A-B),
 the NC Schedule A and D-400TC Parts 1 and 3.
 
-Design and sources: `docs/superpowers/specs/2026-10-02-nc-state-module-design.md`
-(§5 is this file function by function); cache keys:
+Contract and sources: `docs/contributing/state-module-nc.md`
+(raw inputs and computation); cache keys:
 `create_state_template("NC")` in `agents/lib/tax_law_fetcher.py`.
 
 EVERY FIGURE IS AN ARGUMENT, read from the fetched `state` block: the flat rate,
@@ -34,7 +34,7 @@ from agents.lib.tax_computations._shared import (
 # The D-401 instruction years whose LINE NUMBERING and line arithmetic this file
 # was written against. Structural, not a tax figure: Schedule S line numbers and
 # the conformity date move by year, and "Schedule S is exhaustive" holds per
-# year only (spec §2). A year not listed is refused rather than mapped by last
+# year only (maintained contract). A year not listed is refused rather than mapped by last
 # year's lines — read that year's D-401, then add it here with its tests.
 _NC_D401_YEARS_READ = frozenset({2025})
 

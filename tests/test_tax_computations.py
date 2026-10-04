@@ -7650,9 +7650,9 @@ class TestOneReaderOfStateBrackets:
 
 
 class TestTheNorthCarolinaResultSection:
-    """`north_carolina_d400` — Z4 slice 2, spec §4 of
-    docs/superpowers/specs/2026-10-02-nc-state-module-design.md. This pins
-    the section against the SPEC's field list; the engine-emits-a-field check
+    """`north_carolina_d400` — Z4 slice 2, result contract in
+    docs/contributing/state-module-nc.md. This pins
+    the section against the contract's field list; the engine-emits-a-field check
     New York has is `tests/test_nc_state.py::TestTheResultSectionHoldsEveryKey`."""
 
     REPO = Path(__file__).resolve().parents[1]

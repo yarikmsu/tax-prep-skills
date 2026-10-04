@@ -80,9 +80,11 @@ before the season-open runbook.
 
 ## Feature workflow
 
-Substantial features follow the superpowers flow: brainstorm → spec → plan → subagent-driven
-implementation → review → ship; trivial markdown or JSON edits go inline. Specs and plans go
-under `docs/superpowers/{specs,plans}/YYYY-MM-DD-<feature>`; precedent `tax-rollover` (#8).
+Substantial features start from a scoped entry in `docs/roadmap/BACKLOG.md`.
+Record the design and implementation plan in the PR, and keep durable contracts
+in contributor or skill references. Implement, review locally, then ship after
+green CI. State modules use `docs/contributing/state-module-template.md`.
+Shipped history belongs in `docs/changelog/`; trivial edits can go inline.
 
 ## Git conventions for an assistant session
 

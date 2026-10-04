@@ -160,7 +160,7 @@ as a no-income-tax regime, and other states are bracket-estimate only. Adding a 
 explicitly community territory and the path is mapped:
 
 - `docs/contributing/state-module-playbook.md` — the procedure.
-- `docs/superpowers/specs/TEMPLATE-state-module.md` — the spec template to fill in.
+- `docs/contributing/state-module-template.md` — the spec template to fill in.
 
 Start by writing the spec. State tax law has more discontinuities than people expect,
 and the template exists because the ordering of those questions is what makes the

@@ -80,7 +80,7 @@ collapse was about.
   Python 3.12/3.14 CI), a PR template, and an issue template whose first field is a
   redaction warning with a synthetic example. **The on-ramp already exists**: AGENTS.md
   invites community state modules and `docs/contributing/state-module-playbook.md` plus
-  `docs/superpowers/specs/TEMPLATE-state-module.md` are a ready-made first contribution
+  [TEMPLATE-state-module.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/TEMPLATE-state-module.md) are a ready-made first contribution
   — label two states as `good first issue` and point CONTRIBUTING.md at them.
   Acceptance: the bug-report template makes pasting a real W-2 feel wrong, and a
   first-time contributor can add a state without asking a question.
@@ -109,7 +109,7 @@ collapse was about.
 
 - **S1 (P1, M): `tax-safe-harbor` — DONE 2026-08-27** (PR #78, squash `47db081`; suite
   2431 → 3221, CI green on 3.12 and 3.14). Executed
-  `docs/superpowers/plans/2026-08-12-safe-harbor-advisory.md` — twelve tasks, three
+  [2026-08-12-safe-harbor-advisory.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/plans/2026-08-12-safe-harbor-advisory.md) — twelve tasks, three
   phases, no new tax math. Shipped inside the Sep 15 window, so the expiry clause
   (re-scope to Jan 15 / Q4, else drop to P3) never fired. The engine-free property is a
   POSITIVE declaration — `ENGINE_FREE_SKILLS` in `tests/skill_text.py`, tested in both

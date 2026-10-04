@@ -1,7 +1,6 @@
 # AGENTS.md
 
-Project instructions for any AI coding agent working in this repository — OpenAI
-Codex, Cursor, Kimi Code, GitHub Copilot, Claude Code, or another. It handles
+Instructions for coding agents in this repository. It handles
 **real taxpayer data**: treat every runtime file as sensitive.
 
 This file is ordered by criticality on purpose. Several agents truncate
@@ -227,7 +226,7 @@ are plain Markdown instructions and are written to be executable that way.
 IT-203/NYC IT-360.1 require a reviewed TY2025 filing plan and allocations;
 other-state returns stay gated. WA has EMPTY ordinary brackets and no wage tax.
 No-tax regimes and depth limits: `docs/contributing/state-module-playbook.md`;
-adding a state: `docs/superpowers/specs/TEMPLATE-state-module.md`.
+adding a state: `docs/contributing/state-module-template.md`.
 
 ## 5. Directory structure
 
@@ -253,8 +252,7 @@ agents/
 docs/
 ├── contributing/                # One file per topic; §9 is the index
 ├── changelog/                   # Per-epic implementation history
-├── roadmap/                     # BACKLOG.md — the one backlog
-└── superpowers/                 # Feature specs + implementation plans
+└── roadmap/                     # BACKLOG.md — the one backlog
 scripts/                         # pre-commit-pii-scan.sh
 tests/                           # pytest suite
 ```
@@ -415,11 +413,15 @@ in full, so a new file in either goes in this table.
 
 | Topic | File |
 |---|---|
-| Per-agent sharp edges (Codex/Cursor/Kimi/Copilot/Claude) | `docs/contributing/agents-compat.md` |
-| Per-skill design notes, invariants, scope limits | `docs/contributing/skill-catalog.md` |
-| Counter-intuitive tax rules that have caused real bugs | `docs/contributing/tax-gotchas.md` |
-| What each block of the test suite guarantees | `docs/contributing/test-invariants.md` |
+| Agent compatibility | `docs/contributing/agents-compat.md` |
+| Skill contracts and scope | `docs/contributing/skill-catalog.md` |
+| Tax gotchas | `docs/contributing/tax-gotchas.md` |
+| Test invariants | `docs/contributing/test-invariants.md` |
 | Adding support for a new state | `docs/contributing/state-module-playbook.md` |
+| State contract template | `docs/contributing/state-module-template.md` |
+| NY contracts | `docs/contributing/state-module-ny.md` |
+| NC contract | `docs/contributing/state-module-nc.md` |
+| WA contract | `docs/contributing/state-module-wa.md` |
 | What the PII gate matches and how it fails | `docs/contributing/pii-gate.md` |
 | Key paths and per-status keying of the tax-law cache | `docs/contributing/tax-law-cache.md` |
 | The delegated-parse boundary and its degrade path | `docs/contributing/parse-boundary.md` |
@@ -429,7 +431,6 @@ in full, so a new file in either goes in this table.
 | Accepting a review subagent before trusting it | `docs/ops/review-subagent-acceptance.md` |
 | Opening a filing season | `docs/ops/season-open-runbook.md` |
 | Per-epic implementation history | `docs/changelog/` |
-| Feature specs and implementation plans | `docs/superpowers/` |
 
 **Roadmap status** — `docs/roadmap/BACKLOG.md` is the ONE backlog; a second
 file there is a second place for an item's status. It holds what is open, who

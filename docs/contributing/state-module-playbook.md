@@ -27,22 +27,18 @@ down.
   joint periods, special IT-230 ratios and IT-203 Yonkers tax refuse. Ordinary
   NY projections/IT203 withholding forecasts skip with a named reason. A City
   move while NY residency remains full-year still requires the unmodeled IT201
-  part-year City branch. See `2026-10-03-ny-it203-design.md` under the specs.
+  part-year City branch. The maintained IT-203 contract is in
+  `docs/contributing/state-module-ny.md`.
   Within the IT-201 scope, IT-196 lines 1-45, IT-201
   line 45's other taxes, the AMOUNT of each refundable credit and line 59's
   sales and use tax are not computed either — each taken as an input or asked,
-  and each NAMED on `meta.limitations`. The design spec is
-  `docs/superpowers/specs/2026-09-10-ny-state-module-design.md`; the New York
+  and each NAMED on `meta.limitations`. The maintained contract is
+  `docs/contributing/state-module-ny.md`; the New York
   keying gotchas a cache reader needs are in
   `docs/contributing/tax-law-cache.md`.
-  Expectations: steps 0-2 (the
-questionnaire, the fetched-law block, the result section) fit a ~90-minute
-Claude Code session; compute functions + hand-computed worksheet tests are
-a further multi-hour session plus at least one adversarial review round —
-that is what CA's own features took, per the roadmap history this playbook
-cites. Open this file and
-`docs/superpowers/specs/TEMPLATE-state-module.md` in your session and tell
-Claude which state you're building.
+  Open this guide and `docs/contributing/state-module-template.md` before
+  building a state. Answer the questionnaire, define the law and result
+  contracts, then implement and review the worksheet tests.
 
 North Carolina's Form D-400 is the third module, for a full-year resident under
 the source-verified TY2025 D-401. It computes Schedule S lines 1 and 17-21,
@@ -50,8 +46,8 @@ raw-input NC Schedule A, the child deduction and D-400TC Part 1. It gates other
 Schedule S deductions, business/recovery/NOL/Taxed-PTE items and other credits.
 NC-40 true-up uses fetched shares; farmer and annualized-income worksheets are
 manual, and holiday dates conservatively roll weekends only. Other form years
-refuse until their conformity rules are verified. Spec:
-`docs/superpowers/specs/2026-10-02-nc-state-module-design.md`.
+refuse until their conformity rules are verified. Maintained contract:
+`docs/contributing/state-module-nc.md`.
 
 ## The pattern in one paragraph
 
@@ -159,8 +155,10 @@ conventions are load-bearing:
   `evidence_fields` (step 5), add a `_<xx>_section_computed()` wrapper in
   `projection/` mirroring `_ca_section_computed`, and consume
   it from any state-specific projection/withholding block you add — if
-  you add none, say so explicitly in your spec. Give your section a field
-  that is ALWAYS non-zero when computed (CA uses the standard deduction).
+  you add none, say so explicitly in your contract. Evidence must come from
+  computation. If every amount can be zero, add a checked computation witness
+  such as `computed_tax_year` (WA and IT-203), rather than assuming every state
+  has CA's nonzero standard deduction.
 - Field names must match what the skills instruct writing — the tie-out
   and `/tax-generate` read them literally.
 
@@ -241,7 +239,7 @@ Grep-verify each of these — they are the places "state" is enumerated:
 | `capabilities._state_note` | upgrade your state from the bracket-estimate note to a depth note — **do this LAST (step 7)** |
 | `retirement_dashboard` sets | `_HSA_NON_CONFORMING_STATES`, `_IRA_DEDUCTION_NONCONFORMING_STATES`, `_RETIREMENT_DEFERRAL_NONCONFORMING_STATES` if your state belongs |
 | `tax_calendar.py` **and** `agents/lib/ptet.py` | weighted estimated-payment events if not equal quarters (CA-ES precedent); PTET: one `PTET_WINDOWS` entry in the state registry, which both modules read (W10) |
-| `withholding.py` / `projection/` | projection has a generic bracket path (`project_state_tax`); **withholding has NO generic state path** — it is federal plus a `build_<xx>_true_up` per computed state (CA, NY), so either add a state true-up block or list the gap explicitly in your spec's non-goals (an unlisted gap silently drops your state's true-up) |
+| `withholding.py` / `projection/` | projection has a generic bracket path (`project_state_tax`); **withholding has NO generic state path** — it is federal plus a `build_<xx>_true_up` per computed income-tax state (CA, NY, NC). Wire the true-up and document any projection skip; excise and no-income-tax regimes explicitly explain why neither wage true-up nor a generic bracket forecast applies. |
 | `/tax-extend` and `tax_calendar.events_extension` | your state's extension mechanics (CA's automatic extension with FTB 3519 and NY's required IT-370 are the precedents) |
 
 ## Step 6 — Tests
@@ -286,8 +284,8 @@ Grep-verify each of these — they are the places "state" is enumerated:
 `pytest tests/` green with your additions; `/tax-setup` fetches your block;
 a synthetic profile computes your section end-to-end; the tie-out passes
 with your withholding category; the capability note tells the truth; the
-`docs/contributing/test-invariants.md` test count + your state's depth
-description in `AGENTS.md` updated; spec written from
-`docs/superpowers/specs/TEMPLATE-state-module.md`.
+relevant `docs/contributing/test-invariants.md` coverage + your state's depth
+description in `AGENTS.md` updated; maintained contract written from
+`docs/contributing/state-module-template.md`.
 
-Washington (Z5) is `capital_gains_excise`, with empty ordinary brackets and its own fetched LT-gain bands. It has no wage-withholding ledger or quarterly true-up. TY2025 only; separate households, special federal gain normalization and midyear domicile changes refuse. See the 2026-10-03 WA design spec.
+Washington is `capital_gains_excise`, with empty ordinary brackets and its own fetched LT-gain bands. It has no wage-withholding ledger or quarterly true-up. TY2025 only; separate households, special federal gain normalization and midyear domicile changes refuse. Its return and shipped harvest/crypto/WFTC contracts are in `docs/contributing/state-module-wa.md`.

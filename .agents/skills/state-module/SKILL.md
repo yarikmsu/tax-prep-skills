@@ -11,7 +11,7 @@ already written down. This skill is the ORDER and the GATES; the detail lives in
 two files you should open alongside it and follow directly:
 
 - `docs/contributing/state-module-playbook.md` — the worked pattern, step by step
-- `docs/superpowers/specs/TEMPLATE-state-module.md` — the spec template
+- `docs/contributing/state-module-template.md` — the maintained contract template
 
 Worked precedents: **California** (the in-depth `graduated_income` module) and
 **Florida** (PR #65, the `type: "none"` regime).
@@ -129,8 +129,8 @@ Playbook step 7 and its "Definition of done" close this out.
 
 ## Non-interactive use
 
-This is contributor work, not a taxpayer run: decisions belong in the spec file
-under `docs/superpowers/specs/`, never in `answers.md`, which is taxpayer
+This is contributor work, not a taxpayer run: decisions belong in the maintained
+`docs/contributing/state-module-{xx}.md` contract, never in `answers.md`, which is taxpayer
 workspace. In a headless run, if a questionnaire answer is not already recorded
 in the spec, stop and ask — do not infer a state's conformity from a neighbour's.
 

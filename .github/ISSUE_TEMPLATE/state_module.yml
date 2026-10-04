@@ -13,7 +13,7 @@ body:
         so you are not starting from a blank page:
 
         - `docs/contributing/state-module-playbook.md` — the procedure
-        - `docs/superpowers/specs/TEMPLATE-state-module.md` — the spec to fill in
+        - `docs/contributing/state-module-template.md` — the spec to fill in
 
         **Start with the spec, not the code.** State tax law has more
         discontinuities than people expect, and the ordering of the template's
