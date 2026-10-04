@@ -487,10 +487,6 @@ def _prior_state_tax_agi(spec: StateTrueUpSpec, prior):
     return tax, agi
 
 
-def _prior_ny_tax_nyagi(prior):
-    return _prior_state_tax_agi(_STATE_TRUE_UP_SPECS["NY"], prior)
-
-
 def _state_payments(spec: StateTrueUpSpec, inputs: dict, as_of: datetime.date):
     frac = elapsed_fraction(as_of)
     if frac <= 0:

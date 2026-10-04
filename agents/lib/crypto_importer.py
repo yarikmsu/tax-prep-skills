@@ -1160,10 +1160,6 @@ def _gemini_split(symbol: str) -> 'tuple[str, str]':
     return _alias(s), ""
 
 
-def _gemini_base(symbol: str) -> str:
-    return _gemini_split(symbol)[0]
-
-
 _ADAPTERS = {
     "coinbase": adapt_coinbase,
     "kraken": adapt_kraken,
