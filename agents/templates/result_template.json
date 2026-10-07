@@ -125,7 +125,7 @@
   },
 
   "schedule_a": {
-    "_include_if": "compute_schedule_a ran and use_itemized is true (or the election was close enough to document — within $500)",
+    "_include_if": "compute_schedule_a ran and use_itemized is true, OR charitable_ledger is present, OR the election was close enough to document — within $500",
     "note": "Itemized deductions. Election computed by compute_schedule_a, not vibes.",
     "medical_deductible": 0,
     "medical_expenses": null,
@@ -137,6 +137,7 @@
     "investment_interest": 0,
     "charitable_deductible": 0,
     "charitable_carryforward": 0,
+    "charitable_ledger": null,
     "charitable_limits_confirmed": false,
     "obbba_70111_reduction": 0,
     "itemized_total": 0,
@@ -147,15 +148,17 @@
   },
 
   "schedule_ca_itemized": {
-    "_include_if": "CA return and compute_ca_itemized ran (CA itemizes far more often than federal — small CA standard deduction, no SALT cap)",
+    "_include_if": "CA return and compute_ca_itemized ran; retain whenever charitable_ledger is present, including standard-deduction years",
     "note": "CA Schedule CA itemized path. Independent of the federal election.",
     "medical_deductible": 0,
     "taxes_deductible": 0,
     "mortgage_deductible": 0,
     "investment_interest": 0,
     "charitable_deductible": 0,
+    "charitable_inputs": null,
     "misc_deductible": 0,
     "charitable_carryforward": 0,
+    "charitable_ledger": null,
     "phaseout_reduction": 0,
     "itemized_total": 0,
     "use_itemized": false,

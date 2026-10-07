@@ -178,6 +178,8 @@ def compute_ca_itemized(
     mfs_spouse_is_a_separate_filer: bool | None = None,
     ca_standard_deduction: float,
     phaseout_threshold: float | None = None,
+    charitable_prior_ledger: dict | None = None,
+    charitable_worksheet: dict | None = None,
 ) -> dict:
     """CA Schedule CA itemized deductions — computed from the SOURCE figures
     (not by adjusting the federal Schedule A total), because the differences
@@ -312,6 +314,18 @@ def compute_ca_itemized(
             f"conformity) — ${ca_charitable_carryforward:,.2f} carries "
             "forward for CA (tracked separately from the federal "
             "carryforward; enter manually next year)")
+
+    charity_settlement = {}
+    if charitable_prior_ledger is not None or charitable_worksheet is not None:
+        from agents.lib.tax_computations.charitable import settle_charitable_ledger
+        charity_settlement = settle_charitable_ledger(
+            charitable_prior_ledger, charitable_worksheet, tax_year=tax_year,
+            jurisdiction="CA", agi=federal_agi, charitable_cash=cash,
+            charitable_noncash=noncash)
+        charitable_deductible = charity_settlement["charitable_deductible"]
+        ca_charitable_carryforward = charity_settlement["charitable_carryforward"]
+        notes = [n for n in notes if not n.startswith("CA cash charitable cap")]
+        notes.append("CA charitable vintages use the separate reviewed CA worksheet")
 
     misc_deductible = round(max(0.0, misc - 0.02 * agi_v), 2)
     if misc > 0:
@@ -559,7 +573,16 @@ def compute_ca_itemized(
             "CA itemizes even when the federal return takes the "
             "standard deduction — the elections are independent")
 
+    if charity_settlement:
+        assert charitable_worksheet is not None
+        if charitable_worksheet["itemizes"] != use_itemized:
+            raise ValueError("CA charitable worksheet election differs; resolve absorption for the actual election")
     return {
+        **charity_settlement,
+        "charitable_inputs": ({"charitable_prior_ledger": charitable_prior_ledger,
+                               "charitable_worksheet": charitable_worksheet,
+                               "agi": federal_agi, "charitable_cash": cash,
+                               "charitable_noncash": noncash} if charity_settlement else None),
         "medical_deductible": medical_deductible,
         "taxes_deductible": taxes_deductible,
         "mortgage_deductible": mortgage_deductible,

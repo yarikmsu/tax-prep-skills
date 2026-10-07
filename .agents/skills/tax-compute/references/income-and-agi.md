@@ -684,6 +684,19 @@ persona SALT usually exceeds the OBBBA cap by itself):
   Record `schedule_a.charitable_limits_confirmed` as true only when both are
   confirmed (an absent gift category qualifies); otherwise false. Planning
   tools require this confirmation before re-pricing a binding charitable cap.
+- **Charitable vintages (AA35):** follow
+  `docs/contributing/charitable-carryovers.md` when an opening carryover exists
+  OR this year's computation produces a carryforward. Supply
+  `charitable_prior_ledger` from the profile and a reviewed
+  `charitable_worksheet` to `compute_schedule_a`; save `charitable_ledger`
+  and the returned `inputs` unchanged, even when taking the standard
+  deduction. The worksheet resolves current gifts, category ordering, oldest
+  eligible vintages, expiration, floors and standard-deduction absorption.
+  Missing prior worksheets require explicit manual resolution in answers.md
+  (`[charitable_carryovers]`); an aggregate is never split or aged by guess.
+  The derived-lines gate reproduces the settlement and refuses missing,
+  dropped or edited vintages. A scenario at another AGI requires another
+  reviewed worksheet; it must not reuse the baseline allocation.
 - MFS: ask whether the spouse itemizes; record it as
   `- **[mfs_spouse_itemizes]** the answer`. The answer binds BOTH ways —
   §63(c)(6)(A) zeroes the standard deduction of both spouses once either

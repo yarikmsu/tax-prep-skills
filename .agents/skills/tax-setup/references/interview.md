@@ -800,6 +800,15 @@ own state of residence)**:**
   and `prior_year.capital_loss_carryforward_long_term`. A figure the user only
   knows combined goes in the legacy `prior_year.capital_loss_carryforward`; do
   not split it by guess — `/tax-compute` stops for the split before Schedule D.
+- Charitable carryovers? Request prior worksheets with each origin year,
+  contribution category, federal/CA jurisdiction, expiry and original/used/
+  lapsed/remaining amounts. Store verified ledgers in
+  `prior_year.charitable_carryforward_ledger` as described in
+  `docs/contributing/charitable-carryovers.md`. An aggregate is not proof of
+  vintage or eligibility. Missing worksheets require an explicit manual
+  resolution recorded as `- **[charitable_carryovers]** the answer` in
+  answers.md; until resolved, store `{"verified": false}` for the affected
+  jurisdiction. Never substitute an empty ledger for an unresolved balance.
 - QBI (qualified business income) loss carryforward?
 - Unused foreign tax credit carryforward?
 - Net operating loss (NOL) carryforward?

@@ -79,6 +79,8 @@ _TRIGGERS = {
     "document_set_complete": dict(),
     "corrected_documents": dict(),
     "charitable_gifts": dict(),
+    "charitable_carryovers": dict(profile={"prior_year": {
+        "charitable_carryforward_ledger": {"federal": {"verified": False}}}}),
     "capital_loss_carryforward_split": dict(
         profile={"prior_year": {"capital_loss_carryforward": 9000,
                                 "capital_loss_carryforward_short_term": 0,

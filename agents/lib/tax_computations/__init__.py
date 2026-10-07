@@ -2066,6 +2066,9 @@ def compute_schedule_a(
     top_bracket_income: float = None,
     modified_agi: "float | None" = None,
     non_itemizer_charitable: "float | None" = None,
+    *,
+    charitable_prior_ledger: "dict | None" = None,
+    charitable_worksheet: "dict | None" = None,
 ) -> dict:
     """Federal Schedule A + the itemize-vs-standard election, computed.
 
@@ -2167,6 +2170,8 @@ def compute_schedule_a(
         "charitable_over_250_substantiated": charitable_over_250_substantiated,
         "mfs_spouse_itemizes": mfs_spouse_itemizes,
         "non_itemizer_charitable": non_itemizer_charitable,
+        "charitable_prior_ledger": charitable_prior_ledger,
+        "charitable_worksheet": charitable_worksheet,
     }
     fs = _normalize_filing_status(filing_status)
     if isinstance(tax_year, bool) or not isinstance(tax_year, int):
@@ -2268,6 +2273,17 @@ def compute_schedule_a(
             "enter it manually in next year's prior_year block "
             "(/tax-rollover lists it in the manual-carryforward reminder; "
             "it is not auto-tracked)")
+    charity_settlement = {}
+    if charitable_prior_ledger is not None or charitable_worksheet is not None:
+        from agents.lib.tax_computations.charitable import settle_charitable_ledger
+        charity_settlement = settle_charitable_ledger(
+            charitable_prior_ledger, charitable_worksheet, tax_year=tax_year,
+            jurisdiction="federal", agi=agi, charitable_cash=cash,
+            charitable_noncash=noncash)
+        charitable_deductible = charity_settlement["charitable_deductible"]
+        charitable_carryforward = charity_settlement["charitable_carryforward"]
+        notes = [n for n in notes if not n.startswith(("OBBBA §70425", "charitable contributions over"))]
+        notes.append("Charitable deduction and vintages use the reviewed carryover worksheet")
     if cash > 0:
         notes.append(
             "assumes all donees are 50%-limit public charities — cash to a "
@@ -2381,7 +2397,10 @@ def compute_schedule_a(
                else None if (non_itemizer_charitable is None
                              and tax_year >= _CHARITABLE_NONITEMIZER_FROM)
                else non_itemizer)
+    if charity_settlement and charitable_worksheet["itemizes"] != use_itemized:
+        raise ValueError("Charitable worksheet election differs; resolve absorption for the actual election")
     return {
+        **charity_settlement,
         "medical_deductible": medical_deductible,
         # The gross, not only what cleared the floor: the floor is a share of
         # AGI, and a planning tool asking whether a delta moves the deduction
@@ -2467,6 +2486,8 @@ def rerun_schedule_a(inputs: dict, agi: float,
     expected = ((set(inspect.signature(compute_schedule_a).parameters)
                  - set(SCHEDULE_A_AGI_ARGUMENTS))
                 | set(_SCHEDULE_A_RERUN_KEYS))
+    if not {"charitable_prior_ledger", "charitable_worksheet"} & set(inputs):
+        expected -= {"charitable_prior_ledger", "charitable_worksheet"}
     if set(inputs) != expected:
         missing = sorted(expected - set(inputs))
         extra = sorted(set(inputs) - expected)
@@ -3546,6 +3567,10 @@ def compute_education_credits(
 # calls them by — this is not only a re-export. `_coerce_numeric` in particular
 # is addressed as `tax_computations._coerce_numeric` from outside the package,
 # by tests and by the review-subagent acceptance fixture.
+from agents.lib.tax_computations.charitable import (  # noqa: E402,F401
+    settle_charitable_ledger,
+    validate_charitable_ledger,
+)
 from agents.lib.tax_computations._shared import (  # noqa: F401
     qdcg_worksheet_applies,
     _CHARITY_APPRECIATED_AGI_CAP,

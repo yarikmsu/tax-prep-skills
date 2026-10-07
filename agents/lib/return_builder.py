@@ -637,8 +637,50 @@ def check(result: dict, profile: "dict | None" = None) -> None:
     _check_the_amt(result)
     _check_the_payments(result)
     _check_the_prior_overpayment(result, profile)
+    _check_charitable_vintages(result, profile)
     net_st, net_lt = _schedule_d_nets(result)
     _check_line_7_against_schedule_d(result, net_st + net_lt)
+
+
+def _check_charitable_vintages(result, profile):
+    """Bind each worksheet settlement to the opening profile and actual return."""
+    from agents.lib.tax_computations.charitable import settle_charitable_ledger
+    opening = ((profile or {}).get("prior_year") or {}).get("charitable_carryforward_ledger")
+    if opening is None:
+        opening = {}
+    if not isinstance(opening, dict):
+        raise Blocked("Opening charitable ledgers must be an object")
+    for jurisdiction, name in (("federal", "schedule_a"), ("CA", "schedule_ca_itemized")):
+        section = result.get(name) or {}
+        if not isinstance(section, dict):
+            raise Blocked("Charitable result section must be an object")
+        prior = opening.get(jurisdiction)
+        ledger = section.get("charitable_ledger")
+        if prior is None and ledger is None and not section.get("charitable_carryforward"):
+            continue
+        if profile is None:
+            raise Blocked("Charitable vintage validation needs the taxpayer profile")
+        inputs = (section.get("inputs") if jurisdiction == "federal"
+                  else section.get("charitable_inputs")) or {}
+        if not isinstance(inputs, dict):
+            raise Blocked("Charitable worksheet inputs must be an object")
+        try:
+            if inputs.get("charitable_prior_ledger") != prior:
+                raise ValueError("Charitable worksheet opening differs from the profile")
+            agi = (result.get("form_1040") or {}).get("line_11_agi")
+            settled = settle_charitable_ledger(
+                prior, inputs.get("charitable_worksheet"),
+                tax_year=(result.get("meta") or {}).get("tax_year"),
+                jurisdiction=jurisdiction, agi=agi,
+                charitable_cash=inputs.get("charitable_cash"),
+                charitable_noncash=inputs.get("charitable_noncash"))
+            for key, expected in settled.items():
+                if section.get(key) != expected:
+                    raise ValueError("Charitable result differs from its reviewed vintage settlement")
+            if inputs["charitable_worksheet"]["itemizes"] != section.get("use_itemized"):
+                raise ValueError("Charitable worksheet differs from the return's deduction election")
+        except (ValueError, TypeError, KeyError) as exc:
+            raise Blocked(f"{jurisdiction} charitable carryover unresolved: {exc}") from exc
 
 
 def _check_the_payments(result: dict) -> None:

@@ -176,6 +176,8 @@
   "prior_year": {
     "filing_status": null,
     "state_residency_changes": null,
+    "charitable_carryforward_ledger": {"federal": null, "CA": null},
+    "_comment_charitable": "Reviewed end-of-year vintage ledgers from prior worksheets, separate by jurisdiction. Each preserves origin year, category, evidence, expiry, used/lapsed/remaining amounts. An unresolved marker BLOCKS computation; never reconstruct vintages from aggregate totals. See docs/contributing/charitable-carryovers.md.",
     "qbi_loss_carryforward": 0,
     "capital_loss_carryforward_short_term": 0,
     "capital_loss_carryforward_long_term": 0,

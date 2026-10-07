@@ -29,6 +29,18 @@ class RolloverError(Exception):
 # because lookup is by stable key, not raw path.
 
 FIELD_MAP: dict[str, dict] = {
+    "charitable_carryforward_federal": {
+        "category": "carryforwards", "source_path": "schedule_a",
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.charitable_carryforward_ledger.federal",
+        "transform": "charitable_ledger", "jurisdiction": "federal",
+    },
+    "charitable_carryforward_ca": {
+        "category": "carryforwards", "source_path": "schedule_ca_itemized",
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.charitable_carryforward_ledger.CA",
+        "transform": "charitable_ledger", "jurisdiction": "CA",
+    },
     # Category 1: Carryforwards (dollar amounts)
     "capital_loss_carryforward": {
         "category": "carryforwards",
@@ -499,10 +511,45 @@ def _capital_loss_changes(prior: "PriorReturn", profile: dict, raw) -> list:
     return out
 
 
+def _charitable_changes(prior, current, entry):
+    from agents.lib.tax_computations.charitable import validate_charitable_ledger
+    path = entry["target_path"]
+    section = _get_path(prior.result, entry["source_path"], {}) or {}
+    if not isinstance(section, dict):
+        raise RolloverError("Archived charitable section must be an object")
+    ledger = section.get("charitable_ledger")
+    incoming = _get_path(prior.profile, path)
+    existing = _get_path(current.profile, path)
+    if ledger is None and not section.get("charitable_carryforward") and not incoming:
+        return []  # An absent worksheet never retires an existing ledger.
+    reason = "Verified charitable vintage ledger; preserve origin, category and jurisdiction"
+    action = "apply"
+    try:
+        ledger = validate_charitable_ledger(ledger, prior.year, entry["jurisdiction"])
+        if round(sum(r["remaining_amount"] for r in ledger["entries"]), 2) != section.get("charitable_carryforward"):
+            raise ValueError("Archived charitable total differs from its vintage ledger")
+        prior_status = _status_code((prior.result.get("meta") or {}).get("filing_status")
+                                    or prior.profile.get("filing_status"))
+        current_status = _status_code(current.profile.get("filing_status"))
+        if prior_status is None or current_status is None or prior_status != current_status:
+            raise ValueError("Changed filing status needs a reviewed ownership/allocation resolution")
+    except ValueError as exc:
+        action = "ask"
+        reason = f"{exc}; resolve from prior worksheets before computation, never infer vintage from totals"
+        ledger = {"as_of_year": prior.year, "verified": False, "reason": reason}
+    if existing is not None and existing != ledger:
+        action = "ask"
+        reason += "; current ledger differs — confirm replacement"
+    return [Change("carryforwards", path, "taxpayer_profile.json", ledger, existing, action, reason)]
+
+
 def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Change]:
     out: list[Change] = []
     for key, entry in FIELD_MAP.items():
         if entry["category"] != "carryforwards":
+            continue
+        if entry.get("transform") == "charitable_ledger":
+            out.extend(_charitable_changes(prior, current, entry))
             continue
         raw = _get_path(prior.result, entry["source_path"])
         if raw is None:

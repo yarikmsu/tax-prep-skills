@@ -166,6 +166,20 @@ def _capital_loss_split_unknown(inputs: _Inputs) -> bool:
     return bool(combined) and not split
 
 
+def _charitable_carryovers_unresolved(inputs: _Inputs) -> bool:
+    ledgers = inputs.prior_year.get("charitable_carryforward_ledger") or {}
+    if not isinstance(ledgers, dict):
+        return True
+    for jurisdiction, section_name in (("federal", "schedule_a"), ("CA", "schedule_ca_itemized")):
+        ledger = ledgers.get(jurisdiction)
+        if ledger is not None and (not isinstance(ledger, dict) or ledger.get("verified") is not True):
+            return True
+        section = inputs.result.get(section_name) or {}
+        if section.get("charitable_carryforward") and not section.get("charitable_ledger"):
+            return True
+    return False
+
+
 def _state_has_an_income_tax(inputs: _Inputs) -> bool:
     """A `type: "none"` regime is a POSITIVE declaration (AGENTS.md §4).
 
@@ -258,6 +272,15 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
                       "no income tax is asked too; unasked, that deduction is "
                       "silently zero and the tax overstated",
         when=_always,
+    ),
+    RequiredAnswer(
+        id="charitable_carryovers",
+        kind=FACT,
+        question="Resolve each charitable carryover's vintage, category, jurisdiction, "
+                 "eligibility and balance from prior worksheets; document the manual resolution.",
+        asked_by="tax-compute income-and-agi.md",
+        required_when="an opening charitable ledger is unresolved or a closing total lacks vintages",
+        when=_charitable_carryovers_unresolved,
     ),
     RequiredAnswer(
         id="mfs_spouse_itemizes",

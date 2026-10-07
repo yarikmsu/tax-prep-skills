@@ -98,6 +98,13 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    federal one** — with CA's small standard deduction, itemizing CA-only
    is the norm for the persona. Write the `schedule_ca_itemized` section
    when itemizing.
+   **Charitable vintages:** pass the separate CA opening ledger and reviewed
+   CA worksheet as `charitable_prior_ledger` / `charitable_worksheet`.
+   Persist `charitable_ledger` AND `charitable_inputs` in
+   `schedule_ca_itemized`, including when CA takes the standard deduction.
+   Follow `docs/contributing/charitable-carryovers.md`; federal vintage usage
+   is never a substitute for CA usage. Other-state charitable worksheets
+   remain manual and are not declared conforming by this ledger.
 5. CA taxable income = CA AGI - CA deduction. **Line 18 is
    `use_itemized` — NEVER `max(itemized_total, ca_standard_deduction)`.**
    `compute_ca_itemized` returns no `deduction` key, so the caller picks, and

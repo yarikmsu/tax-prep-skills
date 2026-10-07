@@ -417,8 +417,8 @@ exit 2
 #   ---------------------------------------------------------------------------
 #   nothing watched changed        no pytest     under a thousandth
 #   agent-definition edit           48 tests     roughly a hundred-and-fiftieth
-#   skill .md edit                1099 tests     about a seventh
-#   cold pass, all seven modules  1405 tests     one
+#   skill .md edit                1100 tests     about a seventh
+#   cold pass, all seven modules  1406 tests     one
 #   (for scale) `pytest tests/`   every module  about twice
 #
 # The agent-definition row is the agents row below — that trigger selects that
@@ -442,7 +442,7 @@ exit 2
 #   tests/test_claude_hooks.py     212 tests    the dominant row
 #   tests/test_portability.py      260 tests    about a tenth of the hooks row
 #   tests/test_preflight.py        383 tests    a twelfth to a twentieth of it
-#   tests/test_secure_fs.py        189 tests    under a fiftieth of it
+#   tests/test_secure_fs.py        190 tests    under a fiftieth of it
 #   tests/test_host_guard.py        94 tests    under a fiftieth of it
 #   tests/test_capabilities.py     219 tests    under a fiftieth of it
 #   tests/test_claude_agents.py     48 tests    under a fiftieth of it
@@ -463,8 +463,8 @@ exit 2
 # list and not the timeout; parallelism is the honest lever left, and it needs
 # a dependency the lock does not carry.
 #
-# ARITHMETIC, which is the half that is EXACT: 48 + 219 + 189 + 260 + 383 = 1099
-# for a skill edit, plus 94 + 212 = 1405 for a cold pass, both matching the
+# ARITHMETIC, which is the half that is EXACT: 48 + 219 + 190 + 260 + 383 = 1100
+# for a skill edit, plus 94 + 212 = 1406 for a cold pass, both matching the
 # trigger table to the test. `test_the_measured_costs_counts_match_live_
 # collection` collects every module and re-derives both sums, the parts
 # included, so a stale count is a red suite rather than a figure a reader has to

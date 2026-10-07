@@ -56,6 +56,12 @@ Last updated: {{DATE}}
 
 - **[charitable_gifts]**
 
+### Resolve each charitable carryover's vintage, category, jurisdiction, eligibility and balance from prior worksheets; document the manual resolution.
+
+*Asked by tax-compute income-and-agi.md; required when an opening charitable ledger is unresolved or a closing total lacks vintages.*
+
+- **[charitable_carryovers]**
+
 ### Does your spouse itemize ON EACH RETURN they file — federal, and California or New York if either applies? The elections are INDEPENDENT (a spouse can take the federal standard deduction and itemize for CA), so record the state answer separately where it differs and pass each one to its own function. It binds this return BOTH ways: §63(c)(6) zeroes the standard deduction of both spouses once either itemizes, so a yes forces itemizing whatever the total, and a no bars it even when it is worth more. A no is an ANSWER, not an absence — the engine refuses to guess it. If the answer is no, also record whether the spouse files their own SEPARATE return or is considered unmarried and files as head of household: the coupling does not bind the second, and the two answers differ by the whole margin.
 
 *Asked by tax-compute income-and-agi.md; required when the filing status is married filing separately.*
