@@ -644,7 +644,7 @@ def test_an_itemizer_with_recorded_inputs_is_repriced_per_rung():
     assert "re-priced at each AGI" in rl.render_markdown(priced)
     # What re-pricing does not reach is still said (AA23's bias review).
     assert "Schedule 1-A (line 13b) deductions" in rl.render_markdown(priced)
-    assert "Taxable Social Security is held" in rl.render_markdown(priced)
+    assert "Taxable Social Security is recomputed" in rl.render_markdown(priced)
     assert rl._report_to_dict(priced)["schedule_a_repriced"] is True
 
     held = ladder(dict(result, schedule_a={k: v for k, v in sched.items()

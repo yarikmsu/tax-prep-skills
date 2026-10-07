@@ -457,11 +457,12 @@ def test_extract_baseline_inputs_ira_plus_pension():
     assert sc.extract_baseline_inputs(result)["ira_distribution"] == 1500.0
 
 
-def test_extract_baseline_inputs_taxable_ss_folds_into_ordinary():
-    # Codex P1: taxable Social Security (line 6b) is ordinary income and must be in
-    # the baseline so deltas stack at the right bracket for retirees.
+def test_extract_baseline_inputs_requires_gross_ss_evidence():
+    # Line 6b cannot establish gross benefits or the provisional-income worksheet.
+    # AA37 refuses this legacy shape rather than pricing a retiree too cheaply.
     result = {"form_1040": {"line_6b_taxable_ss": 12000, "line_8_schedule1_other": 1000}}
-    assert sc.extract_baseline_inputs(result)["other_income"] == 13000.0
+    with pytest.raises(sc.ScenarioError, match="never infer gross"):
+        sc.extract_baseline_inputs(result)
 
 
 def test_read_tax_year_wrong_year_raises():

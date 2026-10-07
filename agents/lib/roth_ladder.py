@@ -258,6 +258,8 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
                      or profile.get("filing_status"))
     rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)
     base_inputs = extract_baseline_inputs(result)
+    if base_inputs.get("social_security") is not None:
+        read_tax_year(result, year)
     basis_modeled, basis, value = _resolve_basis(profile, ira_basis, ira_value)
 
     line24 = round(_num(((result.get("form_1040", {}) or {})
@@ -525,9 +527,10 @@ def render_markdown(r: LadderReport) -> str:
               "among them, are held at the baseline amount: a rung that carries "
               "MAGI through a phase-out removes deduction this table does not, "
               "so its cost may read low.",
-              "- Taxable Social Security is held at the baseline: a conversion "
-              "that pushes more benefits into the taxable range costs more than "
-              "shown."]
+              "- Taxable Social Security is recomputed at each rung from confirmed "
+              "regular-worksheet inputs. Gross benefits, tax-exempt interest, exclusion "
+              "add-backs and non-SE adjustments stay fixed. Lump-sum and combined IRA "
+              "worksheets require separate review."]
     lines += schedule_a_caveat(r.schedule_a_repriced, r.schedule_a_held)
     lines += salt_phasedown_caveat(
         r.salt_cap_may_move, "rungs that carry modified AGI above the threshold can cost "

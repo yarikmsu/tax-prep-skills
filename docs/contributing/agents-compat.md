@@ -12,6 +12,14 @@ Behaviour below was verified against vendor documentation in **August 2026**.
 Agents ship fast; if a claim here contradicts what your agent actually does,
 trust the agent and please open a PR.
 
+## Invoking a skill
+
+Invoke a skill using your agent's own syntax (a slash command, a skill
+reference, or simply telling the agent to follow that skill). If your agent has
+no skill mechanism, read `.agents/skills/<name>/SKILL.md` and follow it directly,
+opening each `references/*.md` when the step that links it comes up — the files
+are plain Markdown instructions and are written to be executable that way.
+
 ## Parsing an untrusted document: which hosts can enforce the boundary
 
 A source document is untrusted input, and `AGENTS.md` §1 requires the party

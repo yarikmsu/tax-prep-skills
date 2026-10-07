@@ -33,6 +33,14 @@
 
   "dependents": [],
 
+  "social_security_worksheet": {
+    "_include_if": "SSA-1099 or RRB-1099 benefits exist",
+    "tax_year": null,
+    "regular_worksheet_confirmed": false,
+    "inputs": null,
+    "_note": "Persist every actual compute_taxable_ss input after computing line 6b. Confirm only a regular worksheet without lump-sum election or combined IRA/MAGI-dependent adjustment feedback. Required by income scenarios and Roth sweeps; never infer gross benefits from the taxable amount. See docs/contributing/social-security-planning.md."
+  },
+
   "form_1040": {
     "digital_asset_question": "No",
     "_note_digital_asset": "Form 1040 page-1 attestation. MUST be 'Yes' if the taxpayer received (reward/award/payment) OR sold/exchanged/disposed of any digital asset. /tax-parse-crypto sets this. Buying-and-holding with USD only is 'No'.",

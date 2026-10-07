@@ -155,6 +155,15 @@ the worksheet:
   can only LOWER taxable benefits and is NOT modeled — the computed line 6b is
   an upper bound the user should verify in tax software before filing.
 
+Persist every actual argument above (including explicit zero amounts and the
+lived-apart flag, null for a non-MFS filer) in
+`social_security_worksheet.inputs`, with the covered `tax_year`. Set
+`regular_worksheet_confirmed: true` only after confirming that the regular
+worksheet applies without a lump-sum election or combined IRA/MAGI-dependent
+adjustment feedback. Otherwise leave it false and record the reviewed method in
+`answers.md`. Planning tools need this evidence to reprice line 6b; they refuse
+legacy benefits without it. See `docs/contributing/social-security-planning.md`.
+
 **Capital loss carryforward (Schedule D):** the PRIOR year's carryforward
 enters this return BY CHARACTER — `prior_year.capital_loss_carryforward_short_term`
 on Schedule D line 6 (record it in `schedule_d.part_i_short_term.line_6_prior_year_carryover`,

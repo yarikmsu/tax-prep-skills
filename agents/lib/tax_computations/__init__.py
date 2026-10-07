@@ -3108,6 +3108,61 @@ SCENARIO_INPUT_KEYS = (
 )
 
 
+def _scenario_social_security(evidence, merged_inputs, *, ss_wage_base, capital_loss_limit):
+    """Reprice recorded benefits from the original worksheet and cumulative deltas."""
+    if evidence is None:
+        return 0.0, 0.0
+    if not isinstance(evidence, dict) or evidence.get("regular_worksheet_confirmed") is not True:
+        raise ValueError("Social Security requires confirmed regular-worksheet evidence")
+    original = evidence.get("origin")
+    worksheet = evidence.get("worksheet")
+    if (not isinstance(original, dict) or set(original) != set(SCENARIO_INPUT_KEYS)
+            or not isinstance(worksheet, dict)):
+        raise ValueError("Social Security scenario evidence is incomplete")
+    required = {"ss_benefits", "other_income", "tax_exempt_interest", "adjustments",
+                "filing_status", "lived_apart_from_spouse_all_year",
+                "lump_sum_prior_year_benefits", "excluded_income_addbacks"}
+    if set(worksheet) != required:
+        raise ValueError("Social Security requires every original worksheet input")
+    if worksheet["lump_sum_prior_year_benefits"] != 0:
+        raise ValueError("Social Security lump-sum election scenarios require separate reviewed worksheets")
+    baseline = compute_taxable_ss(**worksheet)
+    worksheet = dict(worksheet)
+    for key in required - {"filing_status", "lived_apart_from_spouse_all_year"}:
+        worksheet[key] = _coerce_numeric(worksheet[key], default=None)
+    if worksheet["ss_benefits"] <= 0:
+        raise ValueError("Social Security repayment scenarios require separate reviewed worksheets")
+
+    def gross_and_half(values):
+        clean = {}
+        for key in SCENARIO_INPUT_KEYS:
+            try:
+                val = _coerce_numeric(values.get(key), default=None)
+            except TypeError:
+                raise ValueError("Social Security scenario income must be numeric") from None
+            if val is None or not math.isfinite(val):
+                raise ValueError("Social Security scenario income must be finite")
+            clean[key] = val
+        capital = clean["capital_gains"]
+        gross = sum(clean[k] for k in SCENARIO_INPUT_KEYS
+                    if k not in {"qualified_dividends", "capital_gains"})
+        gross += capital if capital >= 0 else max(capital, -capital_loss_limit)
+        half = (compute_se_tax(clean["self_employment_net"], ss_wage_base=ss_wage_base,
+                               w2_ss_wages=max(0.0, clean["wages"]))["deductible_half"]
+                if clean["self_employment_net"] > 0 else 0.0)
+        return gross, half
+
+    original_gross, original_half = gross_and_half(original)
+    changed_gross, changed_half = gross_and_half(merged_inputs)
+    revised = dict(worksheet)
+    revised["other_income"] += changed_gross - original_gross
+    revised["adjustments"] += changed_half - original_half
+    if revised["adjustments"] < 0:
+        raise ValueError("Social Security adjusted deductions need explicit reconciliation")
+    taxable = compute_taxable_ss(**revised)["taxable_ss"]
+    return taxable, round(taxable - baseline["taxable_ss"], 2)
+
+
 def compute_scenario(
     baseline: dict,
     delta: dict,
@@ -3159,7 +3214,7 @@ def compute_scenario(
 
     Returns:
         Dict with the federal outcome (all rounded to 2 dp):
-        gross_income, adjustments, agi, taxable_income, tax_before_credits, ctc,
+        gross_income, taxable_ss, adjustments, agi, taxable_income, tax_before_credits, ctc,
         se_tax, additional_medicare, total_federal_tax, used_qdcg.
 
     Raises:
@@ -3193,8 +3248,7 @@ def compute_scenario(
     # baseline (constant across the $0-delta and the scenario, so the anchored
     # delta is unchanged in magnitude but priced from the correct, lower
     # taxable-income position — matters near bracket/QDCG/credit thresholds).
-    # SECOND-ORDER caveat (same class as the taxable-SS note in
-    # scenario.extract_baseline_inputs): a MAGI-INCREASING delta (Roth
+    # SECOND-ORDER caveat: a MAGI-INCREASING delta (Roth
     # conversion, wages, cap gains) also phases OUT more of the Schedule 1-A
     # deduction near a threshold — held fixed here, so a delta crossing a
     # phase-out band is modeled slightly too cheap. Not re-derived (the
@@ -3239,6 +3293,10 @@ def compute_scenario(
                          else max(capital_gains, -capital_loss_limit))
     gross = (wages + taxable_interest + ordinary_dividends + cap_gain_in_gross
              + ira_distribution + other_income + se_net)
+    taxable_ss, ss_change = _scenario_social_security(
+        baseline.get("social_security"), {k: merged(k) for k in SCENARIO_INPUT_KEYS},
+        ss_wage_base=ss_wage_base, capital_loss_limit=capital_loss_limit)
+    gross += ss_change
     adjustments = se["deductible_half"]
     agi = max(0.0, gross - adjustments)
 
@@ -3301,6 +3359,7 @@ def compute_scenario(
 
     return {
         "gross_income": round(gross, 2),
+        "taxable_ss": taxable_ss,
         "adjustments": round(adjustments, 2),
         "agi": round(agi, 2),
         "taxable_income": round(taxable_income, 2),

@@ -2494,3 +2494,27 @@ expiration, missing evidence, tampering and rollover publication. Disabling the
 completion guard made its regression fail. The full suite, Ruff, mypy and the
 computation self-test passed. The full suite also exposed a pre-existing stale
 secure_fs collection count; its hook row and derived totals were corrected.
+
+## AA36 — local paystub intake preserves reconciled YTD evidence (#240)
+
+Projection inputs previously required manual YTD entry. The local importer now
+reads bounded labeled PDF tables and payroll CSVs through the shared locked,
+masked parsers. It keeps current-period values separate, selects the latest
+cumulative statement for each confirmed distinct job, and totals those jobs
+only after complete-as-of, jurisdiction and source-ownership confirmation.
+
+Ambiguous labels, missing wage bases, duplicate sources across jobs, conflicting
+statements, declining cumulative values and unsupported layouts refuse
+publication. The manifest supplies the adjustment job's pay frequency; a
+template default is not an answer. Existing forecast inputs remain intact.
+Workspace containment, the run lock and secured atomic writer protect the
+projection inputs and source/date/period evidence. The planner checks that the
+imported actuals still match their evidence before annualization. The existing
+aggregate annualization assumption still requires employment-change review.
+
+Local review added 46 synthetic cases, including a generated PDF, CSV intake,
+multiple jobs, evidence mismatches, symlink refusal and secure publication.
+Disabling the duplicate-source guard made its regression fail. The initial full
+suite exposed the new module's expanded secure_fs parametrization, and the
+hook's measured count was corrected. Targeted and final engine checks, Ruff and
+mypy passed; all six CI jobs passed on the final head before merge.

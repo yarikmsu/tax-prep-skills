@@ -30,6 +30,7 @@ from agents.lib.projection import (  # noqa: E402
     _money,
     _num,
     _read_json,
+    _validate_tax_law_year,
 )
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
@@ -42,6 +43,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     _medical_deductible,
     _coerce_numeric,
     compute_scenario,
+    compute_taxable_ss,
     net_capital_gains,
     rerun_schedule_a,
 )
@@ -76,6 +78,7 @@ class Outcome:
     additional_medicare: float
     total_federal_tax: float
     used_qdcg: bool
+    taxable_ss: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -226,7 +229,7 @@ def extract_baseline_inputs(result: dict) -> dict:
     sc = result.get("schedule_c")
     if isinstance(sc, dict):
         se_net = _num(sc.get("line_31_net"), "self_employment_net")
-    return {
+    inputs: dict = {
         "wages": wages,
         "taxable_interest": _num(f.get("line_2b_taxable_interest"), "taxable_interest"),
         "ordinary_dividends": _num(f.get("line_3b_ordinary_dividends"), "ordinary_dividends"),
@@ -237,9 +240,8 @@ def extract_baseline_inputs(result: dict) -> dict:
             + _num(f.get("line_5b_taxable_pensions"), "line_5b_taxable_pensions"), 2),
         "self_employment_net": se_net,
         # other_income is the ordinary catch-all: Schedule 1 + net short-term gain +
-        # taxable Social Security (line 6b). Including taxable SS keeps a delta stacked
-        # at the right marginal bracket for retirees. (The second-order effect — a delta
-        # pushing MORE SS into the taxable range — is not modeled; see caveats.)
+        # taxable Social Security (line 6b). The keystone replaces its baseline
+        # taxable portion with the repriced amount from the recorded worksheet.
         "other_income": round(
             _num(f.get("line_8_schedule1_other"), "other_income") + ordinary_short
             + _num(f.get("line_6b_taxable_ss"), "taxable_ss"), 2),
@@ -256,6 +258,46 @@ def extract_baseline_inputs(result: dict) -> dict:
                    "charitable_non_itemizer"), 2),
         "schedule_1a_se_tips": _deducted_se_tips(result, se_net),
     }
+    benefits = _num(f.get("line_6a_social_security"), "Social Security benefits")
+    taxable = _num(f.get("line_6b_taxable_ss"), "taxable Social Security")
+    if benefits != 0 or taxable != 0:
+        evidence = result.get("social_security_worksheet")
+        if not isinstance(evidence, dict) or evidence.get("regular_worksheet_confirmed") is not True:
+            raise ScenarioError("Social Security benefits require recorded regular-worksheet inputs; "
+                                "never infer gross benefits from line 6b")
+        worksheet = evidence.get("inputs")
+        required = {"ss_benefits", "other_income", "tax_exempt_interest", "adjustments",
+                    "filing_status", "lived_apart_from_spouse_all_year",
+                    "lump_sum_prior_year_benefits", "excluded_income_addbacks"}
+        if not isinstance(worksheet, dict) or set(worksheet) != required:
+            raise ScenarioError("Social Security requires every original worksheet input")
+        expected_other = sum(_num(f.get(k), k) for k in
+                             ("line_1z_total_wages", "line_2b_taxable_interest",
+                              "line_3b_ordinary_dividends", "line_4b_taxable_ira",
+                              "line_5b_taxable_pensions", "line_7_capital_gain", "line_8_schedule1_other"))
+        try:
+            computed = compute_taxable_ss(**worksheet)
+            if (benefits <= 0 or worksheet["lump_sum_prior_year_benefits"] != 0
+                    or isinstance(evidence.get("tax_year"), bool)
+                    or not isinstance(evidence.get("tax_year"), int)
+                    or worksheet["ss_benefits"] != benefits
+                    or worksheet["other_income"] != round(expected_other, 2)
+                    or worksheet["tax_exempt_interest"] != _num(f.get("line_2a_tax_exempt_interest"), "line 2a")
+                    or worksheet["adjustments"] != _num(f.get("line_10_adjustments"), "line 10")
+                    or computed["taxable_ss"] != taxable
+                    or evidence.get("tax_year") != (result.get("meta") or {}).get("tax_year")
+                    or _full_status_key(worksheet["filing_status"]) != _full_status_key(
+                        (result.get("meta") or {}).get("filing_status"))
+                    or (worksheet["filing_status"].strip().upper() == "MFJ") != (
+                        ((result.get("meta") or {}).get("filing_status") or "").strip().upper() == "MFJ")):
+                raise ValueError("inconsistent worksheet")
+        except (ValueError, TypeError, ProjectionError, AttributeError):
+            raise ScenarioError("Social Security worksheet does not reproduce the return or uses "
+                                "a lump-sum/repayment method; obtain reviewed evidence") from None
+        inputs["social_security"] = {"regular_worksheet_confirmed": True,
+                                     "worksheet": dict(worksheet),
+                                     "origin": {k: inputs[k] for k in SCENARIO_INPUT_KEYS}}
+    return inputs
 
 
 def _num_ctc_children(profile: dict) -> int:
@@ -309,6 +351,17 @@ def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None",
     and the return's own deduction (`return_deduction`), read last so a
     missing status or rate refuses first."""
     full_key = _full_status_key(filing_status)
+    ss = result.get("social_security_worksheet")
+    if isinstance(ss, dict) and ss.get("regular_worksheet_confirmed") is True:
+        worksheet_year = ss.get("tax_year")
+        if isinstance(worksheet_year, bool) or not isinstance(worksheet_year, int):
+            raise ScenarioError("Social Security worksheet needs its covered tax year")
+        _validate_tax_law_year(tax_law, worksheet_year)
+        saved = ss.get("inputs")
+        saved_status = saved.get("filing_status") if isinstance(saved, dict) else None
+        if (_full_status_key(saved_status, "Social Security worksheet") != full_key
+                or (str(saved_status).strip().upper() == "MFJ") != (str(filing_status).strip().upper() == "MFJ")):
+            raise ScenarioError("Social Security worksheet filing status differs from the planner")
     bin_key = _binary_status_key(filing_status)
     fed = tax_law.get("federal", {}) or {}
     fstatus = (fed.get("filing_statuses", {}) or {}).get(full_key, {}) or {}
@@ -343,6 +396,7 @@ def _outcome(d: dict) -> Outcome:
         taxable_income=d["taxable_income"], tax_before_credits=d["tax_before_credits"],
         ctc=d["ctc"], se_tax=d["se_tax"], additional_medicare=d["additional_medicare"],
         total_federal_tax=d["total_federal_tax"], used_qdcg=d["used_qdcg"],
+        taxable_ss=d.get("taxable_ss", 0.0),
     )
 
 
@@ -453,6 +507,11 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
     if base["anchor"] is not None:
         _require_the_same_deduction(base["anchor"], rate_kwargs["deduction"])
     base_inputs = base["inputs"]
+    if base_inputs.get("social_security") is not None:
+        read_tax_year(result, year)
+    if base_scenario is not None and base_inputs.get("social_security") != extract_baseline_inputs(result).get("social_security"):
+        raise ScenarioError("The base scenario used different or missing Social Security evidence; "
+                            "re-run it from result.json before stacking")
     if (base_scenario is not None
             and base_inputs.get("schedule_1a_se_tips", 0)
             != extract_baseline_inputs(result)["schedule_1a_se_tips"]):
@@ -515,7 +574,8 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
                           + (base_out["total_federal_tax"] - anchor["baseline_recompute_total"]), 2)
     anchored = round(anchor["line_24"]
                      + (scen_out["total_federal_tax"] - anchor["baseline_recompute_total"]), 2)
-    delta_income = round(scen_out["gross_income"] - base_out["gross_income"], 2)
+    delta_income = round(scen_out["gross_income"] - base_out["gross_income"]
+                         - (scen_out["taxable_ss"] - base_out["taxable_ss"]), 2)
     delta_tax = round(scen_out["total_federal_tax"] - base_out["total_federal_tax"], 2)
     diff = ScenarioDiff(
         delta_income=delta_income,
@@ -907,8 +967,11 @@ def render_markdown(r: ScenarioReport) -> str:
               "- `capital_gains` deltas are treated as net long-term (preferential) gains; "
               "model a short-term gain with `other_income` instead. A net capital LOSS "
               "offsets ordinary income only up to $3,000/yr (excess carryforward not modeled).",
-              "- Taxable Social Security is taken from the baseline as fixed; a delta that "
-              "would push more SS into the taxable range is not re-computed.",
+              "- Taxable Social Security is recomputed from confirmed regular-worksheet inputs. "
+              "Gross benefits, tax-exempt interest, exclusion add-backs and non-SE adjustments "
+              "stay fixed; the SE-tax deduction moves with modeled earnings. Lump-sum and "
+              "combined IRA worksheets require separate review. The marginal-rate denominator "
+              "excludes the additional benefits made taxable by the change.",
               "- OBBBA Schedule 1-A (line 13b) deductions are held at the baseline amount; a "
               "MAGI-increasing delta that would phase OUT more of the tips/overtime/car-loan/"
               "senior deduction near a threshold is not re-computed, so the marginal cost "

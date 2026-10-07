@@ -111,7 +111,11 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   `--ira-basis`/profile basis) are supplied; otherwise the full conversion is taxable. Basis
   aggregates all traditional/SEP/SIMPLE IRAs (per IRS rules) and is per-individual.
 - MAGI approximated as AGI (no tax-exempt-interest / foreign-EI add-backs).
-- Second-order Social Security taxability is not re-computed.
+- Social Security taxability is recomputed at each rung from confirmed
+  `social_security_worksheet` inputs, required when benefits exist. Follow
+  `docs/contributing/social-security-planning.md`; missing evidence is an
+  explicit ask, including in headless runs. Lump-sum elections and combined
+  IRA worksheets require separate reviewed modeling.
 - Where the return's Schedule A recorded its `inputs` (AA23), every rung re-prices it
   at the rung's AGI, including election changes and the haircut after provisional
   QBI, all rungs or none. Missing inputs or a re-run refusal hold the whole ladder. Otherwise:

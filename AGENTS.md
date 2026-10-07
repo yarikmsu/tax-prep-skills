@@ -157,13 +157,7 @@ truncates the skill — for `tax-compute` that is 1588 of 1698 lines — and fai
 silently, the body still reading as a complete skill that simply names files the
 agent cannot open.
 
-Invoke a skill using your agent's own syntax (a slash command, a skill
-reference, or simply telling the agent to follow that skill). If your agent has
-no skill mechanism, read `.agents/skills/<name>/SKILL.md` and follow it directly,
-opening each `references/*.md` when the step that links it comes up — the files
-are plain Markdown instructions and are written to be executable that way.
-
-**Sharp edges per agent, before your first run:**
+**Invocation and sharp edges per agent, before your first run:**
 `docs/contributing/agents-compat.md`.
 
 ## 4. Key design principles
@@ -417,6 +411,7 @@ in full, so a new file in either goes in this table.
 | Skill contracts and scope | `docs/contributing/skill-catalog.md` |
 | Paystub projection intake | `docs/contributing/paystub-intake.md` |
 | Charitable vintage accounting | `docs/contributing/charitable-carryovers.md` |
+| Social Security in income planning | `docs/contributing/social-security-planning.md` |
 | Tax gotchas | `docs/contributing/tax-gotchas.md` |
 | Test invariants | `docs/contributing/test-invariants.md` |
 | Adding support for a new state | `docs/contributing/state-module-playbook.md` |

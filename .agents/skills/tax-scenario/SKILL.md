@@ -64,6 +64,11 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 1. **Validate prerequisites.** Confirm `result.json`, `taxpayer_profile.json`, and
    `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24 or line 12,
    stop and tell the user to run `/tax-compute`.
+   Benefits require confirmed `social_security_worksheet` inputs; follow
+   `docs/contributing/social-security-planning.md`. Missing gross benefits,
+   exclusion add-backs, MFS evidence or adjustments are explicit asks, including
+   in headless runs. Never infer gross benefits from line 6b. Lump-sum elections
+   and combined IRA worksheets require separate reviewed modeling.
 
 2. **Pick a name and deltas.** Default name is `scenario`; pass `--name` for a meaningful
    label (a single path segment — letters, digits, `-`, `_`). To stack on a prior scenario,
