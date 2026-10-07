@@ -3626,6 +3626,7 @@ def compute_education_credits(
 # calls them by — this is not only a re-export. `_coerce_numeric` in particular
 # is addressed as `tax_computations._coerce_numeric` from outside the package,
 # by tests and by the review-subagent acceptance fixture.
+from agents.lib.tax_computations.federal.ira_basis import compute_individual_8606  # noqa: E402,F401
 from agents.lib.tax_computations.charitable import (  # noqa: E402,F401
     settle_charitable_ledger,
     validate_charitable_ledger,

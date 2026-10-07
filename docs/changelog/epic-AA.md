@@ -2542,3 +2542,29 @@ Disabling the benefit repricer made its regression fail. The full suite passed
 before the final year-binding refinement, and targeted checks, Ruff, mypy and
 the computation self-test passed after it. All six CI jobs passed on the final
 head before merge.
+
+## AA38 — state liability reprices independently in income planning (#242)
+
+Scenario and Roth reports formerly exposed federal effects alone. A shared
+state repricer now accepts reviewed full-year TY2025 CA/NY/NC worksheets,
+reproduces the state's baseline liability and prices each cumulative change
+in the actual return's federal-AGI frame. Taxable Social Security is removed
+through state modifications. The federal line-24 anchor remains independent.
+
+CA raw deductions/elections, fetched published table rows and exemption-credit
+steps reprice under a fetched no-preferences AMT screen. NY uses its existing
+AGI, per-owner pension exclusion, IT-196 reductions/election, tax/recapture,
+household credit and full-year NYC/Yonkers/MCTMT engines. NC uses D-400,
+including its child deduction and medical/election changes. Retirement
+classification and basis need independent review. State allocations, general
+CA AMT, moving NY raw itemized limits and unreviewed form years retain named
+limitations. Refundable credits and settlement payments/use tax are excluded
+explicitly. Stacks bind original evidence and law; unsupported results never
+become zero combined costs. The contract is `docs/contributing/state-planning.md`.
+
+Local review added 43 worksheet, malformed-input, stack and CLI cases. Holding
+NC's child deduction made its cliff regression fail. The full local run exposed
+a stale hook count and a conservative no-network false positive; both were
+corrected without weakening the gate. Final targeted checks, Ruff, mypy,
+preflight and the computation self-test passed. All six final-head CI jobs,
+including both full Python suites and Windows, passed before merge.

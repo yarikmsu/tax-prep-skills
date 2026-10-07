@@ -344,6 +344,7 @@ Rules:
 - **Every file in `documents/` gets exactly one record** — parsed with
   `key_boxes`, or `"skipped": "<reason>"` (duplicate scan, non-tax document,
   informational-only). No file may be silently absent; the builder refuses it.
+- For every retirement distribution, record `retirement_kind`: `traditional_ira`, `sep_ira`, `simple_ira`, `pension`, `roth_ira` or `inherited_ira`, confirmed from source evidence. IRA `person` is **primary/spouse**, never joint. Keep the source `doc_id` for that individual's Form 8606 allocation; do not infer recipient from the household total. Missing ownership/kind must be resolved before the individual IRA tie-out can pass.
 - `key_boxes` is keyed by CANONICAL CATEGORY (unknown keys hard-error):
   | Form box | Category |
   |---|---|

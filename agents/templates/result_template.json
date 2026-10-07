@@ -749,8 +749,11 @@
   },
 
   "form_8606": {
-    "_include_if": "has_backdoor_roth or has_roth_conversion is true, OR taxpayer has nondeductible traditional-IRA basis (prior_year.ira_basis > 0 or a nondeductible contribution this year)",
-    "_note": "Form 8606 Part I — nondeductible IRA basis and the pro-rata rule. Computed by compute_form_8606. taxable_to_1040 (line 15 + line 18) flows to Form 1040 line 4b. basis_remaining (line 14) is the carryforward /tax-rollover pulls into next year's prior_year.ira_basis.",
+    "_include_if": "has_backdoor_roth or has_roth_conversion is true, OR either individual has nondeductible traditional-IRA basis (prior_year.ira_basis_by_taxpayer or confirmed legacy ira_basis) or a nondeductible contribution this year",
+    "_note": "Use compute_individual_8606 and replace this scaffold with its whole returned block. schema individual-8606/v1, inputs and by_taxpayer hold independent primary/spouse worksheets. Only gross_to_1040 and taxable_to_1040 are summed to 4a/4b. Each basis_remaining rolls to that owner in prior_year.ira_basis_by_taxpayer. Flat lines below are legacy single-person fields; never fill them as a household worksheet.",
+    "schema": null,
+    "inputs": null,
+    "by_taxpayer": {},
     "line_1_nondeductible_current": 0,
     "line_2_prior_basis": 0,
     "line_3_total_basis": 0,

@@ -410,6 +410,7 @@ in full, so a new file in either goes in this table.
 | Agent compatibility | `docs/contributing/agents-compat.md` |
 | Skill contracts and scope | `docs/contributing/skill-catalog.md` |
 | Paystub projection intake | `docs/contributing/paystub-intake.md` |
+| Individual IRA basis | `docs/contributing/individual-ira-basis.md` |
 | Charitable vintage accounting | `docs/contributing/charitable-carryovers.md` |
 | State effects in income planning | `docs/contributing/state-planning.md` |
 | Social Security in income planning | `docs/contributing/social-security-planning.md` |

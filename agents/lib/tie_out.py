@@ -508,6 +508,7 @@ class LedgerRecord:
     # "match" (independent re-extraction agreed) or "mismatch_resolved"
     # (disagreed; user confirmed the correct figure, recorded in answers.md).
     second_read: "str | None" = None
+    retirement_kind: "str | None" = None
 
 
 @dataclass(frozen=True)
@@ -625,12 +626,17 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 f"{where}.second_read must be one of "
                 f"{sorted(_SECOND_READ_VALUES)} or absent, got {second_read!r}"
                 " — an unrecognized value would silently count as verified")
+        from agents.lib.tax_computations.federal.ira_basis import RETIREMENT_KINDS
+        retirement_kind = rec.get("retirement_kind")
+        if retirement_kind is not None and (not isinstance(retirement_kind, str)
+                                            or retirement_kind not in RETIREMENT_KINDS):
+            raise TieOutError(f"{where}.retirement_kind must be a recognized IRA/pension kind")
         records.append(LedgerRecord(
             doc_id=doc_id, file=file,
             form_type=_require_str(rec.get("form_type"), f"{where}.form_type"),
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
             person=person, key_boxes=tuple(validated), skipped=skipped,
-            foreign=foreign, second_read=second_read))
+            foreign=foreign, second_read=second_read, retirement_kind=retirement_kind))
     return records
 
 
@@ -1476,6 +1482,12 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
             category=cat, ledger_total=round(sums[cat], 2),
             result_total=round(result_total, 2), delta=delta,
             ok=ok, advisory=cat in _ADVISORY_MISMATCH_CATEGORIES))
+
+    from agents.lib.tax_computations.federal.ira_basis import tie_individual_8606
+    try:
+        tie_individual_8606(ledger, result)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        missing_targets.append(f"Individual IRA ownership/source tie-out: {exc}")
 
     # A3: high-value records (any key box ≥ $10K) need a second independent
     # extraction — a transposed digit there is material. Absence is an

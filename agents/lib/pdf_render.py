@@ -411,7 +411,23 @@ def build_story(result: dict, styles, *,
     # in the same box as the rest of what this return does not cover, and that
     # box is above them.
     body = []
+    sections = []
     for key, section in result.items():
+        if key == "form_8606" and isinstance(section, dict) and section.get("schema") == "individual-8606/v1":
+            people = section.get("by_taxpayer")
+            if not isinstance(people, dict) or not people:
+                raise PdfRenderError("Individual Form 8606 worksheets are missing")
+            for owner, worksheet in people.items():
+                if owner not in {"primary", "spouse"} or not isinstance(worksheet, dict):
+                    raise PdfRenderError("Invalid individual Form 8606 owner/worksheet")
+                sections.append((key, {k: v for k, v in worksheet.items() if k != "inputs"},
+                                 f"Form 8606 — {owner.title()}"))
+            sections.append((key, {"gross_to_1040": section.get("gross_to_1040"),
+                                   "taxable_to_1040": section.get("taxable_to_1040")},
+                             "IRA totals to Form 1040"))
+        else:
+            sections.append((key, section, _title(key)))
+    for key, section, heading in sections:
         if key in _SKIP_SECTIONS or _is_commentary(key):
             continue
         rows = _rows(section, section=key) if isinstance(section, (dict, list)) else []
@@ -432,7 +448,7 @@ def build_story(result: dict, styles, *,
         # NOT KeepTogether: a section whose table has to split across pages
         # cannot also be kept whole, and reportlab answers that contradiction
         # with a LayoutError rather than a choice.
-        body.append(Paragraph(_escape(_title(key)), styles["Heading2"]))
+        body.append(Paragraph(_escape(heading), styles["Heading2"]))
         body.append(table)
         body.append(Spacer(1, 10))
 

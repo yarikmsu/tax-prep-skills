@@ -292,7 +292,8 @@ def _nc(fagi: float, taxable_ss: float, plan: dict, cfg: dict, status: str, year
 
 def price_state_points(result: dict, tax_law: dict, year: int, status: str | None,
                        original_inputs: dict, original_outcome: dict,
-                       points: list[tuple[dict, dict]], *, profile: dict | None = None) -> dict:
+                       points: list[tuple[dict, dict]], *, profile: dict | None = None,
+                       retirement_owner: str | None = None) -> dict:
     """Price cumulative normalized inputs/outcomes in the actual return's AGI frame.
 
     The whole sweep is modeled or unavailable; no partial column of zeros.
@@ -341,6 +342,11 @@ def price_state_points(result: dict, tax_law: dict, year: int, status: str | Non
             allowed = {"taxable", "ny_pension"} if code == "NY" and key == "ira_distribution" else {"taxable"}
             if treatment.get(key) not in allowed:
                 raise StatePlanningError(f"Record reviewed state income_treatment for {key}")
+        if (code == "NY" and "ira_distribution" in changed
+                and treatment.get("ira_distribution") == "ny_pension" and retirement_owner is not None
+                and (retirement_owner not in {"primary", "spouse"}
+                     or plan.get("retirement_owner") != retirement_owner)):
+            raise StatePlanningError("NY pension exclusion owner differs from the selected IRA owner; confirm retirement_owner")
         if "ira_distribution" in changed and plan.get("retirement_basis_matches_federal") is not True:
             raise StatePlanningError("State retirement basis/classification must be confirmed independently of conformity metadata")
         if code == "NY":

@@ -40,7 +40,7 @@ covered-year inputs, retirement ownership/basis and named limitations.
   still runs but reports "IRMAA not modeled" — re-run `/tax-setup` to fetch the tiers.
 - **For Form 8606 basis pro-rata (optional):** pass `--ira-value` (total beginning-of-year
   traditional/SEP/SIMPLE IRA balance) to dilute each rung's taxable conversion by the basis
-  ratio. `--ira-basis` defaults to `taxpayer_profile.json prior_year.ira_basis`. Without
+  ratio. On a joint return pass `--ira-owner primary|spouse`; the value and basis are only that person's traditional/SEP/SIMPLE pool. `--ira-basis` defaults to the selected owner in `prior_year.ira_basis_by_taxpayer` (legacy scalars follow the confirmed-owner migration rule). Without
   `--ira-value` the ladder treats the full conversion as taxable (v1 default).
 
 ## Steps

@@ -127,6 +127,7 @@ class LadderReport:
     schedule_a_repriced: bool = False
     schedule_a_held: "list[str]" = field(default_factory=list)
     state_effect: dict = field(default_factory=dict)
+    ira_owner: "str | None" = None
 
 
 def parse_sweep(max_amount, step) -> "list[float]":
@@ -221,10 +222,10 @@ def _irmaa_surcharge(magi: float, tiers: "list[dict]") -> float:
     return surcharge
 
 
-def _resolve_basis(profile: dict, ira_basis, ira_value) -> "tuple[bool, float | None, float | None]":
+def _resolve_basis(profile: dict, ira_basis, ira_value, ira_owner=None) -> "tuple[bool, float | None, float | None]":
     """Resolve (basis_modeled, basis, value) for the pro-rata sweep.
 
-    `ira_basis` defaults to taxpayer_profile.json prior_year.ira_basis when not passed
+    `ira_basis` defaults to the selected individual opening profile balance when not passed
     explicitly. Pro-rata is modeled only when a positive total IRA value B is known
     (the ratio denominator); without it the ladder degrades to full-conversion-taxable.
     A negative basis/value is rejected as a data error. basis > value is NOT rejected:
@@ -232,9 +233,19 @@ def _resolve_basis(profile: dict, ira_basis, ira_value) -> "tuple[bool, float | 
     current IRA value, and the keystone caps the line-10 ratio at 1.0 (the conversion is
     then fully nontaxable up to the balance, with leftover basis carried forward).
     """
+    from agents.lib.tax_computations.federal.ira_basis import opening_basis
+    if ira_owner is not None and ira_owner not in {"primary", "spouse"}:
+        raise RothLadderError("--ira-owner must be primary/spouse")
+    if ira_owner == "spouse" and profile.get("filing_status") != "MFJ":
+        raise RothLadderError("A spouse's IRA belongs on their own separate return")
+    if ira_value is not None and profile.get("filing_status") == "MFJ" and ira_owner is None:
+        raise RothLadderError("Joint IRA pro-rata planning requires --ira-owner; never pool spouses' balances")
+    try:
+        individual_basis = opening_basis(profile)
+    except ValueError as exc:
+        raise RothLadderError(str(exc)) from exc
     if ira_basis is None:
-        prior = profile.get("prior_year", {}) or {}
-        ira_basis = prior.get("ira_basis")
+        ira_basis = individual_basis[ira_owner or "primary"]
     try:
         basis = _coerce_numeric(ira_basis, default=None) if ira_basis is not None else None
         value = _coerce_numeric(ira_value, default=None) if ira_value is not None else None
@@ -259,14 +270,14 @@ def _resolve_basis(profile: dict, ira_basis, ira_value) -> "tuple[bool, float | 
 def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
                  max_amount: float, step: float, name: str,
                  today: datetime.date,
-                 ira_basis=None, ira_value=None) -> LadderReport:
+                 ira_basis=None, ira_value=None, ira_owner=None) -> LadderReport:
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
     rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)
     base_inputs = extract_baseline_inputs(result)
     if base_inputs.get("social_security") is not None:
         read_tax_year(result, year)
-    basis_modeled, basis, value = _resolve_basis(profile, ira_basis, ira_value)
+    basis_modeled, basis, value = _resolve_basis(profile, ira_basis, ira_value, ira_owner)
 
     line24 = round(_num(((result.get("form_1040", {}) or {})
                          .get("line_24_total_tax")), "line_24"), 2)
@@ -331,7 +342,8 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
     state_effect = price_state_points(
         result, tax_law, year, filing_status, base_inputs, base_out,
         [({**base_inputs, "ira_distribution": base_inputs["ira_distribution"] + c}, s)
-         for c, s in zip(convs, scens)], profile=profile)
+         for c, s in zip(convs, scens)], profile=profile,
+        retirement_owner=ira_owner or ("primary" if profile.get("filing_status") != "MFJ" else "unconfirmed"))
     prev_combined = None
     for index, (amt, taxable_conv, scen) in enumerate(zip(amounts, convs, scens)):
         fed_anchored = round(line24 + (scen["total_federal_tax"] - baseline_recompute), 2)
@@ -428,7 +440,8 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
             result, tax_law, year, filing_status, base_out["agi"], priced)),
         medical_floor_may_move=(not repriced and medical_floor_may_move(
             result, base_out["agi"], priced)),
-        schedule_a_repriced=repriced, schedule_a_held=held_notes, state_effect=state_effect)
+        schedule_a_repriced=repriced, schedule_a_held=held_notes, state_effect=state_effect,
+        ira_owner=ira_owner or ("primary" if basis_modeled else None))
 
 
 def _report_to_dict(r: LadderReport) -> dict:
@@ -436,7 +449,7 @@ def _report_to_dict(r: LadderReport) -> dict:
         "schema": r.schema, "name": r.name, "tax_year": r.tax_year, "created": r.created,
         "filing_status": r.filing_status, "max_amount": r.max_amount, "step": r.step,
         "anchor": r.anchor, "basis_modeled": r.basis_modeled, "ira_basis": r.ira_basis,
-        "ira_value": r.ira_value, "baseline_nii": r.baseline_nii,
+        "ira_value": r.ira_value, "ira_owner": r.ira_owner, "baseline_nii": r.baseline_nii,
         "niit_threshold": r.niit_threshold,
         "niit_modeled": r.niit_modeled, "irmaa_modeled": r.irmaa_modeled,
         "rungs": [vars(x) for x in r.rungs],
@@ -478,7 +491,7 @@ def render_markdown(r: LadderReport) -> str:
                   "portion.", ""]
     else:
         lines += ["- **Basis not modeled** — the full conversion is treated as taxable. Pass "
-                  "`--ira-basis` and `--ira-value` (or set `prior_year.ira_basis` and provide "
+                  "`--ira-basis` and `--ira-value` (or set individual opening basis and provide "
                   "`--ira-value`) to apply the Form 8606 pro-rata rule.", ""]
 
     # Loud, unmissable banners when a threshold concern could not be checked — a $0
@@ -573,6 +586,8 @@ def render_markdown(r: LadderReport) -> str:
         "more than shown.")
     lines += medical_floor_caveat(
         r.medical_floor_may_move, "each rung can cost more than shown.")
+    if r.ira_owner:
+        lines += [f"- IRA owner: **{r.ira_owner}**; only this individual\'s traditional/SEP/SIMPLE IRAs are pooled."]
     lines += ["- This is a planning estimate, not a filed return.", ""]
     return "\n".join(lines) + "\n"
 
@@ -588,7 +603,9 @@ def _main(argv: list) -> int:
     parser.add_argument("--step", default=5000, help="sweep increment (default 5000)")
     parser.add_argument("--today", default=None, help="override today's date YYYY-MM-DD (testing)")
     parser.add_argument("--ira-basis", default=None,
-                        help="after-tax (nondeductible) basis; default: profile prior_year.ira_basis")
+                        help="after-tax basis for --ira-owner; default: individual opening profile balance")
+    parser.add_argument("--ira-owner", choices=["primary", "spouse"],
+                        help="individual whose IRA balance/basis is modeled; required for joint pro-rata")
     parser.add_argument("--ira-value", default=None,
                         help="total beginning-of-year traditional/SEP/SIMPLE IRA balance; "
                              "required to apply Form 8606 pro-rata")
@@ -620,7 +637,7 @@ def _main(argv: list) -> int:
     try:
         report = build_ladder(result, profile, tax_law, year, max_amount=amounts[-1],
                               step=_coerce_numeric(args.step, default=5000), name=name,
-                              today=today, ira_basis=args.ira_basis, ira_value=args.ira_value)
+                              today=today, ira_basis=args.ira_basis, ira_value=args.ira_value, ira_owner=args.ira_owner)
     except (RothLadderError, ScenarioError, ProjectionError, ValueError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1

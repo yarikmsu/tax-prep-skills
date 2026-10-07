@@ -385,7 +385,7 @@ def _build_basis(ira_basis=20000, ira_value=100000, max_amount=100000, step=1000
     return rl.build_ladder(
         _load("result.json"), _load("taxpayer_profile.json"), _load("tax_law_2026.json"),
         2026, max_amount=max_amount, step=step, name="roth-ladder", today=TODAY,
-        ira_basis=ira_basis, ira_value=ira_value)
+        ira_basis=ira_basis, ira_value=ira_value, ira_owner="primary")
 
 
 def test_basis_not_modeled_without_value():
@@ -545,7 +545,7 @@ def test_cli_basis_args(tmp_path):
     ws = _ws(tmp_path)
     p = _cli(["--result", "result.json", "--workspace", str(ws), "--year", "2026",
               "--max", "20000", "--step", "10000", "--ira-basis", "20000",
-              "--ira-value", "100000", "--no-save", "--json"], REPO)
+              "--ira-value", "100000", "--ira-owner", "primary", "--no-save", "--json"], REPO)
     assert p.returncode == 0, p.stderr
     out = json.loads(p.stdout)
     assert out["basis_modeled"] is True

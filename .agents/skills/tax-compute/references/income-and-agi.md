@@ -426,50 +426,31 @@ qualified-dividend or LTCG path (that understates):
   blocked distribution was received (the `sanctioned_blocked_asset` constructive-
   receipt question stays MANUAL); a frozen fund is not a disposition.
 
-**Form 8606 — Nondeductible IRA basis & Roth conversions (lines 4a/4b):**
+**Form 8606 — separate individual IRA basis (lines 4a/4b):**
 
-Compute this BEFORE finalizing line 4b whenever the taxpayer has any of: a Roth
-conversion (`has_roth_conversion`/`has_backdoor_roth`), a traditional-IRA distribution
-with after-tax basis, a nondeductible contribution this year, or a prior-year basis
-(`taxpayer_profile.json prior_year.ira_basis > 0`).
+Compute BEFORE finalizing line 4b when either individual has a conversion,
+nondeductible contribution, opening basis, or IRA distribution. Follow the
+[individual IRA input/migration contract](../../../../docs/contributing/individual-ira-basis.md).
+Use `compute_individual_8606()` from `agents.lib.tax_computations` through
+`sh agents/lib/run.sh`, retaining the entire returned `result.form_8606` block.
+Gather each owner's prior worksheet, current nondeductible contributions,
+following-year contribution subset, complete adjusted Dec 31 traditional/SEP/SIMPLE
+balances and outstanding IRA-to-IRA rollovers. Aggregate only that owner's accounts.
 
-Use `compute_form_8606()` from `agents/lib/tax_computations/`. Gather:
-- `nondeductible_contrib_current` — this year's nondeductible traditional-IRA contribution.
-- `prior_basis` — `taxpayer_profile.json prior_year.ira_basis` (rolled forward by `/tax-rollover`).
-- `year_end_value` — **Dec 31 FMV of ALL traditional/SEP/SIMPLE IRAs** (ask the taxpayer; this
-  is the pro-rata denominator — without it you cannot apply the rule correctly).
-- `distributions_not_converted` — the **Form 8606 line 7** amount: traditional/SEP/SIMPLE
-  IRA distributions taken during the year, but **EXCLUDING** anything line 7 leaves out —
-  Roth conversions (those go in `amount_converted`), qualified charitable distributions
-  (QCDs), a one-time HSA funding distribution, rollovers, returned contributions, and
-  recharacterizations. Feeding any of those in would overstate the taxable amount and wrongly
-  consume basis. If none apply, this is just the ordinary 1099-R distributions not converted.
-- `disaster_repayable_amount` (optional, default 0) — the **Form 8606 line 15b** amount,
-  which per the IRS instruction is "the amount on line 15a that is allocable to qualified
-  disaster distributions reported on Form 8915-F." This is the **post-pro-rata TAXABLE
-  portion** of the disaster distribution — NOT the gross disaster amount from line 7. The
-  difference matters: pro-rata strips out the basis-recovery share before any of it gets
-  allocated to line 15b, so passing the gross would over-state line 15b and under-state
-  the 1040 line 4b amount.
-  - **All of line 7 is disaster** (common case): line 15b equals `line_15a_taxable_pre_disaster`
-    from the keystone output — run the keystone once with `disaster_repayable_amount=0` to
-    read line 15a, then call again passing that value.
-  - **Mixed disaster + ordinary distributions**: see Form 8915-F instructions for the
-    allocation; in general it is `line_15a × (disaster_gross / line_7)`.
-  Pass this when the taxpayer is amortizing a disaster distribution over 3 years so the
-  keystone routes only the non-disaster taxable portion (line 15c) to 1040 line 4b. The
-  toolkit does NOT model the Form 8915-F amortization itself — that schedule is the
-  taxpayer's responsibility / a separate form. Omit (0) for typical returns.
-- `amount_converted` — total converted to Roth (1099-R Code 2/7 to a Roth).
+For each parsed 1099-R, confirm the individual recipient and retirement kind;
+allocate its gross exactly once among ordinary distributions, conversions and
+reviewed line-7 exclusions. Never treat an IRA as jointly owned. Confirm the
+regular worksheet applies; inherited IRAs, Roth distributions and special
+worksheets remain outside this wrapper's scope. Missing confirmations or an
+`ira_basis_unresolved` marker BLOCK, including headless runs with no answer.
+Legacy one-person scalars map to primary; a joint scalar needs a confirmed owner,
+and a joint flat result must be migrated to independent worksheets.
 
-The pro-rata rule blends after-tax basis across every dollar — you cannot convert "just the
-basis." Write the returned lines to `result.json form_8606`, then route:
-- `taxable_to_1040` → Form 1040 **line 4b** (taxable IRA amount), with gross on line 4a.
-- `basis_remaining` (line 14) stays in `form_8606` — `/tax-rollover` carries it to next year.
-
-⚠️ **Backdoor-Roth pro-rata trap:** if `pro_rata_triggered` is true (basis AND pre-tax money
-both present at a conversion), warn the taxpayer — their conversion is only *partly* tax-free,
-not fully. A clean backdoor (no other pre-tax traditional IRA) converts tax-free (ratio 1.0).
+Route derived `gross_to_1040` to **4a** and `taxable_to_1040` to **4b**; pensions
+remain on 5a/5b. Keep `basis_remaining` separately in each owner's worksheet for
+rollover, even if zero. The completion gate reproduces the worksheets and the
+intake gate ties each allocation to its owner's document. When either owner's
+`pro_rata_triggered` is true, warn that their conversion is only partly tax-free.
 
 ### Step 4: Compute AGI (Form 1040 Lines 10-11)
 

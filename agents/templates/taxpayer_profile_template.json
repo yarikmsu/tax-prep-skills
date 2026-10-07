@@ -188,11 +188,14 @@
     "nol_carryforward": 0,
     "estimated_payments_applied": 0,
     "ira_basis": 0,
+    "ira_basis_owner": null,
+    "ira_basis_by_taxpayer": {},
+    "ira_basis_unresolved": null,
     "amt_credit_carryforward": 0,
     "ca_amt_credit_carryforward": 0,
     "_comment_amt_credit": "Form 8801 minimum tax credit from prior-year deferral-item AMT (ISO exercises). Rolled forward by /tax-rollover from prior result.json form_6251.form_8801_carryforward_to_next_year; consumed via compute_form_8801_credit (Schedule 3 line 6b).",
     "_comment_ca_amt_credit": "CA Schedule P (540) AMT credit from prior-year deferral-item CA AMT (ISO exercises). A SEPARATE carryforward from the federal one (CA exemption/TMT differ). Rolled forward by /tax-rollover from prior result.json california_540.schedule_p.carryforward_to_next_year.",
-    "_comment_ira_basis": "Form 8606 line 14 nondeductible traditional-IRA basis carried from the prior year. Rolled forward by /tax-rollover from prior result.json form_8606.basis_remaining."
+    "_comment_ira_basis": "Individual Form 8606 line 14 balances belong in ira_basis_by_taxpayer (primary/spouse). A legacy scalar maps to primary on an individual return; MFJ requires confirmed ira_basis_owner. Conflicting scalar/map or ira_basis_unresolved blocks. Never pool spouses; see docs/contributing/individual-ira-basis.md."
   },
   "estimated_payments": {
     "_comment": "Current-year 1040-ES and state estimated payments",

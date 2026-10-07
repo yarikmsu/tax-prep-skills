@@ -70,9 +70,9 @@ FIELD_MAP: dict[str, dict] = {
     },
     "ira_basis": {
         "category": "carryforwards",
-        "source_path": "form_8606.basis_remaining",  # Form 8606 line 14
+        "source_path": "form_8606",  # _ira_changes validates independent line 14 balances
         "target_file": "taxpayer_profile.json",
-        "target_path": "prior_year.ira_basis",
+        "target_path": "prior_year.ira_basis_by_taxpayer",
         "transform": "ira_basis",
     },
     "amt_credit_carryforward": {
@@ -543,6 +543,77 @@ def _charitable_changes(prior, current, entry):
     return [Change("carryforwards", path, "taxpayer_profile.json", ledger, existing, action, reason)]
 
 
+def _ira_changes(prior: PriorReturn, current: CurrentState) -> list[Change]:
+    """Keep individual line 14 balances; ambiguous legacy archives stay blocked."""
+    from agents.lib.tax_computations.federal.ira_basis import (
+        SCHEMA, amount, validate_individual_8606,
+    )
+    section = prior.result.get("form_8606") or {}
+    if not isinstance(section, dict):
+        raise RolloverError("Archived Form 8606 must be an object")
+    path = "prior_year.ira_basis_by_taxpayer"
+    legacy_path = "prior_year.ira_basis"
+    if not section:
+        return []
+    if section.get("schema") not in (None, SCHEMA):
+        raise RolloverError("Unknown archived individual IRA worksheet schema")
+    status = prior.profile.get("filing_status")
+    if status not in {"Single", "MFJ", "MFS", "HOH", "QSS"}:
+        raise RolloverError("Archived IRA basis needs a canonical filing status")
+    try:
+        if section.get("schema") == SCHEMA:
+            if section.get("tax_year") != prior.year:
+                raise ValueError("Archived IRA basis year differs from the selected archive")
+            validate_individual_8606(prior.result, prior.profile)
+            balances = {owner: worksheet["basis_remaining"]
+                        for owner, worksheet in section["by_taxpayer"].items()}
+        else:
+            value = amount(section.get("basis_remaining", 0), "archived IRA basis")
+            if not value:
+                return []
+            owner = section.get("person") or (prior.profile.get("prior_year") or {}).get("ira_basis_owner")
+            if owner is None and status != "MFJ":
+                owner = "primary"
+            if owner == "spouse" and status != "MFJ":
+                raise ValueError("Archived spouse IRA basis belongs on a separate return")
+            if owner not in {"primary", "spouse"}:
+                balances = None
+            else:
+                balances = {owner: value}
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RolloverError(f"Archived individual IRA worksheet is invalid: {exc}") from exc
+    reason = None
+    if balances is None:
+        reason = "Legacy joint Form 8606 has no confirmed individual owner"
+    elif any(balances.values()):
+        for owner, value in balances.items():
+            if not value:
+                continue
+            if owner == "spouse" and current.profile.get("filing_status") != "MFJ":
+                reason = "Spouse IRA basis needs reassignment to that individual's separate workspace"
+            before, after = prior.profile.get(owner) or {}, current.profile.get(owner) or {}
+            if any(before.get(k) and after.get(k) and before[k] != after[k]
+                   for k in ("ssn_last4", "dob", "first_name", "last_name")):
+                reason = "IRA owner identity changed; confirm each individual's carryforward"
+    if reason:
+        marker = {"status": "unresolved", "reason": reason,
+                  "source_year": prior.year, "by_taxpayer": balances,
+                  "legacy_basis": section.get("basis_remaining")}
+        target = "prior_year.ira_basis_unresolved"
+        return [Change("carryforwards", target, "taxpayer_profile.json", marker,
+                       _get_path(current.profile, target), "apply",
+                       reason + "; resolve ownership and remove this blocking marker")]
+    # Preserve the old one-person scalar path only for legacy nonjoint archives.
+    if section.get("schema") != SCHEMA and status != "MFJ":
+        path, balances = legacy_path, next(iter(balances.values()))
+    existing = _get_path(current.profile, path)
+    action = "ask" if existing and existing != balances else "apply"
+    if path != legacy_path and _get_path(current.profile, legacy_path, default=0):
+        action = "ask"  # clear/migrate the old scalar explicitly, never add it
+    return [Change("carryforwards", path, "taxpayer_profile.json", balances, existing,
+                   action, "Independent Form 8606 line 14 balances; confirm any existing conflict")]
+
+
 def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Change]:
     out: list[Change] = []
     for key, entry in FIELD_MAP.items():
@@ -550,6 +621,9 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
             continue
         if entry.get("transform") == "charitable_ledger":
             out.extend(_charitable_changes(prior, current, entry))
+            continue
+        if entry.get("transform") == "ira_basis":
+            out.extend(_ira_changes(prior, current))
             continue
         raw = _get_path(prior.result, entry["source_path"])
         if raw is None:

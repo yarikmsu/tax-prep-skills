@@ -121,3 +121,7 @@ Hand calculations cover child cliffs, medical/election changes, exemption
 phaseout, retirement ownership caps, Social Security exclusion and local tax;
 stack/inverse, partial Roth rungs/basis, malformed data, baseline mismatches,
 unreviewed years and secured CLI publication exercise the boundaries.
+
+Roth planning binds a reviewed NY pension `retirement_owner` to the selected
+`--ira-owner`. A mismatch leaves state and combined estimates unavailable until
+the individual exclusion evidence is corrected.

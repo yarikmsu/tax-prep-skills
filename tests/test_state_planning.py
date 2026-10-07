@@ -235,7 +235,7 @@ def test_stacks_inverse_and_changed_state_evidence():
 def test_roth_partial_rung_combined_cost_and_basis():
     result, law = case()
     r = roth_ladder.build_ladder(result, PROFILE, law, 2025, max_amount=1500, step=1000,
-                                name="state", today=TODAY, ira_basis=5000, ira_value=10000)
+                                name="state", today=TODAY, ira_basis=5000, ira_value=10000, ira_owner="primary")
     assert r.state_effect["modeled"], r.state_effect
     # Taxableconversions0,500,750;childcliffonce atfirststep.
     assert [p.taxable_conversion for p in r.rungs] == [0, 500, 750]

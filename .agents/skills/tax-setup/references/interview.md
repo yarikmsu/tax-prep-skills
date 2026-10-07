@@ -723,6 +723,7 @@ own state of residence)**:**
 
 **Group 7 — Retirement & savings detail:**
 - IRA type: Traditional, Roth, or both? Any Roth conversion this year?
+- For **each individual**, collect prior Form 8606 basis into `prior_year.ira_basis_by_taxpayer` (`primary` / `spouse`), current nondeductible contributions, following-year contribution subset, complete Dec 31 traditional/SEP/SIMPLE accounts and outstanding IRA-to-IRA rollovers. Confirm the 1099-R recipient and each account owner; never pool spouses' balances. Resolve any legacy joint scalar by confirming `ira_basis_owner` and migrate it; `ira_basis_unresolved` blocks until reviewed. Confirm regular worksheet scope and record answers in `answers.md`; inherited/Roth-distribution/special worksheets remain manual. Follow [individual IRA basis](../../../../docs/contributing/individual-ira-basis.md).
 - Backdoor Roth? (If yes: check pro-rata trap — any pre-tax Traditional IRA balance at year-end?)
 - 401(k): Traditional/Roth split? Total deferral amount?
 - Age 50-59 or 64+? (catch-up eligibility for 401k/IRA — amounts from `tax_law JSON` `retirement_401k.catch_up_50_plus` and `ira_limits.catch_up_50_plus`)

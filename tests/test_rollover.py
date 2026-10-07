@@ -438,13 +438,14 @@ def test_compute_diff_ftc_unused():
 
 
 def test_compute_diff_ira_basis_carryforward():
-    """Form 8606 line 14 basis_remaining rolls into prior_year.ira_basis."""
+    """Legacy MFJ line 14 cannot be assigned to either spouse without evidence."""
     prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
     current = _load_current("current_2025_empty")
     diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
-    basis = [c for c in diff["carryforwards"] if c.json_path == "prior_year.ira_basis"]
+    basis = [c for c in diff["carryforwards"] if c.json_path == "prior_year.ira_basis_unresolved"]
     assert len(basis) == 1
-    assert basis[0].prior_value == 6140.35
+    # Historical flat 8606 has line 14 = 6140.35, with no individual owner.
+    assert basis[0].prior_value["legacy_basis"] == 6140.35
     assert basis[0].action_suggested == "apply"
 
 
@@ -477,6 +478,7 @@ def test_compute_diff_ira_basis_missing_section_skipped():
 def test_compute_diff_ira_basis_conflict_asks():
     """A differing current ira_basis surfaces as 'ask', like other carryforwards."""
     prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.profile["filing_status"] = "Single"
     current = _load_current("current_2025_empty")
     current.profile["prior_year"]["ira_basis"] = 999
     diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)

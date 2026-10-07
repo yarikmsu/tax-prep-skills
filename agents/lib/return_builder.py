@@ -638,6 +638,14 @@ def check(result: dict, profile: "dict | None" = None) -> None:
     _check_the_payments(result)
     _check_the_prior_overpayment(result, profile)
     _check_charitable_vintages(result, profile)
+    if profile is not None:
+        from agents.lib.tax_computations.federal.ira_basis import validate_individual_8606
+        try:
+            validate_individual_8606(result, profile)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise Blocked(f"Individual IRA basis unresolved: {exc}") from exc
+    elif (result.get("form_8606") or {}).get("schema"):
+        raise Blocked("Individual IRA validation needs the taxpayer profile")
     net_st, net_lt = _schedule_d_nets(result)
     _check_line_7_against_schedule_d(result, net_st + net_lt)
 

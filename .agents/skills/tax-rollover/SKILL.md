@@ -135,3 +135,5 @@ Show:
 ## Notes
 - Re-runnable safely — diff against existing values surfaces conflicts as `action_suggested: ask`.
 - Reads `tax_law_{current_year}.json` to determine CTC age threshold for dependent age tick. If missing, defaults to 17.
+
+Individual IRA basis follows [the migration contract](../../../docs/contributing/individual-ira-basis.md): separate line 14 balances stay with their owners, including zeros. A legacy joint worksheet without a confirmed owner, an identity change, or a spouse leaving this joint return creates `prior_year.ira_basis_unresolved`. Resolve using the prior individual worksheets and record answers before removing the marker; never move a spouse's basis into primary by guess.

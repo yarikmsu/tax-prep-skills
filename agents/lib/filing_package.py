@@ -264,7 +264,21 @@ def assembly_order(result: dict) -> list:
     federal = []
     for key, (title, seq) in _FEDERAL_SEQUENCE.items():
         if _section_present(result, key):
-            federal.append({"key": key, "title": title, "sequence": seq})
+            section = result.get(key) or {}
+            if key == "form_8606" and section.get("schema") == "individual-8606/v1":
+                people = section.get("by_taxpayer")
+                if not isinstance(people, dict) or not people:
+                    raise FilingPackageError("Individual Form 8606 worksheets are missing")
+                for owner, worksheet in people.items():
+                    if owner not in {"primary", "spouse"} or not isinstance(worksheet, dict):
+                        raise FilingPackageError("Invalid individual Form 8606 owner/worksheet")
+                    if (worksheet.get("line_1_nondeductible_current")
+                            or worksheet.get("line_8_converted")
+                            or (worksheet.get("line_2_prior_basis") and worksheet.get("line_7_distributions"))):
+                        federal.append({"key": f"form_8606.by_taxpayer.{owner}",
+                                        "title": f"{title} — {owner}", "sequence": seq})
+            else:
+                federal.append({"key": key, "title": title, "sequence": seq})
     for title, seq, dkey in _derived_schedules(result):
         federal.append({"key": dkey, "title": title, "sequence": seq})
     federal.sort(key=lambda e: _seq_sort_key(e["sequence"]))
@@ -322,8 +336,8 @@ def attachment_checklist(result: dict) -> list:
         lines.append(
             "Form 8606 is PER INDIVIDUAL — on a joint return, each spouse "
             "with nondeductible basis or a conversion files their OWN "
-            "8606; this package carries one section, so duplicate it per "
-            "spouse as needed.")
+            "8606; individual worksheets in this package are labeled "
+            "primary/spouse. Resolve any legacy joint section before filing.")
     if _section_present(result, "california_540"):
         lines.append(
             "California Form 540 mails in its OWN envelope to the FTB — "
