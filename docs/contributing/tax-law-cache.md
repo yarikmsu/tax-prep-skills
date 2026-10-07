@@ -44,6 +44,12 @@ map goes stale in a way the schema cannot.
 
 ## The keying is not uniform, and the wrong guess reads a real number
 
+CA's optional scenario blocks (`tax_table`, `exemption_phaseout`, `amt_screening`)
+are defined in [state-planning.md](state-planning.md). Thresholds/bands/screens
+use all five statuses; the existing CA standard deduction and itemized phaseout
+retain their three-key grouping. Unfetched blocks do not block every return's
+freshness audit, but do make state scenario effects unavailable.
+
 An accessor that assumes four filing statuses everywhere does not fail — it silently
 reads a key that exists for a DIFFERENT taxpayer, which is the shape AGENTS.md §4 calls
 a hard error when it over-states.

@@ -2518,3 +2518,27 @@ Disabling the duplicate-source guard made its regression fail. The initial full
 suite exposed the new module's expanded secure_fs parametrization, and the
 hook's measured count was corrected. Targeted and final engine checks, Ruff and
 mypy passed; all six CI jobs passed on the final head before merge.
+
+## AA37 — taxable Social Security reprices in scenarios and Roth sweeps (#241)
+
+The income planners had kept baseline taxable Social Security in fixed other
+income. Both now use the return's confirmed regular worksheet and original
+normalized income vector, changing the actual worksheet's income and half-SE
+deduction by modeled differences. Each scenario or rung recomputes taxable
+benefits with the existing engine and feeds the increment into AGI, deductions
+and tax. The marginal denominator remains the actual income/conversion change.
+
+Gross benefits, exempt interest, add-backs, adjustments, filing status and year
+must reconcile to the return. Lump-sum and combined IRA worksheets require
+separate reviewed modeling. Stacks bind the original evidence; requested,
+return, worksheet and tax-law cache years must agree. Schedule A receives the
+updated AGI. No-benefit returns retain their prior behavior. The maintained
+contract is `docs/contributing/social-security-planning.md`.
+
+Local review added hand-calculated zero/50/85-percent bands, caps, inverse and
+stack changes, exempt income, MFS arrangements, SE deduction changes, Roth and
+Schedule A interaction, malformed/missing evidence and year mismatch cases.
+Disabling the benefit repricer made its regression fail. The full suite passed
+before the final year-binding refinement, and targeted checks, Ruff, mypy and
+the computation self-test passed after it. All six CI jobs passed on the final
+head before merge.

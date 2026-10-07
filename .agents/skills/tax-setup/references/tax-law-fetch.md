@@ -160,6 +160,13 @@ a figure from a prior year.
   only these indexed figures are fetched. Unfetched HARD-ERRORS at compute for a
   CA ISO exerciser (never a guessed exemption that would zero the CA AMT). Leave
   all-null for a non-ISO CA return.
+- **Optional CA scenario/Roth planning:** fetch Form 540's tax-table ceiling
+  and published rows into `state.tax_table`, line-32 per-status thresholds and
+  step widths/reduction into `state.exemption_phaseout`, and Box C screening
+  ceilings into `state.amt_screening`. Fetch all rows a sweep touches, without
+  inferring a midpoint. These are independently year/source-pinned figures;
+  see `docs/contributing/state-planning.md`. No covered form means unavailable
+  state planning, even if a newer year's rate has been fetched.
 - **For NY — the generic one-search fallback is NOT enough.**
   The validated IT203 filing plan also selects this entire NY schema regardless
   of mailing address. TY2025 IT203/IT360.1 additionally require live covered-year

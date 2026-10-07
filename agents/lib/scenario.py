@@ -48,6 +48,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     rerun_schedule_a,
 )
 from agents.lib.tax_computations.federal import salt  # noqa: E402
+from agents.lib.tax_computations.state.planning import price_state_points  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -114,6 +115,7 @@ class ScenarioReport:
     schedule_a_repriced: bool = False
     # What the re-pricing held rather than priced: the re-run's own notes.
     schedule_a_held: "list[str]" = field(default_factory=list)
+    state_effect: dict = field(default_factory=dict)
 
 
 def parse_deltas(tokens: "list[str]") -> dict:
@@ -592,6 +594,23 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
     applied = list(base["applied_deltas"]) + [
         {"key": k, "amount": v} for k, v in deltas.items()
     ]
+    original_inputs = extract_baseline_inputs(result)
+    original_out = compute_scenario(original_inputs, {}, **rate_kwargs)
+    state_effect = price_state_points(
+        result, tax_law, year, filing_status, original_inputs, original_out,
+        [(base_inputs, base_out), (resolved_inputs, scen_out)], profile=profile)
+    if base_scenario is not None:
+        prior = base_scenario.get("state_effect") or {}
+        if (prior.get("modeled", False) != state_effect["modeled"]
+                or prior.get("fingerprint") != state_effect["fingerprint"]):
+            raise ScenarioError("State evidence/law changed or was absent in the saved scenario; re-run the stack from result.json")
+    if state_effect["modeled"]:
+        state_delta = round(state_effect["points"][1]["anchored_total_tax"]
+                            - state_effect["points"][0]["anchored_total_tax"], 2)
+        state_effect["delta_total_tax"] = state_delta
+        state_effect["combined_delta_tax"] = round(delta_tax + state_delta, 2)
+        state_effect["combined_marginal_rate"] = (
+            round((delta_tax + state_delta) / delta_income, 4) if delta_income else None)
     return ScenarioReport(
         schema="tax-scenario/v1", name=name, tax_year=year,
         created=today.isoformat(), base=base["base_label"], filing_status=filing_status,
@@ -603,6 +622,7 @@ def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: st
             result, return_agi, priced)),
         schedule_a_repriced=repriced,
         schedule_a_held=held_notes,
+        state_effect=state_effect,
     )
 
 
@@ -616,6 +636,7 @@ def _report_to_dict(r: ScenarioReport) -> dict:
         "medical_floor_may_move": r.medical_floor_may_move,
         "schedule_a_repriced": r.schedule_a_repriced,
         "schedule_a_held": r.schedule_a_held,
+        "state_effect": r.state_effect,
     }
 
 
@@ -962,8 +983,19 @@ def render_markdown(r: ScenarioReport) -> str:
               f"- Δ federal tax: **{_money(d.delta_total_tax)}**",
               f"- Marginal rate on this change: **{_pct(d.marginal_rate)}**", ""]
 
-    lines += ["## Caveats",
-              "- Federal only — state tax effect is not modeled in v1.",
+    if r.state_effect.get("modeled"):
+        before, after = r.state_effect["points"]
+        lines += ["## State and local effects", "",
+                  "State liability is repriced independently from the confirmed return inputs. "
+                  "Refundable credits, payments, use tax and penalties are excluded.", "",
+                  "| Item | Baseline | Scenario | Δ |", "|---|---:|---:|---:|",
+                  f"| {r.state_effect['state']} state/local liability | {_money(before['anchored_total_tax'])} | "
+                  f"{_money(after['anchored_total_tax'])} | {_money(r.state_effect['delta_total_tax'])} |",
+                  f"| Federal + state/local tax change | | | {_money(r.state_effect['combined_delta_tax'])} |", "",
+                  f"Combined marginal rate: **{_pct(r.state_effect['combined_marginal_rate'])}**", ""]
+    lines += ["## Caveats"]
+    lines += [f"- {note}" for note in r.state_effect.get("limitations", [])]
+    lines += [
               "- `capital_gains` deltas are treated as net long-term (preferential) gains; "
               "model a short-term gain with `other_income` instead. A net capital LOSS "
               "offsets ordinary income only up to $3,000/yr (excess carryforward not modeled).",

@@ -11,7 +11,9 @@ deltas, recomputes the federal tax effect, and reports the marginal cost (Δ tax
 Δ income), the projected scenario tax, and the movement in AGI / taxable income /
 effective rate. Saves each scenario to `scenarios/<name>.json` so scenarios can be
 **stacked** (`--base scenarios/<other>.json`). Read-only with respect to the baseline:
-never modifies `result.json` or `taxpayer_profile.json`. Federal only in v1.
+never modifies `result.json` or `taxpayer_profile.json`. Reviewed full-year
+CA/NY/NC state and local liability can be priced separately under
+`docs/contributing/state-planning.md`; unsupported scope remains explicit.
 
 The absolute scenario tax is **anchored** to the real `result.json` line 24 — only the
 marginal effect of the delta is modeled, since the recompute is a simplified federal
@@ -69,6 +71,13 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    exclusion add-backs, MFS evidence or adjustments are explicit asks, including
    in headless runs. Never infer gross benefits from line 6b. Lump-sum elections
    and combined IRA worksheets require separate reviewed modeling.
+   For state effects, read `docs/contributing/state-planning.md` and record
+   reviewed `result.state_planning_inputs` plus covered-year fetched state law.
+   Ask for missing classification, residency, raw deductions and local evidence;
+   in a headless run use `answers.md`, never template defaults. Reproduce the
+   state baseline before pricing changes. An unavailable state verdict leaves
+   federal planning available but supplies no combined estimate; surface its
+   named limitation. Do not replace it with federal delta times a state rate.
 
 2. **Pick a name and deltas.** Default name is `scenario`; pass `--name` for a meaningful
    label (a single path segment — letters, digits, `-`, `_`). To stack on a prior scenario,

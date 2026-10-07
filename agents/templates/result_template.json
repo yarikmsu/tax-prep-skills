@@ -1,5 +1,6 @@
 {
   "_comment": "Tax return result template. Only sections relevant to the taxpayer's situation are included. Field names MUST match what generate_tax_pdf.py expects.",
+  "state_planning_inputs": null,
 
   "meta": {
     "tax_year": null,

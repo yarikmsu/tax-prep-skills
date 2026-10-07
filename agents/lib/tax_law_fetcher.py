@@ -453,6 +453,17 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "brackets": [],  # [{"rate": 0.01, "min": 0, "max": 10412}, ...]
             "personal_exemption": {"amount": None},
             "dependent_exemption": {"amount": None},
+            # Optional planning inputs, fetched from the covered-year Form 540.
+            # Published rows avoid assuming that the tax table is a schedule
+            # evaluated at an inferred midpoint. Each row: min/max, tax by
+            # canonical lower-case status. Fetch every row the sweep touches.
+            "tax_table": {"max_taxable_income": None, "rows": []},
+            "exemption_phaseout": {
+                "threshold": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
+                "band": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
+                "reduction_per_step": None,
+            },
+            "amt_screening": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
             "hsa_conformity": False,
             "hsa_note": "CA does not recognize HSA. Add back employer contributions and HSA earnings.",
             # Statutory-structural (R&TC §17043): the 1% Mental Health
@@ -1451,6 +1462,12 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         _EMPTY_LIST_BY_DESIGN.add("state.brackets")
 
     def _walk(obj, path=""):
+        # Optional CA planning figures are required by the state repricer,
+        # not by every filed-return workflow. The cache validator still audits
+        # populated values; missing ones yield a named planning limitation.
+        if (isinstance(data.get("state"), dict) and data["state"].get("code") == "CA"
+                and path in ("state.tax_table", "state.exemption_phaseout", "state.amt_screening")):
+            return
         # These optional tagged blocks have their own complete validators;
         # empty confirmed lists and inactive null parameters are valid data.
         if path in ("state.modifications", "state.local"):
@@ -2059,6 +2076,7 @@ _STRUCTURAL_BLOCKS = ("federal.se_tax", "federal.niit",
 # PATH, never the bare leaf name: a future key called `schedule` or `brackets`
 # elsewhere in the schema must not inherit a validator meant for another.
 _TABLE_VALIDATORS = (
+    (re.compile(r"^state\.tax_table\.rows$"), "ca_tax_rows"),
     (re.compile(r"^state\.wa_capital_gains\.rates$"), "brackets"),
     (re.compile(r"^(federal\.filing_statuses\.[a-z]+|state)\.brackets$"), "brackets"),
     # New York's brackets are keyed by §601 rate schedule, the State's and the
@@ -2264,6 +2282,12 @@ def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None
     value the file still holds un-normalised."""
     if kind == "brackets":
         _check_brackets(dotted, value)
+    elif kind == "ca_tax_rows":
+        from agents.lib.tax_computations.state.planning import validate_ca_tax_rows
+        try:
+            validate_ca_tax_rows(value)
+        except ValueError as exc:
+            raise TaxLawSetError(str(exc)) from None
     elif kind in ("ny_schedule", "ny_recapture_tiers"):
         # New York's own rules are the engine's, so the two cannot drift. A
         # schedule meets the generic bracket rules first, which normalise an

@@ -22,7 +22,9 @@ first trips each planning threshold:
 The absolute tax at each rung is **anchored** to your real `result.json` line 24 (same
 contract as `/tax-scenario`) — only the marginal effect of the conversion is modeled.
 Read-only with respect to the baseline: never modifies `result.json` or
-`taxpayer_profile.json`. Federal only in v1.
+`taxpayer_profile.json`. Reviewed full-year CA/NY/NC state/local liability can
+be priced separately; follow `docs/contributing/state-planning.md` for the
+covered-year inputs, retirement ownership/basis and named limitations.
 
 ## Prerequisites
 - `result.json` with a computed `form_1040.line_24_total_tax` and
@@ -106,7 +108,14 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   double it if both spouses are on Medicare.
 
 ## Caveats (v1)
-- Federal only — state tax on the conversion is not modeled.
+- State/local liability requires reviewed `result.state_planning_inputs` and
+  fetched covered-year law under `docs/contributing/state-planning.md`.
+  Missing residency, retirement classification/basis, raw deduction or local
+  answers are explicit asks (read `answers.md` in headless runs). Never fill
+  missing evidence from template defaults or conformity metadata. An unavailable
+  state verdict has null state/combined costs; present the named limitation.
+  Federal cost/rate columns remain separate; combined liability excludes
+  refundable credits, payments, use tax and penalties.
 - Non-deductible IRA **basis** (Form 8606 pro-rata) is applied when `--ira-value` (and
   `--ira-basis`/profile basis) are supplied; otherwise the full conversion is taxable. Basis
   aggregates all traditional/SEP/SIMPLE IRAs (per IRS rules) and is per-individual.

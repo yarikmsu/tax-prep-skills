@@ -45,7 +45,7 @@ Written 2026-09-20, replacing eight roadmap files totalling 3,626 lines.
 | `2026-07-12`, `2026-07-17`, `2026-07-20` reviews | Epics I-O, all shipped; `docs/changelog/epic-{I,J,K,L,M,N,O}.md`. |
 
 The historical design directory was retired after the 2026-10-03 review.
-Unimplemented extensions are AA37-AA46 below. Maintained state contracts and
+Unimplemented extensions are AA38-AA46 below. Maintained state contracts and
 the template moved to `docs/contributing/state-module-{ny,nc,wa,template}.md`,
 indexed in AGENTS.md §9. Origins below and historical changelog citations link
 to the [pre-migration Git snapshot](https://github.com/yarikmsu/tax-prep-skills/tree/ba4ab34d0e75/docs/superpowers).
@@ -58,7 +58,7 @@ citations; they no longer direct contributor work in the current checkout.
 
 **Engineering: the original V, W and X queue is complete.** The 2026-10-03
 review of the retired design directory recovered useful, unimplemented extensions;
-AA37-AA46 below now carry that scope instead of relying on historical plans.
+AA38-AA46 below now carry that scope instead of relying on historical plans.
 The suite's size is stated nowhere: since AA8 the
 MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` counts only the
 seven modules that hook selects, and a count restated here would be the mirror
@@ -81,7 +81,7 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
 | **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Next, in entry order** | AA37-AA43 — bounded carryforward, intake, scenario and projection extensions recovered from the historical specs. | These remain absent in the current engine; old follow-ups that already shipped are excluded. |
+| **Next, in entry order** | AA38-AA43 — bounded carryforward, intake, scenario and projection extensions recovered from the historical specs. | These remain absent in the current engine; old follow-ups that already shipped are excluded. |
 | **Later** | AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. | Larger product extensions; the existing single-year engines remain their starting point. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
@@ -108,15 +108,6 @@ The historical specs supply their origin; the scope stated here governs the
 work. The split capital-loss carryforward, Form 1040 line 36 rollover, IRA and
 AMT basis rollover, NIIT projection, full-status capital-gains cache and
 CA/NY/NC withholding true-ups already exist and are not reopened.
-
-- **AA37 (P2, M): Recompute taxable Social Security in income scenarios and Roth sweeps.**
-  `scenario.extract_baseline_inputs` includes baseline taxable Social Security
-  in fixed `other_income`; both planners explicitly hold it unchanged. Retain
-  the gross-benefit and other required income evidence, then recompute its
-  taxable portion at each delta/rung and feed the difference into the existing
-  anchored comparison. Require the necessary inputs instead of inferring gross
-  benefits from the already-taxable amount. Share the existing computation.
-  Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
 
 - **AA38 (P2, L): Add state effects to scenarios and Roth conversion sweeps.**
   Both tools still label their tax effects federal-only. Start with the existing
@@ -437,6 +428,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA30 | #195 | AA32 added household computation methods; an acknowledged unsupported household's City or Yonkers tax remains manual. Supported Z8 plans use their variant guards. |
 | AA35 | #238 | Verified federal/CA charitable vintage ledgers through setup, computation and rollover; missing worksheets require explicit resolution. |
 | AA36 | #240 | Local paystub intake reconciles confirmed jobs into projection YTD with source and period evidence, masked extraction and secured publication. |
+| AA37 | #241 | Confirmed regular Social Security worksheets reprice taxable benefits across scenario stacks and Roth rungs; the original income frame and covered-year evidence remain bound. |
 | AA34 | #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |

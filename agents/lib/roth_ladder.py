@@ -59,6 +59,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_scenario,
 )
 from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.tax_computations.state.planning import price_state_points  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -86,6 +87,10 @@ class LadderRung:
     cumulative_cost: float   # total_tax - baseline (== line 24)
     marginal_rate: "float | None"  # Δtotal / step vs the previous rung; None at $0
     flags: "list[str]"       # threshold labels first crossed at this rung
+    state_local_tax: "float | None" = None
+    state_local_cost: "float | None" = None
+    combined_cost: "float | None" = None
+    combined_marginal_rate: "float | None" = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +126,7 @@ class LadderReport:
     # AA23: Schedule A re-priced at each rung's AGI, and what that still held.
     schedule_a_repriced: bool = False
     schedule_a_held: "list[str]" = field(default_factory=list)
+    state_effect: dict = field(default_factory=dict)
 
 
 def parse_sweep(max_amount, step) -> "list[float]":
@@ -322,7 +328,12 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
         result, rate_kwargs, base_out["agi"], runs,
         [compute_scenario(i, d, **rate_kwargs) for i, d in runs])
 
-    for amt, taxable_conv, scen in zip(amounts, convs, scens):
+    state_effect = price_state_points(
+        result, tax_law, year, filing_status, base_inputs, base_out,
+        [({**base_inputs, "ira_distribution": base_inputs["ira_distribution"] + c}, s)
+         for c, s in zip(convs, scens)], profile=profile)
+    prev_combined = None
+    for index, (amt, taxable_conv, scen) in enumerate(zip(amounts, convs, scens)):
         fed_anchored = round(line24 + (scen["total_federal_tax"] - baseline_recompute), 2)
         niit_here = compute_niit(scen["agi"], nii, niit_threshold, rate=niit_rate)
         niit_addon = round(niit_here - base_niit, 2)
@@ -385,11 +396,21 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
         if truncated_at_balance and amt == amounts[-1]:
             flags.append(f"Full IRA balance reached (max convertible {_money(value)})")
 
+        state_tax = state_cost = combined_cost = combined_marginal = None
+        if state_effect["modeled"]:
+            state_tax = state_effect["points"][index]["anchored_total_tax"]
+            state_cost = round(state_tax - state_effect["recorded_liability"], 2)
+            combined_cost = round(total - line24 + state_cost, 2)
+            combined_marginal = (round((combined_cost - prev_combined) / rung_delta, 4)
+                                if prev_combined is not None and rung_delta else None)
+            prev_combined = combined_cost
         rungs.append(LadderRung(
             amount=amt, taxable_conversion=round(taxable_conv, 2),
             agi=scen["agi"], taxable_income=scen["taxable_income"],
             fed_tax_anchored=fed_anchored, niit_addon=niit_addon, total_tax=total,
-            cumulative_cost=round(total - line24, 2), marginal_rate=marginal, flags=flags))
+            cumulative_cost=round(total - line24, 2), marginal_rate=marginal, flags=flags,
+            state_local_tax=state_tax, state_local_cost=state_cost,
+            combined_cost=combined_cost, combined_marginal_rate=combined_marginal))
         prev_total = total
         prev_amount = amt
 
@@ -407,7 +428,7 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
             result, tax_law, year, filing_status, base_out["agi"], priced)),
         medical_floor_may_move=(not repriced and medical_floor_may_move(
             result, base_out["agi"], priced)),
-        schedule_a_repriced=repriced, schedule_a_held=held_notes)
+        schedule_a_repriced=repriced, schedule_a_held=held_notes, state_effect=state_effect)
 
 
 def _report_to_dict(r: LadderReport) -> dict:
@@ -424,6 +445,7 @@ def _report_to_dict(r: LadderReport) -> dict:
         "medical_floor_may_move": r.medical_floor_may_move,
         "schedule_a_repriced": r.schedule_a_repriced,
         "schedule_a_held": r.schedule_a_held,
+        "state_effect": r.state_effect,
     }
 
 
@@ -477,7 +499,7 @@ def render_markdown(r: LadderReport) -> str:
     tx_hdr = " Taxable convert |" if r.basis_modeled else ""
     tx_sep = "---:|" if r.basis_modeled else ""
     lines += ["## Ladder", "",
-              f"| Convert |{tx_hdr} Taxable income | Fed tax | NIIT add | Total tax | Cumulative cost | Marginal rate | Flags |",
+              f"| Convert |{tx_hdr} Taxable income | Fed tax | NIIT add | Federal total | Federal cost | Federal marginal rate | Flags |",
               f"|---:|{tx_sep}---:|---:|---:|---:|---:|---:|---|"]
     for rung in r.rungs:
         tx_cell = f" {_money(rung.taxable_conversion)} |" if r.basis_modeled else ""
@@ -487,6 +509,21 @@ def render_markdown(r: LadderReport) -> str:
             f"{_money(rung.total_tax)} | {_money(rung.cumulative_cost)} | "
             f"{_pct(rung.marginal_rate)} | {', '.join(rung.flags) or '—'} |")
     lines.append("")
+
+    if r.state_effect.get("modeled"):
+        lines += ["## State and local effects", "",
+                  "State liability is repriced independently. Refundable credits, payments, "
+                  "use tax and penalties are excluded.", "",
+                  f"| Convert | {r.state_effect['state']} state/local liability | State/local cost | Combined cost | Combined marginal rate |",
+                  "|---:|---:|---:|---:|---:|"]
+        for rung in r.rungs:
+            lines.append(f"| {_money(rung.amount)} | {_money(rung.state_local_tax)} | "
+                         f"{_money(rung.state_local_cost)} | {_money(rung.combined_cost)} | "
+                         f"{_pct(rung.combined_marginal_rate)} |")
+        lines.append("")
+    else:
+        lines += [f"> **State/local tax not modeled:** {note}" for note in r.state_effect.get("limitations", [])]
+        lines.append("")
 
     lines += ["## Threshold crossings", ""]
     if not r.crossings:
@@ -503,7 +540,6 @@ def render_markdown(r: LadderReport) -> str:
     lines.append("")
 
     lines += ["## Caveats",
-              "- Federal only — state tax on the conversion is not modeled in v1.",
               "- Non-deductible IRA **basis** (Form 8606 pro-rata) is applied when "
               "`--ira-basis`/`--ira-value` are supplied; otherwise the full conversion is "
               "treated as taxable. Basis is aggregated across all traditional/SEP/SIMPLE "

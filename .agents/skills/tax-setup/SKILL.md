@@ -201,6 +201,8 @@ STOP rule above binds every fetch in it.
   - Populate `taxpayers` section from profile
   - Populate `dependents` from profile
   - **Remove sections that don't apply** (e.g., remove `schedule_c` if no self-employment)
+  - Remove `state_planning_inputs` until a reviewed state scenario worksheet
+    is requested; its null is not a completed return or evidence of conformity.
   - Remove `social_security_worksheet` when no SSA/RRB benefits apply; otherwise
     retain its unconfirmed placeholders until `/tax-compute` records the evidence.
   - Validated NY IT203 plan: set `meta.ny_return_type: IT203`, remove

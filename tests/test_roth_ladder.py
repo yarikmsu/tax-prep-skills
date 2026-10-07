@@ -326,7 +326,7 @@ def test_degrade_without_niit_threshold():
 def test_render_markdown_has_sections():
     md = rl.render_markdown(_build())
     for header in ("# Roth Conversion Ladder", "## Ladder", "## Threshold crossings",
-                   "## Caveats", "Marginal rate"):
+                   "## Caveats", "Federal marginal rate"):
         assert header in md
 
 

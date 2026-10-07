@@ -62,6 +62,7 @@ def workspace(tmp_path_factory):
 # no business, no HSA, no foreign account, no education or retirement activity,
 # and a safe harbour met by withholding alone.
 _INAPPLICABLE_SECTIONS = (
+    "state_planning_inputs",
     "social_security_worksheet",
     "schedule_1a", "charitable_non_itemizer", "schedule_a",
     "schedule_ca_itemized", "form_6251", "form_2210", "schedule_c",
