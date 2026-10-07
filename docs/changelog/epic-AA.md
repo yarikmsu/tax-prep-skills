@@ -2462,3 +2462,35 @@ Validation adds hand-computed election, haircut, QBI, MAGI and gift-cap cases,
 including incompatible forecast law and an unknown legacy offset. The initial
 local review found that a cap newly binding at lower AGI also needed the
 classification gate, and a regression case now covers it.
+
+
+## AA35 — charitable carryovers retain their vintage and jurisdiction (#238)
+
+The federal and CA deduction engines emitted aggregate charitable carryforward
+amounts, but rollover copied neither. An aggregate could not establish a gift's
+origin, category or remaining eligibility, and the rollover reminder still
+claimed prior overpayments were manual even though that path already existed.
+
+Setup now records reviewed opening ledgers. Federal Schedule A and CA Schedule
+CA independently accept covered-year carryover worksheets, reconcile every
+current gift and vintage allocation, and preserve origin, category,
+jurisdiction, expiry, cumulative absorption, lapses and remaining balance.
+The engine computes the deduction election and requires agreement with the
+worksheet. Standard-deduction years retain their hypothetical absorption and
+closing ledger. This adds vintage accounting, not an automatic Pub. 526
+carryover worksheet generator; category priority, special carry periods and
+floor treatment require reviewed worksheet evidence.
+
+Rollover copies verified closing ledgers. Missing prior worksheets, inconsistent
+totals and filing-status transitions become explicit unresolved markers rather
+than invented vintages. The headless answer contract records manual resolution;
+the derived-lines gate reproduces the settlement against the opening profile
+and actual return. Scenarios cannot reuse allocations at a changed AGI. The
+durable contract is `docs/contributing/charitable-carryovers.md`.
+
+Local review covered scope, bias direction, input validation and privacy. The
+new tests exercise multi-year accounting, jurisdiction separation, elections,
+expiration, missing evidence, tampering and rollover publication. Disabling the
+completion guard made its regression fail. The full suite, Ruff, mypy and the
+computation self-test passed. The full suite also exposed a pre-existing stale
+secure_fs collection count; its hook row and derived totals were corrected.
