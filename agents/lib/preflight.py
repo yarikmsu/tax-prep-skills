@@ -142,6 +142,7 @@ GATE_MODULES = (
 # no gain against that failure. `tests/test_preflight.py` pins this roster
 # against the directory listing so a NEW module cannot be silently omitted.
 SKILL_MODULES = (
+    ("agents.lib.paystub", "/tax-project's local paystub intake", "_main"),
     ("agents.lib.amend", "/tax-amend's Form 1040-X three-column engine", "three_column"),
     ("agents.lib.answers", "the required-answer contract a headless run stops on",
      "REQUIRED_ANSWERS"),

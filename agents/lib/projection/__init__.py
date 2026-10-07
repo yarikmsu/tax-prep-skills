@@ -2283,6 +2283,13 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     clock: the CLI already carries a `--today` override the tests drive.
     """
     _validate_tax_law_year(tax_law, year)
+    from agents.lib.paystub import PaystubError, validate_projection_provenance
+    paystub_address = profile.get("address")
+    try:
+        validate_projection_provenance(inputs, year, as_of,
+                                       paystub_address.get("state") if isinstance(paystub_address, dict) else None)
+    except PaystubError as exc:
+        raise ProjectionError(str(exc)) from None
     pay_frequency = validate_pay_frequency(inputs.get("pay_frequency", "biweekly"))
     proj = annualize(inputs.get("ytd", {}), as_of, pay_frequency,
                      inputs.get("forecast_overrides", {}),

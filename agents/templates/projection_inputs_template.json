@@ -83,5 +83,6 @@
     "hsa_spouse_last_month_rule": false,
     "hsa_spouse_testing_period_acknowledged": false
   },
-  "_paystub_parser_hook": "Future: a /tax-parse-paystub feature may populate the ytd block automatically. Keep ytd as the stable interface."
+  "paystub_provenance": null,
+  "_paystub_parser_hook": "Optional local intake: sh agents/lib/run.sh -m agents.lib.paystub --manifest documents/paystub_manifest.json. Preserves the stable ytd keys and requires explicit job/as-of evidence. See docs/contributing/paystub-intake.md."
 }

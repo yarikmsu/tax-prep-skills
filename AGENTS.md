@@ -415,6 +415,7 @@ in full, so a new file in either goes in this table.
 |---|---|
 | Agent compatibility | `docs/contributing/agents-compat.md` |
 | Skill contracts and scope | `docs/contributing/skill-catalog.md` |
+| Paystub projection intake | `docs/contributing/paystub-intake.md` |
 | Charitable vintage accounting | `docs/contributing/charitable-carryovers.md` |
 | Tax gotchas | `docs/contributing/tax-gotchas.md` |
 | Test invariants | `docs/contributing/test-invariants.md` |
