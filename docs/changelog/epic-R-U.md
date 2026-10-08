@@ -80,11 +80,11 @@ collapse was about.
   Python 3.12/3.14 CI), a PR template, and an issue template whose first field is a
   redaction warning with a synthetic example. **The on-ramp already exists**: AGENTS.md
   invites community state modules and `docs/contributing/state-module-playbook.md` plus
-  [TEMPLATE-state-module.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/TEMPLATE-state-module.md) are a ready-made first contribution
+  [TEMPLATE-state-module.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/TEMPLATE-state-module.md) are a ready-made first contribution
   — label two states as `good first issue` and point CONTRIBUTING.md at them.
   Acceptance: the bug-report template makes pasting a real W-2 feel wrong, and a
   first-time contributor can add a state without asking a question.
-- **R4 (P2, XS): Merge PR #75 — DONE 2026-08-17** (squash `e975f6c`). The README front
+- **R4 (P2, XS): Merge PR #75 — DONE 2026-08-17** (squash `7a87549`). The README front
   door shipped with it, which is what closed R5's remaining link.
 - **R5 (P1, S): The first-user path — the funnel target. DONE 2026-08-12.**
   `docs/QUICKSTART.md`: clone → venv → two engine commands → real figures, on the
@@ -107,9 +107,9 @@ collapse was about.
 > As a taxpayer who will never clone a repo, I want the one question this toolkit can
 > answer without its engine.
 
-- **S1 (P1, M): `tax-safe-harbor` — DONE 2026-08-27** (PR #78, squash `47db081`; suite
+- **S1 (P1, M): `tax-safe-harbor` — DONE 2026-08-27** (PR #78, squash `3c6a2fe`; suite
   2431 → 3221, CI green on 3.12 and 3.14). Executed
-  [2026-08-12-safe-harbor-advisory.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/plans/2026-08-12-safe-harbor-advisory.md) — twelve tasks, three
+  [2026-08-12-safe-harbor-advisory.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/plans/2026-08-12-safe-harbor-advisory.md) — twelve tasks, three
   phases, no new tax math. Shipped inside the Sep 15 window, so the expiry clause
   (re-scope to Jan 15 / Q4, else drop to P3) never fired. The engine-free property is a
   POSITIVE declaration — `ENGINE_FREE_SKILLS` in `tests/skill_text.py`, tested in both
@@ -130,7 +130,7 @@ collapse was about.
   source pin per block, ending in `verify_source_pinning` clean. M1's fixture proves
   wiring; only this proves fetchability.
 - **T2 (P2, S): Validate the two review subagents — DONE.** Both agents PASSED the
-  replay on 2026-08-27; the record merged 2026-09-04 (PR #81, squash `43ea099`). The
+  replay on 2026-08-27; the record merged 2026-09-04 (PR #81, squash `b2b5b16`). The
   replay date is the one that ages, not the merge. The procedure is the one CLAUDE.md
   specifies — replay a known answer, never plausibility. The pre-committed criteria, the
   planted defects and the traps are recorded in
