@@ -277,7 +277,7 @@
 
   "crypto_summary": {
     "_include_if": "has_crypto flag is true (populated by /tax-parse-crypto)",
-    "_note": "Crypto is PROPERTY (Notice 2014-21): wash-sale (§1091) does NOT apply. FIFO basis, universal per-asset pool (v1). Capital rows feed form_8949/schedule_d; ordinary_income.total feeds Schedule 1 line 8 (Schedule C + SE tax if mining/staking is a business).",
+    "_note": "Crypto is PROPERTY (Notice 2014-21): wash-sale (§1091) does NOT apply. FIFO basis segregated by explicit account ID; preserve complete/unresolved_inputs metadata from the importer and retain the secured account_fifo transfer workpaper. Capital rows feed form_8949/schedule_d; ordinary_income.total feeds Schedule 1 line 8 (Schedule C + SE tax if mining/staking is a business).",
     "realized_capital_gain": 0,
     "ordinary_income": 0,
     "disposals": 0,

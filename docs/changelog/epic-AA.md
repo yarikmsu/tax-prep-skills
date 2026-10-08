@@ -2568,3 +2568,30 @@ a stale hook count and a conservative no-network false positive; both were
 corrected without weakening the gate. Final targeted checks, Ruff, mypy,
 preflight and the computation self-test passed. All six final-head CI jobs,
 including both full Python suites and Windows, passed before merge.
+
+## AA39 — separate individual IRA basis and Form 8606 worksheets (#243)
+
+Joint returns previously exposed one IRA basis and a flat Form 8606. The public
+`compute_individual_8606` wrapper now keeps reviewed primary/spouse opening
+basis, complete individual traditional/SEP/SIMPLE pools and source allocations
+independent. Only gross and taxable IRA amounts sum onto Form 1040. The
+completion gate reproduces each worksheet and the intake gate checks each
+classified IRA document's owner, coverage and gross. Known joint basis,
+conversion screens and classified IRA activity cannot omit the worksheets.
+
+Rollover preserves each owner's verified line 14, including a worked zero.
+One-person legacy scalars retain an explicit migration path; ambiguous joint
+archives, identity changes and spouse transitions create a blocking ownership
+marker. The PDF labels both worksheets and the filing package lists only the
+individual forms required by current activity. Roth planning names the selected
+IRA owner and binds NY pension-exclusion evidence to that owner. Inherited IRAs,
+Roth-distribution ordering and special worksheets remain outside the regular
+Part I/II wrapper. The contract is `docs/contributing/individual-ira-basis.md`.
+
+Local review added 87 hand-worked, refusal, routing, source, rollover, protected
+writer, PDF and planner cases. Held pooled-basis and disabled-ownership mutations
+failed their regressions. The full local suite passed (6,526 tests, 7 skips),
+followed by 158 attachment checks and 609 checks covering the final omission
+guards. Ruff, mypy, preflight and the engine self-test passed. All six CI jobs
+passed on final head `519537f26a131a5cffda1fbc378d808685afa4b1` before squash merge
+`b3855b75b1a2453726d3b7d5f1f7da003e552c07`.

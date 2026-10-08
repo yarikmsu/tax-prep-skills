@@ -1443,6 +1443,19 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     sums = category_sums(ledger)
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
+    crypto = result.get("crypto_summary")
+    form8949 = result.get("form_8949") or {}
+    account_rows = (isinstance(form8949, dict) and any(
+        isinstance(row, dict) and "account_id" in row
+        for key in ("part_i_short_term", "part_ii_long_term")
+        for row in (form8949.get(key) or []) if isinstance(form8949.get(key), list)))
+    if account_rows and not isinstance(crypto, dict):
+        missing_targets.append("crypto account FIFO: completeness workpaper is missing")
+    if isinstance(crypto, dict) and (any(key in crypto for key in ("basis_mode", "complete", "unresolved_inputs")) or account_rows):
+        if (crypto.get("basis_mode") not in ("account_fifo", "isolated_account")
+                or crypto.get("complete") is not True
+                or crypto.get("unresolved_inputs") != []):
+            missing_targets.append("crypto account FIFO: resolve inventory, ownership and transfer evidence before completion")
     for cat in sorted(sums):
         if cat in _INFORMATIONAL:
             note = _INFORMATIONAL_ADVISORIES.get(cat)

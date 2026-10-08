@@ -125,13 +125,13 @@ Life-event flags read False when absent, so a legacy profile still passes.
   NOT apply** — the exact INVERSE of `/tax-harvest` (which is for "stock or securities");
   loudly caveated; (4) the digital-asset question is "Yes" iff any disposal OR income receipt
   (acquire-and-hold = "No"). **Bias-direction decisions:** FIFO only (IRS default; HIFO/LIFO
-  would under-report → forbidden in v1); unmatched disposals (no acquisition on record) get
-  $0 basis + a `needs_basis` flag (OVER-states gain → safe direction → banner + degrade, every
-  row surfaced, not a hard error that blocks the whole import). v1 simplifications (caveated,
-  not silently wrong): one per-asset FIFO pool across all transactions (universal basis,
-  default — a self-transfer `send` is a no-op so basis stays in the pool; Rev. Proc. 2024-28
-  per-wallet segregation from 2025 → run per account with `--per-account`, where `send`
-  removes the lot); Box C/F default (no
+  would under-report → forbidden in v1). AA40 segregates FIFO by explicit account
+  IDs in one import and moves reviewed original lot slices through linked transfers.
+  Missing acquisition/basis/ownership/transfer evidence blocks completion, including
+  when there are no taxable disposals. Output remains diagnostic until complete;
+  tie-out enforces the summary gate. From 2025 universal basis is diagnostic only.
+  Legacy `--per-account` supports isolated histories. Contract and evidence schema:
+  `docs/contributing/crypto-accounts.md`. Box C/F default (no
   1099-DA reconciliation); NFTs/collectible 28% rate, DeFi, §1256, margin, mining-as-business
   auto-classification not modeled; state handled downstream by `/tax-compute`. Adds
   `form_1040.digital_asset_question` + a `crypto_summary` block to result_template, sets

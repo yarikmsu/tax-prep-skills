@@ -24,17 +24,16 @@ DESIGN (bias-direction taxonomy — see CLAUDE.md):
   - FIFO only (the IRS default absent a contemporaneous specific-ID election). HIFO/LIFO
     minimize gains and would UNDER-report tax if chosen silently → forbidden in v1.
   - Unmatched disposals (no acquisition on record, e.g. a transfer-in with no basis) get
-    $0 cost basis + a `needs_basis` flag. $0 basis OVER-states the gain (the safe,
-    over-reporting direction) → banner + degrade, every affected row surfaced — rather
-    than a hard error that would block the whole import on one missing record.
+    diagnostic $0 cost basis + a `needs_basis` flag. In account mode missing basis
+    or transfer evidence BLOCKS return preparation; diagnostic totals are not filing values.
   - All numeric inputs are validated at the parse boundary and REJECT bool / NaN /
     Infinity / negative (NaN/Inf pass isinstance and defeat `< 0` checks — the recurring
     project lesson). Unknown kind / unknown exchange / malformed date → clean
     CryptoImportError, never a raw traceback.
 
-v1 SIMPLIFICATIONS (caveated, not silently wrong): one per-asset FIFO pool across all
-provided transactions (universal basis; Rev. Proc. 2024-28 per-wallet segregation is a
-v1.1 item — run per account for strict treatment); Box C/F default (no 1099-B/1099-DA
+Account FIFO segregates explicit account IDs and transfers original lot slices.
+Legacy universal imports for 2025 onward are diagnostic only (Rev. Proc. 2024-28).
+Remaining scope limits: Box C/F default (no 1099-B/1099-DA
 reconciliation); NFTs/collectible 28% rate, DeFi, §1256, margin not modeled; state tax
 handled downstream by /tax-compute; mining/staking-as-a-business (Schedule C + SE tax)
 flagged, not auto-classified. Federal Form 8949 only.
@@ -44,11 +43,13 @@ dict the /tax-parse-crypto skill merges.
 """
 
 import datetime
+import heapq
 import json
 import math
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from fractions import Fraction
 from pathlib import Path
 from typing import Literal
 
@@ -232,6 +233,8 @@ class IncomeEvent:
     fmv: float              # ordinary income recognized at receipt
     received: datetime.date
     income_type: str
+    account_id: str | None = None
+    txn_id: str | None = None
 
 
 def _coerce_transaction(raw: dict, idx: int) -> CryptoTransaction:
@@ -386,6 +389,10 @@ class Form8949Row:
     holding_period: 'Literal["short", "long"]'
     box: str                    # C (short) or F (long)
     needs_basis: bool           # True when this slice had no acquisition on record
+    account_id: str | None = None
+    txn_id: str | None = None
+    origin_account_id: str | None = None
+    origin_txn_id: str | None = None
 
 
 class _OpenLot:
@@ -510,6 +517,312 @@ def _fmt_qty(q: float) -> str:
     return s if s else "0"
 
 
+# Account FIFO keeps exact quantities and basis fractions internally. Only form
+# amounts are rounded to cents; transfers move slices, never create another buy.
+@dataclass
+class _AccountLot:
+    quantity: Fraction
+    basis: Fraction
+    acquired: datetime.datetime | None
+    origin_account: str
+    origin_txn: str
+    origin_order: int
+    basis_known: bool = True
+    acquired_tax_date: datetime.date | None = None
+
+
+def _account_datetime(value):
+    # Transfers can cross exports with different offsets. Ordering uses UTC;
+    # a separate original calendar date is retained for forms and year filters.
+    if isinstance(value, datetime.datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.datetime.fromisoformat(value.strip().removesuffix(' UTC').replace('Z', '+00:00'))
+        except ValueError as exc:
+            raise CryptoImportError('Account timestamp requires an ISO date/time or UTC suffix') from exc
+    else:
+        return _parse_dt(value, 'account timestamp')
+    return (parsed.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            if parsed.tzinfo else parsed)
+
+
+def _quantity_text(value):
+    # Input quantities and their differences are terminating decimals. Avoid an
+    # arbitrary eight-decimal display cutoff (ETH units can be much smaller).
+    denominator, twos, fives = value.denominator, 0, 0
+    while denominator % 2 == 0:
+        denominator //= 2
+        twos += 1
+    while denominator % 5 == 0:
+        denominator //= 5
+        fives += 1
+    if denominator != 1:
+        raise CryptoImportError('Account quantity is not a terminating decimal')
+    scale = max(twos, fives)
+    digits = str(value.numerator * 2 ** (scale-twos) * 5 ** (scale-fives)).rjust(scale+1, '0')
+    return (digits[:-scale] + '.' + digits[-scale:]).rstrip('0').rstrip('.') if scale else digits
+
+
+def _exact(value, label):
+    _num(value, label)  # finite / bool / sign checks precede exact arithmetic
+    text = value.replace(',', '').replace('$', '').strip() if isinstance(value, str) else str(value)
+    try:
+        return Fraction(text)
+    except (ValueError, ZeroDivisionError) as exc:
+        raise CryptoImportError(f'{label} must be an exact finite decimal') from exc
+
+
+def _account_id(value, label):
+    identifier = _req_str(value, label)
+    if identifier != value or redact(identifier) != identifier:
+        raise CryptoImportError(f'{label} must be an opaque identifier without sensitive values')
+    return identifier
+
+
+def _fraction_record(value):
+    return {'numerator': str(value.numerator), 'denominator': str(value.denominator)}
+
+
+def _account_lot_record(lot):
+    return {'quantity': _quantity_text(lot.quantity), 'basis_usd': _money(_num(float(lot.basis), 'lot basis')),
+            'quantity_exact': _fraction_record(lot.quantity), 'basis_exact': _fraction_record(lot.basis),
+            'acquired': lot.acquired.isoformat() if lot.acquired else None,
+            'acquired_tax_date': lot.acquired_tax_date.isoformat() if lot.acquired_tax_date else None,
+            'origin_account_id': lot.origin_account, 'origin_txn_id': lot.origin_txn,
+            'basis_known': lot.basis_known}
+
+
+def _account_timeline(raw, txns, links):
+    """Preserve account-local order and transfer causality at equal timestamps."""
+    groups = {}
+    for index, txn in enumerate(txns):
+        groups.setdefault(txn.date, []).append(index)
+    order = []
+    for date, group in sorted(groups.items()):
+        supplied = [raw[i].get('sequence') for i in group]
+        if any(seq is not None for seq in supplied):
+            if any(isinstance(seq, bool) or not isinstance(seq, int) or seq < 0 for seq in supplied):
+                raise CryptoImportError('Supply non-negative integer sequence for every event at this timestamp')
+            if len(set(supplied)) != len(supplied):
+                raise CryptoImportError('Same-time transaction sequences must be unique')
+            ranked = sorted(group, key=lambda i: raw[i]['sequence'])
+        else:
+            ranked = group
+        # Linked receive MUST follow its send. Local source order is explicit
+        # data; a conflicting same-time export needs corrected sequence evidence.
+        edges = {i: set() for i in group}
+        indegree = {i: 0 for i in group}
+        last = {}
+        def edge(before, after):
+            if after not in edges[before]:
+                edges[before].add(after)
+                indegree[after] += 1
+        for i in ranked:
+            account = raw[i]['account_id']
+            if account in last:
+                edge(last[account], i)
+            last[account] = i
+        if any(seq is not None for seq in supplied):
+            for before, after in zip(ranked, ranked[1:]):
+                edge(before, after)
+        for pair in links.values():
+            before, after = pair['send'], pair['receive']
+            if txns[before].date == date and txns[after].date == date:
+                edge(before, after)
+        rank = {index: position for position, index in enumerate(ranked)}
+        ready = [(rank[i], i) for i in ranked if indegree[i] == 0]
+        heapq.heapify(ready)
+        done = []
+        while ready:
+            _, i = heapq.heappop(ready)
+            done.append(i)
+            for after in edges[i]:
+                indegree[after] -= 1
+                if indegree[after] == 0:
+                    heapq.heappush(ready, (rank[after], after))
+        if len(done) != len(group):
+            raise CryptoImportError('Conflicting same-time account/transfer order; supply reviewed sequence evidence')
+        order.extend(done)
+    return order
+
+
+def _match_account_fifo(raw, txns, transfer_links):
+    """Segregated pools and one reconciled send/receive pair per transfer id."""
+    if transfer_links is None:
+        transfer_links = {}
+    if not isinstance(transfer_links, dict):
+        raise CryptoImportError('transfer_links must be an object keyed by transfer_id')
+    seen, legs, qty = set(), {}, {}
+    for i, (record, txn) in enumerate(zip(raw, txns)):
+        account = _account_id(record.get('account_id'), 'account_id')
+        txid = _account_id(record.get('txn_id'), 'txn_id')
+        if (account, txid) in seen:
+            raise CryptoImportError('Duplicate transaction id in one account; do not import a source twice')
+        seen.add((account, txid))
+        _exact(record.get('fee_usd', 0), 'account fee')
+        if record.get('external_transfer_confirmed') is not None and txn.kind not in {'send', 'receive'}:
+            raise CryptoImportError('Only transfers may carry external_transfer_confirmed')
+        qty[i] = _exact(record['quantity'], 'account quantity')
+        if qty[i] <= 0:
+            raise CryptoImportError('Account events require a positive quantity')
+        if 'external_transfer_confirmed' in record and not isinstance(record['external_transfer_confirmed'], bool):
+            raise CryptoImportError('external_transfer_confirmed must be boolean')
+        tid = record.get('transfer_id')
+        if tid is not None:
+            tid = _account_id(tid, 'transfer_id')
+            if txn.kind not in {'send', 'receive'}:
+                raise CryptoImportError('Only send/receive may carry transfer_id')
+            if record.get('external_transfer_confirmed') is True:
+                raise CryptoImportError('An internal linked transfer cannot also be external')
+            legs.setdefault(tid, []).append(i)
+        if txn.kind in {'send', 'receive'} and txn.fee_usd:
+            raise CryptoImportError('Transfer fees require separately reviewed taxable fee events; never ignore them')
+    unknown = set(transfer_links) - set(legs)
+    if unknown:
+        raise CryptoImportError('Transfer evidence names a transfer with no transaction legs')
+    links, issues = {}, []
+    def unresolved(index, reason):
+        issues.append({'account_id': raw[index]['account_id'], 'txn_id': raw[index]['txn_id'],
+                       'kind': txns[index].kind, 'reason': reason})
+    for tid, indices in legs.items():
+        sends = [i for i in indices if txns[i].kind == 'send']
+        receives = [i for i in indices if txns[i].kind == 'receive']
+        if len(indices) > 2 or len(sends) > 1 or len(receives) > 1:
+            raise CryptoImportError('A transfer_id must identify exactly one send and one receive')
+        evidence = transfer_links.get(tid)
+        if evidence is not None:
+            if (not isinstance(evidence, dict) or set(evidence) != {'ownership_confirmed', 'evidence'}
+                    or evidence['ownership_confirmed'] is not True):
+                raise CryptoImportError('Transfer evidence requires ownership_confirmed true and an evidence reference')
+            _account_id(evidence['evidence'], 'transfer evidence reference')
+        if not sends or not receives or evidence is None:
+            for i in indices:
+                unresolved(i, 'unmatched transfer or missing reviewed ownership evidence')
+            continue
+        send, receive = sends[0], receives[0]
+        if (raw[send]['account_id'] == raw[receive]['account_id'] or txns[send].asset != txns[receive].asset
+                or qty[send] != qty[receive]):
+            raise CryptoImportError('Transfer accounts, asset or exact quantities do not reconcile')
+        if txns[receive].date < txns[send].date:
+            raise CryptoImportError('A transfer cannot arrive before it leaves the source account')
+        if txns[receive].basis_usd is not None or txns[receive].acquired_date is not None:
+            raise CryptoImportError('Linked receive basis/date are derived from source slices; remove manual overrides')
+        links[tid] = {'send': send, 'receive': receive, 'evidence': evidence['evidence']}
+    pools, transit, transfers, rows, all_incomes, disposals = {}, {}, [], [], [], []
+    order = _account_timeline(raw, txns, links)
+    def add(account, asset, lot):
+        queue = pools.setdefault((account, asset), [])
+        queue.append(lot)
+        queue.sort(key=lambda entry: (entry.acquired or datetime.datetime.max, entry.origin_order))
+    def consume(index):
+        txn, record = txns[index], raw[index]
+        remaining, slices = qty[index], []
+        for lot in pools.get((record['account_id'], txn.asset), []):
+            if remaining <= 0:
+                break
+            if lot.quantity <= 0:
+                continue
+            take = min(remaining, lot.quantity)
+            basis = lot.basis * take / lot.quantity
+            slices.append(_AccountLot(take, basis, lot.acquired, lot.origin_account,
+                                      lot.origin_txn, lot.origin_order, lot.basis_known, lot.acquired_tax_date))
+            lot.quantity -= take
+            lot.basis -= basis
+            remaining -= take
+        if remaining > 0:
+            unresolved(index, 'source account lacks acquisition inventory; another account cannot supply it')
+            slices.append(_AccountLot(remaining, Fraction(0), None, record['account_id'],
+                                      record['txn_id'], index, False))
+        return slices
+    for origin_order, index in enumerate(order):
+        txn, record = txns[index], raw[index]
+        account, txid = record['account_id'], record['txn_id']
+        tid = record.get('transfer_id')
+        if txn.kind == 'send':
+            slices = consume(index)
+            if tid in links:
+                transit[tid] = slices
+            elif record.get('external_transfer_confirmed') is not True:
+                unresolved(index, 'outbound transfer needs a matched receive or explicit external ownership confirmation')
+            transfers.append({'transfer_id': tid, 'from_account_id': account,
+                              'to_account_id': raw[links[tid]['receive']]['account_id'] if tid in links else None,
+                              'from_txn_id': txid,
+                              'to_txn_id': raw[links[tid]['receive']]['txn_id'] if tid in links else None,
+                              'received': txns[links[tid]['receive']].date.isoformat() if tid in links else None,
+                              'quantity': _quantity_text(qty[index]),
+                              'sent': txn.date.isoformat(), 'asset': txn.asset,
+                              'slices': [_account_lot_record(lot) for lot in slices],
+                              'external': record.get('external_transfer_confirmed') is True,
+                              'evidence': links[tid]['evidence'] if tid in links else None})
+            continue
+        if txn.kind == 'receive':
+            if tid in links:
+                for lot in transit.pop(tid):
+                    add(account, txn.asset, lot)
+            else:
+                known = (record.get('external_transfer_confirmed') is True
+                         and txn.basis_usd is not None and txn.acquired_date is not None)
+                if not known:
+                    unresolved(index, 'incoming transfer needs a matched send or confirmed external basis and acquisition evidence')
+                if txn.acquired_date is not None and txn.acquired_date > txn.date:
+                    raise CryptoImportError('Original acquisition cannot follow the transfer receipt')
+                basis = _exact(record['basis_usd'], 'external receive basis') if known else Fraction(0)
+                add(account, txn.asset, _AccountLot(qty[index], basis, txn.acquired_date if known else None,
+                                                    account, txid, origin_order, known,
+                                                    _parse_dt(record['acquired'], 'acquired').date() if known else None))
+            continue
+        acquisitions, taxable, incomes = expand_transaction(txn)
+        if taxable:
+            tax_date = _parse_dt(record['date'], 'date')
+            disposals.extend(replace(disposal, disposed=tax_date) for disposal in taxable)
+            slices = consume(index)
+            net = _exact(record['usd_amount'], 'disposal proceeds') - _exact(record.get('fee_usd', 0), 'disposal fee')
+            posted = Fraction(0)
+            for position, lot in enumerate(slices):
+                proceeds = _money(float(net * lot.quantity / qty[index]))
+                # Row rounding must still reproduce the disposal's net proceeds.
+                if position == len(slices) - 1:
+                    proceeds = _money(float(net) - float(posted))
+                posted += Fraction(str(proceeds))
+                basis = _money(_num(float(lot.basis), 'disposed basis'))
+                period = _holding_period(lot.acquired_tax_date, tax_date.date()) if lot.acquired_tax_date else 'short'
+                rows.append(Form8949Row(
+                    description=f'{_quantity_text(lot.quantity)} {txn.asset}',
+                    date_acquired=lot.acquired_tax_date.isoformat() if lot.acquired_tax_date else 'UNKNOWN',
+                    date_sold=tax_date.date().isoformat(), proceeds=proceeds, cost_basis=basis,
+                    gain_loss=_money(proceeds-basis), holding_period=period,
+                    box=_BOX_LONG if period == 'long' else _BOX_SHORT, needs_basis=not lot.basis_known,
+                    account_id=account, txn_id=txid, origin_account_id=lot.origin_account,
+                    origin_txn_id=lot.origin_txn))
+        for acquisition in acquisitions:
+            # New trade/income basis uses the existing documented fee convention.
+            if txn.kind == 'buy':
+                basis = _exact(record['usd_amount'], 'purchase basis') + _exact(record.get('fee_usd', 0), 'purchase fee')
+                quantity = qty[index]
+            elif txn.kind == 'trade':
+                basis = _exact(record['usd_amount'], 'trade basis')
+                quantity = _exact(record['received_quantity'], 'trade received quantity')
+                if quantity <= 0:
+                    raise CryptoImportError('An account trade requires a positive received quantity')
+            else:
+                basis, quantity = _exact(record['usd_amount'], 'income basis'), qty[index]
+            add(account, acquisition.asset, _AccountLot(quantity, basis, txn.date, account, txid, origin_order,
+                                                    acquired_tax_date=_parse_dt(record['date'], 'date').date()))
+        all_incomes.extend(replace(event, account_id=account, txn_id=txid,
+                                  received=_parse_dt(record['date'], 'date')) for event in incomes)
+    inventory = {account: {} for account, _ in sorted(seen)}
+    for (account, asset), lots in sorted(pools.items()):
+        inventory.setdefault(account, {})[asset] = [_account_lot_record(lot) for lot in lots if lot.quantity > 0]
+    return rows, all_incomes, disposals, {
+        'basis_mode': 'account_fifo', 'complete': not issues and not any(row.needs_basis for row in rows),
+        'unresolved_inputs': issues,
+        'unresolved_transfers': [issue for issue in issues if issue['kind'] in {'send', 'receive'}],
+        'transfer_ledger': transfers, 'inventory': inventory,
+    }
+
+
+
 # --------------------------------------------------------------------------
 # Aggregator
 # --------------------------------------------------------------------------
@@ -517,6 +830,8 @@ def _fmt_qty(q: float) -> str:
 def build_crypto_import(transactions: 'list[dict]', *,
                         tax_year: 'int | None' = None,
                         per_account: bool = False,
+                        account_aware: bool | None = None,
+                        transfer_links: dict | None = None,
                         wa_domicile_by_date: "dict | None" = None) -> dict:
     """Build the full crypto-import result from a list of normalized transaction dicts.
 
@@ -527,16 +842,32 @@ def build_crypto_import(transactions: 'list[dict]', *,
     if not isinstance(transactions, list):
         raise CryptoImportError("transactions must be a JSON array.")
 
+    if tax_year is not None and (isinstance(tax_year, bool) or not isinstance(tax_year, int)
+                                 or not 1 <= tax_year <= 9999):
+        raise CryptoImportError('tax_year must be a valid integer calendar year')
+    if not isinstance(per_account, bool):
+        raise CryptoImportError('per_account must be boolean')
+    tagged = any(isinstance(t, dict) and 'account_id' in t for t in transactions)
+    if account_aware is not None and not isinstance(account_aware, bool):
+        raise CryptoImportError('account_aware must be boolean or absent')
+    if tagged and account_aware is False:
+        raise CryptoImportError('Tagged accounts cannot use a universal FIFO pool')
+    account_mode = tagged or account_aware is True or transfer_links is not None
     txns = [_coerce_transaction(t, i) for i, t in enumerate(transactions)]
+    if account_mode:
+        txns = [replace(t, date=_account_datetime(raw['date']),
+                        acquired_date=_account_datetime(raw['acquired']) if raw.get('acquired') else None)
+                for raw, t in zip(transactions, txns)]
 
     acquisitions: 'list[Acquisition]' = []
     disposals: 'list[Disposal]' = []
     all_incomes: 'list[IncomeEvent]' = []
-    for t in txns:
-        a, d, i = expand_transaction(t, per_account=per_account)
-        acquisitions.extend(a)
-        disposals.extend(d)
-        all_incomes.extend(i)
+    if not account_mode:
+        for t in txns:
+            a, d, i = expand_transaction(t, per_account=per_account)
+            acquisitions.extend(a)
+            disposals.extend(d)
+            all_incomes.extend(i)
 
     # FIFO runs over ALL years so lot consumption is chronologically correct (a prior-year
     # sale consumes the oldest lot before a filing-year sale sees it). But only events whose
@@ -544,7 +875,11 @@ def build_crypto_import(transactions: 'list[dict]', *,
     # the filing year, keeping prior-year acquisitions purely for basis. Out-of-year events
     # are excluded from every total (not just caveated) and reported as a count. When
     # tax_year is None (no filtering requested), everything is reported. (Codex P1, PR #23.)
-    rows_all = match_lots(acquisitions, disposals)
+    account_report = None
+    if account_mode:
+        rows_all, all_incomes, disposals, account_report = _match_account_fifo(transactions, txns, transfer_links)
+    else:
+        rows_all = match_lots(acquisitions, disposals)
     taxable_disposals = [d for d in disposals if d.taxable]  # excludes non-taxable `send`
     if tax_year is not None:
         rows = [r for r in rows_all if int(r.date_sold[:4]) == tax_year]
@@ -609,7 +944,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
             "by_type": income_breakdown,
             "events": [
                 {"asset": e.asset, "quantity": e.quantity, "fmv": e.fmv,
-                 "date": e.received.isoformat(), "income_type": e.income_type}
+                 "date": e.received.isoformat(), "income_type": e.income_type,
+                 **({"account_id": e.account_id, "txn_id": e.txn_id} if e.account_id is not None else {})}
                 for e in incomes
             ],
             "routing_note": ("Ordinary income at FMV on receipt (Schedule 1 line 8). "
@@ -627,6 +963,19 @@ def build_crypto_import(transactions: 'list[dict]', *,
         "caveats": _caveats(needs_basis, off_year=off_year, tax_year=tax_year),
     }
 
+    if account_report is not None:
+        result['account_fifo'] = account_report
+        result['crypto_summary'].update(basis_mode='account_fifo', complete=account_report['complete'])
+        result['crypto_summary']['unresolved_inputs'] = account_report['unresolved_inputs']
+        result['caveats'] = [c for c in result['caveats'] if 'ONE per-asset FIFO pool' not in c]
+        result['caveats'].append('FIFO pools are segregated by explicit account_id; reviewed transfers carry original lot slices.')
+        if not account_report['complete']:
+            result['caveats'].insert(0, 'BLOCKED: unresolved account inventory/transfer evidence; do not merge these diagnostic totals into the return.')
+    elif not per_account and (tax_year or max((t.date.year for t in txns), default=0)) >= 2025:
+        # Statutory transition year, not an annual rate. Rev. Proc. 2024-28.
+        result['crypto_summary'].update(basis_mode='legacy_universal', complete=False,
+                                       unresolved_inputs=['Explicit wallet/account allocation is required from 2025'])
+        result['caveats'].insert(0, 'BLOCKED: universal basis cannot establish wallet/account FIFO from 2025; supply explicit account IDs.')
     if wa_domicile_by_date is not None:
         result["washington_allocation"] = washington_crypto_allocation(
             result, wa_domicile_by_date)
@@ -684,6 +1033,9 @@ def _row_dict(r: Form8949Row) -> dict:
         "gain_loss": r.gain_loss,
         "box": r.box,
         "needs_basis": r.needs_basis,
+        **({"account_id": r.account_id, "txn_id": r.txn_id,
+            "origin_account_id": r.origin_account_id, "origin_txn_id": r.origin_txn_id}
+           if r.account_id is not None else {}),
     }
 
 
@@ -697,9 +1049,9 @@ def _caveats(needs_basis: list, *, off_year: int = 0,
         "specific-identification election). HIFO/LIFO are not modeled in v1.",
         "v1 uses ONE per-asset FIFO pool across all provided transactions (universal "
         "basis). Rev. Proc. 2024-28 requires per-wallet/per-account basis from 2025 — "
-        "run the importer per account for strict per-wallet treatment.",
+        "use explicit account IDs for a combined import or --per-account for one isolated account.",
         "Form 8949 Box C/F default ('not reported on a 1099-B'). Form 1099-DA (TY2025+) "
-        "is not reconciled in v1.",
+        "is not reconciled yet. C/F are legacy placeholders; reviewed current-year routing and broker reconciliation are required before merging into a return.",
         "Stablecoins are digital assets: a market quoted in a stablecoin (USDT/USDC/DAI/"
         "GUSD/TUSD/BUSD/PYUSD) is a crypto-to-crypto disposition (use the JSON 'trade' path), "
         "not a USD trade, and is rejected. A stablecoin whose ticker ENDS in 'USD' "
@@ -1197,6 +1549,11 @@ def render_markdown(result: dict) -> str:
         f"| **Net** | | | **${sd['net_gain']:,.2f}** | |",
         "",
     ]
+    if result.get('crypto_summary', {}).get('complete') is False:
+        lines[0:0] = ['# BLOCKED — diagnostic import; unresolved account/transfer evidence', '']
+        for issue in result.get('account_fifo', {}).get('unresolved_inputs', []):
+            lines.append(f"- {issue['account_id']} / {issue['txn_id']}: {issue['reason']}")
+        lines.append('')
     oi = result["ordinary_income"]
     if oi["total"]:
         lines += [
@@ -1273,13 +1630,23 @@ def _under_the_workspace(path_arg: str) -> str:
 def _cli_adapt(argv: 'list[str]') -> int:
     if len(argv) < 2 or "--exchange" not in argv:
         print("Usage: crypto_importer.py adapt <file.csv> --exchange "
-              "<coinbase|kraken|gemini> [--assume-self-transfers]", file=sys.stderr)
+              "<coinbase|kraken|gemini> [--assume-self-transfers] [--account-id ID]", file=sys.stderr)
         return 2
     path = _under_the_workspace(argv[0])
     exchange = _flag_value(argv, "--exchange")
     assume_self = "--assume-self-transfers" in argv
     rows = _read_csv(path)
     txns = adapt_csv(rows, exchange, assume_self_transfers=assume_self)
+    if '--account-id' in argv:
+        from hashlib import sha256
+        account = _account_id(_flag_value(argv, '--account-id'), 'account_id')
+        # Alphabetic encoding avoids digit runs that the opaque-ID privacy guard
+        # would reject, while retaining the export digest's deterministic identity.
+        source = sha256(json.dumps(rows, sort_keys=True).encode('utf-8')).hexdigest()[:20]
+        source = source.translate(str.maketrans('0123456789abcdef', 'abcdefghijklmnop'))
+        for i, txn in enumerate(txns):
+            txn['account_id'] = account
+            txn['txn_id'] = f'{source}:{i}'
     print(json.dumps({"transactions": txns}, indent=2))
     return 0
 
@@ -1287,7 +1654,7 @@ def _cli_adapt(argv: 'list[str]') -> int:
 def _cli_compute(argv: 'list[str]') -> int:
     if not argv:
         print("Usage: crypto_importer.py compute <transactions.json> [--year YYYY] "
-              "[--per-account] [--markdown]", file=sys.stderr)
+              "[--account-aware] [--per-account] [--markdown]", file=sys.stderr)
         return 2
     path = _under_the_workspace(argv[0])
     p = Path(path)
@@ -1312,13 +1679,15 @@ def _cli_compute(argv: 'list[str]') -> int:
         raise CryptoImportError("wa_domicile_by_date must be an explicit object when supplied.")
     per_account = "--per-account" in argv
     result = build_crypto_import(txns, tax_year=year, per_account=per_account,
+                                 account_aware=True if '--account-aware' in argv else None,
+                                 transfer_links=data.get('transfer_links') if isinstance(data, dict) else None,
                                  wa_domicile_by_date=(data.get("wa_domicile_by_date")
                                                      if isinstance(data, dict) else None))
     if "--markdown" in argv:
         print(render_markdown(result))
     else:
         print(json.dumps(result, indent=2))
-    return 0
+    return 2 if result['crypto_summary'].get('complete') is False else 0
 
 
 def _self_test() -> int:

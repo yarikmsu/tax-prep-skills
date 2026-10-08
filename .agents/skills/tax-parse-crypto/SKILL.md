@@ -77,7 +77,7 @@ supply a normalized `crypto_transactions.json` directly.
 
 For each recognized exchange file, run the deterministic adapter:
 ```bash
-sh agents/lib/run.sh agents/lib/crypto_importer.py adapt 'documents/coinbase.csv' --exchange coinbase
+sh agents/lib/run.sh agents/lib/crypto_importer.py adapt 'documents/coinbase.csv' --exchange coinbase --account-id exchange-A
 ```
 (Always single-quote the path — same shell-safety rule as `/tax-parse`.) This prints
 `{"transactions": [...]}`. The adapters are header-name driven and tolerant of column
@@ -99,8 +99,9 @@ these by default rather than silently under-reporting. Confirm with the user:
   - an inbound **payment/reward** → kind `income` (`usd_amount` = FMV at receipt);
   - a bona fide **gift** → **NOT** a taxable disposal to the donor — no Form 8949 gain is
     recognized (the donee takes carryover basis; a gift over the annual exclusion is a Form 709
-    matter, not Form 8949). v1 does not model gifts, so **do not enter a gift as `spend`** (that
-    reports a phantom gain) — exclude the row and handle the gift separately.
+    matter, not Form 8949). This engine does not model gifts: **STOP the account import
+    until a separate reviewed gift/inventory workpaper resolves the removed lot slices**.
+    Neither `spend` nor omitting the gift is valid account inventory treatment.
 
   Do NOT blanket-apply the `--assume-self-transfers` flag when any row is a real disposal/income.
 
@@ -179,7 +180,7 @@ object per economic event:
     {"date": "2024-03-01", "kind": "income","asset": "ETH", "quantity": 2.0,
      "usd_amount": 4000, "income_type": "staking"},
     {"date": "2024-02-01", "kind": "receive","asset": "ETH","quantity": 1.0,
-     "basis_usd": 2000}
+     "basis_usd": 2000, "acquired": "2023-01-01", "external_transfer_confirmed": true}
   ]
 }
 ```
@@ -197,62 +198,51 @@ the file's Windows DACL.
   at `usd_amount` (FMV of the swap), gives B that basis. Convert/swap rows are this kind.
 - `income` — staking/reward/interest/mining/airdrop; `usd_amount` = FMV; sets basis.
 - `spend` — paying for goods/services with crypto (a disposal; proceeds = FMV of goods).
-- `receive` — transfer IN. Use it ONLY for an EXTERNAL inflow (from a wallet/exchange NOT in
-  this import) — e.g. a gift or a transfer from an account you didn't export; `basis_usd` =
-  original cost if known (else 0 → flagged needs-basis). Add `acquired` = the coin's ORIGINAL
-  acquisition date (YYYY-MM-DD) so the holding period is correct — a transfer-in does NOT
-  restart it; if omitted, the transfer date is used and a long-held coin may be mis-flagged
-  short-term. For an INTERNAL self-transfer between two accounts you ARE importing, do NOT
-  record the `receive` leg in universal mode (see `send`).
-- `send` — transfer OUT to your own wallet (non-taxable; no USD figure). Its lot-engine
-  effect depends on the **pool mode** (see step 4):
-  - **Universal pool (default):** `send` is a **no-op** — the coins stay in your single pool
-    and the original buy lot supplies basis to the eventual sale on any exchange. For an
-    internal self-transfer between imported accounts, **record NEITHER leg** — drop the `send`
-    AND the destination `receive`. `expand_transaction` always turns a `receive` into an
-    acquisition while `send` is a no-op, so keeping the `receive` (with OR without `basis_usd`)
-    adds a PHANTOM extra lot that can later be consumed FIFO and corrupt Form 8949 basis/gain.
-    Never record a self-transfer as a `sell` + `buy` either.
-  - **Per-account (`--per-account`):** `send` **removes** the oldest matching lot(s) from this
-    account's pool (a non-taxable disposal — no gain, no Form 8949 row); record the matching
-    `receive` (with `basis_usd`) in the destination account's separate run so basis carries.
+- `receive` / `send` — reviewed own-wallet transfers. In account mode retain BOTH
+  legs with the same `transfer_id` and reviewed `transfer_links` ownership evidence.
+  Original lot slices move between accounts without new basis or taxable gain.
+  An owned account outside the import needs `external_transfer_confirmed: true`;
+  an external receive also needs original `basis_usd` and `acquired`. Gifts are
+  outside this engine. Transfer fees need separate reviewed taxable fee events.
 
 ### 3. Merge all normalized transactions
 
-Concatenate the `transactions` arrays from every adapter run + every normalization sub-task file into ONE
-`crypto_transactions.json` at the workspace root:
-```json
-{ "transactions": [ ...all events from all exchanges... ] }
-```
-Immediately after writing it, run
+Read `docs/contributing/crypto-accounts.md` for the account/transfer schema,
+opening allocation, ordering and evidence contract. Assign a distinct opaque
+`account_id` to EVERY account, including separate accounts at one exchange, and a
+unique `txn_id` per economic event in that account. Review/deduplicate overlapping
+exports; adapter-generated IDs only detect identical exports. Include acquisition
+and disposal history and reviewed pre-2025 wallet allocation evidence. Never infer
+account ownership, acquisition date or basis. Obtain missing answers before import.
+
+Concatenate all reviewed arrays into ONE `crypto_transactions.json`, retaining
+both internal transfer legs. Add `transfer_links`, keyed by their shared
+`transfer_id`, with `ownership_confirmed: true` and a secured evidence reference.
+Missing matches remain unresolved; never drop a transfer to make the report pass.
+Input order within an account declares the reviewed order at equal timestamps;
+obtain explicit `sequence` evidence where export order is ambiguous.
+Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.
-**Why one file:** the default is a single universal per-asset FIFO pool. An internal transfer
-of a coin between two imported exchanges is non-taxable, and the `send` is a no-op, so the
-original buy lot already supplies basis to the eventual sale on any exchange — **drop BOTH
-transfer legs** (do not record the destination `receive`, which would add a phantom lot). No
-per-leg basis annotation is needed in universal mode. (Rev. Proc. 2024-28 requires per-wallet
-basis from 2025 — if the user needs strict per-account treatment, run the importer once per
-account with `--per-account`, where `send` removes the lot and the destination run re-adds it
-via a `receive` with `basis_usd`. Surface this trade-off.)
 
 ### 4. Compute Form 8949 / Schedule D
 
 ```bash
-sh agents/lib/run.sh agents/lib/crypto_importer.py compute crypto_transactions.json --year {year}
-# add --per-account ONLY when importing a single account's history in isolation (2025+
-# per-wallet basis); the default universal pool is correct when all accounts are in one file.
+sh agents/lib/run.sh agents/lib/crypto_importer.py compute crypto_transactions.json --year {year} --account-aware
 ```
-This prints a JSON result (`--markdown` for a human summary). Review:
-- `schedule_d.short_term` / `long_term` / `net_gain`,
-- `ordinary_income.total` + `by_type`,
-- `digital_asset_question`,
-- `needs_basis` — **if non-empty, STOP and resolve with the user**: each listed disposal had
-  no acquisition on record and was given **$0 basis**, which *overstates* the gain. Ask for
-  the missing acquisition (or a `receive` with `basis_usd`) and re-run. Only proceed with $0
-  basis if the user explicitly accepts over-reporting on those rows. That acceptance is the
-  `crypto_disposals_without_basis` ACKNOWLEDGEMENT: it is re-asked on every run and is
-  cleared for one invocation with `--acknowledge crypto_disposals_without_basis`, never by
-  a line in answers.md — the figures it was given for are this year's.
+
+Review `account_fifo` inventory, transfer slices and provenance, plus Schedule D,
+ordinary income, Form 1040 digital-asset answer and `needs_basis`. **Exit 2,
+`crypto_summary.complete` other than true, any unresolved input, or any missing
+basis: STOP.** Diagnostic zero-basis amounts overstate gain and must not enter
+the return. Obtain missing ownership, history, dates or basis, then re-run.
+The `crypto_disposals_without_basis` acknowledgement cannot waive the account
+inventory or transfer-evidence gate. Keep the complete output as a secured
+workpaper under `summaries/` using the same `secure_fs` call as step 2b.
+
+For legacy isolated-account workflows, `--per-account` remains available with
+reviewed external lot inputs; it cannot reconcile multiple accounts. Universal
+pool imports from 2025 are diagnostic only and blocked. Use explicit account
+IDs for every new combined import, including historical imports.
 
 ### 5. Merge into result.json
 
@@ -276,9 +266,21 @@ Update `result.json` from the main session only — never from a delegated sub-t
 2. **`form_8949.part_i_short_term` / `part_ii_long_term`** ← APPEND the crypto rows to any
    existing equity rows (do not overwrite 1099-B rows from `/tax-parse`).
 3. **`schedule_d`** — ADD the crypto ST/LT proceeds, cost, and gain into the existing
-   Schedule D Part I/II totals, then recompute `line_16_combined`. Crypto with no 1099-B is
-   Box C (line 1c short) / Box F (long, "not reported"); keep it separate from box-A/D rows.
-4. **`crypto_summary`** ← the result's `crypto_summary` + `needs_basis`.
+   Schedule D Part I/II totals, then recompute `line_16_combined`.
+   **Reporting review is a separate HARD GATE:** the importer's C/F boxes are
+   legacy placeholders, not verified current-year routing. Obtain the current-year
+   Form 8949/Schedule D instructions and actual broker forms before merging rows;
+   review and replace placeholders with the applicable boxes. TY2025 uses G/H/I
+   (short) and J/K/L (long), depending on explicit reported-basis and form evidence:
+   `https://www.irs.gov/instructions/i8949` (verified TY2025, 2026-10-07).
+   Never infer that no 1099-DA was received from its absence in the import, and
+   never reuse TY2025 routing as verified future-year instructions. AA41 adds
+   deterministic broker reconciliation; until then unresolved reporting evidence
+   blocks this merge even when account inventory is complete.
+4. **`crypto_summary`** ← the result's COMPLETE `crypto_summary` + `needs_basis`.
+   Preserve `basis_mode`, `complete`, and `unresolved_inputs`; tie-out blocks
+   unresolved account metadata. Retain the full `account_fifo` workpaper in
+   secured `summaries/`, including transfer slices, evidence and remaining lots.
 5. **Ordinary income**: add `ordinary_income.total` to `form_1040.line_8_schedule1_other`
    (Schedule 1 line 8 — other income), unless the user confirms mining/staking is a trade or
    business, in which case route it to Schedule C + Schedule SE (flag this; v1 does not
