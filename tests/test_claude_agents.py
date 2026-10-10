@@ -1453,7 +1453,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         Replay B's fixture is GENERATED, so it drifts by an edit to the
         generator; Replay A's is a git object, so it drifts by an edit to the
         SHA — one character of the record, and the class of the change is
-        invisible in a diff. Point it at `a696dac` instead of its parent, at any
+        invisible in a diff. Point it at `2b4c849` instead of its parent, at any
         later revision, or at a hash that no longer resolves, and the bias
         reviewer's report on it is honestly empty. Empty is also what a BROKEN
         reviewer returns, and the record cannot tell them apart: that is the

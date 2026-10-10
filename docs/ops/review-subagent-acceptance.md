@@ -42,19 +42,19 @@ restart, then replay.
 
 ## Replay A — `bias-direction-reviewer`
 
-**Input.** The pre-fix `agents/lib/tax_computations.py` from `5c23279`, the parent of
-`a696dac` ("fix: P0 engine correctness sprint"). Copy it to a scratch directory and
+**Input.** The pre-fix `agents/lib/tax_computations.py` from `2f83b25`, the parent of
+`2b4c849` ("fix: P0 engine correctness sprint"). Copy it to a scratch directory and
 point the agent at that path alone:
 
 ```sh
 mkdir -p /tmp/t2-bias/agents/lib
-git show 5c23279fc28efd008ed9d2aa8d4770e00f7fcb45:agents/lib/tax_computations.py \
+git show 2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py \
     > /tmp/t2-bias/agents/lib/tax_computations.py
 ```
 
 **Why that commit.** Almost every merge here is a squash, so `<sha>^` is the state
 before the whole feature — a bug introduced and fixed inside one PR leaves nothing in
-the parent to find, and the replay is vacuous. `a696dac` is one of the two `fix:`
+the parent to find, and the replay is vacuous. `2b4c849` is one of the two `fix:`
 commits on `main` that correct defects shipped by an *earlier* PR, so its parent
 genuinely carries them. `git log --oneline -- agents/lib/ | grep -i '^[0-9a-f]* fix'`
 finds the candidates. Searching the log for a review's own P1 markers does not, and
@@ -63,7 +63,7 @@ puts the marker in a body describing the whole feature, never on the defect's ow
 commit. It names the trap and not a command to run, so do not go looking there for one.
 
 **The pin is checked, and it is the fixture.** A SHA is one string, and moved to
-`a696dac` itself — or to any revision that never carried the defect — the reviewer's
+`2b4c849` itself — or to any revision that never carried the defect — the reviewer's
 report on it is honestly empty, which is what a BROKEN reviewer returns too. So
 `tests/test_claude_agents.py` reads this `git show` line, materialises the file it
 names, and calls the function on the pass criterion's own case below: the pinned copy
@@ -242,7 +242,7 @@ materialise the fixtures compare the pin against what they built — no second
 Renew an input pin the way it was taken. Replay A:
 
 ```sh
-git show 5c23279fc28efd008ed9d2aa8d4770e00f7fcb45:agents/lib/tax_computations.py | tr -d '\r' | shasum -a 256
+git show 2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py | tr -d '\r' | shasum -a 256
 ```
 
 Replay B: run the generator above, note the path it PRINTS, and take
@@ -345,7 +345,7 @@ the shape that trains a reader to skim findings.
 **Definition.** `.claude/agents/bias-direction-reviewer.md`,
 sha256 `bd3025c7093e6681f66d52696933ea42888d1c50a6cf0a9f41c856d80ea3bf91`.
 
-**Input.** `5c23279fc28efd008ed9d2aa8d4770e00f7fcb45:agents/lib/tax_computations.py`,
+**Input.** `2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py`,
 sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
 
 **Model.** Not recorded — see *What no pin here covers* above.
@@ -452,7 +452,7 @@ recorded here as what the acceptance apparatus is for.
 **Definition.** `.claude/agents/bias-direction-reviewer.md`,
 sha256 `bd3025c7093e6681f66d52696933ea42888d1c50a6cf0a9f41c856d80ea3bf91`.
 
-**Input.** `5c23279fc28efd008ed9d2aa8d4770e00f7fcb45:agents/lib/tax_computations.py`,
+**Input.** `2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py`,
 sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
 
 **Model.** `claude-fable-5-1`.

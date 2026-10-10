@@ -41,14 +41,14 @@ Written 2026-09-20, replacing eight roadmap files totalling 3,626 lines.
 | `2026-08-12-product-owner-review.md` | Shipped Epics R-U → `docs/changelog/epic-R-U.md` (new), including **R1's audit baseline**. Distribution analysis → below. |
 | `2026-state-support-ny-fl-wa.md` | Its WA stories shipped as Z5/Z6; see `docs/changelog/epic-Z.md`. Its FL and NY story tables are NOT moved — that work shipped and is narrated in `epic-P.md` and `epic-Z.md` from other sources; the tables themselves are in git history. |
 | `2026-tax-planning-features.md` | All twelve features shipped; see `docs/changelog/pre-epic.md` and the historical design snapshot below. Its `/tax-retirement` v1.1 deferrals subsequently shipped as X10; see `docs/changelog/epic-X.md`. |
-| `2026-multi-agent-portability.md` | Epic Q shipped in PR #66; plan retained at [2026-08-03-multi-agent-portability.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/plans/2026-08-03-multi-agent-portability.md). |
+| `2026-multi-agent-portability.md` | Epic Q shipped in PR #66; plan retained at [2026-08-03-multi-agent-portability.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/plans/2026-08-03-multi-agent-portability.md). |
 | `2026-07-12`, `2026-07-17`, `2026-07-20` reviews | Epics I-O, all shipped; `docs/changelog/epic-{I,J,K,L,M,N,O}.md`. |
 
 The historical design directory was retired after the 2026-10-03 review.
 Unimplemented extensions are AA40-AA46 below. Maintained state contracts and
 the template moved to `docs/contributing/state-module-{ny,nc,wa,template}.md`,
 indexed in AGENTS.md §9. Origins below and historical changelog citations link
-to the [pre-migration Git snapshot](https://github.com/yarikmsu/tax-prep-skills/tree/ba4ab34d0e75/docs/superpowers).
+to the [pre-migration Git snapshot](https://github.com/yarikmsu/tax-prep-skills/tree/017d2dd45ead/docs/superpowers).
 Old plans remain available there, including their contemporary roadmap
 citations; they no longer direct contributor work in the current checkout.
 
@@ -116,7 +116,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   links carrying original basis/acquisition evidence. Do not duplicate lots or
   borrow another account's lots; unmatched transfers remain unresolved inputs.
   FIFO stays the supported method; specific identification is separate scope.
-  Origin: [2026-05-31-crypto-importer-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-31-crypto-importer-design.md) §Out of scope.
+  Origin: [2026-05-31-crypto-importer-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-31-crypto-importer-design.md) §Out of scope.
 
 - **AA41 (P2, M): Reconcile crypto imports with Form 1099-DA.**
   The importer and skill still disclose that broker forms are not reconciled
@@ -125,7 +125,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   treatment from explicit evidence, and surface unresolved differences before
   the crypto result feeds the return. Keep adjustments and their source evidence
   in the ledger rather than silently replacing the FIFO result.
-  Origin: [2026-05-31-crypto-importer-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-31-crypto-importer-design.md) §Out of scope.
+  Origin: [2026-05-31-crypto-importer-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-31-crypto-importer-design.md) §Out of scope.
 
 - **AA42 (P2, L): Add AMT and IRMAA exposure to the mid-year projection.**
   NIIT projection is already implemented. The federal projection total still
@@ -134,7 +134,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   law, including a named boundary for unsupported AMT preference items. Report
   IRMAA as a per-beneficiary premium estimate with its lookback, separate from
   income tax. Never reuse current law as a verified future-year figure.
-  Origin: [2026-05-25-tax-project-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-25-tax-project-design.md) §Open follow-ups.
+  Origin: [2026-05-25-tax-project-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-25-tax-project-design.md) §Open follow-ups.
 
 - **AA43 (P2, M): Extend projection estimated-payment schedules beyond CA.**
   CA weighted projection vouchers and CA/NY/NC computed-return true-ups already
@@ -143,7 +143,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   inputs and existing deadline helpers, with state/local liability and
   withholding on the same footing. Incomplete City/Yonkers or allocation inputs
   retain a refusal instead of producing a combined payment or refund estimate.
-  Origin: [2026-05-25-tax-project-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-25-tax-project-design.md) §Open follow-ups.
+  Origin: [2026-05-25-tax-project-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-25-tax-project-design.md) §Open follow-ups.
 
 - **AA44 (P3, L): Import a prior return PDF for first-time rollover users.**
   `load_prior` reads toolkit archive JSON, not a software-exported prior return;
@@ -152,7 +152,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   masked identity and user-reviewed provenance. Missing carryover worksheets
   stay unresolved instead of being reconstructed from summary lines. Proprietary
   software formats require a separate supported-format decision.
-  Origin: [2026-05-24-tax-rollover-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-24-tax-rollover-design.md) §Open follow-ups.
+  Origin: [2026-05-24-tax-rollover-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-24-tax-rollover-design.md) §Open follow-ups.
 
 - **AA45 (P3, L): Model multi-year Roth conversion plans.**
   The ladder currently sweeps one tax year. Add explicit annual income/balance
@@ -160,7 +160,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   inputs, and distinguish fetched covered-year law from hypothetical future-law
   assumptions. Show tax, Medicare premiums and distribution effects separately;
   a future-year forecast must not masquerade as a filing computation.
-  Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
+  Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
 
 - **AA46 (P3, M): Extend YoY reports to multi-year, saved and PDF outputs.**
   `yoy_diff` still compares two years and renders inline Markdown. Reuse its
@@ -168,7 +168,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   deliverable and an explicitly ordered PDF embed. Any narrative must follow
   the measured changes without asserting unsupported causes. Keep arbitrary
   recursive field diffs out; a separate `/tax-diff` skill is demand-gated.
-  Origin: [2026-05-25-yoy-diff-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/ba4ab34d0e75/docs/superpowers/specs/2026-05-25-yoy-diff-design.md) §Open follow-ups.
+  Origin: [2026-05-25-yoy-diff-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-25-yoy-diff-design.md) §Open follow-ups.
 
 Other explicit historical boundaries remain demand-gated scope candidates:
 NOL computation/rollover; ISO dual-basis and unsold-lot rollover; crypto
