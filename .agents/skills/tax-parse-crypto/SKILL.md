@@ -9,7 +9,8 @@ license: Apache-2.0
 Ingests crypto exchange transaction CSVs (Coinbase, Kraken, Gemini) or a normalized
 JSON, matches disposals against acquisition lots **FIFO**, and emits:
 
-- **Form 8949** rows (short-term Box C, long-term Box F — "not reported on a 1099-B"),
+- **Form 8949** rows, each routed to its check box from reviewed broker-form evidence
+  (TY2025 digital assets: G/H/I short-term, J/K/L long-term — never C/F),
 - **Schedule D** short/long/net totals,
 - **ordinary income** from staking/rewards/interest/mining/airdrops (Schedule 1 line 8),
 - the **Form 1040 page-1 digital-asset answer** ("Yes" if any disposal or income receipt),
@@ -34,6 +35,8 @@ return line items that `/tax-compute` consumes (it does NOT model what-if scenar
 - `taxpayer_profile.json` must exist (run `/tax-setup` first).
 - Exchange CSV exports placed in the `documents/` directory, OR a pre-normalized
   `crypto_transactions.json` in the workspace (schema below).
+- Every Form 1099-DA (Form 1099-B before TY2025) for a crypto account, parsed by
+  `/tax-parse`, and each account's answer to whether it received one.
 - Python: standard library only (no extra packages — CSV parsing is built-in).
 
 ## Usage
@@ -221,6 +224,16 @@ both internal transfer legs. Add `transfer_links`, keyed by their shared
 Missing matches remain unresolved; never drop a transfer to make the report pass.
 Input order within an account declares the reviewed order at equal timestamps;
 obtain explicit `sequence` evidence where export order is ambiguous.
+
+Add `broker_reporting` from the parsed broker forms — the schema, the year
+table and every treatment are in `docs/contributing/crypto-accounts.md`
+(Broker-form reconciliation). Ask the user, for EVERY account with a filing-year
+disposal, whether it received a broker form for the year, and record the answer
+with its evidence; never infer "no form" from a form missing in `documents/`.
+Enter one `forms` entry per reported transaction, linked by `txn_id` to the
+disposal it reports, copying every box and a blank one as null: the importer
+refuses a missing key rather than read it as blank. Add a `resolutions` entry
+only when the user confirms, with evidence, which figure is correct.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.
 
@@ -231,18 +244,20 @@ sh agents/lib/run.sh agents/lib/crypto_importer.py compute crypto_transactions.j
 ```
 
 Review `account_fifo` inventory, transfer slices and provenance, plus Schedule D,
-ordinary income, Form 1040 digital-asset answer and `needs_basis`. **Exit 2,
-`crypto_summary.complete` other than true, any unresolved input, or any missing
-basis: STOP.** Diagnostic zero-basis amounts overstate gain and must not enter
-the return. Obtain missing ownership, history, dates or basis, then re-run.
+ordinary income, Form 1040 digital-asset answer and `needs_basis`, then
+`broker_reporting`: each form's broker and FIFO figures and the Form 8949
+routing. **Exit 2, `crypto_summary.complete` or `reporting_complete` other than
+true, any unresolved input, or any missing basis: STOP.** Show the user each
+`broker_reporting.unresolved` difference with both figures; it clears only
+through corrected inputs, a corrected form, or a resolution the user evidences.
+Diagnostic zero-basis amounts overstate gain and must not enter the return. Obtain missing ownership, history, dates or basis, then re-run.
 The `crypto_disposals_without_basis` acknowledgement cannot waive the account
 inventory or transfer-evidence gate. Keep the complete output as a secured
 workpaper under `summaries/` using the same `secure_fs` call as step 2b.
 
-For legacy isolated-account workflows, `--per-account` remains available with
-reviewed external lot inputs; it cannot reconcile multiple accounts. Universal
-pool imports from 2025 are diagnostic only and blocked. Use explicit account
-IDs for every new combined import, including historical imports.
+`--per-account` and universal-pool output are diagnostic only: neither can
+match a broker form, so neither routes a box. Use explicit account IDs for every
+import, including historical ones.
 
 ### 5. Merge into result.json
 
@@ -265,22 +280,19 @@ Update `result.json` from the main session only — never from a delegated sub-t
    and independent of the dollars.
 2. **`form_8949.part_i_short_term` / `part_ii_long_term`** ← APPEND the crypto rows to any
    existing equity rows (do not overwrite 1099-B rows from `/tax-parse`).
-3. **`schedule_d`** — ADD the crypto ST/LT proceeds, cost, and gain into the existing
-   Schedule D Part I/II totals, then recompute `line_16_combined`.
-   **Reporting review is a separate HARD GATE:** the importer's C/F boxes are
-   legacy placeholders, not verified current-year routing. Obtain the current-year
-   Form 8949/Schedule D instructions and actual broker forms before merging rows;
-   review and replace placeholders with the applicable boxes. TY2025 uses G/H/I
-   (short) and J/K/L (long), depending on explicit reported-basis and form evidence:
-   `https://www.irs.gov/instructions/i8949` (verified TY2025, 2026-10-07).
-   Never infer that no 1099-DA was received from its absence in the import, and
-   never reuse TY2025 routing as verified future-year instructions. AA41 adds
-   deterministic broker reconciliation; until then unresolved reporting evidence
-   blocks this merge even when account inventory is complete.
+3. **`schedule_d`** — for each box in `broker_reporting.schedule_d_routing`, ADD its
+   `proceeds`, `cost`, `adjustment` and `gain` into the same keys of the
+   `line_*_digital_assets` row it names, and set that row's `adjustment_code` to
+   the box's. Each is part of its Schedule D line, and of line 7 or 15, like any other row; recompute them and
+   `line_16_combined`. Never merge crypto into a 1099-B row: those carry the
+   `employer_stock` flag, whose tie reads the row's whole adjustment. A row without a box is
+   never merged: the importer gives one only from reconciled evidence, and a year
+   without a reviewed regime blocks rather than reusing another year's boxes.
 4. **`crypto_summary`** ← the result's COMPLETE `crypto_summary` + `needs_basis`.
-   Preserve `basis_mode`, `complete`, and `unresolved_inputs`; tie-out blocks
-   unresolved account metadata. Retain the full `account_fifo` workpaper in
-   secured `summaries/`, including transfer slices, evidence and remaining lots.
+   Preserve `basis_mode`, `complete`, `unresolved_inputs` and every `reporting_*`
+   field; tie-out blocks unresolved account metadata and unrouted reporting. Retain
+   the full `account_fifo` and `broker_reporting` workpapers in secured `summaries/`,
+   including transfer slices, broker-form figures, evidence and remaining lots.
 5. **Ordinary income**: add `ordinary_income.total` to `form_1040.line_8_schedule1_other`
    (Schedule 1 line 8 — other income), unless the user confirms mining/staking is a trade or
    business, in which case route it to Schedule C + Schedule SE (flag this; v1 does not
@@ -346,17 +358,20 @@ Print:
 - digital-asset answer (Yes/No),
 - Schedule D net gain (short / long / total), ordinary income total,
 - count of disposals and any needs-basis rows,
+- the Form 8949 routing by box, each form-code adjustment, and any unresolved
+  broker-form difference,
 - the caveats from the result (`caveats` array — wash-sale N/A, FIFO, per-wallet basis,
-  Box C/F, NFTs/DeFi/§1256 not modeled),
+  broker-form routing, NFTs/DeFi/§1256 not modeled),
 - suggested next step: `/tax-compute` (which will fold these into the full return).
 
 ## Caveats (v1)
 - **FIFO only** (IRS default absent a contemporaneous specific-ID election). HIFO/LIFO can
   reduce gains and are not modeled — choosing them silently would risk under-reporting.
-- **Universal per-asset basis pool** (one queue per coin across all transactions). Per-wallet
-  segregation (Rev. Proc. 2024-28, 2025+) requires running per account.
+- **Per-account FIFO needs explicit account IDs** (Rev. Proc. 2024-28, 2025+). The legacy
+  universal pool and `--per-account` are diagnostic only and route no Form 8949 box.
 - **Wash-sale does NOT apply** to crypto (property, not securities).
-- **Box C/F default** — Form 1099-DA (TY2025+) is not reconciled.
+- **Form 8949 boxes come only from reviewed broker-form evidence.** A year without a
+  reviewed regime blocks every reported row instead of reusing another year's boxes.
 - **Not modeled:** NFTs/collectible 28% rate, DeFi/liquidity-pool events, §1256 futures,
   margin/lending, mining/staking-as-a-business auto-classification, state-specific treatment
   (handled downstream by `/tax-compute`).

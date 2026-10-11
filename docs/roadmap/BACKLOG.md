@@ -101,6 +101,48 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   "indexes roughly 1%/yr" and that an absent value "degrades quietly", and never
   checks for a stale or already-reduced amount. Found by AA16's second review.
 
+- **AA47 (P2, M): Give the 1099-DA cases AA41 blocks for good a way through.**
+  AA41 links each form to one disposal by `txn_id` and requires matching units
+  and proceeds, so four cases block for good: a broker using §1.6045-1(d)(10)'s
+  optional aggregate method for qualifying stablecoins or specified NFTs (one
+  form per stablecoin type, date sold possibly blank); one form line covering
+  several partial fills; units that differ only in precision (box 1c asks for
+  18 decimal places, which an import or broker may not carry); and a proceeds
+  gap of a cent or so that no recorded fee explains. Two more block every way:
+  a filled box the engine does not model (ordinary, accrued market discount,
+  wash sale, loss not allowed) refuses the WHOLE import, though the doc says to
+  report that one transaction manually and no input can mark it so; and a sale
+  the import dates January 1 that the broker dates December 31 in UTC fails
+  both years, because a date a day off matches only within one year. Each
+  needs its own evidenced treatment, not a tolerance. Until then the import
+  blocks instead of guessing. Found by AA41's review.
+
+- **AA48 (P1, S): Add the TY2026 Form 8949 boxes before TY2026 crypto imports.**
+  `_REPORTING_REGIMES` holds TY2023-2025 only, so every TY2026 import with a
+  filing-year disposal blocks. One that supplies `broker_reporting` is refused
+  outright, exit 1, with no FIFO or form workpaper. A test pins that refusal on
+  purpose: evidence the engine cannot read for its year is refused like
+  malformed evidence. When the TY2026 Form 8949 instructions publish, add the
+  entry and its row in `crypto-accounts.md`'s table from a year-pinned
+  `irs-prior` copy, as the source test requires, and re-check that the 1099-DA
+  boxes AA41 refuses still mean what it read them as. Found by AA41's review.
+
+- **AA49 (P3, M): Tie each form-backed digital-asset row to its own broker
+  figures.** The `capital_proceeds` tie subtracts one aggregate,
+  `crypto_summary.reporting_proceeds_above_forms`, from the result side. A stale
+  figure surviving a re-merge, or one for a 1099-DA the ledger does not hold,
+  would shift the whole Schedule D tie and could offset an equal over-merge of
+  result-side proceeds. Carrying each routed row's broker proceeds and summing
+  those would remove the special case. Not reproduced: reproduce it first.
+  Found by AA41's review.
+
+- **AA50 (P3, XS): Build the importer's event map from filing-year disposals
+  only.** `build_crypto_import` parses every transaction's date and converts
+  every fee to cents, buys and receives included, to look up the filing-year
+  disposals that reconcile against broker forms, though `_match_account_fifo`
+  has already parsed those dates. Negligible at realistic sizes. Found by
+  AA41's review.
+
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
 These are extensions, not unfinished portions of the shipped v1 deliveries.

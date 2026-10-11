@@ -55,9 +55,10 @@ def test_partial_transfer_moves_two_original_lots_then_destination_fifo():
     sold = {row['origin_txn_id']: row for row in rows(r) if row['txn_id'] == 'sell'}
     assert sold['old']['cost_basis'] == 200
     assert sold['old']['date_acquired'] == '2023-01-01'
-    assert sold['old']['box'] == 'F'
+    # Holding period picks the part; the box waits on broker-form evidence (AA41).
+    assert sold['old'] in r['form_8949']['part_ii_long_term'] and sold['old']['box'] is None
     assert sold['new']['cost_basis'] == 150
-    assert sold['new']['box'] == 'C'
+    assert sold['new'] in r['form_8949']['part_i_short_term']
     assert next(row for row in rows(r) if row['txn_id'] == 'source-sale')['cost_basis'] == 300
     inventory = r['account_fifo']['inventory']['B']['BTC']
     assert [lot['quantity'] for lot in inventory] == ['0.5', '1']
@@ -240,11 +241,12 @@ def test_income_and_trade_lots_stay_in_their_account():
     assert r['schedule_d']['net_gain'] == 100  # swap50 + ETHsale50
 
 
-def test_universal_post_transition_is_diagnostic_but_isolated_account_supported():
+def test_universal_post_transition_is_diagnostic_and_per_account_routes_no_box():
     tx = [dict(date='2024-01-01', kind='buy', asset='BTC', quantity=1, usd_amount=100),
           dict(date='2025-03-01', kind='sell', asset='BTC', quantity=1, usd_amount=200)]
     assert C.build_crypto_import(tx, tax_year=2025)['crypto_summary']['complete'] is False
-    assert 'complete' not in C.build_crypto_import(tx, tax_year=2025, per_account=True)['crypto_summary']
+    isolated = C.build_crypto_import(tx, tax_year=2025, per_account=True)['crypto_summary']
+    assert 'complete' not in isolated and isolated['reporting_complete'] is False
 
 
 @pytest.mark.parametrize('summary', [dict(basis_mode='account_fifo', complete=False, unresolved_inputs=[]),
@@ -258,7 +260,8 @@ def test_tie_out_cannot_complete_unresolved_crypto(summary):
 
 
 def test_tie_out_accepts_complete_account_metadata():
-    summary = dict(basis_mode='account_fifo', complete=True, unresolved_inputs=[])
+    summary = dict(basis_mode='account_fifo', complete=True, unresolved_inputs=[],
+                   reporting_complete=True, reporting_unresolved=[])
     assert not tie_out.evaluate([], {'crypto_summary': summary}, []).failed
 
 
@@ -286,7 +289,7 @@ def test_utc_ordering_does_not_shift_declared_tax_dates_or_year():
     r = C.build_crypto_import(tx, tax_year=2024)
     assert rows(r)[0]['date_acquired'] == '2023-12-31'
     assert rows(r)[0]['date_sold'] == '2024-12-31'
-    assert rows(r)[0]['box'] == 'C'  # exactly one calendar year
+    assert rows(r)[0] in r['form_8949']['part_i_short_term']  # exactly one calendar year
     assert r['ordinary_income']['total'] == 20
 
 
@@ -350,11 +353,13 @@ def test_dropping_basis_mode_cannot_clear_incomplete_metadata():
 
 
 def test_fee_cents_reconcile_across_partial_sale_slices():
-    # Three original lots; net proceeds $0.05 require a rounding residual on
-    # the final slice (0.02 + 0.02 + 0.01), not three independent $0.02 rows.
+    # Three original lots; net proceeds $0.05 must add up across the slices,
+    # not round to three independent $0.02 rows. Each slice posts the rounded
+    # running total less the cents already posted: 1.67 -> 2, 3.33 -> 3 (1),
+    # 5 -> 5 (2), so 0.02 + 0.01 + 0.02.
     tx = [event('A', f'b{i}', 'buy', f'2023-01-0{i+1}', 1, 0.01) for i in range(3)]
     tx.append(event('A', 'sell', 'sell', '2025-01-01', 3, 0.07, fee_usd=0.02))
     r = C.build_crypto_import(tx)
     assert r['account_fifo']['complete']
-    assert [row['proceeds'] for row in rows(r)] == [0.02, 0.02, 0.01]
+    assert [row['proceeds'] for row in rows(r)] == [0.02, 0.01, 0.02]
     assert r['schedule_d']['net_gain'] == 0.02
