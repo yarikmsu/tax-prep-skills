@@ -734,6 +734,21 @@ def _category_target(result: dict, category: str):
     return CATEGORY_TARGETS[category]
 
 
+def _crypto_proceeds_above_forms(result: dict) -> float:
+    """Proceeds the crypto importer reported ABOVE their broker forms, each
+    with reviewed evidence (Form 8949 column (d) takes the correct, higher
+    figure). The ledger holds the forms' own figure, so the tie subtracts the
+    excess. Never negative: an excess can only lower the result side, so a
+    crafted figure cannot hide an under-report."""
+    crypto = result.get("crypto_summary")
+    value = crypto.get("reporting_proceeds_above_forms", 0) if isinstance(crypto, dict) else 0
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or value < 0:
+        raise TieOutError("crypto_summary.reporting_proceeds_above_forms must be a "
+                          "finite non-negative amount")
+    return float(value)
+
+
 def _result_total(result: dict, category: str) -> "float | None":
     """Sum the mapped result-side fields. None ONLY when the section itself
     is absent, or for capital_proceeds without non-zero detail rows — the
@@ -752,28 +767,34 @@ def _result_total(result: dict, category: str) -> "float | None":
         # ships zero-valued Part I rows, and treating those as "found" would
         # compare a long-term-only broker's ledger total against $0 and fail a
         # correct return ("section present" = non-zero, per repo convention).
-        # Box C/F rows are EXCLUDED: by definition no 1099-B backs them —
-        # that's where /tax-parse-crypto merges crypto disposals (its CSVs
-        # are ledgered as documented skips, so their proceeds are on the
-        # result side only) and where personal no-1099-B sales go. Including
+        # Box C/F rows are EXCLUDED: by definition no broker form backs them
+        # — the same rows hold Box I/L digital-asset sales no 1099-DA reports
+        # (exchange CSVs are ledgered as documented skips, so their proceeds
+        # are on the result side only) and personal no-1099-B sales. Including
         # them would fail a correct broker+crypto return. A broker row
         # misfiled into Box C/F under-counts the result side → ledger >
-        # result → still FAILS (the safe direction).
+        # result → still FAILS (the safe direction). Crypto rows a broker
+        # form DOES report (Box G/H/J/K, or A/B/D/E before TY2025) share the
+        # 1099-B rows and tie with the 1099-DA's ledgered proceeds, less the
+        # documented excess the importer reported ABOVE those forms.
+        # A non-zero Box C/F row still makes the tie VERIFIABLE while adding
+        # nothing to it: otherwise a broker form answered "no form received"
+        # and filed there left every other row zero, and the dropped proceeds
+        # degraded to an unverifiable warning instead of failing.
         total, found = 0.0, False
         for part_key in ("part_i_short_term", "part_ii_long_term"):
             part = section.get(part_key)
             if not isinstance(part, dict):
                 continue
             for row_key, row in part.items():
-                if "box_c" in row_key or "box_f" in row_key:
-                    continue
                 if isinstance(row, dict):
                     p = row.get("proceeds")
                     if isinstance(p, (int, float)) and not isinstance(p, bool):
-                        total += float(p)
                         if p != 0:
                             found = True
-        return total if found else None
+                        if "box_c" not in row_key and "box_f" not in row_key:
+                            total += float(p)
+        return total - _crypto_proceeds_above_forms(result) if found else None
     if category == "employer_stock_basis_adjustment":
         # Sum the SIGNED `adjustment` across the Schedule D box detail rows
         # flagged `employer_stock`, then NEGATE: employer-stock corrections are
@@ -1456,6 +1477,20 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                 or crypto.get("complete") is not True
                 or crypto.get("unresolved_inputs") != []):
             missing_targets.append("crypto account FIFO: resolve inventory, ownership and transfer evidence before completion")
+    # AA41: a crypto row's Form 8949 box comes from reconciled broker-form
+    # evidence. A summary predating it, or one that dropped the keys, is
+    # still crypto and still owes the reconciliation.
+    if isinstance(crypto, dict) and (account_rows or any(key in crypto for key in (
+            "basis_mode", "complete", "unresolved_inputs", "reporting_complete", "reporting_unresolved",
+            "reporting_proceeds_above_forms"))):
+        if crypto.get("reporting_complete") is not True or crypto.get("reporting_unresolved") != []:
+            missing_targets.append("crypto Form 8949 reporting: reconcile broker forms and route every "
+                                   "row to its box before completion")
+        above = _crypto_proceeds_above_forms(result)
+        if above:
+            advisories.append(f"crypto proceeds exceed their broker forms by {above:,.2f} — Form 8949 "
+                              "column (d) shows the correct figure under reviewed evidence; the "
+                              "capital_proceeds tie subtracts it, so confirm it against the forms")
     for cat in sorted(sums):
         if cat in _INFORMATIONAL:
             note = _INFORMATIONAL_ADVISORIES.get(cat)

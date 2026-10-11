@@ -55,9 +55,10 @@ def test_partial_transfer_moves_two_original_lots_then_destination_fifo():
     sold = {row['origin_txn_id']: row for row in rows(r) if row['txn_id'] == 'sell'}
     assert sold['old']['cost_basis'] == 200
     assert sold['old']['date_acquired'] == '2023-01-01'
-    assert sold['old']['box'] == 'F'
+    # Holding period picks the part; the box waits on broker-form evidence (AA41).
+    assert sold['old'] in r['form_8949']['part_ii_long_term'] and sold['old']['box'] is None
     assert sold['new']['cost_basis'] == 150
-    assert sold['new']['box'] == 'C'
+    assert sold['new'] in r['form_8949']['part_i_short_term']
     assert next(row for row in rows(r) if row['txn_id'] == 'source-sale')['cost_basis'] == 300
     inventory = r['account_fifo']['inventory']['B']['BTC']
     assert [lot['quantity'] for lot in inventory] == ['0.5', '1']
@@ -258,7 +259,8 @@ def test_tie_out_cannot_complete_unresolved_crypto(summary):
 
 
 def test_tie_out_accepts_complete_account_metadata():
-    summary = dict(basis_mode='account_fifo', complete=True, unresolved_inputs=[])
+    summary = dict(basis_mode='account_fifo', complete=True, unresolved_inputs=[],
+                   reporting_complete=True, reporting_unresolved=[])
     assert not tie_out.evaluate([], {'crypto_summary': summary}, []).failed
 
 
@@ -286,7 +288,7 @@ def test_utc_ordering_does_not_shift_declared_tax_dates_or_year():
     r = C.build_crypto_import(tx, tax_year=2024)
     assert rows(r)[0]['date_acquired'] == '2023-12-31'
     assert rows(r)[0]['date_sold'] == '2024-12-31'
-    assert rows(r)[0]['box'] == 'C'  # exactly one calendar year
+    assert rows(r)[0] in r['form_8949']['part_i_short_term']  # exactly one calendar year
     assert r['ordinary_income']['total'] == 20
 
 

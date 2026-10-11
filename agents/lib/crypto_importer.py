@@ -33,8 +33,10 @@ DESIGN (bias-direction taxonomy — see CLAUDE.md):
 
 Account FIFO segregates explicit account IDs and transfers original lot slices.
 Legacy universal imports for 2025 onward are diagnostic only (Rev. Proc. 2024-28).
-Remaining scope limits: Box C/F default (no 1099-B/1099-DA
-reconciliation); NFTs/collectible 28% rate, DeFi, §1256, margin not modeled; state tax
+Form 8949 boxes route only from reviewed broker-form evidence (AA41): each
+filing-year disposal is reconciled with the 1099-DA/1099-B that reports it, or
+its account's reviewed declaration that none does. Remaining scope limits:
+NFTs/collectible 28% rate, DeFi, §1256, margin not modeled; state tax
 handled downstream by /tax-compute; mining/staking-as-a-business (Schedule C + SE tax)
 flagged, not auto-classified. Federal Form 8949 only.
 
@@ -65,9 +67,9 @@ SCHEMA = "tax-parse-crypto/v1"
 # Normalized transaction kinds. Each expands to some combination of primitive events.
 _KINDS = {"buy", "sell", "trade", "income", "spend", "receive", "send"}
 
-# Disposals default to Form 8949 Box C (short-term) / Box F (long-term): "transaction not
-# reported on a 1099-B." Most exchanges issued no 1099-B; 1099-DA (TY2025+) reconciliation
-# is a v1.1 item. Box is a per-row field so the skill/user can override.
+# The diagnostic matcher's placeholder boxes. build_crypto_import replaces every
+# reported row's box from broker-form evidence or clears it (AA41, below), so a
+# placeholder never reaches a result.
 _BOX_SHORT = "C"
 _BOX_LONG = "F"
 
@@ -393,6 +395,15 @@ class Form8949Row:
     txn_id: str | None = None
     origin_account_id: str | None = None
     origin_txn_id: str | None = None
+    # Account mode only. Exact slice figures feed broker-form reconciliation;
+    # `cost_basis` is then Form 8949 column (e), and `fifo_cost_basis` keeps
+    # the FIFO figure beside it whenever a broker form's basis is shown there.
+    quantity_exact: Fraction | None = None
+    basis_exact: Fraction | None = None
+    adjustment: float = 0.0
+    adjustment_code: str | None = None
+    form_id: str | None = None
+    fifo_cost_basis: float | None = None
 
 
 class _OpenLot:
@@ -794,7 +805,7 @@ def _match_account_fifo(raw, txns, transfer_links):
                     gain_loss=_money(proceeds-basis), holding_period=period,
                     box=_BOX_LONG if period == 'long' else _BOX_SHORT, needs_basis=not lot.basis_known,
                     account_id=account, txn_id=txid, origin_account_id=lot.origin_account,
-                    origin_txn_id=lot.origin_txn))
+                    origin_txn_id=lot.origin_txn, quantity_exact=lot.quantity, basis_exact=lot.basis))
         for acquisition in acquisitions:
             # New trade/income basis uses the existing documented fee convention.
             if txn.kind == 'buy':
@@ -822,6 +833,348 @@ def _match_account_fifo(raw, txns, transfer_links):
     }
 
 
+# --------------------------------------------------------------------------
+# Broker-form reconciliation (AA41)
+# --------------------------------------------------------------------------
+# Form 8949's check boxes for each reviewed year, from that year's
+# instructions: (basis reported to the IRS, basis not reported, no broker
+# form) per holding period. Box letters are form structure, not an indexed
+# figure, but they still move: TY2025 took digital assets off C/F. A year
+# without its own reviewed entry routes nothing.
+_REPORTING_REGIMES: 'dict[int, dict]' = {
+    2023: {'form_type': '1099-B', 'short': ('A', 'B', 'C'), 'long': ('D', 'E', 'F'),
+           'source': 'https://www.irs.gov/pub/irs-prior/i8949--2023.pdf'},
+    2024: {'form_type': '1099-B', 'short': ('A', 'B', 'C'), 'long': ('D', 'E', 'F'),
+           'source': 'https://www.irs.gov/pub/irs-prior/i8949--2024.pdf'},
+    2025: {'form_type': '1099-DA', 'short': ('G', 'H', 'I'), 'long': ('J', 'K', 'L'),
+           'source': 'https://www.irs.gov/instructions/i8949'},
+}
+_REPORTING_VERIFIED = '2026-10-11'
+# The result.json schedule_d row each box adds into, and its Schedule D line.
+# Schedule D pairs A/G, B/H, C/I, D/J, E/K and F/L on one line; these rows
+# always go through Form 8949, so A/G and D/J land on lines 1b and 8b.
+_SCHEDULE_D_TARGETS = {
+    **dict.fromkeys('AG', ('part_i_short_term', 'line_1a_1099b_box_a', '1b')),
+    **dict.fromkeys('BH', ('part_i_short_term', 'line_2_1099b_box_b', '2')),
+    **dict.fromkeys('CI', ('part_i_short_term', 'line_1c_1099b_box_c', '3')),
+    **dict.fromkeys('DJ', ('part_ii_long_term', 'line_8a_1099b_box_d', '8b')),
+    **dict.fromkeys('EK', ('part_ii_long_term', 'line_9_1099b_box_e', '9')),
+    **dict.fromkeys('FL', ('part_ii_long_term', 'line_10_1099b_box_f', '10')),
+}
+_FORM_FIELDS = {'form_id', 'form_type', 'account_id', 'txn_id', 'asset', 'quantity',
+                'date_sold', 'proceeds', 'basis_reported_to_irs'}
+_FORM_OPTIONAL = {'cost_basis', 'term'}
+# Form boxes this engine does not model. Each is REQUIRED — null, false or 0
+# when blank — because a box nobody copied must not read as a blank one; filled
+# in, it refuses: each changes the row (debt, tokenized securities, a loss the
+# form disallows).
+_FORM_UNSUPPORTED = {'ordinary', 'accrued_market_discount', 'wash_sale_loss_disallowed',
+                     'loss_not_allowed'}
+_RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs'},
+                'basis': {'taxpayer_records'}, 'term': {'taxpayer_records'}}
+
+
+def _cents(value) -> int:
+    """Whole cents, half up, of an exact amount (a Fraction or a cent float)."""
+    exact = value if isinstance(value, Fraction) else Fraction(str(value))
+    return math.floor(exact * 100 + Fraction(1, 2))
+
+
+def _running_cents(amounts) -> 'list[int]':
+    """Cents per item whose running total is the rounded running total, so
+    the parts always add up to the rounded whole."""
+    parts, previous, running = [], 0, Fraction(0)
+    for amount in amounts:
+        running += amount
+        parts.append(_cents(running) - previous)
+        previous += parts[-1]
+    return parts
+
+
+def _spread(total_cents: int, weights) -> 'list[int]':
+    whole = sum(weights)
+    return _running_cents([Fraction(total_cents, 100) * w / whole for w in weights])
+
+
+def _form_cents(value, label) -> int:
+    amount = _exact(value, label)
+    if (amount * 100).denominator != 1:
+        raise CryptoImportError(f'{label} must be a whole-cent amount as the form shows it')
+    return int(amount * 100)
+
+
+def _broker_reporting_input(reporting, events, regime, tax_year):
+    if not isinstance(reporting, dict) or not set(reporting) <= {'accounts', 'forms', 'resolutions'}:
+        raise CryptoImportError('broker_reporting takes only accounts, forms and resolutions')
+    raw_accounts = reporting.get('accounts', {})
+    raw_forms = reporting.get('forms', [])
+    raw_resolutions = reporting.get('resolutions', {})
+    if not (isinstance(raw_accounts, dict) and isinstance(raw_forms, list)
+            and isinstance(raw_resolutions, dict)):
+        raise CryptoImportError('broker_reporting accounts and resolutions are objects; forms is a list')
+    known = {account for account, _ in events}
+    accounts = {}
+    for account, entry in raw_accounts.items():
+        if _account_id(account, 'broker_reporting account') not in known:
+            raise CryptoImportError('broker_reporting names an account with no transactions in this import')
+        if (not isinstance(entry, dict)
+                or not {'forms_received', 'evidence'} <= set(entry) <= {'forms_received', 'evidence', 'not_reported'}
+                or not isinstance(entry['forms_received'], bool)):
+            raise CryptoImportError('Each broker_reporting account needs boolean forms_received and an evidence reference')
+        listed = entry.get('not_reported', [])
+        if not isinstance(listed, list) or (listed and not entry['forms_received']):
+            raise CryptoImportError('not_reported lists disposals missing from forms an account DID receive')
+        listed = [_account_id(txn, 'not_reported txn_id') for txn in listed]
+        if len(set(listed)) != len(listed) or any((account, txn) not in events for txn in listed):
+            raise CryptoImportError('not_reported must name distinct transactions in that account')
+        accounts[account] = {'forms_received': entry['forms_received'], 'not_reported': set(listed),
+                             'evidence': _account_id(entry['evidence'], 'broker_reporting evidence reference')}
+    forms = []
+    for index, form in enumerate(raw_forms):
+        label = f'broker_reporting.forms[{index}]'
+        if not isinstance(form, dict):
+            raise CryptoImportError(f'{label} must be an object')
+        if any(form[key] not in (None, False, 0) for key in _FORM_UNSUPPORTED & set(form)):
+            raise CryptoImportError(f'{label} fills a box this engine does not model '
+                                    f'({sorted(_FORM_UNSUPPORTED)}); report that disposal manually')
+        missing = (_FORM_FIELDS | _FORM_UNSUPPORTED) - set(form)
+        unknown = set(form) - _FORM_FIELDS - _FORM_OPTIONAL - _FORM_UNSUPPORTED
+        if missing or unknown:
+            raise CryptoImportError(f'{label} is missing {sorted(missing)} or names unknown {sorted(unknown)}')
+        if form['form_type'] != regime['form_type']:
+            raise CryptoImportError(f"{label}.form_type must be {regime['form_type']} for TY{tax_year}")
+        account = _account_id(form['account_id'], f'{label}.account_id')
+        txn = _account_id(form['txn_id'], f'{label}.txn_id')
+        if (account, txn) not in events:
+            raise CryptoImportError(f'{label} names no transaction in that account')
+        declared = accounts.get(account)
+        if declared is not None and (not declared['forms_received'] or txn in declared['not_reported']):
+            raise CryptoImportError(f"{label} contradicts its account's reviewed reporting declaration")
+        reported, term, shown = form['basis_reported_to_irs'], form.get('term'), form.get('cost_basis')
+        if not isinstance(reported, bool) or term not in (None, 'short', 'long'):
+            raise CryptoImportError(f'{label} needs boolean basis_reported_to_irs and term short, long or null')
+        if reported and shown is None:
+            raise CryptoImportError(f'{label} reports basis to the IRS but shows no cost_basis')
+        try:
+            date_sold = datetime.date.fromisoformat(form['date_sold'])
+        except (TypeError, ValueError):
+            raise CryptoImportError(f'{label}.date_sold must be YYYY-MM-DD') from None
+        quantity = _exact(form['quantity'], f'{label}.quantity')
+        if quantity <= 0:
+            raise CryptoImportError(f'{label}.quantity must be positive')
+        forms.append({'form_id': _account_id(form['form_id'], f'{label}.form_id'),
+                      'account_id': account, 'txn_id': txn, 'quantity': quantity, 'date_sold': date_sold,
+                      'asset': _req_str(form['asset'], f'{label}.asset').upper(),
+                      'proceeds': _form_cents(form['proceeds'], f'{label}.proceeds'),
+                      'cost_basis': None if shown is None else _form_cents(shown, f'{label}.cost_basis'),
+                      'reported': reported, 'term': term})
+    ids = [form['form_id'] for form in forms]
+    if len(set(ids)) != len(ids):
+        raise CryptoImportError('broker form ids must be unique')
+    resolutions = {}
+    for form_id, entry in raw_resolutions.items():
+        choices = ({key: value for key, value in entry.items() if key != 'evidence'}
+                   if isinstance(entry, dict) and 'evidence' in entry else {})
+        if (form_id not in ids or not choices
+                or any(value not in _RESOLUTIONS.get(key, ()) for key, value in choices.items())):
+            raise CryptoImportError('A resolution names a form, a supported proceeds/basis/term '
+                                    'treatment and an evidence reference')
+        resolutions[form_id] = {**choices, 'evidence': _account_id(entry['evidence'], 'resolution evidence reference')}
+    return accounts, forms, resolutions
+
+
+def _reconcile_forms(rows, forms, event, regime, resolutions):
+    """One disposal's rows against the broker forms that report it.
+
+    Returns ({id(row): routed row} or None, ledger records, [(form_id,
+    reason)], cents of proceeds reported above the forms). A difference is never absorbed:
+    it stays a reason until a resolution names its Form 8949 treatment, and
+    every treatment keeps the FIFO gain in column (h).
+    """
+    if len(forms) == 1:
+        groups = [(forms[0], rows)]
+    else:
+        terms = [form['term'] for form in forms]
+        if None in terms or len(set(terms)) != len(terms):
+            return None, [], [(None, 'split broker forms must each state a different holding period')], 0
+        groups = [(form, [row for row in rows if row.holding_period == form['term']]) for form in forms]
+        if any(not group for _, group in groups) or sum(len(group) for _, group in groups) != len(rows):
+            return None, [], [(None, "the broker's holding-period split differs from FIFO; "
+                                     "review its lot identification")], 0
+    totals_agree = sum(form['proceeds'] for form in forms) == sum(_cents(row.proceeds) for row in rows)
+    # The only costs a form can leave unreflected are the fee the import
+    # recorded; a larger gap is a wrong price or valuation, never code E.
+    fee_left = event['fee']
+    routed: 'dict[int, Form8949Row]' = {}
+    records: 'list[dict]' = []
+    problems: 'list[tuple]' = []
+    above = 0
+    for form, group in groups:
+        reasons = [reason for reason, differs in (
+            ('asset differs', form['asset'] != event['asset']),
+            ('date sold differs', form['date_sold'] != event['date']),
+            ('units differ', form['quantity'] != sum(row.quantity_exact for row in group))) if differs]
+        if reasons:
+            problems.append((form['form_id'], '; '.join(reasons)))
+            continue
+        resolution, used, codes = resolutions.get(form['form_id'], {}), set(), set()
+        weights = [row.quantity_exact for row in group]
+        fifo_proceeds = [_cents(row.proceeds) for row in group]
+        fifo_basis = _running_cents(row.basis_exact for row in group)
+        proceeds, column_e = fifo_proceeds, fifo_basis
+        costs, corrections = [0] * len(group), [0] * len(group)
+        gap = sum(fifo_proceeds) - form['proceeds']
+        if gap and len(forms) > 1 and abs(gap) <= 1 and totals_agree:
+            proceeds = _spread(form['proceeds'], weights)  # split-form apportionment cent
+        elif gap > 0 and resolution.get('proceeds') == 'taxpayer_records':
+            used.add('proceeds')  # i8949 column (d): enter the correct, higher proceeds
+            above += gap
+        elif gap < 0 and resolution.get('proceeds') == 'transaction_costs':
+            used.add('proceeds')
+            if -gap > fee_left:
+                reasons.append(f'the form exceeds FIFO proceeds by {-gap / 100:,.2f}, more than the '
+                               f'{fee_left / 100:,.2f} of recorded fees left to explain it')
+            else:  # code E: form proceeds in (d), unreflected costs in (g)
+                codes.add('E')
+                fee_left += gap
+                proceeds, costs = _spread(form['proceeds'], weights), _spread(gap, weights)
+        elif gap:
+            reasons.append(f'proceeds differ from the form by {gap / 100:+,.2f}')
+        shown = form['cost_basis']
+        if shown is not None and shown != sum(fifo_basis):
+            if resolution.get('basis') == 'taxpayer_records':
+                used.add('basis')
+                codes.add('B')
+                if form['reported']:  # (e) shows the reported basis; (g) corrects it
+                    column_e = _spread(shown, weights)
+                    corrections = [shown_part - fifo for shown_part, fifo in zip(column_e, fifo_basis)]
+            else:
+                reasons.append(f'cost basis differs from the form by {(shown - sum(fifo_basis)) / 100:+,.2f}')
+        term_codes = [set() for _ in group]
+        other = [i for i, row in enumerate(group) if form['term'] not in (None, row.holding_period)]
+        spans = len({row.holding_period for row in group}) > 1
+        if form['reported'] and spans and (other or shown != sum(fifo_basis)):
+            reasons.append('a basis-reported form spans both holding periods; its basis cannot be split')
+        elif other and resolution.get('term') == 'taxpayer_records':
+            used.add('term')
+            for i in other:
+                term_codes[i].add('T')
+        elif other:
+            reasons.append('holding period differs from the form')
+        stale = set(resolution) - {'evidence'} - used
+        if stale:
+            reasons.append(f'resolution {sorted(stale)} names no difference on this form')
+        records.append({
+            'form_id': form['form_id'], 'account_id': group[0].account_id, 'txn_id': group[0].txn_id,
+            'term': form['term'], 'basis_reported_to_irs': form['reported'],
+            'broker_proceeds': _money(form['proceeds'] / 100), 'fifo_proceeds': _money(sum(fifo_proceeds) / 100),
+            'broker_cost_basis': None if shown is None else _money(shown / 100),
+            'fifo_cost_basis': _money(sum(fifo_basis) / 100),
+            'codes': ''.join(sorted(codes.union(*term_codes))) or None,
+            'resolution': {key: value for key, value in resolution.items() if key in used} or None,
+            'evidence': resolution.get('evidence') if used else None,
+            'status': 'unresolved' if reasons else 'reconciled'})
+        if reasons:
+            problems.append((form['form_id'], '; '.join(reasons)))
+            continue
+        for i, row in enumerate(group):
+            adjustment = costs[i] + corrections[i]
+            routed[id(row)] = (replace(
+                row, box=regime[row.holding_period][0 if form['reported'] else 1],
+                proceeds=_money(proceeds[i] / 100), cost_basis=_money(column_e[i] / 100),
+                adjustment=_money(adjustment / 100), adjustment_code=''.join(sorted(codes | term_codes[i])) or None,
+                gain_loss=_money((proceeds[i] - column_e[i] + adjustment) / 100),
+                form_id=form['form_id'], fifo_cost_basis=_money(fifo_basis[i] / 100)))
+    return (None, records, problems, 0) if problems else (routed, records, [], above)
+
+
+def _reporting_report(tax_year, regime, issues, **ledger) -> dict:
+    return {'tax_year': tax_year,
+            'form_type': regime and regime['form_type'], 'source': regime and regime['source'],
+            'verified': regime and _REPORTING_VERIFIED,
+            'complete': not issues, 'unresolved': issues,
+            **{'accounts': {}, 'forms': [], 'not_reported': [], 'proceeds_above_forms': 0.0,
+               'schedule_d_routing': {}, **ledger}}
+
+
+def _reconcile_broker_reporting(rows, tax_year, events, reporting):
+    """Route filing-year account rows to Form 8949 boxes from explicit evidence.
+
+    A row's box comes from a broker form that reports its disposal, or from
+    the account's reviewed declaration that no form covers it — never from
+    the absence of a form in the import. A row without that evidence keeps no
+    box and leaves the report incomplete.
+    """
+    regime = _REPORTING_REGIMES.get(tax_year) if tax_year is not None else None
+    issues: 'list[dict]' = []
+
+    def issue(reason, account=None, txn=None, form=None):
+        issues.append({'account_id': account, 'txn_id': txn, 'form_id': form, 'reason': reason})
+
+    accounts, forms, resolutions = {}, [], {}
+    if reporting is not None:
+        if regime is None:
+            raise CryptoImportError(
+                'broker_reporting needs --year' if tax_year is None else
+                f'TY{tax_year} has no reviewed Form 8949 reporting regime; broker_reporting cannot route it')
+        accounts, forms, resolutions = _broker_reporting_input(reporting, events, regime, tax_year)
+    by_txn: 'dict[tuple, list]' = {}
+    for row in rows:
+        by_txn.setdefault((row.account_id, row.txn_id), []).append(row)
+    forms_by_txn: 'dict[tuple, list]' = {}
+    for form in forms:
+        forms_by_txn.setdefault((form['account_id'], form['txn_id']), []).append(form)
+    for key in forms_by_txn.keys() - by_txn.keys():
+        for form in forms_by_txn[key]:
+            issue('the form reports no filing-year disposal in this import', *key, form['form_id'])
+    if by_txn and regime is None:
+        issue('Form 8949 routing needs the filing year (--year)' if tax_year is None else
+              f'TY{tax_year} has no reviewed Form 8949 reporting regime')
+        by_txn = {}
+    routed, records, not_reported, above = {}, [], [], 0
+    for (account, txn), txn_rows in by_txn.items():
+        declared = accounts.get(account)
+        if declared is None:
+            issue('declare whether this account received broker forms for the filing year', account, txn)
+            continue
+        if not declared['forms_received'] or txn in declared['not_reported']:
+            for row in txn_rows:
+                routed[id(row)] = replace(row, box=regime[row.holding_period][2], fifo_cost_basis=row.cost_basis)
+            not_reported.append({'account_id': account, 'txn_id': txn, 'evidence': declared['evidence']})
+            continue
+        if (account, txn) not in forms_by_txn:
+            issue('no broker form reports this disposal; add it, or list the disposal under not_reported',
+                  account, txn)
+            continue
+        new_rows, form_records, problems, extra = _reconcile_forms(
+            txn_rows, forms_by_txn[(account, txn)], events[(account, txn)], regime, resolutions)
+        records += form_records
+        for form_id, reason in problems:
+            issue(reason, account, txn, form_id)
+        if new_rows is not None:
+            above += extra
+            routed.update(new_rows)
+    final = [routed.get(id(row)) or replace(row, box=None, fifo_cost_basis=row.cost_basis) for row in rows]
+    routing: 'dict[str, dict]' = {}
+    for row in final:
+        if row.box is None:
+            continue
+        part, target, line = _SCHEDULE_D_TARGETS[row.box]
+        entry = routing.setdefault(row.box, {'part': part, 'row': target, 'schedule_d_line': line,
+                                             'proceeds': 0, 'cost_basis': 0, 'adjustment': 0, 'gain': 0, 'rows': 0})
+        for key, value in (('proceeds', row.proceeds), ('cost_basis', row.cost_basis),
+                           ('adjustment', row.adjustment), ('gain', row.gain_loss)):
+            entry[key] += _cents(value)
+        entry['rows'] += 1
+    for entry in routing.values():
+        for key in ('proceeds', 'cost_basis', 'adjustment', 'gain'):
+            entry[key] = _money(entry[key] / 100)
+    return final, _reporting_report(
+        tax_year, regime, issues, forms=records, not_reported=not_reported,
+        accounts={account: {'forms_received': entry['forms_received'], 'evidence': entry['evidence'],
+                            'not_reported': sorted(entry['not_reported'])} for account, entry in accounts.items()},
+        proceeds_above_forms=_money(above / 100), schedule_d_routing=dict(sorted(routing.items())))
+
 
 # --------------------------------------------------------------------------
 # Aggregator
@@ -832,12 +1185,15 @@ def build_crypto_import(transactions: 'list[dict]', *,
                         per_account: bool = False,
                         account_aware: bool | None = None,
                         transfer_links: dict | None = None,
-                        wa_domicile_by_date: "dict | None" = None) -> dict:
+                        wa_domicile_by_date: "dict | None" = None,
+                        broker_reporting: dict | None = None) -> dict:
     """Build the full crypto-import result from a list of normalized transaction dicts.
 
     Returns a dict with form_8949 (short/long row lists), schedule_d totals,
     ordinary_income (total + per-event breakdown), digital_asset_question, crypto_summary
     (per-asset realized gain), needs_basis (disposals lacking an acquisition), and caveats.
+    broker_reporting is the reviewed broker-form evidence that routes each reported
+    row to a Form 8949 box; without it no row carries a box (AA41).
     """
     if not isinstance(transactions, list):
         raise CryptoImportError("transactions must be a JSON array.")
@@ -891,6 +1247,20 @@ def build_crypto_import(transactions: 'list[dict]', *,
         incomes = all_incomes
         reported_disposals = taxable_disposals
         off_year = 0
+    if account_mode:
+        events = {(raw['account_id'], raw['txn_id']): {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
+                                                        'date': _parse_dt(raw['date'], 'date').date()}
+                  for raw, txn in zip(transactions, txns)}
+        rows, reporting = _reconcile_broker_reporting(rows, tax_year, events, broker_reporting)
+    else:
+        if broker_reporting is not None:
+            raise CryptoImportError('broker_reporting needs an account-aware import with explicit account '
+                                    'and transaction IDs')
+        rows = [replace(row, box=None) for row in rows]
+        reporting = _reporting_report(tax_year, None, [{
+            'account_id': None, 'txn_id': None, 'form_id': None,
+            'reason': 'Form 8949 routing needs an account-aware import with explicit account '
+                      'and transaction IDs'}] if rows else [])
 
     short_rows = [r for r in rows if r.holding_period == "short"]
     long_rows = [r for r in rows if r.holding_period == "long"]
@@ -976,6 +1346,18 @@ def build_crypto_import(transactions: 'list[dict]', *,
         result['crypto_summary'].update(basis_mode='legacy_universal', complete=False,
                                        unresolved_inputs=['Explicit wallet/account allocation is required from 2025'])
         result['caveats'].insert(0, 'BLOCKED: universal basis cannot establish wallet/account FIFO from 2025; supply explicit account IDs.')
+    result['broker_reporting'] = reporting
+    result['crypto_summary'].update(reporting_complete=reporting['complete'],
+                                    reporting_unresolved=reporting['unresolved'],
+                                    reporting_proceeds_above_forms=reporting['proceeds_above_forms'])
+    if not reporting['complete']:
+        result['caveats'].insert(0, 'BLOCKED: Form 8949 reporting is unresolved; reconcile broker forms '
+                                    '(broker_reporting.unresolved) before merging rows into a return.')
+    elif rows:
+        result['caveats'].append(
+            f"Form 8949 boxes route from reviewed TY{tax_year} Form {reporting['form_type']} evidence; a "
+            "broker-form difference carries its column (f) code and column (g) adjustment, so column (h) "
+            "keeps the FIFO gain.")
     if wa_domicile_by_date is not None:
         result["washington_allocation"] = washington_crypto_allocation(
             result, wa_domicile_by_date)
@@ -1018,6 +1400,7 @@ def _totals(rows: 'list[Form8949Row]') -> dict:
     return {
         "proceeds": _money(sum(r.proceeds for r in rows)),
         "cost_basis": _money(sum(r.cost_basis for r in rows)),
+        "adjustment": _money(sum(r.adjustment for r in rows)),
         "gain": _money(sum(r.gain_loss for r in rows)),
         "rows": len(rows),
     }
@@ -1034,7 +1417,9 @@ def _row_dict(r: Form8949Row) -> dict:
         "box": r.box,
         "needs_basis": r.needs_basis,
         **({"account_id": r.account_id, "txn_id": r.txn_id,
-            "origin_account_id": r.origin_account_id, "origin_txn_id": r.origin_txn_id}
+            "origin_account_id": r.origin_account_id, "origin_txn_id": r.origin_txn_id,
+            "adjustment_code": r.adjustment_code, "adjustment": r.adjustment,
+            "fifo_cost_basis": r.fifo_cost_basis, "form_id": r.form_id}
            if r.account_id is not None else {}),
     }
 
@@ -1050,8 +1435,6 @@ def _caveats(needs_basis: list, *, off_year: int = 0,
         "v1 uses ONE per-asset FIFO pool across all provided transactions (universal "
         "basis). Rev. Proc. 2024-28 requires per-wallet/per-account basis from 2025 — "
         "use explicit account IDs for a combined import or --per-account for one isolated account.",
-        "Form 8949 Box C/F default ('not reported on a 1099-B'). Form 1099-DA (TY2025+) "
-        "is not reconciled yet. C/F are legacy placeholders; reviewed current-year routing and broker reconciliation are required before merging into a return.",
         "Stablecoins are digital assets: a market quoted in a stablecoin (USDT/USDC/DAI/"
         "GUSD/TUSD/BUSD/PYUSD) is a crypto-to-crypto disposition (use the JSON 'trade' path), "
         "not a USD trade, and is rejected. A stablecoin whose ticker ENDS in 'USD' "
@@ -1549,11 +1932,27 @@ def render_markdown(result: dict) -> str:
         f"| **Net** | | | **${sd['net_gain']:,.2f}** | |",
         "",
     ]
-    if result.get('crypto_summary', {}).get('complete') is False:
+    summary = result.get('crypto_summary', {})
+    reporting = result.get('broker_reporting') or {}
+    if summary.get('complete') is False:
         lines[0:0] = ['# BLOCKED — diagnostic import; unresolved account/transfer evidence', '']
         for issue in result.get('account_fifo', {}).get('unresolved_inputs', []):
             lines.append(f"- {issue['account_id']} / {issue['txn_id']}: {issue['reason']}")
         lines.append('')
+    if summary.get('reporting_complete') is False:
+        lines[0:0] = ['# BLOCKED — Form 8949 reporting unresolved; reconcile broker forms', '']
+        for issue in reporting.get('unresolved', []):
+            where = ' / '.join(issue[key] for key in ('account_id', 'txn_id', 'form_id') if issue.get(key))
+            lines.append(f"- {where or 'import'}: {issue['reason']}")
+        lines.append('')
+    if reporting.get('schedule_d_routing'):
+        lines += ["## Form 8949 routing", "",
+                  "| Box | Schedule D line | Proceeds | Cost basis | Adjustment | Gain/(loss) | Rows |",
+                  "|-----|-----------------|---------:|-----------:|-----------:|------------:|-----:|"]
+        lines += [f"| {box} | {e['schedule_d_line']} | ${e['proceeds']:,.2f} | ${e['cost_basis']:,.2f} | "
+                  f"${e['adjustment']:,.2f} | ${e['gain']:,.2f} | {e['rows']} |"
+                  for box, e in reporting['schedule_d_routing'].items()]
+        lines.append("")
     oi = result["ordinary_income"]
     if oi["total"]:
         lines += [
@@ -1682,12 +2081,15 @@ def _cli_compute(argv: 'list[str]') -> int:
                                  account_aware=True if '--account-aware' in argv else None,
                                  transfer_links=data.get('transfer_links') if isinstance(data, dict) else None,
                                  wa_domicile_by_date=(data.get("wa_domicile_by_date")
-                                                     if isinstance(data, dict) else None))
+                                                     if isinstance(data, dict) else None),
+                                 broker_reporting=(data.get('broker_reporting')
+                                                   if isinstance(data, dict) else None))
     if "--markdown" in argv:
         print(render_markdown(result))
     else:
         print(json.dumps(result, indent=2))
-    return 2 if result['crypto_summary'].get('complete') is False else 0
+    summary = result['crypto_summary']
+    return 2 if summary.get('complete') is False or summary.get('reporting_complete') is False else 0
 
 
 def _self_test() -> int:
@@ -1713,6 +2115,15 @@ def _self_test() -> int:
     st = r["schedule_d"]["short_term"]
     assert st["gain"] == 1000.0, st
     assert r["crypto_summary"]["needs_basis_count"] == 0, r["crypto_summary"]
+    # A universal pool cannot route a Form 8949 box (AA41); the same events in one
+    # account with a reviewed no-form declaration route TY2024's C/F.
+    assert r["crypto_summary"]["reporting_complete"] is False, r["broker_reporting"]
+    account = [dict(t, account_id="exchange-A", txn_id=f"t{i}") for i, t in enumerate(txns)]
+    r = build_crypto_import(account, tax_year=2024, broker_reporting={"accounts": {
+        "exchange-A": {"forms_received": False, "evidence": "self-test-declaration"}}})
+    assert r["crypto_summary"]["reporting_complete"] is True, r["broker_reporting"]
+    boxes = [(row["box"], row["gain_loss"]) for part in r["form_8949"].values() for row in part]
+    assert boxes == [("C", 1000.0), ("F", 14950.0)], boxes
     print("crypto_importer self-test: OK")
     print(render_markdown(r))
     return 0

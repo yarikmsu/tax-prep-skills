@@ -925,15 +925,17 @@ def test_cli_adapt_coinbase():
 
 
 def test_cli_compute_from_normalized_json():
+    # A universal pool computes, but cannot route a Form 8949 box (AA41): exit 2.
     p = _run("compute", str(FIX / "transactions.json"))
-    assert p.returncode == 0
+    assert p.returncode == 2
     r = json.loads(p.stdout)
     assert r["schedule_d"]["net_gain"] == 42745.0
 
 
 def test_cli_compute_markdown():
     p = _run("compute", str(FIX / "transactions.json"), "--markdown")
-    assert p.returncode == 0 and "Digital-asset question" in p.stdout
+    assert p.returncode == 2 and "Digital-asset question" in p.stdout
+    assert p.stdout.startswith("# BLOCKED — Form 8949 reporting")
 
 
 def test_cli_adapt_flag_without_operand_is_clean_error():

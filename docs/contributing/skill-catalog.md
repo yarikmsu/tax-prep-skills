@@ -131,8 +131,11 @@ Life-event flags read False when absent, so a legacy profile still passes.
   when there are no taxable disposals. Output remains diagnostic until complete;
   tie-out enforces the summary gate. From 2025 universal basis is diagnostic only.
   Legacy `--per-account` supports isolated histories. Contract and evidence schema:
-  `docs/contributing/crypto-accounts.md`. Box C/F default (no
-  1099-DA reconciliation); NFTs/collectible 28% rate, DeFi, §1256, margin, mining-as-business
+  `docs/contributing/crypto-accounts.md`. AA41 routes each reported row to its
+  Form 8949 box only from reconciled broker-form evidence — 1099-DA (TY2025:
+  G-L) or 1099-B (TY2023-TY2024: A-F) — or a reviewed no-form declaration; any
+  difference blocks until evidenced, and its B/E/T adjustment keeps the FIFO
+  gain. Other years and both legacy pools route nothing. NFTs/collectible 28% rate, DeFi, §1256, margin, mining-as-business
   auto-classification not modeled; state handled downstream by `/tax-compute`. Adds
   `form_1040.digital_asset_question` + a `crypto_summary` block to result_template, sets
   `flags.has_crypto` AND `flags.has_capital_gains` when capital rows exist (the latter is
