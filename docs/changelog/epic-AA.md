@@ -2594,4 +2594,35 @@ failed their regressions. The full local suite passed (6,526 tests, 7 skips),
 followed by 158 attachment checks and 609 checks covering the final omission
 guards. Ruff, mypy, preflight and the engine self-test passed. All six CI jobs
 passed on final head `519537f26a131a5cffda1fbc378d808685afa4b1` before squash merge
-`b3855b75b1a2453726d3b7d5f1f7da003e552c07`.
+`05952f5eddd12a3e3b2809211c00a895ffff6d45`.
+
+## AA40 — account-specific crypto FIFO and reviewed transfers (#244)
+
+One combined import now maintains an independent lot queue for each explicit
+account/asset pair. Reviewed ownership links reconcile both transfer legs and
+move original acquisition slices and exact basis fractions, including partial
+and chained transfers. Source coins are consumed, destination FIFO uses original
+acquisition order, and another account cannot supply a missing lot. Opaque CSV
+account/transaction IDs, secured workpaper guidance and transfer provenance
+support review without embedding identity in public artifacts.
+
+Unmatched transfers, unknown source inventory and missing original external
+basis/dates produce blocked diagnostics. CLI exit 2 and the tie-out metadata
+gate prevent their completion; a missing-basis acknowledgement cannot waive
+transfer evidence. Untagged universal imports from 2025 are diagnostic-only;
+the isolated-account `--per-account` mode remains available. UTC ordering
+retains declared calendar dates on forms. The skill requires a separate
+current-year reporting review for legacy box placeholders pending AA41. The
+contract is `docs/contributing/crypto-accounts.md`.
+
+AA40 adds 66 account cases. Both deliberately pooled account inventory
+and duplicated transferred-coin mutations failed their regressions. The full
+local suite passed (6,585 tests, 7 skips) before final refinements, followed by
+6,004 engine tests (5 skips) and 436 final focused crypto/tie-out checks. Ruff,
+mypy, preflight, both self-tests and audits of all three dependency locks passed.
+GitHub refused all CI jobs before execution because of billing/spending limits,
+and squash merge `0a05d0c4aaec308dd3b286b140594cd95f84585d` landed from
+reviewed head `37d70b219786a0be57e94ecf0768c32bc7a13913` without CI. Once
+Actions ran again, all six CI jobs passed on
+`4389a80714900f277176e1568a55fbcf5187fea0`: that squash plus a commit-id
+repoint touching only docs and one test docstring.
