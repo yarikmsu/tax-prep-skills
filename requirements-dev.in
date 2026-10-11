@@ -11,5 +11,5 @@
 # pip-audit is deliberately NOT pinned that way: its new findings are real
 # advisories, and going red on one is the job.
 ruff==0.16.9
-mypy==2.3.1
+mypy==2.4.0
 pip-audit
