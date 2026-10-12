@@ -174,7 +174,7 @@ def test_fifo_single_lot_long_term():
     dis = [ci.Disposal("BTC", 1.0, 30000, datetime.date(2024, 6, 1))]
     rows = ci.match_lots(acq, dis)
     assert len(rows) == 1
-    assert rows[0].holding_period == "long" and rows[0].box == "F"
+    assert rows[0].holding_period == "long" and rows[0].box is None
     assert rows[0].gain_loss == 10000.0
 
 
@@ -191,7 +191,7 @@ def test_leap_year_exact_one_year_is_short_term():
     acq = [ci.Acquisition("BTC", 1.0, 10000, datetime.date(2024, 1, 1))]
     dis = [ci.Disposal("BTC", 1.0, 15000, datetime.date(2025, 1, 1))]
     rows = ci.match_lots(acq, dis)
-    assert rows[0].holding_period == "short" and rows[0].box == "C"
+    assert rows[0].holding_period == "short" and rows[0].box is None
     # One day later IS long-term.
     dis2 = [ci.Disposal("BTC", 1.0, 15000, datetime.date(2025, 1, 2))]
     assert ci.match_lots(acq, dis2)[0].holding_period == "long"
@@ -925,15 +925,17 @@ def test_cli_adapt_coinbase():
 
 
 def test_cli_compute_from_normalized_json():
+    # A universal pool computes, but cannot route a Form 8949 box (AA41): exit 2.
     p = _run("compute", str(FIX / "transactions.json"))
-    assert p.returncode == 0
+    assert p.returncode == 2
     r = json.loads(p.stdout)
     assert r["schedule_d"]["net_gain"] == 42745.0
 
 
 def test_cli_compute_markdown():
     p = _run("compute", str(FIX / "transactions.json"), "--markdown")
-    assert p.returncode == 0 and "Digital-asset question" in p.stdout
+    assert p.returncode == 2 and "Digital-asset question" in p.stdout
+    assert p.stdout.startswith("# BLOCKED — Form 8949 reporting")
 
 
 def test_cli_adapt_flag_without_operand_is_clean_error():

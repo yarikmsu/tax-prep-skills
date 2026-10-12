@@ -364,6 +364,7 @@ Rules:
   | 1099-DIV box 2a | `capital_gain_distributions` (→ Schedule D line 13) |
   | 1099-R box 1 / 2a | `retirement_gross` / `retirement_taxable` (box 2a is ADVISORY at the gate — the return may legitimately recompute 4b/5b via Form 8606 basis, QCD, or rollover; OMIT `retirement_taxable` when box 2b "taxable amount not determined" is checked — box 1 still hard-ties) |
   | 1099-B proceeds total | `capital_proceeds` |
+  | 1099-DA box 1f proceeds total | `capital_proceeds` (its per-transaction rows feed `/tax-parse-crypto`'s `broker_reporting`, which routes them to Form 8949) |
   | Any 1099 federal withholding box | `federal_withholding_1099` |
   | SSA-1099 box 5 | `ss_benefits` (may be NEGATIVE when repayments exceed gross — record the negative as-is; the gate switches to a Pub 915 advisory instead of a sum tie) |
   | 1099-NEC box 1 / 1099-MISC boxes 3-7 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below) |
@@ -473,6 +474,11 @@ C (short-term, no 1099-B received),
 D (long-term, basis reported to IRS), E (long-term, basis NOT reported to IRS),
 F (long-term, no 1099-B received)
 Foreign brokerages: typically Box B or E (basis not reported to IRS)
+
+### 1099-DA Extraction
+Must capture, per transaction: boxes 1a-1i (blank stays blank), 2, 4, 5, 6 and 9.
+From TY2025 a digital asset never uses C/F: `/tax-parse-crypto` routes each
+transaction G-L from these boxes, so never pick its Form 8949 box here.
 
 ### 1099-R Extraction
 Must capture: Boxes 1, 2a, 4, 5, 7 (distribution code)

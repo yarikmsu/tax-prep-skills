@@ -734,6 +734,38 @@ def _category_target(result: dict, category: str):
     return CATEGORY_TARGETS[category]
 
 
+def _crypto_proceeds_above_forms(result: dict) -> float:
+    """Proceeds the crypto importer reported ABOVE their broker forms, each
+    with reviewed evidence (Form 8949 column (d) takes the correct, higher
+    figure). The ledger holds the forms' own figure, so the tie subtracts the
+    excess. Never negative: an excess can only lower the result side, so a
+    crafted figure cannot hide an under-report."""
+    crypto = result.get("crypto_summary")
+    value = crypto.get("reporting_proceeds_above_forms", 0) if isinstance(crypto, dict) else 0
+    if not _is_figure(value):
+        raise TieOutError("crypto_summary.reporting_proceeds_above_forms must be a "
+                          "finite non-negative amount")
+    return float(value)
+
+
+# Digital-asset sales keep Schedule D rows of their own beside the 1099-B rows
+# (`line_1b_digital_assets` ... `line_10_digital_assets`). Line 3 and line 10
+# pair Box C/F with I/L: sales no broker form reports.
+_DIGITAL_ASSET_ROW_SUFFIX = "_digital_assets"
+_NO_BROKER_FORM_DIGITAL_ROWS = frozenset({"line_3_digital_assets", "line_10_digital_assets"})
+
+
+def _digital_asset_rows(result: dict) -> "list[tuple[str, dict]]":
+    section = result.get("schedule_d")
+    rows = []
+    for part_key in ("part_i_short_term", "part_ii_long_term"):
+        part = section.get(part_key) if isinstance(section, dict) else None
+        if isinstance(part, dict):
+            rows += [(key, row) for key, row in part.items()
+                     if key.endswith(_DIGITAL_ASSET_ROW_SUFFIX) and isinstance(row, dict)]
+    return rows
+
+
 def _result_total(result: dict, category: str) -> "float | None":
     """Sum the mapped result-side fields. None ONLY when the section itself
     is absent, or for capital_proceeds without non-zero detail rows — the
@@ -752,28 +784,35 @@ def _result_total(result: dict, category: str) -> "float | None":
         # ships zero-valued Part I rows, and treating those as "found" would
         # compare a long-term-only broker's ledger total against $0 and fail a
         # correct return ("section present" = non-zero, per repo convention).
-        # Box C/F rows are EXCLUDED: by definition no 1099-B backs them —
-        # that's where /tax-parse-crypto merges crypto disposals (its CSVs
-        # are ledgered as documented skips, so their proceeds are on the
-        # result side only) and where personal no-1099-B sales go. Including
-        # them would fail a correct broker+crypto return. A broker row
-        # misfiled into Box C/F under-counts the result side → ledger >
-        # result → still FAILS (the safe direction).
+        # Box C/F rows, and the digital-asset rows for lines 3 and 10 (Box
+        # I/L, or C/F before TY2025), are EXCLUDED: by definition no broker
+        # form backs them (exchange CSVs are ledgered as documented skips, so
+        # their proceeds are on the result side only; personal no-1099-B sales
+        # go there too). Including them would fail a correct broker+crypto
+        # return. A broker row misfiled into one under-counts the result side →
+        # ledger > result → still FAILS (the safe direction). Digital-asset
+        # rows a broker form DOES report (Box G/H/J/K, or A/B/D/E before
+        # TY2025) tie with the 1099-DA's ledgered proceeds, less the
+        # documented excess the importer reported ABOVE those forms.
+        # A non-zero no-form row still makes the tie VERIFIABLE while adding
+        # nothing to it: otherwise a broker form answered "no form received"
+        # and filed there left every other row zero, and the dropped proceeds
+        # degraded to an unverifiable warning instead of failing.
         total, found = 0.0, False
         for part_key in ("part_i_short_term", "part_ii_long_term"):
             part = section.get(part_key)
             if not isinstance(part, dict):
                 continue
             for row_key, row in part.items():
-                if "box_c" in row_key or "box_f" in row_key:
-                    continue
                 if isinstance(row, dict):
                     p = row.get("proceeds")
                     if isinstance(p, (int, float)) and not isinstance(p, bool):
-                        total += float(p)
                         if p != 0:
                             found = True
-        return total if found else None
+                        if ("box_c" not in row_key and "box_f" not in row_key
+                                and row_key not in _NO_BROKER_FORM_DIGITAL_ROWS):
+                            total += float(p)
+        return total - _crypto_proceeds_above_forms(result) if found else None
     if category == "employer_stock_basis_adjustment":
         # Sum the SIGNED `adjustment` across the Schedule D box detail rows
         # flagged `employer_stock`, then NEGATE: employer-stock corrections are
@@ -785,7 +824,9 @@ def _result_total(result: dict, category: str) -> "float | None":
         # unrelated correction into (or offset) the employer-stock total.
         # schedule_d present with no employer-stock rows returns 0.0 (a real "no
         # adjustment landed" figure a nonzero ledger fails against) — None only
-        # when the section is absent (already handled above).
+        # when the section is absent (already handled above). Crypto never
+        # shares these rows: it has its own, and evaluate() fails a
+        # digital-asset row that claims to be employer stock.
         total = 0.0
         for part_key in ("part_i_short_term", "part_ii_long_term"):
             part = section.get(part_key)
@@ -1452,10 +1493,31 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     if account_rows and not isinstance(crypto, dict):
         missing_targets.append("crypto account FIFO: completeness workpaper is missing")
     if isinstance(crypto, dict) and (any(key in crypto for key in ("basis_mode", "complete", "unresolved_inputs")) or account_rows):
-        if (crypto.get("basis_mode") not in ("account_fifo", "isolated_account")
+        if (crypto.get("basis_mode") != "account_fifo"
                 or crypto.get("complete") is not True
                 or crypto.get("unresolved_inputs") != []):
             missing_targets.append("crypto account FIFO: resolve inventory, ownership and transfer evidence before completion")
+    # AA41: a crypto row's Form 8949 box comes from reconciled broker-form
+    # evidence. A summary predating it — whose only mark of crypto is a
+    # non-zero `disposals` count — or one that dropped the keys, or merged
+    # digital-asset rows with no summary at all, still owes the reconciliation.
+    digital_rows = _digital_asset_rows(result)
+    if any(row.get("employer_stock") is True for _, row in digital_rows):
+        missing_targets.append("schedule_d digital-asset row flagged employer_stock: a crypto adjustment "
+                               "is never employer stock")
+    summary = crypto if isinstance(crypto, dict) else {}
+    merged_crypto = account_rows or any(row.get("proceeds") not in (None, 0) for _, row in digital_rows)
+    if merged_crypto or summary.get("disposals", 0) != 0 or any(key in summary for key in (
+            "basis_mode", "complete", "unresolved_inputs", "reporting_complete", "reporting_unresolved",
+            "reporting_proceeds_above_forms")):
+        if summary.get("reporting_complete") is not True or summary.get("reporting_unresolved") != []:
+            missing_targets.append("crypto Form 8949 reporting: reconcile broker forms and route every "
+                                   "row to its box before completion")
+        above = _crypto_proceeds_above_forms(result)
+        if above:
+            advisories.append(f"crypto proceeds exceed their broker forms by {above:,.2f} — Form 8949 "
+                              "column (d) shows the correct figure under reviewed evidence; the "
+                              "capital_proceeds tie subtracts it, so confirm it against the forms")
     for cat in sorted(sums):
         if cat in _INFORMATIONAL:
             note = _INFORMATIONAL_ADVISORIES.get(cat)

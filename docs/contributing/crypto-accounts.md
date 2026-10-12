@@ -79,17 +79,139 @@ workpaper. Tie-out fails incomplete/missing account metadata independently of
 whether reported dollars happen to match. Account IDs in Form 8949 rows also
 trigger this check if the summary was removed.
 
-Legacy untagged universal API output remains available for historical diagnostics;
-from 2025 it is marked incomplete and exits 2. `--per-account` remains available
-for one isolated account with independently reviewed destination lot inputs.
-Account `complete` certifies inventory evidence only. C/F output boxes are legacy
-placeholders: review current-year Form 8949/Schedule D instructions and actual
-broker forms before merging rows. TY2025 digital assets use G/H/I and J/K/L,
-with the selection depending on reporting evidence. The skill blocks unresolved
-reporting review; deterministic 1099-DA reconciliation is AA41. Source: [TY2025
-Form 8949 instructions](https://www.irs.gov/instructions/i8949), verified live
-on 2026-10-07. Future-year routing requires its own reviewed instructions.
-Specific identification, gifts, NFTs, DeFi and futures remain outside this engine.
+Legacy untagged universal output and `--per-account` remain for diagnostics.
+Neither carries the account and transaction IDs a broker form is matched to, so
+neither routes a Form 8949 box: with any reported row both exit 2. Account
+`complete` certifies inventory evidence only; Form 8949 routing is the separate
+`reporting_complete` gate below. Specific identification, gifts, NFTs, DeFi and
+futures remain outside this engine.
+
+## Broker-form reconciliation
+
+AA41 routes each reported row to its Form 8949 box from explicit evidence, never
+from a form's absence in the import. `broker_reporting` sits beside
+`transfer_links` in the normalized JSON, and needs `--year`:
+
+```json
+"broker_reporting": {
+  "accounts": {
+    "exchange-A": {"forms_received": true, "evidence": "reviewed-1099da-exchange-A",
+                   "not_reported": ["swap-7"]},
+    "wallet-B": {"forms_received": false, "evidence": "self-custody-no-broker"}
+  },
+  "forms": [
+    {"form_id": "da-1", "form_type": "1099-DA", "account_id": "exchange-A",
+     "txn_id": "sell-1", "asset": "BTC", "quantity": "1", "date_sold": "2025-03-01",
+     "proceeds": 150.00, "cost_basis": null, "basis_reported_to_irs": false,
+     "term": null, "ordinary": false, "accrued_market_discount": null,
+     "wash_sale_loss_disallowed": null, "loss_not_allowed": false}
+  ],
+  "resolutions": {
+    "da-1": {"proceeds": "taxpayer_records", "evidence": "trade-confirmation-1"}
+  }
+}
+```
+
+- **accounts** — every account with a filing-year disposal declares whether it
+  received broker forms for that year. `forms_received: true` asserts the listed
+  forms are all of them, and names any disposal they do not report in
+  `not_reported`, which must each be a filing-year disposal of that account. An
+  undeclared account blocks; it is never presumed formless.
+- **forms** — one entry per reported transaction, linked by `txn_id` to the
+  reviewed disposal it reports. The asset and units must match it, and the date
+  sold must be the import's date or the day either side in the same year:
+  §1.6045-1(d)(2)(i)(B)(3) asks the broker only for "the sale date", naming no
+  time zone, and no UTC offset reaches a full day. The row keeps the import's
+  date; the workpaper records both.
+  Every key is required. `cost_basis` and `term` are null where the form
+  leaves them blank (1099-DA box 1g and box 6; 1099-B box 1e and box 2), never
+  absent, because an omitted term would pass a form whose box disagrees with
+  FIFO without code T. `basis_reported_to_irs` is 1099-DA
+  box 2 or 1099-B box 12. A disposal split across forms must mirror the FIFO
+  split by holding period, one form each; when their total agrees, the forms'
+  own figures replace a one-cent apportionment difference in proceeds. Basis
+  apportionment requires both forms to report basis to the IRS; otherwise each
+  basis difference requires an evidenced resolution preserving FIFO gain.
+  Four boxes this engine does not model are likewise REQUIRED,
+  null or false when blank: `ordinary` (1099-DA box 6, 1099-B box 2),
+  `accrued_market_discount` (1h / 1f), `wash_sale_loss_disallowed` (1i / 1g)
+  and `loss_not_allowed` (box 5 / box 7). Filled in, each refuses: report that
+  transaction manually. Backup withholding (box 4) belongs to the parse ledger,
+  not here.
+- **resolutions** — a difference stays unresolved until a resolution with its
+  own evidence names the treatment. Each keeps the FIFO gain in column (h):
+
+| Difference | Resolution | Form 8949 |
+|---|---|---|
+| Proceeds above the form | `proceeds: taxpayer_records` | (d) the correct, higher proceeds; reported as `proceeds_above_forms` |
+| Proceeds below the form, by no more than the recorded fee | `proceeds: transaction_costs` | (d) the form's proceeds; code E; the unreflected costs in (g) |
+| Basis reported to the IRS differs | `basis: taxpayer_records` | (e) the reported basis; code B; (g) = reported − FIFO basis |
+| Basis shown but not reported differs | `basis: taxpayer_records` | (e) the FIFO basis; code B; (g) zero |
+| Holding period differs | `term: taxpayer_records` | the correct part; code T; (g) zero |
+
+The only costs a form can leave unreflected are the fees the import recorded,
+so a larger gap below the form is a wrong price, never code E: obtain a corrected
+form or correct the import. A basis-reported form spanning both holding periods
+stays unresolved when its basis differs, whether or not it states a term, and
+when it states a term the FIFO split contradicts, even at an equal basis: the
+broker identified other lots, so review its lot identification. Only a
+blank-term form whose basis equals FIFO's routes each part with its own FIFO
+basis. So do a resolution that matches no difference, a form naming no
+filing-year disposal — including a transfer the broker reported as a sale — a
+2025 digital asset on Form 1099-B, and a date sold that differs from the
+import's declared date.
+
+The boxes for each reviewed year come from that year's instructions, verified
+live on 2026-10-11:
+
+| Year | Broker form | Short-term: basis reported / not reported / no form | Long-term | Source |
+|---|---|---|---|---|
+| TY2023 | 1099-B | A / B / C | D / E / F | [Form 8949 instructions (2023)](https://www.irs.gov/pub/irs-prior/i8949--2023.pdf) |
+| TY2024 | 1099-B | A / B / C | D / E / F | [Form 8949 instructions (2024)](https://www.irs.gov/pub/irs-prior/i8949--2024.pdf) |
+| TY2025 | 1099-DA | G / H / I | J / K / L | [Form 8949 instructions (2025)](https://www.irs.gov/pub/irs-prior/i8949--2025.pdf) |
+
+The TY2025 instructions say digital asset transactions "should not be reported
+using box C or F". A broker need not report basis for a 2025 sale ([Form 1099-DA
+instructions (2025)](https://www.irs.gov/pub/irs-prior/i1099da--2025.pdf)), so
+most 2025 forms route to H or K. Any other year blocks every reported row until
+its own reviewed entry joins `_REPORTING_REGIMES` and this table; a test holds
+the two together.
+
+Each row's proceeds and basis are the disposal's rounded running totals less
+the cents already posted, a tie away from zero, so a disposal's rows add up to
+its rounded figures and the FIFO side of a reconciliation is the very cents the
+return carries: a form that agrees leaves column (h) unchanged.
+
+The result's `broker_reporting` records each form's broker and FIFO figures,
+codes, evidence, status and reason — an unresolved form included — the
+unresolved items, and `schedule_d_routing`. A form's status is `reconciled`,
+`unresolved` or `blocked`; `blocked` means the form agrees but another form for
+the same disposal does not, since a disposal routes all its rows or none. Split
+forms that cannot be paired with the FIFO parts are each set against the whole
+disposal's figures. `schedule_d_routing` gives each box's `result.json`
+Schedule D row, line, totals and joined column (f) codes, its amounts keyed as
+that row is (`cost`, not `cost_basis`) so they add in key for key. Schedule D
+pairs the boxes on one line (A/G 1b, B/H 2, C/I 3, D/J 8b, E/K
+9, F/L 10), and digital assets take rows of their own on each,
+`line_1b_digital_assets` through `line_10_digital_assets`, never the 1099-B rows.
+Form 8949 code B is not unique to employer stock: the employer-stock tie reads a
+whole 1099-B row's column (g), so a crypto correction merged into a row an RSU
+correction flags `employer_stock` would read as employer stock. Tie-out fails a
+digital-asset row that claims the flag. Rows carry `adjustment_code`,
+`adjustment`, `fifo_cost_basis` and `form_id`; a row without evidence carries
+`box: null`. `crypto_summary` gains `reporting_complete`, `reporting_unresolved`
+and `reporting_proceeds_above_forms`. Any unresolved item exits 2 under a
+BLOCKED heading, and tie-out fails it independently of the dollars — including
+for a summary from before AA41, whose only mark of crypto is a non-zero
+`disposals`, and for merged digital-asset rows with no summary at all.
+
+`/tax-parse` ledgers a 1099-DA in `documents/` with its box 1f total as
+`capital_proceeds`. The tie sums the form-backed digital-asset rows with the
+1099-B rows and leaves out the no-form rows of lines 3 and 10, so it compares
+like with like; the documented `proceeds_above_forms`
+excess comes off the result side, which it can only lower, and the key alone
+meets the reporting gate. A non-zero no-form row keeps that tie verifiable, so
+a form wrongly declared "not received" fails it instead of warning.
 
 ## Primary authorities
 
