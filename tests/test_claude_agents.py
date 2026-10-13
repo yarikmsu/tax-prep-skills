@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from agents.lib.tax_law_export import audit_schema
 from agents.lib.tax_law_fetcher import (
-    _AUTHORITATIVE_NONGOV_DOMAINS,
     create_empty_tax_law,
     create_state_template,
 )
@@ -47,6 +47,7 @@ WATCHES = (
     (140, ('agents/lib/capabilities.py', 'agents/lib/rollover.py')),
     (150, ('agents/lib/tax_law_fetcher.py',)),
     (160, ('agents/lib/ptet.py',)),
+    (165, ('agents/lib/tax_law_export.py',)),
     (170, ('agents/lib/tax_computations', 'agents/lib/tax_computations/*')),
     (180, ('tests/test_claude_agents.py',)),
     (190, ('agents/lib/secure_fs.py',)),
@@ -1072,13 +1073,63 @@ class TestFreshnessAuditorMatchesTheSchema:
         assert "must not be rejected" in text
         assert "colorado" in text
 
+    # Each key `schema.json` carries besides its own `about` note.
+    SCHEMA_KEYS = frozenset(audit_schema(create_empty_tax_law(2026), 2026)) - {"about"}
+
+    def test_every_schema_table_is_named_and_every_name_is_a_table(self):
+        """Both directions, because each failed once. A table the export ships
+        and the definition never names is one the auditor never reads; a name
+        the definition gives that the export does not ship is a key renamed
+        under it, and the auditor looks it up and finds nothing."""
+        text = self.AUDITOR.read_text()
+        named = set(re.findall(r"`([a-z_]+_(?:seed|code|regimes|pins|policy))`", text))
+        assert self.SCHEMA_KEYS <= named, (
+            f"schema.json ships {sorted(self.SCHEMA_KEYS - named)}, which the "
+            "auditor is never told to read")
+        assert named <= self.SCHEMA_KEYS, (
+            f"the auditor reads {sorted(named - self.SCHEMA_KEYS)} from "
+            "schema.json, which the export does not write")
+
+    def test_state_regime_reads_the_exported_code(self):
+        text = " ".join(self.AUDITOR.read_text().split())
+        assert "Look up `schema.json`'s `state_regime_code`" in text
+        assert "never the cache's raw code or the `state_seed` code" in text
+
+    def test_pins_and_provenance_read_the_exported_roster(self):
+        """A state pin is not its path. Item 9 written as a lookup by path
+        never reached `set`'s `state.FL.county_surtax_rate` entry, and item 4
+        built `state.ca` where the engine pins `state.CA`."""
+        text = " ".join(self.AUDITOR.read_text().split())
+        assert "Take every pin's name from it and never build one" in text
+        assert "Read a key `source_pins` lists as the data path it covers" in text
+        assert "matching whole dotted segments, not string prefixes" in text
+        assert "under any pin `multi_period_pins` does not list" in text
+
+    def test_a_file_the_fetch_saved_outside_the_directory_stays_unread(self):
+        """The one agent with network access reads two files. A PDF its fetch
+        saved lands in the host's tool-output tree beside other sessions'
+        transcripts, and its path arrives where a page's text can forge one,
+        so the figure goes UNVERIFIED rather than the boundary growing."""
+        text = " ".join(self.AUDITOR.read_text().split())
+        assert ("Read the two files in the directory you are pointed at, and "
+                "nothing else on this machine." in text)
+        assert "That includes a file your own fetch saved." in text
+        assert "Do not open that path or anything beside it" in text
+        assert "tool metadata" not in text
+
     def test_source_authority_matches_the_fetcher_policy(self):
-        """The auditor must not reject a source the canonical cache accepts."""
+        """The auditor must not reject a source the canonical cache accepts.
+
+        It applies the `source_host_policy` that `schema.json` carries, which
+        `test_tax_law_export.py` holds to the fetcher's own verdict. The domains
+        the prose names are an example the definition says the file overrides:
+        pinning each one here made a new authoritative domain a definition
+        edit, and every definition edit a fresh-session replay.
+        """
         text = self.AUDITOR.read_text().lower()
-        assert "_source_host_authoritative" in text
-        for domain in _AUTHORITATIVE_NONGOV_DOMAINS:
-            assert domain in text, (
-                f"freshness auditor omits authoritative exception {domain}")
+        assert re.search(r"apply `_source_host_authoritative`, which `schema\.json`"
+                         r"\s+carries as `source_host_policy`", text)
+        assert re.search(r"the file is right and this sentence is\s+stale", text)
 
     def test_multi_period_fields_are_checked_against_their_effective_periods(self):
         """Not every cache leaf describes the return's filing year.
@@ -1966,7 +2017,7 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         return found[0]
 
     def test_the_documented_generator_writes_a_corrupt_cache(self, tmp_path,
-                                                             monkeypatch):
+                                                             monkeypatch, capsys):
         """Run the record's own generator; audit the file it produces.
 
         The failure this catches is a generator that still declares its two years
@@ -1990,10 +2041,11 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         # POSIX absolute path: under Git Bash with the native Windows
         # interpreter it resolves to the current drive's root, where the replay
         # may simply be unable to write — and Windows clones are a supported
-        # contributor surface. `mkdtemp` asks the platform instead, which is also
-        # what makes the record's isolation claim structural: a fresh directory
-        # every run cannot have last year's cache sitting beside this year's.
-        assert "tempfile.mkdtemp(" in body, (
+        # contributor surface. `TemporaryDirectory` asks the platform instead, as
+        # the export's own `mkdtemp` does, which is also what makes the record's
+        # isolation claim structural: a fresh directory every run cannot have
+        # last year's cache sitting beside this year's.
+        assert "tempfile.TemporaryDirectory(" in body, (
             "the generator no longer asks the platform for a scratch directory, "
             "so this test's redirection points at nothing and it would write "
             "wherever the record says — re-point the redirection rather than "
@@ -2001,11 +2053,20 @@ class TestTheAcceptanceFixtureIsActuallyCorrupt:
         monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
         exec(compile(body, str(self.RECORD), "exec"), {"__name__": "__main__"})
 
-        written = sorted(tmp_path.glob("*/tax_law_*.json"))
-        assert len(written) == 1, (
-            f"the generator wrote {[f.name for f in written]}; the replay hands "
-            "the auditor ONE cache and a directory holding several is the "
-            "ambiguity the record's own isolation note exists to prevent")
+        # The directory the generator PRINTS is what the auditor is handed, so
+        # that is what is audited — not whatever it left elsewhere on the way.
+        printed = capsys.readouterr().out.strip().splitlines()
+        assert printed, "the generator printed nothing to hand the auditor"
+        handed = Path(printed[-1])
+        from agents.lib.tax_law_export import SCHEMA_NAME
+        assert sorted(p.name for p in handed.iterdir()) == sorted(
+            [SCHEMA_NAME, f"tax_law_{covered}.json"]), (
+            f"the auditor is handed {sorted(p.name for p in handed.iterdir())}; "
+            "the replay scores it on the export a real audit gets — ONE cache "
+            "and the schema it is checked against. Several caches is the "
+            "ambiguity the record's own isolation note exists to prevent, and a "
+            "missing schema sends the agent looking for one outside it")
+        written = sorted(handed.glob("tax_law_*.json"))
         assert written[0].name == f"tax_law_{covered}.json", (
             f"the generator declares TY{covered} but wrote {written[0].name} — "
             "the payload year the auditor sees is not the one the pass criterion "

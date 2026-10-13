@@ -112,9 +112,10 @@ a covered payload year:
 
 ```sh
 sh agents/lib/run.sh - <<'PY'
-import json, pathlib, tempfile
+import json, pathlib, sys, tempfile
 from agents.lib.tax_law_fetcher import create_empty_tax_law
 from agents.lib.ptet import _salt_cap
+from agents.lib.tax_law_export import build_audit_copy
 
 YEAR, PRE_OBBBA = 2026, 2024          # both figures come from the engine
 law = create_empty_tax_law(YEAR)
@@ -122,21 +123,37 @@ law["federal"]["salt_cap"] = {"amount": _salt_cap(PRE_OBBBA, "single"),
                               "mfs_amount": _salt_cap(PRE_OBBBA, "MFS")}
 law.setdefault("_sources", {})["federal.salt_cap"] = \
     "https://www.irs.gov/taxtopics/tc503"
-out = pathlib.Path(tempfile.mkdtemp(prefix="t2-auditor-"))
-cache = out / f"tax_law_{YEAR}.json"     # a fresh dir: never last year's beside it
-cache.write_text(json.dumps(law, indent=2) + "\n")
-print(cache)                             # hand the auditor THIS path
+with tempfile.TemporaryDirectory(prefix="t2-fixture-") as tmp:
+    fixture = pathlib.Path(tmp)
+    (fixture / f"tax_law_{YEAR}.json").write_text(json.dumps(law, indent=2) + "\n")
+    copy = build_audit_copy(YEAR, fixture)   # the export a real audit gets
+print(copy.parent)                           # hand the auditor THIS directory
+print("Remove it when the audit is done: rm -rf", copy.parent, file=sys.stderr)
 PY
 ```
 
-Run it from the repository root, and **give the agent the printed FILE path, not
-the directory.** The first draft did neither: it reused the directory with
-`exist_ok=True` and named no file. Re-running the replay for a later year — the
-one case this document tells you to expect, since the covered year has to move —
-then left `tax_law_2026.json` sitting beside `tax_law_2030.json`, and a dispatch
-pointed at the directory audits whichever it finds, or both. Either way the
-verdict is about a cache the pass criterion was not written against, and it reads
-like a clean run. One directory, cleared, one file, named. **Through `run.sh`, and importing `agents.lib.*`,
+Run it from the repository root, and **give the agent the printed DIRECTORY and
+nothing else.** It is the export a season-open audit gets — the cache, byte for
+byte, and the `schema.json` the auditor checks it against — so the replay scores
+the agent on the boundary it is used through. Handing it the generator's own file
+path, as this recipe did until Y2, bypassed the export entirely: the replay kept
+passing whether or not the auditor could work from what the export gives it.
+The directory is fresh every run. The first draft reused one with
+`exist_ok=True`, and re-running the replay for a later year — the one case this
+document tells you to expect, since the covered year has to move — left
+`tax_law_2026.json` sitting beside `tax_law_2030.json`, so a dispatch audited
+whichever it found, or both, and the verdict was about a cache the pass criterion
+was not written against. The fixture's own directory is removed once the export is
+made, and the copy's goes when you run the command printed beside it; every replay
+used to leave both behind.
+
+**Dispatch from a FRESH session started at the repository root**, the only place
+`.claude/agents/` loads, and name the printed directory and nothing else. The agent's
+working directory is then the clone. Nothing in its definition points there any more, so
+what keeps it out is the definition's scope sentence, and the contamination check below
+is what notices when that did not hold.
+
+**Through `run.sh`, and importing `agents.lib.*`,
 for a reason this document earned the hard way:** the first draft of this recipe put
 `agents` on `sys.path` and imported `lib.tax_law_fetcher` on a bare `python3`. That is
 precisely what `docs/ops/season-open-runbook.md` was fixed for — on a stock macOS
@@ -149,7 +166,7 @@ rule rather than an exception to it. Both are fixed: this document is in that te
 
 **Pass criterion.** It must report `federal.salt_cap` as stale or wrong for the payload
 year. OBBBA raised that cap for TY2025-2029 (`agents/lib/ptet.py`), so the plant is
-unambiguous whether or not the ~1%/yr indexing for 2026-2029 has been applied — the
+unambiguous whichever step of §164(b)(7)(A)'s schedule the payload year falls on — the
 acceptance does not depend on knowing the current figure, which is the auditor's job
 to fetch and not this document's to restate.
 
@@ -478,6 +495,209 @@ stands as a PASS on the criteria; but a dispatch that reads beyond its named inp
 is the thing this check exists to notice, and the next replay should give the agent a
 working directory that does not contain the repository.
 
+## Results — 2026-10-12
+
+Re-run because Y2 edited the auditor's definition, making the five edits the
+season-open runbook had queued for this sitting: the scope paragraph and every schema
+read now point at the `schema.json` the export writes beside the copy rather than at
+`agents/lib/tax_law_fetcher.py` (V7), item 3 reads the source-host rule from that file,
+item 5's `federal.salt_cap` check states the statutory schedule (AA19), item 7 keys
+`capital_gains_rates` by all four statuses (X1), and item 9, reading `_provenance`, is
+new (V4). Replay B changed with it — the generator hands the auditor the EXPORTED
+directory instead of a file path — so this is the first verdict scored through the
+boundary a season-open audit actually uses. The bias reviewer's definition did not
+change; it is re-run because a section is read whole, for the reason the 2026-09-06
+section gives.
+
+Both were dispatched from a session started at the repository root after the edit
+landed, with the definitions on disk hashing to the pins below. Each prompt named its
+input path and nothing else, and asked the agent to list what it read. The pass
+criteria, carrying the planted and the correct figures, were written to disk before
+either dispatch. The earlier sections are kept above as history.
+
+### `tax-law-freshness-auditor` — PASS
+
+**Definition.** `.claude/agents/tax-law-freshness-auditor.md`,
+sha256 `1cf7ab41f06da2dcfb37ad2e2dba755afc8ca8135acdeeb1e181b7e5a21ca3d3`.
+
+**Input.** The cache Replay B's generator exports, copied byte for byte,
+sha256 `e2a9d7a31e88195851b429b7100a4eafdd34c456bf42b59f8c9e28ed413ff440`.
+
+**Model.** `claude-opus-5-5`.
+
+Named the plant as its first finding, under STALE, by VALUE: the cache carries
+$10,000 / $5,000 — `_salt_cap(2024, …)` from the generator — and the payload year's
+figure is $40,400 / $20,200, from §164(b)(7)(A)(ii) on Cornell LII and Pub 505 (2026),
+whose page says "For use in 2026". As on both earlier runs it also caught that the
+pinned Topic 503 page names no tax year, and this time quoted what it does say —
+$40,000, the TY2025 step — so the pin cannot support a TY2026 figure of any size
+(credit, not the bar).
+
+**The rewritten item 5 changed the explanation, not the verdict.** Earlier runs called
+$10,000 the pre-OBBBA figure; this one called it the §164(b)(7)(B) phasedown FLOOR, a
+fully reduced cap fetched as the year's amount — the failure item 5 now tells it to
+look for. Both readings are true of the same number, which is why the plant stays
+unambiguous: whichever story an auditor tells, the VALUE is wrong for the payload year,
+and that is what was scored.
+
+**Item 9 fired as written.** The fixture carries no `_provenance` and no `_meta`, so
+the report put every figure UNVERIFIED for age. That is the correct reading of a
+`create_empty_tax_law` seed, and the first evidence the V4 check reaches a report.
+
+Seeds flagged: four populated `create_empty_tax_law` blocks under COULD NOT VERIFY —
+`form_8938_thresholds`, `fbar_threshold`, `foreign_tax_credit_simplified`,
+`irmaa.lookback_years` — each for want of a page naming TY2026, citing the page it did
+find and saying why that page fell short; eight seed rows VERIFIED against Pub
+505 (2026), Pub 15 (2026) and the IRS QBI page. The `mfj_us` row the 2026-09-06 first
+dispatch caught now matches the i8938 table. An audit that ran out of year-named
+pages, not an enumeration; the by-product ticket the 2026-08-27 verdict raised still
+stands, and the report raised it again unprompted as a policy question rather than
+deciding it.
+
+Scope was honoured, and through the export this time rather than by instruction alone:
+it read the cache and `schema.json` in the handed directory and nothing else. One fetch
+returned an undecoded PDF that the host saved outside that directory; the agent named
+the path and reported not opening it, which is the scope sentence applied to an
+artifact of its own making.
+
+### `bias-direction-reviewer` — PASS
+
+**Definition.** `.claude/agents/bias-direction-reviewer.md`,
+sha256 `bd3025c7093e6681f66d52696933ea42888d1c50a6cf0a9f41c856d80ea3bf91`.
+
+**Input.** `2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py`,
+sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
+
+**Model.** `claude-opus-5-5`.
+
+Named the required finding unprompted, as finding 4: `compute_qbi_deduction` applies
+20% with none of §199A's limitations, the cap at 20% of taxable income before QBI and
+net capital gain first among them, direction OVER-stating the deduction and
+UNDER-stating tax. Demonstrated: $60,000 of Schedule C alone, single, deducts $12,000
+where the cap allows $8,002.23. Form 8959 named as finding 10(a) — SE tax folded into
+`regular_medicare` zeroes the Additional Medicare withheld — with worked figures. The
+CTC refundable split and the ODC were NOT named, as on 2026-09-06, so one of the two
+credit items was earned. Fifteen findings in all, every one directional with a
+severity, a `file:line` and a triggering input, none outside its lens.
+
+**Spot-checked against the fixture rather than taken on trust.** The pass criterion's
+own case still reproduces — $100,000 of QBI returns $20,000, the function taking no
+taxable-income argument at all — and so do three of the report's claims: the 8959 case
+returns `withheld_addl` 0 where line 22 is $2,700; a NaN `ss_wage_base` passes the
+`<= 0` guard and returns $2,678.15 of SE tax against $14,129.55; and an MFJ filer
+living in the US with $150,000 / $180,000 abroad is told no Form 8938 is due, the
+fallback carrying the doubled `mfj` pair the 2026-09-06 run traced. The remaining
+findings were not independently checked.
+
+**The contamination the 2026-09-06 run recorded did not recur.** Two tool calls: a read
+of the one file and a listing of the directory it sat in, which held nothing else.
+The report says plainly that no tests or callers were in reach and marks each finding
+that depends on one, where the earlier run compared against the tracked engine. No
+working-directory mechanism was available to enforce this — the dispatch ran with the
+clone as its working directory, as every dispatch from the repository root does — so
+this is the scope sentence holding on one run, not a boundary.
+
+## Results — 2026-10-13
+
+Re-run because AA51 edited the auditor's definition, closing four places where it
+restated a rule `check_freshness` holds in code. `schema.json` now carries the engine's
+pin roster (`source_pins`), the multi-period pins and the state's regime code,
+normalised as the engine normalises it, and items 4, 8 and 9 read those tables instead
+of restating them — which reaches the `_provenance` entries `set` keys by a pin that is
+not a path, Florida's county rate among them. Item 9's `applies_to` exemption now names
+the multi-period pins, so it no longer reads as covering the CA surcharge. And a PDF the
+agent's own fetch saves outside the directory is named as staying unread. That last one
+reverses an intermediate edit, made the evening before, that let the auditor read such
+a file: the host files it beside other sessions' transcripts, and its path arrives
+where a page's text could forge one. That edit's replay is not recorded here as an
+acceptance — its output was truncated and its session kept no transcript, so its
+contamination check could not be completed — and the definition it judged no longer
+exists. The bias reviewer's definition did not change; it is re-run because a section
+is read whole.
+
+Each reviewer ran in its own fresh headless session, started at the repository root
+after the edit, which dispatched it as a subagent with a task naming its input path and
+nothing else and asking it to list what it read. Both sessions kept their transcripts
+and each run's complete tool trace was captured, so the contamination checks below are
+read from the trace rather than from the report. The pass criteria were on disk before
+either dispatch. The earlier sections are kept above as history.
+
+### `tax-law-freshness-auditor` — PASS
+
+**Definition.** `.claude/agents/tax-law-freshness-auditor.md`,
+sha256 `b7e9c739fa631dad8439c2384f8c2f1908408c2e3a37d73d0994ffd730f86947`.
+
+**Input.** The cache Replay B's generator exports, copied byte for byte,
+sha256 `e2a9d7a31e88195851b429b7100a4eafdd34c456bf42b59f8c9e28ed413ff440`.
+
+**Model.** `claude-opus-5-5`.
+
+Named the plant as its first finding, under STALE, by VALUE: the cache carries
+10,000 / 5,000 — `_salt_cap(2024, …)` from the generator — against $40,400 / $20,200
+for 2026, from §164(b)(7)(A)(ii) on Cornell LII and Pub 505 (2026), which reads "For
+2026, the limit is $40,400 ($20,200 if married filing separately)." It offered both
+readings of the old number, the TCJA cap and the (B) floor, and settled on neither: the
+VALUE is wrong whichever it is, and that is what was scored. The Topic 503 pin was
+caught again, quoting the TY2025 $40,000 it states (credit, not the bar).
+
+Seeds flagged: four seed groups UNVERIFIED for want of a page naming TY2026 —
+`qbi_deduction_rate`, `foreign_tax_credit_simplified`, `form_8938_thresholds` and
+`fbar_threshold` — each with the page it did find and why that page fell short; seven
+rows VERIFIED against Pub 505 (2026), Pub 15 (2026) and SSA POMS HI 01101.020. An audit,
+not an enumeration. Item 9 fired as before: no `_provenance` and no `_meta`, so every
+figure UNVERIFIED for age.
+
+**The new rules were exercised, not just present.** One fetch, the 2026 Form 1040-ES,
+came back undecodable and the host saved it outside the directory; the report says "I
+did not open it", and the trace holds no read of it. The report counted the fetched
+blocks itself and said the count "matches `source_pins`", and read the empty state
+block's `state_regime_code` as null — no regime expected, and "not a no-income-tax
+declaration". The fixture holds no state block and no `_provenance`, so the pin-keyed
+lookup itself is not exercised here; `test_tax_law_export.py` holds the roster to the
+entries `set` writes.
+
+**Contamination, read from the trace.** Twenty-six tool calls: a Glob of the handed
+directory, a Read of each of its two files, and twenty-three web calls, every fetch to
+a `.gov` host or `law.cornell.edu`. No other file was read.
+
+### `bias-direction-reviewer` — PASS
+
+**Definition.** `.claude/agents/bias-direction-reviewer.md`,
+sha256 `bd3025c7093e6681f66d52696933ea42888d1c50a6cf0a9f41c856d80ea3bf91`.
+
+**Input.** `2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py`,
+sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
+
+**Model.** `claude-opus-5-5`.
+
+Named the required finding unprompted, as finding 3: `compute_qbi_deduction` applies
+no limit but the 20% rate, the §199A(a)(1)(B) cap at 20% of taxable income before QBI
+less net capital gain first among them, direction OVER-stating the deduction and
+UNDER-stating tax, demonstrated on a $40,000 Schedule C. Form 8959 named as finding
+8(b) — the withholding check subtracts SE Medicare that was never withheld — with
+worked figures. The refundable credit was named only inside `compute_scenario`
+(finding 5) and the ODC not at all, so one of the two credit items was earned, as on
+both earlier runs. Fifteen findings, each directional with a severity, a line and a
+triggering input, none outside its lens.
+
+**Spot-checked against the fixture rather than taken on trust.** The pass criterion's
+own case reproduces — $100,000 of QBI returns $20,000, the function taking no
+taxable-income argument — and so do three of the report's claims: the 8959 case returns
+`withheld_addl` 0 where line 22 is $540; a $50,000 SE loss against $300,000 of wages
+returns $450 of Additional Medicare Tax where Form 8959 gives $900; and $420 of net
+profit returns $59.34 of SE tax where Schedule SE's $400 test owes none. The remaining
+findings were not independently checked.
+
+**Contamination, and one the report disclosed itself.** Two tool calls: a Read of the
+one file and a Glob of its directory, which held nothing else. The report then said
+that the harness had loaded both instruction files and the session-memory index into
+its context, and that the index carried a line about a Form 8938 threshold error — the
+subject of its finding 2, an unplanted credit item. The index says nothing of the QBI
+cap, so the bar was not hinted, and the line has since been taken out of the index.
+What a host loads into every subagent is outside any scope sentence's reach, and that
+index reaches the auditor too, the one agent with network access — so it must carry
+nothing a replay is scored on and nothing that identifies a taxpayer.
+
 ## The parse worker is accepted differently, and this is why
 
 `tax-parse-worker` is in `.claude/agents/` and has **no replay section above, on
@@ -626,10 +846,9 @@ silent one — see `.agents/skills/tax-parse/references/parse-task-delegation.md
 ## When to re-run
 
 - Before T1, the season-open runbook, since it leans on the freshness auditor. That
-  runbook's step 5 is the ORDERED procedure for it — edits, fetch, fresh session, replay,
-  re-record, in one sitting — because two definition edits are deliberately queued behind
-  this replay (V4's `_provenance` check and X1's item-7 keying note) and an edit made
-  without a replay leaves the digests below certifying bytes that are no longer there.
+  runbook's step 5 is the ORDERED procedure for it — fetch, any queued edits, fresh
+  session, replay, re-record, in one sitting — because an edit made without a replay
+  leaves the digests below certifying bytes that are no longer there.
 - After editing either definition in `.claude/agents/` — **from a new session**,
   per the rule above; the running one still holds the definition it started with.
 - After a schema change that moves any path an agent names — `tests/test_claude_agents.py`

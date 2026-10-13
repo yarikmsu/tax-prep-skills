@@ -18,17 +18,37 @@ import os
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from agents.lib import tax_law_export  # noqa: E402
 from agents.lib.tax_law_export import (  # noqa: E402
+    SCHEMA_NAME,
     ExportError,
     build_audit_copy,
     identifier_findings,
+)
+from agents.lib.tax_law_fetcher import (  # noqa: E402
+    _MULTI_PERIOD_PINS,
+    _STATE_NAME_TO_CODE,
+    TaxLawSetError,
+    _expected_pins,
+    _none_type_allowed,
+    _source_host_authoritative,
+    create_empty_tax_law,
+    create_retirement_conformity_template,
+    create_state_template,
+    save_tax_law,
+    set_figure,
+    source_host_policy,
+    state_regimes,
+    state_schema,
 )
 
 # Assembled at runtime, never written as a literal — this file would otherwise
@@ -294,7 +314,273 @@ class TestTheDestination:
                                                   encoding="utf-8")
         (ws / "result.json").write_text("{}", encoding="utf-8")
         target = build_audit_copy(2026, ws, dest=_dest(tmp_path))
-        assert sorted(p.name for p in target.parent.iterdir()) == ["tax_law_2026.json"]
+        assert sorted(p.name for p in target.parent.iterdir()) == [
+            SCHEMA_NAME, "tax_law_2026.json"]
+
+
+# --- The schema travels with the copy ---------------------------------------
+#
+# The auditor checks a cache against the engine's seeds. It used to read them in
+# `agents/lib/tax_law_fetcher.py`, inside the clone, and with TAX_WORKSPACE unset
+# the clone IS the workspace: the instruction that handed it the schema handed it
+# the taxpayer's files too. So the seeds are written beside the copy, and these
+# pin that what is written is the ENGINE'S answer rather than a copy of it.
+
+class TestTheSchemaTravelsWithTheCopy:
+    def _schema(self, tmp_path, cache, year=2026) -> dict:
+        ws = _workspace(tmp_path, cache, year)
+        target = build_audit_copy(year, ws, dest=_dest(tmp_path))
+        return json.loads((target.parent / SCHEMA_NAME).read_text(encoding="utf-8"))
+
+    def test_the_cache_seed_is_the_engines_for_the_filename_year(self, tmp_path):
+        """The FILENAME's year, the one the auditor's item 0 holds the payload
+        to. A 2026 file declaring 2025 stops there as INCOMPLETE, so a seed for
+        the payload's year would describe a cache it refuses to audit."""
+        cache = _minimal()
+        cache["tax_year"] = 2025
+        schema = self._schema(tmp_path, cache)
+        assert schema["cache_seed"] == create_empty_tax_law(2026)
+
+    def test_the_state_seed_is_what_set_validates_against(self, tmp_path):
+        cache = _minimal()
+        assert self._schema(tmp_path, cache)["state_seed"] == state_schema("CA", 2026)
+
+    def test_a_lower_case_code_gets_the_template_set_used(self, tmp_path):
+        """`create_state_template("ca")` is the GENERIC template, and that is
+        what `set` validated a block coded `ca` against. Normalising the code
+        here, as the pin does, handed the auditor California's keys for a block
+        never written from them."""
+        cache = _minimal()
+        cache["state"]["code"] = "ca"
+        seed = self._schema(tmp_path, cache)["state_seed"]
+        assert seed == state_schema("ca", 2026)
+        assert seed != state_schema("CA", 2026)
+
+    @pytest.mark.parametrize("state, expected", [
+        ({"code": "fl", "type": "none"}, "FL"),
+        ({"code": "ca"}, "CA"),
+        ({"name": " California "}, "CA"),
+        ({"code": "fl", "name": "California"}, "FL"),
+        ({"code": "invalid", "name": "California"}, "CA"),
+        ({"code": "co"}, "CO"),
+        ({}, None),
+        ({"name": "Atlantis"}, None),
+        (None, None),
+    ])
+    def test_the_regime_code_is_normalised_apart_from_the_seed(
+            self, tmp_path, state, expected):
+        """Item 8 looks the regime up by the code `check_freshness` uses, while
+        the seed keeps the code as written. A block coded `fl` and typed `none`
+        is Florida's claim, not an unknown state's. A block the engine resolves
+        no code for is None, never the pin suffix `state`."""
+        cache = _minimal()
+        cache["state"] = state
+        schema = self._schema(tmp_path, cache)
+        assert schema["state_regime_code"] == expected
+        raw_code = state.get("code") if isinstance(state, dict) else None
+        assert schema["state_seed"] == (
+            None if raw_code is None else state_schema(raw_code, 2026))
+
+    def test_the_pin_tables_are_the_engines(self, tmp_path):
+        """Items 4 and 9 read these instead of restating the rules that build
+        them, which is how a pin the prose did not know of went unread."""
+        cache = _minimal()
+        cache["state"] = {"code": "fl", "type": "none",
+                          "sales_tax": {"state_rate": 0.06,
+                                        "county_surtax_rate": 0.01}}
+        schema = self._schema(tmp_path, cache)
+        assert schema["source_pins"] == dict(_expected_pins(cache))
+        assert schema["source_pins"]["state.FL.county_surtax_rate"] == \
+            "state.sales_tax.county_surtax_rate"
+        assert schema["multi_period_pins"] == sorted(_MULTI_PERIOD_PINS)
+
+    @staticmethod
+    def _dating_entry(figure: str, provenance: dict, pins: dict) -> "str | None":
+        """Item 9 read literally: a key the roster lists stands for the path it
+        covers, any other key for itself, and the deepest enclosing path wins."""
+        by_path = {pins.get(key, key): key for key in provenance}
+        segments = figure.split(".")
+        for depth in range(len(segments), 0, -1):
+            key = by_path.get(".".join(segments[:depth]))
+            if key is not None:
+                return key
+        return None
+
+    def test_a_literal_reading_finds_every_entry_set_writes(self, tmp_path):
+        """`set` keys a whole-block write by its PIN, and a state pin is not
+        its path: Florida's county rate is dated by `state.FL.county_surtax_rate`
+        though it lives under `sales_tax`. A lookup by path alone fell through
+        to `state.FL` and checked that figure against the general-rate page."""
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        dor = "https://floridarevenue.com/taxes/taxesfees/Pages/discretionary.aspx"
+        save_tax_law(2026, create_empty_tax_law(2026), str(ws))
+        set_figure(2026, "state", create_state_template("FL"), dor, str(ws))
+        set_figure(2026, "state.sales_tax.county_surtax_rate", 0.01, dor, str(ws))
+        set_figure(2026, "state.sales_tax.state_rate", 0.06, dor, str(ws))
+        target = build_audit_copy(2026, ws, dest=_dest(tmp_path))
+        provenance = json.loads(target.read_text(encoding="utf-8"))["_provenance"]
+        pins = json.loads((target.parent / SCHEMA_NAME).read_text(
+            encoding="utf-8"))["source_pins"]
+        assert "state.FL.county_surtax_rate" in provenance
+        expected = {
+            "state.sales_tax.county_surtax_rate": "state.FL.county_surtax_rate",
+            "state.sales_tax.state_rate": "state.sales_tax.state_rate",
+            "state.type": "state.FL",
+        }
+        for figure, entry in expected.items():
+            assert self._dating_entry(figure, provenance, pins) == entry, figure
+
+    @pytest.mark.parametrize("state", [{}, {"name": "California"}],
+                             ids=["empty", "legacy-by-name"])
+    def test_a_block_with_no_code_gets_no_state_seed(self, tmp_path, state):
+        """`set` refuses every write under a block with no code, so no template
+        was ever applied to it — a seed would grade it against keys nobody
+        validated. The refusal is asserted too, so the two cannot drift."""
+        cache = _minimal()
+        cache["state"] = state
+        assert self._schema(tmp_path, cache)["state_seed"] is None
+        with pytest.raises(TaxLawSetError, match="no state block yet"):
+            set_figure(2026, "state.sdi_rate", 0.01, "https://edd.ca.gov/x",
+                       str(tmp_path / "workspace"))
+
+    # Hosts the rule must answer for, the regression first: real caches pin
+    # statutes at www.law.cornell.edu, and the first published policy had no
+    # subdomain clause, so an auditor applying it literally rejected them.
+    _PROBES = (
+        "https://www.law.cornell.edu/uscode/text/26/164",
+        "https://law.cornell.edu/x", "https://notlaw.cornell.edu/x",
+        "https://law.cornell.edu.evil.com/x", "https://floridarevenue.com/x",
+        "https://www.floridarevenue.com/x", "https://www.irs.gov/x",
+        "http://www.ftb.ca.gov/x", "https://gov/x", "https://irs.gov.evil.com/x",
+        "ftp://www.irs.gov/x", "javascript://www.irs.gov/x", "https:///x",
+    )
+
+    @pytest.mark.parametrize("url", _PROBES)
+    def test_the_published_policy_decides_as_the_rule_does(self, tmp_path, url):
+        """The auditor cannot run the rule; it reads the policy and applies
+        `match`. That reading, done literally, must reach the rule's verdict."""
+        policy = self._schema(tmp_path, _minimal())["source_host_policy"]
+        assert policy == source_host_policy()
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        literal = (parsed.scheme in policy["schemes"] and bool(host) and any(
+            host == d or host.endswith("." + d) for d in policy["domains"]))
+        assert literal == _source_host_authoritative(url)
+
+    def test_the_regime_table_is_the_engines_for_the_filename_year(self, tmp_path):
+        """Item 8 holds `state.type` to this table and may not read the engine.
+        The filename's year, like the seed: TN is `none` only from TY2021."""
+        assert self._schema(tmp_path, _minimal())["state_regimes"] == state_regimes(2026)
+        (tmp_path / "old").mkdir()
+        regimes = self._schema(tmp_path / "old", _minimal(2020), year=2020)["state_regimes"]
+        assert regimes["TN"] == "graduated_income"
+        assert state_regimes(2026)["TN"] == "none"
+        assert {"CA": "graduated_income", "WA": "capital_gains_excise",
+                "FL": "none"}.items() <= regimes.items()
+        assert "CO" not in regimes, "a generic estimate state has no expected regime"
+
+    @pytest.mark.parametrize("year", [2020, 2021, 2026])
+    def test_the_none_entries_are_check_freshness_allowlist(self, year):
+        """`none` is the claim item 8 polices hardest, and `check_freshness`
+        allows it through `_none_type_allowed`. The auditor must allow exactly
+        the same codes."""
+        regimes = state_regimes(year)
+        for code in sorted(set(_STATE_NAME_TO_CODE.values())):
+            assert (regimes.get(code) == "none") == _none_type_allowed(code, year), code
+
+    def test_the_conformity_seed_ships_only_with_the_block(self, tmp_path):
+        assert "retirement_conformity_seed" not in self._schema(tmp_path, _minimal())
+        cache = _minimal()
+        cache["retirement_conformity"] = {}
+        (tmp_path / "with").mkdir()
+        schema = self._schema(tmp_path / "with", cache)
+        assert schema["retirement_conformity_seed"] == create_retirement_conformity_template()
+
+    def test_the_schema_carries_no_identifier_shaped_text(self, tmp_path):
+        """It goes where the copy goes, to an agent that can reach the network,
+        and the copy is refused for less."""
+        assert identifier_findings(self._schema(tmp_path, _minimal())) == []
+
+    def test_a_failed_schema_write_takes_the_copy_back(self, tmp_path, monkeypatch):
+        """A copy without its schema sends the auditor looking outside the
+        directory. Neither file survives, and the directory this call made goes
+        with them."""
+        ws = _workspace(tmp_path, _minimal())
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+        real = tax_law_export.write_secure
+
+        def failing(path, text):
+            if Path(path).name == SCHEMA_NAME:
+                raise OSError("disk full")
+            real(path, text)
+
+        monkeypatch.setattr(tax_law_export, "write_secure", failing)
+        with pytest.raises(OSError, match="disk full"):
+            build_audit_copy(2026, ws)
+        assert list(scratch.iterdir()) == []
+
+    def test_a_named_dest_is_left_empty_and_reusable(self, tmp_path, monkeypatch):
+        """The half-built directory used to block the re-run as one that
+        "already holds files"."""
+        ws = _workspace(tmp_path, _minimal())
+        real = tax_law_export.write_secure
+
+        def failing(path, text):
+            if Path(path).name == SCHEMA_NAME:
+                raise OSError("disk full")
+            real(path, text)
+
+        monkeypatch.setattr(tax_law_export, "write_secure", failing)
+        with pytest.raises(OSError):
+            build_audit_copy(2026, ws, dest=_dest(tmp_path))
+        assert list(_dest(tmp_path).iterdir()) == []
+        monkeypatch.setattr(tax_law_export, "write_secure", real)
+        target = build_audit_copy(2026, ws, dest=_dest(tmp_path))
+        assert (target.parent / SCHEMA_NAME).is_file()
+
+    def test_a_cleanup_that_fails_does_not_replace_the_cause(
+            self, tmp_path, monkeypatch):
+        """The write failure is what the user acts on. A copy the cleanup
+        could not remove raised over it, reporting a permission problem where
+        the disk was full."""
+        ws = _workspace(tmp_path, _minimal())
+        real_write, real_unlink = tax_law_export.write_secure, Path.unlink
+
+        def failing(path, text):
+            if Path(path).name == SCHEMA_NAME:
+                raise OSError("disk full")
+            real_write(path, text)
+
+        def stuck(self, *args, **kwargs):
+            if self.name == "tax_law_2026.json":
+                raise PermissionError("cannot remove the copy")
+            real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(tax_law_export, "write_secure", failing)
+        monkeypatch.setattr(Path, "unlink", stuck)
+        with pytest.raises(OSError, match="disk full"):
+            build_audit_copy(2026, ws, dest=_dest(tmp_path))
+
+    def test_an_engine_that_cannot_describe_the_cache_creates_nothing(
+            self, tmp_path, monkeypatch):
+        ws = _workspace(tmp_path, _minimal())
+
+        def broken(data, year):
+            raise RuntimeError("engine changed")
+
+        monkeypatch.setattr(tax_law_export, "audit_schema", broken)
+        with pytest.raises(RuntimeError):
+            build_audit_copy(2026, ws, dest=_dest(tmp_path))
+        assert not _dest(tmp_path).exists()
+
+    @posix_only
+    def test_the_schema_is_owner_only(self, tmp_path):
+        ws = _workspace(tmp_path, _minimal())
+        target = build_audit_copy(2026, ws, dest=_dest(tmp_path))
+        assert stat.S_IMODE((target.parent / SCHEMA_NAME).stat().st_mode) == 0o600
 
 
 # --- The scanner itself -----------------------------------------------------
@@ -331,6 +617,7 @@ def test_the_cli_exits_0_and_prints_the_directory(tmp_path):
     assert r.returncode == 0, r.stderr
     printed = Path(r.stdout.strip().splitlines()[-1])
     assert (printed / "tax_law_2026.json").is_file()
+    assert (printed / SCHEMA_NAME).is_file()
     assert "rm -rf" in r.stderr, "the operator is never told to remove the copy"
 
 

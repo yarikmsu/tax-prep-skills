@@ -146,6 +146,43 @@ floor refuses, both home-sale exclusions survive, and the CLI `--max` false
 alarm disappears. This remains a bounded prose lint, not a tax-law parser;
 source freshness and the season's fetched figures still need the gates below.
 
+#### Verified 2026-10-12 (Y2)
+
+Steps 1-4 ran on a TY2026 cache written through `set`, each figure read from the
+primary document's own text, never from a search engine's summary of it:
+
+| Block | Source |
+|---|---|
+| `filing_statuses`, `capital_gains_rates`, `child_tax_credit` amount and refundable limit, `qbi_threshold`, `amt`, `qbi_minimum` | Rev. Proc. 2025-32 |
+| `ira_limits`, `retirement_401k`, the §603 threshold included | Notice 2025-67 |
+| `hsa_limits` | Rev. Proc. 2025-19; §223(b)(3) for the catch-up |
+| `social_security.wage_base` | Publication 15 (2026); ssa.gov refuses automated requests |
+| `irmaa.tiers` | CMS, 2026 Medicare Parts A & B premiums and Part D income-related amounts |
+| `underpayment_rates` | IRS quarterly interest rates page, all four 2026 quarters |
+| `salt_cap`, `child_tax_credit.phase_out_start`, `schedule_1a`, `charitable_non_itemizer` | 26 USC §§164(b)(7), 24(h)(3), 224, 225, 163(h)(4), 151(d)(5)(C), 170(p) |
+
+Every bracket table was checked a second way: the engine's tax at each boundary
+equals the base tax the document prints beside it, and moving one boundary by $50
+fails that check. The constants in the X6 table above were re-read against their
+statutes and are unchanged, and the §6651(a) floor for returns filed in 2027 is
+$535 (Rev. Proc. 2025-32 §4.52). The state block follows the taxpayer's state and
+filing status, so it is not recorded here.
+
+Three things were not yet published. The gate reads INCOMPLETE on the last two,
+and each is fetched when it appears:
+
+- the 2027 §6621 quarters, which Form 2210's window and an extension's interest
+  window both reach;
+- the IRS yearly average exchange rates for 2026, in January;
+- state figures that publish with the year's full tables rather than an early
+  indexing notice.
+
+One nuance for whoever reads IRMAA next: CMS's lower tiers begin at "greater
+than" their threshold and the top tier at "greater than or equal to", as 42
+U.S.C. §1395r(i)(3)(C) says "More than" and "At least". `roth_ladder` applied
+every tier at `>=`, which charged a MAGI of exactly a lower threshold one tier
+early; it now follows the statute tier by tier, the top one included.
+
 ---
 
 ### The State and City tax-table bases (AA14)
@@ -185,7 +222,7 @@ python3 -m pytest tests/ -q                            # full suite
 FRESH populated cache is the green light to open the season; an INCOMPLETE one
 names the block(s) still to fetch.
 
-## 5. Make the queued definition edits, then re-run the review-subagent acceptance
+## 5. Make any queued definition edits, then re-run the review-subagent acceptance
 
 **Point it at an exported copy, never at the workspace** (V7):
 
@@ -193,44 +230,39 @@ names the block(s) still to fetch.
 sh agents/lib/run.sh agents/lib/tax_law_export.py <year>
 ```
 
-**This isolates nothing unless `TAX_WORKSPACE` is set** (Y4). Unset, the workspace IS the
-clone, and the auditor's definition tells it four times to read
-`agents/lib/tax_law_fetcher.py` for the schema — so handing it the schema hands it the
-directory holding `taxpayer_profile.json`. Set the variable, or the export is a tidier
-input rather than a boundary.
+The command prints a fresh directory holding two files: the cache, copied VERBATIM, and
+`schema.json`, the seeds, source-host rule and state regimes the auditor checks it
+against, generated from the engine. Nothing is filtered out of the copy, because the auditor's items 6 and 8
+are findings ABOUT keys the schema does not define and an export that removed them would
+be answering for it. It refuses instead — exit 2, no copy — when the cache holds anything
+SSN- or credential-shaped, which a cache fetched from `.gov` sources has no business
+holding. Exit 1 is "could not run".
 
-The command prints a fresh directory holding one file, copied VERBATIM: nothing is
-filtered out, because the auditor's items 6 and 8 are findings ABOUT keys the schema does
-not define and an export that removed them would be answering for it. It refuses instead
-— exit 2, no copy — when the cache holds anything SSN- or credential-shaped, which a
-cache fetched from `.gov` sources has no business holding. Exit 1 is "could not run".
-
-Launch the auditor with that directory as its working directory and do not name the
-workspace to it. **The Agent tool has no `cwd` parameter**, so this means the PARENT
-session's working directory: `cd` there before dispatching, or run the dispatch from a
-session started in it. Delete the directory when the audit is done — the command prints
-the `rm -rf` for it, and nothing else cleans it up.
-
-**Two things this procedure does not yet have, and both belong in step 5 below.** The
-auditor's "What to check" tells it to read `agents/lib/tax_law_fetcher.py` for the schema,
-the source-host policy and the fetched-block derivation; with the cwd moved, none of those
-resolve, so those instructions need rewording in the same sitting as the other queued
-edits. And Replay B in `docs/ops/review-subagent-acceptance.md` builds its own fixture and
-hands the auditor a FILE PATH, so it bypasses the export entirely and will keep passing
-whether or not this works — the replay should hand it an exported directory, and changing
-that changes what the next replay tests, so it is queued too rather than done here.
+**The schema travels with the copy, so the definition names nothing in the clone** (Y2).
+It used to tell the agent to read `agents/lib/tax_law_fetcher.py`, and with `TAX_WORKSPACE`
+unset the clone IS the workspace: the instruction that handed it the schema handed it the
+directory holding `taxpayer_profile.json`. What is still not enforced is where the agent
+CAN read. `Read` is not directory-confined, and a dispatch from a session started at the
+repository root, the only place `.claude/agents/` loads, runs with the clone as its
+working directory. The definition's scope sentence is what keeps it out, which is
+prompt-level, and the acceptance record's contamination check is what notices a breach.
+So the one layer under it is where the taxpayer's files ARE: **dispatch from a clone that
+holds none of them**, the return kept in a `TAX_WORKSPACE` outside the checkout or the
+session started in a second clone used for nothing else, and the directory the agent
+starts in has nothing to find. Name the printed directory to the agent and nothing else,
+and delete it when the audit is done: the command prints the `rm -rf` for it, and nothing
+else cleans it up.
 
 `tax-law-freshness-auditor` is the only check on the freshness contract this runbook
 exists to satisfy, so this runbook LEANS ON it and must not be the thing that first
-discovers it has regressed. It also carries the two definition edits that were
-deliberately DEFERRED to this moment, and they have to be made and scored in the same
-sitting — the acceptance record digest-pins the definition bytes, so an edit without a
-replay leaves the record certifying something that is no longer there.
+discovers it has regressed. A definition edit queued for this moment has to be made and
+scored in the same sitting: the acceptance record digest-pins the definition bytes, so an
+edit without a replay leaves the record certifying something that is no longer there.
 
-**The whole chain, in one place (Y2):** fetch and gate (steps 1-4 above) →
-make the queued definition edits below → a FRESH session → replay both
-reviewers → re-record the verdicts and digests. Every link is below; none is a
-decision, and the first is gated only on the year's figures publishing.
+**The whole chain, in one place:** fetch and gate (steps 1-4 above) → make any queued
+definition edits → a FRESH session → replay both reviewers → re-record the verdicts and
+digests. Every link is below; none is a decision, and the first is gated only on the
+year's figures publishing.
 
 **Do these in order, and do not split them across sittings.** A replay run before the
 fetch scores the auditor against last year's figures and proves nothing about this year's;
@@ -239,38 +271,14 @@ a definition loads at SESSION START.
 
 1. **The fetch and the freshness gate above are already done.** If they are not, stop:
    steps 1-4 come first, and this step is worthless before them.
-2. **Make the queued edits** to `.claude/agents/tax-law-freshness-auditor.md`, and the one to the acceptance record's Replay B fixture:
-   - the `_provenance` check (V4, `docs/changelog/epic-V.md`): the auditor reads
-     `_sources` today and cannot see WHEN a block was retrieved, which is exactly the
-     staleness it exists to catch;
-   - the item-7 keying note (X1, #89, `docs/changelog/epic-X.md`): the definition says
-     `capital_gains_rates` is keyed ONLY `single`/`mfj`, and #89 keyed both its limits
-     by all four statuses; `child_tax_credit.phase_out_start` and `qbi_threshold` are
-     still the two-status ones. Left as is, the auditor reports a correct `mfs`/`hoh`
-     figure as a keying error;
-   - the scope-limits paragraph AND the four schema reads in "What to check" (V7):
-     the scope sentence says "read `tax_law_<year>.json` and nothing else in the
-     workspace", and there is no workspace any more — the auditor is pointed at an
-     exported copy holding nothing else. The four reads of
-     `agents/lib/tax_law_fetcher.py` (the schema, `_source_host_authoritative`, the
-     fetched-block derivation) do not resolve from that directory either, and with
-     `TAX_WORKSPACE` unset they resolve to the clone, which IS the workspace — the
-     boundary this epic exists to build, undone by the agent's own instructions. Reword
-     both together; a scope sentence describing a directory the agent is not in teaches
-     it to go looking for one.
-   - **Replay B's fixture** in `docs/ops/review-subagent-acceptance.md`: it hands the
-     auditor a file path and so bypasses the export. Hand it an exported directory, or
-     the procedure that scores this agent proves nothing about the isolation.
-   - **Item 5's `federal.salt_cap`** (AA19): it says the amount "indexes roughly
-     1%/yr" and that an absent value degrades quietly. Both are false since AA16 —
-     §164(b)(7)(A) NAMES each year's amount ($40,000 TY2025, $40,400 TY2026, 101%
-     a year to TY2029), and `compute_schedule_a` refuses a missing cap. Replace
-     them with the check that matters: a cached amount that differs from the
-     statute's, which is what a filer's already-REDUCED cap fetched as the year's
-     amount looks like.
-   Do NOT touch `docs/ops/review-subagent-acceptance.md` yet.
-3. **Start a FRESH session.** Not a new sub-agent, not a cleared context — a new session,
-   because that is when the edited definition is loaded.
+2. **Make the queued edits, if any are listed here.** None are after Y2 (2026-10-12),
+   which made the five that were: the `_provenance` check (V4), the item-7 keying note
+   (X1), the scope paragraph and schema reads pointed at the export (V7), Replay B handed
+   an exported directory instead of a file path, and item 5's `federal.salt_cap` check
+   (AA19). Queue a later edit by listing it here, never by editing the definition ahead
+   of its replay.
+3. **Start a FRESH session** at the repository root. Not a new sub-agent, not a cleared
+   context — a new session, because that is when the edited definition is loaded.
 4. **Replay both reviewers** exactly per `docs/ops/review-subagent-acceptance.md`: its
    pre-committed criteria, its known answers, and its traps (a squash merge leaves nothing
    in `<sha>^`, so `--grep=P1` is the wrong search).
