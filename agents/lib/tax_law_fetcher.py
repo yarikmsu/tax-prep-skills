@@ -205,10 +205,13 @@ def create_empty_tax_law(year: int) -> dict:
                 "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000},
             },
             # IRMAA = Medicare Part B/D premium surcharge driven by MAGI from 2 years
-            # prior. Tiers are MAGI lower-bounds with the per-beneficiary ANNUAL surcharge
-            # (Part B + Part D) above the standard premium. Empty until /tax-setup fetches;
-            # /tax-roth-convert degrades to "IRMAA not modeled" when tiers are empty.
-            # Each tier: {"magi_threshold": <lower bound>, "annual_surcharge_per_person": <$>}.
+            # prior. Each tier pairs the threshold CMS prints with the per-beneficiary
+            # ANNUAL surcharge (Part B + Part D) above the standard premium. A tier
+            # applies ABOVE its threshold and the top tier AT it, so the threshold is
+            # the printed figure, never the first dollar past it. Empty until /tax-setup
+            # fetches; /tax-roth-convert degrades to "IRMAA not modeled" when tiers are
+            # empty.
+            # Each tier: {"magi_threshold": <printed $>, "annual_surcharge_per_person": <$>}.
             "irmaa": {
                 "lookback_years": 2,
                 "tiers": {"single": [], "mfj": []},
@@ -1011,6 +1014,15 @@ _AUTHORITATIVE_NONGOV_DOMAINS = frozenset({
     "floridarevenue.com",
 })
 
+# The rule's two tables, read by `_source_host_authoritative` and published by
+# `source_host_policy`. `gov` sits in the domain list as one more entry because
+# the rule treats it as one: `host == "gov" or host.endswith(".gov")` is the
+# same test every listed domain gets. One table, so the copy the auditor reads
+# cannot lose a clause the rule has — the first one dropped the subdomain match
+# and would have rejected the `www.law.cornell.edu` pins real caches carry.
+_SOURCE_SCHEMES = ("https", "http")
+_AUTHORITATIVE_DOMAINS = ("gov", *sorted(_AUTHORITATIVE_NONGOV_DOMAINS))
+
 # Inverse of the shared US state/DC map (code → display name). A legacy cache
 # with only `name: "California"` normalizes to the documented `state.CA` pin
 # rather than a bogus `state.California` advisory. Also used for
@@ -1133,6 +1145,36 @@ def _none_type_allowed(code: str, tax_year) -> bool:
     """
     return _expected_state_regime(code, tax_year) == "none"
 
+
+def state_regimes(tax_year: int) -> dict:
+    """Every code `_expected_state_regime` knows for `tax_year`, with its regime.
+
+    The freshness auditor's item 8 needs this table and may not read this file,
+    so `tax_law_export` ships it beside the copy. Asked of the function rather
+    than rebuilt from the sets it reads, so a regime added there arrives here
+    unchanged, TN's repeal year included. A code absent from it is a generic
+    bracket-estimate state: `type` may be absent, and `none` is never allowed.
+    """
+    regimes = {code: _expected_state_regime(code, tax_year)
+               for code in sorted(set(_STATE_NAME_TO_CODE.values()))}
+    return {code: regime for code, regime in regimes.items() if regime is not None}
+
+
+def state_regime_code(data: dict) -> "str | None":
+    """The code `check_freshness` looks the state block's regime up by, or None.
+
+    The auditor's item 8 reads it against `state_regimes`. Normalised as the
+    pin is — a code upper-cased, a display name mapped — because a block coded
+    `fl` declares Florida's regime however `set` spelled it. `_state_pin_code`
+    falls back to the bare pin suffix 'state', which names no state; that is
+    None here, so "no code" has one spelling.
+    """
+    state = data.get("state")
+    if not isinstance(state, dict):
+        return None
+    code = _state_pin_code(state)
+    return None if code == "state" else code
+
 # Federal blocks that SHOULD carry a `_sources` pin are DERIVED from the cache
 # (every populated structured `federal.<block>`), not a fixed short list — a
 # hardcoded pair would leave child_tax_credit / additional_medicare_tax / niit /
@@ -1159,16 +1201,33 @@ def _source_host_authoritative(url) -> bool:
     # Must be a retrievable web URL — reject javascript:/file:/ftp:/data: even
     # when a government hostname is present (`javascript://www.irs.gov/x` parses
     # a hostname but is not a fetchable authoritative source).
-    if parsed.scheme not in ("https", "http"):
+    if parsed.scheme not in _SOURCE_SCHEMES:
         return False
     host = parsed.hostname
     if not host:
         return False
     host = host.lower()
-    if host == "gov" or host.endswith(".gov"):
-        return True
-    return any(host == d or host.endswith("." + d)
-               for d in _AUTHORITATIVE_NONGOV_DOMAINS)
+    return any(host == d or host.endswith("." + d) for d in _AUTHORITATIVE_DOMAINS)
+
+
+def source_host_policy() -> dict:
+    """`_source_host_authoritative` as data, for a reader that cannot run it.
+
+    The freshness auditor applies this rule to every pin and may not read this
+    file, so `tax_law_export` ships it beside the copy. Built from the two
+    tables the rule itself reads, and `match` states the one comparison it
+    makes over them.
+    """
+    return {
+        "rule": "_source_host_authoritative",
+        "schemes": list(_SOURCE_SCHEMES),
+        "domains": list(_AUTHORITATIVE_DOMAINS),
+        "match": ("a URL passes when its scheme is one of `schemes` and its "
+                  "hostname, lower-cased, equals one of `domains` or ends with "
+                  "'.' followed by one: www.law.cornell.edu passes on "
+                  "law.cornell.edu, any .gov host on gov, and irs.gov.evil.com "
+                  "on nothing"),
+    }
 
 
 def _has_real_data(node) -> bool:
@@ -1304,6 +1363,23 @@ def _expected_pins(data: dict) -> "list[tuple[str, str]]":
                     and _has_real_data(block):
                 expected.append((f"ptet.{code}", f"ptet.{code}"))
     return expected
+
+
+def source_pins(data: dict) -> dict:
+    """`_expected_pins` as a table, each pin to the data path it covers.
+
+    The freshness auditor needs the roster for its item 4, and for item 9 to
+    read a `_provenance` entry `set` keyed by a pin: a state pin is not its
+    path, so `state.FL.county_surtax_rate` dates a figure under `sales_tax`
+    that no lookup by path ever reaches. It may not read this file, so
+    `tax_law_export` ships the table beside the copy.
+    """
+    return dict(_expected_pins(data))
+
+
+def multi_period_pins() -> list:
+    """`_MULTI_PERIOD_PINS` as data, for the auditor's item 9 `applies_to` rule."""
+    return sorted(_MULTI_PERIOD_PINS)
 
 
 def _naive(when: datetime) -> datetime:
@@ -2435,16 +2511,43 @@ def _seed_root(dotted: str, data: dict, year: int):
     if segs[0] == "retirement_conformity" and len(segs) > 1:
         return create_retirement_conformity_template(), segs[1:], "retirement_conformity"
     if segs[0] == "state" and len(segs) > 1:
-        current = data.get("state")
-        if not isinstance(current, dict) or not isinstance(current.get("code"), str):
+        code = declared_state_code(data)
+        if code is None:
             raise TaxLawSetError(
                 f"{dotted}: no state block yet — set `state` to the "
                 "create_state_template output first, then its fields")
-        schema = create_state_template(current["code"], tax_year=year)
-        schema["modifications"] = create_state_modifications_template()
-        schema["local"] = create_state_local_template()
-        return schema, segs[1:], "state"
+        return state_schema(code, year), segs[1:], "state"
     return create_empty_tax_law(year), segs, ""
+
+
+def declared_state_code(data: dict) -> "str | None":
+    """The `state.code` a `set` under the state block is validated by, AS
+    WRITTEN, or None when there is none and `set` refuses the block.
+
+    Not `_state_pin_code`, which upper-cases a code and maps a display name for
+    the PIN's sake: `create_state_template("ca")` is the generic template, so a
+    block coded `ca` was validated against generic keys. `tax_law_export` hands
+    the auditor the seed through this, so it is the template the block was
+    actually written against.
+    """
+    state = data.get("state")
+    if isinstance(state, dict) and isinstance(state.get("code"), str):
+        return state["code"]
+    return None
+
+
+def state_schema(code: str, year: int) -> dict:
+    """The state block a write is checked against: the state's template plus the
+    two optional rule blocks, which materialize only on their own fetch.
+
+    One builder, because two readers need the same answer: `set` validates a
+    state path against it, and `tax_law_export` hands it to the freshness
+    auditor as the schema that auditor checks a cache against.
+    """
+    schema = create_state_template(code, tax_year=year)
+    schema["modifications"] = create_state_modifications_template()
+    schema["local"] = create_state_local_template()
+    return schema
 
 
 def _reference_for(dotted: str, data: dict, value, year: int):

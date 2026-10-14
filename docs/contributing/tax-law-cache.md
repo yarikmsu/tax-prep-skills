@@ -12,7 +12,9 @@ map goes stale in a way the schema cannot.
 - `federal.additional_medicare_tax.threshold`
 - `federal.niit.threshold`
 - `federal.irmaa.tiers.<single|mfj>` — a list of
-  `{magi_threshold, annual_surcharge_per_person}`
+  `{magi_threshold, annual_surcharge_per_person}`, each threshold the figure
+  CMS prints. A tier applies ABOVE it, and the top tier AT it (42 U.S.C.
+  §1395r(i)(3)(C)), which `roth_ladder._irmaa_tiers_reached` applies
 - `federal.salt_cap` — `{amount, mfs_amount}`
 - `state.{brackets,standard_deduction}`
 - `state.modifications` — optional `{tax_year, coverage_confirmed, rules}`.

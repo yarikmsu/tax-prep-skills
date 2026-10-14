@@ -186,14 +186,21 @@ wrong figure ties out perfectly.
 
 As the only agent with network access it is held to a closed minimal tool set — a shell
 plus an outbound connection in a workspace holding a real return being exactly what §1
-forbids. That bound is enforced by the GRANT; "read `tax_law_<year>.json` and nothing
-else" is only prompt-level, and the difference is the whole point.
+forbids. That bound is enforced by the GRANT; "read the two files in the directory you
+are pointed at, and nothing else" is only prompt-level, and the difference is the whole
+point. A PDF the agent's own fetch saved outside the directory is held to the same
+sentence: the host files it in a tree beside other sessions' transcripts, and its path
+arrives where a fetched page's text could have written one, so the figure it would have
+verified goes UNVERIFIED and the STOP rule's paste is the way through. An edit letting
+it read that one file was reverted for both reasons.
 
-V7 moved that sentence out of the prompt and into the filesystem. `tax_law_export.py`
-copies the cache into a fresh directory holding nothing else and the auditor is launched
-there, so the workspace is not somewhere it declines to look — it is somewhere it is not.
-That is the V6 pattern rather than a new one: the parent extracts and hands over only what
-the sub-task needs.
+V7 moved what the agent is POINTED AT, not where it can reach. `tax_law_export.py` copies
+the cache into a fresh directory, with only the `schema.json` it is checked against beside
+it (Y2), and the auditor is handed that directory, so everything it is asked to read is
+published figures. That is the V6 pattern rather than a new one: the parent extracts and
+hands over only what the sub-task needs. It does not make the workspace somewhere the
+agent is not — a dispatch has no working directory of its own, and `Read` reaches the
+clone it runs in; see below.
 
 **The copy is FAITHFUL, and the first draft got that exactly wrong.** It filtered the
 cache against the schema — and this agent's job includes reporting keys the schema does
@@ -211,10 +218,17 @@ otherwise. Identity data never reaches the copy because there is no copy. What i
 NOT check is freshness, schema validity, or source authority: the auditor's own items 3
 and 4 do the last of those, better than a regex would.
 
-**It isolates nothing unless `TAX_WORKSPACE` is set.** Unset, the workspace is the clone,
-and the definition tells the agent four times to read `agents/lib/tax_law_fetcher.py` for
-the schema — so handing it the schema hands it the directory holding
-`taxpayer_profile.json`. Y4 is a precondition here, not a neighbour.
+**The schema travels with the copy** (Y2). The definition used to tell the agent four
+times to read `agents/lib/tax_law_fetcher.py` for the schema, and with `TAX_WORKSPACE` unset
+the clone is the workspace, so handing it the schema handed it the directory holding
+`taxpayer_profile.json`. The export now writes `schema.json` beside the copy — the seeds, the
+source-host rule, the year's state regimes and the cache's pin roster, each published by
+the engine so the definition restates none of their rules — and the definition names
+nothing outside that directory. What stays prompt-level is where the agent CAN read: `Read` is not
+directory-confined, and a dispatch from the repository root, the only place
+`.claude/agents/` loads, runs in the clone. The acceptance replay's contamination check is
+what notices a breach, and the one layer under the prompt is where the taxpayer's files
+are: the season-open runbook's step 5 dispatches from a clone that holds none.
 
 **`bias-direction-reviewer`** is scoped to `agents/lib/` diffs and instructed to report
 NOTHING that is not a directional-bias or unstated-precondition finding. The general

@@ -43,6 +43,7 @@ WATCHES = (
     (150, ('agents/lib/tax_law_fetcher.py',)),
     (155, ('agents/lib/tie_out.py',)),
     (160, ('agents/lib/ptet.py',)),
+    (165, ('agents/lib/tax_law_export.py',)),
     (170, ('agents/lib/tax_computations', 'agents/lib/tax_computations/*')),
     (190, ('agents/lib/secure_fs.py',)),
     (210, ('agents/lib',)),

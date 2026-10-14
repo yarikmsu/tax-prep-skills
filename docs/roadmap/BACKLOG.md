@@ -101,6 +101,69 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   "indexes roughly 1%/yr" and that an absent value "degrades quietly", and never
   checks for a stale or already-reduced amount. Found by AA16's second review.
 
+- **AA51 (P2, M): Four auditor rules still restate what `check_freshness` does in
+  code.** Y2 moved the schema into the export's `schema.json`; these are the rules the
+  definition still describes in prose, and each disagrees with the engine on some cache.
+  Item 9 dates a figure by its own `_provenance` entry, its block's pin or
+  `_meta.fetched`, but `check_freshness` also counts an entry keyed by any path ABOVE
+  the figure, which `set` writes for a subtree, so a cache written as documented reads
+  UNVERIFIED for age and STOPs. Item 8 looks `state.code` up as written where the engine
+  normalises it through `_state_pin_code`, so `fl` typed `none` is a false finding and a
+  `ca` with no type is missed; publish the normalised code in `schema.json`, the table
+  rather than the rule. Item 9's `applies_to` exemption reads as covering item 2's CA
+  surcharge, which `_MULTI_PERIOD_PINS` does not, though only a hand edit reaches it
+  since `set` refuses the entry. And the scope sentence bars a PDF the agent's own fetch
+  saved outside the directory, so a figure whose only year-named source is one reads
+  COULD NOT VERIFY: it fails closed, and the 2026-10-12 replay hit it. Each is a
+  definition edit, so all four ride the next fresh-session replay. Found by Y2's review.
+
+- **AA52 (P2, M): The export and the engine still answer four questions
+  differently.** `audit_schema` adds `retirement_conformity_seed` when the cache
+  holds that block, but the definition never names it, and the test that holds
+  every exported table to a name builds its key set from
+  `create_empty_tax_law(2026)`, which has no such block: it stays green over the
+  exact gap it exists to catch. Build the set from a cache with every optional
+  block present. `state_seed` takes its template from the code as written, the
+  way `set` does through `declared_state_code`, while `validate_cache` grades
+  the same block against `_state_pin_code`'s normalised one, so a block coded
+  `ca`, or a legacy block carrying only `name`, is checked against two
+  templates, and the export ships `state_seed: null` for the second. That wants
+  one selection rule in the engine, not a second copy in the export. A
+  whole-block `set state` keys its `_provenance` entry by the pin (`state.FL`)
+  and clears only entries under that pin, so an earlier leaf entry keyed by
+  path (`state.sales_tax.state_rate`) survives the rewrite. `check_freshness`
+  dates the block by its oldest entry and item 9 by the deepest, so both date
+  the refetched figure from the stale one: a gate crying wolf on correct data.
+  And with no resolvable code `_pin_key` writes `state.state` where
+  `_expected_pins` expects `state`, so the block reads UNPINNED however often
+  it is refetched. The last two predate Y2 and are engine fixes; the first is a
+  definition edit and rides the next fresh-session replay. Found by Y2's second
+  review, which reproduced the two `set` defects.
+
+- **AA53 (P3, S): The IRMAA top-tier rule trusts the cached list to be
+  complete.** `_irmaa_tiers_reached` gives "at least" to whichever tier is last
+  in the cache, not to the statutory top tier, so a partial list charges a MAGI
+  exactly at its last threshold one tier early. That over-states the
+  surcharge, and the crossing label prints `≥` where CMS prints "greater
+  than". Nothing reaches it today: the TY2026 cache holds every tier for both
+  statuses, and `main`'s uniform `>=` was wrong at every threshold but the top.
+  Y2 also changed `magi_threshold` from the first dollar of a tier to the
+  printed figure, and nothing detects a cache written under the old meaning,
+  where a MAGI exactly at the stored figure now goes uncharged: an
+  under-statement with no banner. The TY2026 thresholds are all whole thousands, so the
+  printed figure was stored. Refuse a tier list short of the statutory count,
+  and a threshold that is not a whole thousand once the rounding rule is
+  confirmed in 42 U.S.C. §1395r(i). Found by Y2's second review.
+
+- **AA54 (P3, XS): A failed export leaves a `--dest` it created behind.**
+  `build_audit_copy` passes `made_here=dest is None`, reading "a `--dest` was
+  named" as "the directory already existed", but `_resolve_dest` creates a
+  named one that does not exist, parents included. A failed write then leaves
+  it in place, empty, where `_write_export`'s docstring says the directory goes
+  when this call made it. A re-run still accepts it. In the same tests, the
+  stub that fails only the schema write is copied three times; one helper would
+  serve all three. Found by Y2's second review.
+
 - **AA47 (P2, M): Give the 1099-DA cases AA41 blocks for good a way through.**
   AA41 links each form to one disposal by `txn_id` and requires matching units
   and proceeds, so four cases block for good: a broker using §1.6045-1(d)(10)'s

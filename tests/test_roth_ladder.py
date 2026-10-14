@@ -133,6 +133,27 @@ def test_irmaa_surcharge_picks_highest_crossed_tier():
     assert rl._irmaa_surcharge(300000, tiers) == 2800.0
 
 
+# 42 U.S.C. §1395r(i)(3)(C)(i)(III): every tier but the top begins at "More than"
+# its threshold, the top at "At least" its own; CMS's 2026 tables say "Greater
+# than $109,000" and "Greater than or equal to $500,000". Three tiers, so the
+# boundary is asserted on a lower, a middle and the top one.
+_STATUTE_TIERS = [{"magi_threshold": 109000, "annual_surcharge_per_person": 1000},
+                  {"magi_threshold": 205000, "annual_surcharge_per_person": 2800},
+                  {"magi_threshold": 500000, "annual_surcharge_per_person": 3600}]
+
+
+def test_irmaa_lower_tiers_start_above_their_threshold():
+    assert rl._irmaa_surcharge(109000, _STATUTE_TIERS) == 0.0
+    assert rl._irmaa_surcharge(109000.01, _STATUTE_TIERS) == 1000.0
+    assert rl._irmaa_surcharge(205000, _STATUTE_TIERS) == 1000.0
+    assert rl._irmaa_surcharge(205000.01, _STATUTE_TIERS) == 2800.0
+
+
+def test_irmaa_top_tier_starts_at_its_threshold():
+    assert rl._irmaa_surcharge(499999.99, _STATUTE_TIERS) == 2800.0
+    assert rl._irmaa_surcharge(500000, _STATUTE_TIERS) == 3600.0
+
+
 def test_niit_params_full_then_binary_key():
     law = {"federal": {"niit": {"rate": 0.038, "threshold": {"single": 200000, "mfj": 250000}}}}
     assert rl._niit_params(law, "MFJ") == (250000, 0.038)
@@ -212,7 +233,24 @@ def test_niit_onset_flag_at_first_crossing_only():
 def test_irmaa_tier_flags_at_both_crossings():
     r = _build()
     irmaa_amounts = [x.amount for x in r.rungs if any("IRMAA" in f for f in x.flags)]
-    assert irmaa_amounts == [20000, 70000]  # MAGI 220000 (>=212K), 270000 (>=266K)
+    assert irmaa_amounts == [20000, 70000]  # MAGI 220000 (>212K), 270000 (>=266K)
+
+
+def test_irmaa_a_rung_exactly_on_a_lower_threshold_is_not_a_crossing():
+    # The fixture's MFJ tiers are 212K (lower) and 266K (top) over a 200K baseline,
+    # so the 12K rung lands on 212K exactly: "More than", so not yet charged.
+    r = _build(max_amount=24000, step=12000)
+    irmaa = [c for c in r.crossings if c.kind == "irmaa"]
+    assert [(c.at_amount, c.magi) for c in irmaa] == [(24000, 224000)]
+    assert "MAGI > $212,000" in irmaa[0].label
+
+
+def test_irmaa_a_rung_exactly_on_the_top_threshold_is_a_crossing():
+    # "At least" the top threshold: the 66K rung lands on 266K and is charged.
+    r = _build(max_amount=66000, step=33000)
+    irmaa = [c for c in r.crossings if c.kind == "irmaa"]
+    assert [(c.at_amount, c.magi) for c in irmaa] == [(33000, 233000), (66000, 266000)]
+    assert "MAGI ≥ $266,000" in irmaa[1].label
 
 
 def test_ltcg_15_to_20_flag_but_not_0_to_15():

@@ -46,17 +46,24 @@ WHAT THIS DOES NOT DO is check freshness, validate the schema, or judge a source
 host. `check_freshness`, `validate_cache` and the auditor's own items 3 and 4
 answer those, and the auditor answers them better than a regex would.
 
-**THIS ONLY ISOLATES ANYTHING IF `TAX_WORKSPACE` IS SET** (Y4). Unset, the
-workspace IS the clone — and the auditor's definition tells it four times to read
-`agents/lib/tax_law_fetcher.py` for the schema, so handing it the schema hands it
-the directory holding `taxpayer_profile.json`. The copy is then a tidier input,
-not a boundary. `docs/ops/season-open-runbook.md` states the precondition.
+**THE SCHEMA TRAVELS WITH THE COPY** (Y2). The auditor checks a cache against
+`create_empty_tax_law` and `create_state_template`, and it used to read them out
+of `agents/lib/tax_law_fetcher.py`. That path resolves inside the clone, and with
+`TAX_WORKSPACE` unset the clone IS the workspace, so the instruction that gave it
+the schema also gave it the directory holding `taxpayer_profile.json`: the copy
+was a tidier input, not a boundary. `schema.json` beside the copy carries those
+seeds, the source-host policy, the year's state regimes and the pins this cache
+needs, each generated here from the engine, so the auditor can be told to read
+nothing outside the directory it is pointed at. Unlike the copy it is not the taxpayer's file: it
+holds no fetched figure, only what the engine expects one to look like.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -71,12 +78,56 @@ from agents.lib.secure_fs import (  # noqa: E402
     secure_path,
     write_secure,
 )
-from agents.lib.tax_law_fetcher import get_tax_law_path  # noqa: E402
+from agents.lib.tax_law_fetcher import (  # noqa: E402
+    create_empty_tax_law,
+    create_retirement_conformity_template,
+    declared_state_code,
+    get_tax_law_path,
+    multi_period_pins,
+    source_host_policy,
+    source_pins,
+    state_regime_code,
+    state_regimes,
+    state_schema,
+)
 from agents.lib.workspace import WorkspaceError, resolve_workspace  # noqa: E402
+
+SCHEMA_NAME = "schema.json"
 
 
 class ExportError(Exception):
     """The copy could not be made, or could not be made safe to hand over."""
+
+
+def audit_schema(data: dict, year: int) -> dict:
+    """What the auditor checks `data` against, built from the engine.
+
+    The year is the FILENAME's, the one the auditor's item 0 holds the payload
+    to: a cache declaring another `tax_year` stops there, so a seed for the
+    payload's year would only describe a cache it refuses to audit. The state
+    seed is the template `set` validated the block against, chosen by the same
+    helper from the code as written, and null when the block carries no code,
+    since `set` validates nothing under such a block. The regime code is the
+    other spelling, normalised as `check_freshness` normalises it, because the
+    regime a block declares does not depend on how `set` spelled its code. The
+    host policy, the regime table and the two pin tables are the engine's rules
+    published as data by the functions beside them, not restated here.
+    """
+    code = declared_state_code(data)
+    schema = {
+        "about": ("Generated from the engine by tax_law_export.py when the copy "
+                  "beside it was made. Not a cache: it holds no fetched figure."),
+        "cache_seed": create_empty_tax_law(year),
+        "state_seed": None if code is None else state_schema(code, year),
+        "state_regime_code": state_regime_code(data),
+        "state_regimes": state_regimes(year),
+        "source_pins": source_pins(data),
+        "multi_period_pins": multi_period_pins(),
+        "source_host_policy": source_host_policy(),
+    }
+    if "retirement_conformity" in data:
+        schema["retirement_conformity_seed"] = create_retirement_conformity_template()
+    return schema
 
 
 def identifier_findings(node, dotted: str = "") -> "list[str]":
@@ -139,7 +190,8 @@ def _resolve_dest(dest, root: Path, year: int) -> Path:
 
 
 def build_audit_copy(year: int, workspace=None, dest=None) -> Path:
-    """Copy `tax_law_<year>.json` into a directory of its own, or refuse."""
+    """Copy `tax_law_<year>.json`, with `schema.json` beside it, into a
+    directory of its own, or refuse. Returns the copy's path."""
     root = resolve_workspace(workspace)
     source = get_tax_law_path(year, str(root))
     if not source.is_file():
@@ -183,21 +235,50 @@ def build_audit_copy(year: int, workspace=None, dest=None) -> Path:
             + "\nA cache is fetched from .gov sources and has no business "
               "holding one. Remove it and re-run /tax-setup.")
 
-    target = _resolve_dest(dest, root, year) / source.name
-    secure_path(target.parent)
-    write_secure(target, text)
+    # Built before anything is created, so an engine that cannot describe this
+    # cache leaves no directory behind.
+    schema_text = json.dumps(audit_schema(data, year), indent=2) + "\n"
+    directory = _resolve_dest(dest, root, year)
+    target = directory / source.name
+    _write_export(directory, {target: text, directory / SCHEMA_NAME: schema_text},
+                  made_here=dest is None)
     return target
+
+
+def _write_export(directory: Path, files: dict, made_here: bool) -> None:
+    """Write every file or none of them.
+
+    A copy without its schema sends the auditor looking for one outside the
+    directory, and the half-built directory then blocks a re-run to the same
+    `--dest` as one that "already holds files". So a failed write takes back
+    what this call wrote, and the directory as well when this call made it. A
+    named `--dest` is left in place, empty, which a re-run accepts. The cleanup
+    is best effort: a failure in it would raise over the error that caused it,
+    which is the one the user has to act on.
+    """
+    written: list[Path] = []
+    try:
+        secure_path(directory)
+        for path, content in files.items():
+            write_secure(path, content)
+            written.append(path)
+    except BaseException:
+        for path in written:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+        if made_here:
+            shutil.rmtree(directory, ignore_errors=True)
+        raise
 
 
 def _main(argv) -> int:
     parser = argparse.ArgumentParser(
         prog="tax_law_export.py",
-        description="Copy tax_law_<YEAR>.json into a directory of its own and "
-                    "print that directory. Point tax-law-freshness-auditor at "
-                    "the printed path and do not name the workspace to it: the "
-                    "isolation is what the agent can SEE, not what its prompt "
-                    "says. Set TAX_WORKSPACE first, or the workspace is the "
-                    "clone and there is nothing to isolate it from.")
+        description="Copy tax_law_<YEAR>.json, with the schema it is checked "
+                    "against, into a directory of its own and print that "
+                    "directory. Point tax-law-freshness-auditor at the printed "
+                    "path and do not name the workspace to it: the isolation is "
+                    "what the agent can SEE, not what its prompt says.")
     parser.add_argument("year", type=int)
     parser.add_argument("workspace", nargs="?", default=None)
     parser.add_argument("--dest", default=None,

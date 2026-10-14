@@ -50,7 +50,9 @@ a figure from a prior year.
   filer rather than use the single figure.
 - Search: `"Medicare IRMAA {year} income brackets Part B Part D"` — populate `federal.irmaa.tiers`
   (`single`/`mfj` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
-  monthly Part B + Part D surcharge above the standard premium). Optional but unlocks IRMAA
+  monthly Part B + Part D surcharge above the standard premium). `magi_threshold` is the
+  figure CMS prints for the tier, never the first dollar past it: a tier applies above it
+  and the top tier at it. Optional but unlocks IRMAA
   flags in `/tax-roth-convert`; leave as `[]` if not relevant to the taxpayer.
 - Search: `"IRS {year} AMT exemption amount phase out"` — populate `federal.amt`
   (`exemption` + `phaseout_start` by status, and `rate_28_breakpoint` — the

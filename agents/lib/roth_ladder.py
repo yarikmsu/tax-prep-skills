@@ -213,13 +213,25 @@ def _irmaa_tiers(tax_law: dict, filing_status: "str | None") -> "list[dict]":
     return sorted(cleaned, key=lambda t: t["magi_threshold"])
 
 
+def _irmaa_tiers_reached(magi: float, tiers: "list[dict]") -> int:
+    """How many of the sorted `tiers` apply at `magi`.
+
+    42 U.S.C. §1395r(i)(3)(C)(i)(III) starts every tier but the top at "More
+    than" its threshold and the top at "At least" its own, and CMS's tables say
+    "Greater than" and "Greater than or equal to" to match. A uniform `>=`
+    charged a MAGI of exactly a lower threshold one tier early; a uniform `>`
+    would undercharge at exactly the top one.
+    """
+    top = len(tiers) - 1
+    return sum(1 for i, t in enumerate(tiers)
+               if magi > t["magi_threshold"]
+               or (i == top and magi == t["magi_threshold"]))
+
+
 def _irmaa_surcharge(magi: float, tiers: "list[dict]") -> float:
-    """Per-beneficiary annual surcharge for the highest tier whose threshold <= magi."""
-    surcharge = 0.0
-    for t in tiers:
-        if magi >= t["magi_threshold"]:
-            surcharge = t["annual_surcharge_per_person"]
-    return surcharge
+    """Per-beneficiary annual surcharge for the highest tier that applies at magi."""
+    reached = _irmaa_tiers_reached(magi, tiers)
+    return tiers[reached - 1]["annual_surcharge_per_person"] if reached else 0.0
 
 
 def _resolve_basis(profile: dict, ira_basis, ira_value, ira_owner=None) -> "tuple[bool, float | None, float | None]":
@@ -297,7 +309,7 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
     base_niit = compute_niit(base_out["agi"], nii, niit_threshold, rate=niit_rate)
     base_irmaa_surcharge = _irmaa_surcharge(base_out["agi"], irmaa_tiers)
     # IRMAA tiers already in effect at $0 are not "crossings"; only flag NEW tiers.
-    base_irmaa_idx = sum(1 for t in irmaa_tiers if base_out["agi"] >= t["magi_threshold"])
+    base_irmaa_idx = _irmaa_tiers_reached(base_out["agi"], irmaa_tiers)
 
     amounts = parse_sweep(max_amount, step)
     # When pro-rata is modeled, truncate the sweep at the IRA balance so every rung is an
@@ -391,16 +403,18 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
 
         # IRMAA tiers — each new tier crossed by the conversion. est_annual_cost is the
         # INCREMENT over the previously-crossed tier so the crossings list sums correctly.
-        tiers_now = sum(1 for t in irmaa_tiers if scen["agi"] >= t["magi_threshold"])
+        tiers_now = _irmaa_tiers_reached(scen["agi"], irmaa_tiers)
         while tiers_now > irmaa_crossed:
             tier = irmaa_tiers[irmaa_crossed]
+            at_least = irmaa_crossed == len(irmaa_tiers) - 1
             irmaa_crossed += 1
             incremental = round(tier["annual_surcharge_per_person"] - last_irmaa_surcharge, 2)
             last_irmaa_surcharge = tier["annual_surcharge_per_person"]
             flags.append(f"IRMAA tier @ MAGI {_money(tier['magi_threshold'])}")
             crossings.append(ThresholdCrossing(
                 kind="irmaa",
-                label=f"Medicare IRMAA surcharge tier (MAGI ≥ {_money(tier['magi_threshold'])})",
+                label=(f"Medicare IRMAA surcharge tier (MAGI {'≥' if at_least else '>'} "
+                       f"{_money(tier['magi_threshold'])})"),
                 at_amount=amt, magi=scen["agi"], est_annual_cost=incremental))
 
         # When the sweep was truncated at the IRA balance (--max ran past B), flag the
