@@ -187,8 +187,25 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   purpose: evidence the engine cannot read for its year is refused like
   malformed evidence. When the TY2026 Form 8949 instructions publish, add the
   entry and its row in `crypto-accounts.md`'s table from a year-pinned
-  `irs-prior` copy, as the source test requires, and re-check that the 1099-DA
-  boxes AA41 refuses still mean what it read them as. Found by AA41's review.
+  `irs-prior` copy, as the source test requires. Found by AA41's review.
+  **Blocked on the IRS, as of a live check on 2026-10-13:** the year-pinned
+  [TY2026 Form 8949 instructions](https://www.irs.gov/pub/irs-prior/i8949--2026.pdf)
+  returned HTTP 404, and the IRS's
+  [current instructions](https://www.irs.gov/pub/irs-pdf/i8949.pdf) still named
+  TY2025. Keep the unreviewed-year refusal until the TY2026 instructions
+  publish. Do not carry the TY2025 boxes forward, and do not pin the entry to a
+  URL that does not resolve yet: the source test checks the prefix and the
+  year, not that the file exists. The 1099-DA re-check this entry used to carry
+  is AA55, which is not blocked.
+
+- **AA55 (P1, S): Re-read the TY2026 Form 1099-DA boxes before AA48 lands.**
+  AA41 maps each 1099-DA box it reads or refuses to an import key by the box's
+  TY2025 meaning, and `crypto-accounts.md` names every one. The
+  [TY2026 Form 1099-DA instructions](https://www.irs.gov/pub/irs-prior/i1099da--2026.pdf)
+  are published, so confirm now that each box still means the same, rather than
+  waiting for the Form 8949 instructions to arrive close to filing season. If a
+  box moved, the map becomes per-year like `_REPORTING_REGIMES`, because TY2025
+  imports still read the old one. Split from AA48 by its review.
 
 - **AA49 (P3, M): Tie each form-backed digital-asset row to its own broker
   figures.** The `capital_proceeds` tie subtracts one aggregate,
@@ -312,12 +329,13 @@ and vendor-CI rulings remain closed.
 
 ---
 
-## Blocked on an owner ACTION, not a ruling
+## Blocked on an owner ACTION or an outside publication, not a ruling
 
 | Item | What it waits on |
 |---|---|
 | **Y1** | The owner publishing the repository and enabling Discussions. Verified still private, Discussions off, 0 stars. |
 | **Y2** | TY2026 figures publishing, then the staged fetch → auditor edits → FRESH-session replay → acceptance-record chain. It is also the only route to the auditor's stale keying note. |
+| **AA48** | The IRS publishing the TY2026 Form 8949 instructions. The entry dates the last check, and the season-open runbook's Form 8949 step repeats it. |
 
 ## Declined, with the reasoning kept so it is not re-proposed
 
