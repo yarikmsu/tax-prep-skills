@@ -6410,11 +6410,11 @@ class TestTheBacklogSaysWhatIsOpen:
         blocked = text[text.index("\n## Blocked on an owner ACTION"):
                        text.index("\n## Declined,")]
         named = set(re.findall(rf"^\| \*\*({self._ID})\*\* \|", blocked, re.M))
-        assert named, "the blocked-on-owner table parses as empty"
+        assert named, "the blocked table parses as empty"
         opened = set(self.ENTRY.findall(self._open_section()))
         orphans = sorted(named - opened)
         assert not orphans, (
-            f"{orphans} are blocked on the owner but have no entry in Open — "
+            f"{orphans} are in the blocked table but have no entry in Open — "
             "the table says an item is waiting and nothing says what it is")
 
 
