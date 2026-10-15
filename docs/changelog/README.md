@@ -13,7 +13,7 @@ One file per epic, newest first, plus the pre-epic base engine:
 |------|-------|
 | [`epic-AA.md`](epic-AA.md) | The 2026-09-20 product-owner review and what later reviews filed under it: the Earned Income Credit disclosed instead of defaulting to zero (AA1), MEASURED COSTS recording ratios rather than seconds (AA3), and a section for each AA item as it ships |
 | [`epic-Z.md`](epic-Z.md) | State coverage for the named next users (NY IT-201/IT-203, NYC and Yonkers, NC D-400, WA excise, residency guardrails) |
-| [`epic-Y.md`](epic-Y.md) | Distribution and operations (`TAX_WORKSPACE`, the workspace root outside the checkout) |
+| [`epic-Y.md`](epic-Y.md) | Distribution and operations (`TAX_WORKSPACE`, the workspace root outside the checkout; the TY2026 season open and the auditor's self-contained export) |
 | [`epic-W.md`](epic-W.md) | Engineering hygiene (ruff and mypy in CI, the `slow` marker, the pinned dev interpreter) |
 | [`epic-X.md`](epic-X.md) | Tax correctness, known and unfixed (capital-gains breakpoints fail closed) |
 | [`epic-V.md`](epic-V.md) | Agent reliability and determinism (SSN/ITIN masking at the extraction boundary) |

@@ -45,7 +45,7 @@ Written 2026-09-20, replacing eight roadmap files totalling 3,626 lines.
 | `2026-07-12`, `2026-07-17`, `2026-07-20` reviews | Epics I-O, all shipped; `docs/changelog/epic-{I,J,K,L,M,N,O}.md`. |
 
 The historical design directory was retired after the 2026-10-03 review.
-Unimplemented extensions are AA41-AA46 below. Maintained state contracts and
+Unimplemented extensions are AA42-AA46 below. Maintained state contracts and
 the template moved to `docs/contributing/state-module-{ny,nc,wa,template}.md`,
 indexed in AGENTS.md §9. Origins below and historical changelog citations link
 to the [pre-migration Git snapshot](https://github.com/yarikmsu/tax-prep-skills/tree/017d2dd45ead/docs/superpowers).
@@ -58,20 +58,24 @@ citations; they no longer direct contributor work in the current checkout.
 
 **Engineering: the original V, W and X queue is complete.** The 2026-10-03
 review of the retired design directory recovered useful, unimplemented extensions;
-AA41-AA46 below now carry that scope instead of relying on historical plans.
+AA42-AA46 below now carry that scope instead of relying on historical plans.
 The suite's size is stated nowhere: since AA8 the
 MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` counts only the
 seven modules that hook selects, and a count restated here would be the mirror
 this file was collapsed to remove.
 
-**Product: blocked on one decision.** The repository is private, Discussions are
-off, and there are zero non-owner users. Every distribution item has been
+**Product: blocked on one decision.** The repository is public, but Discussions
+are off and there are zero non-owner users. Every distribution item has been
 waiting on that since 2026-08-12.
 
-**CI is back and green.** Minutes returned 2026-10-01, and the first full
-matrix on `main`, at #189, passed: the 3.13 floor for the first time, 3.14,
-Windows, lint, the PII scan and the Dependency audit once AA27 moved urllib3.
-Everything merged on one local interpreter from #155 on is now covered by it.
+**CI passes, but runs only when dispatched.** Minutes returned 2026-10-01, and
+the first full matrix on `main`, at #189, passed: the 3.13 floor for the first
+time, 3.14, Windows, lint, the PII scan and the Dependency audit once AA27 moved
+urllib3. Everything merged on one local interpreter from #155 on is now covered
+by it. Since the repository was recreated on 2026-10-10, though, CI runs only
+when dispatched, and a dispatched run skips the PII range scan, so each merge is
+scanned locally and the weekly dependency audit is dispatched by hand until
+AA57 finds why.
 
 ---
 
@@ -79,9 +83,12 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 
 | When | What | Why |
 |---|---|---|
-| **Owner decision; excluded from the current implementation queue** | **Y1** — publish and enable Discussions, or demote the distribution goal in writing. | Oct 15 is the last TY2025 window; the next is January. |
-| **Oct-Nov** | **Y2** — run the staged fetch → auditor edit (including **AA19**) → fresh-session replay chain. | Begins when the year's figures publish. |
-| **Next, in entry order** | AA41-AA43 — bounded carryforward, intake, scenario and projection extensions recovered from the historical specs. | These remain absent in the current engine; old follow-ups that already shipped are excluded. |
+| **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
+| **Now** | **AA55** — re-read the TY2026 Form 1099-DA boxes, so **AA48** can land the day the Form 8949 instructions publish. **AA57** — find why CI's push, pull-request and scheduled runs never register. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. | Every TY2026 crypto import with a filing-year disposal blocks until AA48 lands. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. AA58 lands before TY2026 filing opens: a return filed before the April 2027 rate publishes would otherwise price that quarter at the last cached rate. |
+| **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | The quarters are the one item no gate catches: Form 2210 carries the last cached rate forward with only a note until AA58 lands, so this row is their reminder. |
+| **Next** | **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13: its definition edit and the test change it forces cannot land apart, and the season-open sitting would leave the auditor a table short through the TY2026 season. | Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, and both items touch the export Y2 shipped. |
+| **Then** | **AA43**, then **AA42** with **AA53** — NY/NC estimated-payment schedules in the mid-year projection, then its AMT and IRMAA exposure. | Both are absent from the current engine. AA43 is the smaller and extends the CA schedule; AA42's IRMAA layer reuses the Roth premium computation, whose tier rule AA53 fixes, so that fix lands with it or before. |
+| **After** | **AA47**, **AA49**, **AA50** — the crypto follow-ups AA41 filed: a way through for the cases it blocks for good, a per-row broker-proceeds tie, and a narrower event map. Then **AA56**, so the shipped-index check tells the two PR numberings apart. | AA47 turns a permanent block into a return. AA49 must be reproduced first, and AA50 is a performance change, so it needs a before-and-after benchmark. AA56 changes a test, not a return. |
 | **Later** | AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. | Larger product extensions; the existing single-year engines remain their starting point. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
@@ -90,32 +97,6 @@ Everything merged on one local interpreter from #155 on is now covered by it.
 ## Open
 
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
-
-- **AA19 (P2, S): The auditor's SALT-cap check still awaits Y2.** The engine
-  validation shipped in #216 under Q14: Schedule A and PTET refuse a cached
-  amount that differs from `salt.base_cap`, accepting its exact amount at cents
-  or its nearest whole dollar (half up), before the per-return phasedown.
-  AGENTS.md §2 now requires agreement rather than unconditional cache precedence.
-  The remaining auditor edit rides Y2's chain, since the definition is
-  digest-pinned to a passed acceptance. Its check 5 still says `federal.salt_cap`
-  "indexes roughly 1%/yr" and that an absent value "degrades quietly", and never
-  checks for a stale or already-reduced amount. Found by AA16's second review.
-
-- **AA51 (P2, M): Four auditor rules still restate what `check_freshness` does in
-  code.** Y2 moved the schema into the export's `schema.json`; these are the rules the
-  definition still describes in prose, and each disagrees with the engine on some cache.
-  Item 9 dates a figure by its own `_provenance` entry, its block's pin or
-  `_meta.fetched`, but `check_freshness` also counts an entry keyed by any path ABOVE
-  the figure, which `set` writes for a subtree, so a cache written as documented reads
-  UNVERIFIED for age and STOPs. Item 8 looks `state.code` up as written where the engine
-  normalises it through `_state_pin_code`, so `fl` typed `none` is a false finding and a
-  `ca` with no type is missed; publish the normalised code in `schema.json`, the table
-  rather than the rule. Item 9's `applies_to` exemption reads as covering item 2's CA
-  surcharge, which `_MULTI_PERIOD_PINS` does not, though only a hand edit reaches it
-  since `set` refuses the entry. And the scope sentence bars a PDF the agent's own fetch
-  saved outside the directory, so a figure whose only year-named source is one reads
-  COULD NOT VERIFY: it fails closed, and the 2026-10-12 replay hit it. Each is a
-  definition edit, so all four ride the next fresh-session replay. Found by Y2's review.
 
 - **AA52 (P2, M): The export and the engine still answer four questions
   differently.** `audit_schema` adds `retirement_conformity_seed` when the cache
@@ -136,9 +117,15 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   the refetched figure from the stale one: a gate crying wolf on correct data.
   And with no resolvable code `_pin_key` writes `state.state` where
   `_expected_pins` expects `state`, so the block reads UNPINNED however often
-  it is refetched. The last two predate Y2 and are engine fixes; the first is a
-  definition edit and rides the next fresh-session replay. Found by Y2's second
-  review, which reproduced the two `set` defects.
+  it is refetched. The second and the last two are engine fixes, the last two
+  predating Y2. The first is a definition edit plus the key-set change above,
+  and the two cannot land apart: the test holds them to each other in both
+  directions, so either alone turns it red. Land the whole entry with a
+  fresh-session replay of its own, as AA51 did on 2026-10-13, and remove its
+  line from the season-open runbook's §5 step 2, which holds it until then. A
+  season-open sitting that comes first makes the definition half there, and the
+  engine fixes stay here. Found by Y2's second review, which reproduced the two
+  `set` defects.
 
 - **AA53 (P3, S): The IRMAA top-tier rule trusts the cached list to be
   complete.** `_irmaa_tiers_reached` gives "at least" to whichever tier is last
@@ -223,6 +210,50 @@ Everything merged on one local interpreter from #155 on is now covered by it.
   has already parsed those dates. Negligible at realistic sizes. Found by
   AA41's review.
 
+- **AA56 (P3, S): Tell the shipped index's two PR numberings apart.**
+  `test_every_shipped_row_names_a_pull_request_that_really_merged` builds its
+  merged set from every subject in history that ends in `(#N)`. Pull-request
+  numbers restarted at #1 when the repository was recreated on 2026-10-10, and
+  old and new merges already share #3, #4 and #8, so a row naming a new number
+  that never merged passes on an old merge carrying it: a new #5 would pass on
+  one from 2026-03-08. The test needs a way to tell which numbering a row
+  means, such as the merge's side of that date. Found by the review that
+  recorded Y2 as shipped.
+
+- **AA57 (P2, S): Find why CI's push, pull-request and scheduled runs never register.**
+  `ci.yml` declares `pull_request`, `push` to main and a weekly `schedule`, but
+  since the repository was recreated on 2026-10-10 none has registered a run:
+  every CI run on record, verified 2026-10-15, was dispatched by hand, the
+  merges of #6, #7 and #8 have none, and Monday 2026-10-12 passed with no
+  scheduled run. `scripts/ci-pii-range.sh` exits 3 for a dispatched run, so its
+  PII job passes without scanning, and the commit that lands on main is scanned
+  only if someone runs the push-event scan by hand. The weekly dependency audit,
+  the one run that catches a new advisory against an unchanged lock, has
+  stopped with it. Until the runs register, dispatch CI on the branch and bind
+  the poll to its head commit; after each merge, straight after
+  `git reset --hard origin/main` syncs main, run
+  `RANGE=$(EVENT_NAME=push PUSH_BEFORE_SHA=$(git rev-parse ORIG_HEAD) bash scripts/ci-pii-range.sh) && bash scripts/pre-commit-pii-scan.sh "$RANGE"`.
+  `ORIG_HEAD` is main's head before the sync, so a sync that brings in several
+  merges scans them all, where `HEAD~1` would scan only the newest. Dispatch
+  `gh workflow run ci.yml --ref main` weekly in place of the schedule. The
+  cause has not been investigated. Landing it removes the interim sentences in
+  this file's CI status paragraph, in `docs/contributing/ci-and-locks.md` and in
+  `README.md`'s CI section. Found by the review that recorded Y2 as shipped.
+
+- **AA58 (P2, S): Stop Form 2210 pricing a quarter the cache does not hold.**
+  `compute_form_2210` in `agents/lib/tax_computations/federal/penalties.py`
+  accrues the penalty through April 15 of the year after the tax year. When the
+  cached §6621 rates stop before April 1 of that year, it prices the rest at the
+  last cached rate, sets `penalty_computed`, and adds only a note. AGENTS.md §2
+  lets a fallback degrade only when the output is advisory and under-states;
+  line 38 is neither, and the carried rate over-states the penalty whenever the
+  next quarter's rate falls. The engine already holds both alternatives: the
+  unfetched case reports that a penalty applies without computing it, and
+  `compute_underpayment_interest` (Epic M) never extrapolates a rate past the
+  quarters the cache holds. Choose one, and test it with a timeline whose last
+  change is January 1 of the filing year. Until it lands, Y8's fetch of the 2027
+  quarters is the only guard. Found by the review that recorded Y2 as shipped.
+
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
 These are extensions, not unfinished portions of the shipped v1 deliveries.
@@ -230,15 +261,6 @@ The historical specs supply their origin; the scope stated here governs the
 work. The split capital-loss carryforward, Form 1040 line 36 rollover, IRA and
 AMT basis rollover, NIIT projection, full-status capital-gains cache and
 CA/NY/NC withholding true-ups already exist and are not reopened.
-
-- **AA41 (P2, M): Reconcile crypto imports with Form 1099-DA.**
-  The importer and skill still disclose that broker forms are not reconciled
-  and default Form 8949 rows to Box C/F. Compare broker proceeds and reported
-  basis with matched disposals, select the covered year's appropriate reporting
-  treatment from explicit evidence, and surface unresolved differences before
-  the crypto result feeds the return. Keep adjustments and their source evidence
-  in the ledger rather than silently replacing the FIFO result.
-  Origin: [2026-05-31-crypto-importer-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-31-crypto-importer-design.md) §Out of scope.
 
 - **AA42 (P2, L): Add AMT and IRMAA exposure to the mid-year projection.**
   NIIT projection is already implemented. The federal projection total still
@@ -296,7 +318,8 @@ and vendor-CI rulings remain closed.
 
 ### Y — distribution and product
 
-- **Y1 (P1, XS): Publish the repository and enable Discussions.**
+- **Y1 (P1, XS): Enable Discussions on the public repository.**
+  The repository is public, verified 2026-10-15; Discussions are still off.
   Every artifact the publish gate asked for is in place: R1's full-history audit
   (one adjudicated-benign finding, baseline recorded in
   `docs/changelog/epic-R-U.md`), R3's intake surface, R5's QUICKSTART with
@@ -307,25 +330,20 @@ and vendor-CI rulings remain closed.
   the stated success criterion ("a stranger files a return with it") cannot be
   evaluated without it.
 
-- **Y2 (P1, S): Season-open runbook when the TY2026 figures publish.**
-  **PRE-STAGED 2026-10-02:** the chain is one ordered paragraph in
-  `docs/ops/season-open-runbook.md` §5, with the two auditor edits and the
-  AA14 `table_bases` check written into it. What remains is the run itself.
-  Ruled at Q5: **write the procedure, touch nothing.** Both reviewer definitions
-  and `docs/ops/review-subagent-acceptance.md` stay exactly as they are,
-  certified with their digest pins matching, and the runbook carries one ordered
-  procedure. What gates Y2 is the figures publishing and then the owner's fetch
-  and FRESH-SESSION replay — neither a decision. Follow the staged chain in §5:
-  fetch and gate → make the queued auditor edits → start a FRESH session →
-  replay both reviewers → re-record verdicts and digests. The edits correct
-  the stale `federal.capital_gains_rates` keying note from before #89 and
-  AA19's `salt_cap` check. The definition is digest-pinned to a PASSED
-  acceptance, so editing it without the replay silently withdraws an
-  acceptance this repository advertises.
-  One more check rides the runbook: when the TY2026 State and City tables
-  publish, compare them with their schedules and fetch `tax_table.table_bases`
-  (AA14). A cache without the key gets a note, not a refusal, and the row can
-  then be a dollar off in either direction.
+- **Y8 (P2, XS): Fetch the TY2026 figures still unpublished at season open.**
+  The season-open runbook's "Verified 2026-10-12 (Y2)" record names three: the
+  2027 §6621 quarters, the IRS yearly average exchange rates for 2026, due in
+  January, and the state figures that publish with the year's full tables.
+  With them goes the step AA14 and AA28 left for TY2026: when the NY State and
+  City tables publish, compare each with its rate schedule and fetch
+  `state.tax_table.table_bases` and `state.nyc_tax.tax_table.table_bases`, per
+  the runbook's AA14 section. The freshness gate reads INCOMPLETE on the
+  exchange rates and the state figures, so neither can be missed at compute
+  time. It does not gate the quarters: Form 2210 carries the last cached rate
+  through April 15, 2027 with only a note, and an extension's interest window
+  reaches later quarters still. Fetch each through `set` as it publishes, the
+  quarters included; gating them is AA58. Filed by the review that recorded Y2
+  as shipped.
 
 ---
 
@@ -333,8 +351,8 @@ and vendor-CI rulings remain closed.
 
 | Item | What it waits on |
 |---|---|
-| **Y1** | The owner publishing the repository and enabling Discussions. Verified still private, Discussions off, 0 stars. |
-| **Y2** | TY2026 figures publishing, then the staged fetch → auditor edits → FRESH-session replay → acceptance-record chain. It is also the only route to the auditor's stale keying note. |
+| **Y1** | The owner enabling Discussions. Verified 2026-10-15: public, Discussions off, 0 stars. |
+| **Y8** | The 2027 §6621 quarters, published one quarter at a time; the IRS's 2026 yearly average exchange rates, in January; and the TY2026 state tables, NY's included. |
 | **AA48** | The IRS publishing the TY2026 Form 8949 instructions. The entry dates the last check, and the season-open runbook's Form 8949 step repeats it. |
 
 ## Declined, with the reasoning kept so it is not re-proposed
@@ -385,10 +403,12 @@ and vendor-CI rulings remain closed.
   a hosted sandbox rather than on packaging mechanics.
 
 - **Y3 — package `agents/lib` as a distribution. DECLINED at Q11, with a re-open
-  trigger.** The repository is not public, so there is no consumer to install a
-  distribution — the largest contract change in the backlog against zero demand
-  signal, and it defeats the venv-refusal guard by design. **Re-open when a second
-  consumer of the engine exists outside a clone.**
+  trigger.** At Q11 the repository was not public, so there was no consumer to
+  install a distribution — the largest contract change in the backlog against
+  zero demand signal, and it defeats the venv-refusal guard by design. It is
+  public now, verified 2026-10-15, and still has no consumer outside a clone, so
+  the trigger has not fired. **Re-open when a second consumer of the engine
+  exists outside a clone.**
 
 ## Rulings
 
@@ -448,7 +468,11 @@ say that in its first screen.
 ## Shipped
 
 The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
-`docs/changelog/README.md`.
+`docs/changelog/README.md`. Pull-request numbers restarted at #1 when the
+repository was recreated on 2026-10-10, so a low number can name two pull
+requests; a row's numbers are read from its merge commits' subjects, and where
+two commits carry the same one, the date tells the numberings apart. The test
+that checks each row cannot yet; that is AA56.
 
 | Item | PRs | Remaining scope / follow-ups |
 |---|---|---|
@@ -457,7 +481,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | V1 | #109, #110, #111 | — |
 | V2 | #108 | — |
 | V3 | #97, #98, #107, #116, #117, #141 | — |
-| V4 | #87 | the auditor's `_provenance` check waits for the Y2 replay |
+| V4 | #87 | the auditor's `_provenance` check shipped with Y2 in #7 |
 | V5 | #103, #104 | — |
 | V6 | #99, #100, #101, #106 | — |
 | V7 | #115 | needs `TAX_WORKSPACE` set, or it isolates nothing |
@@ -475,7 +499,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | W10 | #208, #209, #210, #211, #227 | Registry and wiring; generic year-bound adjustment workpapers and explicit local-tax routing. |
 | W11 | #226 | Shared state true-up specification; public report behavior retained and NY timing-note crash fixed. |
 | W12 | #225 | Test-owned hook input declarations and independent read/import audit. |
-| X1 | #89 | the auditor's keying note is WRONG, not pending; only the Y2 replay can correct it |
+| X1 | #89 | the auditor's keying note was corrected with Y2 in #7 |
 | X2 | #86 | — |
 | X3 | #88 | — |
 | X4 | #110, #142 | — |
@@ -485,6 +509,7 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | X8 | #159 | Engine entry-point status validation: direct checks or declared delegation probed at both ends |
 | X9 | #228 | Wrapped and paired amounts, Markdown block boundaries, code/CLI handling and shared figure gates. |
 | X10 | #224 | Roth catch-up split, confirmed HSA eligibility and fetched per-account state conformity. |
+| Y2 | #7 | The figures still unpublished on 2026-10-12 are Y8, and Y2's review filed AA52-AA54. |
 | Y4 | #112 | — |
 | Y5 | #113 | — |
 | Y6 | #114, #119, #165 | — |
@@ -513,9 +538,9 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA5 | #186 | — |
 | AA8 | #186 | the suite's size is stated nowhere, and the scale row's "about twice" a cold pass is a reader's to keep, not a check's |
 | AA17 | #188 | a part-year return across the border is blocked, not modeled, and so is a non-citizen's dual-status federal year |
-| AA14 | #189 | a cache without `table_bases` gets a note, and the row can be a dollar off either way; the TY2026 check rides Y2 |
+| AA14 | #189 | a cache without `table_bases` gets a note, and the row can be a dollar off either way; the TY2026 check is Y8 |
 | AA27 | #189 | — |
-| AA28 | #190 | the TY2026 `table_bases` check rides Y2 |
+| AA28 | #190 | the TY2026 `table_bases` check is Y8 |
 | AA29 | #192 | AA30 moved household screening to Step 0.7; AA32 requires computation methods beside flagged household values. A typed method is not a receipt-bound proof. |
 | AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
 | AA31 | #194 | — |
@@ -526,6 +551,9 @@ The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 | AA38 | #242 | Reviewed full-year TY2025 CA/NY/NC state/local liability reprices independently in scenarios and Roth sweeps; missing worksheets, allocations and unreviewed form years stay named limitations. |
 | AA39 | #243 | Independent primary/spouse Form 8606 worksheets bind owned IRA balances and source allocations, preserve separate closing basis through rollover, and label individual reports and Roth planning. |
 | AA40 | #244 | Account-specific crypto FIFO moves reviewed original lot slices through owned transfer links; missing inventory/evidence blocks completion and untagged universal imports from 2025 are diagnostic-only. |
+| AA41 | #6 | Reviewed years TY2023-2025 only: the TY2026 boxes are AA48 and AA55, the cases that block for good AA47, a per-row broker-proceeds tie AA49, a narrower event map AA50. |
+| AA19 | #216, #7 | — |
+| AA51 | #7 | A PDF the auditor's own fetch saves outside the export stays unread by decision, so such a figure goes UNVERIFIED; the export and the engine still answer four questions differently, filed as AA52. |
 | AA34 | #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |

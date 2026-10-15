@@ -1919,9 +1919,10 @@ class TestTheDocumentsNameTheIngestPath:
         assert "_provenance" in fetch
 
     def test_the_runbook_writes_through_set_and_names_the_per_block_dates(self):
-        """The auditor definition is deliberately NOT updated here: its bytes
-        are digest-pinned by the acceptance record, and an edit demands the
-        fresh-session replay — scheduled with the season-open runbook (Y2)."""
+        """V4 deliberately left the auditor definition alone: its bytes are
+        digest-pinned by the acceptance record, and an edit demands the
+        fresh-session replay the season-open runbook schedules. That edit rode
+        Y2's replay, in #7."""
         root = Path(__file__).resolve().parent.parent
         runbook = (root / "docs" / "ops" / "season-open-runbook.md").read_text()
         assert "tax_law_fetcher.py set" in runbook
