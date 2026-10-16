@@ -182,9 +182,9 @@ AA57 finds why.
   TY2025. Keep the unreviewed-year refusal until the TY2026 instructions
   publish. Do not carry the TY2025 boxes forward, and do not pin the entry to a
   URL that does not resolve yet: the source test checks the prefix and the
-  year, not that the file exists. The TY2026 Form 1099-DA boxes the import
-  maps were re-read by AA55 and kept their meanings, so the entry needs no
-  per-year input map.
+  year, not that the file exists. AA55 re-read every TY2026 Form 1099-DA box,
+  whether the import reads it or not, and each kept its meaning, so the entry
+  needs no per-year input map.
 
 - **AA55 (P1, S): Re-read the TY2026 Form 1099-DA boxes before AA48 lands.**
   AA41 maps each 1099-DA box it reads or refuses to an import key by the box's
@@ -255,8 +255,8 @@ AA57 finds why.
   change is January 1 of the filing year. Until it lands, Y8's fetch of the 2027
   quarters is the only guard. Found by the review that recorded Y2 as shipped.
 
-- **AA59 (P2, S): Read or refuse the 1099-DA boxes the import never names.**
-  AA55's table in `crypto-accounts.md` has a row for every numbered box of the
+- **AA59 (P1, S): Read or refuse the 1099-DA boxes the import never names.**
+  AA55's table in `crypto-accounts.md` has a row for every box of the
   TY2025 and TY2026 forms and marks AA59 on each box that carries a meaning but
   has neither an import key nor a stated reason it cannot change the row. The
   sharpest is box 3b, the disposition of an interest in a qualified opportunity
@@ -264,9 +264,12 @@ AA57 finds why.
   require any gain previously deferred into the fund to be recognized on its
   own row with code Y, with a Form 8997 for the year of disposal. A form with
   box 3b checked reconciles as an ordinary sale, so that gain never reaches
-  the return. Others carry money or a broker's own aggregation: box
+  the return. Others carry money, a broker's own aggregation or a rule the
+  import does not apply: box
   11c's specified-NFT first-sale proceeds are kept out of box 1f, box 16 holds
-  state income tax withheld, and box 11a marks an optional aggregate report.
+  state income tax withheld, box 11a marks an optional aggregate report, and
+  the unnumbered CUSIP box marks a tokenized security, which the wash-sale
+  rules reach while the import models none.
   The hole is open now: TY2025's 1099-DA imports route today, and AA48 widens
   it to TY2026. Decide each box at both ends. `/tax-parse`'s 1099-DA extraction
   list captures none of them, so a new key would have nothing to copy from; the

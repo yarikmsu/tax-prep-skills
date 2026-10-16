@@ -726,7 +726,8 @@ def test_every_reviewed_year_and_source_is_documented():
     # and checking only the engine's years finds neither.
     rows = {}
     for line in doc.splitlines():
-        if match := re.match(r'\| TY(\d{4}) \|', line):
+        # Any spelling of the year cell: a padded or bold row renders as a row.
+        if match := re.match(r'\s*\|[\s*_]*TY(\d{4})\b', line):
             assert int(match[1]) not in rows, f'TY{match[1]} has two routing rows'
             rows[int(match[1])] = line
     assert sorted(rows) == sorted(C._REPORTING_REGIMES), sorted(rows)
@@ -742,12 +743,21 @@ def test_every_reviewed_year_and_source_is_documented():
     assert C._REPORTING_VERIFIED in doc
 
 
-# Every numbered box of Form 1099-DA, the same in TY2025 and TY2026: the box
-# headings on pages 7-10 of each year's instructions. A box a later form adds
-# joins this set when that year is re-read.
-_1099DA_BOXES = {'1a', '1b', '1c', '1d', '1e', '1f', '1g', '1h', '1i', '2', '3a', '3b',
-                 '4', '5', '6', '7', '8', '9', '10', '11a', '11b', '11c', '12a', '12b',
-                 '13', '14', '15', '16'}
+# Every box on Form 1099-DA, per reviewed year: the numbered boxes headed on
+# pages 7-10 of the year's instructions, then the unnumbered fields of the
+# recipient's Copy B. TY2026's form has the same boxes. A year re-read at
+# season open joins here with its own set.
+_1099DA_FORM_BOXES = {'1a', '1b', '1c', '1d', '1e', '1f', '1g', '1h', '1i', '2', '3a', '3b',
+                      '4', '5', '6', '7', '8', '9', '10', '11a', '11b', '11c', '12a', '12b',
+                      '13', '14', '15', '16', 'CORRECTED', 'Filer, recipient', 'Account number',
+                      'CUSIP', 'Applicable checkbox', 'Reserved'}
+_1099DA_BOXES = {2025: _1099DA_FORM_BOXES, 2026: _1099DA_FORM_BOXES}
+# The box each key copies or refuses. The table is the only place this
+# pairing is written, and checking each column as a set passes a swap.
+_1099DA_KEY_BOXES = {'asset': '1b', 'quantity': '1c', 'date_sold': '1e', 'proceeds': '1f',
+                     'cost_basis': '1g', 'basis_reported_to_irs': '2', 'term': '6', 'ordinary': '6',
+                     'accrued_market_discount': '1h', 'wash_sale_loss_disallowed': '1i',
+                     'loss_not_allowed': '5', 'federal_withholding_1099': '4'}
 
 
 def test_the_reviewed_1099da_table_names_every_box_and_key():
@@ -756,13 +766,30 @@ def test_the_reviewed_1099da_table_names_every_box_and_key():
     list, is what makes "every box was re-read" a claim a test can check."""
     doc = (REPO / 'docs' / 'contributing' / 'crypto-accounts.md').read_text(encoding='utf-8')
     section = doc[doc.index('### Reviewed Form 1099-DA inputs (AA55)'):doc.index('\n## Primary authorities')]
-    rows = [[cell.strip() for cell in line.strip().strip('|').split('|')]
-            for line in section.splitlines() if line.startswith('| ') and not line.startswith('| Input key ')]
-    for column, year in ((1, 2025), (2, 2026)):
-        assert {row[column] for row in rows} == _1099DA_BOXES, year
+    header, rule, *rows = [[cell.strip() for cell in line.strip().strip('|').split('|')]
+                           for line in section.splitlines() if line.lstrip().startswith('|')]
+    assert set(''.join(rule)) <= set('-: ') and all(len(row) == len(header) for row in rows), header
+    # The columns between key and meaning are the reviewed years, and each
+    # cites its own year's instructions and form: a relabelled or added
+    # column fails here unless its year was re-read.
+    assert header[0] == 'Input key' and header[-1].startswith('Reviewed meaning'), header
+    years = [int(re.fullmatch(r'TY(\d{4}) box', cell)[1]) for cell in header[1:-1]]
+    assert years == sorted(_1099DA_BOXES), header
+    for source in ('i1099da', 'f1099da'):
+        cited = re.findall(rf'/pub/irs-prior/{source}--(\d{{4}})\.pdf', section)
+        assert sorted(set(map(int, cited))) == years, source
+    assert {year for year, regime in C._REPORTING_REGIMES.items() if regime['form_type'] == '1099-DA'} <= set(years)
     # Both ways against the importer: each key it reads or refuses has its row,
     # and no row names a key it lacks. The four identity keys copy no box.
-    keys = {row[0].split()[0].strip('`') for row in rows if row[0] != '—'}
+    keyed = [row for row in rows if row[0] != '—']
+    keys = [row[0].split()[0].strip('`') for row in keyed]
     identity = {'form_id', 'form_type', 'account_id', 'txn_id'}
-    assert keys == (C._FORM_FIELDS - identity) | C._FORM_UNSUPPORTED | {'federal_withholding_1099'}
+    assert len(keys) == len(set(keys)), keys
+    assert set(keys) == set(_1099DA_KEY_BOXES) == (C._FORM_FIELDS - identity) | C._FORM_UNSUPPORTED | {'federal_withholding_1099'}
     assert 'federal_withholding_1099' in tie_out.CATEGORY_TARGETS
+    for column, year in enumerate(years, start=1):
+        assert {key: row[column] for key, row in zip(keys, keyed)} == _1099DA_KEY_BOXES, year
+        # Every box once, and a box two keys share once per key.
+        paired = list(_1099DA_KEY_BOXES.values())
+        expected = sorted([*_1099DA_BOXES[year] - set(paired), *paired])
+        assert sorted(row[column] for row in rows if row[column] != '—') == expected, year

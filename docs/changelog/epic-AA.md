@@ -2686,13 +2686,15 @@ engine still answer differently is AA52.
 
 The year-pinned TY2025 and TY2026 IRS instructions were fetched directly with
 cache bypass on 2026-10-15, both HTTP 200, and their box sections (pages 7-10)
-were compared. Every numbered box keeps its number and meaning in both years.
+were compared, as was the recipient's Copy B of each year's form on 2026-10-16
+for the unnumbered boxes. Every box keeps its number and meaning in both years;
+TY2026 only splits the filer's and recipient's addresses into separate fields.
 Box 1e adds "or Disposed" to its label and box 1i drops a plural, neither
 changing its input; box 9's text now names box 2 among the boxes a broker may
 complete for a noncovered sale, and box 4 cites a newer backup-withholding
 relief notice. The shared normalized schema therefore needs no per-year map.
 
-`docs/contributing/crypto-accounts.md` now has a row for every numbered box:
+`docs/contributing/crypto-accounts.md` now has a row for every box, numbered or not:
 each input key with both years' box numbers and its blank/refusal treatment,
 including the parse ledger's proceeds and backup withholding, and each box
 with no key with its reason or AA59. The review also records TY2026's mandatory
@@ -2727,11 +2729,32 @@ and a second row for one it does. AA59 covers `/tax-parse`'s extraction list as
 well as the importer, and AA55's Open entry stays until its shipped row lands,
 as AA40's and AA41's did.
 
+A third review found the table still wrong in places. It mapped `asset` to box
+1b, the asset's full name, but the importer compares `asset` exactly with the
+import's symbol and no resolution clears a mismatch, so a form copied box for
+box blocked for good. The row and `/tax-parse-crypto` now say `asset` holds the
+import's symbol. The table also left out the form's unnumbered boxes: the
+Applicable Checkbox, whose code Y means an unknown holding period rather than
+Form 8949's code Y; the CUSIP box, which marks a tokenized security and joins
+AA59; the account number, CORRECTED, the parties' identity fields and a reserved
+field. The tests checked each box column as a set, so swapped keys passed; they
+read only the first two columns and never the header; and they found a routing
+row in only one spelling. The table test now pins each key's box, reads the
+reviewed years from the header, requires each year to cite its own instructions
+and form and to cover every year whose 1099-DA forms the engine routes, and
+counts each box once. AA59 moves to P1: its gap lets a wrong return through
+silently, where AA48's absence only blocks.
+
 Each check was mutation-tested. A premature TY2026 row and a duplicate TY2025
 row passed the one-way routing check and fail the new one, as does a deleted
 TY2025 row with its source moved into prose. Deleting box 3b's or box 16's row,
 deleting the `term` row while box 6 stays covered, adding a key the importer
-lacks, and adding an importer key with no row each fail the table test.
+lacks, and adding an importer key with no row each fail the table test. After
+the third review, these fail it too: swapping two keys' boxes, relabelling or
+adding a year column, dropping a year's instructions or form link, a duplicate
+or extra row in any spelling, a row a cell short, and a 1099-DA year the engine
+routes with no column. A premature routing row that is padded, bold or
+unspaced fails the routing test.
 
-The crypto-reporting and portability suites passed locally on Python 3.14 only;
-the 3.13 floor was not run. No engine behavior changed.
+The full suite passed locally on Python 3.14, and CI ran it on the 3.13 floor
+and 3.14. No engine behavior changed.

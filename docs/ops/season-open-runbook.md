@@ -199,8 +199,9 @@ a year with its own reviewed entry in `_REPORTING_REGIMES`
 (`agents/lib/crypto_importer.py`), and any other year's import with a
 filing-year disposal blocks. Every season therefore needs the new year's entry,
 read from that year's Form 8949 instructions, and a re-read of every Form
-1099-DA box against that year's 1099-DA instructions — the boxes the import
-does not read included, since a new meaning there passes unread.
+1099-DA box against that year's 1099-DA instructions and form — the unnumbered
+boxes and the ones the import does not read included, since a new meaning
+there passes unread.
 `docs/contributing/crypto-accounts.md` holds the box table, the year-pinned
 source rule and the 1099-DA map. The two documents publish separately, and
 either may still be missing when the season opens: check for each again with
@@ -208,9 +209,10 @@ every later fetch until both are out, and add the entry when the Form 8949
 instructions appear. Track the two reviews independently, recording each
 year's 1099-DA re-read in
 [the reviewed input table](../contributing/crypto-accounts.md#reviewed-form-1099-da-inputs-aa55),
-which names the years it covers and has a row for every box. A box a new form
-adds gets a row there and joins `_1099DA_BOXES` in
-`tests/test_crypto_reporting.py`. A reviewed 1099-DA year does not unblock that
+which has a row for every box and a column for every reviewed year. A
+re-read year's column cites that year's instructions and form, its boxes join
+`_1099DA_BOXES` in `tests/test_crypto_reporting.py`, and a box its form adds
+gets a row. A reviewed 1099-DA year does not unblock that
 year's disposals, only its Form 8949 entry does. TY2026's entry is AA48 in
 `docs/roadmap/BACKLOG.md`.
 

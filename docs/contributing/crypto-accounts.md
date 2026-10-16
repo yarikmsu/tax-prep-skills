@@ -216,24 +216,29 @@ a form wrongly declared "not received" fails it instead of warning.
 
 ### Reviewed Form 1099-DA inputs (AA55)
 
-Every numbered box was compared by live, cache-bypassing IRS HTTPS fetches
-on 2026-10-15 against the year-named [TY2025 instructions, pages 7-10](https://www.irs.gov/pub/irs-prior/i1099da--2025.pdf)
-and [TY2026 instructions, pages 7-10](https://www.irs.gov/pub/irs-prior/i1099da--2026.pdf).
+Every box was compared by live, cache-bypassing IRS HTTPS fetches: the
+numbered boxes on 2026-10-15 against the year-named [TY2025 instructions, pages 7-10](https://www.irs.gov/pub/irs-prior/i1099da--2025.pdf)
+and [TY2026 instructions, pages 7-10](https://www.irs.gov/pub/irs-prior/i1099da--2026.pdf),
+and the unnumbered ones on 2026-10-16 against the recipient's Copy B of the
+[TY2025 form](https://www.irs.gov/pub/irs-prior/f1099da--2025.pdf) and the
+[TY2026 form](https://www.irs.gov/pub/irs-prior/f1099da--2026.pdf).
 Each box keeps its number and meaning in both years, so the normalized input
-contract stays shared between them. Two labels change without changing their
+contract stays shared between them. TY2026 splits the filer's and recipient's
+addresses into separate fields, Country among them, which changes no input.
+Two labels change without changing their
 input: box 1e's from "Date Sold" to "Date Sold or Disposed", still the sale
 date, and box 1i's from "Wash Sales Loss Disallowed" to "Wash Sale Loss
 Disallowed". Box 4 now cites Notice 2025-33 for transitional backup-withholding
 relief, and the box 1g and box 9 changes are below. A later year's box change
 needs a per-year input map, preserving TY2025.
 
-The table has a row for every numbered box, keyed or not. A box marked AA59
+The table has a row for every box, numbered or not, keyed or not. A box marked AA59
 carries a meaning the import neither reads nor refuses, so a form with it
 filled in passes unread until AA59 decides it.
 
 | Input key | TY2025 box | TY2026 box | Reviewed meaning and treatment |
 |---|---|---|---|
-| `asset` | 1b | 1b | Digital asset name; review the name-to-symbol match against the disposal. |
+| `asset` | 1b | 1b | Not copied: the import's own symbol for the asset box 1b names, "BTC" for "Bitcoin". The importer compares it exactly with the disposal's, and no resolution clears a mismatch. |
 | `quantity` | 1c | 1c | Units sold, exchanged or otherwise disposed of. |
 | `date_sold` | 1e | 1e | Sale date, normalized to YYYY-MM-DD. |
 | `proceeds` | 1f | 1f | Proceeds after the broker's reduction for transaction costs; preserve the form's amount for reconciliation. The parse ledger also records its total as `capital_proceeds`. |
@@ -245,7 +250,7 @@ filled in passes unread until AA59 decides it.
 | `wash_sale_loss_disallowed` | 1i | 1i | Disallowed wash-sale loss for tokenized stock or securities; a nonzero amount refuses the import. |
 | `loss_not_allowed` | 5 | 5 | Loss not allowed based on box 1f; checked, refuses the import. |
 | `federal_withholding_1099` (parse ledger only) | 4 | 4 | Backup withholding; handled by `/tax-parse`, outside `broker_reporting.forms`. |
-| — | 1a | 1a | Code for the digital asset; helps review the `asset` name, and is not a key. |
+| — | 1a | 1a | Code for the digital asset; with box 1b, confirms which asset the `asset` symbol stands for, and is not a key. |
 | — | 1d | 1d | Date acquired; never replaces an original acquisition date in the FIFO inventory. |
 | — | 3a | 3a | "Gross proceeds", or "Net proceeds" when box 1f was reduced by option premiums; AA59. |
 | — | 3b | 3b | Disposition of an interest in a qualified opportunity fund; AA59. |
@@ -262,6 +267,12 @@ filled in passes unread until AA59 decides it.
 | — | 14 | 14 | State; with box 15, identifies box 16's withholding (AA59). |
 | — | 15 | 15 | The filer's state identification number; with box 14, identifies box 16's withholding (AA59). |
 | — | 16 | 16 | State income tax withheld; AA59. |
+| — | CORRECTED | CORRECTED | Checked when the form replaces one the broker issued earlier; copy the corrected form instead of the original, never both. |
+| — | Filer, recipient | Filer, recipient | Names, addresses, TINs and the filer's telephone; they identify the parties, not the sale. Never copy the recipient's TIN (AGENTS.md §1). |
+| — | Account number | Account number | The broker's number for the customer's account, not a wallet address; helps confirm the form's `account_id`, and is not a key. |
+| — | CUSIP | CUSIP | CUSIP or other identifying number of a tokenized security, which the wash-sale rules reach (box 1i) while the import models none; AA59. |
+| — | Applicable checkbox | Applicable checkbox | The broker's Form 8949 code: G, H, J or K, or Y when it cannot tell box H from box K. Not read: box 2 and the FIFO holding period choose the box. This Y is not Form 8949's own code Y (box 3b). |
+| — | Reserved | Reserved | Reserved for future use, beside the CUSIP box. |
 
 Which keys a `broker_reporting.forms` entry needs, and how a blank is copied,
 is the forms rule above; this review changes neither and adds no

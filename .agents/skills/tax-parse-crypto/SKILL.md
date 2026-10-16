@@ -232,7 +232,9 @@ disposal, whether it received a broker form for the year, and record the answer
 with its evidence; never infer "no form" from a form missing in `documents/`.
 Enter one `forms` entry per reported transaction, linked by `txn_id` to the
 disposal it reports, copying every box and a blank one as null: the importer
-refuses a missing key rather than read it as blank. Add a `resolutions` entry
+refuses a missing key rather than read it as blank. `asset` is the exception:
+it holds the import's own symbol for the asset box 1b names ("BTC", not
+"Bitcoin"), which must equal the disposal's exactly. Add a `resolutions` entry
 only when the user confirms, with evidence, which figure is correct.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.
