@@ -109,7 +109,7 @@ jobs:
           python -m coverage xml
           python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
       # Uploaded as a GitHub ARTIFACT, deliberately not to a coverage service.
-      # This repository is private and its subject is real returns; a third-party
+      # This repository's subject is real returns; a third-party
       # upload is a new destination for repository content and a new credential
       # in repository secrets, and AGENTS.md §1 does not spend either on a
       # convenience. The number is on the job summary and the XML is here for

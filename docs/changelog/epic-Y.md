@@ -377,3 +377,43 @@ shallow CI clone walk into missing objects — and assertion 2 covers it without
 STILL OPEN: the Windows CI job runs only `test_secure_fs.py` and `test_host_guard.py`,
 so none of this has Windows coverage.
 
+## Y2 — the TY2026 season opens, and the auditor reads a self-contained export — PR #7
+
+The season-open runbook ran for TY2026 on 2026-10-12, every block written
+through `set` from the primary document's own text. Pinning, the readiness
+tests, the engine self-test and the full suite passed, and the freshness gate
+reads INCOMPLETE only on figures not yet published. The runbook's "Verified
+2026-10-12 (Y2)" record names each block's source and the items still to come,
+which are Y8 in the backlog.
+
+Before the replay, the auditor's definition read its schema out of
+`agents/lib/tax_law_fetcher.py`. With `TAX_WORKSPACE` unset the clone is the
+workspace, so the instruction that handed it the schema handed it the directory
+holding the taxpayer's files, and its prose restated engine rules that had since
+moved. `tax_law_export.py` now writes `schema.json` beside the cache copy: the
+seeds, the source-host policy, the state regimes, the cache's pin roster and the
+normalised state code, each from a public engine function. The definition reads
+only those two files. The queued edits went in with it and the 2026-10-12
+replay certified them: `_provenance` dating (V4), the four-status
+`capital_gains_rates` keying (X1) and the §164(b)(7) SALT schedule (AA19). The
+four rules AA51 named followed, with a replay of their own on 2026-10-13.
+Replay B now exports its fixture and hands over the directory, the path the
+runbook uses, and the runbook dispatches the auditor from a clone holding no
+taxpayer files, because `Read` is not directory-confined.
+
+One engine fix came out of the fetch. IRMAA tiers now start where 42 U.S.C.
+§1395r(i)(3)(C) starts them, above each lower threshold and at the top one, so a
+MAGI exactly on a lower threshold is no longer charged a tier early, provided the
+cache holds every tier. AA53 is what remains: a partial tier list treats its own
+last tier as the top one, and a cache written under the old threshold meaning
+now under-charges a MAGI exactly at a stored threshold, with no banner.
+
+Both reviewers passed acceptance from fresh sessions on 2026-10-12, and again on
+2026-10-13 after AA51's edits; the recipe, criteria and traces are in
+`docs/ops/review-subagent-acceptance.md`. The local suite passed on Python 3.14,
+and CI ran by dispatch on head `5c91365f`
+([run 38486433138](https://github.com/yarikmsu/tax-prep-skills/actions/runs/38486433138)),
+all six jobs green. Squash merge `6def237f` registered no push run, so its PII
+range scan ran locally on `main`: clean, one commit and twenty files. The
+review's eight findings changed no return and fire on nothing in the TY2026
+cache; they are AA52-AA54.

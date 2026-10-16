@@ -168,8 +168,8 @@ statutes and are unchanged, and the §6651(a) floor for returns filed in 2027 is
 $535 (Rev. Proc. 2025-32 §4.52). The state block follows the taxpayer's state and
 filing status, so it is not recorded here.
 
-Three things were not yet published. The gate reads INCOMPLETE on the last two,
-and each is fetched when it appears:
+Three things were not yet published, tracked as Y8 in `docs/roadmap/BACKLOG.md`. The
+gate reads INCOMPLETE on the last two, and each is fetched when it appears:
 
 - the 2027 §6621 quarters, which Form 2210's window and an extension's interest
   window both reach;
@@ -285,12 +285,21 @@ a definition loads at SESSION START.
 
 1. **The fetch and the freshness gate above are already done.** If they are not, stop:
    steps 1-4 come first, and this step is worthless before them.
-2. **Make the queued edits, if any are listed here.** None are after Y2 (2026-10-12),
-   which made the five that were: the `_provenance` check (V4), the item-7 keying note
-   (X1), the scope paragraph and schema reads pointed at the export (V7), Replay B handed
-   an exported directory instead of a file path, and item 5's `federal.salt_cap` check
-   (AA19). Queue a later edit by listing it here, never by editing the definition ahead
-   of its replay.
+2. **Make the queued edits, if any are listed here.** One is queued, with the test change
+   it needs, until AA52 lands both with a replay of its own: name `schema.json`'s
+   `retirement_conformity_seed`, which the export writes whenever the cache holds that
+   block, beside `cache_seed` and `state_seed`, and in the same edit build `SCHEMA_KEYS`
+   in `tests/test_claude_agents.py` from a cache holding every optional block. That test
+   holds the definition's names and the export's keys to each other in both directions,
+   so either half alone turns it red. If AA52 is still open when this sitting comes,
+   make both here; its engine fixes stay in the backlog. Y2's sitting (2026-10-12) made
+   the five queued before it: the `_provenance` check (V4), the item-7 keying note (X1),
+   the scope paragraph and schema reads pointed at the export (V7), Replay B handed an
+   exported directory instead of a file path, and item 5's `federal.salt_cap` check
+   (AA19).
+   AA51's four edits followed with a sitting of their own (2026-10-13), the precedent
+   for replaying between seasons. Queue a later edit by listing it here, never by
+   editing the definition ahead of its replay.
 3. **Start a FRESH session** at the repository root. Not a new sub-agent, not a cleared
    context — a new session, because that is when the edited definition is loaded.
 4. **Replay both reviewers** exactly per `docs/ops/review-subagent-acceptance.md`: its

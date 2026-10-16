@@ -252,12 +252,13 @@ CI runs the same script against the pull request, inspecting **each commit indiv
 
 **CI (GitHub Actions):**
 - Runs pytest, PII file scan, and pip-audit on every PR to `main`
+- Not on this repository yet: since it was recreated on 2026-10-10, CI has run only when dispatched by hand, and a dispatched run skips the PII range scan. AA57 in the [backlog](docs/roadmap/BACKLOG.md) tracks why.
 - Dependabot monitors dependencies weekly for known vulnerabilities
 
 ### Recommendations
 
 - Enable full-disk encryption (FileVault on macOS, BitLocker on Windows)
-- Work in a private repository
+- Keep a real return out of any public repository: clone this one and, if you want a remote, push the clone to a new private repository. A fork of this public repository is itself public, so use a fork only to contribute code.
 - Delete taxpayer data files after filing season
 - Review commits before pushing — the pre-push hook scans them, but only you can see what a figure means
 

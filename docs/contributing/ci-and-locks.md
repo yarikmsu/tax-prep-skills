@@ -24,7 +24,10 @@ silent schedule as a finding rather than as quiet.
 A concurrency group cancels a superseded PR run and NEVER one on main: the
 push-run is the only thing that scans the commit that actually landed, and a
 second merge arriving while it runs would cancel it, leaving that commit
-unscanned under a green tick from the run that replaced it.
+unscanned under a green tick from the run that replaced it. On the repository
+recreated 2026-10-10 that push-run has never registered, nor has the weekly
+schedule, so until AA57 in `docs/roadmap/BACKLOG.md` finds why, the scan of each
+merge runs by hand and the weekly run is dispatched by hand.
 
 ## The scan range is a script, not a workflow expression
 
@@ -206,7 +209,7 @@ one annotation — `typing-extensions` is no longer reachable through
 ## Coverage: read the caveat before the number
 
 The report is a build ARTIFACT, not an upload to a coverage service. This
-repository is private and its subject is real returns; a third-party upload is a
+repository's subject is real returns; a third-party upload is a
 new destination for repository content AND a new credential in repository
 secrets, and AGENTS.md §1 does not spend either on a convenience.
 

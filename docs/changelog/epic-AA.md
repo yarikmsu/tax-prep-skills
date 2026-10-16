@@ -2626,3 +2626,58 @@ reviewed head `37d70b219786a0be57e94ecf0768c32bc7a13913` without CI. Once
 Actions ran again, all six CI jobs passed on
 `4389a80714900f277176e1568a55fbcf5187fea0`: that squash plus a commit-id
 repoint touching only docs and one test docstring.
+
+## AA41 — Form 8949 boxes from reconciled broker forms (#6)
+
+Every crypto Form 8949 row used to leave the importer in Box C/F, a placeholder
+the skill told the agent to review by hand. For TY2025 it was wrong on its face:
+digital assets moved to Boxes G-L, chosen by whether a Form 1099-DA reported the
+sale and its basis. Nothing compared a broker form's proceeds or basis with the
+FIFO figures, so dropped broker proceeds (the CP2000 case) or a broker basis
+copied over FIFO could reach the return unseen.
+
+A box now comes only from evidence. `broker_reporting` declares, for every
+account with a filing-year disposal, whether it received forms, and links each
+form transaction by `txn_id` to the disposal it reports; an undeclared account
+blocks. `_REPORTING_REGIMES` holds the reviewed years, TY2023-2024 on 1099-B and
+TY2025 on 1099-DA, each pinned to that year's `irs-prior` instructions. A
+difference in asset, date, units, proceeds, basis or holding period stays
+unresolved until an evidenced resolution names its treatment (code E, B or T),
+and every treatment keeps the FIFO gain in column (h). Crypto merges into
+digital-asset Schedule D rows of its own, so a code-B correction cannot read as
+employer stock. An unresolved form leaves `box: null`, the CLI exits 2, and the
+tie-out fails unreconciled reporting independently of the dollars. The contract
+is `docs/contributing/crypto-accounts.md`.
+
+Three contracts broke on purpose: universal-pool and `--per-account` output with
+any reported row now exits 2, a pre-AA41 `result.json` with crypto disposals
+fails tie-out until re-imported, and account rows round by running cents, which
+can move a cent between a disposal's rows without changing its total.
+
+The bias review found five issues and three general reviews found ten each; every
+fix was flipped off and seen red. What still blocks is filed: the cases with no
+way through as AA47, the TY2026 boxes as AA48 (its Form 1099-DA re-read since
+split out as AA55), a per-row broker-proceeds tie as AA49 and a narrower event
+map as AA50. Its tests are in `tests/test_crypto_reporting.py`, and the full
+local suite passed on Python 3.14. CI ran by dispatch on head `68974db8`
+([run 38208740507](https://github.com/yarikmsu/tax-prep-skills/actions/runs/38208740507)),
+all jobs green. A dispatched run skips the PII range scan, and squash merge
+`d9b2c89d` registered no push run, so that scan ran locally on 2026-10-14: clean,
+one commit and twelve files, matching the merge.
+
+## AA19 and AA51 — the auditor's last restated rules, shipped with Y2 (#7)
+
+Both were edits to the freshness auditor's definition, which is digest-pinned to
+a passed acceptance, so each needed a fresh-session replay, and both shipped in
+Y2's PR rather than one of their own; the narrative is Y2's, in `epic-Y.md`.
+AA19's engine half shipped in #216 under Q14. Its definition half, item 5
+checking `federal.salt_cap` against the §164(b)(7) schedule, is one of the edits
+Y2's 2026-10-12 replay certified. AA51 named four places where the definition
+restated `check_freshness`, and its edits had a replay of their own on
+2026-10-13. Three changed to follow the engine: items 4, 8 and 9 read tables
+`schema.json` now carries, and item 9's exemption names the multi-period pins.
+The fourth went the other way on purpose. The definition now says outright that
+a PDF the auditor's own fetch saves outside the export stays unread, so a figure
+whose only year-named source is one goes UNVERIFIED; that sitting's results in
+`docs/ops/review-subagent-acceptance.md` record why. What the export and the
+engine still answer differently is AA52.
