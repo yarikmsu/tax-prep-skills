@@ -2681,3 +2681,57 @@ a PDF the auditor's own fetch saves outside the export stays unread, so a figure
 whose only year-named source is one goes UNVERIFIED; that sitting's results in
 `docs/ops/review-subagent-acceptance.md` record why. What the export and the
 engine still answer differently is AA52.
+
+## AA55 — TY2026 Form 1099-DA input-box review
+
+The year-pinned TY2025 and TY2026 IRS instructions were fetched directly with
+cache bypass on 2026-10-15, both HTTP 200, and their box sections (pages 7-10)
+were compared. Every numbered box keeps its number and meaning in both years.
+Box 1e adds "or Disposed" to its label and box 1i drops a plural, neither
+changing its input; box 9's text now names box 2 among the boxes a broker may
+complete for a noncovered sale, and box 4 cites a newer backup-withholding
+relief notice. The shared normalized schema therefore needs no per-year map.
+
+`docs/contributing/crypto-accounts.md` now has a row for every numbered box:
+each input key with both years' box numbers and its blank/refusal treatment,
+including the parse ledger's proceeds and backup withholding, and each box
+with no key with its reason or AA59. The review also records TY2026's mandatory
+covered-asset basis reporting, voluntary noncovered basis, and the need to read
+box 2 explicitly rather than infer it from box 9 or a shown basis. Box 1g's new
+clarification restricts a broker's use of customer-provided acquisition
+information to lot selection, reinforcing the separation of broker figures from
+original FIFO lots. Tokenized-security wash-sale and ordinary/debt/loss
+refusals stay in place.
+
+AA48 remains separate: no TY2026 Form 8949 regime is added, and the existing
+unreviewed-year refusal stays in force until its own instructions are reviewed.
+
+Its first review found the comparison had started from the importer's own keys,
+so it could confirm only boxes the importer already knew. Boxes 3a, 3b, 8 and
+11a were filed as AA59, and the season-open runbook's re-read now covers every
+box, not only the mapped ones. The new section also named TY2026 in prose,
+which let the routing test's `f'TY{year}' in doc` pass for 2026 with no routing
+row; the test now requires the year's own row, carrying the engine's form,
+boxes and source.
+
+A second review found that fix had repeated the miss one level up. It listed
+four unread boxes where both forms carry more, among them 7, 11b, 11c, 12a, 12b
+and the state boxes 14-16, and it cited pages 7-9 while boxes 10 through 16
+begin on page 10. It also gave box 3b's harm as a lost deferral. The TY2025
+Form 8949 instructions instead require a fund disposal to recognize any gain
+previously deferred into it, on its own code-Y row, so the import leaves that
+gain off the return. The table now has a row per box, and a new test holds its
+box columns to the form's full list and its keys to the importer's, both ways.
+The routing test also now refuses a row for a year the engine does not route
+and a second row for one it does. AA59 covers `/tax-parse`'s extraction list as
+well as the importer, and AA55's Open entry stays until its shipped row lands,
+as AA40's and AA41's did.
+
+Each check was mutation-tested. A premature TY2026 row and a duplicate TY2025
+row passed the one-way routing check and fail the new one, as does a deleted
+TY2025 row with its source moved into prose. Deleting box 3b's or box 16's row,
+deleting the `term` row while box 6 stays covered, adding a key the importer
+lacks, and adding an importer key with no row each fail the table test.
+
+The crypto-reporting and portability suites passed locally on Python 3.14 only;
+the 3.13 floor was not run. No engine behavior changed.

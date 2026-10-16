@@ -84,7 +84,7 @@ AA57 finds why.
 | When | What | Why |
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
-| **Now** | **AA55** — re-read the TY2026 Form 1099-DA boxes, so **AA48** can land the day the Form 8949 instructions publish. **AA57** — find why CI's push, pull-request and scheduled runs never register. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. | Every TY2026 crypto import with a filing-year disposal blocks until AA48 lands. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. AA58 lands before TY2026 filing opens: a return filed before the April 2027 rate publishes would otherwise price that quarter at the last cached rate. |
+| **Now** | **AA57** — find why CI's push, pull-request and scheduled runs never register. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA59** — read or refuse the Form 1099-DA boxes the import never names. | AA59's hole is open now for TY2025 and AA48 widens it to TY2026, so it lands first: a 1099-DA with its qualified-opportunity-fund box checked reconciles as an ordinary sale, and any gain deferred into the fund, which that sale must recognize, never reaches the return. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. AA58 lands before TY2026 filing opens: a return filed before the April 2027 rate publishes would otherwise price that quarter at the last cached rate. |
 | **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | The quarters are the one item no gate catches: Form 2210 carries the last cached rate forward with only a note until AA58 lands, so this row is their reminder. |
 | **Next** | **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13: its definition edit and the test change it forces cannot land apart, and the season-open sitting would leave the auditor a table short through the TY2026 season. | Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, and both items touch the export Y2 shipped. |
 | **Then** | **AA43**, then **AA42** with **AA53** — NY/NC estimated-payment schedules in the mid-year projection, then its AMT and IRMAA exposure. | Both are absent from the current engine. AA43 is the smaller and extends the CA schedule; AA42's IRMAA layer reuses the Roth premium computation, whose tier rule AA53 fixes, so that fix lands with it or before. |
@@ -182,8 +182,9 @@ AA57 finds why.
   TY2025. Keep the unreviewed-year refusal until the TY2026 instructions
   publish. Do not carry the TY2025 boxes forward, and do not pin the entry to a
   URL that does not resolve yet: the source test checks the prefix and the
-  year, not that the file exists. The 1099-DA re-check this entry used to carry
-  is AA55, which is not blocked.
+  year, not that the file exists. The TY2026 Form 1099-DA boxes the import
+  maps were re-read by AA55 and kept their meanings, so the entry needs no
+  per-year input map.
 
 - **AA55 (P1, S): Re-read the TY2026 Form 1099-DA boxes before AA48 lands.**
   AA41 maps each 1099-DA box it reads or refuses to an import key by the box's
@@ -253,6 +254,25 @@ AA57 finds why.
   quarters the cache holds. Choose one, and test it with a timeline whose last
   change is January 1 of the filing year. Until it lands, Y8's fetch of the 2027
   quarters is the only guard. Found by the review that recorded Y2 as shipped.
+
+- **AA59 (P2, S): Read or refuse the 1099-DA boxes the import never names.**
+  AA55's table in `crypto-accounts.md` has a row for every numbered box of the
+  TY2025 and TY2026 forms and marks AA59 on each box that carries a meaning but
+  has neither an import key nor a stated reason it cannot change the row. The
+  sharpest is box 3b, the disposition of an interest in a qualified opportunity
+  fund: the [TY2025 Form 8949 instructions](https://www.irs.gov/pub/irs-prior/i8949--2025.pdf)
+  require any gain previously deferred into the fund to be recognized on its
+  own row with code Y, with a Form 8997 for the year of disposal. A form with
+  box 3b checked reconciles as an ordinary sale, so that gain never reaches
+  the return. Others carry money or a broker's own aggregation: box
+  11c's specified-NFT first-sale proceeds are kept out of box 1f, box 16 holds
+  state income tax withheld, and box 11a marks an optional aggregate report.
+  The hole is open now: TY2025's 1099-DA imports route today, and AA48 widens
+  it to TY2026. Decide each box at both ends. `/tax-parse`'s 1099-DA extraction
+  list captures none of them, so a new key would have nothing to copy from; the
+  importer then reads the box, refuses it as the unsupported boxes do, or
+  states why it cannot change the row. A new required key breaks every existing
+  `broker_reporting` input. Found by AA55's review.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
@@ -551,7 +571,7 @@ that checks each row cannot yet; that is AA56.
 | AA38 | #242 | Reviewed full-year TY2025 CA/NY/NC state/local liability reprices independently in scenarios and Roth sweeps; missing worksheets, allocations and unreviewed form years stay named limitations. |
 | AA39 | #243 | Independent primary/spouse Form 8606 worksheets bind owned IRA balances and source allocations, preserve separate closing basis through rollover, and label individual reports and Roth planning. |
 | AA40 | #244 | Account-specific crypto FIFO moves reviewed original lot slices through owned transfer links; missing inventory/evidence blocks completion and untagged universal imports from 2025 are diagnostic-only. |
-| AA41 | #6 | Reviewed years TY2023-2025 only: the TY2026 boxes are AA48 and AA55, the cases that block for good AA47, a per-row broker-proceeds tie AA49, a narrower event map AA50. |
+| AA41 | #6 | Reviewed years TY2023-2025 only: the TY2026 boxes are AA48, the cases that block for good AA47, a per-row broker-proceeds tie AA49, a narrower event map AA50, the 1099-DA boxes it never names AA59. |
 | AA19 | #216, #7 | — |
 | AA51 | #7 | A PDF the auditor's own fetch saves outside the export stays unread by decision, so such a figure goes UNVERIFIED; the export and the engine still answer four questions differently, filed as AA52. |
 | AA34 | #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |

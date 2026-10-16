@@ -7,6 +7,7 @@ basis-not-reported form takes the correct basis in (e) with -0- in (g).
 """
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -720,9 +721,48 @@ def test_excess_must_be_a_finite_non_negative_amount(above):
 
 def test_every_reviewed_year_and_source_is_documented():
     doc = (REPO / 'docs' / 'contributing' / 'crypto-accounts.md').read_text(encoding='utf-8')
+    # Every routing row, both ways: a row for a year the engine refuses, or a
+    # second row for one it routes, tells a reader what the engine does not do,
+    # and checking only the engine's years finds neither.
+    rows = {}
+    for line in doc.splitlines():
+        if match := re.match(r'\| TY(\d{4}) \|', line):
+            assert int(match[1]) not in rows, f'TY{match[1]} has two routing rows'
+            rows[int(match[1])] = line
+    assert sorted(rows) == sorted(C._REPORTING_REGIMES), sorted(rows)
     for year, regime in C._REPORTING_REGIMES.items():
-        assert f'TY{year}' in doc and regime['source'] in doc, year
+        # The year's own routing row, citing its source: the doc names years
+        # and URLs in prose too, so finding either anywhere proves no row.
+        row = (f"| TY{year} | {regime['form_type']} | {' / '.join(regime['short'])} | "
+               f"{' / '.join(regime['long'])} | ")
+        assert rows[year].startswith(row) and regime['source'] in rows[year], year
         # A year-pinned copy: the current-year page becomes next year's text.
         assert regime['source'].startswith('https://www.irs.gov/pub/irs-prior/') and str(year) in regime['source']
         assert set(regime['short'] + regime['long']) <= set(C._SCHEDULE_D_TARGETS)
     assert C._REPORTING_VERIFIED in doc
+
+
+# Every numbered box of Form 1099-DA, the same in TY2025 and TY2026: the box
+# headings on pages 7-10 of each year's instructions. A box a later form adds
+# joins this set when that year is re-read.
+_1099DA_BOXES = {'1a', '1b', '1c', '1d', '1e', '1f', '1g', '1h', '1i', '2', '3a', '3b',
+                 '4', '5', '6', '7', '8', '9', '10', '11a', '11b', '11c', '12a', '12b',
+                 '13', '14', '15', '16'}
+
+
+def test_the_reviewed_1099da_table_names_every_box_and_key():
+    """AA55's review began from the importer's keys, so it could confirm only
+    boxes the importer already knew. A row per box, held to the form's own
+    list, is what makes "every box was re-read" a claim a test can check."""
+    doc = (REPO / 'docs' / 'contributing' / 'crypto-accounts.md').read_text(encoding='utf-8')
+    section = doc[doc.index('### Reviewed Form 1099-DA inputs (AA55)'):doc.index('\n## Primary authorities')]
+    rows = [[cell.strip() for cell in line.strip().strip('|').split('|')]
+            for line in section.splitlines() if line.startswith('| ') and not line.startswith('| Input key ')]
+    for column, year in ((1, 2025), (2, 2026)):
+        assert {row[column] for row in rows} == _1099DA_BOXES, year
+    # Both ways against the importer: each key it reads or refuses has its row,
+    # and no row names a key it lacks. The four identity keys copy no box.
+    keys = {row[0].split()[0].strip('`') for row in rows if row[0] != '—'}
+    identity = {'form_id', 'form_type', 'account_id', 'txn_id'}
+    assert keys == (C._FORM_FIELDS - identity) | C._FORM_UNSUPPORTED | {'federal_withholding_1099'}
+    assert 'federal_withholding_1099' in tie_out.CATEGORY_TARGETS
