@@ -2682,7 +2682,7 @@ whose only year-named source is one goes UNVERIFIED; that sitting's results in
 `docs/ops/review-subagent-acceptance.md` record why. What the export and the
 engine still answer differently is AA52.
 
-## AA55 — TY2026 Form 1099-DA input-box review
+## AA55 — TY2026 Form 1099-DA input-box review (#10)
 
 The year-pinned TY2025 and TY2026 IRS instructions were fetched directly with
 cache bypass on 2026-10-15, both HTTP 200, and their box sections (pages 7-10)

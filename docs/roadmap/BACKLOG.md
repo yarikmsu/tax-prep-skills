@@ -186,15 +186,6 @@ AA57 finds why.
   whether the import reads it or not, and each kept its meaning, so the entry
   needs no per-year input map.
 
-- **AA55 (P1, S): Re-read the TY2026 Form 1099-DA boxes before AA48 lands.**
-  AA41 maps each 1099-DA box it reads or refuses to an import key by the box's
-  TY2025 meaning, and `crypto-accounts.md` names every one. The
-  [TY2026 Form 1099-DA instructions](https://www.irs.gov/pub/irs-prior/i1099da--2026.pdf)
-  are published, so confirm now that each box still means the same, rather than
-  waiting for the Form 8949 instructions to arrive close to filing season. If a
-  box moved, the map becomes per-year like `_REPORTING_REGIMES`, because TY2025
-  imports still read the old one. Split from AA48 by its review.
-
 - **AA49 (P3, M): Tie each form-backed digital-asset row to its own broker
   figures.** The `capital_proceeds` tie subtracts one aggregate,
   `crypto_summary.reporting_proceeds_above_forms`, from the result side. A stale
@@ -577,6 +568,7 @@ that checks each row cannot yet; that is AA56.
 | AA41 | #6 | Reviewed years TY2023-2025 only: the TY2026 boxes are AA48, the cases that block for good AA47, a per-row broker-proceeds tie AA49, a narrower event map AA50, the 1099-DA boxes it never names AA59. |
 | AA19 | #216, #7 | — |
 | AA51 | #7 | A PDF the auditor's own fetch saves outside the export stays unread by decision, so such a figure goes UNVERIFIED; the export and the engine still answer four questions differently, filed as AA52. |
+| AA55 | #10 | Input boxes only: TY2026's Form 8949 boxes are AA48, and the 1099-DA boxes the import never names are AA59. |
 | AA34 | #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
