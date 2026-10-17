@@ -123,19 +123,20 @@ from a form's absence in the import. `broker_reporting` sits beside
   §1.6045-1(d)(2)(i)(B)(3) asks the broker only for "the sale date", naming no
   time zone, and no UTC offset reaches a full day. The row keeps the import's
   date; the workpaper records both.
-  Every key is required. `cost_basis` and `term` are null where the form
-  leaves them blank (1099-DA box 1g and box 6; 1099-B box 1e and box 2), never
-  absent, because an omitted term would pass a form whose box disagrees with
-  FIFO without code T. `basis_reported_to_irs` is 1099-DA
-  box 2 or 1099-B box 12. A disposal split across forms must mirror the FIFO
-  split by holding period, one form each; when their total agrees, the forms'
-  own figures replace a one-cent apportionment difference in proceeds. Basis
+  Every key is required. Each key's 1099-DA box is in
+  [the reviewed input table](#reviewed-form-1099-da-inputs-aa55); the 1099-B
+  boxes are given here. `cost_basis` and `term` are null where the form leaves
+  them blank (1099-B box 1e and box 2), never absent, because an omitted term
+  would pass a form whose box disagrees with FIFO without code T.
+  `basis_reported_to_irs` is 1099-B box 12. A disposal split across forms must
+  mirror the FIFO split by holding period, one form each; when their total
+  agrees, the forms' own figures replace a one-cent apportionment difference in proceeds. Basis
   apportionment requires both forms to report basis to the IRS; otherwise each
   basis difference requires an evidenced resolution preserving FIFO gain.
   Four boxes this engine does not model are likewise REQUIRED,
-  null or false when blank: `ordinary` (1099-DA box 6, 1099-B box 2),
-  `accrued_market_discount` (1h / 1f), `wash_sale_loss_disallowed` (1i / 1g)
-  and `loss_not_allowed` (box 5 / box 7). Filled in, each refuses: report that
+  null or false when blank: `ordinary` (1099-B box 2),
+  `accrued_market_discount` (1f), `wash_sale_loss_disallowed` (1g)
+  and `loss_not_allowed` (box 7). Filled in, each refuses: report that
   transaction manually. Backup withholding (box 4) belongs to the parse ledger,
   not here.
 - **resolutions** — a difference stays unresolved until a resolution with its
@@ -212,6 +213,93 @@ like with like; the documented `proceeds_above_forms`
 excess comes off the result side, which it can only lower, and the key alone
 meets the reporting gate. A non-zero no-form row keeps that tie verifiable, so
 a form wrongly declared "not received" fails it instead of warning.
+
+### Reviewed Form 1099-DA inputs (AA55)
+
+Every box was compared by live, cache-bypassing IRS HTTPS fetches: the
+numbered boxes on 2026-10-15 against the year-named [TY2025 instructions, pages 7-10](https://www.irs.gov/pub/irs-prior/i1099da--2025.pdf)
+and [TY2026 instructions, pages 7-10](https://www.irs.gov/pub/irs-prior/i1099da--2026.pdf),
+and the unnumbered ones on 2026-10-16 against the recipient's Copy B of the
+[TY2025 form](https://www.irs.gov/pub/irs-prior/f1099da--2025.pdf) and the
+[TY2026 form](https://www.irs.gov/pub/irs-prior/f1099da--2026.pdf).
+Each box keeps its number and meaning in both years, so the normalized input
+contract stays shared between them. TY2026 splits the filer's and recipient's
+addresses into separate fields, Country among them, which changes no input.
+Two labels change without changing their
+input: box 1e's from "Date Sold" to "Date Sold or Disposed", still the sale
+date, and box 1i's from "Wash Sales Loss Disallowed" to "Wash Sale Loss
+Disallowed". Box 4 now cites Notice 2025-33 for transitional backup-withholding
+relief, and the box 1g and box 9 changes are below. A later year's box change
+needs a per-year input map, preserving TY2025.
+
+The table has a row for every box, numbered or not, keyed or not. A box marked AA59
+carries a meaning the import neither reads nor refuses, so a form with it
+filled in passes unread until AA59 decides it.
+
+| Input key | TY2025 box | TY2026 box | Reviewed meaning and treatment |
+|---|---|---|---|
+| `asset` | 1b | 1b | Not copied: the import's own symbol for the asset box 1b names, "BTC" for "Bitcoin". The importer compares it exactly with the disposal's, and no resolution clears a mismatch. |
+| `quantity` | 1c | 1c | Units sold, exchanged or otherwise disposed of. |
+| `date_sold` | 1e | 1e | Sale date, normalized to YYYY-MM-DD. |
+| `proceeds` | 1f | 1f | Proceeds after the broker's reduction for transaction costs; preserve the form's amount for reconciliation. The parse ledger also records its total as `capital_proceeds`. |
+| `cost_basis` | 1g | 1g | Adjusted basis; a blank is null, while an actual zero basis is zero. |
+| `basis_reported_to_irs` | 2 | 2 | Whether basis was reported to the IRS; copy the checkbox even when basis is shown. |
+| `term` | 6 | 6 | Short-term or long-term; null when blank. |
+| `ordinary` | 6 | 6 | Ordinary gain/loss checkbox; filled in, refuses the import. |
+| `accrued_market_discount` | 1h | 1h | Accrued market discount for covered digital assets that are debt instruments; a nonzero amount refuses the import. |
+| `wash_sale_loss_disallowed` | 1i | 1i | Disallowed wash-sale loss for tokenized stock or securities; a nonzero amount refuses the import. |
+| `loss_not_allowed` | 5 | 5 | Loss not allowed based on box 1f; checked, refuses the import. |
+| `federal_withholding_1099` (parse ledger only) | 4 | 4 | Backup withholding; handled by `/tax-parse`, outside `broker_reporting.forms`. |
+| — | 1a | 1a | Code for the digital asset; with box 1b, confirms which asset the `asset` symbol stands for, and is not a key. |
+| — | 1d | 1d | Date acquired; never replaces an original acquisition date in the FIFO inventory. |
+| — | 3a | 3a | "Gross proceeds", or "Net proceeds" when box 1f was reduced by option premiums; AA59. |
+| — | 3b | 3b | Disposition of an interest in a qualified opportunity fund; AA59. |
+| — | 7 | 7 | Only cash proceeds were paid; AA59. |
+| — | 8 | 8 | The broker relied on customer-provided acquisition information; AA59. |
+| — | 9 | 9 | Noncovered security; not read, since box 2 answers whether basis was reported (below). |
+| — | 10 | 10 | Reserved. |
+| — | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional method; AA59. |
+| — | 11b | 11b | Number of transactions under that method; AA59. |
+| — | 11c | 11c | Specified NFTs' first-sale proceeds, kept out of box 1f; AA59. |
+| — | 12a | 12a | Units transferred into the account; AA59. |
+| — | 12b | 12b | Transfer-in date; AA59. |
+| — | 13 | 13 | Reserved. |
+| — | 14 | 14 | State; with box 15, identifies box 16's withholding (AA59). |
+| — | 15 | 15 | The filer's state identification number; with box 14, identifies box 16's withholding (AA59). |
+| — | 16 | 16 | State income tax withheld; AA59. |
+| — | CORRECTED | CORRECTED | Checked when the form replaces one the broker issued earlier; copy the corrected form instead of the original, never both. |
+| — | Filer, recipient | Filer, recipient | Names, addresses, TINs and the filer's telephone; they identify the parties, not the sale. Never copy the recipient's TIN (AGENTS.md §1). |
+| — | Account number | Account number | The broker's number for the customer's account, not a wallet address; helps confirm the form's `account_id`, and is not a key. |
+| — | CUSIP | CUSIP | CUSIP or other identifying number of a tokenized security, which the wash-sale rules reach (box 1i) while the import models none; AA59. |
+| — | Applicable checkbox | Applicable checkbox | The broker's Form 8949 code: G, H, J or K, or Y when it cannot tell box H from box K. Not read: box 2 and the FIFO holding period choose the box. This Y is not Form 8949's own code Y (box 3b). |
+| — | Reserved | Reserved | Reserved for future use, beside the CUSIP box. |
+
+Which keys a `broker_reporting.forms` entry needs, and how a blank is copied,
+is the forms rule above; this review changes neither and adds no
+manual-disposal path (AA47). `form_id`, `form_type`, `account_id` and `txn_id`
+identify and link the reviewed record, rather than copying numbered boxes.
+TY2026's box 1g instructions explicitly clarify that brokers may use
+customer-provided acquisition information for lot selection, but not for
+reporting basis or acquisition dates. Keep the form's figures separate from
+the reviewed original lot records; any difference still needs reconciliation.
+
+The TY2026 instructions' General Instructions and Information Required sections
+(pages 1 and 3-4) require basis reporting for covered digital assets, while
+basis reporting for noncovered assets remains voluntary. Box 9 alone does not
+answer whether basis was reported: a noncovered form may still report basis in
+1g and check box 2, which TY2026's box 9 text now names among the boxes a broker
+may complete voluntarily. That text also ends, for sales after 2025, the penalty
+relief for basis given without box 9 checked; the box 2 input stays the same.
+Neither a shown basis nor a year-wide assumption replaces
+the explicit box-2 input. Blank basis and term remain possible for noncovered
+assets; optional aggregate reporting is still outside the per-disposal matching
+contract. Box 1i still concerns tokenized securities, without applying wash-sale
+rules to ordinary cryptocurrency.
+
+This review establishes the TY2026 **input-box** meanings only. It does not add
+TY2026 to `_REPORTING_REGIMES`: AA48 still needs that year's Form 8949
+instructions, including the no-form boxes. Form 1099-DA's own Form 8949 code
+list cannot substitute for that review. The existing TY2026 refusal remains.
 
 ## Primary authorities
 
