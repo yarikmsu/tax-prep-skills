@@ -234,7 +234,9 @@ Enter one `forms` entry per reported transaction, linked by `txn_id` to the
 disposal it reports, copying every box and a blank one as null: the importer
 refuses a missing key rather than read it as blank. `asset` is the exception:
 it holds the import's own symbol for the asset box 1b names ("BTC", not
-"Bitcoin"), which must equal the disposal's exactly. Add a `resolutions` entry
+"Bitcoin"), which must equal the disposal's exactly. A 1099-DA summary that does
+not show boxes 3a, 3b, 8, 11a, 11c and CUSIP never read them: re-read those from
+the form, never copy one as blank from that summary. Add a `resolutions` entry
 only when the user confirms, with evidence, which figure is correct.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.

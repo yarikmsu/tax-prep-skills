@@ -2758,3 +2758,108 @@ unspaced fails the routing test.
 
 The full suite passed locally on Python 3.14, and CI ran it on the 3.13 floor
 and 3.14. No engine behavior changed.
+
+## AA59 — the Form 1099-DA boxes the import never named
+
+AA55's table marked AA59 on every 1099-DA box with a meaning the import neither
+read nor refused, so a form with one filled passed unread. Two did harm in
+opposite directions: box 3b (a qualified opportunity fund disposition)
+reconciled as an ordinary sale, leaving off the return the deferred gain the
+TY2025 Form 8949 instructions require on a code-Y row, and box 16 dropped state
+tax the taxpayer had already paid.
+
+Seven keys for six boxes became required on a 1099-DA under the rule AA41 gave
+the boxes the engine does not model, blank as null, false or 0 and refusing the
+import when filled: `net_proceeds` and `gross_proceeds` (3a, completed only for
+a sale from an option's exercise, whose premium the engine does not price),
+`qof` (3b), `customer_acquisition_info` (8), `optional_method` (11a),
+`primary_sale_proceeds` (11c, proceeds kept out of 1f) and `cusip` (a tokenized
+security, which the wash-sale rules reach while the import models none). The key
+set is per form type, `_FORM_UNSUPPORTED_BY_TYPE`; the 1099-B's is empty because
+its own boxes are unreviewed (AA61), so TY2023-2024 inputs are unchanged.
+Checking `form_type` first lets the type decide the keys. The refusal names the
+filled keys and says how a blank is copied; a missing key says to re-read the
+box from the form, since a summary parsed before the box was read cannot say it
+was blank.
+
+Box 8 changed its answer twice. It was planned as a refusal, then reversed: the
+TY2026 instructions (page 8) say a broker may use customer-provided acquisition
+information "for purposes of determining when a customer purchased a digital
+asset", which is what the import's own FIFO does. The tax review restored it.
+§1.6045-1(d)(2)(ii)(B)(2) also lets a broker use that information "for purposes
+of enabling a customer to make a sufficiently specific reference", which is
+specific identification, and for transferred-in units the broker reports no
+basis or date, so nothing on the form would show a different lot. The form
+cannot say which use it was, and the engine would guess FIFO. AA62 asks the
+taxpayer instead, and will let box 8 through on a FIFO answer.
+
+Box 16 belongs to the parse ledger, as box 4 does, and so does every other
+1099's state box, which /tax-parse's extraction lists for the 1099-R, 1099-DIV
+and 1099-B now name. NC's amount uses `state_withholding_nc`. A CA or NY amount
+is recorded as `unrouted_state_withholding`, which fails the tie-out gate on any
+non-zero amount and is never tied: those returns are computed here but have no
+1099 route until AA60, and losing the payment silently over-states the balance
+due. Both routes apply only when this run computes that state's return; any
+other state's 1099 amount, and a W-2's box 17 for a state other than CA, NY or
+NC, is recorded as `other_state_withholding`, an advisory: blocking the federal
+return over a payment that belongs on another state's return would leave no way
+through. The block says the whole return, federal included, cannot complete
+here, since preparing only the state return elsewhere clears nothing. Every 1099
+amount also feeds Schedule A line 5a: `/tax-compute`'s recipe for
+`state_local_income_taxes` counted W-2 box 17 alone, so no 1099's state
+withholding ever reached the deduction. A parser finds each 1099's withheld box
+by its label, since the number differs between forms and moves between
+revisions: the 1099-G's moved from box 11 to box 12 on its December 2026
+revision. Box 11c's proceeds are kept out of box 1f, so `capital_proceeds` never
+sees them; `/tax-parse` records them as `nft_first_sale_proceeds`, which blocks
+the gate too, so a form that never reaches `broker_reporting` cannot lose them.
+The blocking categories sit apart from the per-state `state_withholding_*`
+names. `/tax-parse`'s skill body is at the 500-line cap, so every new rule
+replaced or widened an existing line.
+
+Boxes 7, 11b, 12a, 12b, 14 and 15 are not read, each with its reason in the
+table. Box 3a's "Gross proceeds" was first let through, on the belief that a
+broker ticks it on every form as Form 1099-B's box 6 is. The 1099-DA filer
+instructions complete box 3a only "if the digital assets were sold because of
+the exercise of an option", and on such a sale "Gross" means box 1f leaves out
+a premium that changes the amount realized, in either direction, so the third
+review made it refuse.
+
+Filed alongside: AA60 (P1) routes CA and NY 1099 state withholding, IT-203
+included; AA61 (P2) reviews the TY2023-2024 Form 1099-B boxes, collectibles
+among them; AA62 (P1) asks about specific identification. AA47's list of boxes
+that refuse the whole import names the six new ones.
+
+Five reviews ran over the first commit, each in a clean worktree holding no
+taxpayer files: engine correctness, tax law, tests and docs, blast radius, and
+the bias reviewer. Beyond box 8, they found the other 1099s' state boxes missing
+from the extraction lists, a block for out-of-state withholding with no way
+through, a message that named no action, the migration hazard above, a false
+"only one form type has" comment, and tests that let box 16's fallback category,
+the 1099-DA extraction list and the documented example drift. A third review,
+over the squashed commit, found box 3a's "Gross", the Schedule A gap, a CA or NY
+block that named the 1099's state rather than the return this run computes,
+withheld boxes listed by number, `/tax-parse-crypto`'s unpinned copy of the
+1099-DA boxes, a category test that skipped the blocking categories, and a
+docstring that still said only income could fail Check D.
+
+Every TY2025 `broker_reporting` input is refused, naming the seven missing keys,
+until it is re-copied from the forms.
+
+Each fix was mutation-tested. A test fails for each of these: dropping a key,
+box 8's included, from the 1099-DA set; checking only the shared set for filled
+boxes; requiring a 1099-DA key on a 1099-B; listing every key in the refusal, or
+dropping its blank or re-read hint; a gate that never fails, fails on a zero
+amount, names a form carrying none, or omits "Nothing waives this"; a ledger
+that rejects a new category, or an 11c category that does not block; box 16's
+row falling back to a W-2 category; swapped, unkeyed or deleted table rows; the
+example dropping a key; the extraction list dropping a keyed box; and a renamed
+or removed parse-table row. From the third review: a dropped `gross_proceeds`
+key, row or example entry; an advisory without Schedule A; a block message that
+hides that the federal return stays open; a blocking category with no parse
+row, or an advisory category also tied; state rows that ignore whether this run
+computes the state's return; a Schedule A recipe without 1099s or without other
+states; and a `/tax-parse-crypto` box list one box short or one long. The one
+survivor of the first round, treating 0 as filled, is equivalent:
+`0 == False` in Python. The full suite passed locally on
+Python 3.14.

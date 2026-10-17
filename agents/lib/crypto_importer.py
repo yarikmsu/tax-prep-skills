@@ -867,6 +867,21 @@ _FORM_FIELDS = {'form_id', 'form_type', 'account_id', 'txn_id', 'asset', 'quanti
 # form disallows).
 _FORM_UNSUPPORTED = {'ordinary', 'accrued_market_discount', 'wash_sale_loss_disallowed',
                      'loss_not_allowed'}
+# The same rule per form type, for the boxes reviewed on that form (AA59). On a
+# 1099-DA: either box in 3a, completed only for a sale from an option's exercise
+# (premiums the engine does not price, in 1f or out of it), a QOF disposition
+# in 3b (its deferred gain owes a code-Y row and Form 8997), box 8 (the broker
+# used the customer's acquisition dates, which can carry a specific
+# identification this FIFO engine does not make), an optional aggregate report
+# in 11a and first-sale NFT proceeds in 11c (neither one disposal's figures;
+# 11c is kept out of 1f), and a CUSIP, which marks a tokenized security that
+# §1091 reaches. The 1099-B set is empty because its own boxes are unreviewed
+# (AA61), not because it lacks them.
+_FORM_UNSUPPORTED_BY_TYPE = {
+    '1099-B': frozenset(),
+    '1099-DA': frozenset({'net_proceeds', 'gross_proceeds', 'qof', 'customer_acquisition_info',
+                          'optional_method', 'primary_sale_proceeds', 'cusip'}),
+}
 _RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs'},
                 'basis': {'taxpayer_records'}, 'term': {'taxpayer_records'}}
 
@@ -946,15 +961,21 @@ def _accounts_input(raw_accounts, events) -> dict:
 def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
     if not isinstance(form, dict):
         raise CryptoImportError(f'{label} must be an object')
-    if any(form[key] not in (None, False, 0) for key in _FORM_UNSUPPORTED & set(form)):
-        raise CryptoImportError(f'{label} fills a box this engine does not model '
-                                f'({sorted(_FORM_UNSUPPORTED)}); report that disposal manually')
-    missing = (_FORM_FIELDS | _FORM_UNSUPPORTED) - set(form)
-    unknown = set(form) - _FORM_FIELDS - _FORM_UNSUPPORTED
-    if missing or unknown:
-        raise CryptoImportError(f'{label} is missing {sorted(missing)} or names unknown {sorted(unknown)}')
-    if form['form_type'] != regime['form_type']:
+    # First, because the type decides which keys the form must carry.
+    if form.get('form_type') != regime['form_type']:
         raise CryptoImportError(f"{label}.form_type must be {regime['form_type']} for TY{tax_year}")
+    unsupported = _FORM_UNSUPPORTED | _FORM_UNSUPPORTED_BY_TYPE[regime['form_type']]
+    filled = sorted(key for key in unsupported & set(form) if form[key] not in (None, False, 0))
+    if filled:
+        raise CryptoImportError(f'{label} fills {filled}, which this engine does not model; '
+                                'report that disposal manually (a blank box is copied as null, false or 0)')
+    missing = (_FORM_FIELDS | unsupported) - set(form)
+    unknown = set(form) - _FORM_FIELDS - unsupported
+    if missing or unknown:
+        # A summary parsed before a box was read cannot say it was blank.
+        hint = ('; re-read each missing box from the form itself, never from a summary that did '
+                'not capture it, and copy a blank one as null' if missing else '')
+        raise CryptoImportError(f'{label} is missing {sorted(missing)} or names unknown {sorted(unknown)}{hint}')
     account = _account_id(form['account_id'], f'{label}.account_id')
     txn = _account_id(form['txn_id'], f'{label}.txn_id')
     if (account, txn) not in events:

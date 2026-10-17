@@ -638,7 +638,9 @@ persona SALT usually exceeds the OBBBA cap by itself):
   is one. On any
   re-call, pass `salt_cap` from the cache again, never `salt_cap_applied`:
   the applied cap fed back in is reduced a second time.
-- `state_local_income_taxes` = W-2 box 17 (all states) + CA SDI (box 14) +
+- `state_local_income_taxes` = W-2 box 17 (all states) + every 1099's state
+  tax withheld (all states; the parse ledger's 1099 state-withholding
+  records, routed or not) + CA SDI (box 14) +
   state estimated payments PAID during the year + prior-year state balance
   paid this year. Ask the user for the last two — they're not on any W-2 —
   and record both in answers.md as

@@ -84,7 +84,7 @@ AA57 finds why.
 | When | What | Why |
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
-| **Now** | **AA57** — find why CI's push, pull-request and scheduled runs never register. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA59** — read or refuse the Form 1099-DA boxes the import never names. | AA59's hole is open now for TY2025 and AA48 widens it to TY2026, so it lands first: a 1099-DA with its qualified-opportunity-fund box checked reconciles as an ordinary sale, and any gain deferred into the fund, which that sale must recognize, never reaches the return. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. AA58 lands before TY2026 filing opens: a return filed before the April 2027 rate publishes would otherwise price that quarter at the last cached rate. |
+| **Now** | **AA57** — find why CI's push, pull-request and scheduled runs never register. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA59** — read or refuse the Form 1099-DA boxes the import never names. **AA60** — route CA and NY 1099 state withholding. **AA62** — ask about specific identification before FIFO prices a crypto sale. | AA59's hole is open now for TY2025 and AA48 widens it to TY2026, so it lands first: a 1099-DA with its qualified-opportunity-fund box checked reconciles as an ordinary sale, and any gain deferred into the fund, which that sale must recognize, never reaches the return. AA60 follows it directly: AA59 makes a 1099 state amount outside NC block the return instead of vanishing, so until AA60 a CA or NY return with state tax withheld on a 1099 cannot complete. AA62 closes the other silent crypto gap: a taxpayer who identified lots at a broker gets FIFO lots, and a TY2025 form, reporting no basis for noncovered units, shows no difference. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. AA58 lands before TY2026 filing opens: a return filed before the April 2027 rate publishes would otherwise price that quarter at the last cached rate. |
 | **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | The quarters are the one item no gate catches: Form 2210 carries the last cached rate forward with only a note until AA58 lands, so this row is their reminder. |
 | **Next** | **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13: its definition edit and the test change it forces cannot land apart, and the season-open sitting would leave the auditor a table short through the TY2026 season. | Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, and both items touch the export Y2 shipped. |
 | **Then** | **AA43**, then **AA42** with **AA53** — NY/NC estimated-payment schedules in the mid-year projection, then its AMT and IRMAA exposure. | Both are absent from the current engine. AA43 is the smaller and extends the CA schedule; AA42's IRMAA layer reuses the Roth premium computation, whose tier rule AA53 fixes, so that fix lands with it or before. |
@@ -160,12 +160,15 @@ AA57 finds why.
   18 decimal places, which an import or broker may not carry); and a proceeds
   gap of a cent or so that no recorded fee explains. Two more block every way:
   a filled box the engine does not model (ordinary, accrued market discount,
-  wash sale, loss not allowed) refuses the WHOLE import, though the doc says to
-  report that one transaction manually and no input can mark it so; and a sale
-  the import dates January 1 that the broker dates December 31 in UTC fails
-  both years, because a date a day off matches only within one year. Each
-  needs its own evidenced treatment, not a tolerance. Until then the import
-  blocks instead of guessing. Found by AA41's review.
+  wash sale, loss not allowed, and on a 1099-DA either proceeds box in 3a, QOF,
+  customer-provided acquisition information, optional aggregate method,
+  first-sale NFT proceeds and CUSIP boxes AA59 added) refuses the WHOLE
+  import, though the doc says to report that one transaction manually and no
+  input can mark it so; and a sale the import dates January 1
+  that the broker dates December 31 in UTC fails both years, because a date a
+  day off matches only within one year. Each needs its own evidenced
+  treatment, not a tolerance. Until then the import blocks instead of
+  guessing. Found by AA41's review.
 
 - **AA48 (P1, S): Add the TY2026 Form 8949 boxes before TY2026 crypto imports.**
   `_REPORTING_REGIMES` holds TY2023-2025 only, so every TY2026 import with a
@@ -276,6 +279,45 @@ AA57 finds why.
   importer then reads the box, refuses it as the unsupported boxes do, or
   states why it cannot change the row. A new required key breaks every existing
   `broker_reporting` input. Found by AA55's review.
+
+- **AA60 (P1, S): Route CA and NY 1099 state withholding.**
+  Only NC's 1099 state withholding has a ledger category. The CA and NY
+  categories carry W-2 box 17: `/tax-compute`'s state reference takes CA
+  withholding from box 17 (`references/state-return.md`, step 10), and
+  `/tax-verify` names box 17 as IT-201 line 72's source. AA59 records a CA or
+  NY 1099 amount as `unrouted_state_withholding`, which blocks the tie-out gate
+  instead of losing the payment, so until this lands a run that computes CA's
+  or NY's return, with that state's tax withheld on a 1099-R, a 1099-DA or any
+  other 1099, cannot complete, its federal return included; a state whose
+  return the run does not compute is only an advisory. Read Form
+  540's and IT-201's withholding-line instructions first, IT-203's line 62
+  too, then decide whether each state's category widens to its 1099 boxes,
+  which changes what `ca_withholding_box17` holds, or gains a field of its
+  own. Found by AA59's design.
+
+- **AA61 (P2, S): Review the TY2023-2024 Form 1099-B boxes the import never names.**
+  Crypto reported on Form 1099-B for TY2023-2024 reconciles through the same
+  importer, whose 1099-B key set AA59 left empty: AA55 reviewed Form 1099-DA
+  only. The 1099-B has unread boxes of its own, among them box 3's
+  collectibles checkbox, whose gain is taxed at up to 28%, its QOF checkbox,
+  box 6's gross or net proceeds and the CUSIP field. Re-read every box of each
+  year's 1099-B against that year's instructions and form, record them in a
+  table like AA55's, and give each a key in `_FORM_UNSUPPORTED_BY_TYPE` or a
+  stated reason. Until then the gap is silent: a TY2024 NFT sale with box 3's
+  collectibles box checked routes at capital-gain rates rather than up to
+  28%. Found by AA59's design.
+
+- **AA62 (P1, S): Ask about specific identification before FIFO prices a crypto sale.**
+  The engine is FIFO-only and `crypto-accounts.md` puts specific
+  identification outside it, but nothing asks. Under §1.6045-1(d)(2)(ii)(B)(2)
+  a taxpayer can identify lots at a broker, by a standing order among other
+  ways, and §1.1012-1(j)(3) then makes that identification the taxpayer's. A
+  TY2025 form reports no basis for noncovered units, so the reconciliation
+  shows no difference and FIFO's gain reaches the return in either direction.
+  Box 8, which can carry such an identification, now refuses the import
+  (AA59). Add a `tax-setup` question and a capability rule that blocks a
+  specific identification at any broker, and let box 8 through once the
+  taxpayer answers FIFO. Found by AA59's review.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 

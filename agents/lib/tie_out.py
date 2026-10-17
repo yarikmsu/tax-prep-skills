@@ -29,7 +29,9 @@ intake-to-output MAPPING instead:
   Check D (verifiability): ledger income whose result SECTION is absent
     FAILS (the form was never computed); a present section whose comparable
     figures are genuinely unavailable (zero-scaffold Schedule D proceeds
-    detail) is WARNED loudly, never silently passed.
+    detail) is WARNED loudly, never silently passed. A ledger amount in a
+    blocking category (_BLOCKING_CATEGORIES: a payment or proceeds no result
+    line can hold) FAILS the same way, and is never tied.
 
 Pure compute + markdown renderer + CLI, following projection/capabilities.py.
 Read-only: writes only summaries/_tie_out.md (workspace-bounded), never touches
@@ -121,13 +123,21 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   "qualified_tips", "qualified_overtime_premium",
                   # Form 3922 ESPP boxes — feed the §423 disposition split and
                   # FUTURE-year basis; no single result line to tie to.
-                  "espp_purchase_info"}
+                  "espp_purchase_info",
+                  # AA59: withholding for a state whose return this run does
+                  # not compute; it is claimed on that state's own return.
+                  "other_state_withholding"}
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
 # failure), so a taxable state refund or misclassified 1099-K can't vanish
 # without the reviewer seeing a to-verify line.
 _INFORMATIONAL_ADVISORIES = {
+    "other_state_withholding": (
+        "state income tax withheld for a state whose return this run does not "
+        "compute — claim it on that state's return, filed separately, or the "
+        "payment is never refunded or credited; it also counts toward Schedule A "
+        "line 5a, where an itemizer deducts it"),
     "state_refund_1099g": (
         "taxable on Schedule 1 line 1 if the prior year itemized and got a "
         "tax benefit from the deduction — verify against the prior-year "
@@ -234,6 +244,27 @@ CATEGORY_TARGETS = {
 # Categories where the return may legitimately report MORE than the ledger
 # (cash receipts without a 1099); only ledger > result fails (under-report).
 _AT_LEAST_CATEGORIES = {"self_employment_gross"}
+
+# AA59: categories the ledger records only so the gate can refuse them, each an
+# amount a return this toolkit computes owes but has no line for. Dropped, a
+# withheld payment over-states the balance due and first-sale NFT proceeds
+# under-state income; neither is sum-tied, since there is nothing to tie it to.
+# Which states route their 1099 withholding is /tax-parse's table, not this.
+# Named apart from the per-state `state_withholding_*` categories above.
+_BLOCKING_CATEGORIES = {
+    "unrouted_state_withholding": (
+        "1099 state income tax withheld for a state whose return this run "
+        "computes but whose 1099 withholding it does not route yet, so the payment "
+        "would never reach that return. Nothing waives this: keep the record, since "
+        "deleting it or moving the amount into a W-2 box 17 category hides the "
+        "payment. Until the route exists the return, federal included, cannot "
+        "complete here, so prepare it outside this toolkit"),
+    "nft_first_sale_proceeds": (
+        "Form 1099-DA box 11c proceeds from first sales of specified NFTs by their "
+        "creator or minter, which box 1f leaves out and this toolkit does not "
+        "model. Nothing waives this: keep the record, and report those sales "
+        "outside this toolkit"),
+}
 
 # A3: records with any key box at or above this get a second independent
 # extraction (/tax-parse step 6.7). Absence is an ADVISORY, not a failure —
@@ -487,7 +518,7 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
     return tuple(out)
 
 
-_ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL
+_ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL | set(_BLOCKING_CATEGORIES)
 
 
 @dataclass(frozen=True)
@@ -529,7 +560,7 @@ class TieOutReport:
     phantom_files: "tuple[str, ...]"  # ledger records whose file doesn't exist
     pending_skips: "tuple[str, ...]"  # skips deferring to a skill that never ran — fails
     sum_checks: "tuple[SumCheck, ...]"
-    missing_result_targets: "tuple[str, ...]"  # ledger income with NO result section — fails
+    missing_result_targets: "tuple[str, ...]"  # ledger amounts no result line holds, and unmet completeness — fails
     pfic_incomplete: "tuple[str, ...]"  # form_8621_pfic present but not all_complete — fails
     ny_city_and_yonkers: "tuple[str, ...]"  # IT-201 47a/55/56 uncomputed or line 58 short — fails
     unverifiable: "tuple[str, ...]"  # Check D warnings (section present, figures unavailable)
@@ -1519,6 +1550,13 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                               "column (d) shows the correct figure under reviewed evidence; the "
                               "capital_proceeds tie subtracts it, so confirm it against the forms")
     for cat in sorted(sums):
+        if cat in _BLOCKING_CATEGORIES:
+            if sums[cat]:
+                docs = sorted({redact(rec.doc_id) for rec in ledger if rec.skipped is None
+                               and any(c == cat and amount for c, amount in rec.key_boxes)})
+                missing_targets.append(f"{cat} ({sums[cat]:,.2f}; {', '.join(docs)}): "
+                                       f"{_BLOCKING_CATEGORIES[cat]}")
+            continue
         if cat in _INFORMATIONAL:
             note = _INFORMATIONAL_ADVISORIES.get(cat)
             if note is not None:
@@ -2105,10 +2143,11 @@ def render_markdown(report: TieOutReport) -> str:
                   "amounts are in no sum. Run the named skill (its record "
                   "replaces the pending skip), then re-run /tax-compute.", ""]
     if report.missing_result_targets:
-        lines += ["## ⛔ Ledger income with NO result section to land on", ""]
+        lines += ["## ⛔ Ledger amounts with NO result section to land on", ""]
         lines += [f"- {t}" for t in report.missing_result_targets]
-        lines += ["", "The form these amounts belong on was never computed — "
-                  "a dropped Schedule C/8889/Schedule D, not a rounding issue.", ""]
+        lines += ["", "Each amount has no line on the return as computed — a "
+                  "dropped form such as Schedule C, 8889 or Schedule D, or an "
+                  "amount this toolkit does not route. None is a rounding issue.", ""]
     if report.pfic_incomplete:
         lines += ["## ⛔ PFIC §1291 computation INCOMPLETE", ""]
         lines += [f"- {t}" for t in report.pfic_incomplete]

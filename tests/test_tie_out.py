@@ -549,6 +549,89 @@ class TestNewYorkWithholding:
                     node = node[seg]
 
 
+class TestUnroutedStateWithholding:
+    """AA59: a 1099 state amount for CA or NY, whose returns this toolkit
+    computes but whose 1099 withholding it does not route yet, blocks the
+    gate. Dropped instead, it is a payment the return never claims, which
+    over-states the balance due."""
+
+    FILES = ["documents/W2_Acme.pdf", "documents/1099DA.pdf", "documents/1099R.pdf"]
+
+    def _recs(self, amount, category="unrouted_state_withholding", other=None):
+        records = [_record(), _record(
+            doc_id="da-exchange", file="documents/1099DA.pdf", form_type="1099-DA",
+            payer="Exchange", key_boxes={category: amount})]
+        if other is not None:
+            records.append(_record(doc_id="r-pension", file="documents/1099R.pdf", form_type="1099-R",
+                                   payer="Pension", key_boxes={category: other}))
+        return _ledger(*records)
+
+    def _target(self, report, category="unrouted_state_withholding"):
+        (target,) = [t for t in report.missing_result_targets if t.startswith(category)]
+        return target
+
+    def test_an_amount_fails_the_gate_names_its_form_and_says_what_to_do(self):
+        report = T.evaluate(self._recs(125.0), _result(), self.FILES[:2])
+        assert report.failed
+        target = self._target(report)
+        assert "da-exchange" in target and "Nothing waives this" in target
+        # Preparing only the state return elsewhere clears nothing here.
+        assert "federal included, cannot complete here" in target
+
+    def test_only_the_forms_carrying_an_amount_are_named(self):
+        report = T.evaluate(self._recs(125.0, other=0.0), _result(), self.FILES)
+        assert "r-pension" not in self._target(report)
+
+    def test_it_is_never_tied_or_demoted_to_a_warning(self):
+        """No result field can hold it, so a sum check could only compare it
+        against a section that does not exist."""
+        report = T.evaluate(self._recs(125.0), _result(), self.FILES[:2])
+        assert all(c.category != "unrouted_state_withholding" for c in report.sum_checks)
+        assert "unrouted_state_withholding" not in report.unverifiable
+
+    def test_a_zero_amount_blocks_nothing(self):
+        assert not T.evaluate(self._recs(0.0), _result(), self.FILES[:2]).failed
+
+    def test_first_sale_nft_proceeds_block_too(self):
+        """Box 11c's proceeds are kept out of 1f, so `capital_proceeds` never
+        sees them, and a form that never reaches broker_reporting would
+        lose them."""
+        report = T.evaluate(self._recs(900.0, "nft_first_sale_proceeds"), _result(), self.FILES[:2])
+        assert report.failed and "da-exchange" in self._target(report, "nft_first_sale_proceeds")
+
+    def test_another_states_withholding_is_an_advisory_not_a_block(self):
+        """A state whose return this run does not compute is claimed on a
+        return filed elsewhere: blocking the federal return over it is a block
+        with no way through, and dropping it silently loses the reminder."""
+        report = T.evaluate(self._recs(300.0, "other_state_withholding"), _result(), self.FILES[:2])
+        assert not report.failed
+        (advisory,) = [a for a in report.advisories if a.startswith("other_state_withholding")]
+        # The amount is on this return too, for an itemizer.
+        assert "Schedule A line 5a" in advisory
+
+    def test_a_1099_routes_only_to_a_state_return_this_run_computes(self):
+        """A Texas resident's CA-withheld 1099 has no CA return here: blocking
+        their federal return over it would name a return that does not exist."""
+        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
+        for category in ("state_withholding_nc", "unrouted_state_withholding"):
+            (row,) = [line for line in parse_md.splitlines()
+                      if "1099's state-tax-withheld box" in line and f"`{category}`" in line]
+            assert "this run computes" in row, category
+
+    def test_every_1099_state_amount_reaches_the_schedule_a_recipe(self):
+        """State income tax withheld is deductible on Schedule A line 5a
+        whichever state's return claims it."""
+        recipe = (REPO / ".agents/skills/tax-compute/references/income-and-agi.md").read_text(encoding="utf-8")
+        line = recipe[recipe.index("- `state_local_income_taxes` ="):].split("\n- ")[0]
+        assert "every 1099's state" in line and "all states" in line.split("1099")[1], line
+
+    def test_none_of_them_is_also_tied(self):
+        """Each names an amount no result line holds, so none may sit in a
+        registry that compares it with one."""
+        assert not set(T._BLOCKING_CATEGORIES) & (set(T.CATEGORY_TARGETS) | T._INFORMATIONAL)
+        assert "other_state_withholding" not in T.CATEGORY_TARGETS
+
+
 # --------------------------------------------------------------------------
 # Check D — unverifiable categories warn loudly, never silently pass
 # --------------------------------------------------------------------------
@@ -976,10 +1059,10 @@ def test_every_category_documented_in_tax_parse_skill():
     from the skill doc is dead protection (the gate passes vacuously).
     Mirrors the capabilities interview-asks-it grep test."""
     from pathlib import Path
-    from agents.lib.tie_out import CATEGORY_TARGETS, _INFORMATIONAL
+    from agents.lib.tie_out import _ALL_CATEGORIES
     skill = (Path(__file__).resolve().parent.parent
              / ".agents/skills/tax-parse/SKILL.md").read_text()
-    for cat in sorted(set(CATEGORY_TARGETS) | set(_INFORMATIONAL)):
+    for cat in sorted(_ALL_CATEGORIES):
         assert f"`{cat}`" in skill, (
             f"tie-out category {cat!r} is registered but never documented "
             f"in .agents/skills/tax-parse/SKILL.md — parse subagents can't emit "
