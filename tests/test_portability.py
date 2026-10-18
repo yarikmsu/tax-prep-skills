@@ -4968,6 +4968,7 @@ class TestTheSaltPhasedownHandoffs:
         assert "the credit its election makes usable" in flat
         # The excess is income next year whether or not the owner itemizes.
         assert "itemized or not" in flat
+        assert "read the owner's tax for that state from its section of `result.json`" in flat
         assert "refunded next year or not" in flat
         assert "never the tax attributed to the K-1" in flat
         # Step 3's stop, carried out without a person to ask.

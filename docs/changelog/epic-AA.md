@@ -2975,7 +2975,9 @@ the excess is income on the standard deduction too; payments below the credit
 could take `--other-salt` negative, which the analyzer refuses, so the figure
 floors at 0, which a brute force showed never over-states; and `/tax-ptet` said
 to quote no savings but not to leave the state out of the run. One state's
-entities now net as one credit.
+entities now net as one credit. The thirteenth found no material defect; its
+two wording gaps, a stopped state's deadline and where `/tax-review` reads the
+owner's state tax, are closed.
 
 Filed alongside: AA60 (P1) routes CA and NY 1099 state withholding, IT-203
 included; AA61 (P2) reviews the TY2023-2024 Form 1099-B boxes, collectibles

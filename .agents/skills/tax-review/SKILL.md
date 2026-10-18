@@ -329,7 +329,9 @@ rather than telling the taxpayer a number first.
    record `_PTET: not applicable (no pass-through income)._` and proceed to Step 4.
 2. Else, for each entity state in `flags.k1_states` that is CA/NY/NJ, ask the
    taxpayer for the qualifying pass-through income and the credit its
-   election makes usable. Where `/tax-ptet` step 3 stops, a refundable credit
+   election makes usable, and read the owner's tax for that state from its
+   section of `result.json` (ask when the run computes no return for it).
+   Where `/tax-ptet` step 3 stops, a refundable credit
    beyond the owner's tax for that state, itemized or not, leave that state's
    `--income` out and record
    `_PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax._`

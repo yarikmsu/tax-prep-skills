@@ -93,7 +93,10 @@ Steps:
      output:
      `PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax`.
      This holds on the standard deduction too, since the entity deducted the
-     PTET. A nonrefundable CA credit beyond the tax carries forward instead: no stop.
+     PTET. Still give that state's election deadline (step 5); when every state
+     stops, give the stop lines and deadlines and skip the run, whose
+     no-`--income` mode would invite an estimate. A nonrefundable CA credit
+     beyond the tax carries forward instead: no stop.
    - Never subtract a credit from an earlier year's election, or the part
      this year's election makes usable only in a later year: the
      [TY2025 FTB 3804-CR instructions](https://www.ftb.ca.gov/forms/2025/2025-3804-cr-instructions.html)

@@ -663,6 +663,7 @@ class TestUnroutedStateWithholding:
         assert "all of that state's entities' credits together" in ptet
         assert "Leave that state's `--income` out of the run" in ptet
         assert "This holds on the standard deduction too" in ptet
+        assert "when every state stops, give the stop lines and deadlines and skip the run" in ptet
         assert "at the same marginal rate both years" in ptet
         assert "as if the entity did not elect" in ptet
         assert "Unknown, take this year's whole PTET as the credit" in ptet
