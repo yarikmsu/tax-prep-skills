@@ -4965,7 +4965,9 @@ class TestTheSaltPhasedownHandoffs:
                 in flat), (
             "the warning against the return's salt_before_cap is gone, and it "
             "is the figure a reader reaches for first")
-        assert "PTET credit this year's election makes usable" in flat
+        assert "the credit its election makes usable" in flat
+        # The excess is income next year whether or not the owner itemizes.
+        assert "itemized or not" in flat
         assert "refunded next year or not" in flat
         assert "never the tax attributed to the K-1" in flat
         # Step 3's stop, carried out without a person to ask.

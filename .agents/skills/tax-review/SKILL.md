@@ -328,14 +328,15 @@ rather than telling the taxpayer a number first.
 1. Check `flags.has_k1_income`. If false and no K-1 surfaced during parsing,
    record `_PTET: not applicable (no pass-through income)._` and proceed to Step 4.
 2. Else, for each entity state in `flags.k1_states` that is CA/NY/NJ, ask the
-   taxpayer for the qualifying pass-through income. When the return itemized,
-   also get their OTHER state and local taxes by `/tax-ptet` step 3: SALT
-   before the cap less the PTET credit this year's election makes usable,
-   refunded next year or not, never the tax attributed to the K-1. Where step
-   3 stops, a refundable credit beyond the owner's tax for that state, leave
-   that state's `--income` out and record
+   taxpayer for the qualifying pass-through income and the credit its
+   election makes usable. Where `/tax-ptet` step 3 stops, a refundable credit
+   beyond the owner's tax for that state, itemized or not, leave that state's
+   `--income` out and record
    `_PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax._`
-   and continue with the others, or with Step 4. Pass the
+   and continue with the others, or with Step 4. When the return itemized,
+   also get their OTHER state and local taxes by step 3: SALT before the cap
+   less that credit, refunded next year or not, never the tax attributed to
+   the K-1. Pass the
    remaining SALT as `--other-salt`, so the engine derives the headroom against
    the cap it prices. Then run:
    ```bash

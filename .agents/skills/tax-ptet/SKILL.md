@@ -69,7 +69,8 @@ Steps:
    amount the entity would elect to pay PTET on). Map each to `--income STATE=AMT`.
 3. Ask for their other state/local taxes: personal SALT before the cap for the
    modeled year, as if the entity did not elect, then net each electing
-   state's credit out of it:
+   state's credit out of it, all of that state's entities' credits together,
+   flooring the result at 0:
    - Start with property tax + every state and local income tax line 5a
      takes, per `/tax-compute`'s `state_local_income_taxes` recipe, but count
      each electing state's tax for THIS year at the smaller of what was paid
@@ -87,10 +88,12 @@ Steps:
      makes them read low.
    - **Stop** when a refundable credit (NY, NJ) exceeds that state's tax for
      the year: the excess refunds PTET the entity already deducted, income
-     next year in full, which the analyzer does not price. Quote no savings
-     for that election; tell the user, and record
+     next year in full, which the analyzer does not price. Leave that state's
+     `--income` out of the run, quote no savings for it, and say so in the
+     output:
      `PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax`.
-     A nonrefundable CA credit beyond the tax carries forward instead: no stop.
+     This holds on the standard deduction too, since the entity deducted the
+     PTET. A nonrefundable CA credit beyond the tax carries forward instead: no stop.
    - Never subtract a credit from an earlier year's election, or the part
      this year's election makes usable only in a later year: the
      [TY2025 FTB 3804-CR instructions](https://www.ftb.ca.gov/forms/2025/2025-3804-cr-instructions.html)
@@ -100,7 +103,7 @@ Steps:
      and the savings read low.
 
    For example, $44,000 of pre-election SALT, $8,000 of it the tax on the K-1
-   income within a $20,000 tax for the year that was fully paid, and a usable
+   income within a $20,000 tax for the year that was paid exactly, and a usable
    $10,000 credit leave `--other-salt 34000`, refunded or not. Pass the remaining SALT
    as `--other-salt`; the analyzer derives the unused headroom
    against the year's SALT cap, which moves every year and with modified AGI

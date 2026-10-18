@@ -2969,6 +2969,14 @@ refundable credit exceeds it. `/tax-ptet` step 3, the report, `--help` and the
 docstring now say so, and the stop names what to record: `/tax-review` leaves
 that state's `--income` out and records it as not priced.
 
+The twelfth review confirmed every surface carries that rule and found three
+gaps in carrying it out: `/tax-review` stopped only an itemized return, though
+the excess is income on the standard deduction too; payments below the credit
+could take `--other-salt` negative, which the analyzer refuses, so the figure
+floors at 0, which a brute force showed never over-states; and `/tax-ptet` said
+to quote no savings but not to leave the state out of the run. One state's
+entities now net as one credit.
+
 Filed alongside: AA60 (P1) routes CA and NY 1099 state withholding, IT-203
 included; AA61 (P2) reviews the TY2023-2024 Form 1099-B boxes, collectibles
 among them; AA62 (P1) asks about specific identification; AA63 (P2) says when a
@@ -3056,4 +3064,6 @@ From the tenth: an exact-match 1099-DA trigger, and a `/tax-ptet` step without
 the state-tax cap and its stop. From the eleventh: a step that counts the
 state's tax as paid rather than at the smaller of payments and the year's tax,
 a stop with nothing to record, a `/tax-review` that drops the stop, and a
-`--help` without the refundable limit. The full suite passed locally on Python 3.14.
+`--help` without the refundable limit. From the twelfth: no floor, no
+per-state netting, a stopped state left in the run, a stop limited to
+itemizers, `--help` without "refundable", and a changed worked example. The full suite passed locally on Python 3.14.

@@ -653,6 +653,16 @@ class TestUnroutedStateWithholding:
         assert "**Stop** when a refundable credit (NY, NJ) exceeds that state's tax" in ptet
         assert "`PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax`" in ptet
         assert "A nonrefundable CA credit beyond the tax carries forward instead: no stop" in ptet
+        # Payments below the credit can take the figure negative, which the
+        # analyzer refuses; two entities in one state are one credit; and the
+        # stopped state must leave the run, or its savings still print.
+        assert "flooring the result at 0" in ptet
+        # $44,000 less the $10,000 credit; the year's $20,000 tax, paid exactly,
+        # counts in full and caps nothing here.
+        assert "paid exactly, and a usable $10,000 credit leave `--other-salt 34000`" in ptet
+        assert "all of that state's entities' credits together" in ptet
+        assert "Leave that state's `--income` out of the run" in ptet
+        assert "This holds on the standard deduction too" in ptet
         assert "at the same marginal rate both years" in ptet
         assert "as if the entity did not elect" in ptet
         assert "Unknown, take this year's whole PTET as the credit" in ptet
