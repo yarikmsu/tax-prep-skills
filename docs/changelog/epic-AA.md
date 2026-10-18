@@ -2946,6 +2946,17 @@ question also fires on a ledgered 1099-DA whose proceeds reached no
 digital-asset row, and a CLI test reads a `true` answer. Placed in the plan:
 AA67 now, AA61 and AA63 after.
 
+The tenth review re-checked the ninth's fixes against the same sources. A
+refundable NY or NJ credit beyond the owner's own state tax refunds PTET the
+entity already deducted, income in full next year, so `/tax-ptet` now caps the
+subtraction at the electing state's income tax in the figure and stops past
+it; the figure is pre-election SALT, and the two-year equivalence is stated at
+equal marginal rates, a higher rate next year reading high. The 1099-DA trigger
+matched one spelling exactly, so "1099-DA (Corrected)" passed the option
+question unasked; it now matches by containment. The §1.6045-1(m) date reads
+"granted or acquired", the head-tax exclusion keeps a wage-percentage local
+tax, and `crypto-accounts.md` names the ledgered trigger.
+
 Filed alongside: AA60 (P1) routes CA and NY 1099 state withholding, IT-203
 included; AA61 (P2) reviews the TY2023-2024 Form 1099-B boxes, collectibles
 among them; AA62 (P1) asks about specific identification; AA63 (P2) says when a
@@ -3028,5 +3039,6 @@ survivor of the first round, treating 0 as filled, is equivalent:
 refunded credit's payments, an unknown credit that does not degrade low, a
 floor notice that drops the refund case, a line 5a recipe without Rev. Rul.
 2025-4, the state-fund condition or the head-tax exclusion, a ledgered 1099-DA
-that skips the option question, and a CLI that reads `true` as unanswered. The
-full suite passed locally on Python 3.14.
+that skips the option question, and a CLI that reads `true` as unanswered.
+From the tenth: an exact-match 1099-DA trigger, and a `/tax-ptet` step without
+the state-tax cap and its stop. The full suite passed locally on Python 3.14.

@@ -707,8 +707,10 @@ def test_the_gate_reads_the_option_answer_from_the_profile(tmp_path, capsys, ans
     (tmp_path / 'result.json').write_text(json.dumps({'meta': {'tax_year': 2025}, 'crypto_summary': COMPLETE}))
     (tmp_path / 'taxpayer_profile.json').write_text(json.dumps(
         {'flags': {'has_crypto': False, 'has_digital_asset_option_exercise': answer}}))
-    tie_out._main(['--workspace', str(tmp_path)])
-    assert ('has_digital_asset_option_exercise is unanswered' in capsys.readouterr().out) is owed
+    assert tie_out._main(['--workspace', str(tmp_path)]) == (2 if owed else 0)
+    captured = capsys.readouterr()
+    assert captured.err == ''
+    assert ('has_digital_asset_option_exercise is unanswered' in captured.out) is owed
 
 
 def _ledgered_1099da(form_type='1099-DA', skipped=None):
@@ -717,7 +719,8 @@ def _ledgered_1099da(form_type='1099-DA', skipped=None):
         person='primary', key_boxes={} if skipped else {'capital_proceeds': 0}, skipped=skipped)]})
 
 
-@pytest.mark.parametrize('form_type', ['1099-DA', 'Form 1099-da', '1099DA'])
+@pytest.mark.parametrize('form_type', ['1099-DA', 'Form 1099-da', '1099DA', '1099-DA (Corrected)',
+                                       'Substitute 1099-DA', 'Consolidated 1099 (1099-DA, 1099-MISC)'])
 def test_a_ledgered_1099da_owes_the_option_answer_with_no_crypto_rows(form_type):
     """A 1099-DA whose proceeds were routed to the non-digital rows leaves no
     crypto summary or digital-asset row; the ledgered form is the data."""

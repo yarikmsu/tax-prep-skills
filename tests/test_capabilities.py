@@ -194,7 +194,7 @@ def test_no_foreign_funds_no_pfic_event_block():
 
 def test_a_crypto_profile_must_answer_the_option_exercise_question():
     """AA59 stopped refusing a 1099-DA whose box 3a shows "Gross proceeds",
-    box 1f's default on every sale no premium reduced, so a crypto profile
+    which can mark an ordinary sale or an option's un-netted one, so a crypto profile
     from before the flag would pass an option's sale with its premium left out
     of the row. Absence is not 'no', as for the PFIC event."""
     r = C.evaluate(_profile({"has_crypto": True}))  # option flag absent

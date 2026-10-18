@@ -570,7 +570,9 @@ def analyze(
     lowers this year's payments or is refunded next year: the tax benefit rule
     makes next year's refund income to the extent this year's deduction
     reduced tax, so that timing is not savings. Never more than this year's
-    PTET, and never an earlier election's credit or this one's carryover.
+    PTET or the electing state's income tax inside it (a refundable excess
+    refunds PTET already deducted, income next year in full, which this does
+    not price), and never an earlier election's credit or this one's carryover.
 
     QBI clawback: for §199A-eligible pass-through income (states in
     `qbi_eligible_states`), the entity-level PTET deduction reduces the business's
@@ -859,13 +861,15 @@ def analyze(
     if lost_salt_total > 0:
         notes.append(
             "SALT-OFFSET FLOOR: the offset assumes this year's election makes a "
-            "credit equal to the whole PTET usable this year. Where less is usable "
-            "(a nonrefundable credit limited and carried forward), the offset is "
-            "too large and the savings read low for this year, though the "
-            "carryover can cost a later year's deduction when it is used. A usable "
-            "credit refunded next year rather than lowering this year's payments "
-            "changes nothing: the refund is income then to the extent this year's "
-            "deduction reduced tax. Other caveats still apply.")
+            "credit equal to the whole PTET usable this year. Where SALT before "
+            "the election is under the cap and less is usable (a nonrefundable "
+            "credit carried forward), the offset can be too large and the savings "
+            "read low for this year, though the carryover can cost a later year's "
+            "deduction when it is used. A usable credit refunded next year rather "
+            "than lowering this year's payments changes nothing at the same "
+            "marginal rate both years: the refund is income then to the extent "
+            "this year's deduction reduced tax, so a higher rate next year makes "
+            "these savings read high. Other caveats still apply.")
     if itemizes and salt.phasedown_applies(tax_year):
         # This note used to say the phasedown was "not modeled here" and quote
         # TY2025's $500,000 threshold for every year in the range. It is modeled
@@ -1126,7 +1130,8 @@ def _main(argv: list) -> int:
                         "Schedule A line 5a's state and local income taxes), less "
                         "the PTET credit this year's election makes usable this "
                         "year, refunded next year or not; never more than this "
-                        "year's PTET, nor an earlier election's credit. Headroom is "
+                        "year's PTET or the electing state's income tax in it, nor "
+                        "an earlier election's credit. Headroom is "
                         "cap − this. --salt-room takes precedence.")
     p.add_argument("--marginal-fed", type=float, default=None,
                    help="Federal marginal rate for the forgone-SALT offset "

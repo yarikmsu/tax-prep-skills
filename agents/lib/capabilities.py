@@ -228,7 +228,7 @@ RULES: "tuple[Rule, ...]" = (
          "neither adjustment. Form 1099-DA box 3a cannot clear a sale: \"Net "
          "proceeds\" refuses the import, and \"Gross proceeds\" can show on an "
          "ordinary sale and on an option's sale alike, a broker need not net a "
-         "premium on an option granted before 2026 (Regs. 1.6045-1(m)). "
+         "premium on an option granted or acquired before 2026 (Regs. 1.6045-1(m)). "
          "Acknowledging this leaves those disposals in the import, priced without "
          "the premium, since no input marks one transaction for hand "
          "preparation (AA47): correct those Form 8949 rows and lots by hand. A "

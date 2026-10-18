@@ -367,8 +367,15 @@ def test_other_salt_subtracts_the_usable_credit_not_tax_attributed_to_the_k1():
     assert actual.salt_room == 6000.0
     assert actual.states[0].lost_salt_offset == 1800.0
     assert actual.total_net_fed_savings == 1200.0
-    refunded_next_year = 3000.0 - 0.30 * min(40000 - 34000, 10000)
-    assert actual.total_net_fed_savings == refunded_next_year
+    # Refunded path, worked apart from the engine: this year deducts the
+    # capped $40k either way, so the entity deduction is the whole gain,
+    # and next year's $10k refund is income up to what the deduction gained
+    # over the credit-reduced $34k (Pub. 525, Recoveries).
+    deducted_this_year = min(40000, 44000)
+    recovery_next_year = min(10000, deducted_this_year - min(40000, 44000 - 10000))
+    refunded_two_year = 0.30 * 10000 - 0.30 * recovery_next_year
+    assert recovery_next_year == 6000
+    assert actual.total_net_fed_savings == refunded_two_year
     attributed = price(44000 - 8000)
     assert attributed.total_net_fed_savings - actual.total_net_fed_savings == 600.0
 

@@ -1560,7 +1560,9 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     # capability gate asks it only once has_crypto is set, in skill prose; the
     # merged rows, or a ledgered 1099-DA routed anywhere, are the data, as a
     # taxable PFIC fund is for its flag.
-    form_da = any(rec.skipped is None and re.sub(r"[^0-9A-Z]", "", rec.form_type.upper()).removeprefix("FORM") == "1099DA"
+    # Containment, not equality: nothing pins the label, and a corrected,
+    # substitute or consolidated 1099-DA missed here passes the question unasked.
+    form_da = any(rec.skipped is None and "1099DA" in re.sub(r"[^0-9A-Z]", "", rec.form_type.upper())
                   for rec in ledger)
     if (crypto_present or form_da) and not isinstance(option_exercise_answer, bool):
         missing_targets.append("digital assets are on this return but flags.has_digital_asset_option_exercise "

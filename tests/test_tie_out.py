@@ -643,7 +643,13 @@ class TestUnroutedStateWithholding:
         assert "PTET credit this year's election makes usable this year" in ptet
         assert "less the credit this year's election makes usable" in ptet
         assert "tax benefit rule" in ptet
-        assert "never a credit from an earlier year's election" in ptet
+        assert "Never subtract a credit from an earlier year's election" in ptet
+        # A refundable credit beyond the state's tax refunds PTET already
+        # deducted, income in full next year, which the analyzer cannot price.
+        assert "nor more than the electing state's income tax inside the figure" in ptet
+        assert "so stop and price that election outside it" in ptet
+        assert "at the same marginal rate both years" in ptet
+        assert "as if the entity did not elect" in ptet
         assert "Unknown, subtract this year's whole PTET" in ptet
         assert "Do not reduce already-paid withholding" not in ptet
         assert "less the state income tax on the step-2 qualifying income" not in ptet

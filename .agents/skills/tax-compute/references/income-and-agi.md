@@ -643,8 +643,9 @@ persona SALT usually exceeds the OBBBA cap by itself):
   each amount counted once from its own form, never from a ledger category
   total (`state_withholding_nc` and `other_state_withholding` hold W-2 box 17
   too): W-2 box 17 (all states) and box 19 (every locality's income tax, NYC
-  and Yonkers included, read by its label: a head or occupational privilege
-  tax such as Pennsylvania's Local Services Tax is not an income tax),
+  and Yonkers included, read by its label: a flat head tax such as Denver's
+  occupational privilege tax or Pennsylvania's Local Services Tax is not an
+  income tax, one levied as a percentage of wages is),
   every 1099's state tax withheld (all states, routed or not) and local tax
   withheld (1099-R box 17), and a W-2G's (boxes 15 and 17). Each mandatory
   contribution that list describes, read from W-2 box 14 (14a from TY2026) by
