@@ -14,6 +14,7 @@ import pytest
 
 from agents.lib import crypto_importer as C
 from agents.lib import tie_out
+from tests.skill_text import listed_boxes
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -30,7 +31,7 @@ BASE = [event('A', 'buy', 'buy', '2023-01-01', usd=100),
 
 # The 1099-DA boxes the engine refuses when filled (AA59), each copied blank.
 # The 1099-B's own set is unreviewed (AA61) and empty, so it carries none.
-DA_BLANKS = dict(net_proceeds=False, gross_proceeds=False, qof=False, customer_acquisition_info=False,
+DA_BLANKS = dict(net_proceeds=False, qof=False, customer_acquisition_info=False,
                  optional_method=None, primary_sale_proceeds=None, cusip=None)
 
 
@@ -537,7 +538,7 @@ def test_evidence_for_an_unreviewed_or_unknown_year_is_refused(year):
 # Each value a broker could fill in: "Net proceeds" in 3a, the QOF box, box 8,
 # either optional-method box in 11a, first-sale proceeds in 11c, any CUSIP.
 @pytest.mark.parametrize('key,value', [
-    ('net_proceeds', True), ('gross_proceeds', True), ('qof', True), ('customer_acquisition_info', True),
+    ('net_proceeds', True), ('qof', True), ('customer_acquisition_info', True),
     ('optional_method', 'qualifying_stablecoins'), ('optional_method', True),
     ('primary_sale_proceeds', 25), ('cusip', 'TKN000A01')])
 def test_a_filled_1099da_box_refuses_the_import_and_names_its_key(key, value):
@@ -557,7 +558,7 @@ def test_the_refusal_names_every_filled_box_and_only_those():
         run(reporting(form(ordinary=True, qof=True)))
 
 
-@pytest.mark.parametrize('key,blank', [('net_proceeds', None), ('gross_proceeds', None), ('qof', None),
+@pytest.mark.parametrize('key,blank', [('net_proceeds', None), ('qof', None),
                                        ('optional_method', False),
                                        ('primary_sale_proceeds', 0), ('primary_sale_proceeds', 0.0)])
 def test_a_1099da_box_left_blank_passes(key, blank):
@@ -570,7 +571,9 @@ def test_each_1099da_key_is_required_on_a_1099da(key):
     # before the box was read cannot say it was blank.
     copied = form()
     del copied[key]
-    with pytest.raises(C.CryptoImportError, match=rf"is missing \['{key}'\].*re-read"):
+    with pytest.raises(C.CryptoImportError, match=rf"is missing \['{key}'\].*; re-read each missing box "
+                       "from the form itself, never from a summary that did not capture it, and copy a "
+                       "blank one as null"):
         run(reporting(copied))
 
 
@@ -644,7 +647,7 @@ COMPLETE = dict(basis_mode='account_fifo', complete=True, unresolved_inputs=[],
 @pytest.mark.parametrize('change', [dict(reporting_complete=False), dict(reporting_unresolved=[{'reason': 'x'}]),
                                     dict(reporting_complete=None)])
 def test_tie_out_requires_reconciled_reporting(change):
-    report = tie_out.evaluate([], {'crypto_summary': {**COMPLETE, **change}}, [])
+    report = tie_out.evaluate([], {'crypto_summary': {**COMPLETE, **change}}, [], option_exercise_answer=False)
     assert report.failed
     assert any('Form 8949 reporting' in target for target in report.missing_result_targets)
 
@@ -652,22 +655,66 @@ def test_tie_out_requires_reconciled_reporting(change):
 def test_tie_out_reporting_gate_survives_dropped_keys():
     for dropped in ('reporting_complete', 'reporting_unresolved'):
         summary = {key: value for key, value in COMPLETE.items() if key != dropped}
-        assert tie_out.evaluate([], {'crypto_summary': summary}, []).failed
+        assert tie_out.evaluate([], {'crypto_summary': summary}, [], option_exercise_answer=False).failed
     summary = dict(reporting_complete=False)
-    assert tie_out.evaluate([], {'crypto_summary': summary}, []).failed
+    assert tie_out.evaluate([], {'crypto_summary': summary}, [], option_exercise_answer=False).failed
     rows_only = {'form_8949': {'part_ii_long_term': [{'account_id': 'A'}]},
                  'crypto_summary': dict(basis_mode='account_fifo', complete=True, unresolved_inputs=[])}
-    assert tie_out.evaluate([], rows_only, []).failed
+    assert tie_out.evaluate([], rows_only, [], option_exercise_answer=False).failed
 
 
 def test_tie_out_accepts_reconciled_reporting():
-    assert not tie_out.evaluate([], {'crypto_summary': COMPLETE}, []).failed
+    assert not tie_out.evaluate([], {'crypto_summary': COMPLETE}, [], option_exercise_answer=False).failed
+
+
+def test_merged_crypto_with_the_option_question_unanswered_fails():
+    """The capability gate asks it once has_crypto is set, which a skipped
+    /tax-parse-crypto step leaves false; the merged rows are the data."""
+    report = tie_out.evaluate([], {'crypto_summary': COMPLETE}, [], option_exercise_answer=None)
+    assert report.failed
+    assert any('has_digital_asset_option_exercise is unanswered' in t for t in report.missing_result_targets)
+    assert not tie_out.evaluate([], {'crypto_summary': COMPLETE}, [], option_exercise_answer=True).failed
+
+
+def test_an_omitted_option_answer_is_unanswered():
+    report = tie_out.evaluate([], {'crypto_summary': COMPLETE}, [])
+    assert report.failed
+    assert any('has_digital_asset_option_exercise is unanswered' in target
+               for target in report.missing_result_targets)
+    assert any('sold, exchanged or spent' in target for target in report.missing_result_targets)
+
+
+@pytest.mark.parametrize('answer', [0, 1, 'no'])
+def test_a_non_boolean_option_answer_is_unanswered(answer):
+    report = tie_out.evaluate([], {'crypto_summary': COMPLETE}, [], option_exercise_answer=answer)
+    assert report.failed
+    assert any('has_digital_asset_option_exercise is unanswered' in target
+               for target in report.missing_result_targets)
+
+
+def test_a_missing_profile_does_not_answer_the_option_question(tmp_path, capsys):
+    (tmp_path / 'documents').mkdir()
+    (tmp_path / 'parse_ledger.json').write_text(json.dumps({'records': []}))
+    (tmp_path / 'result.json').write_text(json.dumps({'crypto_summary': COMPLETE}))
+    assert tie_out._main(['--workspace', str(tmp_path)]) == 2
+    assert 'has_digital_asset_option_exercise is unanswered' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('answer,owed', [(None, True), ('yes', True), (False, False)])
+def test_the_gate_reads_the_option_answer_from_the_profile(tmp_path, capsys, answer, owed):
+    (tmp_path / 'documents').mkdir()
+    (tmp_path / 'parse_ledger.json').write_text(json.dumps({'records': []}))
+    (tmp_path / 'result.json').write_text(json.dumps({'meta': {'tax_year': 2025}, 'crypto_summary': COMPLETE}))
+    (tmp_path / 'taxpayer_profile.json').write_text(json.dumps(
+        {'flags': {'has_crypto': False, 'has_digital_asset_option_exercise': answer}}))
+    tie_out._main(['--workspace', str(tmp_path)])
+    assert ('has_digital_asset_option_exercise is unanswered' in capsys.readouterr().out) is owed
 
 
 def test_tie_out_refuses_a_basis_mode_nothing_can_complete():
     # --per-account output never routes a box, so 'isolated_account' is not a
     # mode a return can finish under.
-    assert tie_out.evaluate([], {'crypto_summary': {**COMPLETE, 'basis_mode': 'isolated_account'}}, []).failed
+    assert tie_out.evaluate([], {'crypto_summary': {**COMPLETE, 'basis_mode': 'isolated_account'}}, [], option_exercise_answer=False).failed
 
 
 def _employer_ledger(adjustment):
@@ -686,7 +733,7 @@ def _rsu_and_crypto(**crypto_row):
 
 
 def test_a_crypto_correction_never_touches_the_employer_stock_tie():
-    report = tie_out.evaluate(_employer_ledger(5000), _rsu_and_crypto(), ['documents/supplemental.pdf'])
+    report = tie_out.evaluate(_employer_ledger(5000), _rsu_and_crypto(), ['documents/supplemental.pdf'], option_exercise_answer=False)
     assert not report.failed, report
     check = next(c for c in report.sum_checks if c.category == 'employer_stock_basis_adjustment')
     assert check.result_total == 5000
@@ -694,7 +741,7 @@ def test_a_crypto_correction_never_touches_the_employer_stock_tie():
 
 def test_a_digital_asset_row_is_never_employer_stock():
     report = tie_out.evaluate(_employer_ledger(5000), _rsu_and_crypto(employer_stock=True),
-                              ['documents/supplemental.pdf'])
+                              ['documents/supplemental.pdf'], option_exercise_answer=False)
     assert report.failed
     assert any('digital-asset row' in target for target in report.missing_result_targets)
 
@@ -729,14 +776,14 @@ def test_every_box_routes_to_its_own_digital_asset_row_in_the_template():
     dict(disposals=1, needs_basis_count=0, ordinary_income=0, per_asset={'BTC': {}}, realized_capital_gain=50),
     dict(disposals='1')])
 def test_a_summary_from_before_aa41_still_owes_the_reconciliation(summary):
-    report = tie_out.evaluate([], {'crypto_summary': summary}, [])
+    report = tie_out.evaluate([], {'crypto_summary': summary}, [], option_exercise_answer=False)
     assert report.failed
     assert any('Form 8949 reporting' in target for target in report.missing_result_targets)
 
 
 def test_merged_digital_asset_rows_without_a_summary_owe_the_reconciliation():
     result = {'schedule_d': {'part_ii_long_term': {'line_9_digital_assets': dict(proceeds=150, cost=100, gain=50)}}}
-    report = tie_out.evaluate([], result, [])
+    report = tie_out.evaluate([], result, [], option_exercise_answer=False)
     assert any('Form 8949 reporting' in target for target in report.missing_result_targets)
 
 
@@ -758,11 +805,11 @@ def _with_box_k(proceeds, above):
 
 
 def test_proceeds_above_their_form_tie_to_the_form_and_say_so():
-    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 10), ['documents/1099DA.pdf'])
+    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 10), ['documents/1099DA.pdf'], option_exercise_answer=False)
     assert not report.failed
     assert any('exceed their broker forms by 10.00' in note for note in report.advisories)
     # Without the documented excess the form's own figure no longer ties.
-    assert tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 0), ['documents/1099DA.pdf']).failed
+    assert tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 0), ['documents/1099DA.pdf'], option_exercise_answer=False).failed
 
 
 @pytest.mark.parametrize('row', ['line_10_digital_assets', 'line_10_1099b_box_f'])
@@ -772,7 +819,7 @@ def test_a_no_form_row_cannot_turn_a_dropped_form_into_a_warning(row):
     # degrade to unverifiable. Line 10's rows hold no broker-form proceeds.
     result = {'crypto_summary': COMPLETE,
               'schedule_d': {'part_ii_long_term': {row: dict(proceeds=150, cost=100, gain=50)}}}
-    report = tie_out.evaluate(_broker_ledger(1500), result, ['documents/1099DA.pdf'])
+    report = tie_out.evaluate(_broker_ledger(1500), result, ['documents/1099DA.pdf'], option_exercise_answer=False)
     assert report.failed and 'capital_proceeds' not in report.unverifiable
     check = next(c for c in report.sum_checks if c.category == 'capital_proceeds')
     assert (check.ledger_total, check.result_total) == (1500, 0)
@@ -782,7 +829,7 @@ def test_an_excess_alone_is_crypto_metadata_and_meets_the_gate():
     # A duplicated 500 lot on line 1a must not hide behind a bare excess key.
     result = {'crypto_summary': dict(reporting_proceeds_above_forms=500),
               'schedule_d': {'part_i_short_term': {'line_1a_1099b_box_a': dict(proceeds=10500, cost=0, gain=0)}}}
-    report = tie_out.evaluate(_broker_ledger(10000), result, ['documents/1099DA.pdf'])
+    report = tie_out.evaluate(_broker_ledger(10000), result, ['documents/1099DA.pdf'], option_exercise_answer=False)
     assert report.failed
     assert any('Form 8949 reporting' in target for target in report.missing_result_targets)
 
@@ -790,13 +837,13 @@ def test_an_excess_alone_is_crypto_metadata_and_meets_the_gate():
 def test_a_claimed_excess_can_only_lower_the_result_side():
     # Rows never merged: the result side is short of the form, and an
     # excess makes it shorter still — it cannot hide the dropped form.
-    assert tie_out.evaluate(_broker_ledger(150), _with_box_k(0.01, 10), ['documents/1099DA.pdf']).failed
+    assert tie_out.evaluate(_broker_ledger(150), _with_box_k(0.01, 10), ['documents/1099DA.pdf'], option_exercise_answer=False).failed
 
 
 @pytest.mark.parametrize('above', [-1, float('nan'), float('inf'), True, '10'])
 def test_excess_must_be_a_finite_non_negative_amount(above):
     with pytest.raises(tie_out.TieOutError):
-        tie_out.evaluate(_broker_ledger(140), _with_box_k(150, above), ['documents/1099DA.pdf'])
+        tie_out.evaluate(_broker_ledger(140), _with_box_k(150, above), ['documents/1099DA.pdf'], option_exercise_answer=False)
 
 
 def test_every_reviewed_year_and_source_is_documented():
@@ -837,7 +884,7 @@ _1099DA_BOXES = {2025: _1099DA_FORM_BOXES, 2026: _1099DA_FORM_BOXES}
 _1099DA_KEY_BOXES = {'asset': '1b', 'quantity': '1c', 'date_sold': '1e', 'proceeds': '1f',
                      'cost_basis': '1g', 'basis_reported_to_irs': '2', 'term': '6', 'ordinary': '6',
                      'accrued_market_discount': '1h', 'wash_sale_loss_disallowed': '1i',
-                     'loss_not_allowed': '5', 'net_proceeds': '3a', 'gross_proceeds': '3a', 'qof': '3b',
+                     'loss_not_allowed': '5', 'net_proceeds': '3a', 'qof': '3b',
                      'customer_acquisition_info': '8',
                      'optional_method': '11a', 'primary_sale_proceeds': '11c', 'cusip': 'CUSIP',
                      'federal_withholding_1099': '4', 'state_withholding_nc': '16'}
@@ -901,27 +948,13 @@ def test_the_reviewed_1099da_table_names_every_box_and_key():
         assert sorted(row[column] for row in rows if row[column] != '—') == expected, year
 
 
-def _boxes(listed: str) -> set:
-    """`1a-1i, 2, 4-6, CUSIP` as the boxes it names."""
-    boxes = set()
-    for item in re.findall(r'\b\d+[a-z]?(?:-\d+[a-z]?)?\b|CUSIP', listed):
-        low, _, high = item.partition('-')
-        if not high:
-            boxes.add(low)
-        elif low[-1].isalpha():
-            boxes |= {low[:-1] + chr(c) for c in range(ord(low[-1]), ord(high[-1]) + 1)}
-        else:
-            boxes |= {str(n) for n in range(int(low), int(high) + 1)}
-    return boxes
-
-
 def test_tax_parse_captures_every_1099da_box_a_key_or_category_reads():
     """A key the parse never captured has nothing to copy from, and a box
     copied from nothing reads as blank: AA59 began with every new key in
     that state."""
     skill = (REPO / '.agents' / 'skills' / 'tax-parse' / 'SKILL.md').read_text(encoding='utf-8')
     listed = skill[skill.index('### 1099-DA Extraction'):].splitlines()[1]
-    assert set(_1099DA_KEY_BOXES.values()) <= _boxes(listed.split(':', 1)[1]), listed
+    assert set(_1099DA_KEY_BOXES.values()) <= listed_boxes(listed.split(':', 1)[1]), listed
 
 
 def test_tax_parse_crypto_names_every_box_a_1099da_only_key_reads():
@@ -930,7 +963,7 @@ def test_tax_parse_crypto_names_every_box_a_1099da_only_key_reads():
     summary that never saw it."""
     skill = (REPO / '.agents' / 'skills' / 'tax-parse-crypto' / 'SKILL.md').read_text(encoding='utf-8')
     (listed,) = re.findall(r'does\s+not show boxes ([^:]+) never read them', skill)
-    assert _boxes(listed) == {_1099DA_KEY_BOXES[key] for key in C._FORM_UNSUPPORTED_BY_TYPE['1099-DA']}, listed
+    assert listed_boxes(listed) == {_1099DA_KEY_BOXES[key] for key in C._FORM_UNSUPPORTED_BY_TYPE['1099-DA']}, listed
 
 
 def test_the_documented_example_form_carries_exactly_the_1099da_keys():

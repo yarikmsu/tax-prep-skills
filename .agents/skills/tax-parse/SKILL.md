@@ -356,8 +356,8 @@ Rules:
   | W-2 box 17 (CA) | `state_withholding_ca` |
   | W-2 box 17 (NY) | `state_withholding_ny` |
   | W-2 box 17 (NC) | `state_withholding_nc` |
-  | Any 1099's state-tax-withheld box (1099-R box 14, ...), when its state is NC and this run computes NC's return | `state_withholding_nc` |
-  | Any other 1099's state-tax-withheld box, found by its label: the number differs by form and revision (1099-B/1099-DA/1099-DIV 16, 1099-INT 17, 1099-NEC 5, ...); a W-2's box 17 for a state other than CA, NY or NC | CA or NY, and this run computes that state's return: `unrouted_state_withholding`, which BLOCKS the tie-out gate, the federal return included, until their 1099 route exists; never fold it into the W-2 box 17 category, which hides the payment. Any other: `other_state_withholding`, an advisory to claim it on that state's own return. Every 1099 amount also counts toward Schedule A line 5a. Record either: unrecorded, the payment silently vanishes |
+  | Any 1099's state-tax-withheld box, or a W-2G's (1099-R box 14, W-2G box 15, ...), when its state is NC and this run computes NC's return | `state_withholding_nc` |
+  | Any other 1099's state-tax-withheld box, or a W-2G's, found by its label: the number differs by form and revision (1099-B/1099-DA/1099-DIV 16, 1099-INT 17, 1099-NEC 5, W-2G 15, ...); a 1099-R's or W-2G's local tax withheld (box 17) for NYC or Yonkers; a W-2's box 17 for a state other than CA, NC or NY | CA or NY (NYC and Yonkers count as NY), and this run computes that state's return: `unrouted_state_withholding`, which BLOCKS the tie-out gate, the federal return included, until their 1099 route exists; never fold it into a W-2 category or `other_state_withholding`, which hides the payment. Any other: `other_state_withholding`, an advisory to claim it on that state's own return. Schedule A line 5a counts each amount once, from its own form. Record either: unrecorded, the payment silently vanishes |
   | W-2 boxes 18-20, locality NYC | `city_withholding_nyc` (box 19 LOCAL tax withheld; box 20 confirms NYC). Separate from state withholding: IT-201 lines 72/73, or selected IT-203 lines 62/63. Never combine them. |
   | W-2 box 19, locality Yonkers | `city_withholding_yonkers`: IT-201 line 74 or selected IT-203 line 64. Confirm box 20 locality; do not infer it from employer address. |
   | 1099-INT box 1 (+3) | `taxable_interest`; box 8 → `tax_exempt_interest` |
@@ -460,7 +460,7 @@ Print:
 ## Document-Specific Parsing Notes
 
 ### W-2 Extraction
-Must capture: Boxes 1, 2, 3, 4, 5, 6, 12 (all codes), 13, 14, 15, 16, 17
+Must capture: Boxes 1-8, 10-11, 12 (all codes), 13, 14 (14a-14b from TY2026; every label, SDI, PFL and UI among them), 15-20 (state and local wages, tax withheld and locality, every row)
 Check: Box 12 codes (AA=Roth 401k, C=life ins, D=401k, DD=health, W=HSA)
 
 ### 1099-DIV Extraction
@@ -482,7 +482,7 @@ From TY2025 a digital asset never uses C/F: `/tax-parse-crypto` routes each
 transaction G-L from these boxes, so never pick its Form 8949 box here.
 
 ### 1099-R Extraction
-Must capture: Boxes 1, 2a, 4, 5, 7 (distribution code), 14-15 (state tax withheld, state)
+Must capture: Boxes 1, 2a, 2b, 4, 5, 7 (distribution code), 14-19 (state and local tax withheld, state, locality, distributions)
 Code G = direct rollover (not taxable but report on 1040 line 5a)
 Code 1 = early distribution (10% penalty unless exception)
 

@@ -254,7 +254,7 @@ def test_universal_post_transition_is_diagnostic_and_per_account_routes_no_box()
                                     dict(basis_mode='account_fifo', unresolved_inputs=[]),
                                     dict(basis_mode='legacy_universal', complete=True, unresolved_inputs=[])])
 def test_tie_out_cannot_complete_unresolved_crypto(summary):
-    report = tie_out.evaluate([], {'crypto_summary': summary}, [])
+    report = tie_out.evaluate([], {'crypto_summary': summary}, [], option_exercise_answer=False)
     assert report.failed
     assert any('crypto account FIFO' in message for message in report.missing_result_targets)
 
@@ -262,7 +262,7 @@ def test_tie_out_cannot_complete_unresolved_crypto(summary):
 def test_tie_out_accepts_complete_account_metadata():
     summary = dict(basis_mode='account_fifo', complete=True, unresolved_inputs=[],
                    reporting_complete=True, reporting_unresolved=[])
-    assert not tie_out.evaluate([], {'crypto_summary': summary}, []).failed
+    assert not tie_out.evaluate([], {'crypto_summary': summary}, [], option_exercise_answer=False).failed
 
 
 def test_cli_diagnostic_exit_and_adapter_account_identifiers(tmp_path, capsys):
@@ -295,9 +295,9 @@ def test_utc_ordering_does_not_shift_declared_tax_dates_or_year():
 
 def test_account_rows_without_completeness_metadata_cannot_pass_tie_out():
     result = {'form_8949': {'part_i_short_term': [{'account_id': 'A'}]}}
-    assert tie_out.evaluate([], result, []).failed
+    assert tie_out.evaluate([], result, [], option_exercise_answer=False).failed
     result['crypto_summary'] = {}
-    assert tie_out.evaluate([], result, []).failed
+    assert tie_out.evaluate([], result, [], option_exercise_answer=False).failed
 
 
 @pytest.mark.parametrize('kind', ['send', 'receive'])
@@ -349,7 +349,7 @@ def test_filing_year_domain_is_strict(value):
 
 def test_dropping_basis_mode_cannot_clear_incomplete_metadata():
     summary = dict(complete=False, unresolved_inputs=[])
-    assert tie_out.evaluate([], {'crypto_summary': summary}, []).failed
+    assert tie_out.evaluate([], {'crypto_summary': summary}, [], option_exercise_answer=False).failed
 
 
 def test_fee_cents_reconcile_across_partial_sale_slices():

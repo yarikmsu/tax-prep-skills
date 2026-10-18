@@ -84,7 +84,7 @@ AA57 finds why.
 | When | What | Why |
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
-| **Now** | **AA57** — find why CI's push, pull-request and scheduled runs never register. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA59** — read or refuse the Form 1099-DA boxes the import never names. **AA60** — route CA and NY 1099 state withholding. **AA62** — ask about specific identification before FIFO prices a crypto sale. | AA59's hole is open now for TY2025 and AA48 widens it to TY2026, so it lands first: a 1099-DA with its qualified-opportunity-fund box checked reconciles as an ordinary sale, and any gain deferred into the fund, which that sale must recognize, never reaches the return. AA60 follows it directly: AA59 makes a 1099 state amount outside NC block the return instead of vanishing, so until AA60 a CA or NY return with state tax withheld on a 1099 cannot complete. AA62 closes the other silent crypto gap: a taxpayer who identified lots at a broker gets FIFO lots, and a TY2025 form, reporting no basis for noncovered units, shows no difference. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. AA58 lands before TY2026 filing opens: a return filed before the April 2027 rate publishes would otherwise price that quarter at the last cached rate. |
+| **Now** | **AA57** — find why CI's push, pull-request and scheduled runs never register. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA59** — read or refuse the Form 1099-DA boxes the import never names. **AA60** — route CA and NY 1099 state withholding. **AA62** — ask about specific identification before FIFO prices a crypto sale. **AA64** — read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC. **AA65** — record Form 1099-G's unemployment and family leave benefits. **AA66** — give Form W-2G a parse route. | AA59's hole is open now for TY2025 and AA48 widens it to TY2026, so it lands first: a 1099-DA with its qualified-opportunity-fund box checked reconciles as an ordinary sale, and any gain deferred into the fund, which that sale must recognize, never reaches the return. AA60 follows it directly: AA59 makes a CA or NY 1099 state amount block a run that computes that state's return, instead of vanishing, so until AA60 such a return cannot complete. AA62 closes the other silent crypto gap: a taxpayer who identified lots at a broker gets FIFO lots, and a TY2025 form, reporting no basis for noncovered units, shows no difference. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. AA58 lands before TY2026 filing opens: a return filed before the April 2027 rate publishes would otherwise price that quarter at the last cached rate. So does AA64: the 2026 Form W-2 reports qualified overtime in box 12 code TT, where no `/tax-parse` row looks. AA65 and AA66 close dropped-form holes open today: a 1099-G's unemployment compensation and a W-2G's winnings and federal withholding have no ledger category, so the gate cannot see them go missing. |
 | **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | The quarters are the one item no gate catches: Form 2210 carries the last cached rate forward with only a note until AA58 lands, so this row is their reminder. |
 | **Next** | **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13: its definition edit and the test change it forces cannot land apart, and the season-open sitting would leave the auditor a table short through the TY2026 season. | Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, and both items touch the export Y2 shipped. |
 | **Then** | **AA43**, then **AA42** with **AA53** — NY/NC estimated-payment schedules in the mid-year projection, then its AMT and IRMAA exposure. | Both are absent from the current engine. AA43 is the smaller and extends the CA schedule; AA42's IRMAA layer reuses the Roth premium computation, whose tier rule AA53 fixes, so that fix lands with it or before. |
@@ -160,11 +160,12 @@ AA57 finds why.
   18 decimal places, which an import or broker may not carry); and a proceeds
   gap of a cent or so that no recorded fee explains. Two more block every way:
   a filled box the engine does not model (ordinary, accrued market discount,
-  wash sale, loss not allowed, and on a 1099-DA either proceeds box in 3a, QOF,
+  wash sale, loss not allowed, and on a 1099-DA box 3a's net proceeds, QOF,
   customer-provided acquisition information, optional aggregate method,
   first-sale NFT proceeds and CUSIP boxes AA59 added) refuses the WHOLE
   import, though the doc says to report that one transaction manually and no
-  input can mark it so; and a sale the import dates January 1
+  input can mark it so, and an acknowledged `digital_asset_option_exercise`
+  leaves that sale in the import, priced without its premium; and a sale the import dates January 1
   that the broker dates December 31 in UTC fails both years, because a date a
   day off matches only within one year. Each needs its own evidenced
   treatment, not a tolerance. Until then the import blocks instead of
@@ -287,13 +288,23 @@ AA57 finds why.
   `/tax-verify` names box 17 as IT-201 line 72's source. AA59 records a CA or
   NY 1099 amount as `unrouted_state_withholding`, which blocks the tie-out gate
   instead of losing the payment, so until this lands a run that computes CA's
-  or NY's return, with that state's tax withheld on a 1099-R, a 1099-DA or any
-  other 1099, cannot complete, its federal return included; a state whose
-  return the run does not compute is only an advisory. Read Form
-  540's and IT-201's withholding-line instructions first, IT-203's line 62
-  too, then decide whether each state's category widens to its 1099 boxes,
-  which changes what `ca_withholding_box17` holds, or gains a field of its
-  own. Found by AA59's design.
+  or NY's return, with that state's tax withheld on a 1099-R, a 1099-DA, a
+  W-2G or any other 1099, cannot complete, its federal return included; a state whose
+  return the run does not compute is only an advisory. NYC and Yonkers tax
+  withheld on a 1099-R or W-2G (box 17) blocks the same way: IT-201 lines
+  72-74 (IT-203 lines 62-64) take New York, NYC and Yonkers tax withheld from
+  IT-2, IT-1099-R, Form 1099-G and Form W-2G. CA has a second gap with no row
+  at all: Form 540 line 73 takes withholding on Forms 592-B and 593, which
+  `/tax-parse` never names. Read Form 540's and IT-201's withholding-line instructions
+  first, IT-203's lines 62-64 too, then decide whether each state's category
+  widens to its 1099 boxes, which changes what `ca_withholding_box17` holds,
+  or gains a field of its own. Give each `other_state_withholding` record the
+  state it holds, too, and fail the gate when that state has its own
+  withholding category and this run computes its return: today nothing checks
+  the parser's choice, so a CA, NY or NC amount recorded there passes as an
+  advisory and leaves that return short. A generic-estimate state's W-2 box 17
+  sits there by design and must still pass.
+  Found by AA59's design and its fourth review.
 
 - **AA61 (P2, S): Review the TY2023-2024 Form 1099-B boxes the import never names.**
   Crypto reported on Form 1099-B for TY2023-2024 reconciles through the same
@@ -318,6 +329,74 @@ AA57 finds why.
   (AA59). Add a `tax-setup` question and a capability rule that blocks a
   specific identification at any broker, and let box 8 through once the
   taxpayer answers FIFO. Found by AA59's review.
+
+- **AA63 (P2, S): Say when a local tax is withheld that no return here claims.**
+  `/tax-parse` records local tax withheld only for NYC and Yonkers, whose
+  amounts IT-201 and IT-203 settle (a 1099-R's or W-2G's blocks until AA60).
+  Local tax withheld anywhere else, such as an Ohio or Pennsylvania
+  municipality's on a W-2 box 19, 1099-R box 17 or W-2G box 17, reaches
+  Schedule A line 5a (AA59) but no ledger category, so nothing tells the
+  taxpayer that the locality may expect a return of its own or owe a refund,
+  and the toolkit computes no local return. Add an advisory category like
+  `other_state_withholding`, or a capability rule that names the local
+  return, deciding between them by whether the payment is ever claimed
+  without one. Found while fixing AA59's Schedule A recipe.
+
+- **AA64 (P1, S): Read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC.**
+  The 2026 Form W-2 reports cash tips reported to the employer in box 12 code
+  TP, qualified overtime compensation in code TT and employer Trump-account
+  contributions in code TA, and adds box 14b for the Treasury tipped
+  occupation code, box 14 becoming 14a (2026 Instructions for Forms W-2 and
+  W-3, What's New). The December 2026 Form 1099-NEC renumbers box 1 as 1a,
+  still the total of nonemployee compensation, with 1b (cash tips) and 1d
+  (overtime compensation) amounts "included in box 1a" and 1c an occupation
+  code; the December 2026 Form 1099-MISC adds 13a (cash tips) and 14 (overtime
+  compensation), each "included in box 3", and 13b, a code (Instructions for
+  Forms 1099-MISC and 1099-NEC, Rev. December 2026). Summing 1a with 1b or 1d
+  counts them twice. `/tax-parse`'s `qualified_tips`
+  and `qualified_overtime_premium` rows still send the agent to box 7, box 14
+  or an employer statement, and its `self_employment_gross` row to 1099-NEC
+  box 1, so a TY2026 parse can miss code TT or box 1d and leave the Schedule
+  1-A overtime deduction at zero. Re-read those rows against the 2026
+  instructions, deciding which box feeds which category and what each
+  occupation code gates, before TY2026 filing opens. Found while fixing AA59's
+  Schedule A recipe, widened by its fourth review.
+
+- **AA65 (P1, S): Record Form 1099-G's unemployment and family leave benefits.**
+  `/tax-parse` gives Form 1099-G's box 2 its own category
+  (`state_refund_1099g`), and its box 4 and its state tax withheld go through
+  the generic withholding rows, but no ledger category or tie-out target holds
+  box 1, unemployment compensation, which Schedule 1 line 7 taxes. A 1099-G parsed and then dropped from the
+  return therefore passes the gate: the dropped-1099 case the tie-out exists
+  to catch, and the one a CP2000 notice follows. The December 2026 revision
+  adds box 10, family leave benefits, and so renumbers the state boxes 10a, 10b
+  and 11 as 11a, 11b and 12. Read both years' instructions for each box's
+  line, add the categories and their targets, and say which box a state return
+  reads too. Found by AA59's fourth review.
+
+- **AA66 (P1, S): Give Form W-2G a parse route.**
+  Gambling is a MANUAL capability rule, so a return with a W-2G computes, but
+  `/tax-parse` has no W-2G extraction list and no category for box 1
+  (winnings, Schedule 1 line 8b) or box 4 (federal income tax withheld, which
+  Form 1040 line 25c takes from "other forms", not the 1099 line 25b). AA59
+  routes its state and local boxes (15 and 17) only. A W-2G parsed and then
+  dropped passes the gate with its winnings and its withholding gone, the
+  first under-stating tax and the second over-stating the balance due. Add the
+  extraction list, both categories and their targets. Found by AA59's fifth
+  review.
+
+- **AA67 (P1, S): Map Form 1099-MISC's boxes by the current form.**
+  `/tax-parse`'s `self_employment_gross` row reads "1099-MISC boxes 3-7", the
+  layout from before nonemployee compensation moved to Form 1099-NEC. On the
+  Rev. April 2025 Form 1099-MISC, box 4 is federal income tax withheld, box 7
+  is the direct-sales checkbox and box 3 is other income, which generally goes
+  to Schedule 1 rather than Schedule C. Recorded as the row says, the
+  withholding joins gross receipts, and the at-least tie then pushes Schedule
+  C up to meet it, over-stating income and self-employment tax. Re-read each
+  box against the year's instructions and give each its category: box 4 to
+  `federal_withholding_1099`, box 3 to other income unless the taxpayer's
+  trade or business earned it, boxes 5 and 6 to Schedule C. Found by AA59's
+  sixth review.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 

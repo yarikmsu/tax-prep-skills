@@ -105,7 +105,7 @@ from a form's absence in the import. `broker_reporting` sits beside
      "proceeds": 150.00, "cost_basis": null, "basis_reported_to_irs": false,
      "term": null, "ordinary": false, "accrued_market_discount": null,
      "wash_sale_loss_disallowed": null, "loss_not_allowed": false,
-     "net_proceeds": false, "gross_proceeds": false, "qof": false,
+     "net_proceeds": false, "qof": false,
      "customer_acquisition_info": false,
      "optional_method": null, "primary_sale_proceeds": null, "cusip": null}
   ],
@@ -212,6 +212,16 @@ BLOCKED heading, and tie-out fails it independently of the dollars — including
 for a summary from before AA41, whose only mark of crypto is a non-zero
 `disposals`, and for merged digital-asset rows with no summary at all.
 
+Merged crypto also requires an explicit boolean answer to
+`flags.has_digital_asset_option_exercise`. The tie-out API's omitted answer and
+the CLI's absent profile both leave it unanswered and fail the gate. Ask about
+assets sold, exchanged or spent, including lots an option exercise acquired in
+an earlier year: [TY2025 Pub. 550, Options](https://www.irs.gov/pub/irs-prior/p550--2025.pdf)
+adjusts acquired basis for the option premium, and the
+[IRS digital-asset guidance](https://www.irs.gov/filing/digital-assets) treats
+exchanges and spending as dispositions too. A yes blocks at the capability gate
+unless explicitly acknowledged; tie-out verifies the answer exists.
+
 `/tax-parse` ledgers a 1099-DA in `documents/` with its box 1f total as
 `capital_proceeds`. The tie sums the form-backed digital-asset rows with the
 1099-B rows and leaves out the no-form rows of lines 3 and 10, so it compares
@@ -255,8 +265,7 @@ with no key cannot change the row.
 | `accrued_market_discount` | 1h | 1h | Accrued market discount for covered digital assets that are debt instruments; a nonzero amount refuses the import. |
 | `wash_sale_loss_disallowed` | 1i | 1i | Disallowed wash-sale loss for tokenized stock or securities; a nonzero amount refuses the import. |
 | `loss_not_allowed` | 5 | 5 | Loss not allowed based on box 1f; checked, refuses the import. |
-| `net_proceeds` | 3a | 3a | "Net proceeds" checked: box 1f was reduced by option premiums, which the import does not price; checked, refuses the import. Box 3a is completed only "if the digital assets were sold because of the exercise of an option" (Instructions for Form 1099-DA, Information Required on the Form 1099-DA), so a blank 3a is false in both keys. |
-| `gross_proceeds` | 3a | 3a | "Gross proceeds" checked: box 1f was not adjusted for the premium of the option whose exercise caused the sale, which then changes the amount realized; checked, refuses the import. Form 1099-B's box 6 says "Otherwise, check the first box" on every form; the 1099-DA's limits box 3a to such a sale. |
+| `net_proceeds` | 3a | 3a | "Net proceeds" checked: box 1f was reduced by option premiums, which the import does not price; checked, refuses the import, and a blank 3a is false. "Gross proceeds" is no key: box 1f's instructions check it on every other sale ("If you reduce gross proceeds by option premiums, check 'Net proceeds' in box 3a. Otherwise, check 'Gross proceeds' in box 3a"), and box 3a is not among the boxes "completed only if applicable", so on its own it says nothing about an option. An option exercise affecting a disposal (sale, exchange or spending), through its proceeds or the lot's basis, blocks at the capability gate instead (`digital_asset_option_exercise`), whichever box shows. |
 | `qof` | 3b | 3b | Disposition of an interest in a qualified opportunity fund; checked, refuses the import, since gain previously deferred into the fund needs its own code-Y row and Form 8997. |
 | `customer_acquisition_info` | 8 | 8 | The broker took customer-provided acquisition information into account when identifying the units sold (§1.6045-1(d)(2)(ii)(B)(4)). It can date a purchase for the broker's FIFO or, under (B)(2), support the customer's own specific identification, and the form cannot say which; for transferred-in units the broker reports no basis or date, so no difference would show. Checked, refuses the import until AA62 asks the taxpayer. |
 | `optional_method` | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional aggregate method; either box checked refuses the import, since an aggregate is not one disposal's figures (AA47). |

@@ -277,8 +277,11 @@ Prove every parsed document landed on the return — the CP2000 killer:
      sum that doesn't match the return (the classic dropped-1099), or a New
      York City or Yonkers line (IT-201 47a, 55, 56) the profile flags and
      nobody computed, or one written without its function's `method` beside
-     it — compute it, write both, and recompute line 58. Fix the
-     aggregation (or the ledger, if the parse was wrong) and re-run. NEVER
+     it — compute it, write both, and recompute line 58; or an amount in a
+     blocking category (`unrouted_state_withholding`, `nft_first_sale_proceeds`)
+     that no line here holds, which nothing clears: keep its record and prepare
+     the return outside this toolkit, never re-file it under another category.
+     Otherwise fix the aggregation (or the ledger, if the parse was wrong) and re-run. NEVER
      proceed to `/tax-generate` past a failed tie-out, and never "fix" a
      mismatch by editing the ledger to match the return without re-checking
      the source document.

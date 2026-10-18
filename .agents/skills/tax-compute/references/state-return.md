@@ -193,8 +193,10 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    explicitly states "no state income tax return exists or is required for
    {state}" rather than omitting state coverage without explanation.
 2. **Schedule A sales-tax input — FL ONLY (`state.code == "FL"`):** the SALT
-   line-5a election for a no-income-tax state is general SALES tax (Box 17
-   is empty — there is no income tax to elect).
+   line-5a election for a no-income-tax state is general SALES tax, since FL
+   levies no income tax to elect. Another state's withholding, estimates or
+   prior-year balance still go in `state_local_income_taxes`, and line 5a
+   takes the larger of the two.
    **Compute the worksheet income BEFORE selecting TABLE_AMOUNT (round-4
    finding C).** The IRS Optional State Sales Tax Tables are NOT keyed on
    AGI alone — the Schedule A instructions' Optional Sales Tax Tables

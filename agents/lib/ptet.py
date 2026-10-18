@@ -565,6 +565,11 @@ def analyze(
     anchored benefit allocated pro-rata to each state's modeled income reduction
     (a marginal-stacking approximation; the aggregate is exact).
 
+    `other_salt` is deductible personal SALT remaining in the modeled year,
+    after personal payments actually displaced by the election. The caller
+    must establish credit usability and payment timing; attributable K-1 tax
+    or the face amount of the PTET credit is not a payment comparison.
+
     QBI clawback: for §199A-eligible pass-through income (states in
     `qbi_eligible_states`), the entity-level PTET deduction reduces the business's
     QBI, so the owner loses ~`qbi_rate × PTET` of QBI deduction. We can't recompute
@@ -827,10 +832,15 @@ def analyze(
             f"ASSUMPTION: you itemize and your ${salt_cap:,.0f} SALT cap "
             f"({_salt_cap_label(tax_year)}{cap_qualifier}) is already fully "
             f"consumed by other "
-            f"state/local taxes (property tax, W-2 state withholding) — so the full "
+            f"state/local taxes (property tax, and the state and local income tax "
+            f"left on Schedule A once the entity elects) — so the full "
             f"PTET is incremental federal deduction. With the larger OBBBA cap this "
-            f"is LESS likely to hold; pass --other-salt <your property + state income "
-            f"tax> to derive the unused headroom, or --salt-room directly. (If you "
+            f"is LESS likely to hold; pass --other-salt <deductible personal SALT "
+            f"remaining in the modeled year after personal payments actually displaced "
+            f"by the election>. Confirm credit usability and payment timing; do not "
+            f"subtract attributable K-1 tax or already-paid amounts merely because "
+            f"a refund or credit is expected. This derives the unused headroom; "
+            f"--salt-room sets it directly. (If you "
             f"take the standard deduction, pass --standard-deduction.)")
     else:
         notes.append(
@@ -845,6 +855,14 @@ def analyze(
                 "$100 deduction-only probe; AGI and its credit phaseouts stay "
                 "fixed. Near a taxable-income breakpoint the rate can differ — pass "
                 "an explicit --marginal-fed for a precise offset.")
+    if lost_salt_total > 0:
+        notes.append(
+            "SALT-OFFSET CONSERVATIVE FLOOR: the offset assumes displaced personal "
+            "payments equal the full entity PTET. If credit usability or payment "
+            "timing means fewer personal payments are displaced in the modeled "
+            "year, the offset may be too large and this approximation can "
+            "UNDERSTATE federal savings. Recompute the full payment and deduction "
+            "comparison for a precise offset. Other caveats still apply.")
     if itemizes and salt.phasedown_applies(tax_year):
         # This note used to say the phasedown was "not modeled here" and quote
         # TY2025's $500,000 threshold for every year in the range. It is modeled
@@ -1101,9 +1119,12 @@ def _main(argv: list) -> int:
                         "settle it — it carries the year's statutory amount, "
                         "and (B) reduces that per return.")
     p.add_argument("--other-salt", type=float, default=None,
-                   help="Your other state/local taxes already counting against the "
-                        "SALT cap (property + state income/wage tax) — headroom is "
-                        "derived as cap − this. --salt-room takes precedence.")
+                   help="Deductible personal SALT remaining in the modeled year "
+                        "after personal payments actually displaced by the election. "
+                        "Confirm credit usability and payment timing; do not subtract "
+                        "attributable K-1 tax or already-paid amounts merely because "
+                        "a refund or credit is expected. Headroom is cap − this. --salt-room "
+                        "takes precedence.")
     p.add_argument("--marginal-fed", type=float, default=None,
                    help="Federal marginal rate for the forgone-SALT offset "
                         "(auto-estimated from result.json if omitted)")

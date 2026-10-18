@@ -2096,8 +2096,9 @@ def compute_schedule_a(
             rather than degrading (AGENTS.md §2).
         medical_expenses: total unreimbursed — the 7.5% AGI floor is applied
             HERE, pass the gross figure.
-        state_local_income_taxes: W-2 box 17 + CA SDI + estimated state
-            payments made during the year + prior-year state balance paid.
+        state_local_income_taxes: line 5a's state AND local income taxes,
+            assembled by /tax-compute's recipe in references/income-and-agi.md,
+            which owns the list.
         state_local_sales_taxes: the ELECTIVE alternative — the greater of
             income vs sales taxes is used (both can't be deducted).
         mortgage_interest/points: 1098 box 1 / deductible points.

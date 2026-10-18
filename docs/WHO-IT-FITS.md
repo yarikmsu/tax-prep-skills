@@ -32,6 +32,12 @@ rental property, is most of it everywhere.
   by someone who does not live there, whose Yonkers tax (Form Y-203) is not
   modeled on a joint return. Accepting a limitation at the gate clears none of
   them.
+- **A California or New York return with that state's tax withheld on a 1099
+  or W-2G is refused at the tie-out**, a pension's 1099-R among them, and so is
+  New York City or Yonkers tax withheld on a 1099-R or W-2G. The toolkit does
+  not route that withholding to Form 540 or IT-201 yet, and nothing waives it:
+  the whole return, federal included, has to be prepared elsewhere until it
+  does.
 
 ## The blocks, measured
 
@@ -92,6 +98,11 @@ commutes is one blocked return, so this undercounts joint returns.
   the tables above is cut by it.
 - **A foreign fund's distribution or sale** (`pfic_taxable_event`), which is
   computed once you accept it (above).
+- **A digital asset sold, exchanged or spent because an option was exercised,
+  or from a lot one bought**
+  (`digital_asset_option_exercise`). The option's premium moves the sale's
+  amount realized or the purchase's basis, and the crypto import prices
+  neither.
 - **Out-of-state income that is not a commute.** This is the same block as
   commuting, and the table's commuting figure is only its floor. It also covers
   a K-1 from a partnership doing business in other states, a sale of property

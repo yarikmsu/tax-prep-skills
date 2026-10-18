@@ -55,9 +55,16 @@ named form unless acknowledged, an unknown id hard-errors, and every rule's flag
 exist in `taxpayer_profile_template.json` AND be asked by the `tax-setup` interview.
 
 **Blocking** (exit 2, clearable only by an explicit `acknowledged_limitations` entry
-with the decision recorded in `answers.md`): rental Schedule E, Form 8962, part-year
-residency, residency in a second state, income sourced to another state, kiddie tax,
-Schedule H, and PFIC with a taxable event. New York City's full-year resident tax is
+with the decision recorded in `answers.md`): rental Schedule E (`rental_income`), Form
+8962 (`marketplace_insurance`), part-year residency (`part_year_residency`), a move
+abroad (`move_abroad`), residency in a US territory (`territory_resident`), residency
+in a second state (`statutory_residency_second_state`), income sourced to another state
+(`nonresident_source_income`), Schedule H (`household_employees`), kiddie tax
+(`kiddie_tax`), PFIC with a taxable event (`pfic_taxable_event`), and a digital asset
+sold, exchanged or spent because an option was exercised, or from a lot one bought
+(`digital_asset_option_exercise`). NC's
+and WA's own rules (`nc_*`, `wa_*`) block only on those states' returns, and a test
+holds this list to the registry. New York City's full-year resident tax is
 computed, not blocked; a City resident for only part of the year is refused at compute
 time.
 

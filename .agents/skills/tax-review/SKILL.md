@@ -329,9 +329,12 @@ rather than telling the taxpayer a number first.
    record `_PTET: not applicable (no pass-through income)._` and proceed to Step 4.
 2. Else, for each entity state in `flags.k1_states` that is CA/NY/NJ, ask the
    taxpayer for the qualifying pass-through income. When the return itemized,
-   also get their OTHER state and local taxes — the figure `/tax-ptet` step 3
-   asks for, which leaves out the state tax on the pass-through income itself —
-   and pass it as `--other-salt`, so the engine derives the headroom against
+   also get their OTHER state and local taxes using `/tax-ptet` step 3,
+   after subtracting only personal payments actually displaced in the
+   modeled year. Confirm credit usability and payment timing; attributing tax to
+   the K-1 is not a payment comparison. If that displacement is unknown, stop
+   the PTET estimate and obtain it before quoting savings. Pass the remaining
+   SALT as `--other-salt`, so the engine derives the headroom against
    the cap it prices. Then run:
    ```bash
    sh agents/lib/run.sh -m agents.lib.ptet --year {year} \
@@ -343,9 +346,10 @@ rather than telling the taxpayer a number first.
    return with no `schedule_a` section took the standard deduction: pass
    `--standard-deduction` then, because a missing section alone is not read
    as one.
-   Never pass `schedule_a.salt_before_cap` as `--other-salt`: it includes the
-   state tax on the pass-through income whenever the entity has not elected,
-   so the headroom comes out too small and the benefit too large. And never
+   Never pass `schedule_a.salt_before_cap` as `--other-salt` without reconciling
+   it to the election's actual payment displacement: retaining displaced
+   payments shrinks headroom and over-states savings. Already-paid withholding
+   or estimates are not removed just because a refund or credit is expected. And never
    ask whether the cap is already used up, to pass `--salt-room`: the answer
    depends on a cap that moves every year and with MAGI, and `--salt-room`
    overrides the cap the engine priced.

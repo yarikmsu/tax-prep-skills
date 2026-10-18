@@ -302,7 +302,10 @@ Update `result.json` from the main session only — never from a delegated sub-t
    business, in which case route it to Schedule C + Schedule SE (flag this; v1 does not
    auto-classify).
 6. **Set `taxpayer_profile.json flags.has_crypto = true`** (so the digital-asset
-   attestation carries through). **AND, whenever any crypto capital rows were added (i.e.
+   attestation carries through), and if `flags.has_digital_asset_option_exercise` is
+   null, ask now whether any digital asset was sold, exchanged or spent this year because an option was
+   exercised, or from a lot an option's exercise bought in any year, and set it true
+   or false: the capability gate blocks until it is. **AND, whenever any crypto capital rows were added (i.e.
    `crypto_summary.disposals > 0` or any Form 8949 row exists), also set
    `flags.has_capital_gains = true`.** `/tax-compute` gates the Schedule D / Form 8949
    computation on `has_capital_gains`, NOT on `has_crypto` — a taxpayer whose *only* capital

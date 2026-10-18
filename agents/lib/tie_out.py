@@ -136,8 +136,10 @@ _INFORMATIONAL_ADVISORIES = {
     "other_state_withholding": (
         "state income tax withheld for a state whose return this run does not "
         "compute — claim it on that state's return, filed separately, or the "
-        "payment is never refunded or credited; it also counts toward Schedule A "
-        "line 5a, where an itemizer deducts it"),
+        "payment is never refunded or credited. An amount for a state with its own "
+        "withholding category whose return this run computes never belongs here. "
+        "Schedule A line 5a counts it once, from its own form, where an itemizer "
+        "deducts it"),
     "state_refund_1099g": (
         "taxable on Schedule 1 line 1 if the prior year itemized and got a "
         "tax benefit from the deduction — verify against the prior-year "
@@ -253,10 +255,11 @@ _AT_LEAST_CATEGORIES = {"self_employment_gross"}
 # Named apart from the per-state `state_withholding_*` categories above.
 _BLOCKING_CATEGORIES = {
     "unrouted_state_withholding": (
-        "1099 state income tax withheld for a state whose return this run "
-        "computes but whose 1099 withholding it does not route yet, so the payment "
-        "would never reach that return. Nothing waives this: keep the record, since "
-        "deleting it or moving the amount into a W-2 box 17 category hides the "
+        "state income tax withheld on a 1099 or W-2G, or New York City or Yonkers "
+        "tax withheld on one, for a return this run computes but whose 1099 "
+        "withholding it does not route yet, so the payment would never reach that "
+        "return. Nothing waives this: keep the record, since deleting it or moving "
+        "the amount into a W-2 category or other_state_withholding hides the "
         "payment. Until the route exists the return, federal included, cannot "
         "complete here, so prepare it outside this toolkit"),
     "nft_first_sale_proceeds": (
@@ -1489,7 +1492,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              pfic_multiyear_disposition_ids: "set | None" = None,
              pfic_recompute_failures: "list | None" = None,
              eic_screening: "bool | None" = False,
-             profile_flags: "dict | None" = None) -> TieOutReport:
+             profile_flags: "dict | None" = None,
+             option_exercise_answer: "bool | None" = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
     source files that exist under documents/."""
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) \
@@ -1544,6 +1548,16 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         if summary.get("reporting_complete") is not True or summary.get("reporting_unresolved") != []:
             missing_targets.append("crypto Form 8949 reporting: reconcile broker forms and route every "
                                    "row to its box before completion")
+        # AA59: the import no longer refuses box 3a's "Gross", so the option
+        # question is all that catches a sale an option's exercise caused. The
+        # capability gate asks it only once has_crypto is set, in skill prose;
+        # merged crypto rows are the data, as a taxable PFIC fund is for its flag.
+        if not isinstance(option_exercise_answer, bool):
+            missing_targets.append("crypto rows are merged but flags.has_digital_asset_option_exercise "
+                                   "is unanswered: ask whether any digital asset was sold, exchanged or spent this year "
+                                   "because an option was exercised, or from a lot one bought in any "
+                                   "year, set it true or false, and re-run the capability gate, which "
+                                   "blocks a yes")
         above = _crypto_proceeds_above_forms(result)
         if above:
             advisories.append(f"crypto proceeds exceed their broker forms by {above:,.2f} — Form 8949 "
@@ -2309,6 +2323,7 @@ def _main(argv: list) -> int:
         pfic_recompute_failures: list = []
         eic_screening: "bool | None" = None
         profile_flags: "dict | None" = None
+        option_exercise_answer: "bool | None" = None
         profile_path = (workspace / "taxpayer_profile.json").resolve()
         if profile_path.exists():
             prof = _read_json(_validate_subpath(profile_path, workspace),
@@ -2323,6 +2338,10 @@ def _main(argv: list) -> int:
             _eic_flag = flags.get("may_qualify_for_eic")
             eic_screening = _eic_flag if isinstance(_eic_flag, bool) else None
             profile_flags = _flags_for_city_and_yonkers(prof, flags)
+            # Absent, null or non-bool are all unanswered (capabilities refuses
+            # a non-bool by name at Step 0.7).
+            _opt = flags.get("has_digital_asset_option_exercise")
+            option_exercise_answer = _opt if isinstance(_opt, bool) else None
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None
@@ -2366,7 +2385,8 @@ def _main(argv: list) -> int:
                           pfic_multiyear_disposition_ids=pfic_multiyear_disposition_ids,
                           pfic_recompute_failures=pfic_recompute_failures,
                           eic_screening=eic_screening,
-                          profile_flags=profile_flags)
+                          profile_flags=profile_flags,
+                          option_exercise_answer=option_exercise_answer)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)

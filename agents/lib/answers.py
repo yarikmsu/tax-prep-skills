@@ -121,7 +121,6 @@ class _Inputs:
     workspace: Path
     profile: dict
     result: dict
-    tax_law: dict
 
     @property
     def prior_year(self) -> dict:
@@ -180,24 +179,6 @@ def _charitable_carryovers_unresolved(inputs: _Inputs) -> bool:
     return False
 
 
-def _state_has_an_income_tax(inputs: _Inputs) -> bool:
-    """A `type: "none"` regime is a POSITIVE declaration (AGENTS.md §4).
-
-    Read from the tax-law cache rather than from `result.json`: this runs at
-    `tax-compute` Step 0, where `result.json` is still the copied template and
-    every figure in it is zero. A trigger reading the run's own OUTPUT reports
-    nothing on the first pass — the pass the contract exists for.
-    """
-    if _get_path(inputs.tax_law, "state.type") not in (None, "none"):
-        return True
-    # A filer who MOVED to a no-income-tax state can still have paid the old
-    # state's prior-year balance during this year, and it is deductible. Reading
-    # the current regime alone dropped the question for exactly that taxpayer,
-    # which UNDER-states the deduction and so OVER-states the tax — the
-    # direction AGENTS.md §4 calls a hard error.
-    return bool(inputs.prior_year.get("state_residency_changes"))
-
-
 def _filing_separately(inputs: _Inputs) -> bool:
     status = inputs.profile.get("filing_status")
     return isinstance(status, str) and status.strip().upper() in ("MFS",
@@ -250,15 +231,23 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
         when=_capital_loss_split_unknown,
     ),
     RequiredAnswer(
-        id="state_taxes_paid_outside_withholding",
+        # The former state-only id cannot answer the added local-payment
+        # questions. A fresh id re-asks them on a resumed workspace (AA59).
+        id="state_local_taxes_paid_outside_withholding",
         kind=FACT,
-        question="State estimated payments made DURING this tax year, and any "
-                 "prior-year state balance paid during it. (Schedule A line 5a "
-                 "— neither is on a W-2.)",
+        question="State and local estimated payments made in good faith "
+                 "DURING this tax year, any prior-year overpayment credited to "
+                 "them included, "
+                 "and any prior-year state or local balance paid during it, "
+                 "without its penalties or interest. Filing separately, only "
+                 "your own share. (Schedule A line 5a — neither is on a W-2.)",
         asked_by="tax-compute income-and-agi.md",
-        required_when="the state regime has an income tax; the two figures are "
-                      "inputs to compute_schedule_a and appear on no document",
-        when=_state_has_an_income_tax,
+        required_when="always — a resident of a state with no income tax "
+                      "can still pay a former or another state's tax, and no "
+                      "profile field records last year's state; the two "
+                      "figures are inputs to compute_schedule_a and appear on "
+                      "no document",
+        when=_always,
     ),
     RequiredAnswer(
         id="charitable_gifts",
@@ -461,21 +450,14 @@ def load_answers(workspace: Path) -> AnswersFile:
 
 
 def _read_inputs(workspace: Path) -> _Inputs:
-    """The workspace's files. The tax-law cache is the one for the PROFILE's
-    year, never merely the newest on disk: a workspace carrying both
-    `tax_law_2025.json` and `tax_law_2026.json` would otherwise read the state
-    regime off the wrong return, and a mover's two caches disagree about exactly
-    the question that trigger asks. When the profile names no year, or names one
-    with no cache, the regime is undecidable here — Step 0.5's freshness gate
-    owns that failure and blocks on NOT_FOUND, so this does not guess at it."""
-    profile = _read_json(workspace / "taxpayer_profile.json")
-    year = profile.get("tax_year")
-    cache = workspace / f"tax_law_{year}.json" if isinstance(year, (int, str)) else None
+    """The workspace's files. No predicate reads the tax-law cache: the one
+    that did, asking for state payments only where the resident state taxes
+    income, read a generic state's untyped cache as no tax and missed a
+    mover's old state, so that answer is now owed by every workspace (AA59)."""
     return _Inputs(
         workspace=workspace,
-        profile=profile,
+        profile=_read_json(workspace / "taxpayer_profile.json"),
         result=_read_json(workspace / "result.json"),
-        tax_law=_read_json(cache) if cache is not None else {},
     )
 
 
