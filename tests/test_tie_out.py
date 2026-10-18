@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import tie_out as T  # noqa: E402
+from tests.skill_text import listed_boxes  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -549,6 +550,234 @@ class TestNewYorkWithholding:
                     node = node[seg]
 
 
+class TestUnroutedStateWithholding:
+    """AA59: a 1099 state amount for CA or NY, whose returns this toolkit
+    computes but whose 1099 withholding it does not route yet, blocks the
+    gate. Dropped instead, it is a payment the return never claims, which
+    over-states the balance due."""
+
+    FILES = ["documents/W2_Acme.pdf", "documents/1099DA.pdf", "documents/1099R.pdf"]
+
+    def _recs(self, amount, category="unrouted_state_withholding", other=None):
+        records = [_record(), _record(
+            doc_id="da-exchange", file="documents/1099DA.pdf", form_type="1099-DA",
+            payer="Exchange", key_boxes={category: amount})]
+        if other is not None:
+            records.append(_record(doc_id="r-pension", file="documents/1099R.pdf", form_type="1099-R",
+                                   payer="Pension", key_boxes={category: other}))
+        return _ledger(*records)
+
+    def _target(self, report, category="unrouted_state_withholding"):
+        (target,) = [t for t in report.missing_result_targets if t.startswith(category)]
+        return target
+
+    def test_an_amount_fails_the_gate_names_its_form_and_says_what_to_do(self):
+        report = T.evaluate(self._recs(125.0), _result(), self.FILES[:2])
+        assert report.failed
+        target = self._target(report)
+        assert "da-exchange" in target and "Nothing waives this" in target
+        # Preparing only the state return elsewhere clears nothing here.
+        assert "federal included, cannot complete here" in target
+        # Each way round the block that loses the payment is named, the
+        # advisory category among them: nothing checks which state it holds.
+        assert "a W-2 category or other_state_withholding hides the payment" in target
+        assert "state income tax withheld on a 1099 or W-2G" in target
+        assert "New York City or Yonkers tax withheld" in target
+
+    def test_only_the_forms_carrying_an_amount_are_named(self):
+        report = T.evaluate(self._recs(125.0, other=0.0), _result(), self.FILES)
+        assert "r-pension" not in self._target(report)
+
+    def test_it_is_never_tied_or_demoted_to_a_warning(self):
+        """No result field can hold it, so a sum check could only compare it
+        against a section that does not exist."""
+        report = T.evaluate(self._recs(125.0), _result(), self.FILES[:2])
+        assert all(c.category != "unrouted_state_withholding" for c in report.sum_checks)
+        assert "unrouted_state_withholding" not in report.unverifiable
+
+    def test_a_zero_amount_blocks_nothing(self):
+        # The 1099-DA owes the option answer whatever its boxes hold (AA59).
+        assert not T.evaluate(self._recs(0.0), _result(), self.FILES[:2],
+                              option_exercise_answer=False).failed
+
+    def test_first_sale_nft_proceeds_block_too(self):
+        """Box 11c's proceeds are kept out of 1f, so `capital_proceeds` never
+        sees them, and a form that never reaches broker_reporting would
+        lose them."""
+        report = T.evaluate(self._recs(900.0, "nft_first_sale_proceeds"), _result(), self.FILES[:2])
+        target = self._target(report, "nft_first_sale_proceeds")
+        assert report.failed and "da-exchange" in target and "Nothing waives this" in target
+
+    def test_another_states_withholding_is_an_advisory_not_a_block(self):
+        """A state whose return this run does not compute is claimed on a
+        return filed elsewhere: blocking the federal return over it is a block
+        with no way through, and dropping it silently loses the reminder."""
+        report = T.evaluate(self._recs(300.0, "other_state_withholding"), _result(), self.FILES[:2],
+                            option_exercise_answer=False)
+        assert not report.failed
+        (advisory,) = [a for a in report.advisories if a.startswith("other_state_withholding")]
+        # The amount is on this return too, for an itemizer, once.
+        assert "Schedule A line 5a counts it once, from its own form" in advisory
+        # By category AND computed return: a Texas resident's CA 1099 belongs
+        # here, as does a generic-estimate state's W-2 box 17.
+        assert ("An amount for a state with its own withholding category whose return "
+                "this run computes never belongs here") in advisory
+
+    def test_a_1099_routes_only_to_a_state_return_this_run_computes(self):
+        """A Texas resident's CA-withheld 1099 has no CA return here: blocking
+        their federal return over it would name a return that does not exist."""
+        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
+        for category in ("state_withholding_nc", "unrouted_state_withholding"):
+            (row,) = [line for line in parse_md.splitlines()
+                      if "1099's state-tax-withheld box" in line and f"`{category}`" in line]
+            assert "this run computes" in row, category
+
+    def test_ptet_takes_line_5a_less_the_usable_credit(self):
+        """Tax attributable to K-1 income can differ from the usable PTET
+        credit, and a usable credit refunded next year is income then under
+        the tax benefit rule, so its timing is not savings. Both the procedure
+        and the headroom description must subtract the credit, refunded or not,
+        and an unknown credit must degrade toward savings that read low."""
+        ptet = " ".join((REPO / ".agents/skills/tax-ptet/SKILL.md").read_text(encoding="utf-8").split())
+        assert "`state_local_income_taxes` recipe" in ptet
+        assert "PTET credit this year's election makes usable**" in ptet
+        assert "less the credit this year's election makes usable" in ptet
+        assert "tax benefit rule" in ptet
+        assert "Never subtract a credit from an earlier year's election" in ptet
+        # The electing state's tax counts at the smaller of payments and the
+        # year's tax, and the credit nets against that tax: a prior-year
+        # balance or over-withholding otherwise let a refundable excess, PTET
+        # already deducted and income in full next year, through as savings.
+        assert "smaller of what was paid toward it this year and the owner's tax for the year" in ptet
+        assert "no more than that state's tax for the year" in ptet
+        assert "**Stop** when a refundable credit (NY, NJ) exceeds that state's tax" in ptet
+        assert "`PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax`" in ptet
+        assert "A nonrefundable CA credit beyond the tax carries forward instead: no stop" in ptet
+        # Payments below the credit can take the figure negative, which the
+        # analyzer refuses; two entities in one state are one credit; and the
+        # stopped state must leave the run, or its savings still print.
+        assert "flooring the result at 0" in ptet
+        # $44,000 less the $10,000 credit; the year's $20,000 tax, paid exactly,
+        # counts in full and caps nothing here.
+        assert "paid exactly, and a usable $10,000 credit leave `--other-salt 34000`" in ptet
+        assert "all of that state's entities' credits together" in ptet
+        assert "Leave that state's `--income` out of the run" in ptet
+        assert "This holds on the standard deduction too" in ptet
+        assert "when every state stops, give the stop lines and deadlines and skip the run" in ptet
+        assert "at the same marginal rate both years" in ptet
+        assert "as if the entity did not elect" in ptet
+        assert "Unknown, take this year's whole PTET as the credit" in ptet
+        assert "Do not reduce already-paid withholding" not in ptet
+        assert "less the state income tax on the step-2 qualifying income" not in ptet
+        assert "less the tax on the electing income" not in ptet
+        assert "state income/wage" not in ptet
+
+    def test_the_blocking_states_are_those_with_a_w2_category_and_no_1099_route(self):
+        """The states that block are not a list to keep by hand: each state
+        with a `state_withholding_<xx>` category is computed here, and one no
+        1099 row routes would otherwise send its 1099 withholding to the
+        advisory. Both places that name them must name exactly these."""
+        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
+        computed = {c.rsplit("_", 1)[1].upper() for c in T._ALL_CATEGORIES
+                    if c.startswith("state_withholding_")}
+        routed = {code for code in computed if any(
+            "1099's state-tax-withheld box" in line and f"`state_withholding_{code.lower()}`" in line
+            for line in parse_md.splitlines())}
+        named = " or ".join(sorted(computed - routed))
+        assert named == "CA or NY"  # the reading this test makes of today's rows
+        (row,) = [line for line in parse_md.splitlines()
+                  if "1099's state-tax-withheld box" in line and "`unrouted_state_withholding`" in line]
+        assert f"| {named} (NYC and Yonkers count as NY), and this run computes" in row, row
+        # The W-2 half of the same row lists every state with a category.
+        *head, last = sorted(computed)
+        assert f"a W-2's box 17 for a state other than {', '.join(head)} or {last} |" in row, row
+        accounts = (REPO / "docs/contributing/crypto-accounts.md").read_text(encoding="utf-8")
+        (box16,) = [line for line in accounts.splitlines() if "`unrouted_state_withholding` for" in line]
+        assert f"`unrouted_state_withholding` for {named}," in box16, box16
+
+    def test_a_w2g_routes_and_blocks_as_a_1099_does(self):
+        """A W-2G is not a 1099, so a row naming only 1099s sent an NC W-2G
+        to the advisory and left D-400 line 20a short with the gate green."""
+        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
+        rows = [line for line in parse_md.splitlines() if "1099's state-tax-withheld box" in line]
+        assert len(rows) == 2 and all("W-2G" in row.split("|")[1] for row in rows), rows
+
+    def test_a_1099_local_tax_for_nyc_or_yonkers_blocks_as_ny_does(self):
+        """IT-201 lines 72-74 take New York, NYC and Yonkers tax withheld from
+        IT-2, IT-1099-R, Form 1099-G and Form W-2G; with no route for a 1099-R's
+        or W-2G's local box, the amount captured for Schedule A would never
+        reach line 73 or 74."""
+        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
+        (row,) = [line for line in parse_md.splitlines()
+                  if "1099's state-tax-withheld box" in line and "`unrouted_state_withholding`" in line]
+        assert "a 1099-R's or W-2G's local tax withheld (box 17) for NYC or Yonkers" in row, row
+
+    def test_every_1099_state_amount_reaches_the_schedule_a_recipe(self):
+        """State income tax withheld is deductible on Schedule A line 5a
+        whichever state's return claims it."""
+        recipe = (REPO / ".agents/skills/tax-compute/references/income-and-agi.md").read_text(encoding="utf-8")
+        line = recipe[recipe.index("- `state_local_income_taxes` ="):].split("\n- ")[0]
+        assert "every 1099's state" in line and "all states" in line.split("1099")[1], line
+
+    def test_the_schedule_a_recipe_takes_every_item_of_the_line_5a_list(self):
+        """Each item of the TY2025 Schedule A instructions' line 5a list, the
+        local half of each included: the recipe once took W-2 box 17, CA SDI
+        and STATE payments alone, so a NYC resident's box 19 never reached an
+        itemized return."""
+        recipe = (REPO / ".agents/skills/tax-compute/references/income-and-agi.md").read_text(encoding="utf-8")
+        line = " ".join(recipe[recipe.index("- `state_local_income_taxes` ="):].split("\n- ")[0].split())
+        for item in ("W-2 box 17 (all states)", "counted once from its own form",
+                     "box 19 (every locality's income tax", "local tax withheld (1099-R box 17)",
+                     "a W-2G's (boxes 15 and 17)",
+                     "state's own disability fund", "unemployment fund (AK, CA, NJ, PA)",
+                     "paid family or medical leave program", "Rev. Rul. 2025-4",
+                     "State and local estimated payments", "prior-year overpayment credited",
+                     "prior-year state and local balances", "never their penalties or interest",
+                     "supplemental workers' compensation fund",
+                     "Never to a private or voluntary plan", "employer confirms the state fund",
+                     "Local Services Tax is not an income tax",
+                     "deducted on Schedule C, E or F", '"Joint state and local returns"',
+                     "made in good faith", "unless that income is interest", "(14a from TY2026)"):
+            assert item in line, item
+
+    # Each form's own face (W-2 2025 and 2026, 1099-R, and the 1099-DIV,
+    # 1099-B and 1099-DA AA59 read): the state and local tax-withheld boxes,
+    # with the boxes that say whose tax it is, and the W-2's box 14, where the
+    # recipe reads the state-fund contributions. A summary that never captured
+    # one has nothing for the recipe above to sum.
+    _WITHHELD_BOXES = {
+        "W-2": {"14", "15", "17", "19", "20"},
+        "1099-R": {"14", "15", "17", "18"},
+        "1099-DIV": {"14", "15", "16"},
+        "1099-B": {"14", "15", "16"},
+        "1099-DA": {"14", "15", "16"},
+    }
+
+    @pytest.mark.parametrize("form", sorted(_WITHHELD_BOXES))
+    def test_tax_parse_captures_each_forms_withheld_boxes(self, form):
+        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
+        listed = parse_md[parse_md.index(f"### {form} Extraction"):].splitlines()[1]
+        assert self._WITHHELD_BOXES[form] <= listed_boxes(listed.split(":", 1)[1]), listed
+        if form == "W-2":  # box 14's labels name the funds the recipe reads
+            assert "every label, SDI, PFL and UI among them" in listed, listed
+
+    def test_compute_names_each_one_where_a_failed_gate_sends_the_reader(self):
+        """Step 12.7's exit-2 guidance says "fix the ledger"; for these the fix
+        is to keep the record, so each one must be named where that is read."""
+        compute = (REPO / ".agents/skills/tax-compute/SKILL.md").read_text(encoding="utf-8")
+        start = compute.index("**2 (FAILED): STOP")
+        guidance = " ".join(compute[start:compute.index("**1 (error):**", start)].split())
+        for category in T._BLOCKING_CATEGORIES:
+            assert f"`{category}`" in guidance, category
+        assert "never re-file it under another category" in guidance
+
+    def test_none_of_them_is_also_tied(self):
+        """Each names an amount no result line holds, so none may sit in a
+        registry that compares it with one."""
+        assert not set(T._BLOCKING_CATEGORIES) & (set(T.CATEGORY_TARGETS) | T._INFORMATIONAL)
+        assert "other_state_withholding" not in T.CATEGORY_TARGETS
+
+
 # --------------------------------------------------------------------------
 # Check D — unverifiable categories warn loudly, never silently pass
 # --------------------------------------------------------------------------
@@ -976,10 +1205,10 @@ def test_every_category_documented_in_tax_parse_skill():
     from the skill doc is dead protection (the gate passes vacuously).
     Mirrors the capabilities interview-asks-it grep test."""
     from pathlib import Path
-    from agents.lib.tie_out import CATEGORY_TARGETS, _INFORMATIONAL
+    from agents.lib.tie_out import _ALL_CATEGORIES
     skill = (Path(__file__).resolve().parent.parent
              / ".agents/skills/tax-parse/SKILL.md").read_text()
-    for cat in sorted(set(CATEGORY_TARGETS) | set(_INFORMATIONAL)):
+    for cat in sorted(_ALL_CATEGORIES):
         assert f"`{cat}`" in skill, (
             f"tie-out category {cat!r} is registered but never documented "
             f"in .agents/skills/tax-parse/SKILL.md — parse subagents can't emit "

@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parent.parent
 WATCHES = (
     (10, ('.agents/skills', '.agents/skills/*', '.claude/skills', '.claude/skills/*')),
     (40, ('docs/contributing/residency-guardrails.md',)),
+    (45, ('docs/contributing/skill-catalog.md',)),
     (50, ('docs/WHO-IT-FITS.md',)),
     (60, ('scripts/who_it_fits.py',)),
     (70, ('scripts/who_it_fits_figures.json',)),
@@ -96,6 +97,7 @@ def test_iso_exercise_is_manual_not_blocking():
     ("has_household_employees", "household_employees"),
     ("has_dependent_unearned_income", "kiddie_tax"),
     ("has_pfic_taxable_event", "pfic_taxable_event"),
+    ("has_digital_asset_option_exercise", "digital_asset_option_exercise"),
 ])
 def test_each_unsupported_flag_blocks(flag, rule_id):
     r = C.evaluate(_profile({flag: True}))
@@ -188,6 +190,64 @@ def test_no_foreign_funds_no_pfic_event_block():
     # The guard only fires when foreign funds are held — a clean profile is unaffected.
     r = C.evaluate(_profile())
     assert "unanswered_pfic_event" not in [f.rule_id for f in r.blocking]
+
+
+def test_a_crypto_profile_must_answer_the_option_exercise_question():
+    """AA59 stopped refusing a 1099-DA whose box 3a shows "Gross proceeds",
+    which can mark an ordinary sale or an option's un-netted one, so a crypto profile
+    from before the flag would pass an option's sale with its premium left out
+    of the row. Absence is not 'no', as for the PFIC event."""
+    r = C.evaluate(_profile({"has_crypto": True}))  # option flag absent
+    assert "unanswered_digital_asset_option" in [f.rule_id for f in r.blocking]
+    r = C.evaluate(_profile({"has_crypto": True, "has_digital_asset_option_exercise": None}))
+    assert "unanswered_digital_asset_option" in [f.rule_id for f in r.blocking]
+    # Accepting the rule it guards does not answer the question, and the guard
+    # itself is no rule an acknowledgement can name.
+    r = C.evaluate(_profile({"has_crypto": True}, acknowledged=["digital_asset_option_exercise"]))
+    assert "unanswered_digital_asset_option" in [f.rule_id for f in r.blocking]
+    with pytest.raises(C.CapabilityError):
+        C.evaluate(_profile({"has_crypto": True}, acknowledged=["unanswered_digital_asset_option"]))
+
+
+def test_a_template_profile_that_later_gains_crypto_must_answer_it():
+    """/tax-parse-crypto sets has_crypto after the interview, so a template
+    `false` would read a question nobody asked as an answered no (AA31)."""
+    template = json.loads((REPO / "agents/templates/taxpayer_profile_template.json")
+                          .read_text())
+    assert template["flags"]["has_digital_asset_option_exercise"] is None
+    profile = _profile({f: v for f, v in template["flags"].items()
+                        if not f.startswith("_") and f not in C._REQUIRED_GATE_FLAGS})
+    profile["flags"]["has_crypto"] = True
+    assert "unanswered_digital_asset_option" in [f.rule_id for f in C.evaluate(profile).blocking]
+    # Neither skill may answer it for the taxpayer: the interview leaves it
+    # null without crypto, and the crypto parse asks when it sets has_crypto.
+    interview = " ".join((REPO / ".agents/skills/tax-setup/references/interview.md").read_text().split())
+    assert "With no crypto, leave it `null`" in interview
+    crypto = " ".join((REPO / ".agents/skills/tax-parse-crypto/SKILL.md").read_text().split())
+    assert "if `flags.has_digital_asset_option_exercise` is absent or null, ask now" in crypto
+    # The note says why the form cannot answer it, and what acknowledging leaves.
+    note = C._RULES_BY_ID["digital_asset_option_exercise"].note
+    assert '"Gross proceeds"' in note and "(AA47)" in note
+    # A lot an exercise bought keeps its premium in basis until it is sold, so
+    # a "no" about this year alone misses a 2024 exercise sold in 2025.
+    assert "in whatever year the exercise fell" in note
+    for text in (interview, crypto):
+        assert "sold, exchanged or spent" in text
+        assert "from a lot an option's exercise bought in any year" in text
+    assert "sold, exchanged or spent" in note
+    unanswered = C.evaluate(_profile({"has_crypto": True})).blocking
+    assert any("sold, exchanged or spent" in finding.note for finding in unanswered)
+    # Setup's own rule answers a skipped question false; this flag is the
+    # exception, named where that rule is.
+    setup = " ".join((REPO / ".agents/skills/tax-setup/SKILL.md").read_text().split())
+    assert "`has_digital_asset_option_exercise` is the exception: without crypto it stays `null`" in setup
+
+
+def test_an_answered_option_question_or_no_crypto_clears_the_guard():
+    for flags in ({"has_crypto": True, "has_digital_asset_option_exercise": False}, {},
+                  {"has_crypto": False}):
+        r = C.evaluate(_profile(flags))
+        assert "unanswered_digital_asset_option" not in [f.rule_id for f in r.blocking], flags
 
 
 def test_foreign_asset_and_sanctioned_are_manual_not_block():
@@ -1598,6 +1658,18 @@ def test_who_it_fits_sizes_exactly_the_blocking_rules():
     assert named - WHO_IT_FITS_NOT_RULES - blocking == set(), (
         f"{sorted(named - WHO_IT_FITS_NOT_RULES - blocking)} are named in "
         "docs/WHO-IT-FITS.md as blocks and are not blocking rules")
+
+
+def test_the_skill_catalog_names_every_blocking_rule():
+    """The catalog maps the registry. A rule added to its blocking sentence by
+    hand (AA59) showed two older ones, move_abroad and territory_resident, the
+    sentence never had. NC's and WA's own rules block only for that state."""
+    text = (REPO / "docs/contributing/skill-catalog.md").read_text()
+    paragraph = text[text.index("**Blocking**"):text.index("**Manual-worksheet items**")]
+    named = set(re.findall(r"`([a-z0-9_]+)`", paragraph)) - {"acknowledged_limitations"}
+    blocking = {r.rule_id for r in C.RULES
+                if r.level == C.UNSUPPORTED and not r.rule_id.startswith(("nc_", "wa_"))}
+    assert named == blocking, (sorted(blocking - named), sorted(named - blocking))
 
 
 def _collapsed(text):

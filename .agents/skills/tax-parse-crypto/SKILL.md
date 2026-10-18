@@ -234,7 +234,10 @@ Enter one `forms` entry per reported transaction, linked by `txn_id` to the
 disposal it reports, copying every box and a blank one as null: the importer
 refuses a missing key rather than read it as blank. `asset` is the exception:
 it holds the import's own symbol for the asset box 1b names ("BTC", not
-"Bitcoin"), which must equal the disposal's exactly. Add a `resolutions` entry
+"Bitcoin"), which must equal the disposal's exactly. A 1099-DA summary that does
+not show boxes 3a, 3b, 8, 11a, 11c and CUSIP never read them: re-read those from
+the form, never copy one as blank from that summary. Box 3a's "Gross proceeds"
+has no key: copy only `net_proceeds`. Add a `resolutions` entry
 only when the user confirms, with evidence, which figure is correct.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.
@@ -300,7 +303,10 @@ Update `result.json` from the main session only — never from a delegated sub-t
    business, in which case route it to Schedule C + Schedule SE (flag this; v1 does not
    auto-classify).
 6. **Set `taxpayer_profile.json flags.has_crypto = true`** (so the digital-asset
-   attestation carries through). **AND, whenever any crypto capital rows were added (i.e.
+   attestation carries through), and if `flags.has_digital_asset_option_exercise` is
+   absent or null, ask now whether any digital asset was sold, exchanged or spent this year because an option was
+   exercised, or from a lot an option's exercise bought in any year (an assigned covered
+   call is a yes), and set it true or false: the capability gate blocks until it is. **AND, whenever any crypto capital rows were added (i.e.
    `crypto_summary.disposals > 0` or any Form 8949 row exists), also set
    `flags.has_capital_gains = true`.** `/tax-compute` gates the Schedule D / Form 8949
    computation on `has_capital_gains`, NOT on `has_crypto` — a taxpayer whose *only* capital

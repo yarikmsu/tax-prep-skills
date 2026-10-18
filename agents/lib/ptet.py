@@ -565,6 +565,17 @@ def analyze(
     anchored benefit allocated pro-rata to each state's modeled income reduction
     (a marginal-stacking approximation; the aggregate is exact).
 
+    `other_salt` is personal SALT before the cap for the modeled year as if
+    the entity did not elect, each electing state's tax for the year counted
+    at the smaller of this year's payments toward it and the year's tax, less
+    the PTET credit this year's election makes usable, no more than that
+    state's tax for the year, refunded next year or not: the tax benefit rule
+    makes next year's refund income to the extent this year's deduction
+    reduced tax, so that timing is not savings. A refundable credit beyond the
+    state's tax refunds PTET already deducted, income next year in full, which
+    this does not price: /tax-ptet stops there. Never an earlier election's
+    credit or this one's carryover.
+
     QBI clawback: for §199A-eligible pass-through income (states in
     `qbi_eligible_states`), the entity-level PTET deduction reduces the business's
     QBI, so the owner loses ~`qbi_rate × PTET` of QBI deduction. We can't recompute
@@ -827,10 +838,17 @@ def analyze(
             f"ASSUMPTION: you itemize and your ${salt_cap:,.0f} SALT cap "
             f"({_salt_cap_label(tax_year)}{cap_qualifier}) is already fully "
             f"consumed by other "
-            f"state/local taxes (property tax, W-2 state withholding) — so the full "
+            f"state/local taxes (property tax, and the state and local income tax "
+            f"left on Schedule A once the entity elects) — so the full "
             f"PTET is incremental federal deduction. With the larger OBBBA cap this "
-            f"is LESS likely to hold; pass --other-salt <your property + state income "
-            f"tax> to derive the unused headroom, or --salt-room directly. (If you "
+            f"is LESS likely to hold; pass --other-salt <your personal SALT before "
+            f"the cap as if the entity did not elect, each electing state's tax for "
+            f"the year at the smaller of this year's payments and the year's tax, "
+            f"less the PTET credit this year's election makes usable this year, no "
+            f"more than that tax, refunded next year or not (the tax benefit rule "
+            f"takes that timing back)>; a refundable credit beyond the tax cannot be "
+            f"priced here. This derives the unused headroom; "
+            f"--salt-room sets it directly. (If you "
             f"take the standard deduction, pass --standard-deduction.)")
     else:
         notes.append(
@@ -845,6 +863,18 @@ def analyze(
                 "$100 deduction-only probe; AGI and its credit phaseouts stay "
                 "fixed. Near a taxable-income breakpoint the rate can differ — pass "
                 "an explicit --marginal-fed for a precise offset.")
+    if lost_salt_total > 0:
+        notes.append(
+            "SALT-OFFSET FLOOR: the offset assumes this year's election makes a "
+            "credit equal to the whole PTET usable this year. Where SALT before "
+            "the election is under the cap and less is usable (a nonrefundable "
+            "credit carried forward), the offset can be too large and the savings "
+            "read low for this year, though the carryover can cost a later year's "
+            "deduction when it is used. A usable credit refunded next year rather "
+            "than lowering this year's payments changes nothing at the same "
+            "marginal rate both years: the refund is income then to the extent "
+            "this year's deduction reduced tax, so a higher rate next year makes "
+            "these savings read high. Other caveats still apply.")
     if itemizes and salt.phasedown_applies(tax_year):
         # This note used to say the phasedown was "not modeled here" and quote
         # TY2025's $500,000 threshold for every year in the range. It is modeled
@@ -1101,9 +1131,15 @@ def _main(argv: list) -> int:
                         "settle it — it carries the year's statutory amount, "
                         "and (B) reduces that per return.")
     p.add_argument("--other-salt", type=float, default=None,
-                   help="Your other state/local taxes already counting against the "
-                        "SALT cap (property + state income/wage tax) — headroom is "
-                        "derived as cap − this. --salt-room takes precedence.")
+                   help="Your personal SALT before the cap as if the entity did "
+                        "not elect (property tax plus Schedule A line 5a's state and "
+                        "local income taxes, each electing state's tax for the year "
+                        "at the smaller of this year's payments and the year's tax), "
+                        "less the PTET credit this year's election makes usable this "
+                        "year, refunded next year or not, no more than that state's "
+                        "tax for the year; a refundable credit beyond it cannot be "
+                        "priced here. Never an earlier election's credit. Headroom is "
+                        "cap − this. --salt-room takes precedence.")
     p.add_argument("--marginal-fed", type=float, default=None,
                    help="Federal marginal rate for the forgone-SALT offset "
                         "(auto-estimated from result.json if omitted)")

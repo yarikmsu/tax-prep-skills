@@ -216,6 +216,23 @@ RULES: "tuple[Rule, ...]" = (
          "(Buy-and-hold with NO distribution or sale is not blocked here — the "
          "reporting-only §1298(f) obligation, with its $25K/$50K-MFJ de-minimis "
          "exception, is carried on the has_foreign_mutual_funds manifest note.)"),
+    Rule("digital_asset_option_exercise", "has_digital_asset_option_exercise", UNSUPPORTED,
+         "Digital asset sold, exchanged or spent because an option was exercised, "
+         "or from a lot an option's exercise bought in any year",
+         "Form 8949 (Pub. 550, Options)",
+         "An option's premium moves the amount realized on a disposal it caused (up "
+         "for a written call, down for a purchased put) or the basis of a lot "
+         "it bought (up by a purchased call's cost, down by a written put's "
+         "premium), in whatever year the exercise fell. Assets sold, exchanged or "
+         "spent from that lot all use that basis, and the crypto import prices "
+         "neither adjustment. Form 1099-DA box 3a cannot clear a sale: \"Net "
+         "proceeds\" refuses the import, and \"Gross proceeds\" can show on an "
+         "ordinary sale and on an option's sale alike, a broker need not net a "
+         "premium on an option granted or acquired before 2026 (Regs. 1.6045-1(m)). "
+         "Acknowledging this leaves those disposals in the import, priced without "
+         "the premium, since no input marks one transaction for hand "
+         "preparation (AA47): correct those Form 8949 rows and lots by hand. A "
+         "form with \"Net proceeds\" checked is still refused."),
     # --- MANUAL: the skills hand-compute these from worksheets; flag loudly ---
     Rule("iso_exercise", "has_iso_exercise", MANUAL,
          "ISO exercise (incentive stock options)", "Form 6251 + CA Schedule P",
@@ -1133,6 +1150,27 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
             "distribution OR get sold this year? Absence is not treated as 'no' — "
             "a PFIC taxable event would otherwise slip through with only the "
             "manual note and understate the punitive §1291 tax. This blocker "
+            "cannot be acknowledged; answer the question.",
+            acknowledged=False))
+
+    # The same fail-closed answer for a crypto profile whose option question
+    # is unanswered (AA59): one that predates the flag, or one built from the
+    # template, which ships it null because /tax-parse-crypto sets has_crypto
+    # after the interview. The import no longer refuses box 3a's "Gross", so
+    # the question is all that catches an option's sale.
+    if _flag_value(flags, "has_crypto") and \
+            flags.get("has_digital_asset_option_exercise") is None:
+        _place(Finding(
+            "unanswered_digital_asset_option", UNSUPPORTED,
+            "Has crypto but the option-exercise question is unanswered",
+            "Form 8949 screening",
+            "This profile records digital assets (has_crypto) but leaves "
+            "has_digital_asset_option_exercise unanswered (absent or null). Set "
+            "it explicitly true/false: was "
+            "any digital asset sold, exchanged or spent this year because an option, held or "
+            "written, was exercised, or from a lot such an exercise bought in "
+            "any year? Absence is not treated as 'no' — the "
+            "premium would otherwise be left out of the row. This blocker "
             "cannot be acknowledged; answer the question.",
             acknowledged=False))
 

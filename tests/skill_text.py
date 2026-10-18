@@ -12,6 +12,7 @@ pins that every reference file is reachable from `SKILL.md` in ONE hop. Content
 found here is therefore content the agent can actually load; without that paired
 check this helper would happily count text buried where nothing links to it.
 """
+import re
 from pathlib import Path
 
 SKILLS_DIR = Path(__file__).resolve().parent.parent / ".agents" / "skills"
@@ -34,6 +35,22 @@ def skill_text(name: str) -> str:
     parts = [(skill_dir / "SKILL.md").read_text()]
     parts += [p.read_text() for p in sorted((skill_dir / "references").glob("*.md"))]
     return "\n".join(parts)
+
+
+def listed_boxes(listed: str) -> set:
+    """`1a-1i, 2, 4-6, CUSIP` as the boxes it names, for a skill's
+    must-capture list. Shared because two modules pin such lists against a
+    form's face, and a second copy of the range rule could drift from this one."""
+    boxes = set()
+    for item in re.findall(r'\b\d+[a-z]?(?:-\d+[a-z]?)?\b|CUSIP', listed):
+        low, _, high = item.partition('-')
+        if not high:
+            boxes.add(low)
+        elif low[-1].isalpha():
+            boxes |= {low[:-1] + chr(c) for c in range(ord(low[-1]), ord(high[-1]) + 1)}
+        else:
+            boxes |= {str(n) for n in range(int(low), int(high) + 1)}
+    return boxes
 
 
 # The two skills that work ON the toolkit rather than on a return. Defined here,

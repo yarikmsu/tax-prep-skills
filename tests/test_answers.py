@@ -44,11 +44,12 @@ from skill_text import SKILLS_DIR, skill_text  # noqa: E402
 TEMPLATE = REPO / "agents" / "templates" / "answers_template.md"
 _COUNTER = itertools.count()
 
-# The three always-on FACTs, so an acknowledgement test measures the
+# The always-on FACTs, so an acknowledgement test measures the
 # acknowledgement rather than the questions every workspace owes.
 _ALL_FACTS_ANSWERED = ("- **[document_set_complete]** yes\n"
                        "- **[corrected_documents]** none\n"
-                       "- **[charitable_gifts]** none\n")
+                       "- **[charitable_gifts]** none\n"
+                       "- **[state_local_taxes_paid_outside_withholding]** none\n")
 
 
 def _workspace(tmp_path, *, profile=None, result=None, tax_law=None, answers=None):
@@ -56,9 +57,8 @@ def _workspace(tmp_path, *, profile=None, result=None, tax_law=None, answers=Non
     ws = tmp_path / f"ws{next(_COUNTER)}"
     ws.mkdir(parents=True)
     if tax_law is not None:
-        # The cache is selected by the PROFILE's year, so a workspace with a
-        # cache and no year has no regime — which is a real state, but not the
-        # one a caller passing `tax_law=` is asking for.
+        # No question reads the cache any more (AA59); a caller passing one
+        # proves that a year's regime leaves the answers owed unchanged.
         profile = dict(profile or {})
         profile.setdefault("tax_year", 2026)
     if profile is not None:
@@ -85,8 +85,7 @@ _TRIGGERS = {
         profile={"prior_year": {"capital_loss_carryforward": 9000,
                                 "capital_loss_carryforward_short_term": 0,
                                 "capital_loss_carryforward_long_term": 0}}),
-    "state_taxes_paid_outside_withholding": dict(
-        tax_law={"state": {"type": "graduated_income", "code": "CA"}}),
+    "state_local_taxes_paid_outside_withholding": dict(),
     "mfs_spouse_itemizes": dict(profile={"filing_status": "MFS"}),
     "foreign_account_completeness": dict(
         profile={"flags": {"has_foreign_accounts": True}}),
@@ -161,15 +160,43 @@ class TestTheTriggersMatchWhatTheSkillActuallySays:
             "capital_loss_carryforward_long_term": 5000}})
         assert "capital_loss_carryforward_split" not in {a.id for a in A.applicable(ws)}
 
-    def test_a_no_income_tax_state_is_not_asked_for_state_payments(self, tmp_path):
-        """`type: "none"` is a POSITIVE declaration (AGENTS.md §4).
+    @pytest.mark.parametrize("state", [{"type": "none", "code": "FL"},
+                                       {"code": "NJ"},  # a generic state's cache has no type
+                                       {"type": "graduated_income", "code": "CA"}])
+    def test_every_filer_is_asked_for_state_payments(self, tmp_path, state):
+        """The question was once asked only where the resident state taxes
+        income: a generic state's cache carries no type and read as no tax, and a filer
+        who moved to Florida last year still pays the old state's balance this
+        year, which no profile field records. Asking costs a no-tax filer one
+        'none'; not asking drops a deduction, the hard-error direction."""
+        ws = _workspace(tmp_path, tax_law={"state": state})
+        assert "state_local_taxes_paid_outside_withholding" in {a.id for a in A.applicable(ws)}
 
-        A Florida filer has no state estimated payments and no prior-year state
-        balance; asking anyway is the gates-that-cry-wolf shape.
-        """
-        ws = _workspace(tmp_path, tax_law={"state": {"type": "none", "code": "FL"}})
-        assert "state_taxes_paid_outside_withholding" not in {
-            a.id for a in A.applicable(ws)}
+    def test_the_line_5a_question_carries_the_recipe_s_limits(self):
+        """The recipe's limits are pinned; the question the taxpayer answers
+        has to carry them too, or the answer brings in what the recipe drops."""
+        (question,) = [a.question for a in A.REQUIRED_ANSWERS
+                       if a.id == "state_local_taxes_paid_outside_withholding"]
+        for phrase in ("State and local estimated payments made in good faith",
+                       "prior-year overpayment credited",
+                       "without its penalties or interest", "Filing separately, only your own share"):
+            assert phrase in question, phrase
+
+    def test_a_state_only_answer_does_not_answer_local_payments(self, tmp_path):
+        """A pre-AA59 fact answered only state estimates and balances. It
+        cannot answer NYC estimates or other local payments never asked for."""
+        old_answers = _ALL_FACTS_ANSWERED.replace(
+            "- **[state_local_taxes_paid_outside_withholding]** none\n", "")
+        old_answers += ("- **[state_taxes_paid_outside_withholding]** "
+                        "State estimates: none; prior-year state balance: none.\n")
+        ws = _workspace(tmp_path, answers=old_answers)
+        owed, _ = A.missing(ws)
+        assert {answer.id for answer in owed} == {"state_local_taxes_paid_outside_withholding"}
+        assert _run(ws)[0] == 2
+        (ws / "answers.md").write_text(
+            old_answers + "- **[state_local_taxes_paid_outside_withholding]** "
+            "No state or local estimates, credited overpayments or prior-year balances.\n")
+        assert _run(ws)[0] == 0
 
     def test_a_no_income_tax_state_IS_still_asked_for_charitable_gifts(self, tmp_path):
         """§170(p) is a NON-itemizer deduction.
@@ -218,11 +245,10 @@ class TestTheTriggersMatchWhatTheSkillActuallySays:
         """
         template = json.loads(
             (REPO / "agents" / "templates" / "result_template.json").read_text())
-        ws = _workspace(tmp_path, result=template,
-                        tax_law={"state": {"type": "graduated_income", "code": "CA"}})
+        ws = _workspace(tmp_path, result=template)
         owed = {a.id for a in A.applicable(ws)}
         assert {"document_set_complete", "corrected_documents", "charitable_gifts",
-                "state_taxes_paid_outside_withholding"} <= owed
+                "state_local_taxes_paid_outside_withholding"} <= owed
 
 
 class TestReadingAnswersFromTheFile:
@@ -356,42 +382,6 @@ class TestAnInputThatCannotBeReadIsNeverACleanBill:
         assert "000-00-0000" not in out
 
 
-class TestTheTaxLawCacheIsTheProfilesYear:
-    """A workspace can hold two caches, and a mover's two disagree about exactly
-    the question the state trigger asks. Taking the newest on disk read the
-    regime off the wrong return."""
-
-    def test_the_profiles_year_decides_and_not_the_newest_file(self, tmp_path):
-        ws = _workspace(tmp_path, answers=_ALL_FACTS_ANSWERED,
-                        profile={"tax_year": 2025})
-        (ws / "tax_law_2025.json").write_text(
-            json.dumps({"state": {"type": "graduated_income", "code": "CA"}}))
-        (ws / "tax_law_2026.json").write_text(
-            json.dumps({"state": {"type": "none", "code": "FL"}}))
-        assert "state_taxes_paid_outside_withholding" in {a.id for a in A.applicable(ws)}
-
-    def test_a_cache_for_another_year_alone_decides_nothing(self, tmp_path):
-        """Undecidable here. Step 0.5's freshness gate owns a missing cache and
-        blocks on NOT_FOUND, so this must not guess a regime in either
-        direction."""
-        ws = _workspace(tmp_path, profile={"tax_year": 2026})
-        (ws / "tax_law_2025.json").write_text(
-            json.dumps({"state": {"type": "graduated_income", "code": "CA"}}))
-        assert "state_taxes_paid_outside_withholding" not in {
-            a.id for a in A.applicable(ws)}
-
-    def test_a_filer_who_MOVED_to_a_no_tax_state_is_still_asked(self, tmp_path):
-        """They can have paid the old state's prior-year balance during this
-        year, and it is deductible. Dropping the question UNDER-states the
-        deduction, which OVER-states the tax."""
-        ws = _workspace(tmp_path, profile={"tax_year": 2026,
-                                           "prior_year": {"state_residency_changes": True}},
-                        tax_law=None)
-        (ws / "tax_law_2026.json").write_text(
-            json.dumps({"state": {"type": "none", "code": "FL"}}))
-        assert "state_taxes_paid_outside_withholding" in {a.id for a in A.applicable(ws)}
-
-
 class TestABadFlagIsCouldNotRunAndNotBlocked:
     def test_an_unknown_skill_scope_exits_one(self, tmp_path):
         assert _run(_workspace(tmp_path), "--for", "tax-comptue")[0] == 1
@@ -498,9 +488,7 @@ class TestScopingToOneSkill:
 
 class TestTheCli:
     def test_a_workspace_owing_nothing_exits_clean(self, tmp_path):
-        ws = _workspace(tmp_path, answers=("- **[document_set_complete]** yes\n"
-                                           "- **[corrected_documents]** none\n"
-                                           "- **[charitable_gifts]** none\n"))
+        ws = _workspace(tmp_path, answers=_ALL_FACTS_ANSWERED)
         code, out = _run(ws)
         assert code == 0, out
         assert "Every required answer this workspace owes is recorded." in out

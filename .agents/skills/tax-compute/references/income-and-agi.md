@@ -638,11 +638,38 @@ persona SALT usually exceeds the OBBBA cap by itself):
   is one. On any
   re-call, pass `salt_cap` from the cache again, never `salt_cap_applied`:
   the applied cap fed back in is reduced a second time.
-- `state_local_income_taxes` = W-2 box 17 (all states) + CA SDI (box 14) +
-  state estimated payments PAID during the year + prior-year state balance
-  paid this year. Ask the user for the last two — they're not on any W-2 —
-  and record both in answers.md as
-  `- **[state_taxes_paid_outside_withholding]** the answer`.
+- `state_local_income_taxes` = every item of line 5a's income-tax list in
+  the year's Schedule A instructions, each one STATE AND LOCAL. Tax withheld,
+  each amount counted once from its own form, never from a ledger category
+  total (`state_withholding_nc` and `other_state_withholding` hold W-2 box 17
+  too): W-2 box 17 (all states) and box 19 (every locality's income tax, NYC
+  and Yonkers included, read by its label: a flat head tax such as Denver's
+  occupational privilege tax or Pennsylvania's Local Services Tax is not an
+  income tax, one levied as a percentage of wages is),
+  every 1099's state tax withheld (all states, routed or not) and local tax
+  withheld (1099-R box 17), and a W-2G's (boxes 15 and 17). Each mandatory
+  contribution that list describes, read from W-2 box 14 (14a from TY2026) by
+  its label: to a state's own disability fund (CA SDI, NJ, RI, and NY's
+  Nonoccupational Disability Benefit Fund), unemployment fund (AK, CA, NJ,
+  PA) or WA's supplemental workers' compensation fund, and to a governmental
+  paid family or medical leave program (CA PFL, NJ FLI, and the WA, MA, CT,
+  OR or CO kind, family and medical parts both: Rev. Rul. 2025-4). Never to a
+  private or voluntary plan, such as CA VPDI or the private carrier most New
+  York employers insure disability and paid family leave through: a NY DBL or
+  PFL amount counts only when the employer confirms the state fund (Pub. 17,
+  Taxes). State and local estimated payments PAID
+  during the year, a prior-year overpayment credited to them included, and
+  prior-year state and local balances paid this year, never their penalties
+  or interest. Never an estimated payment not made in good faith, nor tax on
+  income federal law exempts, unless that income is interest (Pub. 17,
+  Taxes). Leave out a withheld tax already deducted on Schedule C, E or F. Ask the user for the estimated payments and prior-year balances —
+  they're not on any W-2 — and record both in answers.md as
+  `- **[state_local_taxes_paid_outside_withholding]** the answer`. Re-ask if
+  only the old `state_taxes_paid_outside_withholding` answer exists: it did
+  not ask about local payments or credited overpayments. Filing
+  separately, take only this filer's own payments, and of a joint state or
+  local return's payments only the share Pub. 17 gives (Taxes, "Joint state
+  and local returns").
 - **FL filer ordering — compute `state_local_sales_taxes` BEFORE this call
   (Codex round-18 P1):** when the profile state is FL (`type: "none"`,
   `code: "FL"`), the line-5a income-vs-sales election needs the FL sales-tax

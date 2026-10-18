@@ -44,11 +44,11 @@ Last updated: {{DATE}}
 
 - **[capital_loss_carryforward_split]**
 
-### State estimated payments made DURING this tax year, and any prior-year state balance paid during it. (Schedule A line 5a — neither is on a W-2.)
+### State and local estimated payments made in good faith DURING this tax year, any prior-year overpayment credited to them included, and any prior-year state or local balance paid during it, without its penalties or interest. Filing separately, only your own share. (Schedule A line 5a — neither is on a W-2.)
 
-*Asked by tax-compute income-and-agi.md; required when the state regime has an income tax; the two figures are inputs to compute_schedule_a and appear on no document.*
+*Asked by tax-compute income-and-agi.md; required when always — a resident of a state with no income tax can still pay a former or another state's tax, and no profile field records last year's state; the two figures are inputs to compute_schedule_a and appear on no document.*
 
-- **[state_taxes_paid_outside_withholding]**
+- **[state_local_taxes_paid_outside_withholding]**
 
 ### Cash and non-cash charitable gifts for the year, with the documentation you hold for each (a written acknowledgment is required for every gift of $250 or more).
 

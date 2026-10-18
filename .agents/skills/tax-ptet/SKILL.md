@@ -67,8 +67,48 @@ Steps:
    no K-1 income, tell them PTET doesn't apply and stop.
 2. Ask the user for the **qualifying pass-through income per entity state** (the
    amount the entity would elect to pay PTET on). Map each to `--income STATE=AMT`.
-3. Ask for their other state/local taxes (property tax + state income/wage
-   withholding) and pass `--other-salt`; the analyzer derives the unused headroom
+3. Ask for their other state/local taxes: personal SALT before the cap for the
+   modeled year, as if the entity did not elect, then net each electing
+   state's credit out of it, all of that state's entities' credits together,
+   flooring the result at 0:
+   - Start with property tax + every state and local income tax line 5a
+     takes, per `/tax-compute`'s `state_local_income_taxes` recipe, but count
+     each electing state's tax for THIS year at the smaller of what was paid
+     toward it this year and the owner's tax for the year before the credit.
+     A prior-year balance paid this year stays in as paid.
+   - Subtract the **PTET credit this year's election makes usable**, no more
+     than that state's tax for the year, whether it lowers this year's
+     withholding and estimates or comes back next year as a refund or credit.
+     The [TY2025 Schedule A line 5a instructions](https://www.irs.gov/pub/irs-prior/i1040sca--2025.pdf)
+     do not net an expected refund this year, but next year's refund is
+     income to the extent this year's deduction reduced tax (tax benefit
+     rule, Pub. 525, Recoveries), so at the same marginal rate both years the
+     larger deduction is timing, not savings: a higher rate next year makes
+     the savings read high, a lower one or a recovery Pub. 525's limits cut
+     makes them read low.
+   - **Stop** when a refundable credit (NY, NJ) exceeds that state's tax for
+     the year: the excess refunds PTET the entity already deducted, income
+     next year in full, which the analyzer does not price. Leave that state's
+     `--income` out of the run, quote no savings for it, and say so in the
+     output:
+     `PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax`.
+     This holds on the standard deduction too, since the entity deducted the
+     PTET. Still give that state's election deadline (step 5); when every state
+     stops, give the stop lines and deadlines and skip the run, whose
+     no-`--income` mode would invite an estimate. A nonrefundable CA credit
+     beyond the tax carries forward instead: no stop.
+   - Never subtract a credit from an earlier year's election, or the part
+     this year's election makes usable only in a later year: the
+     [TY2025 FTB 3804-CR instructions](https://www.ftb.ca.gov/forms/2025/2025-3804-cr-instructions.html)
+     separate credit claimed from unused carryover. The tax attributable to
+     the step-2 income is not the figure: the credit is. Unknown, take this
+     year's whole PTET as the credit, which can only make the offset larger
+     and the savings read low.
+
+   For example, $44,000 of pre-election SALT, $8,000 of it the tax on the K-1
+   income within a $20,000 tax for the year that was paid exactly, and a usable
+   $10,000 credit leave `--other-salt 34000`, refunded or not. Pass the remaining SALT
+   as `--other-salt`; the analyzer derives the unused headroom
    against the year's SALT cap, which moves every year and with modified AGI
    (step 3 of "What the analyzer computes" below). With the larger OBBBA cap,
    don't assume the cap is exhausted — get the number. The analyzer reads the
@@ -134,8 +174,9 @@ Steps:
    `--other-salt` is priced against the unreduced cap, and the output says so:
    the headroom is a ceiling and the benefit a floor.
    By default the estimate **assumes the cap is fully exhausted** — but with the
-   larger OBBBA cap that's less likely, so pass `--other-salt <property + state
-   income/wage tax>` to derive the unused headroom from the cap, or `--salt-room
+   larger OBBBA cap that's less likely, so pass `--other-salt <personal SALT
+   before the cap, less the credit this year's election makes usable>` (step 3)
+   to derive the unused headroom from the cap, or `--salt-room
    <unused $>` to set it directly (`--salt-room` wins, and is refused above
    the cap). The offset is valued at your
    marginal rate (auto-estimated or `--marginal-fed`).
@@ -192,6 +233,14 @@ sh agents/lib/run.sh -m agents.lib.ptet --year 2025
 - **Federal-only.** State savings is reported as $0: the owner's PTET credit
   generally offsets the entity tax (CA credit nonrefundable, 5-yr carryforward;
   NJ/NY refundable). The whole benefit of PTET is the federal deduction.
+- **SALT-offset approximation.** The offset uses `min(headroom, total PTET)`,
+  assuming this year's election makes a credit equal to the whole PTET usable
+  this year. Where pre-election SALT is under the cap and less is usable, such
+  as a nonrefundable CA credit carried forward, it can overstate this year's
+  lost deduction, and a nonzero offset carries a **SALT-OFFSET FLOOR** notice
+  saying the savings can read low for this year. A usable credit refunded next
+  year changes nothing at the same marginal rate both years: the tax benefit
+  rule takes that timing back.
 - **CA / NY / NJ only.** Other states with PTET regimes (CT, IL, MA, NC, OR, …)
   are surfaced as a "not modeled" note rather than silently ignored.
 - **SALT-cap-exhausted assumption** defaults on; if it's wrong the estimate

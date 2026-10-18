@@ -110,9 +110,10 @@ never has to ask one.
 - **[document_set_complete]** Yes. The four PDFs in `documents/` are every tax
   document for {YEAR}: one Form W-2 and three information returns. There are no
   others outstanding, expected or mislaid.
-- **[state_taxes_paid_outside_withholding]** None of either. No state estimated
-  payments were made during {YEAR}, and the {YEAR - 1} return was fully covered by
-  withholding, so no prior-year balance was paid this year either — nothing is
+- **[state_local_taxes_paid_outside_withholding]** No state or local estimated
+  payments or credited overpayments during {YEAR}, and no prior-year state or
+  local balance paid this year — the {YEAR - 1} return was fully covered by
+  withholding. Nothing is
   deductible on Schedule A line 5a beyond the {YEAR} withholding itself.
 - **[charitable_gifts]** None, cash or non-cash. Nothing is deductible on
   Schedule A line 11-12, and the §170(p) non-itemizer deduction is therefore zero
@@ -162,8 +163,9 @@ never has to ask one.
   because there is nothing to put in it — nothing is outstanding, expected or
   mislaid. This is the answer that separates this return from one whose documents
   have not arrived.
-- **[state_taxes_paid_outside_withholding]** None of either, and no withholding
-  either. Nothing is deductible on Schedule A line 5a.
+- **[state_local_taxes_paid_outside_withholding]** No state or local estimates,
+  credited overpayments, prior-year balances or withholding. Nothing is
+  deductible on Schedule A line 5a.
 - **[charitable_gifts]** None, cash or non-cash. Nothing is deductible on
   Schedule A line 11-12, and the §170(p) non-itemizer deduction is therefore zero
   as well.

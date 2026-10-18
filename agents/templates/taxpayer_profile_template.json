@@ -73,6 +73,7 @@
     "has_1099r": false,
     "lives_abroad": false,
     "has_crypto": false,
+    "has_digital_asset_option_exercise": null,
     "has_stock_compensation": false,
     "has_rsu_vesting": false,
     "has_espp": false,

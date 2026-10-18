@@ -347,6 +347,85 @@ def test_analyze_other_salt_derives_headroom_from_cap():
     assert r.states[0].net_fed_savings == 960.0
 
 
+def test_other_salt_subtracts_the_usable_credit_not_tax_attributed_to_the_k1():
+    # Synthetic 10% PTET override on $100k = $10k, a fully usable $10k credit.
+    # Pre-election SALT $44k leaves $34k; TY2025's $40k cap leaves $6k
+    # headroom. At the synthetic 30% federal rate: gross $3k minus $1,800
+    # forgone SALT = $1,200 net. Attributable K-1 tax of $8k instead leaves
+    # $36k, a $1,200 offset and $1,800 net: $600 high. Refunded next year
+    # rather than lowering this year's payments, the credit gives the same
+    # two-year answer: this year's deduction stays $40k, and the $10k refund
+    # is income to the extent of the $6k it gained, $1,800 back at 30%.
+    def price(other_salt):
+        return analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                       state_incomes={"CA": 100000}, rate_overrides={"CA": 0.10},
+                       tax_year=2025, filing_status="MFJ", modified_agi=400000,
+                       other_salt=other_salt, marginal_fed=0.30)
+
+    actual = price(44000 - 10000)
+    assert actual.total_ptet_paid == 10000.0
+    assert actual.salt_room == 6000.0
+    assert actual.states[0].lost_salt_offset == 1800.0
+    assert actual.total_net_fed_savings == 1200.0
+    # Refunded path, worked apart from the engine: this year deducts the
+    # capped $40k either way, so the entity deduction is the whole gain,
+    # and next year's $10k refund is income up to what the deduction gained
+    # over the credit-reduced $34k (Pub. 525, Recoveries).
+    deducted_this_year = min(40000, 44000)
+    recovery_next_year = min(10000, deducted_this_year - min(40000, 44000 - 10000))
+    refunded_two_year = 0.30 * 10000 - 0.30 * recovery_next_year
+    assert recovery_next_year == 6000
+    assert actual.total_net_fed_savings == refunded_two_year
+    attributed = price(44000 - 8000)
+    assert attributed.total_net_fed_savings - actual.total_net_fed_savings == 600.0
+
+
+@pytest.mark.parametrize(("other_salt", "itemizes", "offset"), [
+    (20000, True, 3000.0), (50000, True, 0.0), (20000, False, 0.0),
+])
+def test_the_credit_usability_floor_is_disclosed_only_when_an_offset_is_priced(
+        other_salt, itemizes, offset):
+    # $10k PTET at synthetic 10% on $100k: the offset is 30% of
+    # min($40k cap - other SALT, $10k PTET), which assumes the whole $10k
+    # credit is usable this year. A credit limited and carried forward makes
+    # it too large, so the banner says the savings read low. No offset exists
+    # with exhausted headroom or the standard deduction.
+    report = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                     state_incomes={"CA": 100000}, rate_overrides={"CA": 0.10},
+                     tax_year=2025, filing_status="MFJ", modified_agi=400000,
+                     other_salt=other_salt, itemizes=itemizes, marginal_fed=0.30)
+    assert report.states[0].lost_salt_offset == offset
+    assert report.total_net_fed_savings == 3000.0 - offset
+    banners = [note for note in report.notes if "SALT-OFFSET FLOOR" in note]
+    assert bool(banners) == (offset > 0)
+    if banners:
+        flat = " ".join(banners[0].split())
+        assert "whole PTET usable this year" in flat
+        assert "savings read low for this year" in flat
+        assert "refunded next year" in flat and "changes nothing" in flat
+        assert "Other caveats still apply" in flat
+
+
+@pytest.mark.parametrize("surface", ["report", "help"])
+def test_other_salt_guidance_subtracts_the_usable_credit(surface):
+    if surface == "report":
+        report = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
+                         state_incomes={"CA": 200000}, tax_year=2026,
+                         filing_status="MFJ", other_salt=50000)
+        text = next(note for note in report.notes if note.startswith("ASSUMPTION:"))
+    else:
+        cli = _run_cli(["--help"])
+        assert cli.returncode == 0, cli.stderr
+        text = cli.stdout
+    flat = " ".join(text.split())
+    assert "PTET credit this year's election makes usable this year" in flat
+    assert "refunded next year or not" in flat
+    assert "smaller of this year's payments and the year's tax" in flat
+    assert "a refundable credit beyond" in flat and "cannot be priced here" in flat
+    assert "actually displaced" not in flat
+    assert "less the tax on the electing income" not in flat
+
+
 def test_analyze_other_salt_zero_headroom_when_salt_exceeds_cap():
     r = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                 state_incomes={"CA": 200000}, tax_year=2026, filing_status="MFJ",
@@ -1038,7 +1117,8 @@ def test_the_applied_note_says_the_election_lowers_magi():
     """The cap is priced at the MAGI WITHOUT the election, and electing takes
     the PTET out of the owner's income. A lower MAGI can only raise the cap, so
     wherever the phasedown bites the modeled benefit is a floor, and the note
-    says so; where it does not bite there is nothing to raise."""
+    says so; where it does not bite there is nothing to raise. Only the
+    phasedown's notes are tested here: credit usability has its own floor."""
     def notes_at(magi):
         return analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                        state_incomes={"CA": 200000}, tax_year=2026,
@@ -1048,7 +1128,8 @@ def test_the_applied_note_says_the_election_lowers_magi():
     assert len(applied) == 1, applied
     assert "modeled benefit is a FLOOR" in applied[0], applied
     below = notes_at(400000.0)
-    assert not any("FLOOR" in n for n in below), below
+    assert not any("FLOOR" in n for n in below
+                   if n.startswith("§164(b)(7)(B)")), below
 
 
 def test_the_applied_note_claims_a_floor_only_where_headroom_was_derived():

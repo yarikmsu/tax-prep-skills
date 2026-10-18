@@ -104,7 +104,10 @@ from a form's absence in the import. `broker_reporting` sits beside
      "txn_id": "sell-1", "asset": "BTC", "quantity": "1", "date_sold": "2025-03-01",
      "proceeds": 150.00, "cost_basis": null, "basis_reported_to_irs": false,
      "term": null, "ordinary": false, "accrued_market_discount": null,
-     "wash_sale_loss_disallowed": null, "loss_not_allowed": false}
+     "wash_sale_loss_disallowed": null, "loss_not_allowed": false,
+     "net_proceeds": false, "qof": false,
+     "customer_acquisition_info": false,
+     "optional_method": null, "primary_sale_proceeds": null, "cusip": null}
   ],
   "resolutions": {
     "da-1": {"proceeds": "taxpayer_records", "evidence": "trade-confirmation-1"}
@@ -137,8 +140,11 @@ from a form's absence in the import. `broker_reporting` sits beside
   null or false when blank: `ordinary` (1099-B box 2),
   `accrued_market_discount` (1f), `wash_sale_loss_disallowed` (1g)
   and `loss_not_allowed` (box 7). Filled in, each refuses: report that
-  transaction manually. Backup withholding (box 4) belongs to the parse ledger,
-  not here.
+  transaction manually. A 1099-DA carries more under the same rule, each in
+  the table below (AA59). The 1099-B's own boxes are unreviewed (AA61), so it
+  carries none, and a form naming a key outside its type's set is refused.
+  Backup and state withholding (1099-DA boxes 4 and 16) belong to the parse
+  ledger, not here.
 - **resolutions** — a difference stays unresolved until a resolution with its
   own evidence names the treatment. Each keeps the FIFO gain in column (h):
 
@@ -206,6 +212,17 @@ BLOCKED heading, and tie-out fails it independently of the dollars — including
 for a summary from before AA41, whose only mark of crypto is a non-zero
 `disposals`, and for merged digital-asset rows with no summary at all.
 
+Merged crypto, or an unskipped 1099-DA in the parse ledger whatever rows its
+proceeds reached, also requires an explicit boolean answer to
+`flags.has_digital_asset_option_exercise`. The tie-out API's omitted answer and
+the CLI's absent profile both leave it unanswered and fail the gate. Ask about
+assets sold, exchanged or spent, including lots an option exercise acquired in
+an earlier year: [TY2025 Pub. 550, Options](https://www.irs.gov/pub/irs-prior/p550--2025.pdf)
+adjusts acquired basis for the option premium, and the
+[IRS digital-asset guidance](https://www.irs.gov/filing/digital-assets) treats
+exchanges and spending as dispositions too. A yes blocks at the capability gate
+unless explicitly acknowledged; tie-out verifies the answer exists.
+
 `/tax-parse` ledgers a 1099-DA in `documents/` with its box 1f total as
 `capital_proceeds`. The tie sums the form-backed digital-asset rows with the
 1099-B rows and leaves out the no-form rows of lines 3 and 10, so it compares
@@ -232,9 +249,9 @@ Disallowed". Box 4 now cites Notice 2025-33 for transitional backup-withholding
 relief, and the box 1g and box 9 changes are below. A later year's box change
 needs a per-year input map, preserving TY2025.
 
-The table has a row for every box, numbered or not, keyed or not. A box marked AA59
-carries a meaning the import neither reads nor refuses, so a form with it
-filled in passes unread until AA59 decides it.
+The table has a row for every box, numbered or not, keyed or not. Each says
+how the box is copied, that a filled box refuses the import, or why a box
+with no key cannot change the row.
 
 | Input key | TY2025 box | TY2026 box | Reviewed meaning and treatment |
 |---|---|---|---|
@@ -249,34 +266,34 @@ filled in passes unread until AA59 decides it.
 | `accrued_market_discount` | 1h | 1h | Accrued market discount for covered digital assets that are debt instruments; a nonzero amount refuses the import. |
 | `wash_sale_loss_disallowed` | 1i | 1i | Disallowed wash-sale loss for tokenized stock or securities; a nonzero amount refuses the import. |
 | `loss_not_allowed` | 5 | 5 | Loss not allowed based on box 1f; checked, refuses the import. |
+| `net_proceeds` | 3a | 3a | "Net proceeds" checked: box 1f was reduced by option premiums, which the import does not price; checked, refuses the import, and a blank 3a is false. "Gross proceeds" is no key, because it cannot clear a sale either way. The instructions complete box 3a "if the digital assets were sold because of the exercise of an option" yet leave it off the boxes "completed only if applicable", and box 1f says "Otherwise, check 'Gross proceeds' in box 3a", so a broker may check it on every sale; and on an option's sale it means the premium was NOT netted, which §1.6045-1(m) does not require for an option granted or acquired before 2026, or held outside the broker's account. Refusing it would refuse ordinary forms, and accepting it as "no option" would pass that unadjusted sale. An option exercise affecting a disposal (sale, exchange or spending), through its proceeds or the lot's basis, blocks at the capability gate instead (`digital_asset_option_exercise`), whichever box shows. |
+| `qof` | 3b | 3b | Disposition of an interest in a qualified opportunity fund; checked, refuses the import, since gain previously deferred into the fund needs its own code-Y row and Form 8997. |
+| `customer_acquisition_info` | 8 | 8 | The broker took customer-provided acquisition information into account when identifying the units sold (§1.6045-1(d)(2)(ii)(B)(4)). It can date a purchase for the broker's FIFO or, under (B)(2), support the customer's own specific identification, and the form cannot say which; for transferred-in units the broker reports no basis or date, so no difference would show. Checked, refuses the import until AA62 asks the taxpayer. |
+| `optional_method` | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional aggregate method; either box checked refuses the import, since an aggregate is not one disposal's figures (AA47). |
+| `primary_sale_proceeds` | 11c | 11c | Specified NFTs' first-sale proceeds, kept out of box 1f; a nonzero amount refuses the import. `/tax-parse` also records it as `nft_first_sale_proceeds`, which blocks the tie-out gate, so a form that never reaches `broker_reporting` cannot lose it. |
+| `cusip` | CUSIP | CUSIP | CUSIP or other identifying number of a tokenized security, which the wash-sale rules reach (box 1i) while the import models none; filled in, refuses the import. A tokenized security with no applicable number leaves it blank and passes; box 1i still refuses a wash sale the broker reports. |
 | `federal_withholding_1099` (parse ledger only) | 4 | 4 | Backup withholding; handled by `/tax-parse`, outside `broker_reporting.forms`. |
+| `state_withholding_nc` and the other state categories (parse ledger only) | 16 | 16 | State income tax withheld, recorded by `/tax-parse` per its table by box 14's state. When this run computes that state's return: `state_withholding_nc` for NC, or `unrouted_state_withholding` for CA or NY, which blocks the tie-out gate until their 1099 route exists. Otherwise `other_state_withholding`, an advisory to claim it on that state's own return. Each also counts toward Schedule A line 5a. Outside `broker_reporting.forms`. |
 | — | 1a | 1a | Code for the digital asset; with box 1b, confirms which asset the `asset` symbol stands for, and is not a key. |
 | — | 1d | 1d | Date acquired; never replaces an original acquisition date in the FIFO inventory. |
-| — | 3a | 3a | "Gross proceeds", or "Net proceeds" when box 1f was reduced by option premiums; AA59. |
-| — | 3b | 3b | Disposition of an interest in a qualified opportunity fund; AA59. |
-| — | 7 | 7 | Only cash proceeds were paid; AA59. |
-| — | 8 | 8 | The broker relied on customer-provided acquisition information; AA59. |
+| — | 7 | 7 | Only cash proceeds were paid. Not read: proceeds paid in property are its value, which the import prices for trades too, and the amounts are compared either way. |
 | — | 9 | 9 | Noncovered security; not read, since box 2 answers whether basis was reported (below). |
 | — | 10 | 10 | Reserved. |
-| — | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional method; AA59. |
-| — | 11b | 11b | Number of transactions under that method; AA59. |
-| — | 11c | 11c | Specified NFTs' first-sale proceeds, kept out of box 1f; AA59. |
-| — | 12a | 12a | Units transferred into the account; AA59. |
-| — | 12b | 12b | Transfer-in date; AA59. |
+| — | 11b | 11b | Number of transactions under an optional method; completed only with box 11a, which refuses. |
+| — | 12a | 12a | Units transferred into the account. Not read: transfers come from the reviewed transfer links, and the original lot keeps its dates and basis. |
+| — | 12b | 12b | Transfer-in date; not read, as box 12a. |
 | — | 13 | 13 | Reserved. |
-| — | 14 | 14 | State; with box 15, identifies box 16's withholding (AA59). |
-| — | 15 | 15 | The filer's state identification number; with box 14, identifies box 16's withholding (AA59). |
-| — | 16 | 16 | State income tax withheld; AA59. |
+| — | 14 | 14 | State; picks box 16's ledger category. |
+| — | 15 | 15 | The filer's state identification number; with box 14, identifies box 16's withholding. |
 | — | CORRECTED | CORRECTED | Checked when the form replaces one the broker issued earlier; copy the corrected form instead of the original, never both. |
 | — | Filer, recipient | Filer, recipient | Names, addresses, TINs and the filer's telephone; they identify the parties, not the sale. Never copy the recipient's TIN (AGENTS.md §1). |
 | — | Account number | Account number | The broker's number for the customer's account, not a wallet address; helps confirm the form's `account_id`, and is not a key. |
-| — | CUSIP | CUSIP | CUSIP or other identifying number of a tokenized security, which the wash-sale rules reach (box 1i) while the import models none; AA59. |
 | — | Applicable checkbox | Applicable checkbox | The broker's Form 8949 code: G, H, J or K, or Y when it cannot tell box H from box K. Not read: box 2 and the FIFO holding period choose the box. This Y is not Form 8949's own code Y (box 3b). |
 | — | Reserved | Reserved | Reserved for future use, beside the CUSIP box. |
 
 Which keys a `broker_reporting.forms` entry needs, and how a blank is copied,
-is the forms rule above; this review changes neither and adds no
-manual-disposal path (AA47). `form_id`, `form_type`, `account_id` and `txn_id`
+is the forms rule above, with each 1099-DA key's box in this table; neither
+adds a manual-disposal path (AA47). `form_id`, `form_type`, `account_id` and `txn_id`
 identify and link the reviewed record, rather than copying numbered boxes.
 TY2026's box 1g instructions explicitly clarify that brokers may use
 customer-provided acquisition information for lot selection, but not for

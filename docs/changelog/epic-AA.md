@@ -2758,3 +2758,314 @@ unspaced fails the routing test.
 
 The full suite passed locally on Python 3.14, and CI ran it on the 3.13 floor
 and 3.14. No engine behavior changed.
+
+## AA59 — the Form 1099-DA boxes the import never named
+
+AA55's table marked AA59 on every 1099-DA box with a meaning the import neither
+read nor refused, so a form with one filled passed unread. Two did harm in
+opposite directions: box 3b (a qualified opportunity fund disposition)
+reconciled as an ordinary sale, leaving off the return the deferred gain the
+TY2025 Form 8949 instructions require on a code-Y row, and box 16 dropped state
+tax the taxpayer had already paid.
+
+Six keys for six boxes became required on a 1099-DA under the rule AA41 gave
+the boxes the engine does not model, blank as null, false or 0 and refusing the
+import when filled: `net_proceeds` (3a's "Net proceeds", box 1f reduced by an
+option premium the engine does not price), `qof` (3b), `customer_acquisition_info` (8), `optional_method` (11a),
+`primary_sale_proceeds` (11c, proceeds kept out of 1f) and `cusip` (a tokenized
+security, which the wash-sale rules reach while the import models none). The key
+set is per form type, `_FORM_UNSUPPORTED_BY_TYPE`; the 1099-B's is empty because
+its own boxes are unreviewed (AA61), so TY2023-2024 inputs are unchanged.
+Checking `form_type` first lets the type decide the keys. The refusal names the
+filled keys and says how a blank is copied; a missing key says to re-read the
+box from the form, since a summary parsed before the box was read cannot say it
+was blank.
+
+Box 8 changed its answer twice. It was planned as a refusal, then reversed: the
+TY2026 instructions (page 8) say a broker may use customer-provided acquisition
+information "for purposes of determining when a customer purchased a digital
+asset", which is what the import's own FIFO does. The tax review restored it.
+§1.6045-1(d)(2)(ii)(B)(2) also lets a broker use that information "for purposes
+of enabling a customer to make a sufficiently specific reference", which is
+specific identification, and for transferred-in units the broker reports no
+basis or date, so nothing on the form would show a different lot. The form
+cannot say which use it was, and the engine would guess FIFO. AA62 asks the
+taxpayer instead, and will let box 8 through on a FIFO answer.
+
+Box 16 belongs to the parse ledger, as box 4 does, and so does every other
+1099's state box, which /tax-parse's extraction lists for the 1099-R, 1099-DIV
+and 1099-B now name. NC's amount uses `state_withholding_nc`. A CA or NY amount
+is recorded as `unrouted_state_withholding`, which fails the tie-out gate on any
+non-zero amount and is never tied: those returns are computed here but have no
+1099 route until AA60, and losing the payment silently over-states the balance
+due. Both routes apply only when this run computes that state's return; any
+other state's 1099 amount, and a W-2's box 17 for a state other than CA, NY or
+NC, is recorded as `other_state_withholding`, an advisory: blocking the federal
+return over a payment that belongs on another state's return would leave no way
+through. The block says the whole return, federal included, cannot complete
+here, since preparing only the state return elsewhere clears nothing. Every 1099
+amount also feeds Schedule A line 5a: `/tax-compute`'s recipe for
+`state_local_income_taxes` counted W-2 box 17 alone, so no 1099's state
+withholding ever reached the deduction. A parser finds each 1099's withheld box
+by its label, since the number differs between forms and moves between
+revisions: the 1099-G's moved from box 11 to box 12 on its December 2026
+revision. Box 11c's proceeds are kept out of box 1f, so `capital_proceeds` never
+sees them; `/tax-parse` records them as `nft_first_sale_proceeds`, which blocks
+the gate too, so a form that never reaches `broker_reporting` cannot lose them.
+The blocking categories sit apart from the per-state `state_withholding_*`
+names. `/tax-parse`'s skill body reached its 500-line cap: one row split in
+two to make the last line, and every rule after it replaced or widened an
+existing line.
+
+Boxes 7, 11b, 12a and 12b are not read, each with its reason in the table;
+boxes 14 and 15 only name box 16's state. Box 3a's "Gross proceeds" changed its
+answer twice. It was first let through, then the third review made it refuse,
+reading the filer instructions' "If the digital assets were sold because of
+the exercise of an option, complete box 3a" as completing it only then: on
+such a sale "Gross" leaves out a premium that changes the amount realized, in
+either direction. The fourth review read the rest. Box 3a's own entry says
+"See Box 1f", and box 1f's says "If you reduce gross proceeds by option
+premiums, check 'Net proceeds' in box 3a. Otherwise, check 'Gross proceeds' in
+box 3a", while the list of boxes "completed only if applicable" leaves 3a out.
+So "Gross" is checked on ordinary sales too, and refusing it would have
+refused them. It is no longer a key. A sale or purchase an option's exercise
+caused is asked about instead: the capability rule
+`digital_asset_option_exercise` blocks on `has_digital_asset_option_exercise`,
+which `/tax-setup` asks of a crypto taxpayer, and a crypto profile that
+predates the flag blocks until it is answered, as an unanswered PFIC event
+does.
+
+Weighing a fourth review turned up the rest of Schedule A line 5a. The recipe
+took W-2 box 17, CA SDI and state payments, while the TY2025 Schedule A
+instructions list state AND local tax withheld, estimated payments with any
+prior-year overpayment credited to them, prior-year balances, and mandatory
+contributions to state disability, unemployment and family-leave funds. A NYC
+resident's box 19, recorded for IT-201 line 73, never reached an itemized
+return, and neither did NY's SDI and PFL or NJ's SDI, FLI and UI. The recipe now
+takes the list item by item. `/tax-parse`'s W-2 list captures boxes 1-8 and
+10-20, box 14 split into 14a and 14b from TY2026, and its 1099-R list adds 2b
+and 14-19; the answers.md question asks for local payments and credited
+overpayments too. No state return moves: CA's itemized deduction ignores the
+figure, NC's takes no income taxes, and NY's IT-196 is an input.
+
+The fourth review, over both commits, found more on that line and around it.
+The recipe now counts each withheld amount once, from its own form:
+`state_withholding_nc` and `other_state_withholding` hold W-2 box 17 too, so a
+category total summed beside the W-2s counted it twice. It leaves penalties
+and interest out of a prior-year balance, adds WA's supplemental workers'
+compensation fund, leaves out a private or voluntary disability plan such as
+CA VPDI, which Pub. 17 disallows, and gives a separate filer only their own
+share of joint payments, as Pub. 17 does. NYC and Yonkers tax withheld on a
+1099-R or W-2G, which IT-201 lines 73 and 74 take, now blocks as a CA or NY
+1099 amount does. The block also names `other_state_withholding` as a way
+round it: nothing checks which state a record holds, so AA60 adds that check.
+A test derives the states that block from the W-2 categories and the 1099 rows
+that route, so a new state's 1099 withholding cannot fall to the advisory.
+`/tax-compute`'s exit-2 guidance names the blocking categories, which no
+ledger fix clears, and `/tax-ptet` takes line 5a's whole income-tax figure as
+other SALT instead of restating part of it.
+
+The fifth review found two holes the fourth review's fixes opened. The
+template shipped `has_digital_asset_option_exercise` false, so a question the
+interview skipped read as an answered no once `/tax-parse-crypto` set
+`has_crypto`, the AA31 trap again: it now ships null, the interview leaves it
+null without crypto, and `/tax-parse-crypto` asks when it sets `has_crypto`.
+And widening the state row to the W-2G sent an NC W-2G to the advisory, so
+D-400 line 20a missed it with the gate green; the NC row and NC's recipe now
+take the W-2G. The line 5a question is now owed wherever the profile records a
+tie to another state, not only where the resident state taxes income, and the
+recipe drops estimates not made in good faith and tax on federally exempt
+income other than interest (Pub. 17). The advisory says which states never
+belong in it by category, since a generic-estimate state's W-2 box 17 does,
+and the skill catalog's list of blocking rules, which lacked two, is now held
+to the registry by test.
+
+The sixth review found two more the fixes made. `/tax-ptet` took line 5a's
+whole figure as other SALT, which counts the tax on the electing income that
+the election moves to the entity, shrinking the headroom and over-stating the
+savings; it now takes line 5a less that tax. The advisory said a state with
+its own category never belongs there, which a Texas resident's CA 1099 does:
+it now says that of a state whose return this run computes too. And the
+option question was asked only once `/tax-parse-crypto` sets `has_crypto`, so
+a skipped step merged crypto with the question unasked; the tie-out gate now
+fails merged crypto rows while the answer is not a bool, as it fails a taxable
+PFIC fund the flag denies. The question now covers a lot an option's exercise
+bought in an earlier year, whose basis carries the premium until it is sold,
+and `/tax-setup`'s rule that a skipped question ends false names this flag as
+its exception. The line 5a answer, which round five had widened to filers with
+a tie to another state, is now owed by every workspace: a generic state's cache
+carries no regime type and read as no tax, and a filer who moved to a no-tax
+state last year pays the old state's balance this year with nothing on the
+profile to say so. `answers.py` reads no tax-law cache any more. The
+question names good faith, the engine's own `/tax-ptet` note and `--help`
+match the skill, `/tax-compute`'s FL sales-tax note no longer says a no-tax
+state has no line 5a income tax, and `WHO-IT-FITS.md` names the CA and NY 1099
+withholding the tie-out refuses until AA60.
+
+The seventh review found that the tie-out API defaulted the option answer to
+false, and the CLI did too when the profile was absent. Both now default to
+unanswered, and a non-boolean API answer also fails the gate. This closes the
+gate's own contract; the full pipeline already requires a profile upstream.
+The option question now names assets sold, exchanged or spent: a lot acquired
+through an option exercise carries its adjusted basis into any of those
+disposals, not only a cash sale. Finally, the old
+`state_taxes_paid_outside_withholding` fact could satisfy the expanded question
+without ever answering its new local-payment items. The replacement
+`state_local_taxes_paid_outside_withholding` id requires a fresh answer on a
+resumed workspace; the skill, template and synthetic eval fixtures use it.
+The new regressions reproduced each gap before the fixes. Mutation checks in a
+tracked-files-only snapshot reverted each default, the boolean validation, the
+answer id and each question's expanded wording separately; every affected test
+failed, and each fix was restored.
+
+The eighth review distinguished the K-1's attributable personal tax from the
+usable PTET credit: a synthetic $44,000 pre-election SALT example reproduces
+the $600 federal overstatement from subtracting $8,000 of attributed tax
+instead of a $10,000 credit. It framed the figure as the personal payments the
+credit displaces this year, and kept already-paid taxes a refund would return.
+
+The ninth review, over the squashed commit, corrected that frame. A usable
+credit refunded next year rather than lowering this year's payments is income
+then to the extent this year's deduction reduced tax (the tax benefit rule,
+Pub. 525), so the two-year saving matches the displaced case and keeping those
+payments over-stated it, at $1,800 in the same example. `/tax-ptet`,
+`/tax-review`, the report and `--help` now subtract the credit this year's
+election makes usable, refunded or not, never more than this year's PTET nor
+an earlier election's credit, and an unknown credit subtracts the whole PTET,
+which reads low. The floor notice now names the one case left, a credit limited
+and carried forward. The same review found the line 5a recipe naming New
+York's disability and family leave contributions, most of which go to private
+carriers, missing the medical half of paid family and medical leave (Rev. Rul.
+2025-4) and reading every W-2 box 19 amount as income tax; all three are fixed.
+It corrected the prose that called box 3a's "Gross proceeds" a default on
+ordinary sales: the instructions complete box 3a for an option's sale, and
+§1.6045-1(m) lets a broker leave a pre-2026 option's premium un-netted, so
+"Gross" may mark exactly that sale. It still cannot clear one, so the question
+stays the screen, and it now names an assigned covered call. The option
+question also fires on a ledgered 1099-DA whose proceeds reached no
+digital-asset row, and a CLI test reads a `true` answer. Placed in the plan:
+AA67 now, AA61 and AA63 after.
+
+The tenth review re-checked the ninth's fixes against the same sources. A
+refundable NY or NJ credit beyond the owner's own state tax refunds PTET the
+entity already deducted, income in full next year, so `/tax-ptet` now caps the
+subtraction at the electing state's income tax in the figure and stops past
+it; the figure is pre-election SALT, and the two-year equivalence is stated at
+equal marginal rates, a higher rate next year reading high. The 1099-DA trigger
+matched one spelling exactly, so "1099-DA (Corrected)" passed the option
+question unasked; it now matches by containment. The §1.6045-1(m) date reads
+"granted or acquired", the head-tax exclusion keeps a wage-percentage local
+tax, and `crypto-accounts.md` names the ledgered trigger.
+
+The eleventh review found the tenth's cap keyed to payments, not liability: a
+prior-year balance paid this year or over-withholding left a refundable excess
+uncapped, and a balance due next April stopped a return nothing refunds. A
+brute force over 105,456 synthetic cases, with the tax benefit rule and a
+refundable excess included in full, found this rule never over-states and never
+falls below the next-year reading least favourable to the taxpayer: count each
+electing state's tax for the year at the smaller of this year's payments and
+the year's tax, subtract the credit up to that tax, and stop only when a
+refundable credit exceeds it. `/tax-ptet` step 3, the report, `--help` and the
+docstring now say so, and the stop names what to record: `/tax-review` leaves
+that state's `--income` out and records it as not priced.
+
+The twelfth review confirmed every surface carries that rule and found three
+gaps in carrying it out: `/tax-review` stopped only an itemized return, though
+the excess is income on the standard deduction too; payments below the credit
+could take `--other-salt` negative, which the analyzer refuses, so the figure
+floors at 0, which a brute force showed never over-states; and `/tax-ptet` said
+to quote no savings but not to leave the state out of the run. One state's
+entities now net as one credit. The thirteenth found no material defect; its
+two wording gaps, a stopped state's deadline and where `/tax-review` reads the
+owner's state tax, are closed.
+
+Filed alongside: AA60 (P1) routes CA and NY 1099 state withholding, IT-203
+included; AA61 (P2) reviews the TY2023-2024 Form 1099-B boxes, collectibles
+among them; AA62 (P1) asks about specific identification; AA63 (P2) says when a
+local tax is withheld that no return here claims; AA64 (P1) reads the TY2026
+tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC; AA65 (P1) records
+Form 1099-G's unemployment and family leave benefits, which no ledger category
+holds;
+AA66 (P1) gives Form W-2G a parse route for its winnings and federal
+withholding; AA67 (P1) maps Form 1099-MISC's boxes by the current form, whose
+box 4 is withholding and box 7 a checkbox where `/tax-parse` still reads
+"boxes 3-7" as self-employment income. AA47's list of boxes
+that refuse the whole import names the six new ones.
+
+Five reviews ran over the first commit, each in a clean worktree holding no
+taxpayer files: engine correctness, tax law, tests and docs, blast radius, and
+the bias reviewer. Beyond box 8, they found the other 1099s' state boxes missing
+from the extraction lists, a block for out-of-state withholding with no way
+through, a message that named no action, the migration hazard above, a false
+"only one form type has" comment, and tests that let box 16's fallback category,
+the 1099-DA extraction list and the documented example drift. A third review,
+over the squashed commit, found box 3a's "Gross", the Schedule A gap, a CA or NY
+block that named the 1099's state rather than the return this run computes,
+withheld boxes listed by number, `/tax-parse-crypto`'s unpinned copy of the
+1099-DA boxes, a category test that skipped the blocking categories, and a
+docstring that still said only income could fail Check D. A fourth, over both
+commits, found the box 3a overreach, the NYC and Yonkers 1099 gap, the double
+count and the other line 5a items above, the unchecked advisory route, tests
+that pinned neither W-2 box 17, box 14 nor the states that block, and stale
+lines in this section, `/tax-ptet` and `/tax-compute`. A fifth found the
+template default and the NC W-2G above, the line 5a question's narrow
+trigger, two more Pub. 17 limits, AA64's misreading of the new 1099-NEC
+boxes, CA's Forms 592-B and 593 (now in AA60) and the W-2G (AA66). A sixth
+found the `/tax-ptet` over-statement, the advisory's over-broad rule, the
+option question's skill-only trigger, a generic state and a mover the line 5a
+answer missed, setup's rule answering the option question false, an exercise
+in an earlier year, and the 1099-MISC row (AA67).
+
+Every TY2025 `broker_reporting` input is refused, naming the six missing keys,
+until it is re-copied from the forms, and a crypto profile without
+`has_digital_asset_option_exercise` blocks at the capability gate until it is
+answered.
+
+Each fix was mutation-tested. A test fails for each of these: dropping a key,
+box 8's included, from the 1099-DA set; checking only the shared set for filled
+boxes; requiring a 1099-DA key on a 1099-B; listing every key in the refusal, or
+dropping its blank or re-read hint; a gate that never fails, fails on a zero
+amount, names a form carrying none, or omits "Nothing waives this"; a ledger
+that rejects a new category, or an 11c category that does not block; box 16's
+row falling back to a W-2 category; swapped, unkeyed or deleted table rows; the
+example dropping a key; the extraction list dropping a keyed box; and a renamed
+or removed parse-table row. From the third review: an advisory without
+Schedule A; a block message that
+hides that the federal return stays open; a blocking category with no parse
+row, or an advisory category also tied; state rows that ignore whether this run
+computes the state's return; a Schedule A recipe without 1099s or without other
+states; and a `/tax-parse-crypto` box list one box short or one long. From the line 5a
+fix: a recipe missing any item of the list, and a W-2, 1099-R, 1099-DIV,
+1099-B or 1099-DA extraction list missing a withheld box or the box naming its
+state or locality. From the fourth review: refusing box 3a's "Gross" again; an
+option-question guard that ignores an unanswered flag or keys on the wrong
+one; the rule demoted to manual, or missing from setup, the template or
+`WHO-IT-FITS.md`; a block message without the advisory route or NYC and
+Yonkers; an NFT block without "Nothing waives this"; an advisory that counts
+the amount twice or admits a state this run computes; a recipe without W-2 box
+17, per-form counting, the penalty exclusion, WA's fund, the voluntary-plan
+exclusion or the separate filer's share; a W-2 list without box 14; a
+hand-edited list of the states that block, or one that misses a new 1099
+route; the 1099-R's NYC clause removed; `/tax-compute`'s guidance missing a
+blocking category; and a cut re-read hint. From the fifth: a template that
+answers the option question false, an interview or crypto parse that answers
+it for the taxpayer, an NC row without the W-2G, a line 5a trigger without
+another state's ties, and an advisory that names computed states. From the
+sixth: a gate that skips the option check, reads the flag as given or never
+receives it, an advisory that bars every state with a category, and a
+`/tax-ptet` figure built from the K-1's attributed tax, an option question
+or note limited to this year's exercise, a setup rule without the exception,
+and a line 5a answer owed only where the resident state taxes income. The one
+survivor of the first round, treating 0 as filled, is equivalent:
+`0 == False` in Python. From the ninth: a `/tax-ptet` figure that keeps a
+refunded credit's payments, an unknown credit that does not degrade low, a
+floor notice that drops the refund case, a line 5a recipe without Rev. Rul.
+2025-4, the state-fund condition or the head-tax exclusion, a ledgered 1099-DA
+that skips the option question, and a CLI that reads `true` as unanswered.
+From the tenth: an exact-match 1099-DA trigger, and a `/tax-ptet` step without
+the state-tax cap and its stop. From the eleventh: a step that counts the
+state's tax as paid rather than at the smaller of payments and the year's tax,
+a stop with nothing to record, a `/tax-review` that drops the stop, and a
+`--help` without the refundable limit. From the twelfth: no floor, no
+per-state netting, a stopped state left in the run, a stop limited to
+itemizers, `--help` without "refundable", and a changed worked example. The full suite passed locally on Python 3.14.

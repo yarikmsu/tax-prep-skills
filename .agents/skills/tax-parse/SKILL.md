@@ -90,7 +90,7 @@ Group documents for parallel processing:
 | Group | Documents | Parser Strategy |
 |-------|-----------|-----------------|
 | **US W-2s** | W-2 PDFs | pdfplumber → extract all boxes |
-| **US 1099s** | 1099-INT, DIV, B, R, SA, NEC, MISC | pdfplumber → extract all boxes |
+| **US 1099s** | 1099-INT, DIV, B, R, SA, NEC, MISC, G, K | pdfplumber → extract all boxes |
 | **Form 3921 (ISO exercise)** | Form 3921 PDFs (often a combined annual packet — one 3921 PER EXERCISE) | pdfplumber → extract boxes 1-5 per exercise |
 | **US Brokerage** | Fidelity, Merrill, Schwab consolidated statements | pdfplumber page-by-page (large PDFs) |
 | **Foreign Bank** | Non-English documents, foreign bank statements | pdfplumber + the agent's multilingual reading |
@@ -356,7 +356,8 @@ Rules:
   | W-2 box 17 (CA) | `state_withholding_ca` |
   | W-2 box 17 (NY) | `state_withholding_ny` |
   | W-2 box 17 (NC) | `state_withholding_nc` |
-  | 1099-R box 14 or other 1099 state-withholding box, when its state is NC | `state_withholding_nc` |
+  | Any 1099's state-tax-withheld box, or a W-2G's (1099-R box 14, W-2G box 15, ...), when its state is NC and this run computes NC's return | `state_withholding_nc` |
+  | Any other 1099's state-tax-withheld box, or a W-2G's, found by its label: the number differs by form and revision (1099-B/1099-DA/1099-DIV 16, 1099-INT 17, 1099-NEC 5, W-2G 15, ...); a 1099-R's or W-2G's local tax withheld (box 17) for NYC or Yonkers; a W-2's box 17 for a state other than CA, NC or NY | CA or NY (NYC and Yonkers count as NY), and this run computes that state's return: `unrouted_state_withholding`, which BLOCKS the tie-out gate, the federal return included, until their 1099 route exists; never fold it into a W-2 category or `other_state_withholding`, which hides the payment. Any other: `other_state_withholding`, an advisory to claim it on that state's own return. Schedule A line 5a counts each amount once, from its own form. Record either: unrecorded, the payment silently vanishes |
   | W-2 boxes 18-20, locality NYC | `city_withholding_nyc` (box 19 LOCAL tax withheld; box 20 confirms NYC). Separate from state withholding: IT-201 lines 72/73, or selected IT-203 lines 62/63. Never combine them. |
   | W-2 box 19, locality Yonkers | `city_withholding_yonkers`: IT-201 line 74 or selected IT-203 line 64. Confirm box 20 locality; do not infer it from employer address. |
   | 1099-INT box 1 (+3) | `taxable_interest`; box 8 → `tax_exempt_interest` |
@@ -364,7 +365,7 @@ Rules:
   | 1099-DIV box 2a | `capital_gain_distributions` (→ Schedule D line 13) |
   | 1099-R box 1 / 2a | `retirement_gross` / `retirement_taxable` (box 2a is ADVISORY at the gate — the return may legitimately recompute 4b/5b via Form 8606 basis, QCD, or rollover; OMIT `retirement_taxable` when box 2b "taxable amount not determined" is checked — box 1 still hard-ties) |
   | 1099-B proceeds total | `capital_proceeds` |
-  | 1099-DA box 1f proceeds total | `capital_proceeds` (its per-transaction rows feed `/tax-parse-crypto`'s `broker_reporting`, which routes them to Form 8949) |
+  | 1099-DA box 1f proceeds total | `capital_proceeds` (its per-transaction rows feed `/tax-parse-crypto`'s `broker_reporting`, which routes them to Form 8949). Box 11c (first-sale NFT proceeds, kept out of 1f) → `nft_first_sale_proceeds`, which BLOCKS the tie-out gate |
   | Any 1099 federal withholding box | `federal_withholding_1099` |
   | SSA-1099 box 5 | `ss_benefits` (may be NEGATIVE when repayments exceed gross — record the negative as-is; the gate switches to a Pub 915 advisory instead of a sum tie) |
   | 1099-NEC box 1 / 1099-MISC boxes 3-7 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below) |
@@ -459,15 +460,15 @@ Print:
 ## Document-Specific Parsing Notes
 
 ### W-2 Extraction
-Must capture: Boxes 1, 2, 3, 4, 5, 6, 12 (all codes), 13, 14, 15, 16, 17
+Must capture: Boxes 1-8, 10-11, 12 (all codes), 13, 14 (14a-14b from TY2026; every label, SDI, PFL and UI among them), 15-20 (state and local wages, tax withheld and locality, every row)
 Check: Box 12 codes (AA=Roth 401k, C=life ins, D=401k, DD=health, W=HSA)
 
 ### 1099-DIV Extraction
-Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (cap gain dist), 5 (Sec 199A)
+Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (cap gain dist), 5 (Sec 199A), 14-16 (state, state tax withheld)
 Note: Foreign tax paid in Box 7 → feeds Form 1116
 
 ### 1099-B Extraction
-Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss
+Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, boxes 14-16 (state, state tax withheld)
 Note Box type (Form 8949 checkboxes):
 A (short-term, basis reported to IRS), B (short-term, basis NOT reported to IRS),
 C (short-term, no 1099-B received),
@@ -476,12 +477,12 @@ F (long-term, no 1099-B received)
 Foreign brokerages: typically Box B or E (basis not reported to IRS)
 
 ### 1099-DA Extraction
-Must capture, per transaction: boxes 1a-1i (blank stays blank), 2, 4, 5, 6 and 9.
+Must capture, per transaction: boxes 1a-1i (blank stays blank), 2, 3a, 3b, 4-6, 8, 9, 11a, 11c, 14-16 and CUSIP.
 From TY2025 a digital asset never uses C/F: `/tax-parse-crypto` routes each
 transaction G-L from these boxes, so never pick its Form 8949 box here.
 
 ### 1099-R Extraction
-Must capture: Boxes 1, 2a, 4, 5, 7 (distribution code)
+Must capture: Boxes 1, 2a, 2b, 4, 5, 7 (distribution code), 14-19 (state and local tax withheld, state, locality, distributions)
 Code G = direct rollover (not taxable but report on 1040 line 5a)
 Code 1 = early distribution (10% penalty unless exception)
 

@@ -29,7 +29,9 @@ intake-to-output MAPPING instead:
   Check D (verifiability): ledger income whose result SECTION is absent
     FAILS (the form was never computed); a present section whose comparable
     figures are genuinely unavailable (zero-scaffold Schedule D proceeds
-    detail) is WARNED loudly, never silently passed.
+    detail) is WARNED loudly, never silently passed. A ledger amount in a
+    blocking category (_BLOCKING_CATEGORIES: a payment or proceeds no result
+    line can hold) FAILS the same way, and is never tied.
 
 Pure compute + markdown renderer + CLI, following projection/capabilities.py.
 Read-only: writes only summaries/_tie_out.md (workspace-bounded), never touches
@@ -60,6 +62,7 @@ raw form boxes at parse time — the skill documents the box→category table.
 
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -121,13 +124,23 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   "qualified_tips", "qualified_overtime_premium",
                   # Form 3922 ESPP boxes — feed the §423 disposition split and
                   # FUTURE-year basis; no single result line to tie to.
-                  "espp_purchase_info"}
+                  "espp_purchase_info",
+                  # AA59: withholding for a state whose return this run does
+                  # not compute; it is claimed on that state's own return.
+                  "other_state_withholding"}
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
 # failure), so a taxable state refund or misclassified 1099-K can't vanish
 # without the reviewer seeing a to-verify line.
 _INFORMATIONAL_ADVISORIES = {
+    "other_state_withholding": (
+        "state income tax withheld for a state whose return this run does not "
+        "compute — claim it on that state's return, filed separately, or the "
+        "payment is never refunded or credited. An amount for a state with its own "
+        "withholding category whose return this run computes never belongs here. "
+        "Schedule A line 5a counts it once, from its own form, where an itemizer "
+        "deducts it"),
     "state_refund_1099g": (
         "taxable on Schedule 1 line 1 if the prior year itemized and got a "
         "tax benefit from the deduction — verify against the prior-year "
@@ -234,6 +247,28 @@ CATEGORY_TARGETS = {
 # Categories where the return may legitimately report MORE than the ledger
 # (cash receipts without a 1099); only ledger > result fails (under-report).
 _AT_LEAST_CATEGORIES = {"self_employment_gross"}
+
+# AA59: categories the ledger records only so the gate can refuse them, each an
+# amount a return this toolkit computes owes but has no line for. Dropped, a
+# withheld payment over-states the balance due and first-sale NFT proceeds
+# under-state income; neither is sum-tied, since there is nothing to tie it to.
+# Which states route their 1099 withholding is /tax-parse's table, not this.
+# Named apart from the per-state `state_withholding_*` categories above.
+_BLOCKING_CATEGORIES = {
+    "unrouted_state_withholding": (
+        "state income tax withheld on a 1099 or W-2G, or New York City or Yonkers "
+        "tax withheld on one, for a return this run computes but whose 1099 "
+        "withholding it does not route yet, so the payment would never reach that "
+        "return. Nothing waives this: keep the record, since deleting it or moving "
+        "the amount into a W-2 category or other_state_withholding hides the "
+        "payment. Until the route exists the return, federal included, cannot "
+        "complete here, so prepare it outside this toolkit"),
+    "nft_first_sale_proceeds": (
+        "Form 1099-DA box 11c proceeds from first sales of specified NFTs by their "
+        "creator or minter, which box 1f leaves out and this toolkit does not "
+        "model. Nothing waives this: keep the record, and report those sales "
+        "outside this toolkit"),
+}
 
 # A3: records with any key box at or above this get a second independent
 # extraction (/tax-parse step 6.7). Absence is an ADVISORY, not a failure —
@@ -487,7 +522,7 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
     return tuple(out)
 
 
-_ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL
+_ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL | set(_BLOCKING_CATEGORIES)
 
 
 @dataclass(frozen=True)
@@ -529,7 +564,7 @@ class TieOutReport:
     phantom_files: "tuple[str, ...]"  # ledger records whose file doesn't exist
     pending_skips: "tuple[str, ...]"  # skips deferring to a skill that never ran — fails
     sum_checks: "tuple[SumCheck, ...]"
-    missing_result_targets: "tuple[str, ...]"  # ledger income with NO result section — fails
+    missing_result_targets: "tuple[str, ...]"  # ledger amounts no result line holds, and unmet completeness — fails
     pfic_incomplete: "tuple[str, ...]"  # form_8621_pfic present but not all_complete — fails
     ny_city_and_yonkers: "tuple[str, ...]"  # IT-201 47a/55/56 uncomputed or line 58 short — fails
     unverifiable: "tuple[str, ...]"  # Check D warnings (section present, figures unavailable)
@@ -1458,7 +1493,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              pfic_multiyear_disposition_ids: "set | None" = None,
              pfic_recompute_failures: "list | None" = None,
              eic_screening: "bool | None" = False,
-             profile_flags: "dict | None" = None) -> TieOutReport:
+             profile_flags: "dict | None" = None,
+             option_exercise_answer: "bool | None" = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
     source files that exist under documents/."""
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) \
@@ -1507,9 +1543,10 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                                "is never employer stock")
     summary = crypto if isinstance(crypto, dict) else {}
     merged_crypto = account_rows or any(row.get("proceeds") not in (None, 0) for _, row in digital_rows)
-    if merged_crypto or summary.get("disposals", 0) != 0 or any(key in summary for key in (
-            "basis_mode", "complete", "unresolved_inputs", "reporting_complete", "reporting_unresolved",
-            "reporting_proceeds_above_forms")):
+    crypto_present = merged_crypto or summary.get("disposals", 0) != 0 or any(key in summary for key in (
+        "basis_mode", "complete", "unresolved_inputs", "reporting_complete", "reporting_unresolved",
+        "reporting_proceeds_above_forms"))
+    if crypto_present:
         if summary.get("reporting_complete") is not True or summary.get("reporting_unresolved") != []:
             missing_targets.append("crypto Form 8949 reporting: reconcile broker forms and route every "
                                    "row to its box before completion")
@@ -1518,7 +1555,29 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
             advisories.append(f"crypto proceeds exceed their broker forms by {above:,.2f} — Form 8949 "
                               "column (d) shows the correct figure under reviewed evidence; the "
                               "capital_proceeds tie subtracts it, so confirm it against the forms")
+    # AA59: the import no longer refuses box 3a's "Gross", so the option
+    # question is all that catches a disposal an option's exercise caused. The
+    # capability gate asks it only once has_crypto is set, in skill prose; the
+    # merged rows, or a ledgered 1099-DA routed anywhere, are the data, as a
+    # taxable PFIC fund is for its flag.
+    # Containment, not equality: nothing pins the label, and a corrected,
+    # substitute or consolidated 1099-DA missed here passes the question unasked.
+    form_da = any(rec.skipped is None and "1099DA" in re.sub(r"[^0-9A-Z]", "", rec.form_type.upper())
+                  for rec in ledger)
+    if (crypto_present or form_da) and not isinstance(option_exercise_answer, bool):
+        missing_targets.append("digital assets are on this return but flags.has_digital_asset_option_exercise "
+                               "is unanswered: ask whether any digital asset was sold, exchanged or spent this "
+                               "year because an option was exercised, or from a lot an option's exercise bought "
+                               "in any year, set it true or false, and re-run the capability gate, which blocks "
+                               "a yes until it is acknowledged")
     for cat in sorted(sums):
+        if cat in _BLOCKING_CATEGORIES:
+            if sums[cat]:
+                docs = sorted({redact(rec.doc_id) for rec in ledger if rec.skipped is None
+                               and any(c == cat and amount for c, amount in rec.key_boxes)})
+                missing_targets.append(f"{cat} ({sums[cat]:,.2f}; {', '.join(docs)}): "
+                                       f"{_BLOCKING_CATEGORIES[cat]}")
+            continue
         if cat in _INFORMATIONAL:
             note = _INFORMATIONAL_ADVISORIES.get(cat)
             if note is not None:
@@ -2105,10 +2164,11 @@ def render_markdown(report: TieOutReport) -> str:
                   "amounts are in no sum. Run the named skill (its record "
                   "replaces the pending skip), then re-run /tax-compute.", ""]
     if report.missing_result_targets:
-        lines += ["## ⛔ Ledger income with NO result section to land on", ""]
+        lines += ["## ⛔ Ledger amounts with NO result section to land on", ""]
         lines += [f"- {t}" for t in report.missing_result_targets]
-        lines += ["", "The form these amounts belong on was never computed — "
-                  "a dropped Schedule C/8889/Schedule D, not a rounding issue.", ""]
+        lines += ["", "Each amount has no line on the return as computed — a "
+                  "dropped form such as Schedule C, 8889 or Schedule D, or an "
+                  "amount this toolkit does not route. None is a rounding issue.", ""]
     if report.pfic_incomplete:
         lines += ["## ⛔ PFIC §1291 computation INCOMPLETE", ""]
         lines += [f"- {t}" for t in report.pfic_incomplete]
@@ -2270,6 +2330,7 @@ def _main(argv: list) -> int:
         pfic_recompute_failures: list = []
         eic_screening: "bool | None" = None
         profile_flags: "dict | None" = None
+        option_exercise_answer: "bool | None" = None
         profile_path = (workspace / "taxpayer_profile.json").resolve()
         if profile_path.exists():
             prof = _read_json(_validate_subpath(profile_path, workspace),
@@ -2284,6 +2345,10 @@ def _main(argv: list) -> int:
             _eic_flag = flags.get("may_qualify_for_eic")
             eic_screening = _eic_flag if isinstance(_eic_flag, bool) else None
             profile_flags = _flags_for_city_and_yonkers(prof, flags)
+            # Absent, null or non-bool are all unanswered (capabilities refuses
+            # a non-bool by name at Step 0.7).
+            _opt = flags.get("has_digital_asset_option_exercise")
+            option_exercise_answer = _opt if isinstance(_opt, bool) else None
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None
@@ -2327,7 +2392,8 @@ def _main(argv: list) -> int:
                           pfic_multiyear_disposition_ids=pfic_multiyear_disposition_ids,
                           pfic_recompute_failures=pfic_recompute_failures,
                           eic_screening=eic_screening,
-                          profile_flags=profile_flags)
+                          profile_flags=profile_flags,
+                          option_exercise_answer=option_exercise_answer)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)

@@ -56,8 +56,8 @@ rate for another year is not permission to reuse the TY2025 form.
   does not prepare a nonresident return.
 - `use_tax`: amount, or `use_tax_certified_none: true` to fill the none-due
   circle. Unknown leaves line 18 null and a prominent balance warning.
-- `withholding` / `spouse_withholding`: all NC withholding from W-2 and 1099
-  boxes, allocated by person (spouse amount only for MFJ). The ledger category
+- `withholding` / `spouse_withholding`: all NC withholding from W-2, W-2G and
+  1099 boxes, allocated by person (spouse amount only for MFJ). The ledger category
   `state_withholding_nc` ties their sum to lines 20a/20b. `estimated_payments`,
   `extension_payment`, `penalties`, `interest`, `underpayment_interest`,
   `applied_to_next_year`, `wildlife_fund`, `education_fund`, `cancer_program`:
