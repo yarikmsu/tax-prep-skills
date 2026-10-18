@@ -37,7 +37,8 @@ rental property, is most of it everywhere.
   New York City or Yonkers tax withheld on a 1099-R or W-2G. The toolkit does
   not route that withholding to Form 540 or IT-201 yet, and nothing waives it:
   the whole return, federal included, has to be prepared elsewhere until it
-  does.
+  does. So is a Form 1099-DA reporting a creator's first sale of an NFT (box
+  11c). Neither is counted in the figures below.
 
 ## The blocks, measured
 
@@ -99,7 +100,7 @@ commutes is one blocked return, so this undercounts joint returns.
 - **A foreign fund's distribution or sale** (`pfic_taxable_event`), which is
   computed once you accept it (above).
 - **A digital asset sold, exchanged or spent because an option was exercised,
-  or from a lot one bought**
+  or from a lot an option's exercise bought in any year**
   (`digital_asset_option_exercise`). The option's premium moves the sale's
   amount realized or the purchase's basis, and the crypto import prices
   neither.

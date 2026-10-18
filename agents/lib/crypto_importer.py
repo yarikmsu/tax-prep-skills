@@ -869,8 +869,9 @@ _FORM_UNSUPPORTED = {'ordinary', 'accrued_market_discount', 'wash_sale_loss_disa
                      'loss_not_allowed'}
 # The same rule per form type, for the boxes reviewed on that form (AA59). On a
 # 1099-DA: 3a's "Net proceeds" (box 1f reduced by option premiums the engine does
-# not price; "Gross" is box 1f's default on every other sale, so it is no key, and
-# the capability gate asks about a sale an option's exercise caused instead), a
+# not price; "Gross" can show on an ordinary sale and an option's sale alike, so
+# it is no key, and the capability gate asks about a sale an option's exercise
+# caused instead), a
 # QOF disposition in 3b (its deferred gain owes a code-Y row and Form 8997), box 8 (the broker
 # used the customer's acquisition dates, which can carry a specific
 # identification this FIFO engine does not make), an optional aggregate report

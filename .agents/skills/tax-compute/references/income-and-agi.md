@@ -642,14 +642,21 @@ persona SALT usually exceeds the OBBBA cap by itself):
   the year's Schedule A instructions, each one STATE AND LOCAL. Tax withheld,
   each amount counted once from its own form, never from a ledger category
   total (`state_withholding_nc` and `other_state_withholding` hold W-2 box 17
-  too): W-2 box 17 (all states) and box 19 (every locality, NYC and Yonkers
-  included), every 1099's state tax withheld (all states, routed or not) and
-  local tax withheld (1099-R box 17), and a W-2G's (boxes 15 and 17). Each
-  mandatory contribution that list describes, read from W-2 box 14 (14a from
-  TY2026) by its label: to a state disability, unemployment or family-leave fund (CA SDI, NY
-  SDI and PFL, and NJ SDI, FLI and UI among them) or WA's supplemental
-  workers' compensation fund, never to a private or voluntary disability plan
-  such as CA VPDI (Pub. 17, Taxes). State and local estimated payments PAID
+  too): W-2 box 17 (all states) and box 19 (every locality's income tax, NYC
+  and Yonkers included, read by its label: a head or occupational privilege
+  tax such as Pennsylvania's Local Services Tax is not an income tax),
+  every 1099's state tax withheld (all states, routed or not) and local tax
+  withheld (1099-R box 17), and a W-2G's (boxes 15 and 17). Each mandatory
+  contribution that list describes, read from W-2 box 14 (14a from TY2026) by
+  its label: to a state's own disability fund (CA SDI, NJ, RI, and NY's
+  Nonoccupational Disability Benefit Fund), unemployment fund (AK, CA, NJ,
+  PA) or WA's supplemental workers' compensation fund, and to a governmental
+  paid family or medical leave program (CA PFL, NJ FLI, and the WA, MA, CT,
+  OR or CO kind, family and medical parts both: Rev. Rul. 2025-4). Never to a
+  private or voluntary plan, such as CA VPDI or the private carrier most New
+  York employers insure disability and paid family leave through: a NY DBL or
+  PFL amount counts only when the employer confirms the state fund (Pub. 17,
+  Taxes). State and local estimated payments PAID
   during the year, a prior-year overpayment credited to them included, and
   prior-year state and local balances paid this year, never their penalties
   or interest. Never an estimated payment not made in good faith, nor tax on

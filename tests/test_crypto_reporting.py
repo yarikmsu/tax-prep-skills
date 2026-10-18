@@ -700,7 +700,7 @@ def test_a_missing_profile_does_not_answer_the_option_question(tmp_path, capsys)
     assert 'has_digital_asset_option_exercise is unanswered' in capsys.readouterr().out
 
 
-@pytest.mark.parametrize('answer,owed', [(None, True), ('yes', True), (False, False)])
+@pytest.mark.parametrize('answer,owed', [(None, True), ('yes', True), (False, False), (True, False)])
 def test_the_gate_reads_the_option_answer_from_the_profile(tmp_path, capsys, answer, owed):
     (tmp_path / 'documents').mkdir()
     (tmp_path / 'parse_ledger.json').write_text(json.dumps({'records': []}))
@@ -709,6 +709,28 @@ def test_the_gate_reads_the_option_answer_from_the_profile(tmp_path, capsys, ans
         {'flags': {'has_crypto': False, 'has_digital_asset_option_exercise': answer}}))
     tie_out._main(['--workspace', str(tmp_path)])
     assert ('has_digital_asset_option_exercise is unanswered' in capsys.readouterr().out) is owed
+
+
+def _ledgered_1099da(form_type='1099-DA', skipped=None):
+    return tie_out.load_ledger({'records': [dict(
+        doc_id='da', file='documents/da.pdf', form_type=form_type, payer='Exchange',
+        person='primary', key_boxes={} if skipped else {'capital_proceeds': 0}, skipped=skipped)]})
+
+
+@pytest.mark.parametrize('form_type', ['1099-DA', 'Form 1099-da', '1099DA'])
+def test_a_ledgered_1099da_owes_the_option_answer_with_no_crypto_rows(form_type):
+    """A 1099-DA whose proceeds were routed to the non-digital rows leaves no
+    crypto summary or digital-asset row; the ledgered form is the data."""
+    report = tie_out.evaluate(_ledgered_1099da(form_type), {}, [])
+    assert any('has_digital_asset_option_exercise is unanswered' in t for t in report.missing_result_targets)
+    answered = tie_out.evaluate(_ledgered_1099da(form_type), {}, [], option_exercise_answer=False)
+    assert not any('has_digital_asset_option_exercise' in t for t in answered.missing_result_targets)
+
+
+def test_a_skipped_1099da_or_another_form_owes_no_option_answer():
+    for ledger in (_ledgered_1099da(skipped='duplicate of da2'), _ledgered_1099da('1099-B')):
+        report = tie_out.evaluate(ledger, {}, [])
+        assert not any('has_digital_asset_option_exercise' in t for t in report.missing_result_targets)
 
 
 def test_tie_out_refuses_a_basis_mode_nothing_can_complete():

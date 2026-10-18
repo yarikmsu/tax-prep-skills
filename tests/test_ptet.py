@@ -347,12 +347,15 @@ def test_analyze_other_salt_derives_headroom_from_cap():
     assert r.states[0].net_fed_savings == 960.0
 
 
-def test_other_salt_uses_payments_displaced_not_tax_attributed_to_the_k1():
-    # Synthetic 10% PTET override on $100k = $10k, fully usable and reducing
-    # this year's personal payments by $10k. Pre-election SALT $44k leaves
-    # $34k; TY2025's $40k cap leaves $6k headroom. At the synthetic 30% federal
-    # rate: gross $3k minus $1,800 forgone SALT = $1,200 net. Attributable K-1
-    # tax of $8k instead leaves $36k, a $1,200 offset and $1,800 net: $600 high.
+def test_other_salt_subtracts_the_usable_credit_not_tax_attributed_to_the_k1():
+    # Synthetic 10% PTET override on $100k = $10k, a fully usable $10k credit.
+    # Pre-election SALT $44k leaves $34k; TY2025's $40k cap leaves $6k
+    # headroom. At the synthetic 30% federal rate: gross $3k minus $1,800
+    # forgone SALT = $1,200 net. Attributable K-1 tax of $8k instead leaves
+    # $36k, a $1,200 offset and $1,800 net: $600 high. Refunded next year
+    # rather than lowering this year's payments, the credit gives the same
+    # two-year answer: this year's deduction stays $40k, and the $10k refund
+    # is income to the extent of the $6k it gained, $1,800 back at 30%.
     def price(other_salt):
         return analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                        state_incomes={"CA": 100000}, rate_overrides={"CA": 0.10},
@@ -364,37 +367,40 @@ def test_other_salt_uses_payments_displaced_not_tax_attributed_to_the_k1():
     assert actual.salt_room == 6000.0
     assert actual.states[0].lost_salt_offset == 1800.0
     assert actual.total_net_fed_savings == 1200.0
+    refunded_next_year = 3000.0 - 0.30 * min(40000 - 34000, 10000)
+    assert actual.total_net_fed_savings == refunded_next_year
     attributed = price(44000 - 8000)
     assert attributed.total_net_fed_savings - actual.total_net_fed_savings == 600.0
 
 
 @pytest.mark.parametrize(("other_salt", "itemizes", "offset"), [
-    (30000, True, 3000.0), (50000, True, 0.0), (30000, False, 0.0),
+    (20000, True, 3000.0), (50000, True, 0.0), (20000, False, 0.0),
 ])
-def test_payment_timing_approximation_is_disclosed_only_when_an_offset_is_priced(
+def test_the_credit_usability_floor_is_disclosed_only_when_an_offset_is_priced(
         other_salt, itemizes, offset):
-    # $10k PTET at synthetic 10% on $100k, and $30k of already-paid SALT:
-    # no personal payment is displaced this year, so the personal deduction
-    # does not change. The current approximation nevertheless offsets 30% of
-    # min($40k cap - $30k remaining SALT, $10k PTET) = $3k, reducing $3k gross
-    # to $0 net. That component is a conservative floor, disclosed loudly.
-    # No offset exists with exhausted headroom or the standard deduction.
+    # $10k PTET at synthetic 10% on $100k: the offset is 30% of
+    # min($40k cap - other SALT, $10k PTET), which assumes the whole $10k
+    # credit is usable this year. A credit limited and carried forward makes
+    # it too large, so the banner says the savings read low. No offset exists
+    # with exhausted headroom or the standard deduction.
     report = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                      state_incomes={"CA": 100000}, rate_overrides={"CA": 0.10},
                      tax_year=2025, filing_status="MFJ", modified_agi=400000,
                      other_salt=other_salt, itemizes=itemizes, marginal_fed=0.30)
     assert report.states[0].lost_salt_offset == offset
     assert report.total_net_fed_savings == 3000.0 - offset
-    banners = [note for note in report.notes if "SALT-OFFSET CONSERVATIVE FLOOR" in note]
+    banners = [note for note in report.notes if "SALT-OFFSET FLOOR" in note]
     assert bool(banners) == (offset > 0)
     if banners:
-        assert "fewer personal payments" in banners[0]
-        assert "UNDERSTATE" in banners[0]
-        assert "Other caveats still apply" in banners[0]
+        flat = " ".join(banners[0].split())
+        assert "whole PTET usable this year" in flat
+        assert "savings read low for this year" in flat
+        assert "refunded next year" in flat and "changes nothing" in flat
+        assert "Other caveats still apply" in flat
 
 
 @pytest.mark.parametrize("surface", ["report", "help"])
-def test_other_salt_guidance_uses_actual_payment_displacement(surface):
+def test_other_salt_guidance_subtracts_the_usable_credit(surface):
     if surface == "report":
         report = analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                          state_incomes={"CA": 200000}, tax_year=2026,
@@ -405,9 +411,9 @@ def test_other_salt_guidance_uses_actual_payment_displacement(surface):
         assert cli.returncode == 0, cli.stderr
         text = cli.stdout
     flat = " ".join(text.split())
-    assert "personal payments actually displaced" in flat
-    assert "modeled year" in flat
-    assert "credit usability and payment timing" in flat
+    assert "PTET credit this year's election makes usable this year" in flat
+    assert "refunded next year or not" in flat
+    assert "actually displaced" not in flat
     assert "less the tax on the electing income" not in flat
 
 
@@ -1103,7 +1109,7 @@ def test_the_applied_note_says_the_election_lowers_magi():
     the PTET out of the owner's income. A lower MAGI can only raise the cap, so
     wherever the phasedown bites the modeled benefit is a floor, and the note
     says so; where it does not bite there is nothing to raise. Only the
-    phasedown's notes are tested here: payment timing has its own floor."""
+    phasedown's notes are tested here: credit usability has its own floor."""
     def notes_at(magi):
         return analyze(baseline_inputs=BASELINE, rate_kwargs=RATE_KW,
                        state_incomes={"CA": 200000}, tax_year=2026,

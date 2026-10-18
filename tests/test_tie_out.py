@@ -596,7 +596,9 @@ class TestUnroutedStateWithholding:
         assert "unrouted_state_withholding" not in report.unverifiable
 
     def test_a_zero_amount_blocks_nothing(self):
-        assert not T.evaluate(self._recs(0.0), _result(), self.FILES[:2]).failed
+        # The 1099-DA owes the option answer whatever its boxes hold (AA59).
+        assert not T.evaluate(self._recs(0.0), _result(), self.FILES[:2],
+                              option_exercise_answer=False).failed
 
     def test_first_sale_nft_proceeds_block_too(self):
         """Box 11c's proceeds are kept out of 1f, so `capital_proceeds` never
@@ -610,7 +612,8 @@ class TestUnroutedStateWithholding:
         """A state whose return this run does not compute is claimed on a
         return filed elsewhere: blocking the federal return over it is a block
         with no way through, and dropping it silently loses the reminder."""
-        report = T.evaluate(self._recs(300.0, "other_state_withholding"), _result(), self.FILES[:2])
+        report = T.evaluate(self._recs(300.0, "other_state_withholding"), _result(), self.FILES[:2],
+                            option_exercise_answer=False)
         assert not report.failed
         (advisory,) = [a for a in report.advisories if a.startswith("other_state_withholding")]
         # The amount is on this return too, for an itemizer, once.
@@ -629,16 +632,20 @@ class TestUnroutedStateWithholding:
                       if "1099's state-tax-withheld box" in line and f"`{category}`" in line]
             assert "this run computes" in row, category
 
-    def test_ptet_takes_line_5a_less_the_payments_the_election_displaces(self):
+    def test_ptet_takes_line_5a_less_the_usable_credit(self):
         """Tax attributable to K-1 income can differ from the usable PTET
-        credit. Only personal payments actually displaced in the modeled year
-        leave Schedule A; guessing from attributable tax can overstate savings.
-        Both the procedure and the headroom description must say which."""
+        credit, and a usable credit refunded next year is income then under
+        the tax benefit rule, so its timing is not savings. Both the procedure
+        and the headroom description must subtract the credit, refunded or not,
+        and an unknown credit must degrade toward savings that read low."""
         ptet = " ".join((REPO / ".agents/skills/tax-ptet/SKILL.md").read_text(encoding="utf-8").split())
         assert "`state_local_income_taxes` recipe" in ptet
-        assert ptet.count("personal payments actually displaced") >= 2
-        assert "credit usability and payment timing" in ptet
-        assert "If that displacement is unknown, stop" in ptet
+        assert "PTET credit this year's election makes usable this year" in ptet
+        assert "less the credit this year's election makes usable" in ptet
+        assert "tax benefit rule" in ptet
+        assert "never a credit from an earlier year's election" in ptet
+        assert "Unknown, subtract this year's whole PTET" in ptet
+        assert "Do not reduce already-paid withholding" not in ptet
         assert "less the state income tax on the step-2 qualifying income" not in ptet
         assert "less the tax on the electing income" not in ptet
         assert "state income/wage" not in ptet
@@ -698,13 +705,15 @@ class TestUnroutedStateWithholding:
         recipe = (REPO / ".agents/skills/tax-compute/references/income-and-agi.md").read_text(encoding="utf-8")
         line = " ".join(recipe[recipe.index("- `state_local_income_taxes` ="):].split("\n- ")[0].split())
         for item in ("W-2 box 17 (all states)", "counted once from its own form",
-                     "box 19 (every locality", "local tax withheld (1099-R box 17)",
+                     "box 19 (every locality's income tax", "local tax withheld (1099-R box 17)",
                      "a W-2G's (boxes 15 and 17)",
-                     "state disability, unemployment or family-leave fund",
+                     "state's own disability fund", "unemployment fund (AK, CA, NJ, PA)",
+                     "paid family or medical leave program", "Rev. Rul. 2025-4",
                      "State and local estimated payments", "prior-year overpayment credited",
                      "prior-year state and local balances", "never their penalties or interest",
                      "supplemental workers' compensation fund",
-                     "never to a private or voluntary disability plan",
+                     "Never to a private or voluntary plan", "employer confirms the state fund",
+                     "Local Services Tax is not an income tax",
                      "deducted on Schedule C, E or F", '"Joint state and local returns"',
                      "made in good faith", "unless that income is interest", "(14a from TY2026)"):
             assert item in line, item

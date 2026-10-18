@@ -641,13 +641,15 @@ own state of residence)**:**
 - Any gig/freelance income (1099-NEC)? Crypto transactions (buy/sell/exchange)?
   - **If crypto: was any digital asset sold, exchanged or spent this year because an option was
     exercised, or from a lot an option's exercise bought in any year**, an
-    option the taxpayer held or wrote? → sets
+    option the taxpayer held or wrote? A covered call that was assigned, so
+    the coins were "called away", is a yes. → sets
     `has_digital_asset_option_exercise` true or false. With no crypto, leave it
     `null`: `/tax-parse-crypto` sets `has_crypto` later, and the capability gate
     then blocks until the question is answered, as it must. The premium
     moves that sale's amount realized or that lot's basis, which the
-    crypto import does not price, and a Form 1099-DA's box 3a does not say
-    which sales they were: "Gross proceeds" is checked on ordinary sales too.
+    crypto import does not price, and a Form 1099-DA's box 3a cannot clear
+    a sale: "Gross proceeds" can show on ordinary sales and on an option's
+    sale whose premium the broker did not net.
 - Stock compensation: RSU vesting, ISO exercises, ESPP purchases?
   - **If ISOs were EXERCISED (and any shares held past year-end)** → sets
     `has_iso_exercise`; otherwise set it `false`. This is load-bearing: it triggers the federal AMT

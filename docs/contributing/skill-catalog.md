@@ -61,10 +61,10 @@ abroad (`move_abroad`), residency in a US territory (`territory_resident`), resi
 in a second state (`statutory_residency_second_state`), income sourced to another state
 (`nonresident_source_income`), Schedule H (`household_employees`), kiddie tax
 (`kiddie_tax`), PFIC with a taxable event (`pfic_taxable_event`), and a digital asset
-sold, exchanged or spent because an option was exercised, or from a lot one bought
-(`digital_asset_option_exercise`). NC's
-and WA's own rules (`nc_*`, `wa_*`) block only on those states' returns, and a test
-holds this list to the registry. New York City's full-year resident tax is
+sold, exchanged or spent because an option was exercised, or from a lot an option's
+exercise bought in any year (`digital_asset_option_exercise`). NC's and WA's own
+rules (`nc_*`, `wa_*`) block only on those states' returns, and a test holds this
+list to the registry. New York City's full-year resident tax is
 computed, not blocked; a City resident for only part of the year is refused at compute
 time.
 

@@ -4953,8 +4953,8 @@ class TestTheSaltPhasedownHandoffs:
         """The review asked the taxpayer whether their SALT was "at the cap"
         and passed `--salt-room`, which overrides the cap the engine prices
         from `--magi`, so the answer, not the return, set the headroom. The
-        return's own `salt_before_cap` needs reconciliation to the personal
-        payments actually displaced, which can differ from the K-1's tax."""
+        return's own `salt_before_cap` holds the state tax the PTET credit
+        pays, which can differ from the K-1's tax."""
         flat = re.sub(r"\s+", " ", skill_text("tax-review"))
         assert "[--other-salt <amount>]" in flat, (
             "/tax-review's PTET command no longer passes --other-salt")
@@ -4965,9 +4965,9 @@ class TestTheSaltPhasedownHandoffs:
                 in flat), (
             "the warning against the return's salt_before_cap is gone, and it "
             "is the figure a reader reaches for first")
-        assert "personal payments actually displaced" in flat
-        assert "credit usability and payment timing" in flat
-        assert "If that displacement is unknown, stop" in flat
+        assert "PTET credit this year's election makes usable" in flat
+        assert "refunded next year or not" in flat
+        assert "never the tax attributed to the K-1" in flat
 
     def test_tax_ptet_describes_the_no_magi_path_the_code_takes(self):
         """The skill said `--other-salt` with no `--magi` REFUSES; the code

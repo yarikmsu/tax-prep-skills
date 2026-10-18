@@ -2916,24 +2916,35 @@ resumed workspace; the skill, template and synthetic eval fixtures use it.
 The new regressions reproduced each gap before the fixes. Mutation checks in a
 tracked-files-only snapshot reverted each default, the boolean validation, the
 answer id and each question's expanded wording separately; every affected test
-failed, and each fix was restored. Follow-up engine, contract and tax reviews
-found no remaining actionable issues.
+failed, and each fix was restored.
 
 The eighth review distinguished the K-1's attributable personal tax from the
-personal payments a usable PTET credit actually displaces. `/tax-ptet` now
-derives other SALT from that payment comparison in the modeled year, confirms
-credit usability and payment timing, and stops the estimate if the comparison
-is unknown. Expected refunds and unused carryovers do not erase already-paid
-taxes. The review handoff, CLI help and report guidance agree. A synthetic
-$44,000 pre-election SALT example reproduces the $600 federal overstatement
-from subtracting $8,000 of attributed tax instead of $10,000 of displaced
-payments. Follow-up review found that the engine still assumes displacement
-equals total PTET when pricing the offset: fewer payments displaced can make
-the savings read low. A nonzero offset now carries a SALT-offset conservative
-floor notice, scoped to that approximation, with a zero-displacement regression
-and silence checks for non-itemizers and exhausted headroom. Mutation checks
-revert each payment definition, unknown-answer stop and notice guard; each
-affected test fails, and the restored guidance passes review.
+usable PTET credit: a synthetic $44,000 pre-election SALT example reproduces
+the $600 federal overstatement from subtracting $8,000 of attributed tax
+instead of a $10,000 credit. It framed the figure as the personal payments the
+credit displaces this year, and kept already-paid taxes a refund would return.
+
+The ninth review, over the squashed commit, corrected that frame. A usable
+credit refunded next year rather than lowering this year's payments is income
+then to the extent this year's deduction reduced tax (the tax benefit rule,
+Pub. 525), so the two-year saving matches the displaced case and keeping those
+payments over-stated it, at $1,800 in the same example. `/tax-ptet`,
+`/tax-review`, the report and `--help` now subtract the credit this year's
+election makes usable, refunded or not, never more than this year's PTET nor
+an earlier election's credit, and an unknown credit subtracts the whole PTET,
+which reads low. The floor notice now names the one case left, a credit limited
+and carried forward. The same review found the line 5a recipe naming New
+York's disability and family leave contributions, most of which go to private
+carriers, missing the medical half of paid family and medical leave (Rev. Rul.
+2025-4) and reading every W-2 box 19 amount as income tax; all three are fixed.
+It corrected the prose that called box 3a's "Gross proceeds" a default on
+ordinary sales: the instructions complete box 3a for an option's sale, and
+§1.6045-1(m) lets a broker leave a pre-2026 option's premium un-netted, so
+"Gross" may mark exactly that sale. It still cannot clear one, so the question
+stays the screen, and it now names an assigned covered call. The option
+question also fires on a ledgered 1099-DA whose proceeds reached no
+digital-asset row, and a CLI test reads a `true` answer. Placed in the plan:
+AA67 now, AA61 and AA63 after.
 
 Filed alongside: AA60 (P1) routes CA and NY 1099 state withholding, IT-203
 included; AA61 (P2) reviews the TY2023-2024 Form 1099-B boxes, collectibles
@@ -3009,9 +3020,13 @@ it for the taxpayer, an NC row without the W-2G, a line 5a trigger without
 another state's ties, and an advisory that names computed states. From the
 sixth: a gate that skips the option check, reads the flag as given or never
 receives it, an advisory that bars every state with a category, and a
-`/tax-ptet` figure that keeps the electing income's tax, an option question
+`/tax-ptet` figure built from the K-1's attributed tax, an option question
 or note limited to this year's exercise, a setup rule without the exception,
 and a line 5a answer owed only where the resident state taxes income. The one
 survivor of the first round, treating 0 as filled, is equivalent:
-`0 == False` in Python. The full suite passed locally on
-Python 3.14.
+`0 == False` in Python. From the ninth: a `/tax-ptet` figure that keeps a
+refunded credit's payments, an unknown credit that does not degrade low, a
+floor notice that drops the refund case, a line 5a recipe without Rev. Rul.
+2025-4, the state-fund condition or the head-tax exclusion, a ledgered 1099-DA
+that skips the option question, and a CLI that reads `true` as unanswered. The
+full suite passed locally on Python 3.14.

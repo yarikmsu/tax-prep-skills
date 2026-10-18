@@ -57,9 +57,8 @@ def _workspace(tmp_path, *, profile=None, result=None, tax_law=None, answers=Non
     ws = tmp_path / f"ws{next(_COUNTER)}"
     ws.mkdir(parents=True)
     if tax_law is not None:
-        # The cache is selected by the PROFILE's year, so a workspace with a
-        # cache and no year has no regime — which is a real state, but not the
-        # one a caller passing `tax_law=` is asking for.
+        # No question reads the cache any more (AA59); a caller passing one
+        # proves that a year's regime leaves the answers owed unchanged.
         profile = dict(profile or {})
         profile.setdefault("tax_year", 2026)
     if profile is not None:
@@ -86,8 +85,7 @@ _TRIGGERS = {
         profile={"prior_year": {"capital_loss_carryforward": 9000,
                                 "capital_loss_carryforward_short_term": 0,
                                 "capital_loss_carryforward_long_term": 0}}),
-    "state_local_taxes_paid_outside_withholding": dict(
-        tax_law={"state": {"type": "graduated_income", "code": "CA"}}),
+    "state_local_taxes_paid_outside_withholding": dict(),
     "mfs_spouse_itemizes": dict(profile={"filing_status": "MFS"}),
     "foreign_account_completeness": dict(
         profile={"flags": {"has_foreign_accounts": True}}),
@@ -166,8 +164,8 @@ class TestTheTriggersMatchWhatTheSkillActuallySays:
                                        {"code": "NJ"},  # a generic state's cache has no type
                                        {"type": "graduated_income", "code": "CA"}])
     def test_every_filer_is_asked_for_state_payments(self, tmp_path, state):
-        """AA59 first asked only where the resident state taxes income: a
-        generic state's cache carries no type and read as no tax, and a filer
+        """The question was once asked only where the resident state taxes
+        income: a generic state's cache carries no type and read as no tax, and a filer
         who moved to Florida last year still pays the old state's balance this
         year, which no profile field records. Asking costs a no-tax filer one
         'none'; not asking drops a deduction, the hard-error direction."""
@@ -247,8 +245,7 @@ class TestTheTriggersMatchWhatTheSkillActuallySays:
         """
         template = json.loads(
             (REPO / "agents" / "templates" / "result_template.json").read_text())
-        ws = _workspace(tmp_path, result=template,
-                        tax_law={"state": {"type": "graduated_income", "code": "CA"}})
+        ws = _workspace(tmp_path, result=template)
         owed = {a.id for a in A.applicable(ws)}
         assert {"document_set_complete", "corrected_documents", "charitable_gifts",
                 "state_local_taxes_paid_outside_withholding"} <= owed

@@ -280,7 +280,9 @@ Prove every parsed document landed on the return — the CP2000 killer:
      it — compute it, write both, and recompute line 58; or an amount in a
      blocking category (`unrouted_state_withholding`, `nft_first_sale_proceeds`)
      that no line here holds, which nothing clears: keep its record and prepare
-     the return outside this toolkit, never re-file it under another category.
+     the return outside this toolkit, never re-file it under another category;
+     or `has_digital_asset_option_exercise` unanswered with digital assets on
+     the return — ask the taxpayer, set it, and re-run Step 0.7 first.
      Otherwise fix the aggregation (or the ledger, if the parse was wrong) and re-run. NEVER
      proceed to `/tax-generate` past a failed tie-out, and never "fix" a
      mismatch by editing the ledger to match the return without re-checking

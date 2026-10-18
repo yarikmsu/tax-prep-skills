@@ -565,10 +565,12 @@ def analyze(
     anchored benefit allocated pro-rata to each state's modeled income reduction
     (a marginal-stacking approximation; the aggregate is exact).
 
-    `other_salt` is deductible personal SALT remaining in the modeled year,
-    after personal payments actually displaced by the election. The caller
-    must establish credit usability and payment timing; attributable K-1 tax
-    or the face amount of the PTET credit is not a payment comparison.
+    `other_salt` is personal SALT before the cap for the modeled year, less
+    the PTET credit this year's election makes usable this year, whether it
+    lowers this year's payments or is refunded next year: the tax benefit rule
+    makes next year's refund income to the extent this year's deduction
+    reduced tax, so that timing is not savings. Never more than this year's
+    PTET, and never an earlier election's credit or this one's carryover.
 
     QBI clawback: for §199A-eligible pass-through income (states in
     `qbi_eligible_states`), the entity-level PTET deduction reduces the business's
@@ -835,11 +837,10 @@ def analyze(
             f"state/local taxes (property tax, and the state and local income tax "
             f"left on Schedule A once the entity elects) — so the full "
             f"PTET is incremental federal deduction. With the larger OBBBA cap this "
-            f"is LESS likely to hold; pass --other-salt <deductible personal SALT "
-            f"remaining in the modeled year after personal payments actually displaced "
-            f"by the election>. Confirm credit usability and payment timing; do not "
-            f"subtract attributable K-1 tax or already-paid amounts merely because "
-            f"a refund or credit is expected. This derives the unused headroom; "
+            f"is LESS likely to hold; pass --other-salt <your personal SALT before "
+            f"the cap, less the PTET credit this year's election makes usable this "
+            f"year, refunded next year or not (the tax benefit rule takes that timing "
+            f"back)>. This derives the unused headroom; "
             f"--salt-room sets it directly. (If you "
             f"take the standard deduction, pass --standard-deduction.)")
     else:
@@ -857,12 +858,14 @@ def analyze(
                 "an explicit --marginal-fed for a precise offset.")
     if lost_salt_total > 0:
         notes.append(
-            "SALT-OFFSET CONSERVATIVE FLOOR: the offset assumes displaced personal "
-            "payments equal the full entity PTET. If credit usability or payment "
-            "timing means fewer personal payments are displaced in the modeled "
-            "year, the offset may be too large and this approximation can "
-            "UNDERSTATE federal savings. Recompute the full payment and deduction "
-            "comparison for a precise offset. Other caveats still apply.")
+            "SALT-OFFSET FLOOR: the offset assumes this year's election makes a "
+            "credit equal to the whole PTET usable this year. Where less is usable "
+            "(a nonrefundable credit limited and carried forward), the offset is "
+            "too large and the savings read low for this year, though the "
+            "carryover can cost a later year's deduction when it is used. A usable "
+            "credit refunded next year rather than lowering this year's payments "
+            "changes nothing: the refund is income then to the extent this year's "
+            "deduction reduced tax. Other caveats still apply.")
     if itemizes and salt.phasedown_applies(tax_year):
         # This note used to say the phasedown was "not modeled here" and quote
         # TY2025's $500,000 threshold for every year in the range. It is modeled
@@ -1119,12 +1122,12 @@ def _main(argv: list) -> int:
                         "settle it — it carries the year's statutory amount, "
                         "and (B) reduces that per return.")
     p.add_argument("--other-salt", type=float, default=None,
-                   help="Deductible personal SALT remaining in the modeled year "
-                        "after personal payments actually displaced by the election. "
-                        "Confirm credit usability and payment timing; do not subtract "
-                        "attributable K-1 tax or already-paid amounts merely because "
-                        "a refund or credit is expected. Headroom is cap − this. --salt-room "
-                        "takes precedence.")
+                   help="Your personal SALT before the cap (property tax plus "
+                        "Schedule A line 5a's state and local income taxes), less "
+                        "the PTET credit this year's election makes usable this "
+                        "year, refunded next year or not; never more than this "
+                        "year's PTET, nor an earlier election's credit. Headroom is "
+                        "cap − this. --salt-room takes precedence.")
     p.add_argument("--marginal-fed", type=float, default=None,
                    help="Federal marginal rate for the forgone-SALT offset "
                         "(auto-estimated from result.json if omitted)")

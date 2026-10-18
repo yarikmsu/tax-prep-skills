@@ -224,7 +224,7 @@ def test_a_template_profile_that_later_gains_crypto_must_answer_it():
     interview = " ".join((REPO / ".agents/skills/tax-setup/references/interview.md").read_text().split())
     assert "With no crypto, leave it `null`" in interview
     crypto = " ".join((REPO / ".agents/skills/tax-parse-crypto/SKILL.md").read_text().split())
-    assert "if `flags.has_digital_asset_option_exercise` is null, ask now" in crypto
+    assert "if `flags.has_digital_asset_option_exercise` is absent or null, ask now" in crypto
     # The note says why the form cannot answer it, and what acknowledging leaves.
     note = C._RULES_BY_ID["digital_asset_option_exercise"].note
     assert '"Gross proceeds"' in note and "(AA47)" in note

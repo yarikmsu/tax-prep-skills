@@ -62,6 +62,7 @@ raw form boxes at parse time — the skill documents the box→category table.
 
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -1542,27 +1543,31 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                                "is never employer stock")
     summary = crypto if isinstance(crypto, dict) else {}
     merged_crypto = account_rows or any(row.get("proceeds") not in (None, 0) for _, row in digital_rows)
-    if merged_crypto or summary.get("disposals", 0) != 0 or any(key in summary for key in (
-            "basis_mode", "complete", "unresolved_inputs", "reporting_complete", "reporting_unresolved",
-            "reporting_proceeds_above_forms")):
+    crypto_present = merged_crypto or summary.get("disposals", 0) != 0 or any(key in summary for key in (
+        "basis_mode", "complete", "unresolved_inputs", "reporting_complete", "reporting_unresolved",
+        "reporting_proceeds_above_forms"))
+    if crypto_present:
         if summary.get("reporting_complete") is not True or summary.get("reporting_unresolved") != []:
             missing_targets.append("crypto Form 8949 reporting: reconcile broker forms and route every "
                                    "row to its box before completion")
-        # AA59: the import no longer refuses box 3a's "Gross", so the option
-        # question is all that catches a sale an option's exercise caused. The
-        # capability gate asks it only once has_crypto is set, in skill prose;
-        # merged crypto rows are the data, as a taxable PFIC fund is for its flag.
-        if not isinstance(option_exercise_answer, bool):
-            missing_targets.append("crypto rows are merged but flags.has_digital_asset_option_exercise "
-                                   "is unanswered: ask whether any digital asset was sold, exchanged or spent this year "
-                                   "because an option was exercised, or from a lot one bought in any "
-                                   "year, set it true or false, and re-run the capability gate, which "
-                                   "blocks a yes")
         above = _crypto_proceeds_above_forms(result)
         if above:
             advisories.append(f"crypto proceeds exceed their broker forms by {above:,.2f} — Form 8949 "
                               "column (d) shows the correct figure under reviewed evidence; the "
                               "capital_proceeds tie subtracts it, so confirm it against the forms")
+    # AA59: the import no longer refuses box 3a's "Gross", so the option
+    # question is all that catches a disposal an option's exercise caused. The
+    # capability gate asks it only once has_crypto is set, in skill prose; the
+    # merged rows, or a ledgered 1099-DA routed anywhere, are the data, as a
+    # taxable PFIC fund is for its flag.
+    form_da = any(rec.skipped is None and re.sub(r"[^0-9A-Z]", "", rec.form_type.upper()).removeprefix("FORM") == "1099DA"
+                  for rec in ledger)
+    if (crypto_present or form_da) and not isinstance(option_exercise_answer, bool):
+        missing_targets.append("digital assets are on this return but flags.has_digital_asset_option_exercise "
+                               "is unanswered: ask whether any digital asset was sold, exchanged or spent this "
+                               "year because an option was exercised, or from a lot an option's exercise bought "
+                               "in any year, set it true or false, and re-run the capability gate, which blocks "
+                               "a yes until it is acknowledged")
     for cat in sorted(sums):
         if cat in _BLOCKING_CATEGORIES:
             if sums[cat]:
