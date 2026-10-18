@@ -68,30 +68,40 @@ Steps:
 2. Ask the user for the **qualifying pass-through income per entity state** (the
    amount the entity would elect to pay PTET on). Map each to `--income STATE=AMT`.
 3. Ask for their other state/local taxes: personal SALT before the cap for the
-   modeled year, as if the entity did not elect. Start with property tax + every state and
-   local income tax line 5a takes, per `/tax-compute`'s
-   `state_local_income_taxes` recipe, and subtract the **PTET credit this
-   year's election makes usable this year**, whether it lowers this year's
-   withholding and estimates or comes back next year as a refund or credit. The
-   [TY2025 Schedule A line 5a instructions](https://www.irs.gov/pub/irs-prior/i1040sca--2025.pdf)
-   do not net an expected refund this year, but next year's refund is income to
-   the extent this year's deduction reduced tax (tax benefit rule, Pub. 525,
-   Recoveries), so at the same marginal rate both years the larger deduction
-   is timing, not savings: a higher rate next year makes the savings read
-   high, a lower one or a recovery Pub. 525's limits cut makes them read low.
-   Subtract no more than this year's PTET, nor more than the electing state's
-   income tax inside the figure: a refundable credit beyond it (NY, NJ)
-   refunds PTET the entity already deducted, which is income next year in
-   full and which the analyzer does not price, so stop and price that
-   election outside it. Never subtract a credit from an earlier year's
-   election or one this year's election makes usable only in a later year: the
-   [TY2025 FTB 3804-CR instructions](https://www.ftb.ca.gov/forms/2025/2025-3804-cr-instructions.html)
-   separate credit claimed from unused carryover. The tax attributable to the
-   step-2 income is not the figure: the credit is. Unknown, subtract this
-   year's whole PTET, which can only make the offset larger and the savings
-   read low. For example, $44,000 of pre-election SALT, $8,000 of it the tax
-   on the K-1 income, and a usable $10,000 credit leave `--other-salt 34000`,
-   refunded or not. Pass the remaining SALT
+   modeled year, as if the entity did not elect, then net each electing
+   state's credit out of it:
+   - Start with property tax + every state and local income tax line 5a
+     takes, per `/tax-compute`'s `state_local_income_taxes` recipe, but count
+     each electing state's tax for THIS year at the smaller of what was paid
+     toward it this year and the owner's tax for the year before the credit.
+     A prior-year balance paid this year stays in as paid.
+   - Subtract the **PTET credit this year's election makes usable**, no more
+     than that state's tax for the year, whether it lowers this year's
+     withholding and estimates or comes back next year as a refund or credit.
+     The [TY2025 Schedule A line 5a instructions](https://www.irs.gov/pub/irs-prior/i1040sca--2025.pdf)
+     do not net an expected refund this year, but next year's refund is
+     income to the extent this year's deduction reduced tax (tax benefit
+     rule, Pub. 525, Recoveries), so at the same marginal rate both years the
+     larger deduction is timing, not savings: a higher rate next year makes
+     the savings read high, a lower one or a recovery Pub. 525's limits cut
+     makes them read low.
+   - **Stop** when a refundable credit (NY, NJ) exceeds that state's tax for
+     the year: the excess refunds PTET the entity already deducted, income
+     next year in full, which the analyzer does not price. Quote no savings
+     for that election; tell the user, and record
+     `PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax`.
+     A nonrefundable CA credit beyond the tax carries forward instead: no stop.
+   - Never subtract a credit from an earlier year's election, or the part
+     this year's election makes usable only in a later year: the
+     [TY2025 FTB 3804-CR instructions](https://www.ftb.ca.gov/forms/2025/2025-3804-cr-instructions.html)
+     separate credit claimed from unused carryover. The tax attributable to
+     the step-2 income is not the figure: the credit is. Unknown, take this
+     year's whole PTET as the credit, which can only make the offset larger
+     and the savings read low.
+
+   For example, $44,000 of pre-election SALT, $8,000 of it the tax on the K-1
+   income within a $20,000 tax for the year that was fully paid, and a usable
+   $10,000 credit leave `--other-salt 34000`, refunded or not. Pass the remaining SALT
    as `--other-salt`; the analyzer derives the unused headroom
    against the year's SALT cap, which moves every year and with modified AGI
    (step 3 of "What the analyzer computes" below). With the larger OBBBA cap,

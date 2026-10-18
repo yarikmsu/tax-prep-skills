@@ -640,17 +640,22 @@ class TestUnroutedStateWithholding:
         and an unknown credit must degrade toward savings that read low."""
         ptet = " ".join((REPO / ".agents/skills/tax-ptet/SKILL.md").read_text(encoding="utf-8").split())
         assert "`state_local_income_taxes` recipe" in ptet
-        assert "PTET credit this year's election makes usable this year" in ptet
+        assert "PTET credit this year's election makes usable**" in ptet
         assert "less the credit this year's election makes usable" in ptet
         assert "tax benefit rule" in ptet
         assert "Never subtract a credit from an earlier year's election" in ptet
-        # A refundable credit beyond the state's tax refunds PTET already
-        # deducted, income in full next year, which the analyzer cannot price.
-        assert "nor more than the electing state's income tax inside the figure" in ptet
-        assert "so stop and price that election outside it" in ptet
+        # The electing state's tax counts at the smaller of payments and the
+        # year's tax, and the credit nets against that tax: a prior-year
+        # balance or over-withholding otherwise let a refundable excess, PTET
+        # already deducted and income in full next year, through as savings.
+        assert "smaller of what was paid toward it this year and the owner's tax for the year" in ptet
+        assert "no more than that state's tax for the year" in ptet
+        assert "**Stop** when a refundable credit (NY, NJ) exceeds that state's tax" in ptet
+        assert "`PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax`" in ptet
+        assert "A nonrefundable CA credit beyond the tax carries forward instead: no stop" in ptet
         assert "at the same marginal rate both years" in ptet
         assert "as if the entity did not elect" in ptet
-        assert "Unknown, subtract this year's whole PTET" in ptet
+        assert "Unknown, take this year's whole PTET as the credit" in ptet
         assert "Do not reduce already-paid withholding" not in ptet
         assert "less the state income tax on the step-2 qualifying income" not in ptet
         assert "less the tax on the electing income" not in ptet

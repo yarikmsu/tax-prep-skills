@@ -2957,6 +2957,18 @@ question unasked; it now matches by containment. The §1.6045-1(m) date reads
 "granted or acquired", the head-tax exclusion keeps a wage-percentage local
 tax, and `crypto-accounts.md` names the ledgered trigger.
 
+The eleventh review found the tenth's cap keyed to payments, not liability: a
+prior-year balance paid this year or over-withholding left a refundable excess
+uncapped, and a balance due next April stopped a return nothing refunds. A
+brute force over 105,456 synthetic cases, with the tax benefit rule and a
+refundable excess included in full, found this rule never over-states and never
+falls below the next-year reading least favourable to the taxpayer: count each
+electing state's tax for the year at the smaller of this year's payments and
+the year's tax, subtract the credit up to that tax, and stop only when a
+refundable credit exceeds it. `/tax-ptet` step 3, the report, `--help` and the
+docstring now say so, and the stop names what to record: `/tax-review` leaves
+that state's `--income` out and records it as not priced.
+
 Filed alongside: AA60 (P1) routes CA and NY 1099 state withholding, IT-203
 included; AA61 (P2) reviews the TY2023-2024 Form 1099-B boxes, collectibles
 among them; AA62 (P1) asks about specific identification; AA63 (P2) says when a
@@ -3041,4 +3053,7 @@ floor notice that drops the refund case, a line 5a recipe without Rev. Rul.
 2025-4, the state-fund condition or the head-tax exclusion, a ledgered 1099-DA
 that skips the option question, and a CLI that reads `true` as unanswered.
 From the tenth: an exact-match 1099-DA trigger, and a `/tax-ptet` step without
-the state-tax cap and its stop. The full suite passed locally on Python 3.14.
+the state-tax cap and its stop. From the eleventh: a step that counts the
+state's tax as paid rather than at the smaller of payments and the year's tax,
+a stop with nothing to record, a `/tax-review` that drops the stop, and a
+`--help` without the refundable limit. The full suite passed locally on Python 3.14.

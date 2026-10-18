@@ -4968,6 +4968,9 @@ class TestTheSaltPhasedownHandoffs:
         assert "PTET credit this year's election makes usable" in flat
         assert "refunded next year or not" in flat
         assert "never the tax attributed to the K-1" in flat
+        # Step 3's stop, carried out without a person to ask.
+        assert "leave that state's `--income` out" in flat
+        assert "not priced — refundable credit exceeds the owner's <STATE> tax" in flat
 
     def test_tax_ptet_describes_the_no_magi_path_the_code_takes(self):
         """The skill said `--other-salt` with no `--magi` REFUSES; the code

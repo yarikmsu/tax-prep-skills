@@ -565,14 +565,16 @@ def analyze(
     anchored benefit allocated pro-rata to each state's modeled income reduction
     (a marginal-stacking approximation; the aggregate is exact).
 
-    `other_salt` is personal SALT before the cap for the modeled year, less
-    the PTET credit this year's election makes usable this year, whether it
-    lowers this year's payments or is refunded next year: the tax benefit rule
+    `other_salt` is personal SALT before the cap for the modeled year as if
+    the entity did not elect, each electing state's tax for the year counted
+    at the smaller of this year's payments toward it and the year's tax, less
+    the PTET credit this year's election makes usable, no more than that
+    state's tax for the year, refunded next year or not: the tax benefit rule
     makes next year's refund income to the extent this year's deduction
-    reduced tax, so that timing is not savings. Never more than this year's
-    PTET or the electing state's income tax inside it (a refundable excess
-    refunds PTET already deducted, income next year in full, which this does
-    not price), and never an earlier election's credit or this one's carryover.
+    reduced tax, so that timing is not savings. A refundable credit beyond the
+    state's tax refunds PTET already deducted, income next year in full, which
+    this does not price: /tax-ptet stops there. Never an earlier election's
+    credit or this one's carryover.
 
     QBI clawback: for §199A-eligible pass-through income (states in
     `qbi_eligible_states`), the entity-level PTET deduction reduces the business's
@@ -840,9 +842,12 @@ def analyze(
             f"left on Schedule A once the entity elects) — so the full "
             f"PTET is incremental federal deduction. With the larger OBBBA cap this "
             f"is LESS likely to hold; pass --other-salt <your personal SALT before "
-            f"the cap, less the PTET credit this year's election makes usable this "
-            f"year, refunded next year or not (the tax benefit rule takes that timing "
-            f"back)>. This derives the unused headroom; "
+            f"the cap as if the entity did not elect, each electing state's tax for "
+            f"the year at the smaller of this year's payments and the year's tax, "
+            f"less the PTET credit this year's election makes usable this year, no "
+            f"more than that tax, refunded next year or not (the tax benefit rule "
+            f"takes that timing back)>; a refundable credit beyond the tax cannot be "
+            f"priced here. This derives the unused headroom; "
             f"--salt-room sets it directly. (If you "
             f"take the standard deduction, pass --standard-deduction.)")
     else:
@@ -1126,12 +1131,14 @@ def _main(argv: list) -> int:
                         "settle it — it carries the year's statutory amount, "
                         "and (B) reduces that per return.")
     p.add_argument("--other-salt", type=float, default=None,
-                   help="Your personal SALT before the cap (property tax plus "
-                        "Schedule A line 5a's state and local income taxes), less "
-                        "the PTET credit this year's election makes usable this "
-                        "year, refunded next year or not; never more than this "
-                        "year's PTET or the electing state's income tax in it, nor "
-                        "an earlier election's credit. Headroom is "
+                   help="Your personal SALT before the cap as if the entity did "
+                        "not elect (property tax plus Schedule A line 5a's state and "
+                        "local income taxes, each electing state's tax for the year "
+                        "at the smaller of this year's payments and the year's tax), "
+                        "less the PTET credit this year's election makes usable this "
+                        "year, refunded next year or not, no more than that state's "
+                        "tax for the year; a refundable credit beyond it cannot be "
+                        "priced here. Never an earlier election's credit. Headroom is "
                         "cap − this. --salt-room takes precedence.")
     p.add_argument("--marginal-fed", type=float, default=None,
                    help="Federal marginal rate for the forgone-SALT offset "

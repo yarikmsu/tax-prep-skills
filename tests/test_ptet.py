@@ -420,6 +420,8 @@ def test_other_salt_guidance_subtracts_the_usable_credit(surface):
     flat = " ".join(text.split())
     assert "PTET credit this year's election makes usable this year" in flat
     assert "refunded next year or not" in flat
+    assert "smaller of this year's payments and the year's tax" in flat
+    assert "beyond" in flat and "cannot be priced here" in flat
     assert "actually displaced" not in flat
     assert "less the tax on the electing income" not in flat
 

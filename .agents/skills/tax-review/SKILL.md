@@ -331,8 +331,11 @@ rather than telling the taxpayer a number first.
    taxpayer for the qualifying pass-through income. When the return itemized,
    also get their OTHER state and local taxes by `/tax-ptet` step 3: SALT
    before the cap less the PTET credit this year's election makes usable,
-   refunded next year or not, never the tax attributed to the K-1, and stop
-   where step 3 does. Pass the
+   refunded next year or not, never the tax attributed to the K-1. Where step
+   3 stops, a refundable credit beyond the owner's tax for that state, leave
+   that state's `--income` out and record
+   `_PTET (<STATE>): not priced — refundable credit exceeds the owner's <STATE> tax._`
+   and continue with the others, or with Step 4. Pass the
    remaining SALT as `--other-salt`, so the engine derives the headroom against
    the cap it prices. Then run:
    ```bash
