@@ -6,7 +6,7 @@ California is the state AGENTS.md §4 says this toolkit computes in depth, and
 its law had been sitting in the federal file since before there was a `state/`
 package to put it in.
 
-Three blocks, and they were never contiguous — excess SDI/VPDI next to the
+The original three blocks were never contiguous — excess SDI/VPDI next to the
 federal excess-Social-Security credit it shares an allocator with, Schedule CA
 itemized next to federal Schedule A, and Schedule P (540) next to Form 6251.
 Each sat beside the FEDERAL form it mirrors rather than beside the other two,
@@ -31,6 +31,7 @@ from agents.lib.tax_computations._shared import (
     _multi_employer_excess,
     _normalize_filing_status,
     _prorated_mortgage_interest,
+    _round_half_up,
     _validated_withholding_list,
 )
 
@@ -38,6 +39,68 @@ from agents.lib.tax_computations._shared import (
 # SB 951 removed the CA SDI taxable wage ceiling starting TY2024 — from that
 # year there is no per-person maximum and therefore no excess-SDI credit.
 _SDI_NO_CEILING_FROM = 2024
+
+
+def validate_ca_exemption_phaseout(value) -> None:
+    """Require the fetched Form 540 line-32 worksheet for every status."""
+    prefix = "state.exemption_phaseout"
+    if not isinstance(value, dict):
+        raise ValueError(f"{prefix} is unfetched or malformed — fetch via /tax-setup")
+    for field in ("threshold", "band"):
+        entries = value.get(field)
+        if not isinstance(entries, dict):
+            raise ValueError(f"{prefix}.{field} is unfetched — fetch via /tax-setup")
+        for status in ("single", "mfj", "mfs", "hoh", "qss"):
+            name = f"{prefix}.{field}.{status}"
+            amount = _amount(entries.get(status), name)
+            if not amount.is_integer():
+                raise ValueError(f"{name} must use whole dollars")
+            if field == "band" and amount <= 0:
+                raise ValueError(f"{name} must be positive")
+    reduction = _amount(value.get("reduction_per_step"), f"{prefix}.reduction_per_step")
+    if not reduction.is_integer():
+        raise ValueError(f"{prefix}.reduction_per_step must use whole dollars")
+    if reduction <= 0:
+        raise ValueError(f"{prefix}.reduction_per_step must be positive")
+
+
+def compute_ca_exemption_credit(
+    federal_agi: float,
+    filing_status: str,
+    personal_blind_senior_count: int,
+    dependent_count: int,
+    personal_exemption: float,
+    dependent_exemption: float,
+    exemption_phaseout: dict,
+) -> dict:
+    """Form 540 line 32, including its AGI Limitation Worksheet.
+
+    Pass FEDERAL AGI (Form 540 line 13), the eligible box counts from lines
+    7-9 and 10, and fetched exemption amounts and phase-out parameters. The
+    personal/blind/senior and dependent groups each floor at zero separately.
+    The worksheet uses whole-dollar AGI, rounded half up before counting steps.
+    This worksheet applies above the Schedule P screening ceiling too; it
+    neither screens nor computes AMT. No annual figure has an engine default.
+    """
+    status = _normalize_filing_status(filing_status).lower()
+    agi = float(_round_half_up(_amount(federal_agi, "federal_agi", allow_negative=True)))
+    for name, count in (("personal_blind_senior_count", personal_blind_senior_count),
+                        ("dependent_count", dependent_count)):
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+    personal = _amount(personal_exemption, "CA personal exemption")
+    dependent = _amount(dependent_exemption, "CA dependent exemption")
+    validate_ca_exemption_phaseout(exemption_phaseout)
+    threshold = exemption_phaseout["threshold"][status]
+    band = exemption_phaseout["band"][status]
+    steps = math.ceil(max(0.0, agi - threshold) / band)
+    reduction = steps * exemption_phaseout["reduction_per_step"]
+    personal_credit = round(personal_blind_senior_count * max(0.0, personal - reduction), 2)
+    dependent_credit = round(dependent_count * max(0.0, dependent - reduction), 2)
+    return dict(exemption_credit=round(personal_credit + dependent_credit, 2),
+                personal_blind_senior_credit=personal_credit,
+                dependent_credit=dependent_credit, phaseout_steps=steps,
+                reduction_per_head=round(reduction, 2))
 
 
 def compute_excess_sdi(

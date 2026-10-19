@@ -235,6 +235,12 @@ def tax_law() -> dict:
         # STOPS — at which point the eval is measuring the gate and not the
         # agent, which is the one thing this fixture must never do.
         "itemized_phaseout": {"single": 250000, "mfj": 500000, "hoh": 375000},
+        "exemption_phaseout": {
+            "threshold": {"single": 250000, "mfj": 500000, "mfs": 250000,
+                          "hoh": 375000, "qss": 500000},
+            "band": {s: 2500 for s in ("single", "mfj", "mfs", "hoh", "qss")},
+            "reduction_per_step": 6,
+        },
         # Step 10.11 runs `compute_excess_sdi` for EVERY person with CA-wage W-2
         # income, and a None rate hard-errors there. The wage limit is
         # explicitly null, which is the correct TY2024+ shape (SB 951 removed

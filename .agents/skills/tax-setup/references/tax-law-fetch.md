@@ -162,9 +162,16 @@ a figure from a prior year.
   only these indexed figures are fetched. Unfetched HARD-ERRORS at compute for a
   CA ISO exerciser (never a guessed exemption that would zero the CA AMT). Leave
   all-null for a non-ISO CA return.
+- **For every CA return:** fetch Form 540 line 32's AGI Limitation Worksheet
+  into `state.exemption_phaseout`: `threshold` and `band` keyed by all five
+  statuses (`single`/`mfj`/`mfs`/`hoh`/`qss`), and `reduction_per_step`.
+  Fetch the personal/blind/senior amount into `state.personal_exemption.amount`
+  and the dependent amount into `state.dependent_exemption.amount`. These are
+  required even when the taxpayer is below the threshold, and source-pinned
+  to the filing year's Form 540 instructions. No missing block may retain
+  the full exemption credit.
 - **Optional CA scenario/Roth planning:** fetch Form 540's tax-table ceiling
-  and published rows into `state.tax_table`, line-32 per-status thresholds and
-  step widths/reduction into `state.exemption_phaseout`, and Box C screening
+  and published rows into `state.tax_table`, and Box C screening
   ceilings into `state.amt_screening`. Fetch all rows a sweep touches, without
   inferring a midpoint. These are independently year/source-pinned figures;
   see `docs/contributing/state-planning.md`. No covered form means unavailable
