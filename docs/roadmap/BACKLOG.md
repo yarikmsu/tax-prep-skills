@@ -427,7 +427,13 @@ at all.
       of certain property. Its ISO income is `iso_exercise`'s.
 
     Ask about those items, carve-out included, and block a yes, since a
-    missing AMT under-states CA tax. Box C (CA AGI above $347,808 single on
+    missing AMT under-states CA tax. Line 61's own test is broader than
+    the boxes. Schedule P Part I adds back itemized deductions the engine
+    already computes: property taxes (line 3), mortgage interest on debt not
+    used to buy or improve the home (line 4), and miscellaneous itemized
+    deductions (line 5). These can produce CA AMT for a filer who answers no
+    to every box, such as an investor with large advisory fees. They are
+    figures from the return, not answers, so they are AA69's to screen. Box C (CA AGI above $347,808 single on
     the 2025 form) is a screen that sends a filer claiming special credits to
     Schedule P. It limits neither credit AA72 adds (see AA72), and it is a
     figure computed from the return, not an answer the gate can hold.
@@ -599,7 +605,10 @@ at all.
   credits and the payments, and returns every line. Line 31 comes from the
   published Tax Table at or below its ceiling. `state.tax_table` is an
   optional planning block today, so make it required, as AA75 does the
-  phase-out. Emit line 113's screened FTB 5805 note from the builder's own
+  phase-out. Run `compute_ca_schedule_p` on every return, not only after an
+  ISO exercise, with Schedule P Part I's itemized add-backs (lines 3-5) as
+  `ca_preference_adjustments`. Line 61 then catches the AMT that AA68's box
+  questions cannot. Emit line 113's screened FTB 5805 note from the builder's own
   lines 100 and 48 (AA68). Its $500 ($250 for a separate filer) amount is a
   threshold, so fetch it into the cache like any other (AGENTS.md §2). The
   lines are the bracket tax, the
