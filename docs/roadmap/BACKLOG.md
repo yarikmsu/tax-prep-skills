@@ -756,8 +756,13 @@ at all.
       tax below the TMT", as the FTB 3804-CR instructions also say. Only net
       tax limits it, after the Other State Tax Credit (B3). Capping it at
       regular tax less TMT would over-state CA tax and invent a carryover.
-    - Code 188 sits in Section A2, so FTB 3510 and the excess of regular tax
-      over TMT limit it, whatever Box C says.
+    - Code 188 sits in Section A2, so FTB 3510 and the excess of Form 540
+      line 35 (Schedule P Part III line 1) over TMT limit it, after Section
+      A1's credits, whatever Box C says. That is line 35, after the
+      exemption credits, not the line 31 that Schedule P line 25 reads
+      (AA77) and `compute_ca_schedule_p` returns as `ca_regular_tax`. Taking
+      that field minus TMT would allow up to the whole exemption credit too
+      much.
     - Box C ($347,808 single on the 2025 form) only screens a filer into
       Schedule P. It limits neither credit, so neither needs
       `state.amt_screening`.
