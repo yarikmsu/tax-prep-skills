@@ -402,6 +402,9 @@ at all.
   **Implementation awaiting owner review:** [PR #16](https://github.com/yarikmsu/tax-prep-skills/pull/16).
 
 - **AA68 (P1, L): Name every Form 540 situation the engine does not compute.**
+  Implementation: [PR #17](https://github.com/yarikmsu/tax-prep-skills/pull/17),
+  open for review; not merged.
+
   `capabilities.py` tells a California filer that Form 540 is "computed in
   depth (Schedule CA, exemption credits, MHST)", yet no CA gate rule exists,
   where NC has six. So a return that needs an uncomputed line finishes looking
