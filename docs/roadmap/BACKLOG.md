@@ -85,7 +85,7 @@ AA57 finds why.
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Now: California** | **AA68** — name every Form 540 situation the engine does not compute. **AA60** — route CA and NY 1099 state withholding. **AA69** — build Form 540 in the engine and check it. **AA70** — record CA estimated payments and next year's applied overpayment. **AA71** — compute the Schedule CA adjustments the persona meets. | The owner put California first on 2026-10-18, and that day's Form 540 audit found that the agent types most of the state return and nothing handles part of it. AA68 lands first. It turns every silent line into a named one, and it has the return run the line-32 worksheet `planning.py` already holds, which closes the one under-statement every high earner meets. AA60 comes next because a CA 1099 amount, a retiree's 1099-R among them, blocks the whole return today. AA69 puts the lines in a checked builder that AA70 and AA71 feed. AA70 fixes the balance due of anyone who paid CA estimates, and AA71 turns AA68's commonest refusals into computed lines. |
-| **Next: every filer's intake and the auditor, before TY2026 filing opens** | **AA65** — record Form 1099-G's unemployment and family leave benefits. **AA67** — map Form 1099-MISC's boxes by the current form. **AA66** — give Form W-2G a parse route. **AA64** — read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC. **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. **AA62** — ask about specific identification before FIFO prices a crypto sale. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA57** — find why CI's push, pull-request and scheduled runs never register. | A Californian files a federal return too, and these holes reach it. AA65 and AA66 close dropped-form holes open today: a 1099-G's unemployment compensation and a W-2G's winnings and federal withholding have no ledger category, so the gate cannot see them go missing. AA65 does not wait for California: its CA note covers the subtraction AA71 adds. AA67 errs the other way: a 1099-MISC's federal withholding, recorded as its row says, joins Schedule C gross receipts and over-states income and self-employment tax. AA64, AA52 and AA58 must land before TY2026 filing opens. The 2026 Form W-2 reports qualified overtime in box 12 code TT, where no `/tax-parse` row looks. Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, so the season-open sitting would leave the auditor a table short through the TY2026 season. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13, because its definition edit and the test change it forces cannot land apart. A return filed before the April 2027 rate publishes would price that quarter at the last cached rate. AA62 closes the last silent crypto gap. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. |
+| **Next: every filer's intake and the auditor, before TY2026 filing opens** | **AA65** — record Form 1099-G's unemployment and family leave benefits. **AA67** — map Form 1099-MISC's boxes by the current form. **AA66** — give Form W-2G a parse route. **AA64** — read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC. **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. **AA62** — ask about specific identification before FIFO prices a crypto sale. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA57** — find why CI's push, pull-request and scheduled runs never register. | A Californian files a federal return too, and these holes reach it. AA65 and AA66 close dropped-form holes open today: a 1099-G's unemployment compensation and a W-2G's winnings and federal withholding have no ledger category, so the gate cannot see them go missing. AA65 subtracts its amounts on Schedule CA through AA69, which lands before it, and falls back to a CA manual note if it is taken out of order. AA67 errs the other way: a 1099-MISC's federal withholding, recorded as its row says, joins Schedule C gross receipts and over-states income and self-employment tax. AA64, AA52 and AA58 must land before TY2026 filing opens. The 2026 Form W-2 reports qualified overtime in box 12 code TT, where no `/tax-parse` row looks. Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, so the season-open sitting would leave the auditor a table short through the TY2026 season. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13, because its definition edit and the test change it forces cannot land apart. A return filed before the April 2027 rate publishes would price that quarter at the last cached rate. AA62 closes the last silent crypto gap. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. |
 | **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | The quarters are the one item no gate catches: Form 2210 carries the last cached rate forward with only a note until AA58 lands, so this row is their reminder. The TY2026 Form 540 also re-keys AA69's line map. |
 | **Then: California's remaining blocks** | **AA72** — claim the CA AMT credit and the PTET credit. **AA73** — compute rental real estate on Schedule E and Schedule CA. **AA74** — prepare a part-year California return (Form 540NR). | AA72 recovers a credit the rollover already carries and nothing claims. Above $200,000, AA73 is the largest block for every persona: 17% of California returns there carry rental or royalty income. It needs scoping before it is sized. AA74's block, 3.7% of California returns, is smaller than the marketplace block (Form 8962: 6.0% of all California returns, 1.3% above $200,000), which has no item. |
 | **After** | **AA43**, then **AA42** with **AA53** — NY/NC estimated-payment schedules in the mid-year projection, then its AMT and IRMAA exposure. | Both are absent from the current engine. AA43 is the smaller and extends the CA schedule. AA42's IRMAA layer reuses the Roth premium computation, whose tier rule AA53 fixes, so that fix lands with it or before. |
@@ -341,10 +341,11 @@ AA57 finds why.
   adds box 10, family leave benefits, and so renumbers the state boxes 10a, 10b
   and 11 as 11a, 11b and 12. Read both years' instructions for each box's
   line, add the categories and their targets, and say which box a state return
-  reads too. California excludes unemployment and CA paid family leave, but no
-  Schedule CA line subtracts them until AA71. When the run computes CA's
-  return, give the new categories a CA manual note rather than waiting, since
-  the amounts would otherwise over-state CA tax. Found by AA59's fourth review.
+  reads too. California excludes unemployment and CA paid family leave. When
+  the run computes CA's return, subtract them on Schedule CA through AA69's
+  builder, which the plan lands first. If this lands before AA69, give the
+  new categories a CA manual note instead, since the amounts would otherwise
+  over-state CA tax. Found by AA59's fourth review.
 
 - **AA66 (P1, S): Give Form W-2G a parse route.**
   Gambling is a MANUAL capability rule, so a return with a W-2G computes, but
@@ -390,26 +391,48 @@ at all.
     the threshold and under-states CA tax. `planning.py`'s `_ca` already runs
     the worksheet for scenarios, so move it into a public function that the
     return recipe calls, rather than blocking the persona the toolkit exists
-    for. AA69 then takes it into the builder. Lines 8-9 are a manual note.
+    for. Lift the worksheet only, not `_ca`, which refuses any AGI above the
+    Box C screening amount. The worksheet's inputs are an optional planning
+    block today: the fetcher's validator skips `state.exemption_phaseout` for
+    CA, as it skips `state.tax_table` and `state.amt_screening`, and
+    `/tax-setup` fetches them only for planning. So make `exemption_phaseout`
+    required for a CA return in setup's fetch, in the validator and in
+    `tax-law-cache.md`, never letting an unfetched block keep the full credit.
+    AA69 then takes the worksheet into the builder. Lines 8-9 are a manual
+    note.
   - Schedule CA Part I beyond the HSA add-backs: US-obligation interest and
     fund dividends, non-CA municipal interest and exempt-interest dividends,
     Social Security, a state refund, unemployment and CA paid family leave,
     §1202, CA and federal basis and depreciation differences, K-1 CA amounts,
     moving expenses and IRA basis.
+  - Line 61 and Schedule P (540) outside an ISO exercise. The booklet's boxes
+    send a return to Schedule P for AMT preference items and, when it claims
+    credits, for CA AGI above $347,808 (single, 2025). The `iso_exercise` rule
+    fires only on an ISO exercise. Both a missing AMT and an unlimited credit
+    under-state CA tax, so this blocks.
   - Line 63's FTB 3805P and other taxes.
+  - Lines 40, 46 and 75-77: the dependent care credit (FTB 3506), the
+    renter's credit, CalEITC, the young child credit and the foster youth
+    credit. Their income limits sit below the persona's, so these are manual
+    notes, never silent zeros.
   - Lines 43-45's credits, the CA AMT credit and the PTET credit (FTB 3804-CR)
     among them.
-  - Lines 72, 73 and 98: estimated payments, an extension payment, last year's
-    applied overpayment, Form 592-B and 593 withholding, and the overpayment
-    applied to next year. Nothing records them, and each over-states the
+  - Lines 72 and 73: estimated payments (those an estate, trust or S
+    corporation paid on the taxpayer's behalf on Schedule K-1 (541) or (100S)
+    included), an extension payment, last year's applied overpayment, and Form
+    592-B and 593 withholding. Nothing records them, and each over-states the
     balance due, so each is a manual note until AA60 and AA70.
+  - Line 98, the overpayment applied to next year. It is an election that
+    cuts the refund, so leaving it out over-states the refund on line 115.
+    That makes it a required intake answer, not a note.
   - Line 91's use tax, line 92's coverage penalty (FTB 3853) and line 113's
     FTB 5805 penalty.
 
   Pick each severity by bias direction. A missing addition or tax
   under-states CA tax and over-states the refund, so its rule blocks. A
   missing subtraction, credit or payment over-states the tax or the balance
-  due, so it is a manual note until a later item computes it. Ask each in
+  due, so it is a manual note until a later item computes it. An omission
+  that over-states the refund, such as line 98, is a required answer. Ask each in
   `/tax-setup`.
 
   A blocking rule costs more than its code. `WHO-IT-FITS.md` must size it,
@@ -426,7 +449,10 @@ at all.
   `test_capabilities.py`. A third prefix copy that misses one site applies
   CA rules to other filers or skips the guard.
 
-  Replace the "in depth" claim everywhere it is made:
+  Replace the "in depth" claim everywhere it is made. These are the sites
+  `git grep -n -i "in depth"` found on 2026-10-18; re-run it rather than
+  trusting this list:
+  - `README.md`, the most public copy
   - `capabilities.py`'s state note
   - `WHO-IT-FITS.md`'s California paragraph
   - AGENTS.md §4
@@ -434,6 +460,8 @@ at all.
   - `.github/ISSUE_TEMPLATE/state_module.yml`
   - the opening of `state-return.md`
   - the comments in `irs_dates.py` and `projection/render.py`
+  - `/tax-project`'s and `/tax-extend`'s state notes
+  - `docs/contributing/test-invariants.md`
 
 - **AA69 (P1, M): Build Form 540 in the engine and check it.**
   Nothing derives Form 540's arithmetic. NC's D-400 comes from one
@@ -447,7 +475,10 @@ at all.
   - Lines 8 and 9 (blind and senior) have no field.
 
   Add `compute_ca_540`. It takes the Schedule CA totals, the deduction, the
-  credits and the payments, and returns every line: the bracket tax, the
+  credits and the payments, and returns every line. Line 31 comes from the
+  published Tax Table at or below its ceiling. `state.tax_table` is an
+  optional planning block today, so make it required, as AA68 does the
+  phase-out. The lines are the bracket tax, the
   phase-out, the floors and line 62's tax (renamed Behavioral Health Services
   Tax on the 2025 form). Add a `--check` like `/tax-compute` step 12.6, carried
   by the validation receipt. Key the line map to the reviewed form year, as
@@ -455,8 +486,9 @@ at all.
   Correct the excess-SDI label: 2025 line 74 is the Motion Picture credit.
 
 - **AA70 (P1, M): Record California estimated payments and next year's applied overpayment.**
-  Form 540 line 72 takes the year's estimated payments, an extension payment
-  and last year's overpayment applied, and the return has no field for any of
+  Form 540 line 72 takes the year's estimated payments (those paid on the
+  taxpayer's behalf on Schedule K-1 (541) or (100S) included), an extension
+  payment and last year's overpayment applied, and the return has no field for any of
   them:
   - State estimated payments reach only the federal Schedule A line 5a
     recipe.
@@ -469,24 +501,32 @@ at all.
   line 36 into `prior_year.estimated_payments_applied`. Add both fields, their intake question and the
   rollover. FTB 5805's penalty on line 113 is a new computation. The
   projection computes only the required annual payment
-  (`compute_ca_safe_harbor`), so the penalty needs the FTB's underpayment rate,
-  fetched and cached as the federal §6621 quarters are, and priced per
-  installment by the payment dates, as `compute_form_2210` prices it. Needs
+  (`compute_ca_safe_harbor`), so the penalty needs the FTB's own rate, priced
+  per installment by the payment dates as `compute_form_2210` prices them.
+  That rate is not a copy of the §6621 quarters. R&TC §19521 resets it every
+  January 1 and July 1 from the federal rate of an earlier month, so it needs
+  its own cached schedule and its own source pin for the freshness auditor. Needs
   AA69.
 
 - **AA71 (P1, M): Compute the Schedule CA adjustments the persona meets.**
   Compute the common adjustments AA68 names instead of refusing them. Each
   needs its parse field, ledger category and line:
-  - US-obligation interest (1099-INT box 3) and the US-obligation share of
-    fund dividends are subtractions. Today `/tax-parse` merges box 3 into
+  - US-obligation interest (1099-INT box 3) is a subtraction. Today `/tax-parse` merges box 3 into
     `taxable_interest`, which loses the figure.
   - Non-CA municipal interest and exempt-interest dividends are additions:
     1099-INT box 8 by issuer state, and 1099-DIV box 12, which `/tax-parse`
     does not capture.
+  - Fund dividends follow CA's 50% rule (R&TC §17145; Schedule CA line 2's
+    instructions; FTB Pub. 1001). Only a fund holding at least 50% of its
+    assets in US obligations passes a US-obligation share through as a
+    subtraction, or, for an exempt-interest dividend, in US and CA
+    obligations. Below that nothing is subtracted, and a federally exempt
+    dividend is an addition in full. Subtracting a share from a fund below 50%
+    under-states CA tax.
   - Social Security is subtracted in full, and so is a state income tax refund.
-  - Unemployment and CA paid family leave are subtracted. This lands with or
-    before AA65's 1099-G categories. Until then, AA65's CA note says that no
-    line subtracts these amounts.
+  - Unemployment and CA paid family leave are AA65's, not this item's. AA65
+    adds their 1099-G categories after AA69's builder exists, and subtracts
+    them on Schedule CA itself.
 
   Needs AA69.
 
@@ -512,8 +552,9 @@ at all.
   `rental_income` blocks 17% of California returns above $200,000 and 7.1% of
   all of them. The figure counts rental or royalty income (`WHO-IT-FITS.md`).
   Above $200,000 it is the largest block for every persona. Across all
-  returns, the marketplace block is larger in Florida and North Carolina, and
-  in California too, where it is 6.0%. The work spans:
+  returns, the marketplace block is larger in Florida and North Carolina,
+  while in California rental stays larger (7.1% against 6.0%). The work
+  spans:
   - Federal Schedule E and depreciation (Form 4562).
   - The passive-loss limit (Form 8582's $25,000 allowance and its phase-out)
     and the suspended-loss carryforward.
