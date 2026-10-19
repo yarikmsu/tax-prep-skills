@@ -326,9 +326,12 @@ college_tuition_deduction_claimed)`.
 payments, not above line 44. `refundable_credits` is a CLOSED set keyed by
 name; an unknown key refuses rather than being silently dropped.
 
-- `state_withholding` is W-2 box 17; `city_withholding` is box 19/20 for a
-  locality of New York City. They are separate lines (72 and 73) and separate
-  tie-out categories.
+- `state_withholding` totals NY tax withheld from W-2 and 1099/W-2G sources;
+  `city_withholding` and `yonkers_withholding` total the corresponding locality's
+  withholding from those sources, including 1099-R/W-2G box 17. Confirm each
+  source jurisdiction by label. IT-201 lines 72, 73 and 74 and their ledger
+  categories stay separate. Prepare IT-2 and IT-1099-R and attach the required
+  1099-G/W-2G statements per the covered-year instructions.
 - The estimated tax penalty **reduces an overpayment** where there is one and
   is **included in the amount owed** where there is not. It is never a separate
   bill beside line 80. Reporting it beside the amount owed double-counts it and

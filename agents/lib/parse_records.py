@@ -55,7 +55,7 @@ LEDGER_NAME = "parse_ledger.json"
 # drop this whole chain exists to catch.
 LEDGER_FIELDS = frozenset({
     "doc_id", "file", "form_type", "payer", "person", "key_boxes", "skipped",
-    "foreign", "second_read", "retirement_kind",
+    "foreign", "second_read", "retirement_kind", "other_state_withholding_by_state",
 })
 RECORD_ONLY_FIELDS = frozenset({
     # The boxes AS READ, label by label, before any category judgement. This is

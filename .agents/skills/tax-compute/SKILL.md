@@ -278,9 +278,11 @@ Prove every parsed document landed on the return — the CP2000 killer:
      York City or Yonkers line (IT-201 47a, 55, 56) the profile flags and
      nobody computed, or one written without its function's `method` beside
      it — compute it, write both, and recompute line 58; or an amount in a
-     blocking category (`unrouted_state_withholding`, `nft_first_sale_proceeds`)
-     that no line here holds, which nothing clears: keep its record and prepare
-     the return outside this toolkit, never re-file it under another category;
+     blocking category: re-read a legacy `unrouted_state_withholding` source
+     and route it through the supported CA/NY/NC/locality category, including
+     the payment on the return; an unresolved source still blocks. For
+     `nft_first_sale_proceeds`, keep its record and prepare the return outside
+     this toolkit, never re-file it under another category;
      or `has_digital_asset_option_exercise` unanswered with digital assets on
      the return — ask the taxpayer, set it, and re-run Step 0.7 first.
      Otherwise fix the aggregation (or the ledger, if the parse was wrong) and re-run. NEVER

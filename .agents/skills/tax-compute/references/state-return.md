@@ -190,7 +190,12 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     Boxes A/B or from the Box C special-credit screen. The checked Form 540
     builder is tracked as AA69. A non-ISO return without an opening AMT credit
     keeps no ISO-path block unless a separate manual Schedule P needs one.
-10. CA withholding from W-2 Box 17
+10. CA withholding: write W-2 box 17 alone to `ca_withholding_box17`,
+    1099/W-2G California income tax withheld to `ca_withholding_1099`, and
+    Forms 592-B/593 recipient withholding to `ca_withholding_592b_593`.
+    Form 540 line 71 is the first two totals; line 73 is the third.
+    Tie each to its own ledger category. Include all three exactly once in
+    payments and the refund/balance calculation; none reduces tax itself.
     (`ca_total_tax` = CA tax after exemption credits minus the separately worked
     allowable nonrefundable credits, floored at zero, plus mental-health surcharge + `ca_amt`
     from step 9.5 when present.)

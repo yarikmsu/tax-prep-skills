@@ -142,7 +142,9 @@
     "ca_refund": 0,
     "line_75_caleitc": 0,
     "line_76_young_child_credit": 0,
-    "line_77_foster_youth_credit": 0
+    "line_77_foster_youth_credit": 0,
+    "ca_withholding_1099": 0,
+    "ca_withholding_592b_593": 0
   },
   "income_summary_by_person": {
     "alex": {

@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import tie_out as T  # noqa: E402
-from tests.skill_text import listed_boxes  # noqa: E402
+from tests.skill_text import listed_boxes, skill_text  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -528,7 +528,7 @@ class TestNewYorkWithholding:
         """A registered-but-never-emitted category is dead protection: the
         ledger never carries it, every sum check passes on an empty set, and
         the gate reports clean. Both halves or neither."""
-        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text()
+        parse_md = skill_text("tax-parse")
         for category in ("state_withholding_ny", "city_withholding_nyc"):
             assert category in parse_md, category
         assert "Yonkers" in parse_md, (
@@ -565,6 +565,9 @@ class TestUnroutedStateWithholding:
         if other is not None:
             records.append(_record(doc_id="r-pension", file="documents/1099R.pdf", form_type="1099-R",
                                    payer="Pension", key_boxes={category: other}))
+        if category == "other_state_withholding":
+            for record in records[1:]:
+                record["other_state_withholding_by_state"] = {"CA": record["key_boxes"][category]}
         return _ledger(*records)
 
     def _target(self, report, category="unrouted_state_withholding"):
@@ -577,10 +580,11 @@ class TestUnroutedStateWithholding:
         target = self._target(report)
         assert "da-exchange" in target and "Nothing waives this" in target
         # Preparing only the state return elsewhere clears nothing here.
-        assert "federal included, cannot complete here" in target
+        assert "still prevents completion, federal included" in target
         # Each way round the block that loses the payment is named, the
         # advisory category among them: nothing checks which state it holds.
-        assert "a W-2 category or other_state_withholding hides the payment" in target
+        assert "re-read the source and use the supported" in target
+        assert "Do not delete the record or hide it" in target
         assert "state income tax withheld on a 1099 or W-2G" in target
         assert "New York City or Yonkers tax withheld" in target
 
@@ -626,8 +630,8 @@ class TestUnroutedStateWithholding:
     def test_a_1099_routes_only_to_a_state_return_this_run_computes(self):
         """A Texas resident's CA-withheld 1099 has no CA return here: blocking
         their federal return over it would name a return that does not exist."""
-        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
-        for category in ("state_withholding_nc", "unrouted_state_withholding"):
+        parse_md = skill_text("tax-parse")
+        for category in ("ca_1099_withholding", "state_withholding_ny", "state_withholding_nc"):
             (row,) = [line for line in parse_md.splitlines()
                       if "1099's state-tax-withheld box" in line and f"`{category}`" in line]
             assert "this run computes" in row, category
@@ -672,45 +676,38 @@ class TestUnroutedStateWithholding:
         assert "less the tax on the electing income" not in ptet
         assert "state income/wage" not in ptet
 
-    def test_the_blocking_states_are_those_with_a_w2_category_and_no_1099_route(self):
-        """The states that block are not a list to keep by hand: each state
-        with a `state_withholding_<xx>` category is computed here, and one no
-        1099 row routes would otherwise send its 1099 withholding to the
-        advisory. Both places that name them must name exactly these."""
-        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
-        computed = {c.rsplit("_", 1)[1].upper() for c in T._ALL_CATEGORIES
-                    if c.startswith("state_withholding_")}
-        routed = {code for code in computed if any(
-            "1099's state-tax-withheld box" in line and f"`state_withholding_{code.lower()}`" in line
-            for line in parse_md.splitlines())}
-        named = " or ".join(sorted(computed - routed))
-        assert named == "CA or NY"  # the reading this test makes of today's rows
-        (row,) = [line for line in parse_md.splitlines()
-                  if "1099's state-tax-withheld box" in line and "`unrouted_state_withholding`" in line]
-        assert f"| {named} (NYC and Yonkers count as NY), and this run computes" in row, row
-        # The W-2 half of the same row lists every state with a category.
-        *head, last = sorted(computed)
-        assert f"a W-2's box 17 for a state other than {', '.join(head)} or {last} |" in row, row
+    def test_every_state_with_a_w2_category_has_a_1099_route(self):
+        """CA retains its W-2-only field; NY/NC widen their form totals.
+        Every registered state must have its corresponding route in both
+        the parse table and the broker-box contract, never only one."""
+        parse_md = skill_text("tax-parse")
         accounts = (REPO / "docs/contributing/crypto-accounts.md").read_text(encoding="utf-8")
-        (box16,) = [line for line in accounts.splitlines() if "`unrouted_state_withholding` for" in line]
-        assert f"`unrouted_state_withholding` for {named}," in box16, box16
+        computed = {c.removeprefix("state_withholding_").upper() for c in T.CATEGORY_TARGETS
+                    if c.startswith("state_withholding_")}
+        for code in computed:
+            category = "ca_1099_withholding" if code == "CA" else f"state_withholding_{code.lower()}"
+            (row,) = [line for line in parse_md.splitlines()
+                      if "1099's state-tax-withheld box" in line and f"`{category}`" in line]
+            assert "this run computes" in row
+            assert f"`{category}` for {code}" in accounts
+        assert "other_state_withholding_by_state" in parse_md and "other_state_withholding_by_state" in accounts
 
-    def test_a_w2g_routes_and_blocks_as_a_1099_does(self):
-        """A W-2G is not a 1099, so a row naming only 1099s sent an NC W-2G
-        to the advisory and left D-400 line 20a short with the gate green."""
-        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
-        rows = [line for line in parse_md.splitlines() if "1099's state-tax-withheld box" in line]
-        assert len(rows) == 2 and all("W-2G" in row.split("|")[1] for row in rows), rows
+    def test_a_w2g_routes_as_a_1099_does(self):
+        """W-2G is not a 1099; its withheld payment must be explicitly routed."""
+        parse_md = skill_text("tax-parse")
+        (row,) = [line for line in parse_md.splitlines() if "1099's state-tax-withheld box" in line]
+        assert "W-2G" in row.split("|")[1]
+        for category in ("ca_1099_withholding", "state_withholding_ny", "state_withholding_nc"):
+            assert f"`{category}`" in row
 
-    def test_a_1099_local_tax_for_nyc_or_yonkers_blocks_as_ny_does(self):
-        """IT-201 lines 72-74 take New York, NYC and Yonkers tax withheld from
-        IT-2, IT-1099-R, Form 1099-G and Form W-2G; with no route for a 1099-R's
-        or W-2G's local box, the amount captured for Schedule A would never
-        reach line 73 or 74."""
-        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
-        (row,) = [line for line in parse_md.splitlines()
-                  if "1099's state-tax-withheld box" in line and "`unrouted_state_withholding`" in line]
-        assert "a 1099-R's or W-2G's local tax withheld (box 17) for NYC or Yonkers" in row, row
+    def test_a_1099_local_tax_for_nyc_or_yonkers_has_its_own_route(self):
+        """IT-201 72-74 / IT-203 62-64 include retirement/gambling withholding;
+        a city payment is never folded into the state line."""
+        parse_md = skill_text("tax-parse")
+        for category in ("city_withholding_nyc", "city_withholding_yonkers"):
+            (row,) = [line for line in parse_md.splitlines()
+                      if line.lstrip().startswith("| W-2") and f"`{category}`" in line]
+            assert "1099/W-2G local-tax box" in row and "this run computes NY" in row
 
     def test_every_1099_state_amount_reaches_the_schedule_a_recipe(self):
         """State income tax withheld is deductible on Schedule A line 5a
@@ -755,7 +752,7 @@ class TestUnroutedStateWithholding:
 
     @pytest.mark.parametrize("form", sorted(_WITHHELD_BOXES))
     def test_tax_parse_captures_each_forms_withheld_boxes(self, form):
-        parse_md = (REPO / ".agents/skills/tax-parse/SKILL.md").read_text(encoding="utf-8")
+        parse_md = skill_text("tax-parse")
         listed = parse_md[parse_md.index(f"### {form} Extraction"):].splitlines()[1]
         assert self._WITHHELD_BOXES[form] <= listed_boxes(listed.split(":", 1)[1]), listed
         if form == "W-2":  # box 14's labels name the funds the recipe reads
@@ -1204,10 +1201,8 @@ def test_every_category_documented_in_tax_parse_skill():
     step-6.5 table — a category registered in CATEGORY_TARGETS but absent
     from the skill doc is dead protection (the gate passes vacuously).
     Mirrors the capabilities interview-asks-it grep test."""
-    from pathlib import Path
     from agents.lib.tie_out import _ALL_CATEGORIES
-    skill = (Path(__file__).resolve().parent.parent
-             / ".agents/skills/tax-parse/SKILL.md").read_text()
+    skill = skill_text("tax-parse")
     for cat in sorted(_ALL_CATEGORIES):
         assert f"`{cat}`" in skill, (
             f"tie-out category {cat!r} is registered but never documented "

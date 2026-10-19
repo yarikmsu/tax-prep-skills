@@ -59,7 +59,8 @@ empty answers must be confirmed in `answers.md`. Consult the covered year's
   in the reviewed nonrefundable-credit worksheet, never line 49.
 - `payments`: `state_withholding`, `city_withholding`, `yonkers_withholding`,
   `estimates_and_extension`; confirm `payments_verified`. Compare actual
-  payer/jurisdiction boxes with ledger categories; another state's withholding
+  payer/jurisdiction boxes from W-2 and 1099/W-2G sources with ledger categories
+  (IT-203 lines 62, 63 and 64, including 1099-R/W-2G local box 17); another state's withholding
   does not pay NY. Supply confirmed `use_tax`, `voluntary_contributions`,
   `penalty`, `interest`, `applied_to_next_year`, and
   `special_it230_income_percentage: false`.

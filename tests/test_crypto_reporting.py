@@ -949,15 +949,17 @@ def test_the_reviewed_1099da_table_names_every_box_and_key():
     # preparer follows, is one the gate reads: tied, or refused outright.
     ledger_rows = [row for row in keyed if '(parse ledger only)' in row[0]]
     assert {row[0].split()[0].strip('`') for row in ledger_rows} == _1099DA_LEDGER_KEYS
-    known = set(tie_out.CATEGORY_TARGETS) | set(tie_out._BLOCKING_CATEGORIES) | tie_out._INFORMATIONAL
+    from agents.lib.parse_records import LEDGER_FIELDS
+    known = set(tie_out.CATEGORY_TARGETS) | set(tie_out._BLOCKING_CATEGORIES) | tie_out._INFORMATIONAL | LEDGER_FIELDS
     for name in re.findall(r'`(\w+)`', ' '.join(' '.join(row) for row in ledger_rows)):
         assert name in known, name
-    # Box 16 names one category per kind of state: routed, a computed return
-    # with no route yet, and a return this toolkit never prepares. A fold into
-    # a W-2 category, or a dropped fallback, fails here.
+    # Box 16 names every supported state route plus the external-state
+    # fallback and its mandatory jurisdiction breakdown. CA uses its own
+    # nonwage component; its W-2-only category must not absorb a 1099.
     (box_16,) = [row for row in ledger_rows if row[1] == '16']
     assert set(re.findall(r'`(\w+)`', ' '.join(box_16))) == {
-        'state_withholding_nc', 'unrouted_state_withholding', 'other_state_withholding'}
+        'ca_1099_withholding', 'state_withholding_ny', 'state_withholding_nc',
+        'other_state_withholding', 'other_state_withholding_by_state'}
     assert 'unrouted_state_withholding' in tie_out._BLOCKING_CATEGORIES
     assert 'other_state_withholding' in tie_out._INFORMATIONAL
     # Box 11c's proceeds stay out of 1f, so the ledger blocks them too: a form
