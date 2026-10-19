@@ -66,6 +66,15 @@ Before computing, identify assumptions that could change the tax outcome by >$10
 
 ### Step 2: Determine Applicable Forms
 
+**State refunds:** whenever a 1099-G refund is present, work the federal
+tax-benefit worksheet against the prior year's deduction election and actual
+tax benefit. Record the taxable part (including a worked zero) in
+`form_1040.taxable_state_refund`, set
+`taxable_state_refund_worksheet_confirmed: true`, and include that part exactly
+once in Schedule 1 line 1 / `line_8_schedule1_other`. A California return
+subtracts that same taxable part on Schedule CA; the gross 1099-G refund is
+not its subtraction.
+
 Based on `taxpayer_profile.json` flags:
 
 | Flag | Forms Triggered |

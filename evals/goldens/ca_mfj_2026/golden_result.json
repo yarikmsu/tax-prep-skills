@@ -6,7 +6,7 @@
     "standard_deduction": 31500,
     "exchange_rates": {},
     "limitations": [
-      "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
+      "State: California Form 540 is partially assembled from manual worksheets. HSA adjustments, exemption-credit math and the ISO Schedule P path have engine support; other situations are gated or marked NOT COMPUTED. FTB 5805's underpayment penalty on line 113 is NOT COMPUTED; the FTB may figure it and send a bill."
     ]
   },
   "taxpayers": {
@@ -75,7 +75,9 @@
     "line_35a_refund": 0,
     "line_36_applied_to_next_year": 0,
     "line_37_amount_owed": 6122.0,
-    "line_38_estimated_tax_penalty": 0
+    "line_38_estimated_tax_penalty": 0,
+    "taxable_state_refund": null,
+    "taxable_state_refund_worksheet_confirmed": false
   },
   "interest_detail": {
     "items": [
@@ -218,7 +220,9 @@
       "hsa_interest_addback": 0,
       "hsa_dividend_addback": 0,
       "total_additions": 0,
-      "total_subtractions": 0
+      "total_subtractions": 0,
+      "taxable_social_security_subtraction": 0,
+      "taxable_state_refund_subtraction": 0
     },
     "ca_agi": 196200.0,
     "ca_taxable_income": 185200.0,
@@ -250,7 +254,10 @@
     "ca_withholding_box17": 9500.0,
     "ca_sdi_box14": 2035.0,
     "ca_excess_sdi_credit": 0,
-    "ca_refund": 1888.0
+    "ca_refund": 1888.0,
+    "line_75_caleitc": 0,
+    "line_76_young_child_credit": 0,
+    "line_77_foster_youth_credit": 0
   },
   "income_summary_by_person": {
     "alex": {

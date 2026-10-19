@@ -511,6 +511,39 @@ own state of residence)**:**
 `ira_contribution.ca_savings`, and `balance_due_summary.california_refund`
 (see their `_note`s); KEEP `florida_state` for FL.
 
+**California Form 540 screening — CA filers only:**
+Ask each question and record an explicit yes/no; an unknown is not no.
+Re-use the existing senior answers `age_65_plus_primary` / `age_65_plus_spouse`;
+do not ask age again. Re-use `has_1099g_state_refund` for state refunds and
+work the federal tax-benefit worksheet before subtracting the taxable part.
+
+- Is either filer eligible for the California blind exemption? → `ca_has_blind_exemption`.
+- Did you receive a Form 1099-G state or local tax refund? → the existing `has_1099g_state_refund` flag; do not ask it again if already answered.
+- Any US-obligation interest or fund dividends with a California-exempt US-obligation portion? → `ca_has_us_obligation_income`.
+- Any non-California municipal interest or exempt-interest dividends taxable by California? → `ca_has_nonca_muni_interest`.
+- Any other Schedule CA Part I difference: unemployment or CA paid family leave, section 1202, federal/CA basis or depreciation, CA K-1 amounts, moving expenses, IRA basis, California lottery winnings, educator expenses, or the foreign earned income exclusion add-back? Ask about each category, recording the applicable lines → `ca_has_other_schedule_ca_adjustments`. HSA add-backs have their own existing path; federally taxable Social Security and state refunds must also be subtracted and are checked at tie-out.
+- Any Schedule P Box A preferences/adjustments after applying the filing year's trade/business gross-receipts carve-out, or Box B investment-interest expense/installment-sale income? Any mortgage interest on debt not used to buy or improve the home? → `ca_has_noniso_amt_items`. Read the covered-year booklet's carve-out; do not block an exempt business item merely because it appears in Box A. ISO income keeps its existing `has_iso_exercise` question. Standard/itemized-deduction AMT adjustments are return figures, not another yes/no question.
+- A lump-sum distribution requiring Schedule G-1 or an accumulation distribution requiring FTB 5870A? → `ca_has_special_distribution_tax`.
+- California early-distribution or other additional taxes, including FTB 3805P? → `ca_has_other_taxes`.
+- For each CA entity in `flags.k1_states`, did it elect PTET and report a credit? Also ask about unused FTB 3804-CR carryovers even without a current CA K-1/election → `ca_has_ptet_credit` if either applies. The credit is not a payment.
+- A CA AMT credit from an earlier return, including one prepared elsewhere? → `ca_has_amt_credit`. A nonzero `prior_year.ca_amt_credit_carryforward` sets the situation at the gate even if this answer is false. If acknowledged, work FTB 3510 and record its available and allowable amounts; preserve the remainder for rollover.
+- Any other unused California credit carryover? → `ca_has_other_credit_carryover`.
+- Any CA estimated or extension payment, prior overpayment applied to this year, payment allocated by an estate/trust/S corporation on K-1, or Forms 592-B/593 withholding? → `ca_has_nonw2_payments`.
+- Will any California overpayment be applied to next year? → `ca_applies_overpayment_forward`.
+- Any California use tax due on untaxed purchases? Work the covered-year use-tax instructions to determine the answer → `ca_owes_use_tax`.
+- Any health-coverage penalty after working FTB 3853's coverage and exemption rules? → `ca_has_coverage_penalty`.
+- Rent paid for a California residence? → `ca_paid_rent`; check the year's renter's-credit worksheet.
+- Any other California special credit claimed from its own worksheet? → `ca_claims_special_credits`; carryovers, PTET and the AMT credit have separate blocking questions above.
+
+For `may_qualify_for_eic`, also screen California's CalEITC, Young Child Tax
+Credit and Foster Youth Tax Credit using the filing year's FTB 3514. A federal
+no does not answer the California question: California accepts ITIN filers,
+CalEITC need not involve a child, and the young-child credit can allow zero
+earned income. Check the year's foster-youth age/eligibility rules separately.
+Set the existing flag true on a yes or maybe; never copy the federal credit.
+`has_dependent_care` also requires a separate FTB 3506 worksheet; only the
+federal credit is computed by the engine.
+
 **Group 3 — Dependents:**
 - Number of dependents (0 = skip, and set `has_dependent_unearned_income` to
   `false` — no dependent, no Form 8615)
@@ -781,7 +814,12 @@ own state of residence)**:**
   manifest line appear at all. **On a New York return, also answer YES for a
   noncustodial parent paying court-ordered child support** — Form IT-209 has
   its own eligibility test, not the federal one, so a federal NO does not
-  rule it out. Screen on SHAPE, not on figures: earned income
+  rule it out. **On a California return, also screen FTB 3514's CalEITC,
+  Young Child Tax Credit and Foster Youth Tax Credit:** ITIN filers can qualify,
+  CalEITC does not require a child, and the young-child credit can allow zero
+  earned income. Use each covered-year eligibility worksheet. Keep this flag
+  TRUE if any jurisdiction's answer is yes or maybe; a later federal no must
+  not overwrite a California or New York yes. Screen the federal credit on SHAPE, not on figures: earned income
   from work or self-employment; a qualifying child, or the taxpayer (on MFJ, at
   least one spouse) in the childless age band; SSNs valid for employment;
   filing status other than MFS unless the separated-spouse rules are met;

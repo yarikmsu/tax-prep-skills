@@ -311,7 +311,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      payload field precisely because you read `--json` first — the markdown carries it
      too, but by then the summary is written.
    - **`state_bracket_estimate_note`** — non-null means the resident state is TAXED but
-     NOT modeled in depth: only California's Form 540 is. Every other state's figures
+     handled by a bracket estimate in this projection; California has a dedicated block. Those state figures
      apply that state's brackets to a federally-derived taxable income and model no
      state-specific credit, addition or subtraction. Surface it whenever you report
      `state.balance`, and never present that figure as an amount owed — say it is an

@@ -79,8 +79,8 @@ class TestNoModuleRestatesTheSupersededStateRule:
     """The premise the state rollover was BUILT on, and which turned out false.
 
     Epic L wired four modules to "a state tax authority does not observe the DC
-    holiday set, so state deadlines roll past weekends only". For California —
-    the one state this toolkit models in depth — R&TC §18410 says the opposite,
+    holiday set, so state deadlines roll past weekends only". For California,
+    R&TC §18410 says the opposite,
     and the rule published CA payment dates up to three days EARLY until it was
     corrected.
 

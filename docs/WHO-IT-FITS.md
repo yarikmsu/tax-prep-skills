@@ -7,9 +7,10 @@ kinds of filer the toolkit is built for: a Californian first, then Floridians an
 New York City residents, then North Carolinians and Seattle residents. Read it
 before you start, to see whether your return is likely to be one of them.
 
-**The short answer: 16–27% of returns hit a block, depending on the persona,
-and 21–29% of returns above $200,000 of income.** Above $200,000, one block,
-rental property, is most of it everywhere.
+**The common federal/residency blocks alone reach 16–27% of returns, depending
+on the persona, and 21–29% above $200,000.** The table below retains those
+common-block estimates. California's additional stops are sized separately
+below; they are not included in those totals, and some remain unmeasured.
 
 ## What a block means
 
@@ -114,8 +115,10 @@ commutes is one blocked return, so this undercounts joint returns.
 
 ### California
 
-California blocks the least of the five overall, and its own return is the
-deepest the toolkit computes. Above $200,000, 17% of returns carry rental or
+For the common measured federal/residency blocks alone, California has the
+lowest overall share. Its Form 540 is partly assembled from manual worksheets,
+and its additional state stops prevent ranking its complete coverage against
+the other personas. Above $200,000, 17% of returns carry rental or
 royalty income, and that one block is most of the 22–27% that hit any. Moves
 (3.7%) are the lowest of the five. Almost nobody commutes to a state that
 blocks: Nevada, the commonest out-of-state workplace, has no income tax and does
@@ -124,6 +127,51 @@ under community-property law carry a note on the return, not a block: the ISO's
 AMT is computed, and the other two are worked by hand. 64% of California returns
 above $500,000 itemize, and for them the federal return applies the SALT cap's
 phasedown on high incomes.
+
+California's additional gates cover the following situations. A yes blocks
+until the limitation is explicitly acknowledged and the named worksheet is
+prepared elsewhere; acknowledgement does not compute the line:
+
+- Blind exemption (`ca_blind_exemption`); US-obligation interest/fund income
+  (`ca_us_obligation_income`); non-CA municipal interest (`ca_nonca_muni_interest`);
+  other Schedule CA differences (`ca_other_schedule_ca`); and a state-refund
+  tax-benefit worksheet (`ca_state_refund`).
+- General AMT items outside the ISO path (`ca_noniso_amt`), special distribution
+  taxes (`ca_distribution_taxes`), and other additional taxes (`ca_other_taxes`).
+- PTET credits/carryovers (`ca_ptet_credit`), the AMT credit (`ca_amt_credit`),
+  and other credit carryovers (`ca_other_credit_carryover`). An acknowledged
+  AMT-credit case still needs a worked FTB 3510 and a preserved carryforward.
+- Payments beyond W-2 withholding (`ca_nonw2_payments`), an overpayment applied
+  forward (`ca_overpayment_forward`), use tax (`ca_use_tax`), and a coverage
+  penalty (`ca_coverage_penalty`).
+
+The TY2023 Historic Table 2 provides these additional measurements. They
+overlap one another and the common blocks, so do not add the shares:
+
+- Taxable Social Security: 17.2% above $200,000 and 13.4% of all California returns.
+  The tie-out requires the federal taxable portion to be subtracted on Schedule
+  CA, regardless of screening answers. Its unrounded share exceeds rental's
+  16.6%; this measures returns needing the checked subtraction, rather than
+  an unsupported situation requiring an acknowledgement. Rental remains the
+  largest measured blocking share above $200,000; the municipal-interest
+  upper bound does not identify a blocking share.
+- Taxable state/local refunds: 2.6% above $200,000 and 3.3% overall.
+  This sizes the taxable subset of the refund gate, not all gross refunds.
+- Unemployment compensation: 5.3% above $200,000 and 5.8% overall.
+  This sizes one component of the broader Schedule CA differences gate.
+- All tax-exempt interest bounds the non-CA municipal subset from above: 18.8% above $200,000 and 4.6% overall.
+  The data does not separate CA-exempt municipal income from the taxable
+  non-CA portion, so this is an upper bound, not a measured blocking share.
+
+The other new California gates are **unmeasured**: no reviewed public series
+identifies their complete eligible populations. The source is
+[IRS TY2023 Historic Table 2](https://www.irs.gov/statistics/soi-tax-stats-historic-table-2),
+fields N02500, N00700, N02300 and N00400, divided by N1; AGI brackets 8–10
+are $200,000+, and bracket 0 is all returns. The extraction script retains
+these measurements separately from its common-block independence estimate.
+Renter's credit, FTB 3506, CalEITC, young-child/foster-youth credits and other
+credits claimed from the taxpayer's own worksheets carry manual notes.
+The FTB may calculate the unpriced FTB 5805 penalty and bill it later.
 
 ### Florida
 

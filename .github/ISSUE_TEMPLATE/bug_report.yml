@@ -91,4 +91,4 @@ body:
     id: tax-year
     attributes:
       label: Tax year and state
-      description: 'For example: "TY2026, CA". Say if the state is not modeled in depth — most are bracket-estimate only.'
+      description: 'For example: "TY2026, CA". Name the form and any manual worksheet or capability limitation; many states receive bracket estimates only.'

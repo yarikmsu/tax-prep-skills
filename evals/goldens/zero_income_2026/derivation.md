@@ -88,15 +88,15 @@ would have scored that agent's seventeen `MISSING` fields as a failure. The
 `(always)` was a label printed by the script used to survey the template, read
 back as though it were in the file.
 
-**The exception the base case also makes:** `california_540.schedule_p` carries
-an `_include_if` of `has_iso_exercise (CA AMT)`, and neither profile sets that
-flag, yet both goldens keep the block at zeros. That is inherited from the first
+**The exception the base case also makes:** `california_540.schedule_p` applies
+to an ISO exercise or an opening CA AMT credit. Neither profile has either
+situation, yet both goldens keep the block at zeros. That is inherited from the first
 golden rather than decided here; it is named so the next reader does not take
 "everything the base case drops" as exact.
 
 ## The one figure that is not zero and not structural
 
 `meta.limitations` carries the same one line the base case does — the
-capability gate's state-scope note about California being computed in depth. It
+capability gate's note that California combines engine functions with manual worksheets. It
 is copied verbatim from the gate's manifest, not written here, for the reason
 AGENTS.md §4 gives: the manifest is what reaches page 1 of the generated PDF.

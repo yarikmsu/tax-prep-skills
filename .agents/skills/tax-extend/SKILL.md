@@ -162,7 +162,7 @@ Work down this ladder and TELL the user which rung was used:
   October 15.
 - **Other states:** rules vary (some piggyback on the federal 4868, some
   need their own form, a few have no extension) — check the state DOR and
-  say explicitly that only CA and NY are modeled in depth.
+  state each supported form's limits; CA still needs manual worksheets and capability checks.
 
 ### 5. Record + calendar
 

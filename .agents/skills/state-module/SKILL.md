@@ -13,7 +13,7 @@ two files you should open alongside it and follow directly:
 - `docs/contributing/state-module-playbook.md` — the worked pattern, step by step
 - `docs/contributing/state-module-template.md` — the maintained contract template
 
-Worked precedents: **California** (the in-depth `graduated_income` module) and
+Worked precedents: **California** (a partial `graduated_income` return with explicit gates) and
 **Florida** (PR #65, the `type: "none"` regime).
 
 Do not re-derive any of it from the CA code by reading around. The playbook

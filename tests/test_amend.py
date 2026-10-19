@@ -15,7 +15,7 @@ def _result(agi=100000, deductions=30000, qbi=0, taxable=70000, tax=12000,
             payments=None, overpayment=0, sched_1a=0):
     payments = wh + est if payments is None else payments
     return {
-        "meta": {"limitations": ["State: CA computed in depth."]},
+        "meta": {"limitations": ["State: CA includes manual worksheets and capability gates."]},
         "form_1040": {
             "line_11_agi": agi,
             "line_12_standard_deduction": deductions,

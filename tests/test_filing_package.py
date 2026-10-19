@@ -12,7 +12,7 @@ from agents.lib import filing_package as FP  # noqa: E402
 
 def _result(**sections):
     base = {
-        "meta": {"limitations": ["State: California computed in depth."]},
+        "meta": {"limitations": ["State: California includes manual worksheets and capability gates."]},
         "form_1040": {"line_9_total_income": 100000},
     }
     base.update(sections)

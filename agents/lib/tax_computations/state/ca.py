@@ -2,7 +2,7 @@
 """California — Form 540 and Schedule P (540), full-year resident.
 
 The second member of `state/`, and the one the split was really about:
-California is the state AGENTS.md §4 says this toolkit computes in depth, and
+California is the priority state in AGENTS.md §4, and
 its law had been sitting in the federal file since before there was a `state/`
 package to put it in.
 

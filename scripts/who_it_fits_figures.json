@@ -43,6 +43,16 @@
    ]
   ]
  },
+ "ca_scope": {
+  "muni_upper_bound_200k": 18.788039291217256,
+  "muni_upper_bound_all": 4.63243211072215,
+  "taxable_refund_200k": 2.5938944530046224,
+  "taxable_refund_all": 3.34125081835053,
+  "taxable_ss_200k": 17.162461479198768,
+  "taxable_ss_all": 13.356129918895375,
+  "unemployment_200k": 5.33272342064715,
+  "unemployment_all": 5.754640926724488
+ },
  "commuting": {
   "California": 0.257364462465019,
   "Florida": 1.04929489287014,
