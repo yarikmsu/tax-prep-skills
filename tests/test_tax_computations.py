@@ -4528,6 +4528,37 @@ class TestCaSchedulePAMT:
     representative CA 2025 indexed figures (single exemption $92,749, phase-out
     start $347,808; MFJ exemption $123,667, phase-out start $463,809)."""
 
+    def test_compute_recipe_passes_line_31_before_credits(self):
+        """The engine accepts either number; the recipe selects its input."""
+        recipe = (Path(__file__).resolve().parents[1]
+                  / ".agents/skills/tax-compute/references/state-return.md").read_text()
+        comparison_base = recipe.split("`ca_regular_tax`", 1)[1].split(
+            "`filing_status`", 1)[0]
+        assert "Form 540 line 31" in comparison_base
+        assert "step 6's tax before credits" in comparison_base
+        assert "after credits" not in comparison_base
+
+    def test_exemption_credits_do_not_raise_iso_amt(self):
+        """TY2025 Schedule P lines 22-26, MFJ with two dependent credits.
+        Synthetic line 19 = 400,000, line 31 = 30,000, line 32 = 1,256,
+        ISO = 250,000. AMTI = 650,000; exemption = 123,667 -
+        (650,000 - 463,745) * .25 = 77,103.25; TMT = 40,102.77.
+        AMT = 40,102.77 - 30,000 = 10,102.77; line 35 + AMT = 38,846.77.
+        Using line 35 (28,744) as the comparison overstates AMT by 1,256.
+        Source: https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf
+        """
+        line_31 = 30000
+        line_35 = line_31 - 1256
+        r = compute_ca_schedule_p(
+            ca_taxable_income=400000, ca_regular_tax=line_31,
+            filing_status="MFJ", exemption=123667, phaseout_start=463745,
+            iso_bargain_element=250000)
+        assert r["ca_exemption_allowed"] == 77103.25
+        assert r["ca_tmt"] == 40102.77
+        assert r["ca_amt"] == 10102.77
+        assert r["schedule_p_carryforward"] == 10102.77
+        assert round(line_35 + r["ca_amt"], 2) == 38846.77
+
     def test_iso_exercise_triggers_ca_amt(self):
         """CA taxable $300K + ISO spread $200K, CA regular tax $25K.
         AMTI = 500,000; exemption 92,749 − 0.25×(500,000−347,808) = 54,701;
