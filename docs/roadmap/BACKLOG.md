@@ -415,14 +415,15 @@ at all.
     Social Security, a state refund, unemployment and CA paid family leave,
     §1202, CA and federal basis and depreciation differences, K-1 CA amounts,
     moving expenses and IRA basis.
-  - Line 61 and Schedule P (540) outside an ISO exercise. The booklet's boxes
-    send a return to Schedule P for AMT preference items and, when it claims
-    credits, for CA AGI above $347,808 (single, 2025). The `iso_exercise` rule
-    fires only on an ISO exercise. Both a missing AMT and an unlimited credit
-    under-state CA tax. The Box C amount is in `state.amt_screening`, the third
-    CA block the fetcher's validator skips and `/tax-setup` fetches only for
-    planning, so make it required for a CA return as AA75 and AA69 do theirs.
-    An unfetched screen must never let a credit pass unlimited.
+  - Line 61 and Schedule P (540) outside an ISO exercise. The booklet's Box A
+    sends a return to Schedule P for AMT preference and adjustment items, and
+    the `iso_exercise` rule fires only on an ISO exercise. Ask about those
+    items and block a yes, since a missing AMT under-states CA tax. Box C
+    (CA AGI above $347,808 single on the 2025 form) only limits the special
+    credits on lines 43-45, which this item already blocks on a yes and no
+    engine step claims. So Box C belongs to AA72, which makes
+    `state.amt_screening` required when it claims those credits. Box C is
+    also a figure computed from the return, not an answer the gate can hold.
   - Line 63's FTB 3805P and other taxes.
   - Lines 40, 46 and 75-77: the dependent care credit (FTB 3506), the
     renter's credit, CalEITC, the young child credit and the foster youth
@@ -442,16 +443,30 @@ at all.
   - Line 91's use tax and line 92's coverage penalty (FTB 3853).
   - Line 113's FTB 5805 penalty, a manual note until AA76. The booklet lets a
     filer leave it out: "The FTB can figure the penalty for you when you file
-    your tax return and send you a bill." Its two screens are line 100 under
-    $500 and line 100 under 10% of line 48, so the note fires only when
-    neither clears. The federal engine treats an unpriced Form 2210 penalty
-    the same way (AA58).
+    your tax return and send you a bill." Its screens are computed figures,
+    not answers:
+    - line 100 under $500 ($250 if married/RDP filing separately), and
+    - line 100 under 10% of line 48, excluding the tax on lump-sum
+      distributions on line 34.
 
-  Pick each severity as NC's rules do. `nc_recovery_deductions`,
-  `nc_other_deductions` and `nc_other_credits` block because the omission
-  "OVER-states NC tax". AGENTS.md §2 and §4 count over-stating the amount
-  owed as a hard error, and the skill catalog says "Over-stating what the
-  taxpayer must pay is the hard error". So:
+    So the capability gate, which reads only the profile before any data
+    loads (`/tax-compute` Step 0.7), cannot run them. AA69's builder and
+    `--check` emit the screened note. Until AA69 lands, every CA return
+    carries the note unscreened. The federal engine likewise reports an
+    unpriced Form 2210 penalty as a note (AA58).
+
+  Pick each severity as NC's rules do, and as AGENTS.md §4's "Never silently
+  out-of-scope" requires: a situation the engine cannot compute blocks,
+  whatever its direction. Both directions have NC precedent:
+  - `nc_business_adjustments` blocks an omitted add-back, which under-states
+    NC tax.
+  - `nc_recovery_deductions`, `nc_other_deductions` and `nc_other_credits`
+    block omissions that "OVER-state NC tax".
+
+  §4's "degrades with a loud banner" covers a fallback inside a computation,
+  not a whole situation the engine leaves out. On the over-statement side,
+  the skill catalog adds: "Over-stating what the taxpayer must pay is the
+  hard error". So:
   - A situation the engine does not compute blocks whichever way it errs.
   - Each rule is keyed to a yes answer, so it stops only the returns it
     applies to.
@@ -460,7 +475,12 @@ at all.
   - A manual note is kept for a line the FTB lets the filer leave blank,
     which is line 113.
 
-  Ask each in `/tax-setup`.
+  Ask each in `/tax-setup`. Some items are already in the parse ledger:
+  Social Security in `ss_benefits` and a state refund in
+  `state_refund_1099g`. Federal AGI includes both and CA subtracts both, so a
+  "no" answer must not pass a parsed form. Key those rules to the ledger as
+  well, in the tie-out gate, as AA59 keyed its option question to a ledgered
+  1099-DA.
 
   A blocking rule costs more than its code. `WHO-IT-FITS.md` must size it,
   measured or stated as unmeasured as NC's and WA's are, and the skill
@@ -549,8 +569,9 @@ at all.
   one today:
   - Its item 2 names `federal.underpayment_rates` among "the only" fields
     with their own effective periods.
-  - `validate_cache` flags a provenance entry for another period unless its
-    pin is in `_MULTI_PERIOD_PINS`.
+  - `check_freshness`, and `set` through `_check_applies_to`, flag a
+    provenance entry for another period unless its pin is in
+    `_MULTI_PERIOD_PINS`.
 
   Both need the CA schedule added, and the fix must not touch `state.CA`.
   `_pin_key` maps every `state.*` path to the single pin `state.CA`, so
@@ -596,15 +617,20 @@ at all.
 
   Needs AA69.
 
-- **AA72 (P2, S): Claim the California AMT credit and the PTET credit.**
+- **AA72 (P2, M): Claim the California AMT credit and the PTET credit.**
   `/tax-rollover` carries `prior_year.ca_amt_credit_carryforward`, but nothing
   claims it: step 9.5 writes only this year's ISO figure, so the carried credit
-  is forfeited. Two credits belong on lines 43-45 with their limits and
-  carryforwards:
+  is forfeited. Lines 43-45 need two credits, their carryforwards, and the
+  limit Schedule P puts on them:
   - The prior-year AMT credit, code 188, which FTB 3510 computes, limits and
     carries over before Schedule P (540) Part III takes its result. Build
     the accumulation on FTB 3510, not on Part III.
-  - FTB 3804-CR's credit for an owner of an electing CA entity. NY has
+  - FTB 3804-CR's credit for an owner of an electing CA entity.
+  - Schedule P's credit limit for CA AGI above Box C ($347,808 single on the
+    2025 form). Its amount is in `state.amt_screening`, the third CA block the
+    fetcher's validator skips and `/tax-setup` fetches only for planning.
+    Make it required for a return claiming these credits, and never let an
+    unfetched screen pass a credit unlimited. NY has
     `compute_ny_ptet_owner`; CA has nothing.
 
   The carryforward never accumulates either. `rollover.py`'s comment says
