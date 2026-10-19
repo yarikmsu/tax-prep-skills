@@ -84,7 +84,7 @@ AA57 finds why.
 | When | What | Why |
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
-| **Now: California** | **AA75** — run line 32's exemption credit phase-out on the return. **AA68** — name every Form 540 situation the engine does not compute. **AA60** — route CA and NY 1099 state withholding. **AA69** — build Form 540 in the engine and check it. **AA70** — record CA estimated payments and next year's applied overpayment. **AA71** — compute the Schedule CA adjustments the persona meets. | The owner put California first on 2026-10-18, and that day's Form 540 audit found that the agent types most of the state return and nothing handles part of it. AA75 lands first. It is small, and it closes the one under-statement every high earner meets with the worksheet `planning.py` already holds. AA68 turns every remaining silent line into a named one. It is large, so if it threatens AA64, AA52 and AA58's January deadline, land its blocking rules first and its wording sweep after. AA60 comes next because a CA 1099 amount, a retiree's 1099-R among them, blocks the whole return today. AA69 puts the lines in a checked builder that AA70 and AA71 feed. AA70 fixes the balance due of anyone who paid CA estimates, and AA71 turns AA68's commonest refusals into computed lines. |
+| **Now: California** | **AA77** — pass Schedule P the tax before credits. **AA75** — run line 32's exemption credit phase-out on the return. **AA68** — name every Form 540 situation the engine does not compute. **AA60** — route CA and NY 1099 state withholding. **AA69** — build Form 540 in the engine and check it. **AA70** — record CA estimated payments and next year's applied overpayment. **AA71** — compute the Schedule CA adjustments the persona meets. | The owner put California first on 2026-10-18, and that day's Form 540 audit found that the agent types most of the state return and nothing handles part of it. AA77 lands first: it is a one-line fix to an over-statement of an ISO exerciser's CA tax that ships today. AA75 follows. It is small, and it closes the one under-statement every high earner meets with the worksheet `planning.py` already holds. AA68 turns every remaining silent line into a named one. It is large, so if it threatens AA64, AA52 and AA58's January deadline, land its blocking rules first and its wording sweep after. AA60 comes next because a CA 1099 amount, a retiree's 1099-R among them, blocks the whole return today. AA69 puts the lines in a checked builder that AA70 and AA71 feed. AA70 fixes the balance due of anyone who paid CA estimates, and AA71 turns AA68's commonest refusals into computed lines. |
 | **Next: every filer's intake and the auditor, before TY2026 filing opens** | **AA65** — record Form 1099-G's unemployment and family leave benefits. **AA67** — map Form 1099-MISC's boxes by the current form. **AA66** — give Form W-2G a parse route. **AA64** — read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC. **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. **AA76** — price FTB 5805's underpayment penalty on line 113, landed with AA52 to share its auditor replay. **AA62** — ask about specific identification before FIFO prices a crypto sale. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA57** — find why CI's push, pull-request and scheduled runs never register. | A Californian files a federal return too, and these holes reach it. AA65 and AA66 close dropped-form holes open today: a 1099-G's unemployment compensation and a W-2G's winnings and federal withholding have no ledger category, so the gate cannot see them go missing. AA65 subtracts its amounts on Schedule CA through AA69, which lands before it, and blocks a CA return holding those amounts if it is taken out of order. AA67 errs the other way: a 1099-MISC's federal withholding, recorded as its row says, joins Schedule C gross receipts and over-states income and self-employment tax. AA64, AA52 and AA58 must land before TY2026 filing opens, and AA76 rides with AA52 because both edit the auditor's digest-pinned definition. The 2026 Form W-2 reports qualified overtime in box 12 code TT, where no `/tax-parse` row looks. Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, so the season-open sitting would leave the auditor a table short through the TY2026 season. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13, because its definition edit and the test change it forces cannot land apart. A return filed before the April 2027 rate publishes would price that quarter at the last cached rate. AA62 closes the last silent crypto gap. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. |
 | **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | The quarters are the one item no gate catches: Form 2210 carries the last cached rate forward with only a note until AA58 lands, so this row is their reminder. The TY2026 Form 540 also re-keys AA69's line map. |
 | **Then: California's remaining blocks** | **AA72** — claim the CA AMT credit and the PTET credit. **AA73** — compute rental real estate on Schedule E and Schedule CA. **AA74** — prepare a part-year California return (Form 540NR). | AA72 recovers a credit the rollover already carries and nothing claims. Above $200,000, AA73 is the largest block for every persona: 17% of California returns there carry rental or royalty income. It needs scoping before it is sized. AA74's block, 3.7% of California returns, is smaller than the marketplace block (Form 8962: 6.0% of all California returns, 1.3% above $200,000), which has no item. |
@@ -381,6 +381,18 @@ mapped to the engine. Only three CA functions run on the return:
 in `/tax-compute`'s `references/state-return.md`, or nothing handles the line
 at all.
 
+- **AA77 (P1, XS): Pass Schedule P the tax before credits.**
+  `/tax-compute`'s `references/state-return.md` step 9.5 passes
+  `compute_ca_schedule_p` "step 8's tax after credits" as `ca_regular_tax`.
+  Schedule P (540) line 25 reads "Regular tax before credits from Form 540,
+  line 31". The CA AMT is the excess of tentative minimum tax over that
+  figure. Passing the smaller after-credit tax raises the AMT by the whole
+  exemption credit whenever the AMT binds, which over-states CA tax for an
+  ISO exerciser today. Pass Form 540 line 31 and pin it with a worked
+  case. Found by the CA plan's fourteenth review, which reproduced the
+  error at $1,256 for a joint return with two children and a $250,000 ISO
+  spread.
+
 - **AA75 (P1, S): Run line 32's exemption credit phase-out on the return.**
   Line 32's credit phases out above a federal AGI threshold ($252,203 single
   on the 2025 form) by the AGI Limitation Worksheet. The return recipe never
@@ -428,12 +440,22 @@ at all.
 
     Ask about those items, carve-out included, and block a yes, since a
     missing AMT under-states CA tax. Line 61's own test is broader than
-    the boxes. Schedule P Part I adds back itemized deductions the engine
-    already computes: property taxes (line 3), mortgage interest on debt not
-    used to buy or improve the home (line 4), and miscellaneous itemized
-    deductions (line 5). These can produce CA AMT for a filer who answers no
-    to every box, such as an investor with large advisory fees. They are
-    figures from the return, not answers, so they are AA69's to screen. Box C (CA AGI above $347,808 single on
+    the boxes. Schedule P Part I adjusts the deduction the return already
+    took, so it can produce CA AMT for a filer who answers no to every box,
+    such as an investor with large advisory fees. Enumerate Part I from the
+    year's form. On the 2025 form it covers:
+    - line 1: the standard deduction of a filer who did not itemize
+    - line 2: part of the medical deduction
+    - line 3: property taxes
+    - line 4: mortgage interest on debt not used to buy or improve the home
+    - line 5: miscellaneous itemized deductions
+    - line 6: refunds of property taxes
+    - line 18: the §17077 phase-out, subtracted back, since "for AMT, this
+      limitation does not apply"
+
+    These are return figures, so they are AA69's to compute. Line 4 is the
+    exception. `compute_ca_itemized` takes one mortgage interest amount and
+    does not record what the loan paid for, so line 4 needs a question. Box C (CA AGI above $347,808 single on
     the 2025 form) is a screen that sends a filer claiming special credits to
     Schedule P. It limits neither credit AA72 adds (see AA72), and it is a
     figure computed from the return, not an answer the gate can hold.
@@ -606,9 +628,15 @@ at all.
   published Tax Table at or below its ceiling. `state.tax_table` is an
   optional planning block today, so make it required, as AA75 does the
   phase-out. Run `compute_ca_schedule_p` on every return, not only after an
-  ISO exercise, with Schedule P Part I's itemized add-backs (lines 3-5) as
-  `ca_preference_adjustments`. Line 61 then catches the AMT that AA68's box
-  questions cannot. Emit line 113's screened FTB 5805 note from the builder's own
+  ISO exercise, with every Schedule P Part I adjustment AA68 lists, in both
+  directions, as `ca_preference_adjustments`. Line 61 then catches the AMT
+  that AA68's box questions cannot. Two inputs follow from that:
+  - `state.amt` is fetched today only for an ISO exerciser, and
+    `compute_ca_schedule_p` refuses it unfetched. Make it required for every
+    CA return in setup's fetch condition, the validator and
+    `tax-law-cache.md`, and never skip Schedule P when it is missing.
+  - Schedule P line 25 reads Form 540 line 31, the tax before credits
+    (AA77). Emit line 113's screened FTB 5805 note from the builder's own
   lines 100 and 48 (AA68). Its $500 ($250 for a separate filer) amount is a
   threshold, so fetch it into the cache like any other (AGENTS.md §2). The
   lines are the bracket tax, the
