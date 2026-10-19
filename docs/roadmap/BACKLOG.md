@@ -462,7 +462,10 @@ at all.
       nonrefundable special credit on lines 43-45, not a payment. Net tax
       limits it, and its excess carries over five years (R&TC §17052.10), so
       it must never be added to the payments. Key it to a CA entry in
-      `flags.k1_states` and a question about the entity's election.
+      `flags.k1_states` and a question about the entity's election, and also
+      to a question about an unused FTB 3804-CR carryover from an earlier
+      year. A carryover blocks as `nc_other_credits` blocks NC carryovers,
+      even in a year with no election.
     - The CA AMT credit blocks when the taxpayer has one, because the
       toolkit already carries the figure. A rule keys only on a boolean
       under `flags.*`, so add a flag. The gate's `derived` dict sets it from
@@ -476,16 +479,19 @@ at all.
       a tie-out check:
       - `state-return.md` step 9.5 writes the `schedule_p` block whenever
         the flag is set, ISO exercise or not.
-      - Its `carryforward_to_next_year` is the carried credit, less any code
-        188 credit the filer enters from FTB 3510 (this needs a field), plus
-        this year's ISO figure.
+      - Its `carryforward_to_next_year` is the carried credit, less the code
+        188 credit allowable this year as the filer works it on FTB 3510,
+        plus this year's ISO figure. That FTB 3510 amount is a required
+        answer whenever the flag is set. Null refuses, and 0 is accepted
+        only as the result of a worked FTB 3510, never as a default.
       - The acknowledgement note sends the filer to FTB 3510 to claim this
         year's allowable credit. Under IRC §53(b), which California follows,
         the carryover falls by the credit ALLOWABLE, not by what was
         claimed, so an unclaimed allowable credit needs an amended return,
         not a larger carryforward.
-      - The tie-out fails when the flag is acknowledged and no
-        `schedule_p` block carries the figure.
+      - The tie-out fails when the flag is acknowledged and either no
+        `schedule_p` block carries the figure or the FTB 3510 amount is
+        unanswered.
   - Lines 72 and 73: estimated payments (those an estate, trust or S
     corporation paid on the taxpayer's behalf on Schedule K-1 (541) or (100S)
     included), an extension payment, last year's applied overpayment, and Form
@@ -693,29 +699,29 @@ at all.
   Needs AA69.
 
 - **AA72 (P2, M): Claim the California AMT credit and the PTET credit.**
-  `/tax-rollover` carries `prior_year.ca_amt_credit_carryforward`, but nothing
-  claims it: step 9.5 writes only this year's ISO figure, so the carried credit
-  is forfeited. Lines 43-45 need two credits, their carryforwards, and the
-  limit Schedule P puts on them:
+  AA68 leaves both credits blocked, and leaves the CA AMT credit's
+  carryforward written by step 9.5 from a filer-entered FTB 3510 amount.
+  Start from that state. Lines 43-45 need the two credits, their
+  carryforwards, and the limit Schedule P puts on them:
   - The prior-year AMT credit, code 188, which FTB 3510 computes, limits and
-    carries over before Schedule P (540) Part III takes its result. Build
-    the accumulation on FTB 3510, not on Part III.
-  - FTB 3804-CR's credit for an owner of an electing CA entity.
+    carries over before Schedule P (540) Part III takes its result. Compute
+    the allowable credit on FTB 3510, not on Part III. That computed figure
+    replaces AA68's entered field, never sits beside it. The carryforward is
+    the prior credit, less the credit ALLOWABLE (IRC §53(b)), plus this
+    year's deferral AMT. Correct `rollover.py`'s comment, which says the
+    figure already includes the unused prior credit.
+  - FTB 3804-CR's credit for an owner of an electing CA entity, with its
+    five-year carryover (R&TC §17052.10). NY has `compute_ny_ptet_owner`;
+    CA has nothing. The TY2025 booklet limits the election to years before
+    2026, so confirm the current statute for TY2026 rather than relying on
+    the 2025 text.
   - Schedule P's credit limit for CA AGI above Box C ($347,808 single on the
     2025 form). Its amount is in `state.amt_screening`, the third CA block the
     fetcher's validator skips and `/tax-setup` fetches only for planning.
     Make it required for a return claiming these credits, and never let an
-    unfetched screen pass a credit unlimited. NY has
-    `compute_ny_ptet_owner`; CA has nothing.
+    unfetched screen pass a credit unlimited.
 
-  The carryforward never accumulates either. `rollover.py`'s comment says
-  `carryforward_to_next_year` holds this year's deferral AMT plus any unused
-  prior credit. But step 9.5 writes only this year's figure, and it is skipped
-  in a year with no ISO exercise, so a carried credit is gone after one such
-  year. Rebuild the accumulation: the prior credit, less the part used, plus
-  this year's. Write it whether or not there was an ISO exercise, and correct
-  the comment. Until this lands, AA68 blocks both credits. Needs
-  AA69.
+  Needs AA69.
 
 - **AA73 (P2, L): Compute rental real estate on Schedule E and Schedule CA.**
   `rental_income` blocks 17% of California returns above $200,000 and 7.1% of
