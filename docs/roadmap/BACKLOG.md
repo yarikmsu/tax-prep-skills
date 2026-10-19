@@ -443,14 +443,35 @@ at all.
     are credits, so they follow the credit precedent below as manual notes,
     on existing rules where one fits:
     - Lines 75-77 join `earned_income_credit`, keyed to `may_qualify_for_eic`,
-      which already covers NY's IT-215 and IT-209 and the NYC EIC.
-    - FTB 3506 joins the `dependent_care` note, keyed to `has_dependent_care`.
+      which already covers NY's IT-215 and IT-209 and the NYC EIC. Its
+      `/tax-setup` question screens on the federal shape, so give it a
+      California carve-out, as it has one for IT-209. CalEITC needs no child,
+      the foster youth credit covers ages 18-25, the young child credit
+      allows zero earned income, and CA takes ITIN filers, so a federal "no"
+      does not rule them out.
+    - FTB 3506 joins the `dependent_care` rule, keyed to `has_dependent_care`.
+      That note says the federal credit IS computed, so add CA text saying
+      FTB 3506 is not, the way the `ny_plan` override rewrites the EIC note.
     - The renter's credit gets a note keyed to rent paid in California.
   - Lines 43-45's credits, the CA AMT credit and the PTET credit (FTB 3804-CR)
-    among them, until AA72. The PTET credit is a manual note under the
-    credit precedent below. The CA AMT credit blocks when
-    `prior_year.ca_amt_credit_carryforward` is nonzero, because the toolkit
-    already carries that figure and would forfeit it.
+    among them, until AA72:
+    - The PTET credit (FTB 3804-CR) blocks. It is not a worksheet credit: it
+      is 9.3% of the owner's share of the electing entity's qualified net
+      income, which the entity reports with the K-1, and it works as tax
+      the entity paid, like the K-1 (541) and (100S) estimates on line 72.
+      Key it to a CA entry in `flags.k1_states` and a question about the
+      entity's election.
+    - The CA AMT credit blocks when the taxpayer has one, because the
+      toolkit already carries the figure. A rule keys only on a boolean
+      under `flags.*`, so add a flag. The gate's `derived` dict sets it from
+      a nonzero `prior_year.ca_amt_credit_carryforward`, and `/tax-setup`
+      asks it, which also catches a credit from a return prepared
+      elsewhere. Acknowledging the block must not forfeit the credit. Step
+      9.5 is skipped without an ISO exercise and, with one, writes only this
+      year's figure, so the rollover would carry 0. The acknowledged path
+      writes the carried amount, plus this year's ISO figure, into
+      `carryforward_to_next_year`, which is the right figure when nothing
+      was claimed.
   - Lines 72 and 73: estimated payments (those an estate, trust or S
     corporation paid on the taxpayer's behalf on Schedule K-1 (541) or (100S)
     included), an extension payment, last year's applied overpayment, and Form
@@ -497,8 +518,9 @@ at all.
     - A credit the taxpayer claims from a worksheet of their own. It has no
       source document for the tie-out to miss, and its omission over-states
       the tax, which `capabilities.py` files under §4's
-      degrade-with-a-banner. `earned_income_credit` and `dependent_care` are
-      MANUAL on that ground, NY's state and City EICs included.
+      degrade-with-a-banner. `earned_income_credit` is MANUAL on that
+      ground, NY's state and City EICs included. `dependent_care` is MANUAL
+      for a different reason: the federal credit is computed.
     - A credit the toolkit already carries is no exception and blocks, as
       `nc_other_credits` blocks NC credit carryovers.
 
@@ -678,8 +700,7 @@ at all.
   in a year with no ISO exercise, so a carried credit is gone after one such
   year. Rebuild the accumulation: the prior credit, less the part used, plus
   this year's. Write it whether or not there was an ISO exercise, and correct
-  the comment. Until this lands, AA68 blocks a carried CA AMT credit and
-  notes the PTET credit. Needs
+  the comment. Until this lands, AA68 blocks both credits. Needs
   AA69.
 
 - **AA73 (P2, L): Compute rental real estate on Schedule E and Schedule CA.**
