@@ -399,6 +399,7 @@ at all.
   `flags.age_65_plus_*`. AA69 then takes the worksheet into
   the builder. Split from AA68 by its third review, so that the one
   under-statement every high earner meets lands first.
+  **Implementation awaiting owner review:** [PR #16](https://github.com/yarikmsu/tax-prep-skills/pull/16).
 
 - **AA68 (P1, L): Name every Form 540 situation the engine does not compute.**
   `capabilities.py` tells a California filer that Form 540 is "computed in
