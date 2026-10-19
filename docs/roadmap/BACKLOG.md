@@ -455,12 +455,14 @@ at all.
     - The renter's credit gets a note keyed to rent paid in California.
   - Lines 43-45's credits, the CA AMT credit and the PTET credit (FTB 3804-CR)
     among them, until AA72:
-    - The PTET credit (FTB 3804-CR) blocks. It is not a worksheet credit: it
-      is 9.3% of the owner's share of the electing entity's qualified net
-      income, which the entity reports with the K-1, and it works as tax
-      the entity paid, like the K-1 (541) and (100S) estimates on line 72.
-      Key it to a CA entry in `flags.k1_states` and a question about the
-      entity's election.
+    - The PTET credit (FTB 3804-CR, code 242) blocks. It is not a worksheet
+      credit: it is 9.3% of the owner's share of the electing entity's
+      qualified net income, a figure the entity reports with the K-1, and
+      that is why it blocks rather than taking a note. It is a
+      nonrefundable special credit on lines 43-45, not a payment. Net tax
+      limits it, and its excess carries over five years (R&TC §17052.10), so
+      it must never be added to the payments. Key it to a CA entry in
+      `flags.k1_states` and a question about the entity's election.
     - The CA AMT credit blocks when the taxpayer has one, because the
       toolkit already carries the figure. A rule keys only on a boolean
       under `flags.*`, so add a flag. The gate's `derived` dict sets it from
@@ -468,10 +470,22 @@ at all.
       asks it, which also catches a credit from a return prepared
       elsewhere. Acknowledging the block must not forfeit the credit. Step
       9.5 is skipped without an ISO exercise and, with one, writes only this
-      year's figure, so the rollover would carry 0. The acknowledged path
-      writes the carried amount, plus this year's ISO figure, into
-      `carryforward_to_next_year`, which is the right figure when nothing
-      was claimed.
+      year's figure, and the rollover skips a missing source path, so the
+      next profile would carry 0. The gate writes no result fields, so the
+      fix lives where the PFIC precedent puts it, a compute step paired with
+      a tie-out check:
+      - `state-return.md` step 9.5 writes the `schedule_p` block whenever
+        the flag is set, ISO exercise or not.
+      - Its `carryforward_to_next_year` is the carried credit, less any code
+        188 credit the filer enters from FTB 3510 (this needs a field), plus
+        this year's ISO figure.
+      - The acknowledgement note sends the filer to FTB 3510 to claim this
+        year's allowable credit. Under IRC §53(b), which California follows,
+        the carryover falls by the credit ALLOWABLE, not by what was
+        claimed, so an unclaimed allowable credit needs an amended return,
+        not a larger carryforward.
+      - The tie-out fails when the flag is acknowledged and no
+        `schedule_p` block carries the figure.
   - Lines 72 and 73: estimated payments (those an estate, trust or S
     corporation paid on the taxpayer's behalf on Schedule K-1 (541) or (100S)
     included), an extension payment, last year's applied overpayment, and Form
