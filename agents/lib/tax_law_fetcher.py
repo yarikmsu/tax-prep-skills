@@ -457,7 +457,7 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "brackets": [],  # [{"rate": 0.01, "min": 0, "max": 10412}, ...]
             "personal_exemption": {"amount": None},
             "dependent_exemption": {"amount": None},
-            # Planning tax-table inputs, fetched from the covered-year Form 540.
+            # Required Form 540 table inputs, fetched for the covered year.
             # Published rows avoid assuming that the tax table is a schedule
             # evaluated at an inferred midpoint. Each row: min/max, tax by
             # canonical lower-case status. Fetch every row the sweep touches.
@@ -469,6 +469,10 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "reduction_per_step": None,
             },
             "amt_screening": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
+            "underpayment_screen": {
+                "minimum_balance": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
+                "tax_fraction": None,
+            },
             "hsa_conformity": False,
             "hsa_note": "CA does not recognize HSA. Add back employer contributions and HSA earnings.",
             # Statutory-structural (R&TC §17043): the 1% Mental Health
@@ -498,8 +502,8 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             # phase-out-start thresholds are fetched here (per filing status —
             # map MFS to its own key). None until fetched: compute_ca_schedule_p
             # hard-errors when a CA ISO exerciser needs it, so a guessed value
-            # can't silently zero the CA AMT. Opt-in for a CA return with an ISO
-            # exercise — leave all-None otherwise.
+            # can't silently zero CA AMT. REQUIRED for every CA return,
+            # including one without an ISO exercise.
             "amt": {
                 "exemption": {"single": None, "mfj": None, "mfs": None, "hoh": None},
                 "phaseout_start": {"single": None, "mfj": None, "mfs": None, "hoh": None},
@@ -1544,7 +1548,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         # not by every filed-return workflow. The cache validator still audits
         # populated values; missing ones yield a named planning limitation.
         if (isinstance(data.get("state"), dict) and data["state"].get("code") == "CA"
-                and path in ("state.tax_table", "state.amt_screening")):
+                and path == "state.amt_screening"):
             return
         # These optional tagged blocks have their own complete validators;
         # empty confirmed lists and inactive null parameters are valid data.
@@ -2705,6 +2709,11 @@ def validate_cache(data: dict, year: int) -> "list[str]":
     if isinstance(state, dict) and _state_pin_code(state) == "CA":
         try:
             validate_ca_exemption_phaseout(state.get("exemption_phaseout"))
+        except ValueError as exc:
+            problems.append(str(exc))
+        try:
+            from agents.lib.tax_computations.state.ca import validate_ca_return_law
+            validate_ca_return_law(state)
         except ValueError as exc:
             problems.append(str(exc))
     if isinstance(state, dict):

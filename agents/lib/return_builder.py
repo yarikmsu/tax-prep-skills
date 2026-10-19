@@ -1173,7 +1173,154 @@ def load(workspace: Path) -> tuple:
     return result, profile, ledger, tax_law, contents
 
 
-def write(workspace: Path, result: dict, derived: "dict[str, float]") -> bool:
+def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict:
+    """The CA half of the receipted check, independently of federal scope."""
+    from agents.lib.capabilities import _profile_state
+    from agents.lib.projection import _ca_section_computed
+    from agents.lib.tax_computations import compute_ca_540, ny_it203_plan
+    from agents.lib.tax_computations.state.ca import CA_540_COMPONENT_LINES
+    from agents.lib.tax_computations._shared import _normalize_filing_status
+    try:
+        address = profile.get("address") or {}
+        selected = (bool(address.get("state")) and _profile_state(profile) == "CA"
+                    and not ny_it203_plan(profile))
+        if not selected and not _ca_section_computed(result):
+            return {}
+        ca = result.get("california_540")
+        if not isinstance(ca, dict):
+            raise ValueError("selected CA return is missing california_540")
+        status = _filing_status(profile, result)
+        fs = _full_status_key(status)
+        ca_status = _normalize_filing_status(ca.get("ca_filing_status")).lower()
+        if ca_status != fs:
+            raise ValueError("Form 540 with a different CA filing status needs a separate pro-forma federal return; "
+                             "this builder cannot reuse the federal AGI/status for it")
+        flags = profile.get("flags", {})
+        eligibility = profile.get("ca_exemptions")
+        if not isinstance(eligibility, dict):
+            raise ValueError("record ca_exemptions eligibility in the profile")
+
+        def fact(key, source=eligibility):
+            value = source.get(key)
+            if not isinstance(value, bool):
+                raise ValueError(f"answer California exemption eligibility: {key}")
+            return value
+
+        own_claimed = fact("primary_can_be_claimed")
+        if fs == "qss" and own_claimed:
+            raise ValueError("resolve QSS eligibility before counting personal exemptions")
+        own_blind = fact("primary_blind")
+        own_senior = fact("age_65_plus_primary", flags)
+        spouse_claimed = fact("spouse_can_be_claimed") if fs == "mfj" else True
+        spouse_blind = fact("spouse_blind") if fs == "mfj" else False
+        spouse_senior = fact("age_65_plus_spouse", flags) if fs == "mfj" else False
+        personal = (2 if fs == "qss" else int(not own_claimed))
+        if fs == "mfj":
+            personal += int(not spouse_claimed)
+        blind = int(own_blind and not own_claimed) + int(spouse_blind and not spouse_claimed)
+        senior = int(own_senior and not own_claimed) + int(spouse_senior and not spouse_claimed)
+        deps = profile.get("dependents")
+        if not isinstance(deps, list) or any(not isinstance(d, dict) for d in deps):
+            raise ValueError("profile.dependents must be the confirmed dependent list")
+        if any(type(d.get("_template_placeholder", False)) is not bool for d in deps):
+            raise ValueError("dependent template markers must be booleans")
+        count = sum(not d.get("_template_placeholder", False) for d in deps)
+        if ca.get("ca_preference_adjustments_confirmed") is not True:
+            raise ValueError("work and confirm all Schedule P Part I adjustments, including signed reductions")
+        adjustments = ca.get("schedule_ca_adjustments")
+        if not isinstance(adjustments, dict):
+            raise ValueError("record Schedule CA totals before building Form 540")
+        state = tax_law.get("state")
+        method = ca.get("ca_deduction_method")
+        if not isinstance(state, dict) or not isinstance(method, str):
+            raise ValueError("record the CA law block and elected deduction method")
+        if (own_claimed or (fs == "mfj" and spouse_claimed)) and method == "standard":
+            raise ValueError("a filer who can be claimed needs the dependent deduction worksheet")
+        components = {f"line_{n}": ca.get(f"line_{n}") for n in CA_540_COMPONENT_LINES}
+        sums = category_sums(ledger)
+        components["line_71"] = round(sums.get("state_withholding_ca", 0) + sums.get("ca_1099_withholding", 0), 2)
+        components["line_73"] = sums.get("ca_592b_593_withholding", 0)
+        built = compute_ca_540(tax_year=_tax_year(result, profile), filing_status=status,
+            state_law=state, federal_agi=_num((result.get("form_1040") or {}).get("line_11_agi"), "federal AGI"),
+            schedule_ca_additions=_num(adjustments.get("total_additions"), "Schedule CA additions"),
+            schedule_ca_subtractions=_num(adjustments.get("total_subtractions"), "Schedule CA subtractions"),
+            deduction=_num(ca.get("ca_deduction"), "CA deduction"), deduction_method=method,
+            personal_count=personal, blind_count=blind, senior_count=senior, dependent_count=count,
+            ca_preference_adjustments=_num(ca.get("ca_preference_adjustments"), "CA Schedule P adjustments"),
+            lump_sum_tax=_num(ca.get("ca_lump_sum_tax"), "CA Schedule G-1 tax in line 34"),
+            iso_bargain_element=_num((ca.get("schedule_p") or {}).get("iso_bargain_element"), "CA ISO spread"), components=components)
+        p = {**(ca.get("schedule_p") or {}), **built["schedule_p"]}
+        generated = p["schedule_p_carryforward"]
+        prior = _num((profile.get("prior_year") or {}).get("ca_amt_credit_carryforward", 0), "prior CA AMT credit")
+        if prior < 0:
+            raise ValueError("prior CA AMT credit cannot be negative")
+        opening = flags.get("ca_has_amt_credit") or prior
+        supplied_credit = any(p.get(key) not in (None, 0) for key in
+                              ("ftb3510_credit_available", "ftb3510_credit_allowable"))
+        if supplied_credit and not opening:
+            raise ValueError("resolve ca_has_amt_credit before dropping a supplied FTB 3510 amount")
+        if opening:
+            available = _num(p.get("ftb3510_credit_available"), "FTB 3510 credit available")
+            allowable = _num(p.get("ftb3510_credit_allowable"), "FTB 3510 credit allowable")
+            if p.get("ftb3510_worksheet_confirmed") is not True or not 0 <= allowable <= available:
+                raise ValueError("confirm the worked FTB 3510 available and allowable credit")
+            if p["ca_amt"] > 0 and allowable > 0:
+                raise ValueError("a current CA AMT liability permits no prior-year AMT credit")
+        else:
+            available = allowable = 0
+        p.update(iso_credit_generated=generated,
+                 carryforward_to_next_year=round(available - allowable + generated, 2))
+        built.update(schedule_p=p, ca_withholding_box17=sums.get("state_withholding_ca", 0),
+            ca_withholding_1099=sums.get("ca_1099_withholding", 0),
+            ca_withholding_592b_593=sums.get("ca_592b_593_withholding", 0))
+        return built
+    except (ValueError, TypeError, KeyError, AttributeError, ReturnBuilderError) as e:
+        raise Blocked(f"Form 540: {redact(e)}") from None
+
+
+def california_summary(result: dict, derived: dict) -> dict:
+    """Keep the existing signed summary consistent with checked settlement."""
+    if not derived or "balance_due_summary" not in result:
+        return {}
+    if not isinstance(result["balance_due_summary"], dict):
+        raise Blocked("balance_due_summary must be an object")
+    f = result.get("form_1040") or {}
+    federal = round(_num(f.get("line_35a_refund"), "federal refund")
+                    - _num(f.get("line_37_amount_owed"), "federal amount owed"), 2)
+    california = round(derived["ca_refund"] - derived["ca_amount_owed"], 2)
+    return {"federal_refund": federal, "california_refund": california,
+            "net_refund": round(federal + california, 2)}
+
+
+def california_differences(result: dict, derived: dict) -> list[str]:
+    ca = result.get("california_540") or {}
+    # Nested workpapers and the screened note are load-bearing too.
+    def agrees(was, value):
+        if isinstance(value, bool):
+            return isinstance(was, bool) and was == value
+        if isinstance(value, (int, float)):
+            actual = _maybe_num(was)
+            return actual is not None and abs(actual - value) < CENT
+        if isinstance(value, dict):
+            return (isinstance(was, dict) and set(was) == set(value)
+                    and all(agrees(was[k], v) for k, v in value.items()))
+        return type(was) is type(value) and was == value
+    fields = [field for field, value in derived.items() if not agrees(ca.get(field), value)]
+    if derived and type(ca.get("computed_tax_year")) is not int and "computed_tax_year" not in fields:
+        fields.append("computed_tax_year")
+    notes = (result.get("meta") or {}).get("limitations", [])
+    if derived and (not isinstance(notes, list) or any(not isinstance(n, str) for n in notes)):
+        raise Blocked("Form 540 requires meta.limitations to be a list of disclosure strings")
+    if derived and derived["line_113_note"] not in notes:
+        fields.append("meta.limitations (Form 540 line 113)")
+    summary = california_summary(result, derived)
+    for key, value in summary.items():
+        if not agrees(result["balance_due_summary"].get(key), value):
+            fields.append(f"balance_due_summary.{key}")
+    return fields
+
+
+def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None) -> bool:
     """Publish the derived lines. Returns whether anything was written.
 
     NOT WRITING AN UNCHANGED FILE IS THE CONTRACT, not an optimization: V8's
@@ -1182,9 +1329,18 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]") -> bool:
     invalidates a pass that is still true. `/tax-generate --filing-package`
     then refuses a package whose gates did run.
     """
-    if not differences(result, derived):
+    if not differences(result, derived) and not california_differences(result, california or {}):
         return False
     updated = {**result, "form_1040": {**result["form_1040"], **derived}}
+    if california:
+        updated["california_540"] = {**result["california_540"], **california}
+        summary = california_summary(updated, california)
+        if summary:
+            updated["balance_due_summary"] = {**result["balance_due_summary"], **summary}
+        meta = dict(result.get("meta") or {})
+        notes = [n for n in meta.get("limitations", []) if not n.startswith("Form 540 line 113:")]
+        notes.append(california["line_113_note"])
+        updated["meta"] = {**meta, "limitations": notes}
     # `write_secure` is temp-then-replace with the descriptor secured before
     # the first byte, so there is nothing to chmod afterwards; the trailing
     # `secure_path` this used to carry was a no-op that would have run AFTER
@@ -1270,6 +1426,16 @@ def _main(argv: list) -> int:
             # certifying a return it never saw, which is what the receipt
             # exists to catch (V8).
             inputs = receipt.gate_inputs(workspace, GATE, contents=contents)
+        california = build_california(result, tax_law, ledger, profile) if args.check else {}
+        ca_changes = california_differences(result, california)
+        if args.check and ca_changes:
+            print("BLOCKED: Form 540 derived fields disagree: " + ", ".join(ca_changes), file=sys.stderr)
+            return _record_the_check(workspace, inputs, "FAILED", 2)
+        # This CA check precedes the federal scope decision: a PFIC waiver
+        # of Form 1040 arithmetic must never waive the separate state return.
+        if args.check and california:
+            print("Form 540 derived lines, Schedule P and screened line-113 note agree.")
+            print(california["line_113_note"])
         derived = build(result, tax_law, ledger,
                         _filing_status(profile, result), profile)
         changes = differences(result, derived)
@@ -1282,11 +1448,16 @@ def _main(argv: list) -> int:
             print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "agree with their components.")
             return _record_the_check(workspace, inputs, receipt.PASS, 0)
-        if write(workspace, result, derived):
+        california = build_california({**result, "form_1040": {**result["form_1040"], **derived}},
+                                      tax_law, ledger, profile)
+        if write(workspace, result, derived, california=california):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "
                   "highest line listed.")
+            if california:
+                print("Rebuilt Form 540 and Schedule P; re-run --check before generating a package.")
+                print(california["line_113_note"])
         else:
             print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "already agree with their components; nothing written.")

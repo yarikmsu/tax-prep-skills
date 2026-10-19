@@ -3,7 +3,7 @@
 Instructions for coding agents in this repository. It handles
 **real taxpayer data**: treat every runtime file as sensitive.
 
-This file is ordered by criticality on purpose. Several agents truncate
+Critical rules come first. Several agents truncate
 instruction files silently (Codex caps the combined chain at 32 KiB; Copilot CLI
 has an open truncation bug around 160 lines). The security rules and the tax-law
 freshness contract come first so that anything lost to truncation is a
@@ -420,6 +420,7 @@ in full, so a new file in either goes in this table.
 | Test invariants | `docs/contributing/test-invariants.md` |
 | Adding support for a new state | `docs/contributing/state-module-playbook.md` |
 | State contract template | `docs/contributing/state-module-template.md` |
+| CA contract | `docs/contributing/state-module-ca.md` |
 | NY contracts | `docs/contributing/state-module-ny.md` |
 | NC contract | `docs/contributing/state-module-nc.md` |
 | WA contract | `docs/contributing/state-module-wa.md` |

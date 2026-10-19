@@ -46,6 +46,12 @@
       "ctc_eligible": false
     }
   ],
+  "ca_exemptions": {
+    "primary_can_be_claimed": null,
+    "spouse_can_be_claimed": null,
+    "primary_blind": null,
+    "spouse_blind": null
+  },
   "flags": {
     "ca_has_blind_exemption": null,
     "ca_has_us_obligation_income": null,

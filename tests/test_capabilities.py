@@ -1457,9 +1457,10 @@ class TestTheNewYorkModuleIsDone:
         note = C.evaluate(_profile(state="CO")).state_note
         assert "CA and NY" in note
 
-    def test_california_is_untouched(self):
+    def test_california_names_the_checked_builder_and_manual_components(self):
         note = C.evaluate(_profile(state="CA")).state_note
-        assert "Form 540 is partially assembled" in note
+        assert "Form 540 arithmetic and Schedule P" in note
+        assert "checked builder" in note and "separately worked" in note
 
     # --- the /tax-verify line map ----------------------------------------
 

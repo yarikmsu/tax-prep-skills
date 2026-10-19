@@ -36,9 +36,9 @@ def test_ca_flags_never_apply_to_another_state(state):
 
 def test_missing_ca_answer_is_not_no_and_cannot_be_acknowledged():
     p = _profile()
-    del p["flags"]["ca_has_noniso_amt_items"]
+    del p["flags"]["ca_has_other_taxes"]
     report = C.evaluate(p)
-    assert any("ca_has_noniso_amt_items" in f.note for f in report.blocking)
+    assert any("ca_has_other_taxes" in f.note for f in report.blocking)
     with pytest.raises(C.CapabilityError):
         C.evaluate(p, {C._MIGRATION_RULE_ID})
 

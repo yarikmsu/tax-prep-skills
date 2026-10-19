@@ -513,11 +513,21 @@ own state of residence)**:**
 
 **California Form 540 screening — CA filers only:**
 Ask each question and record an explicit yes/no; an unknown is not no.
+Confirm California's own filing status, including registered domestic
+partnership and any exception to the federal filing status. Record it in
+`california_540.ca_filing_status`; do not assume it matches. The checked
+builder refuses differing statuses/pro-forma federal returns rather than
+using a single federal AGI for a joint California return.
 Re-use the existing senior answers `age_65_plus_primary` / `age_65_plus_spouse`;
 do not ask age again. Re-use `has_1099g_state_refund` for state refunds and
 work the federal tax-benefit worksheet before subtracting the taxable part.
 
 - Is either filer eligible for the California blind exemption? → `ca_has_blind_exemption`.
+  Record each person's eligibility as `ca_exemptions.primary_blind` and,
+  on a joint return, `spouse_blind`. Ask whether another taxpayer **can** claim
+  either filer, even if they will not, and record `primary_can_be_claimed` /
+  `spouse_can_be_claimed` in `ca_exemptions`. Explicit booleans are required;
+  the builder combines them with the existing senior flags and dependent list.
 - Did you receive a Form 1099-G state or local tax refund? → the existing `has_1099g_state_refund` flag; do not ask it again if already answered.
 - Any US-obligation interest or fund dividends with a California-exempt US-obligation portion? → `ca_has_us_obligation_income`.
 - Any non-California municipal interest or exempt-interest dividends taxable by California? → `ca_has_nonca_muni_interest`.

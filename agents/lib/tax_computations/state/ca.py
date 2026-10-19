@@ -23,6 +23,7 @@ exemption and its own threshold, the SDI rate and ceiling — are all parameters
 
 import math
 
+
 from agents.lib.tax_computations._shared import (
     _CHARITY_APPRECIATED_AGI_CAP,
     _amount,
@@ -35,6 +36,46 @@ from agents.lib.tax_computations._shared import (
     _validated_withholding_list,
 )
 
+
+_CA_540_REVIEWED_YEARS = {2025}
+# Worksheet inputs, not derived lines. Names follow the reviewed printed form.
+CA_540_COMPONENT_LINES = (12, 34, 40, 43, 44, 45, 46, 63, 71, 72, 73, 74,
+                          75, 76, 77, 91, 92, 98, 110, 112, 113)
+
+
+def validate_ca_return_law(state: dict) -> None:
+    """Required fetched blocks for the checked Form 540, not opt-in ISO law."""
+    from agents.lib.tax_computations.state.planning import validate_ca_tax_rows
+    if (not isinstance(state, dict) or state.get("code") != "CA"
+            or state.get("type") != "graduated_income"):
+        raise ValueError("state must be the covered-year CA law block")
+    table = state.get("tax_table")
+    if not isinstance(table, dict):
+        raise ValueError("state.tax_table is required for every CA return")
+    if _amount(table.get("max_taxable_income"), "state.tax_table.max_taxable_income") <= 0:
+        raise ValueError("state.tax_table.max_taxable_income must be positive")
+    validate_ca_tax_rows(table.get("rows"))
+    amt = state.get("amt")
+    screen = state.get("underpayment_screen")
+    for block, fields, statuses in (
+        (amt, ("exemption", "phaseout_start"), ("single", "mfj", "mfs", "hoh")),
+        (screen, ("minimum_balance",), ("single", "mfj", "mfs", "hoh", "qss")),
+    ):
+        name = "state.amt" if block is amt else "state.underpayment_screen"
+        if not isinstance(block, dict):
+            raise ValueError(f"{name} is required for every CA return")
+        for field in fields:
+            values = block.get(field)
+            if not isinstance(values, dict):
+                raise ValueError(f"{name}.{field} is unfetched")
+            for status in statuses:
+                if _amount(values.get(status), f"{name}.{field}.{status}") <= 0:
+                    raise ValueError(f"{name}.{field}.{status} must be positive")
+    if not isinstance(screen, dict):
+        raise ValueError("state.underpayment_screen is required")
+    fraction = _amount(screen.get("tax_fraction"), "state.underpayment_screen.tax_fraction")
+    if not 0 < fraction <= 1:
+        raise ValueError("state.underpayment_screen.tax_fraction must be in (0, 1]")
 
 # SB 951 removed the CA SDI taxable wage ceiling starting TY2024 — from that
 # year there is no per-person maximum and therefore no excess-SDI credit.
@@ -110,8 +151,11 @@ def compute_excess_sdi(
     sdi_wage_limit: float | None,
     tax_year: int,
 ) -> dict:
-    """CA excess-SDI/VPDI credit (Form 540 line 74) — per person, like the
+    """Historical CA excess-SDI/VPDI credit — per person, like the
     federal excess-SS credit.
+
+    TY2025 Form 540 line 74 is the refundable Motion Picture credit. This
+    historical calculation must never populate that line on a TY2025 return.
 
     The tax year DISAMBIGUATES a None wage limit: for TY2024+ (SB 951) None
     is CORRECT — no ceiling exists, so the credit is not applicable. For
@@ -684,10 +728,9 @@ def compute_ca_schedule_p(
 ) -> dict:
     """California Schedule P (540) alternative minimum tax (N1).
 
-    The CA analogue of federal Form 6251 — v1 models the same ISO-exerciser
-    path, since a CA equity-comp filer who triggers federal AMT on an ISO
-    exercise almost always triggers CA AMT on the SAME spread (CA conforms to
-    the ISO adjustment). CA differs from the federal computation in three ways,
+    The CA analogue of federal Form 6251, taking the signed net of the
+    separately worked Part I adjustments. ISO spread stays separate so its
+    deferral-attributable credit can be tracked. CA differs from the federal computation in three ways,
     all reflected here: a FLAT 7% tentative-minimum-tax rate (no 26/28 tiers, so
     no rate_28 breakpoint), NO Part III capital-gains coordination (CA taxes
     capital gains as ordinary income), and a fixed 25% exemption phase-out that
@@ -738,8 +781,17 @@ def compute_ca_schedule_p(
     tmt_rate = float(tmt_rate)
     phaseout_rate = float(phaseout_rate)
 
-    def _tmt(iso_amount: float) -> float:
+    def _amti(iso_amount: float) -> float:
         amti = ti + adj + iso_amount
+        # TY2025 Schedule P Part I line 21 MFS worksheet. Its threshold is
+        # the exemption-elimination ceiling and its cap is one exemption;
+        # both derive from the fetched exemption/phaseout amounts.
+        if fs == "MFS":
+            amti += min(ex, phaseout_rate * max(0.0, amti - (ph_start + ex / phaseout_rate)))
+        return amti
+
+    def _tmt(iso_amount: float) -> float:
+        amti = _amti(iso_amount)
         exemption_allowed = max(0.0, ex - phaseout_rate * max(0.0, amti - ph_start))
         return tmt_rate * max(0.0, amti - exemption_allowed)
 
@@ -758,31 +810,15 @@ def compute_ca_schedule_p(
     amt_exclusion_only = round(max(0.0, round(_tmt(0.0), 2) - rtax_r), 2)
     carryforward = round(max(0.0, ca_amt - amt_exclusion_only), 2)
 
-    amti_full = ti + adj + iso
+    amti_full = _amti(iso)
     exemption_allowed = max(0.0, ex - phaseout_rate * max(0.0, amti_full - ph_start))
     notes = [
-        "v1 models the CA ISO-exerciser path (7% flat TMT, 25% exemption "
-        "phase-out per R&TC §17062); other CA Schedule P preference/adjustment "
-        "items go through ca_preference_adjustments and are the caller's to "
-        "supply. CA taxes capital gains as ordinary income, so there is no "
+        "CA Schedule P uses the supplied signed Part I preferences and adjustments "
+        "(7% flat TMT, 25% exemption phase-out per R&TC §17062). Source worksheets "
+        "are the caller's to supply; deferral-credit attribution is ISO-only. "
+        "CA taxes capital gains as ordinary income, so there is no "
         "federal-style Part III coordination.",
     ]
-    # MFS caveat: the federal §55(d)(3) MFS exemption-RECAPTURE addback (AMTI
-    # increased past the phase-out ceiling, which compute_form_6251 models) is
-    # NOT applied here — CA's exemption still phases to $0 at the ceiling
-    # (modeled), but whether Schedule P carries the additional AMTI add-back is
-    # not confirmed in the FTB instructions, so it is flagged rather than
-    # invented (inventing it would OVERstate; the exemption-to-zero is the
-    # modeled, verified part). Fires only for an MFS filer past the ceiling.
-    if fs == "MFS":
-        ceiling = ph_start + ex / phaseout_rate
-        if amti_full > ceiling:
-            notes.append(
-                "MFS filer past the exemption phase-out ceiling: the CA "
-                "exemption is fully phased out (modeled), but any federal-style "
-                "§55(d)(3) MFS AMTI recapture add-back is NOT modeled — verify "
-                "the MFS exemption worksheet on Schedule P; the CA AMT may be "
-                "understated.")
     if ca_amt > 0:
         notes.append(
             f"CA AMT of ${ca_amt:,.2f} applies (added to the Form 540 tax). "
@@ -799,3 +835,123 @@ def compute_ca_schedule_p(
         "iso_bargain_element": round(iso, 2),
         "notes": notes,
     }
+
+
+def compute_ca_540(
+    *, tax_year: int, filing_status: str, state_law: dict,
+    federal_agi: float, schedule_ca_additions: float, schedule_ca_subtractions: float,
+    deduction: float, deduction_method: str, personal_count: int, blind_count: int,
+    senior_count: int, dependent_count: int, ca_preference_adjustments: float,
+    lump_sum_tax: float,
+    iso_bargain_element: float, components: dict,
+) -> dict:
+    """Derive the reviewed Form 540 from separately worked components.
+
+    Components are the closed CA_540_COMPONENT_LINES set, keyed line_<n>.
+    Credits are ALLOWED worksheet amounts, not eligibility calculations.
+    The signed preference net excludes the automatically added standard
+    deduction and the separately supplied ISO spread. See state-module-ca.md.
+    """
+    normalized_status = _normalize_filing_status(filing_status)
+    from agents.lib.tax_computations.state.planning import _ca_tax
+    if isinstance(tax_year, bool) or not isinstance(tax_year, int) or tax_year not in _CA_540_REVIEWED_YEARS:
+        raise ValueError("Form 540 line map has not been reviewed for this tax year")
+    status = normalized_status.lower()
+    validate_ca_return_law(state_law)
+    if deduction_method not in ("standard", "itemized", "dependent_worksheet"):
+        raise ValueError("deduction_method must identify the reviewed deduction worksheet")
+    counts = (personal_count, blind_count, senior_count, dependent_count)
+    for name, count in zip(("personal", "blind", "senior", "dependent"), counts):
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"{name}_count must be a non-negative integer")
+        limit = 2 if status == "mfj" or (name == "personal" and status == "qss") else 1
+        if name != "dependent" and count > limit:
+            raise ValueError(f"{name}_count exceeds the filing status's eligible filers")
+    if blind_count > personal_count or senior_count > personal_count:
+        raise ValueError("blind/senior counts cannot exceed eligible personal exemptions")
+    if not isinstance(components, dict) or set(components) != {f"line_{n}" for n in CA_540_COMPONENT_LINES}:
+        raise ValueError("Form 540 components must name exactly CA_540_COMPONENT_LINES")
+    out: dict = {key: round(_amount(value, key), 2) for key, value in components.items()}
+    lump_sum = _amount(lump_sum_tax, "lump_sum_tax")
+    if lump_sum > out["line_34"]:
+        raise ValueError("lump_sum_tax cannot exceed Form 540 line 34")
+    agi = round(_amount(federal_agi, "federal_agi", allow_negative=True), 2)
+    adds = round(_amount(schedule_ca_additions, "schedule_ca_additions", allow_negative=True), 2)
+    subs = round(_amount(schedule_ca_subtractions, "schedule_ca_subtractions", allow_negative=True), 2)
+    elected = round(_amount(deduction, "deduction"), 2)
+    deduction_key = "single" if status == "mfs" else "mfj" if status == "qss" else status
+    standard = _amount(state_law.get("standard_deduction", {}).get(deduction_key), "CA standard deduction")
+    if standard <= 0:
+        raise ValueError("CA standard deduction must be fetched and positive")
+    if deduction_method == "standard" and elected != standard:
+        raise ValueError("elected standard deduction differs from the fetched CA amount")
+    personal = _amount(state_law.get("personal_exemption", {}).get("amount"), "state.personal_exemption.amount")
+    dependent = _amount(state_law.get("dependent_exemption", {}).get("amount"), "state.dependent_exemption.amount")
+    out.update(line_7=round(personal_count * personal, 2), line_8=round(blind_count * personal, 2),
+               line_9=round(senior_count * personal, 2), line_10=round(dependent_count * dependent, 2),
+               line_13=agi, line_14=subs, line_15=round(agi - subs, 2), line_16=adds, line_18=elected)
+    out["line_11"] = round(sum(out[f"line_{n}"] for n in (7, 8, 9, 10)), 2)
+    out["line_17"] = round(out["line_15"] + adds, 2)
+    signed_taxable = round(out["line_17"] - elected, 2)
+    out["line_19"] = max(0.0, signed_taxable)
+    out["line_31"] = _ca_tax(out["line_19"], status, state_law)
+    validate_ca_exemption_phaseout(state_law.get("exemption_phaseout"))
+    exemption = compute_ca_exemption_credit(agi, filing_status, sum(counts[:3]), dependent_count,
+        personal, dependent, state_law["exemption_phaseout"])
+    out["line_32"] = exemption["exemption_credit"]
+    out["line_33"] = round(max(0.0, out["line_31"] - out["line_32"]), 2)
+    out["line_35"] = round(out["line_33"] + out["line_34"], 2)
+    out["line_47"] = round(sum(out[f"line_{n}"] for n in (40, 43, 44, 45, 46)), 2)
+    out["line_48"] = round(max(0.0, out["line_35"] - out["line_47"]), 2)
+    adj = _amount(ca_preference_adjustments, "ca_preference_adjustments", allow_negative=True)
+    if deduction_method in ("standard", "dependent_worksheet"):
+        adj += elected
+    key = "mfj" if status == "qss" else status
+    amt = state_law["amt"]
+    schedule_p = compute_ca_schedule_p(signed_taxable, out["line_31"], filing_status,
+        amt["exemption"][key], amt["phaseout_start"][key], adj, iso_bargain_element)
+    out["line_61"] = schedule_p["ca_amt"]
+    surcharge = state_law.get("mental_health_surcharge")
+    if not isinstance(surcharge, dict):
+        raise ValueError("state.mental_health_surcharge is missing")
+    rate = _amount(surcharge.get("rate"), "state.mental_health_surcharge.rate")
+    if rate > 1:
+        raise ValueError("state.mental_health_surcharge.rate must be a fraction")
+    out["line_62"] = round(max(0, out["line_19"] - _amount(surcharge.get("threshold"),
+        "state.mental_health_surcharge.threshold")) * rate, 2)
+    out["line_64"] = round(sum(out[f"line_{n}"] for n in (48, 61, 62, 63)), 2)
+    out["line_78"] = round(sum(out[f"line_{n}"] for n in range(71, 78)), 2)
+    out["line_93"] = round(max(0, out["line_78"] - out["line_91"]), 2)
+    out["line_94"] = round(max(0, out["line_91"] - out["line_78"]), 2)
+    out["line_95"] = round(max(0, out["line_93"] - out["line_92"]), 2)
+    out["line_96"] = round(max(0, out["line_92"] - out["line_93"]), 2)
+    out["line_97"] = round(max(0, out["line_95"] - out["line_64"]), 2)
+    if out["line_98"] > out["line_97"]:
+        raise ValueError("Form 540 line 98 cannot exceed line 97 overpayment")
+    out["line_99"] = round(out["line_97"] - out["line_98"], 2)
+    out["line_100"] = round(max(0, out["line_64"] - out["line_95"]), 2)
+    # Line 111 also settles unpaid use tax/ISR and voluntary contributions.
+    out["line_111"] = round(max(0, out["line_100"] + out["line_94"] + out["line_96"]
+                                  + out["line_110"] - out["line_99"]), 2)
+    settlement = round(out["line_100"] + out["line_94"] + out["line_96"] + out["line_110"]
+                       + out["line_112"] + out["line_113"] - out["line_99"], 2)
+    out["line_114"] = max(0.0, settlement)
+    out["line_115"] = max(0.0, -settlement)
+    screen = state_law["underpayment_screen"]
+    possible = (out["line_100"] >= screen["minimum_balance"][status]
+                and out["line_100"] >= screen["tax_fraction"] * max(0, out["line_48"] - lump_sum))
+    note = ("Form 540 line 113: possible FTB 5805/5805F estimated-tax penalty NOT COMPUTED; "
+            "work the applicable worksheet or let the FTB compute it and send a bill." if possible else
+            "Form 540 line 113: the reviewed balance/percentage screen does not indicate an estimated-tax penalty.")
+    out.update(computed_tax_year=tax_year, ca_agi=out["line_17"], ca_taxable_income=out["line_19"],
+        ca_standard_deduction=standard,
+        federal_agi=agi, ca_tax_from_table=out["line_31"], ca_tax_after_credits=out["line_33"],
+        ca_mental_health_surcharge=out["line_62"], ca_total_tax=out["line_64"],
+        ca_refund=out["line_115"], ca_amount_owed=out["line_114"],
+        schedule_p=schedule_p, exemption_worksheet=exemption, line_113_note=note)
+    out["ca_exemption_credits"] = {
+        "personal": {"count": sum(counts[:3]), "per_person": personal,
+                     "total": exemption["personal_blind_senior_credit"]},
+        "dependent": {"count": dependent_count, "per_dependent": dependent,
+                      "total": exemption["dependent_credit"]}, "total": out["line_32"]}
+    return out

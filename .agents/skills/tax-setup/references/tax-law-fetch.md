@@ -153,15 +153,14 @@ a figure from a prior year.
   indexed annually — R&TC §17077; FTB publishes them with the exemption
   credits). Unfetched → `compute_ca_itemized` skips the phase-out with a
   loud overstatement note for high-AGI itemizers.
-- For CA **when the taxpayer has an ISO exercise** (`has_iso_exercise`): Search
+- For **every CA return**, including without an ISO exercise: Search
   `"California Schedule P 540 {year} AMT exemption amount phase-out"` → populate
   `state.amt.exemption` and `state.amt.phaseout_start` (both keyed
   `single`/`mfj`/`mfs`/`hoh`, indexed annually — FTB publishes them in the
   Schedule P instructions). Record the URL under `_sources` (K2). The 7% TMT
   rate and 25% phase-out are statutory and coded in `compute_ca_schedule_p`;
   only these indexed figures are fetched. Unfetched HARD-ERRORS at compute for a
-  CA ISO exerciser (never a guessed exemption that would zero the CA AMT). Leave
-  all-null for a non-ISO CA return.
+  CA return (never a guessed exemption that would zero the CA AMT).
 - **For every CA return:** fetch Form 540 line 32's AGI Limitation Worksheet
   into `state.exemption_phaseout`: `threshold` and `band` keyed by all five
   statuses (`single`/`mfj`/`mfs`/`hoh`/`qss`), and `reduction_per_step`.
@@ -170,9 +169,15 @@ a figure from a prior year.
   required even when the taxpayer is below the threshold, and source-pinned
   to the filing year's Form 540 instructions. No missing block may retain
   the full exemption credit.
-- **Optional CA scenario/Roth planning:** fetch Form 540's tax-table ceiling
-  and published rows into `state.tax_table`, and Box C screening
-  ceilings into `state.amt_screening`. Fetch all rows a sweep touches, without
+- **For every CA return:** fetch Form 540's tax-table ceiling and published
+  rows into `state.tax_table`. Include the actual row for the return's taxable
+  income at/below the ceiling; use the fetched rate schedule above it. Fetch
+  line 113's per-status balance screen into
+  `state.underpayment_screen.minimum_balance` and its percentage screen into
+  `state.underpayment_screen.tax_fraction`. These are required fetched figures,
+  never engine defaults. Source-pin the covered-year instructions.
+- **Optional CA scenario/Roth planning:** fetch Box C screening
+  ceilings into `state.amt_screening`. Fetch all tax-table rows a sweep touches, without
   inferring a midpoint. These are independently year/source-pinned figures;
   see `docs/contributing/state-planning.md`. No covered form means unavailable
   state planning, even if a newer year's rate has been fetched.

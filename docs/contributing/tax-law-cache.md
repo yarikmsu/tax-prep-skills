@@ -49,11 +49,15 @@ map goes stale in a way the schema cannot.
 CA's `exemption_phaseout` is required for every return's Form 540 line 32.
 Its `threshold` and `band` use all five statuses, with a shared
 `reduction_per_step`; absent, partial or unfetched values block freshness.
-The optional scenario blocks (`tax_table`, `amt_screening`) are defined in
-[state-planning.md](state-planning.md). Screening ceilings also use all five
-statuses; the CA standard deduction and itemized phaseout retain their
-three-key grouping. Missing optional blocks make state scenario effects
-unavailable without blocking every return's freshness audit.
+`state.tax_table` and `state.amt` are also required for **every** CA return:
+the checked Form 540 selects published table rows and runs Schedule P even
+without an ISO exercise. AMT exemption/phaseout use single/mfj/mfs/hoh
+(QSS maps to mfj). `underpayment_screen.minimum_balance` uses all five
+statuses and `tax_fraction` is a fetched scalar for line113's screen.
+Only `amt_screening` remains optional scenario evidence, described in
+[state-planning.md](state-planning.md). The CA standard deduction and itemized
+phaseout retain their three-key grouping. The checked form contract is
+[state-module-ca.md](state-module-ca.md).
 
 An accessor that assumes four filing statuses everywhere does not fail — it silently
 reads a key that exists for a DIFFERENT taxpayer, which is the shape AGENTS.md §4 calls

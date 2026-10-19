@@ -9,6 +9,15 @@ remaining correctness risk in the toolkit, and it is untested by construction:
 
 This directory is where that gets scored.
 
+The checked California builder currently reviews **TY2025 only**. The TY2026
+goldens retain their federal known answers and historical CA component
+baselines; new CA fields are uncomputed scaffold values, not a reviewed
+TY2026 Form 540. A complete live TY2026 CA run must stop at the builder until
+the published form is reviewed and its CA golden is refreshed. Do not waive
+the reviewed-year guard to make that run match an older golden. Federal CLI
+regressions isolate the federal section; the CA suite tests the TY2025 builder
+and the TY2026 refusal independently.
+
 ## The pieces
 
 | | |

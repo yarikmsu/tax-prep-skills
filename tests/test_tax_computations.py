@@ -4669,20 +4669,20 @@ class TestCaSchedulePAMT:
         assert r["ca_amt"] == round(r["ca_tmt"] - r["ca_regular_tax"], 2)
 
 
-class TestCaSchedulePMfsCaveat:
-    """MFS-past-ceiling caveat (self-review addition) — CA exemption phases to
-    $0 (modeled), but the §55(d)(3) MFS recapture add-back is flagged not
-    modeled (unconfirmed on Schedule P; inventing it would overstate)."""
+class TestCaSchedulePMfsRecapture:
+    """TY2025 Schedule P Part I line21 MFS exemption addback worksheet."""
 
-    def test_mfs_past_ceiling_flags_recapture_caveat(self):
-        # MFS 2024: exemption 58,111, phase-out start 217,924, ceiling
-        # 217,924 + 58,111/0.25 = 450,368. AMTI 500,000 > ceiling.
+    def test_mfs_past_ceiling_adds_the_worksheet_amount(self):
+        # TY2025 ceiling=231,868+61,830/.25=479,188.
+        # Add min(61,830, .25*(500,000-479,188))=5,203.
+        # AMTI505,203*7%=35,364.21; less10,000 regular=25,364.21.
         r = compute_ca_schedule_p(
             ca_taxable_income=300000, ca_regular_tax=10000,
-            filing_status="MFS", exemption=58111, phaseout_start=217924,
+            filing_status="MFS", exemption=61830, phaseout_start=231868,
             iso_bargain_element=200000)
         assert r["ca_exemption_allowed"] == 0.0  # fully phased out (modeled)
-        assert any("§55(d)(3)" in n and "recapture" in n for n in r["notes"])
+        assert r["ca_amti"] == 505203
+        assert r["ca_amt"] == 25364.21
 
     def test_mfs_below_ceiling_no_caveat(self):
         r = compute_ca_schedule_p(
@@ -8257,6 +8257,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/federal/penalties.py::compute_form_2210": "direct",
         "tax_computations/state/ca.py::compute_ca_schedule_p": "direct",
         "tax_computations/state/ca.py::compute_ca_exemption_credit": "direct",
+        "tax_computations/state/ca.py::compute_ca_540": "direct",
         "tax_computations/state/ny.py::compute_ny_agi": "direct",
         "tax_computations/state/ny.py::compute_ny_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_household_credit": "direct",

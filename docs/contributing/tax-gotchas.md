@@ -14,7 +14,7 @@ verbatim from CLAUDE.md.
 - FBAR max values (conservative, total inflows) differ from Form 8938 values (realistic simultaneous peak)
 - Form 8938 thresholds differ by filing status — MFJ in US: $200K year-end / $300K any time
 - State HSA non-conformity (CA, NJ): HSA contributions and earnings are state-taxable. (Alabama formerly non-conforming — Ala. Code §40-18-15.6 has allowed the deduction since 2018-01-01)
-- CA SDI has NO taxable wage ceiling since TY2024 (SB 951) — the excess-SDI credit (540 line 74) cannot arise for 2024+; `state.sdi_wage_limit` stays null and `compute_excess_sdi` reports not-applicable. Only pre-2024 returns have a cap to exceed.
+- CA SDI has NO taxable wage ceiling since TY2024 (SB 951) — an excess-SDI credit cannot arise for 2024+; `state.sdi_wage_limit` stays null and `compute_excess_sdi` reports not-applicable. Only pre-2024 returns have a cap to exceed. TY2025 Form 540 line 74 is the refundable Motion Picture credit, never excess SDI.
 - Tax-exempt (muni) interest raises PROVISIONAL income for taxable Social Security even though it's untaxed — line 2a is a required input to `compute_taxable_ss`
 - Excess SS withholding (Sch 3 line 11) is PER PERSON and MULTI-employer only — never pool spouses' Box 4; a single employer that over-withheld corrects via the employer, not the return
 - FTC simplified: ≤$600 MFJ ($300 single) from qualified passive sources — no Form 1116 needed
