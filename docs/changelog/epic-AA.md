@@ -2759,7 +2759,7 @@ unspaced fails the routing test.
 The full suite passed locally on Python 3.14, and CI ran it on the 3.13 floor
 and 3.14. No engine behavior changed.
 
-## AA59 — the Form 1099-DA boxes the import never named
+## AA59 — the Form 1099-DA boxes the import never named (#12)
 
 AA55's table marked AA59 on every 1099-DA box with a meaning the import neither
 read nor refused, so a form with one filled passed unread. Two did harm in
