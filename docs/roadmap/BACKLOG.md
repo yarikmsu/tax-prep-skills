@@ -429,8 +429,7 @@ at all.
     Ask about those items, carve-out included, and block a yes, since a
     missing AMT under-states CA tax. Box C
     (CA AGI above $347,808 single on the 2025 form) only limits the special
-    credits on lines 43-45, which this item already blocks on a yes and no
-    engine step claims. So Box C belongs to AA72, which makes
+    credits on lines 43-45, which no engine step claims. So Box C belongs to AA72, which makes
     `state.amt_screening` required when it claims those credits. Box C is
     also a figure computed from the return, not an answer the gate can hold.
   - Line 34: the Schedule G-1 tax on a lump-sum distribution and the FTB 5870A
@@ -440,14 +439,18 @@ at all.
     renter's credit, CalEITC, the young child credit and the foster youth
     credit. Each turns on an income figure from the return: federal AGI of
     $100,000 or less for line 40, CA AGI of $53,994 or $107,988 for the
-    renter's credit, and earned income for lines 75-77 (2025 booklet). Keying
-    a gate rule to `flags.has_dependent_care` or to rent paid would block
-    every high-earning parent or renter. Asking the taxpayer to judge the
-    threshold is the self-assessment the gate refuses. So AA69's builder
-    screens them, as it screens line 113, and blocks only a return within a
-    limit whose trigger is present. Until then, they carry a note.
+    renter's credit, and earned income for lines 75-77 (2025 booklet). These
+    are credits, so they follow the credit precedent below as manual notes,
+    on existing rules where one fits:
+    - Lines 75-77 join `earned_income_credit`, keyed to `may_qualify_for_eic`,
+      which already covers NY's IT-215 and IT-209 and the NYC EIC.
+    - FTB 3506 joins the `dependent_care` note, keyed to `has_dependent_care`.
+    - The renter's credit gets a note keyed to rent paid in California.
   - Lines 43-45's credits, the CA AMT credit and the PTET credit (FTB 3804-CR)
-    among them.
+    among them, until AA72. The PTET credit is a manual note under the
+    credit precedent below. The CA AMT credit blocks when
+    `prior_year.ca_amt_credit_carryforward` is nonzero, because the toolkit
+    already carries that figure and would forfeit it.
   - Lines 72 and 73: estimated payments (those an estate, trust or S
     corporation paid on the taxpayer's behalf on Schedule K-1 (541) or (100S)
     included), an extension payment, last year's applied overpayment, and Form
@@ -489,8 +492,15 @@ at all.
     applies to.
   - Acknowledging the rule lets the return finish with that line NOT
     COMPUTED.
-  - A manual note is kept for a line the FTB lets the filer leave blank,
-    which is line 113.
+  - Two exceptions are manual notes:
+    - A line the FTB lets the filer leave blank, which is line 113.
+    - A credit the taxpayer claims from a worksheet of their own. It has no
+      source document for the tie-out to miss, and its omission over-states
+      the tax, which `capabilities.py` files under §4's
+      degrade-with-a-banner. `earned_income_credit` and `dependent_care` are
+      MANUAL on that ground, NY's state and City EICs included.
+    - A credit the toolkit already carries is no exception and blocks, as
+      `nc_other_credits` blocks NC credit carryovers.
 
   Ask each in `/tax-setup`, and reuse a flag the profile already has, such as
   `flags.has_1099g_state_refund`, rather than asking twice. Two
@@ -548,7 +558,10 @@ at all.
   credits and the payments, and returns every line. Line 31 comes from the
   published Tax Table at or below its ceiling. `state.tax_table` is an
   optional planning block today, so make it required, as AA75 does the
-  phase-out. The lines are the bracket tax, the
+  phase-out. Emit line 113's screened FTB 5805 note from the builder's own
+  lines 100 and 48 (AA68). Its $500 ($250 for a separate filer) amount is a
+  threshold, so fetch it into the cache like any other (AGENTS.md §2). The
+  lines are the bracket tax, the
   phase-out, the floors and line 62's tax (renamed Behavioral Health Services
   Tax on the 2025 form). Add a `--check` like `/tax-compute` step 12.6, carried
   by the validation receipt. Key the line map to the reviewed form year, as
@@ -665,8 +678,8 @@ at all.
   in a year with no ISO exercise, so a carried credit is gone after one such
   year. Rebuild the accumulation: the prior credit, less the part used, plus
   this year's. Write it whether or not there was an ISO exercise, and correct
-  the comment. AA68's rule for lines 43-45 blocks these credits until this
-  lands. Needs
+  the comment. Until this lands, AA68 blocks a carried CA AMT credit and
+  notes the PTET credit. Needs
   AA69.
 
 - **AA73 (P2, L): Compute rental real estate on Schedule E and Schedule CA.**
