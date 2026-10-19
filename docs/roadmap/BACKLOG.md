@@ -427,11 +427,10 @@ at all.
       of certain property. Its ISO income is `iso_exercise`'s.
 
     Ask about those items, carve-out included, and block a yes, since a
-    missing AMT under-states CA tax. Box C
-    (CA AGI above $347,808 single on the 2025 form) only limits the special
-    credits on lines 43-45, which no engine step claims. So Box C belongs to AA72, which makes
-    `state.amt_screening` required when it claims those credits. Box C is
-    also a figure computed from the return, not an answer the gate can hold.
+    missing AMT under-states CA tax. Box C (CA AGI above $347,808 single on
+    the 2025 form) is a screen that sends a filer claiming special credits to
+    Schedule P. It limits neither credit AA72 adds (see AA72), and it is a
+    figure computed from the return, not an answer the gate can hold.
   - Line 34: the Schedule G-1 tax on a lump-sum distribution and the FTB 5870A
     tax on an accumulation distribution.
   - Line 63's FTB 3805P and other taxes.
@@ -702,7 +701,7 @@ at all.
   AA68 leaves both credits blocked, and leaves the CA AMT credit's
   carryforward written by step 9.5 from a filer-entered FTB 3510 amount.
   Start from that state. Lines 43-45 need the two credits, their
-  carryforwards, and the limit Schedule P puts on them:
+  carryforwards and their limits:
   - The prior-year AMT credit, code 188, which FTB 3510 computes, limits and
     carries over before Schedule P (540) Part III takes its result. Compute
     the allowable credit on FTB 3510, not on Part III. That computed figure
@@ -715,11 +714,16 @@ at all.
     CA has nothing. The TY2025 booklet limits the election to years before
     2026, so confirm the current statute for TY2026 rather than relying on
     the 2025 text.
-  - Schedule P's credit limit for CA AGI above Box C ($347,808 single on the
-    2025 form). Its amount is in `state.amt_screening`, the third CA block the
-    fetcher's validator skips and `/tax-setup` fetches only for planning.
-    Make it required for a return claiming these credits, and never let an
-    unfetched screen pass a credit unlimited.
+  - The limits, from Schedule P (540)'s 2025 instructions:
+    - Code 242 sits in Section B4, among credits that "can reduce regular
+      tax below the TMT", as the FTB 3804-CR instructions also say. Only net
+      tax limits it, after the Other State Tax Credit (B3). Capping it at
+      regular tax less TMT would over-state CA tax and invent a carryover.
+    - Code 188 sits in Section A2, so FTB 3510 and the excess of regular tax
+      over TMT limit it, whatever Box C says.
+    - Box C ($347,808 single on the 2025 form) only screens a filer into
+      Schedule P. It limits neither credit, so neither needs
+      `state.amt_screening`.
 
   Needs AA69.
 
