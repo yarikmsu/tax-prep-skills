@@ -414,21 +414,38 @@ at all.
     fund dividends, non-CA municipal interest and exempt-interest dividends,
     Social Security, a state refund, unemployment and CA paid family leave,
     §1202, CA and federal basis and depreciation differences, K-1 CA amounts,
-    moving expenses and IRA basis.
-  - Line 61 and Schedule P (540) outside an ISO exercise. The booklet's Box A
-    sends a return to Schedule P for AMT preference and adjustment items, and
-    the `iso_exercise` rule fires only on an ISO exercise. Ask about those
-    items and block a yes, since a missing AMT under-states CA tax. Box C
+    moving expenses, IRA basis, California lottery winnings (a subtraction,
+    which matters more once AA66 parses the W-2G), the educator expense
+    add-back, and the foreign earned income exclusion add-back (Schedule CA
+    line 8d).
+  - Line 61 and Schedule P (540) outside an ISO exercise. Two of the
+    booklet's boxes send a return to Schedule P:
+    - Box A: AMT preference and adjustment items, with its carve-out for the
+      trade or business items of a filer whose gross receipts from all trades
+      or businesses are under $1,000,000.
+    - Box B: investment interest expense, and income from installment sales
+      of certain property. Its ISO income is `iso_exercise`'s.
+
+    Ask about those items, carve-out included, and block a yes, since a
+    missing AMT under-states CA tax. Box C
     (CA AGI above $347,808 single on the 2025 form) only limits the special
     credits on lines 43-45, which this item already blocks on a yes and no
     engine step claims. So Box C belongs to AA72, which makes
     `state.amt_screening` required when it claims those credits. Box C is
     also a figure computed from the return, not an answer the gate can hold.
+  - Line 34: the Schedule G-1 tax on a lump-sum distribution and the FTB 5870A
+    tax on an accumulation distribution.
   - Line 63's FTB 3805P and other taxes.
   - Lines 40, 46 and 75-77: the dependent care credit (FTB 3506), the
     renter's credit, CalEITC, the young child credit and the foster youth
-    credit. Their income limits sit below the persona's, so a yes is rare, but
-    a yes still blocks.
+    credit. Each turns on an income figure from the return: federal AGI of
+    $100,000 or less for line 40, CA AGI of $53,994 or $107,988 for the
+    renter's credit, and earned income for lines 75-77 (2025 booklet). Keying
+    a gate rule to `flags.has_dependent_care` or to rent paid would block
+    every high-earning parent or renter. Asking the taxpayer to judge the
+    threshold is the self-assessment the gate refuses. So AA69's builder
+    screens them, as it screens line 113, and blocks only a return within a
+    limit whose trigger is present. Until then, they carry a note.
   - Lines 43-45's credits, the CA AMT credit and the PTET credit (FTB 3804-CR)
     among them.
   - Lines 72 and 73: estimated payments (those an estate, trust or S
@@ -475,12 +492,19 @@ at all.
   - A manual note is kept for a line the FTB lets the filer leave blank,
     which is line 113.
 
-  Ask each in `/tax-setup`. Some items are already in the parse ledger:
-  Social Security in `ss_benefits` and a state refund in
-  `state_refund_1099g`. Federal AGI includes both and CA subtracts both, so a
-  "no" answer must not pass a parsed form. Key those rules to the ledger as
-  well, in the tie-out gate, as AA59 keyed its option question to a ledgered
-  1099-DA.
+  Ask each in `/tax-setup`, and reuse a flag the profile already has, such as
+  `flags.has_1099g_state_refund`, rather than asking twice. Two
+  subtractions are already visible on the federal return, and CA subtracts
+  only what federal AGI included:
+  - Social Security at Form 1040 line 6b (`line_6b_taxable_ss`), not the
+    ledger's box 5.
+  - A state refund at the part federally taxable under the tax benefit rule.
+    It is taxable only if the prior year itemized (`tie_out.py`), and it has
+    no field yet.
+
+  Key those rules to those amounts in the tie-out: a nonzero taxable amount
+  with no CA subtraction fails, whatever the answer was. AA59's option check
+  is not the model here, because it fires only on an unanswered flag.
 
   A blocking rule costs more than its code. `WHO-IT-FITS.md` must size it,
   measured or stated as unmeasured as NC's and WA's are, and the skill
@@ -610,7 +634,9 @@ at all.
     obligations. Below that nothing is subtracted, and a federally exempt
     dividend is an addition in full. Subtracting a share from a fund below 50%
     under-states CA tax.
-  - Social Security is subtracted in full, and so is a state income tax refund.
+  - Social Security is subtracted at its federally taxable amount (line 6b),
+    and a state income tax refund at the part federally included, which
+    needs a field.
   - Unemployment and CA paid family leave are AA65's, not this item's. AA65
     adds their 1099-G categories after AA69's builder exists, and subtracts
     them on Schedule CA itself.
