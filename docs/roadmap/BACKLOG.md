@@ -99,7 +99,10 @@ AA57 finds why.
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
 
 - **AA52 (P2, M): The export and the engine still answer four questions
-  differently.** `audit_schema` adds `retirement_conformity_seed` when the cache
+  differently.**
+  Implementation: [PR #26](https://github.com/yarikmsu/tax-prep-skills/pull/26),
+  draft; the shared fresh-session acceptance replay is pending. Not merged.
+  Depends on PR #25. `audit_schema` adds `retirement_conformity_seed` when the cache
   holds that block, but the definition never names it, and the test that holds
   every exported table to a name builds its key set from
   `create_empty_tax_law(2026)`, which has no such block: it stays green over the
@@ -143,6 +146,9 @@ AA57 finds why.
   confirmed in 42 U.S.C. §1395r(i). Found by Y2's second review.
 
 - **AA54 (P3, XS): A failed export leaves a `--dest` it created behind.**
+  Implementation: [PR #26](https://github.com/yarikmsu/tax-prep-skills/pull/26),
+  draft; the shared fresh-session acceptance replay is pending. Not merged.
+  Depends on PR #25.
   `build_audit_copy` passes `made_here=dest is None`, reading "a `--dest` was
   named" as "the directory already existed", but `_resolve_dest` creates a
   named one that does not exist, parents included. A failed write then leaves
@@ -676,6 +682,9 @@ at all.
   FTB 5805's penalty on line 113 is AA76. Needs AA69.
 
 - **AA76 (P1, M): Price FTB 5805's underpayment penalty on line 113.**
+  Implementation: [PR #26](https://github.com/yarikmsu/tax-prep-skills/pull/26),
+  draft; the shared fresh-session acceptance replay is pending. Not merged.
+  Depends on PR #25.
   Line 113 is a new computation. The projection computes only the required
   annual payment (`compute_ca_safe_harbor`), so the penalty must be priced per
   installment by the payment dates AA70 records. That is not
