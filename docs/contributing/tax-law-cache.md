@@ -54,6 +54,10 @@ the checked Form 540 selects published table rows and runs Schedule P even
 without an ISO exercise. AMT exemption/phaseout use single/mfj/mfs/hoh
 (QSS maps to mfj). `underpayment_screen.minimum_balance` uses all five
 statuses and `tax_fraction` is a fetched scalar for line113's screen.
+`state.schedule_ca.fund_asset_minimum` is also fetched for the covered year,
+from Schedule CA/Publication 1001. It is the fund asset-qualification fraction,
+separate from each fund's income allocation percentages; missing law refuses
+the checked builder even when a legacy cache otherwise looks complete.
 Only `amt_screening` remains optional scenario evidence, described in
 [state-planning.md](state-planning.md). The CA standard deduction and itemized
 phaseout retain their three-key grouping. The checked form contract is

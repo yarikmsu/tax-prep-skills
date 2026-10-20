@@ -3693,6 +3693,7 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
     compute_ca_exemption_credit,
     compute_ca_itemized,
     compute_ca_schedule_p,
+    compute_ca_schedule_ca,
     compute_excess_sdi,
 )
 

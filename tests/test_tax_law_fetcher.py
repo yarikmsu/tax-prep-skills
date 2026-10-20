@@ -76,6 +76,7 @@ def _ca_synthetic_form540_law():
                 {"min": 0, "max": 10001, "tax": dict.fromkeys(statuses, 0)}]},
             "amt": {"exemption": dict.fromkeys(statuses[:-1], 1000),
                     "phaseout_start": dict.fromkeys(statuses[:-1], 100000)},
+            "schedule_ca": {"fund_asset_minimum": .5},
             "underpayment_screen": {"minimum_balance": dict.fromkeys(statuses, 500),
                                     "tax_fraction": .1}}
 

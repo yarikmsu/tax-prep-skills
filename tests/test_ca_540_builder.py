@@ -30,6 +30,7 @@ def law():
         "amt": {"exemption": dict.fromkeys(STATUSES[:-1], 100000),
                 "phaseout_start": dict.fromkeys(STATUSES[:-1], 1000000)},
         "underpayment_screen": {"minimum_balance": dict.fromkeys(STATUSES, 500), "tax_fraction": .1},
+        "schedule_ca": {"fund_asset_minimum": .5},
         "mental_health_surcharge": {"threshold": 1000000, "rate": .01},
         "tax_table": {"max_taxable_income": 10000,
             "rows": [{"min": 0, "max": 10001, "tax": dict.fromkeys(STATUSES, 777)}]},
@@ -140,7 +141,7 @@ def test_check_rejects_non_numeric_money_even_when_false_equals_zero(bad):
     assert 'line_61' in B.california_differences(result, out)
 
 
-@pytest.mark.parametrize("missing", ["amt", "tax_table", "underpayment_screen"])
+@pytest.mark.parametrize("missing", ["amt", "tax_table", "underpayment_screen", "schedule_ca"])
 def test_required_law_cannot_be_skipped_on_zero_income(missing):
     data = inputs(federal_agi=0)
     del data["state_law"][missing]
@@ -174,6 +175,8 @@ def case():
         "ca_exemptions": {"primary_can_be_claimed": False, "primary_blind": True}}
     result = {"meta": {"tax_year": 2025, "filing_status": "Single"},
               "form_1040": {"line_11_agi": 100000}, "california_540": ca}
+    profile['flags'].update(ca_has_us_obligation_income=False, ca_has_nonca_muni_interest=False,
+                            ca_has_other_schedule_ca_adjustments=False)
     return profile, result
 
 

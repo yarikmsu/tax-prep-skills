@@ -63,6 +63,15 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
 **California (Form 540):**
 1. Start with Federal AGI
 2. Schedule CA adjustments:
+   - Record **[ca_investment_sources]** in `answers.md`, including an explicit
+     none. Follow the parse skill's `references/california-investments.md`:
+     every relevant ledger record needs explicit components and reviewed
+     `ca_investments` metadata. Obtain missing supplements before computing.
+     The checked builder runs `compute_ca_schedule_ca` from those records:
+     direct US interest and eligible fund shares subtract on line 2 column B;
+     nonexempt municipal interest/DIV box 12 add on line 2 column C. Fund asset
+     qualification uses fetched `state.schedule_ca.fund_asset_minimum` for each
+     quarter, independently of the income percentage. Never type these totals.
    - HSA add-backs (employer contributions + HSA earnings) — CA non-conformity
    - Subtract the federally taxable Social Security on Form 1040 line 6b,
      recording `schedule_ca_adjustments.taxable_social_security_subtraction`.
@@ -70,9 +79,18 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    - Subtract only `form_1040.taxable_state_refund`, the amount included in
      federal AGI from the tax-benefit worksheet; record it as
      `schedule_ca_adjustments.taxable_state_refund_subtraction`.
-     Include both amounts in `total_subtractions`. The tie-out checks each
-     even if a screening flag says no or a limitation was acknowledged.
-   - Any other CA-specific additions/subtractions
+     Record **[ca_state_refund_worksheet]** when a refund is present; this is
+     the federal worksheet's confirmed taxable part, including zero. The builder
+     derives both subtractions and the totals; the tie-out checks them even if
+     a screening flag says no or a limitation was acknowledged.
+   - Enter other acknowledged source worksheets only in `other_additions` and
+     `other_subtractions`, with `other_adjustments_confirmed: true`, including
+     a worked zero when the other-adjustment screen is yes. Retain the separate
+     existing HSA components. Never migrate an old aggregate total by guessing
+     its components. Remove obsolete `ca_us_obligation_income` and
+     `ca_nonca_muni_interest` acknowledgements after re-reading their sources;
+     acknowledgements cannot waive missing investment facts. The federal refund
+     worksheet remains manual (`ca_state_refund`); its CA subtraction is computed.
 3. CA AGI = Federal AGI + additions - subtractions
 4. CA deduction — run `compute_ca_itemized()` whenever `compute_schedule_a`
    ran (SOURCE figures, not the federal total — CA has no SALT cap but

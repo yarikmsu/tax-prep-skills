@@ -534,9 +534,18 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
   Schedule P line 22 limits that child's AMT exemption, and the builder does
   not compute the limit.
 - Did you receive a Form 1099-G state or local tax refund? → the existing `has_1099g_state_refund` flag; do not ask it again if already answered.
-- Any US-obligation interest or fund dividends with a California-exempt US-obligation portion? → `ca_has_us_obligation_income`.
+- Any US-obligation interest or fund dividends with an underlying US-obligation portion, even when the fund ultimately does not qualify for the CA exemption? → `ca_has_us_obligation_income`.
 - Any non-California municipal interest or exempt-interest dividends taxable by California? → `ca_has_nonca_muni_interest`.
-- Any other Schedule CA Part I difference: unemployment or CA paid family leave, section 1202, federal/CA basis or depreciation, CA K-1 amounts, moving expenses, IRA basis, California lottery winnings, educator expenses, or the foreign earned income exclusion add-back? Ask about each category, recording the applicable lines → `ca_has_other_schedule_ca_adjustments`. HSA add-backs have their own existing path; federally taxable Social Security and state refunds must also be subtracted and are checked at tie-out.
+  These two investment screens now feed the checked Schedule CA builder.
+  Include US-obligation fund income even when the fund ultimately fails the
+  asset test. Obtain the annual fund supplements: each quarter's qualifying
+  asset fraction or an explicit annual provider certification, confirmed US
+  regulated-investment-company status, and the separate
+  US/CA-exempt income percentages. Missing qualification must be resolved, not
+  treated as zero. Capture issuer jurisdictions for direct municipal interest;
+  the broker's address is not the bond issuer. The parse skill's California
+  investment reference defines the per-record fields and federal total rules.
+- Any other Schedule CA Part I difference: unemployment or CA paid family leave, section 1202, federal/CA basis or depreciation, CA K-1 amounts, moving expenses, IRA basis, California lottery winnings, educator expenses, or the foreign earned income exclusion add-back? Ask about each category, recording the applicable lines → `ca_has_other_schedule_ca_adjustments`. Record their acknowledged worksheets separately as `other_additions`/`other_subtractions` and confirm them, including a worked zero. HSA add-backs retain their existing components; federally taxable Social Security and the confirmed federally taxable state refund are derived subtractions.
 - Any Schedule P Box A preferences/adjustments after applying the filing year's trade/business gross-receipts carve-out, or Box B investment-interest expense/installment-sale income? Any mortgage interest on debt not used to buy or improve the home? → `ca_has_noniso_amt_items`. Read the covered-year booklet's carve-out; do not block an exempt business item merely because it appears in Box A. ISO income keeps its existing `has_iso_exercise` question. Standard/itemized-deduction AMT adjustments are return figures, not another yes/no question.
 - A lump-sum distribution requiring Schedule G-1 or an accumulation distribution requiring FTB 5870A? → `ca_has_special_distribution_tax`.
 - California early-distribution or other additional taxes, including FTB 3805P? → `ca_has_other_taxes`.

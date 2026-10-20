@@ -21,7 +21,7 @@ Primary sources, read live on 2026-10-19:
 | # | Question | California answer |
 |---|---|---|
 | 1 | Starting point | Federal AGI, Form 540 line 13; Schedule CA subtractions and additions produce line 17. |
-| 2 | Modifications | Schedule CA has its own conformity rules. HSA contributions/earnings, state refunds, Social Security, retirement/basis and municipal-interest differences must be worked separately; the builder takes the reviewed Schedule CA totals. AA68 gates uncomputed cases; AA71 owns additional automatic adjustments. |
+| 2 | Modifications | The builder derives common US-obligation/municipal/fund, Social Security and state-refund adjustments. HSA components and other acknowledged conformity worksheets remain separate inputs; their totals are derived. AA68 gates uncomputed cases. |
 | 3 | Credits | Personal, blind, senior and dependent exemptions are credits. The line-32 federal-AGI limitation applies separately per eligible head. Other credits are separately worked allowed amounts, subject to their own worksheets and existing gates. |
 | 4 | Local income taxes | No CA local income-tax return is computed or required by this module. |
 | 5 | Surtax | Form 540 line 62 is Behavioral Health Services Tax in TY2025. The existing statutory-fixed `mental_health_surcharge` cache block retains its stable key. |
@@ -58,7 +58,8 @@ are signed (refund positive, amount owed negative); `net_refund` is their sum.
 Those summary fields are derived and checked too. Filing and extension
 payment guidance reads the checked line-114 `ca_amount_owed`.
 
-The builder takes separately worked Schedule CA totals, elected deduction,
+The builder derives common Schedule CA adjustments and their totals from
+reviewed source components, then takes the elected deduction,
 eligible exemption counts, allowed nonrefundable credits, other taxes, use tax,
 ISR penalty and refundable credits. Each input is finite and explicit. It
 derives AGI, taxable income, tax, credit floors, every settlement line and
@@ -129,6 +130,65 @@ dependent worksheet is for a claimable filer only, never above the standard
 deduction (its line 5 takes the smaller), and the standard method is not.
 Claimability is read from line 7's box-6 count. `flags.ca_has_blind_exemption`
 must agree with the eligible blind filers in `ca_exemptions`.
+
+## Common Schedule CA income adjustments (AA71)
+
+Reviewed against the live [TY2025 Schedule CA instructions](https://www.ftb.ca.gov/forms/2025/2025-540-ca-instructions.html),
+[TY2025 Publication 1001, page 8](https://www.ftb.ca.gov/forms/2025/2025-1001-publication.pdf)
+and [R&TC 17145's enacted text](https://www.leginfo.ca.gov/pub/11-12/bill/asm/ab_1401-1450/ab_1423_bill_20111006_chaptered.pdf).
+Direct US-obligation interest and eligible fund distributions go to Part I,
+Section A line 2, column B. Nonexempt municipal interest and exempt-interest
+dividends go to line 2, column C. Section A line 6 subtracts federally taxable
+Social Security; Section B line 1 subtracts the federally included state refund,
+never either document's gross amount. The existing federal refund tax-benefit
+worksheet remains required. Unemployment/PFL is AA65's separate work.
+
+Keep `taxable_interest` inclusive of 1099-INT boxes 1 and 3, and
+`tax_exempt_interest` inclusive of INT box 8 and DIV box 12. Supporting ledger
+categories `us_obligation_interest`, `municipal_interest`,
+`exempt_interest_dividends` and `fund_ordinary_dividends` are components of
+those existing totals, not additional federal income. Capture explicit zero
+components too, so an old inclusive total cannot masquerade as a reviewed split.
+
+Each investment record carries `ca_investments` with `tax_year`, `reviewed`,
+`municipal_interest` and `funds`. Municipal rows retain `issuer_state` and
+`amount`. CA obligations are exempt; other US states' obligations are taxable.
+DC/territory rows also require an explicitly confirmed `ca_exempt` decision
+from their source worksheet: special issuer rules cannot be inferred from a
+broker's address. Fund rows retain opaque `fund_id`, `ordinary_dividends`,
+`exempt_interest_dividends`, source-confirmed `is_us_ric`,
+`us_obligation_fraction`, `ca_exempt_fraction`
+and `asset_test`. Fractions describe income allocation, not asset qualification.
+Per-record components must reconcile to the inclusive federal categories;
+duplicate fund IDs, missing details, unknown years and nonfinite values refuse.
+`parse_records` preserves this metadata when deriving the ledger.
+
+Fetch `state.schedule_ca.fund_asset_minimum` for the covered year. For the
+ordinary asset-test route, every quarter-end must meet that threshold using
+assets whose interest would be exempt in an individual's hands (US and CA
+obligations included). `asset_test.quarterly_fractions` holds four actual
+quarter-end fractions. Alternatively, an explicit annual provider certification
+uses `provider_qualified` plus the certification's `threshold`, which must match
+the fetched rule. This is source evidence, not permission to infer qualification
+from an income percentage. Review any qualified-fund-of-funds exception under
+17145(d) separately before recording the provider's certification. Below the
+ordinary threshold, no US-obligation share is subtracted and the federally
+exempt dividend is added in full. At the threshold, subtract the ordinary
+dividend's eligible US share and add only the nonexempt share of DIV box 12.
+For a confirmed non-RIC, record `is_us_ric: false` and `asset_test: null`;
+no passthrough exemption is available. Unknown RIC status refuses. The
+workpaper preserves the qualification route, and special-issuer worksheets or
+provider certifications also produce a checked disclosure on the return.
+
+The builder replaces `schedule_ca_adjustments`' derived common fields and
+totals. Existing HSA components remain separately worked inputs;
+`other_additions`/`other_subtractions` hold other acknowledged worksheets and
+require `other_adjustments_confirmed` for a positive amount or a positive
+other-adjustment screen. Never migrate an old aggregate total by subtraction.
+The two investment screens must be explicitly answered and agree with the
+source components. Missing facts cannot be waived by obsolete acknowledgements.
+The resulting workpaper, ledger and law inputs participate in the existing
+receipt; the standalone tie-out also checks these derived adjustments.
 
 ## Schedule P
 

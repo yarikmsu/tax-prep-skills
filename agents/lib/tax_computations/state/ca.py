@@ -38,9 +38,201 @@ from agents.lib.tax_computations._shared import (
 
 
 _CA_540_REVIEWED_YEARS = {2025}
+CA_INVESTMENT_COMPONENTS = (
+    "us_obligation_interest", "municipal_interest", "exempt_interest_dividends",
+    "fund_ordinary_dividends",
+)
 # Worksheet inputs, not derived lines. Names follow the reviewed printed form.
 CA_540_COMPONENT_LINES = (12, 34, 40, 43, 44, 45, 46, 63, 71, 72, 73, 74,
                           75, 76, 77, 91, 92, 98, 110, 112, 113)
+
+
+def _ca_input(value, name: str, *, fraction: bool = False) -> float:
+    """Reject malformed facts without putting source values in an error."""
+    try:
+        number = _amount(value, name)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} must be a finite nonnegative number") from None
+    if fraction and number > 1:
+        raise ValueError(f"{name} must be a fraction in [0, 1]")
+    return number if fraction else round(number, 2)
+
+
+def validate_ca_investments(raw, boxes: dict) -> dict:
+    """Per-document intake contract, shared by parse-time and both gates."""
+    from agents.lib.capabilities import _USPS_STATES, _TERRITORIES
+    if not isinstance(boxes, dict):
+        raise ValueError("CA investment key_boxes must be an object")
+    keys = {"tax_year", "reviewed", "municipal_interest", "funds"}
+    if not isinstance(raw, dict) or set(raw) != keys:
+        raise ValueError("ca_investments requires tax_year, reviewed, municipal_interest and funds")
+    year = raw["tax_year"]
+    if type(year) is not int or not 2000 <= year <= 2099 or raw["reviewed"] is not True:
+        raise ValueError("ca_investments needs the source tax year and an explicit reviewed true")
+    if not isinstance(raw["municipal_interest"], list) or not isinstance(raw["funds"], list):
+        raise ValueError("ca_investments municipal_interest and funds must be lists")
+    values = {k: _ca_input(boxes.get(k), k) for k in CA_INVESTMENT_COMPONENTS}
+    muni: list[dict] = []
+    funds: list[dict] = []
+    ids: set[str] = set()
+    for row in raw["municipal_interest"]:
+        if not isinstance(row, dict):
+            raise ValueError("municipal interest rows must be objects")
+        state = row.get("issuer_state")
+        if not isinstance(state, str) or state not in _USPS_STATES:
+            raise ValueError("municipal interest needs a valid uppercase issuer_state")
+        special = state in _TERRITORIES or state == "DC"
+        required = {"issuer_state", "amount"} | ({"ca_exempt", "exemption_confirmed"} if special else set())
+        if set(row) != required:
+            raise ValueError("municipal interest needs its issuer and amount; DC/territories also need a confirmed exemption decision")
+        if special and (type(row["ca_exempt"]) is not bool or row["exemption_confirmed"] is not True):
+            raise ValueError("confirm the special issuer's CA exemption from its source worksheet")
+        muni.append({"issuer_state": state, "amount": _ca_input(row["amount"], "municipal interest"),
+                     **({"ca_exempt": row["ca_exempt"], "exemption_confirmed": True} if special else {})})
+    fund_keys = {"fund_id", "is_us_ric", "ordinary_dividends", "exempt_interest_dividends",
+                 "us_obligation_fraction", "ca_exempt_fraction", "asset_test"}
+    for row in raw["funds"]:
+        if not isinstance(row, dict) or set(row) != fund_keys:
+            raise ValueError("fund rows require their ID, both dividends, both income fractions and asset_test")
+        identifier = row["fund_id"]
+        if (not isinstance(identifier, str) or not identifier.strip() or identifier != identifier.strip()
+                or identifier in ids):
+            raise ValueError("fund_id must be nonempty and unique within its document")
+        ids.add(identifier)
+        is_ric = row["is_us_ric"]
+        if type(is_ric) is not bool:
+            raise ValueError("fund is_us_ric must be an explicit source-confirmed boolean")
+        test = row["asset_test"]
+        if not is_ric and test is not None:
+            raise ValueError("a non-RIC fund has no passthrough asset test; record explicit null")
+        if is_ric and not isinstance(test, dict):
+            raise ValueError("fund asset_test must be an object")
+        if not is_ric:
+            test = None
+        elif set(test) == {"quarterly_fractions"}:
+            quarters = test["quarterly_fractions"]
+            if not isinstance(quarters, list) or len(quarters) != 4:
+                raise ValueError("fund asset_test requires all four quarter-end fractions")
+            test = {"quarterly_fractions": [_ca_input(q, "quarter-end assets", fraction=True) for q in quarters]}
+        elif set(test) == {"provider_qualified", "threshold"}:
+            if type(test["provider_qualified"]) is not bool:
+                raise ValueError("fund provider qualification must be an explicit boolean")
+            threshold = _ca_input(test["threshold"], "provider asset threshold", fraction=True)
+            if threshold <= 0:
+                raise ValueError("provider asset threshold must be positive")
+            test = {"provider_qualified": test["provider_qualified"], "threshold": threshold}
+        else:
+            raise ValueError("fund asset_test needs four quarter-end fractions or an explicit provider certification and threshold")
+        funds.append({"fund_id": identifier, "is_us_ric": is_ric,
+            "ordinary_dividends": _ca_input(row["ordinary_dividends"], "fund ordinary dividends"),
+            "exempt_interest_dividends": _ca_input(row["exempt_interest_dividends"], "fund exempt-interest dividends"),
+            "us_obligation_fraction": _ca_input(row["us_obligation_fraction"], "fund US income fraction", fraction=True),
+            "ca_exempt_fraction": _ca_input(row["ca_exempt_fraction"], "fund CA-exempt income fraction", fraction=True),
+            "asset_test": test})
+    expected = {
+        "municipal_interest": sum(r["amount"] for r in muni),
+        "exempt_interest_dividends": sum(r["exempt_interest_dividends"] for r in funds),
+        "fund_ordinary_dividends": sum(r["ordinary_dividends"] for r in funds),
+    }
+    for key, total in expected.items():
+        if not math.isclose(total, values[key], rel_tol=0, abs_tol=.005):
+            raise ValueError(f"ca_investments does not reconcile to {key}; re-read the source")
+    taxable = _ca_input(boxes.get("taxable_interest", 0), "inclusive taxable interest")
+    exempt = _ca_input(boxes.get("tax_exempt_interest", 0), "inclusive exempt interest")
+    ordinary = _ca_input(boxes.get("ordinary_dividends", 0), "inclusive ordinary dividends")
+    if values["us_obligation_interest"] > taxable or values["fund_ordinary_dividends"] > ordinary:
+        raise ValueError("CA investment components cannot exceed their inclusive federal totals")
+    if not math.isclose(values["municipal_interest"] + values["exempt_interest_dividends"], exempt,
+                        rel_tol=0, abs_tol=.005):
+        raise ValueError("municipal interest plus DIV box12 must reconcile to inclusive tax_exempt_interest")
+    return {"tax_year": year, "reviewed": True, "municipal_interest": muni, "funds": funds}
+
+
+def compute_ca_schedule_ca(
+    *, tax_year: int, investment_records: list, fund_asset_minimum,
+    taxable_social_security: float, taxable_state_refund: float,
+    hsa_employer_addback: float, hsa_interest_addback: float, hsa_dividend_addback: float,
+    other_additions: float, other_subtractions: float,
+) -> dict:
+    """TY2025 ScheduleCA Part I lines2/6 and SectionB line1, without defaults."""
+    if type(tax_year) is not int or tax_year not in _CA_540_REVIEWED_YEARS:
+        raise ValueError("Schedule CA form year has not been reviewed")
+    if not isinstance(investment_records, list):
+        raise ValueError("CA investment records must be a list")
+    us = muni_add = fund_sub = fund_add = 0.0
+    raw_us = 0.0
+    workpaper, municipal_workpaper = [], []
+    source_notes = set()
+    for record in investment_records:
+        if not isinstance(record, dict) or set(record) != {"key_boxes", "ca_investments"}:
+            raise ValueError("CA investment records need their key_boxes and ca_investments")
+        boxes = record["key_boxes"]
+        if not isinstance(boxes, dict):
+            raise ValueError("CA investment key_boxes must be an object")
+        detail = validate_ca_investments(record["ca_investments"], boxes)
+        if detail["tax_year"] != tax_year:
+            raise ValueError("CA investment source year does not match the return")
+        us += _ca_input(boxes["us_obligation_interest"], "US interest")
+        for row in detail["municipal_interest"]:
+            exempt = row.get("ca_exempt", row["issuer_state"] == "CA")
+            if not exempt:
+                muni_add += row["amount"]
+            municipal_workpaper.append({"issuer_state": row["issuer_state"], "amount": row["amount"],
+                                       "ca_exempt": exempt, "source_worksheet": "exemption_confirmed" in row})
+            if "exemption_confirmed" in row:
+                source_notes.add("Special-issuer exemption decisions use separately confirmed source worksheets.")
+        for row in detail["funds"]:
+            test = row["asset_test"]
+            method = "non_ric"
+            if not row["is_us_ric"]:
+                qualified = False
+            else:
+                threshold = _ca_input(fund_asset_minimum, "state.schedule_ca.fund_asset_minimum", fraction=True)
+                if threshold <= 0:
+                    raise ValueError("state.schedule_ca.fund_asset_minimum must be positive")
+            if row["is_us_ric"] and "quarterly_fractions" in test:
+                method = "quarterly_assets"
+                qualified = all(q >= threshold for q in test["quarterly_fractions"])
+            elif row["is_us_ric"]:
+                method = "provider_certification"
+                if test["threshold"] != threshold:
+                    raise ValueError("fund provider certification does not match the fetched asset threshold")
+                qualified = test["provider_qualified"]
+                source_notes.add("Some fund qualifications use annual provider certifications.")
+            eligible_us = row["ordinary_dividends"] * row["us_obligation_fraction"]
+            raw_us += eligible_us
+            subtraction = round(eligible_us, 2) if qualified else 0.0
+            addition = round(row["exempt_interest_dividends"] *
+                             (1 - row["ca_exempt_fraction"] if qualified else 1), 2)
+            fund_sub += subtraction
+            fund_add += addition
+            workpaper.append({"fund_id": row["fund_id"], "qualified": qualified, "qualification_method": method,
+                              "us_subtraction": subtraction, "municipal_addition": addition})
+    out: dict = {"hsa_employer_addback": _ca_input(hsa_employer_addback, "HSA employer addback"),
+           "hsa_interest_addback": _ca_input(hsa_interest_addback, "HSA interest addback"),
+           "hsa_dividend_addback": _ca_input(hsa_dividend_addback, "HSA dividend addback"),
+           "us_obligation_interest_subtraction": round(us, 2),
+           "us_obligation_fund_subtraction": round(fund_sub, 2),
+           "nonca_municipal_interest_addition": round(muni_add, 2),
+           "exempt_interest_dividend_addition": round(fund_add, 2),
+           "taxable_social_security_subtraction": _ca_input(taxable_social_security, "taxable Social Security"),
+           "taxable_state_refund_subtraction": _ca_input(taxable_state_refund, "taxable state refund"),
+           "other_additions": _ca_input(other_additions, "other CA additions"),
+           "other_subtractions": _ca_input(other_subtractions, "other CA subtractions"),
+           "investment_workpaper": workpaper,
+           "municipal_workpaper": municipal_workpaper,
+           "source_note": ("CA investment worksheets: " + " ".join(sorted(source_notes))) if source_notes else None,
+           "has_us_obligation_income": us + raw_us > 0,
+           "has_nonca_muni_interest": muni_add + fund_add > 0}
+    out["line_2_column_b"] = round(us + fund_sub, 2)
+    out["line_2_column_c"] = round(muni_add + fund_add, 2)
+    out["total_additions"] = round(sum(out[k] for k in ("hsa_employer_addback", "hsa_interest_addback",
+        "hsa_dividend_addback", "other_additions")) + out["line_2_column_c"], 2)
+    out["total_subtractions"] = round(sum(out[k] for k in ("taxable_social_security_subtraction",
+        "taxable_state_refund_subtraction", "other_subtractions")) + out["line_2_column_b"], 2)
+    for key in ("line_2_column_b", "line_2_column_c", "total_additions", "total_subtractions"):
+        _ca_input(out[key], key)  # a finite record must not overflow in aggregate
+    return out
 
 
 def validate_ca_return_law(state: dict) -> None:
@@ -76,6 +268,10 @@ def validate_ca_return_law(state: dict) -> None:
     fraction = _amount(screen.get("tax_fraction"), "state.underpayment_screen.tax_fraction")
     if not 0 < fraction <= 1:
         raise ValueError("state.underpayment_screen.tax_fraction must be in (0, 1]")
+    schedule = state.get("schedule_ca")
+    if not isinstance(schedule, dict) or _ca_input(schedule.get("fund_asset_minimum"),
+            "state.schedule_ca.fund_asset_minimum", fraction=True) <= 0:
+        raise ValueError("state.schedule_ca.fund_asset_minimum must be fetched and in (0, 1]")
 
 # SB 951 removed the CA SDI taxable wage ceiling starting TY2024 — from that
 # year there is no per-person maximum and therefore no excess-SDI credit.

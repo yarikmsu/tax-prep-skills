@@ -176,6 +176,11 @@ a figure from a prior year.
   `state.underpayment_screen.minimum_balance` and its percentage screen into
   `state.underpayment_screen.tax_fraction`. These are required fetched figures,
   never engine defaults. Source-pin the covered-year instructions.
+- **For every CA return:** fetch the Schedule CA/Publication 1001 fund asset
+  qualification threshold into `state.schedule_ca.fund_asset_minimum` (a
+  fraction). Verify the covered year and pin it under `state.CA`. The engine
+  compares each quarter's qualifying assets against it; do not substitute an
+  income allocation percentage or carry a prior year's rule forward.
 - **Optional CA scenario/Roth planning:** fetch Box C screening
   ceilings into `state.amt_screening`. Fetch all tax-table rows a sweep touches, without
   inferring a midpoint. These are independently year/source-pinned figures;

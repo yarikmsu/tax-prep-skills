@@ -76,6 +76,9 @@ def _workspace(tmp_path, *, profile=None, result=None, tax_law=None, answers=Non
 # test below asserts this covers the registry: a new entry with no trigger here
 # fails rather than becoming a question nothing ever asks.
 _TRIGGERS = {
+    "ca_investment_sources": dict(profile={"address": {"state": "CA"}}),
+    "ca_state_refund_worksheet": dict(profile={"address": {"state": "CA"},
+        "flags": {"has_1099g_state_refund": True}}),
     "ca_state_payments": dict(profile={"address": {"state": "CA"}}),
     "ca_overpayment_election": dict(profile={"address": {"state": "CA"}}),
     "ca_amt_credit_worksheet": dict(profile={"address": {"state": "CA"},

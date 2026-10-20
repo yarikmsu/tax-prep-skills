@@ -132,10 +132,11 @@ California's additional gates cover the following situations. A yes blocks
 until the limitation is explicitly acknowledged and the named worksheet is
 prepared elsewhere; acknowledgement does not compute the line:
 
-- US-obligation interest/fund income
-  (`ca_us_obligation_income`); non-CA municipal interest (`ca_nonca_muni_interest`);
-  other Schedule CA differences (`ca_other_schedule_ca`); and a state-refund
-  tax-benefit worksheet (`ca_state_refund`).
+- Other Schedule CA differences (`ca_other_schedule_ca`). The checked TY2025
+  builder computes US-obligation and municipal/fund adjustments from reviewed
+  source components and qualification evidence; missing facts still block.
+  The state-refund federal tax-benefit worksheet remains a
+  manual input; the builder derives its CA subtraction and taxable Social Security.
 - Special distribution taxes (`ca_distribution_taxes`) and other additional
   taxes (`ca_other_taxes`). Blind-exemption eligibility and source AMT
   adjustment worksheets are manual inputs to the checked Form 540 builder.
