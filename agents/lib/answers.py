@@ -184,6 +184,18 @@ def _ca_refund_worksheet_needed(inputs: _Inputs) -> bool:
             or _get_path(inputs.result, "form_1040.taxable_state_refund") is not None))
 
 
+def _w2g_needed(inputs: _Inputs) -> bool:
+    return (inputs.flags.get("has_w2g") is True
+            or _amount(_get_path(inputs.result, "schedule_1_other_income.gambling_winnings")) > 0
+            or _amount(_get_path(inputs.result, "other_forms_withholding.w2g_withholding")) > 0)
+
+
+def _line25c_needed(inputs: _Inputs) -> bool:
+    return (_w2g_needed(inputs)
+            or _get_path(inputs.result, "other_forms_withholding.remaining_withholding") is not None
+            or _get_path(inputs.result, "other_forms_withholding.computed_tax_year") is not None)
+
+
 def _misc_income_needed(inputs: _Inputs) -> bool:
     return (inputs.flags.get("has_1099_misc") is True
             or _amount(_get_path(inputs.result, "schedule_1_other_income.miscellaneous_other_income")) > 0)
@@ -232,6 +244,30 @@ def _crypto_disposals_lack_basis(inputs: _Inputs) -> bool:
 # Every registered question, with the condition that makes a workspace owe it.
 REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
     RequiredAnswer(
+        id="w2g_sources", kind=FACT,
+        question="Confirm W-2G year/revision, winnings and withholding ownership, identical wagers "
+                 "and casual versus business income contributions. Reconcile all forms and books, "
+                 "Form5754/corrected forms and any separately reviewed income worksheet; never net casual losses.",
+        asked_by="tax-compute income-and-agi.md", required_when="W-2G sources are present",
+        when=_w2g_needed,
+    ),
+    RequiredAnswer(
+        id="w2g_remaining_income", kind=FACT,
+        question="Reconfirm remaining Schedule1 income EXCLUDING separately mapped casual W-2G, "
+                 "MISC and UI/family income, including zero. Retain reviewed Schedule C NET income "
+                 "and other actual winning income absent from mapped contributions; never reuse an old aggregate.",
+        asked_by="tax-compute income-and-agi.md", required_when="W-2G sources are present",
+        when=_w2g_needed,
+    ),
+    RequiredAnswer(
+        id="line25c_remaining_withholding", kind=FACT,
+        question="Confirm remaining Form1040 line25c withholding EXCLUDING W-2Gs and all W-2/1099 "
+                 "line25a/b amounts, including zero. Use actual Form8959 line24, not net over-withholding "
+                 "credit, and other qualifying K-1/withholding forms for the covered year.",
+        asked_by="tax-compute tax-and-credits.md", required_when="W-2G sources or an adopted line25c workpaper are present",
+        when=_line25c_needed,
+    ),
+    RequiredAnswer(
         id="misc_income_sources", kind=FACT,
         question="Confirm the MISC year/revision, box3 business/other split, substitute payments, "
                  "withholding, business receipts and direct-sales checkbox. Resolve unknown or "
@@ -241,8 +277,8 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
     ),
     RequiredAnswer(
         id="schedule1_remaining_income", kind=FACT,
-        question="Confirm signed remaining Schedule1 income EXCLUDING tracked nonbusiness MISC "
-                 "and UI/family benefits, including a deliberate zero. Include business NET income "
+        question="Confirm signed remaining Schedule1 income EXCLUDING tracked nonbusiness MISC, "
+                 "mapped casual W-2G and UI/family benefits, including a deliberate zero. Include business NET income "
                  "and losses, taxable refunds and other sources. Never reuse an old aggregate.",
         asked_by="tax-compute income-and-agi.md", required_when="a 1099-MISC is present",
         when=_misc_income_needed,

@@ -16,10 +16,16 @@ def record(boxes, *, doc_id="withholding", form="1099-R", breakdown=None):
            "payer": "Synthetic payer", "person": "primary", "key_boxes": boxes}
     if breakdown is not None:
         raw["other_state_withholding_by_state"] = breakdown
+    if form == "W-2G":
+        from tests.test_w2g_intake import source
+        raw["w2g_income"] = source(box_1=0,box_4=0,schedule_1_income=0)
     return raw
 
 
 def report(records, result):
+    if any("w2g_income" in row for row in records):
+        result = copy.deepcopy(result)
+        result.setdefault("meta", {}).setdefault("tax_year", 2025)
     return T.evaluate(T.load_ledger({"records": records}), result,
                       [r["file"] for r in records], option_exercise_answer=False)
 

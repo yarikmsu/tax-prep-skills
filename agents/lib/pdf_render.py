@@ -112,7 +112,7 @@ _AMOUNT_ANYWAY = ("carryforward", "basis", "balance", "amount", "deduction",
 
 def _is_money(key: str) -> bool:
     low = key.lower()
-    if low.endswith("_percentage"):
+    if low.endswith("_percentage") or low == "tax_year" or low.endswith("_tax_year"):
         return False
     if any(word in low for word in _AMOUNT_ANYWAY):
         return not any(word in low for word in ("currency",))
@@ -123,7 +123,7 @@ def _is_money(key: str) -> bool:
 def _is_amount(key: str) -> bool:
     """Money or another currency — either way, two decimal places."""
     low = key.lower()
-    if low.endswith("_percentage"):
+    if low.endswith("_percentage") or low == "tax_year" or low.endswith("_tax_year"):
         return False
     if any(word in low for word in _AMOUNT_ANYWAY):
         return True

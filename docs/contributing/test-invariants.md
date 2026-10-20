@@ -225,3 +225,13 @@ a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
   also exist it supplies their non-benefit component. Actual line8, federal/CA
   AGI, withholding, idempotence, source receipt invalidation and the scope-waiver
   boundary are checked. Both detail workpapers attach even at a zero net total.
+
+- **W-2G income and other-form withholding are separate (`test_w2g_intake.py`):**
+  Covered-year source inventories distinguish W-2G from W-2GU, preserve gross
+  reported winnings, reviewed casual/business contributions and box4 credits.
+  A worksheet method needs explicit proof and a checked disclosure. Identical
+  wagers are reconciled rather than blindly added. The existing Schedule1
+  component excludes mapped casual winnings through a new confirmation; line25c
+  separately adds W-2G withholding to confirmed remaining other-form credits.
+  Actual lines8/25c, payments, state income, scope waivers, receipt changes and
+  byte-idempotence are checked. W-2G CopyB attaches when federal tax was withheld.

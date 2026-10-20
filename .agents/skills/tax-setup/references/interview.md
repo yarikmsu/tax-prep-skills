@@ -772,7 +772,13 @@ federal credit is computed by the engine.
     `/tax-compute` applies the Form 8949 code-B basis adjustment only from that
     documentation (never inferred).
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
-- Gambling income (W-2G)? → sets `has_gambling_income` flag
+- Gambling income, including winnings without a W-2G? → `has_gambling_income`.
+  Did you receive any W-2G (including a corrected or zero form)? → `has_w2g`.
+  Record both answers explicitly. Reconcile actual winnings and losses with
+  forms and annual books, distinguish casual gambling from a trade/business,
+  and resolve shared winners using Form5754/payer-issued allocations before
+  claiming winnings or withholding. Loss/expense limits remain manual; do not
+  net annual casual losses against the separately reported winnings.
 - **OBBBA Schedule 1-A deductions (TY2025-2028 only — BELOW-AGI, line 13b).**
   Ask the unreported/allocated-tips question below in EVERY year:
   `has_unreported_or_allocated_tips` is a required gate question, and Form

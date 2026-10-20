@@ -341,7 +341,10 @@ Use `compute_se_tax()` — only if Schedule C shows profit > $400.
 
 **Additional Medicare Tax (Form 8959):**
 Use `compute_additional_medicare()` — always compute if Medicare wages > $200K.
-The over-withholding credit goes to 1040 line 25c.
+For Form1040 line25c, use actual Additional Medicare withholding from the
+covered-year Form8959 worksheet (TY2025 line24). Its net `over_withholding_credit`
+is not the amount to copy to line25c. Keep the liability in the tax calculation
+and claim the actual withholding once in payments.
 
 **NIIT (Form 8960):**
 If MAGI > threshold (from tax_law JSON): 3.8% on lesser of net investment income or excess MAGI.
@@ -354,6 +357,19 @@ Confirm the covered year's Form8960 worksheet and deductible investment expenses
 
 ### Step 9: Compute Payments and Result (Form 1040 Lines 25-38)
 
+**W-2G and other-form withholding:** record **[line25c_remaining_withholding]**
+in `answers.md`. For a W-2G credit, set
+`other_forms_withholding.remaining_withholding` to separately confirmed other
+qualifying line25c withholding, excluding W-2Gs and all line25a/b W-2/1099
+amounts. Include a deliberate zero; use `remaining_withholding_confirmed: true`.
+Preserve Form8959 actual withholding, K-1 and other qualifying form amounts.
+Call `compute_other_forms_withholding` with the source records and covered year;
+persist its output and assign actual line25c from its total programmatically.
+The builder derives and checks this workpaper before line25d/payments/refunds;
+a federal scope waiver cannot waive it. Source-proven zero W-2G withholding
+preserves the legacy manual component unless the workpaper is explicitly adopted.
+Attach W-2G Copy B when box4 shows federal withholding.
+
 **`agents/lib/return_builder.py` writes the lines marked DERIVED — do not type
 one.** Run it when this step is done; that is the second pass SKILL.md asks for.
 
@@ -362,8 +378,9 @@ Line 25a: DERIVED — federal tax withheld from W-2(s) Box 2 (the ledger's
           `federal_withholding_w2` sum)
 Line 25b: DERIVED — federal tax withheld from 1099s (the ledger's
           `federal_withholding_1099` sum)
-Line 25c: Other withholding (Additional Medicare over-withholding from Form
-          8959) — yours
+Line 25c: DERIVED from other_forms_withholding when applicable (W-2G box4
+          + confirmed remaining other-form withholding); otherwise the manual
+          component. Form8959 actual withholding, not its net overpayment
 Line 25d: DERIVED — total withholding = 25a + 25b + 25c
 Line 26: Estimated tax payments (1040-ES) + prior-year overpayment applied
 Line 27: EIC — NOT COMPUTED by this toolkit, federally or for New York.

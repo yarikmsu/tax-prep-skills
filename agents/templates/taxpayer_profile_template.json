@@ -116,6 +116,7 @@
     "has_marketplace_insurance": false,
     "has_estimated_payments": false,
     "has_gambling_income": false,
+    "has_w2g": null,
     "has_1099g_state_refund": false,
     "has_1099g_benefits": null,
     "has_1099_misc": null,

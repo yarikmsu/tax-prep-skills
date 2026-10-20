@@ -415,9 +415,10 @@ RULES: "tuple[Rule, ...]" = (
          "2025-09-30 — a later acquisition gets $0; confirm the acquisition "
          "date before claiming."),
     Rule("gambling", "has_gambling_income", MANUAL,
-         "Gambling income", "W-2G / Schedule A",
-         "Winnings are reported as income; losses are deductible only when "
-         "itemizing and are hand-computed. **OBBBA §70114 (TY2026+):** the "
+         "Gambling income", "W-2G / Schedule A / Schedule C",
+         "Winnings are reported as income. Nonbusiness losses require itemizing; "
+         "business gamblers need a separately reviewed Schedule C worksheet. "
+         "Losses and allowable expenses are hand-computed. **OBBBA §70114 (TY2026+):** the "
          "wagering-loss deduction is limited to 90% of losses (still capped at "
          "winnings) — a TY2026+ hand-worksheet done under the old 100% rule "
          "OVERSTATES the loss deduction and understates tax. TY2025 stays 100%."),
@@ -1105,6 +1106,7 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     # is where the mail goes, and a Puerto Rico resident with a Florida box
     # is the case the flag alone leaves to a legal term of art.
     derived = {_STATUTORY_RESIDENCY_FLAG: _ny_statutory_resident(profile),
+               "has_gambling_income": _flag_value(flags, "has_w2g"),
                _TERRITORY_FLAG: bool(
                    {_profile_state(profile), _residency_domicile(profile)}
                    & _TERRITORIES)}

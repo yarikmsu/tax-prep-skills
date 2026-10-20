@@ -89,6 +89,7 @@
     "line_25a_w2_withholding": 0,
     "line_25b_1099_withholding": 0,
     "line_25c_other_withholding": 0,
+    "_note_line_25c": "DERIVED from other_forms_withholding when applicable: W-2G box4 plus separately confirmed remaining other-form withholding (Form8959 actual line24, K-1 and other qualifying forms). Never use an old aggregate or route W-2G to 1099 line25b. Otherwise the existing manual component path remains.",
     "line_25d_total_withholding": 0,
     "line_26_estimated_payments": 0,
     "line_27_eic": 0,
@@ -111,12 +112,26 @@
 
   "_optional_sections_below": "Include only if applicable to this taxpayer. Remove sections that don't apply.",
 
+  "other_forms_withholding": {
+    "_include_if": "W-2G federal withholding or an explicitly adopted line25c workpaper",
+    "remaining_withholding": null,
+    "remaining_withholding_confirmed": false,
+    "w2g_withholding": 0,
+    "total": 0,
+    "computed_tax_year": null
+  },
+
   "schedule_1_other_income": {
-    "_include_if": "nonbusiness 1099-MISC income or an explicitly adopted Schedule1 workpaper",
+    "_include_if": "nonbusiness 1099-MISC income, reviewed W-2G sources or an explicitly adopted Schedule1 workpaper",
     "remaining_income": null,
     "remaining_income_confirmed": false,
     "schedule_c_net_included": null,
     "miscellaneous_other_income": 0,
+    "gambling_winnings": 0,
+    "gambling_income": 0,
+    "gambling_business_gross": 0,
+    "w2g_excluded_from_remaining": false,
+    "source_note": null,
     "total": 0,
     "computed_tax_year": null
   },

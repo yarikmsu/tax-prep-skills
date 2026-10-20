@@ -75,11 +75,27 @@ once in Schedule 1 line 1 / `line_8_schedule1_other`. A California return
 subtracts that same taxable part on Schedule CA; the gross 1099-G refund is
 not its subtraction.
 
+**W-2G winnings:** record **[w2g_sources]** and **[w2g_remaining_income]**
+in `answers.md`; follow the parse skill's `references/w2g-intake.md`. Reconcile
+all forms, actual ownership, identical wagers and books. Preserve reported
+box1 separately from the reviewed casual/business contributions. Loss and
+professional business worksheets stay manual; do not net annual casual losses.
+When W-2Gs apply, reconfirm signed `schedule_1_other_income.remaining_income`
+and set `w2g_excluded_from_remaining: true`: it excludes separately mapped
+casual W-2G and MISC income and UI/PFL, but keeps reviewed Schedule C NET income
+and other actual winning income absent from the mapped contributions.
+An older confirmed aggregate is ambiguous; never infer its split.
+Call `compute_schedule1_other` with both MISC `records` and `w2g_records`, plus
+the new exclusion answer. Persist its output and use its total for actual
+Form1040 line8 (or as the UI/PFL workpaper's other-income input) before Social
+Security and AGI/MAGI worksheets. The builder repeats the derivation and checks
+actual line8. Keep its W-2G manual-source disclosure in `meta.limitations`.
+
 **Form 1099-MISC:** record **[misc_income_sources]** and
 **[schedule1_remaining_income]** in `answers.md`. Follow the parse skill's
 `references/misc-income.md`. For nonbusiness MISC income, set
 `schedule_1_other_income.remaining_income` to signed Schedule1 income EXCLUDING
-both tracked MISC and UI/family benefits; confirm it explicitly, including zero.
+tracked MISC, separately mapped casual W-2G and UI/family benefits; confirm it explicitly, including zero.
 Include business NET profit/loss, taxable refunds and other applicable sources.
 Record the Schedule C net it includes as `schedule_c_net_included`; with a
 nonzero `schedule_c.line_31_net` the builder refuses a remainder that does

@@ -76,6 +76,9 @@ def _workspace(tmp_path, *, profile=None, result=None, tax_law=None, answers=Non
 # test below asserts this covers the registry: a new entry with no trigger here
 # fails rather than becoming a question nothing ever asks.
 _TRIGGERS = {
+    "w2g_sources": dict(profile={"flags":{"has_w2g":True}}),
+    "w2g_remaining_income": dict(profile={"flags":{"has_w2g":True}}),
+    "line25c_remaining_withholding": dict(profile={"flags":{"has_w2g":True}}),
     "misc_income_sources": dict(profile={"flags":{"has_1099_misc":True}}),
     "schedule1_remaining_income": dict(profile={"flags":{"has_1099_misc":True}}),
     "government_benefit_sources": dict(profile={"flags":{"has_1099g_benefits":True}}),

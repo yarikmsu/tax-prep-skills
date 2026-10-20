@@ -2,6 +2,7 @@
 
 import agents.lib  # noqa: F401 — the host-interpreter guard
 from agents.lib.tax_computations.federal.government_benefits import _money
+from agents.lib.tax_computations.federal.gambling_income import compute_w2g_totals, WORKSHEET_NOTE, GAMBLING_NOTE
 
 _REVISIONS = {2025: "04/2025", 2026: "12/2026"}
 MISC_OTHER = "miscellaneous_other_income"
@@ -59,12 +60,21 @@ def validate_misc_income(raw, boxes: dict, *, skipped: bool = False) -> dict:
 
 
 def compute_schedule1_other(*, tax_year: int, records: list, remaining_income,
-                            remaining_income_confirmed: bool) -> dict:
+                            remaining_income_confirmed: bool, w2g_records: list | None = None,
+                            w2g_excluded_from_remaining: bool = False) -> dict:
     """The non-benefit Schedule1 component; UI/PFL are added by their workpaper."""
     if type(tax_year) is not int or tax_year not in _REVISIONS:
         raise ValueError("1099-MISC return year has not been reviewed")
     if not isinstance(records, list) or remaining_income_confirmed is not True:
         raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC and government benefits, including zero")
+    if type(w2g_excluded_from_remaining) is not bool:
+        raise ValueError("the W-2G exclusion from remaining income must be an explicit boolean")
+    gambling = compute_w2g_totals(tax_year=tax_year, records=[] if w2g_records is None else w2g_records)
+    gambling_active = (gambling["gambling_winnings"] or gambling["gambling_income"]
+                       or gambling["gambling_business_gross"] or gambling["worksheet_used"])
+    if gambling_active:
+        if w2g_excluded_from_remaining is not True:
+            raise ValueError("reconfirm remaining income EXCLUDING separately mapped casual W-2G income; keep reviewed Schedule C NET income, including zero")
     remaining = _money(remaining_income, "remaining Schedule1 income", signed=True)
     miscellaneous = 0.0
     for rec in records:
@@ -77,5 +87,10 @@ def compute_schedule1_other(*, tax_year: int, records: list, remaining_income,
     miscellaneous = _money(miscellaneous, "MISC Schedule1 total")
     return {"remaining_income": remaining, "remaining_income_confirmed": True,
             MISC_OTHER: miscellaneous,
-            "total": _money(round(remaining + miscellaneous, 2), "non-benefit Schedule1 total", signed=True),
+            "gambling_winnings": gambling["gambling_winnings"],
+            "gambling_income": gambling["gambling_income"],
+            "gambling_business_gross": gambling["gambling_business_gross"],
+            "w2g_excluded_from_remaining": w2g_excluded_from_remaining,
+            "source_note": (WORKSHEET_NOTE if gambling["worksheet_used"] else GAMBLING_NOTE) if gambling_active else None,
+            "total": _money(round(remaining + miscellaneous + gambling["gambling_income"], 2), "non-benefit Schedule1 total", signed=True),
             "computed_tax_year": tax_year}

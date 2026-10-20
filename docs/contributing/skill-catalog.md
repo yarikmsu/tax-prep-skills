@@ -11,6 +11,10 @@ AGENTS.md points here; nothing else should duplicate it.
 engine gates, the `run.sh` launcher and planning modules. Inspect the module
 tree for the roster; it changes, so a list in prose goes stale silently.
 
+Four modules self-test with no arguments: `tax_computations`, `secure_fs`,
+`irs_dates` and `crypto_importer` (pinned by test). `preflight` exits 0, 2 or 1;
+the rest report usage.
+
 The engine is invoked in TWO forms, and any audit of which skills reach it has
 to match both:
 
