@@ -123,7 +123,7 @@ def test_opening_applied_credit_is_not_a_plausible_numeric_default(opening):
         B._ca_payments(p, 2025, "single")
 
 
-@pytest.mark.parametrize("answer,amount", [(None, 0), (False, 100), (True, 0), (True, None), (True, -1)])
+@pytest.mark.parametrize("answer,amount", [(None, 0), (False, 100), (True, 0), (True, None), (True, -1), (True, 0.001)])
 def test_forward_election_needs_explicit_agreement_and_valid_amount(answer, amount):
     p, result = case()
     # A separately worked refundable credit makes the100 election valid
@@ -133,6 +133,16 @@ def test_forward_election_needs_explicit_agreement_and_valid_amount(answer, amou
     result["california_540"]["line_98"] = amount
     with pytest.raises(B.Blocked):
         B.build_california(result, {"state": law()}, [], p)
+
+
+def test_forward_answer_agrees_with_the_election_after_cent_rounding():
+    p, result = case()
+    result['california_540']['line_98'] = 0.001
+    # The form rounds this component to zero cents; a no stays true on rebuild.
+    built = B.build_california(result, {'state': law()}, [], p)
+    assert built['line_98'] == 0
+    result['california_540'].update(built)
+    assert B.build_california(result, {'state': law()}, [], p)['line_98'] == 0
 
 
 def test_cli_settlement_receipt_and_edited_payment_profile(tmp_path):
@@ -232,6 +242,12 @@ def test_rollover_refuses_missing_or_invalid_closing_elections(bad):
 def test_rollover_does_not_treat_a_malformed_archived_answer_as_no_election():
     with pytest.raises(R.RolloverError):
         changes(prior(None, elected='yes'), current())
+
+
+def test_rollover_forward_answer_uses_the_same_cent_precision_as_the_return():
+    with pytest.raises(R.RolloverError, match='contradicts'):
+        changes(prior(0.001), current())
+    assert changes(prior(0.001, elected=False), current()) == []
 
 
 def test_rollover_never_credits_a_later_year_or_reuses_a_missing_source():

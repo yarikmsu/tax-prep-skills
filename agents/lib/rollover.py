@@ -630,7 +630,7 @@ def _ca_applied_payment_changes(prior: PriorReturn, current: CurrentState, entry
             valid = False
         if not valid or value < 0:
             raise RolloverError(f"{where} must be a finite nonnegative amount")
-        return float(value)
+        return round(float(value), 2)
 
     raw = _get_path(prior.result, entry["source_path"])
     elected = _get_path(prior.profile, "flags.ca_applies_overpayment_forward")

@@ -1353,7 +1353,9 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         components["line_72"] = payments["total"]
         forward = flags.get("ca_applies_overpayment_forward")
         amount = _num(components["line_98"], "CA line98 forward election")
-        if not isinstance(forward, bool) or forward != (amount > 0):
+        # Form 540 stores this component to cents; rebuilding must ask the
+        # same election question as the rounded return and rollover.
+        if not isinstance(forward, bool) or forward != (round(amount, 2) > 0):
             raise ValueError("answer ca_applies_overpayment_forward and reconcile it with the explicit line98 election")
         built = compute_ca_540(tax_year=_tax_year(result, profile), filing_status=status,
             state_law=state, federal_agi=_num((result.get("form_1040") or {}).get("line_11_agi"), "federal AGI"),
