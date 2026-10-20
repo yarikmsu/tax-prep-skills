@@ -314,6 +314,8 @@ AA57 finds why.
   without one. Found while fixing AA59's Schedule A recipe.
 
 - **AA64 (P1, S): Read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC.**
+  Implementation: [PR #25](https://github.com/yarikmsu/tax-prep-skills/pull/25),
+  open for review; not merged. Depends on PR #24.
   The 2026 Form W-2 reports cash tips reported to the employer in box 12 code
   TP, qualified overtime compensation in code TT and employer Trump-account
   contributions in code TA, and adds box 14b for the Treasury tipped
