@@ -25,5 +25,5 @@ Withholding authorities reviewed for TY2025: [CA Form 540 lines 71 and 73](https
 
 The builder restricts `parse_ledger.json` as it writes it: it carries dollar
 figures and is gitignored. Use the cross-platform helper, never a bare
-permission command. Under a Windows POSIX-compatible shell, `chmod` only
-flips the read-only DOS attribute and leaves NTFS access unchanged.
+permission command. On Windows, `chmod` only flips the read-only DOS attribute;
+it leaves NTFS access unchanged under a POSIX-compatible shell.

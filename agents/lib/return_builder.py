@@ -1033,9 +1033,9 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
     if not isinstance(result, dict) or not isinstance(result.get("form_1040"), dict):
         raise ReturnBuilderError(f"{RESULT_NAME} has no form_1040 section")
     government = government_workpaper(result, ledger, profile or {})
-    if government is not None:
-        result = {**result, "form_1040": {**result["form_1040"],
-                                        "line_8_schedule1_other": government["total"]}}
+    result = ({**result, "form_1040": {**result["form_1040"],
+                                     "line_8_schedule1_other": government["total"]}}
+              if government is not None else result)
     check(result, profile)
 
     working = {**result["form_1040"], **ledger_income(ledger),

@@ -4,6 +4,7 @@ Source facts are never inferred from a payer's address or a withholding box.
 The caller supplies the separately reviewed non-benefit Schedule 1 amount.
 """
 
+import agents.lib  # noqa: F401 — the host-interpreter guard
 import math
 
 
