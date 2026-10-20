@@ -784,10 +784,13 @@ federal credit is computed by the engine.
   `has_unreported_or_allocated_tips` is a required gate question, and Form
   4137 is not a Schedule 1-A item.
   - Any **qualified tip income** in a customarily-tipped occupation? → sets
-    `has_qualified_tips` (§224). Source: the employer's designated qualified-
-    tip amount (W-2 box 14 code / separate statement) if provided, ELSE **W-2
-    box 7 (Social Security tips)** — a single-employer tipped worker usually
-    has no separate statement, so box 7 tips still set the flag. The SSN test
+    `has_qualified_tips` (§224). Review the
+    [covered-year sources and occupation codes](../../tax-parse/references/tips-overtime.md).
+    TY2026 uses W-2 box12 TP / 14b TTOC, NEC1b / 1c and MISC13a / 13b.
+    TY2025 uses the designated W-2 box14 amount or separate statement,
+    otherwise box7 (with full tip records when the wage-base cap truncates it).
+    Do not carry that fallback into TY2026 by default. Record the source and
+    occupation allocation, including unknown, sole000 or mixed codes. The SSN test
     is RECIPIENT-specific: the spouse who RECEIVED the tips must have a valid
     SSN (an ITIN on the OTHER, non-recipient spouse does NOT disqualify the
     return); MFS doesn't qualify — married must file jointly. **Unreported or
@@ -800,8 +803,14 @@ federal credit is computed by the engine.
     `qualified_tips` (set `has_qualified_tips` too) — exclude them only while
     that paired treatment is unhandled; don't permanently drop the deduction.
   - Any **overtime pay**? → sets `has_qualified_overtime`. Capture the **FLSA
-    premium portion ONLY** (the "half" of time-and-a-half, box 14 / employer
-    statement), NOT gross overtime wages (§225).
+    premium portion ONLY** (the "half" of time-and-a-half). TY2026 W-2 box12
+    TT / NEC1d / MISC14 already report that premium; do not divide it again.
+    TY2025 needs a reviewed box14/employer statement or records (§225).
+    Confirm FLSA and recipient-specific valid-SSN/joint-filing eligibility;
+    a TTOC is not needed for overtime. Resolve a missing/inconsistent field
+    and 1099 worker classification. The 1099 subamounts are already in gross
+    income, and W-2 TA is neither tips nor overtime. Record the applicable
+    `tips_source_review` / `overtime_source_review` intake answers for `/tax-compute`.
   - **Car-loan interest** on a vehicle bought after 2024-12-31? → sets
     `has_car_loan_interest` (§70203). Only qualifies if: NEW vehicle (original
     use), first-lien loan originated after 2024-12-31, US final assembly,

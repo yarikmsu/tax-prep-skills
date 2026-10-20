@@ -26,6 +26,18 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
+### Confirm each tip source's year/revision, cash-tip field, current occupation/TTOC eligibility and allocation, including sole/mixed 000 codes. Reconcile amounts already in income, Form4137 overlaps, recipient eligibility and any SE net-income cap; record the eligible engine input separately from source gross and allowed deduction.
+
+*Asked by tax-compute income-and-agi.md; required when tips are reported at intake or present in the Schedule1-A workpaper.*
+
+- **[tips_source_review]**
+
+### Confirm each overtime source's year/revision, FLSA eligibility and premium field. TY2026 TT/NEC1d/MISC14 already contain the premium: do not divide again or add it to income. Resolve 1099 worker classification and recipient eligibility; overtime does not require a tipped-occupation code.
+
+*Asked by tax-compute income-and-agi.md; required when overtime is reported at intake or present in the Schedule1-A workpaper.*
+
+- **[overtime_source_review]**
+
 ### Confirm W-2G year/revision, winnings and withholding ownership, identical wagers and casual versus business income contributions. Reconcile all forms and books, Form5754/corrected forms and any separately reviewed income worksheet; never net casual losses.
 
 *Asked by tax-compute income-and-agi.md; required when W-2G sources are present.*

@@ -3,6 +3,16 @@
 ### W-2 Extraction
 Must capture: Boxes 1-8, 10-11, 12 (all codes), 13, 14 (14a-14b from TY2026; every label, SDI, PFL and UI among them), 15-20 (state and local wages, tax withheld and locality, every row)
 Check: Box 12 codes (AA=Roth 401k, C=life ins, D=401k, DD=health, W=HSA)
+For TY2026, read TP (cash tips), TT (qualified overtime premium), TA (employer
+Trump-account contributions), 14a (other labels) and 14b (TTOC). TP/TT feed
+the [tip/overtime source review](tips-overtime.md); TA feeds neither deduction.
+
+### 1099-NEC Extraction
+Must capture: TY2025 boxes 1-7; TY2026 boxes 1a-1d and 2-7, including every state row.
+TY2026 box1a is total compensation, including 1b cash tips and 1d qualified
+overtime premium; 1c is TTOC, not money. Federal withholding remains box4;
+state tax/state ID/state income remain 5/6/7. Preserve source amounts once
+and follow the [tip/overtime source review](tips-overtime.md).
 
 ### 1099-DIV Extraction
 Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (cap gain dist), 5 (Sec 199A), 12 (exempt-interest dividends), 14-16 (state, state tax withheld). For CA, obtain the annual fund supplement and follow [California investments](california-investments.md).

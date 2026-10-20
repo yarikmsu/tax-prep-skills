@@ -184,6 +184,20 @@ def _ca_refund_worksheet_needed(inputs: _Inputs) -> bool:
             or _get_path(inputs.result, "form_1040.taxable_state_refund") is not None))
 
 
+def _schedule1a_source_needed(inputs: _Inputs, provision: str, flag: str) -> bool:
+    return (inputs.flags.get(flag) is True or any(
+        _amount(_get_path(inputs.result, f"schedule_1a.{provision}.{field}")) > 0
+        for field in ("raw", "allowed", "disallowed_by_cap", "disallowed_by_phaseout")))
+
+
+def _tips_source_needed(inputs: _Inputs) -> bool:
+    return _schedule1a_source_needed(inputs, "tips", "has_qualified_tips")
+
+
+def _overtime_source_needed(inputs: _Inputs) -> bool:
+    return _schedule1a_source_needed(inputs, "overtime", "has_qualified_overtime")
+
+
 def _w2g_needed(inputs: _Inputs) -> bool:
     return (inputs.flags.get("has_w2g") is True
             or _amount(_get_path(inputs.result, "schedule_1_other_income.gambling_winnings")) > 0
@@ -243,6 +257,24 @@ def _crypto_disposals_lack_basis(inputs: _Inputs) -> bool:
 
 # Every registered question, with the condition that makes a workspace owe it.
 REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
+    RequiredAnswer(
+        id="tips_source_review", kind=FACT,
+        question="Confirm each tip source's year/revision, cash-tip field, current occupation/TTOC "
+                 "eligibility and allocation, including sole/mixed 000 codes. Reconcile amounts already "
+                 "in income, Form4137 overlaps, recipient eligibility and any SE net-income cap; "
+                 "record the eligible engine input separately from source gross and allowed deduction.",
+        asked_by="tax-compute income-and-agi.md", required_when="tips are reported at intake or present in the Schedule1-A workpaper",
+        when=_tips_source_needed,
+    ),
+    RequiredAnswer(
+        id="overtime_source_review", kind=FACT,
+        question="Confirm each overtime source's year/revision, FLSA eligibility and premium field. "
+                 "TY2026 TT/NEC1d/MISC14 already contain the premium: do not divide again or add "
+                 "it to income. Resolve 1099 worker classification and recipient eligibility; "
+                 "overtime does not require a tipped-occupation code.",
+        asked_by="tax-compute income-and-agi.md", required_when="overtime is reported at intake or present in the Schedule1-A workpaper",
+        when=_overtime_source_needed,
+    ),
     RequiredAnswer(
         id="w2g_sources", kind=FACT,
         question="Confirm W-2G year/revision, winnings and withholding ownership, identical wagers "

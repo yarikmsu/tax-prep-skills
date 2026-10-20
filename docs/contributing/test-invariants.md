@@ -235,3 +235,12 @@ a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
   separately adds W-2G withholding to confirmed remaining other-form credits.
   Actual lines8/25c, payments, state income, scope waivers, receipt changes and
   byte-idempotence are checked. W-2G CopyB attaches when federal tax was withheld.
+
+- **Tip/overtime source revisions (`test_tips_overtime_intake.py`):** the linked
+  source contract pins TY2026 TP/TT, NEC1a-1d and MISC13a/13b/14 and keeps the
+  TY2025 fallback separate. Synthetic income and withholding remain unchanged
+  by the informational subamounts; an already reported premium reaches the
+  below-AGI deduction without a second division. Headless source reviews are
+  required from intake or raw/allowed/disallowed workpaper evidence; overtime
+  alone does not require a tip occupation answer. The existing occupation,
+  Form4137, SE-income-cap and QBI-source limits remain explicit.
