@@ -98,6 +98,12 @@ Last updated: {{DATE}}
 
 - **[ca_state_payments]**
 
+### Which FTB5805 method applies? Confirm regular-method eligibility, PartII tax components, prior-return facts and withholding/payment dates; otherwise provide a confirmed special-method worksheet or explicitly elect eligible FTB billing. Confirm the early-return exception separately.
+
+*Asked by tax-compute state-return.md; required when this run selects a CA return.*
+
+- **[ca_penalty_method]**
+
 ### How much of California line97 should be applied to next year's estimates? This is a binding election; confirm the amount, including a deliberate zero.
 
 *Asked by tax-compute state-return.md; required when this run selects a CA return.*

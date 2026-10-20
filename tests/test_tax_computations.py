@@ -8258,6 +8258,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ca.py::compute_ca_schedule_p": "direct",
         "tax_computations/state/ca.py::compute_ca_exemption_credit": "direct",
         "tax_computations/state/ca.py::compute_ca_540": "direct",
+        "tax_computations/state/ca.py::compute_ca_5805": "direct",
         "tax_computations/state/ny.py::compute_ny_agi": "direct",
         "tax_computations/state/ny.py::compute_ny_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_household_credit": "direct",

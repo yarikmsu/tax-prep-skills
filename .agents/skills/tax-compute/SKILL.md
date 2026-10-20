@@ -234,7 +234,7 @@ PRODUCE the lines they are compared against, so a later edit is the failure mode
 that survived deriving them.
 
 For a selected or computed California return this also checks Form540's
-derived lines, Schedule P, withholding, settlement and screened line113 note.
+derived lines, Schedule P, withholding, checked FTB5805, final settlement and method disclosure.
 That CA check still runs when the federal Form1040 is out of scope. Its
 reviewed-year contract and required component worksheets are in
 `docs/contributing/state-module-ca.md` and Step10's state reference.

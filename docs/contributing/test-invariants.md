@@ -30,8 +30,11 @@ a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
   adjustments, MFS addback and payment waterfall. CLI tests bind its verdict
   to the existing receipt, reject later edits and missing disclosures, and
   keep a federal scope waiver from waiving CA. A stale federal AGI must be
-  replaced before the writer validates CA settlement. The line-113 screen
-  distinguishes Schedule G-1 tax from FTB 5870A tax on line 34.
+  replaced before the writer validates CA settlement. FTB5805 tests
+  (`test_ca_5805*.py`) pin daily endpoints, half-year expiry, weighted payments
+  and withholding, prior/current floors, reviewed prior-year facts and tax-base
+  exclusions. Source changes, dropped markers, manual edits and missing method
+  facts cannot preserve a checked penalty or its final balance.
 - State withholding (`test_state_withholding_routes.py`) ties CA W-2,
   1099/W-2G and Forms 592-B/593 components separately, and NY State/NYC/Yonkers
   totals under either return variant. Other-state breakdowns survive record

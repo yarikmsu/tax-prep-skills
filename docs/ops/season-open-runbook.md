@@ -40,6 +40,8 @@ the enacting statute; state figures come from the state tax authority.
 | `qbi_minimum` `{income_threshold, amount}` | §70105 | loud-degrade (taxpayer-favorable) — fetch so the floor applies |
 | `retirement_401k.secure_2_0_high_earner_threshold` | IRC §414(v)(7)(A) indexed | **FAIL-CLOSED for every covered year** — X10 removed the annual default; fetch the indexed threshold whenever the TY2026+ catch-up rule is evaluated |
 | `underpayment_rates` (§6621 quarterly) | IRS quarterly interest-rate news releases | see the two-window note below |
+| CA `underpayment_screen` + `estimated_tax_safe_harbor` | Covered-year FTB5805/540-ES instructions | Required regular-method parameters: current/prior floors and shares, AGI thresholds, weighted installments, effective due/early-filing/end dates. Ordinary `state.CA` pin stays annual. |
+| CA `underpayment_rates` (R&TC19521 half-years) | FTB interest/estimate-penalty rate schedule + covered-year FTB5805 instructions | Separate `state.CA.underpayment_rates` source/provenance pin. Only this CA sub-pin enters `multi_period_pins`; calendar year or `YYYY-H1`/`YYYY-H2`, never federal quarters. Fetch through TY+1 penalty end; a missing half-year never carries forward. Empty is safe only when checked regular-method facts prove no priced days. |
 
 ### The `underpayment_rates` two-window rule (M3)
 
@@ -328,6 +330,9 @@ so this step goes AFTER the fetch and the freshness gate, never before them.
 Register it in all the places the invariant requires (mirroring Epic I):
 `create_empty_tax_law` seed, `/tax-setup` fetch bullet + `_sources` pin,
 `check_freshness` treatment (fail-closed / opt-in / statutory-fallback),
+independent sub-pin in `_pin_key` AND `_expected_pins` when a block has its own
+source/effective period (CA rates are `state.CA.underpayment_rates`, never the
+whole annual `state.CA` pin),
 `tests/test_ty2026_readiness.py` present + absence cases, and a row in this
 runbook's table. A block a user's return can depend on but this runbook doesn't
 list is the exact gap M1/M2 exist to close.

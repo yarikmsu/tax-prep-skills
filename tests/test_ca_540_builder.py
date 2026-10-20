@@ -30,6 +30,16 @@ def law():
         "amt": {"exemption": dict.fromkeys(STATUSES[:-1], 100000),
                 "phaseout_start": dict.fromkeys(STATUSES[:-1], 1000000)},
         "underpayment_screen": {"minimum_balance": dict.fromkeys(STATUSES, 500), "tax_fraction": .1},
+        "estimated_tax_safe_harbor": {
+            "prior_year_share": 1, "prior_year_share_high_income": 1.1,
+            "prior_agi_threshold": dict.fromkeys(STATUSES, 10000),
+            "current_agi_override": dict.fromkeys(STATUSES, 1000000),
+            "installment_shares": [.3, .4, 0, .3],
+            "due_dates": ["2025-04-15", "2025-06-16", "2025-09-15", "2026-01-15"],
+            "penalty_end": "2026-04-15", "early_filing_deadline": "2026-02-02"},
+        "underpayment_rates": [{"effective_from": "2025-01-01", "annual_rate": .08},
+            {"effective_from": "2025-07-01", "annual_rate": .07},
+            {"effective_from": "2026-01-01", "annual_rate": .06}],
         "schedule_ca": {"fund_asset_minimum": .5},
         "mental_health_surcharge": {"threshold": 1000000, "rate": .01},
         "tax_table": {"max_taxable_income": 10000,
@@ -119,16 +129,14 @@ def test_credits_floor_and_payment_waterfall_with_penalties():
     assert out["line_115"] == 0
 
 
-def test_line113_screen_excludes_lump_sum_but_not_accumulation_tax():
-    # Synthetic balance threshold1 isolates the form's percentage screen:
-    # line48=4,490+1,000=5,490; with5,000 withheld, line100=490.
-    # Accumulation tax:490<549 =>no indication; lump-sum tax:490>=449 =>possible.
+def test_form_constructor_cannot_attest_a_penalty_without_the_checked_workpaper():
+    # Even an apparent refund may hide an earlier installment underpayment.
+    # The bare form constructor must not present a balance screen as proof.
     data = inputs()
-    data['state_law']['underpayment_screen']['minimum_balance'] = dict.fromkeys(STATUSES, 1)
-    data['components']['line_34'] = 1000
-    assert 'does not indicate' in compute_ca_540(**data)['line_113_note']
-    data['lump_sum_tax'] = 1000
     assert 'NOT COMPUTED' in compute_ca_540(**data)['line_113_note']
+    data['components']['line_34'] = 1000
+    data['lump_sum_tax'] = 600
+    assert 'checked FTB5805 workpaper' in compute_ca_540(**data)['line_113_note']
 
 
 @pytest.mark.parametrize('bad', [False, float('nan'), float('inf'), '0'])
@@ -177,6 +185,12 @@ def case():
               "form_1040": {"line_11_agi": 100000}, "california_540": ca}
     profile['flags'].update(ca_has_us_obligation_income=False, ca_has_nonca_muni_interest=False,
                             ca_has_other_schedule_ca_adjustments=False)
+    profile["ca_5805"] = {"method": "regular", "regular_method_confirmed": True,
+        "current_tax_components_confirmed": True, "section_453a_interest": 0,
+        "accumulation_distribution_tax": 0, "withholding_method": "deemed",
+        "actual_withholding": [], "balance_payments": [], "early_return": None,
+        "prior_return": {"tax_year": 2024, "filed": True, "full_year": True,
+                         "tax": 0, "agi": 0, "withholding": 0, "confirmed": True}}
     return profile, result
 
 

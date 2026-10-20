@@ -97,6 +97,7 @@ never has to ask one.
 
 - **[ca_investment_sources]** Synthetic source inventory confirmed; TY2026 retains the historical CA baseline, without a checked TY2025 Form540 build.
 - **[ca_state_payments]** No CA estimates, extension, K-1 payments or prior applied credit; sources reconciled.
+- **[ca_penalty_method]** Regular method selected; no annualized, farmer, waiver or special-deadline circumstances. Covered form-year review remains required before pricing.
 - **[ca_overpayment_election]** Deliberate zero; no CA overpayment is elected forward.
 
 - **Estimated tax payments made for {YEAR}:** none. All federal tax was withheld
@@ -151,6 +152,7 @@ never has to ask one.
 
 - **[ca_investment_sources]** Synthetic source inventory confirmed; TY2026 retains the historical CA baseline, without a checked TY2025 Form540 build.
 - **[ca_state_payments]** No CA estimates, extension, K-1 payments or prior applied credit; sources reconciled.
+- **[ca_penalty_method]** Regular method selected; no annualized, farmer, waiver or special-deadline circumstances. Covered form-year review remains required before pricing.
 - **[ca_overpayment_election]** Deliberate zero; no CA overpayment is elected forward.
 
 - **Income:** NONE, for either taxpayer, of any kind. No wages, no interest, no

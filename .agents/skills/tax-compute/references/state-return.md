@@ -253,7 +253,40 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     Keep `prior_year.ca_estimated_payments_applied` outside that list. The builder
     derives line72 and the payment workpaper, excludes other states/years with
     a disclosure, and refuses unverified or contradictory inputs. Never type a
-    second line72 total. Unknown timing receives a disclosure; AA76 owns pricing.
+    second line72 total. Unknown timing receives a disclosure and cannot support
+    a positive priced penalty.
+    **Line113 penalty:** resolve **[ca_penalty_method]** and fill `profile.ca_5805`.
+    The checked builder prices the reviewed TY2025 regular method, with fetched
+    CA installment weights and independently fetched half-year rates. Confirm
+    `regular_method_confirmed` only after screening annualized income, farmers/
+    fishermen, waivers, disaster/special deadlines, fiscal years and estate/trust
+    methods. Work a selected special method externally (`method: manual`, named
+    FTB5805/5805F, confirmed worksheet and finite `manual_penalty`), or explicitly
+    elect `ftb_bill` only after confirming no PartI attachment requirement.
+    Never default a missing method to zero.
+    For regular pricing, confirm `current_tax_components_confirmed`, the actual
+    `section_453a_interest` in line63 and `accumulation_distribution_tax` in
+    line34; `ca_lump_sum_tax` supplies the remaining line34 tax. The builder
+    excludes both distribution taxes, includes lines48/61/62 and only that
+    interest, and uses withholding lines71+73. Review `prior_return` (preceding
+    `tax_year`, `filed`, `full_year`, PartII `tax`, CA `agi`, `withholding`,
+    `confirmed`), rather than copying aggregate total tax. If no return was filed,
+    review the prior-year liability/floor separately from the current-year
+    annual-payment prong. An unknown prior floor cannot mean a positive penalty. Unknown prior facts
+    block when they can change the penalty; independently proved zero needs no
+    invented prior values.
+    Choose `withholding_method: deemed` with `actual_withholding: []`, or
+    `actual` with source-confirmed withholding dates (`actual_withholding_confirmed`)
+    reconciled to lines71+73. Actual withholding
+    and `balance_payments` use `{payment_id, date, amount}`; dates must be actual
+    and the latter require confirmed CA destination/year/ownership/claimable
+    shares (`balance_payments_confirmed`). Return-balance payments affect
+    penalty timing only, never line72; IDs cannot duplicate AA70 payments.
+    `early_return` is null unless `{filed_date, fully_paid_date, verified: true}`
+    establishes filing AND the entire return paid by the fetched effective
+    deadline. That exception removes only the fourth installment's penalty.
+    Rebuild `california_540.ftb_5805`, line113 and settlement together; the
+    standalone tie-out independently checks the workpaper and final balance.
     **Line98 election:** resolve **[ca_overpayment_election]**, record the explicit
     amount in `line_98` and the matching `ca_applies_overpayment_forward` flag,
     including zero. Explain that the election is binding before filing. The
@@ -289,11 +322,11 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     the builder overwrites lines 71, 72 and 73 from the ledger and the
     payment records, so never type a total there.
     Record the Schedule G-1 portion of line 34 separately as `ca_lump_sum_tax`
-    for the line-113 screen; do not classify FTB 5870A tax as lump-sum tax.
+    for the FTB5805 tax base; record FTB5870A tax separately as accumulation tax.
     Existing capability gates still govern uncomputed credits/taxes/payments.
     Run `sh agents/lib/run.sh -m agents.lib.return_builder`; the CA withholding
     lines come from the ledger and the builder writes the entire arithmetic,
-    Schedule P and screened FTB5805 note. Run Step 12.6's `--check` after every
+    Schedule P, FTB5805 workpaper, line113 and final settlement. Run Step 12.6's `--check` after every
     final edit. A federal out-of-scope waiver does not waive the CA check.
     An unreviewed form year refuses; fetching rates alone never reviews a form.
 

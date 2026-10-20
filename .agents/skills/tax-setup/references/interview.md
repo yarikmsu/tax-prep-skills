@@ -566,6 +566,24 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
   `estimated_payments.ca_verified: true` only after reviewing the claimable
   amount and destination of each source. An explicit no must agree with zero
   CA records and zero opening credit. Document **[ca_state_payments]**.
+- Which estimated-tax penalty method applies? Record **[ca_penalty_method]**
+  and `ca_5805`: confirm regular-method eligibility or a named external
+  FTB5805/5805F worksheet; eligible FTB billing is an explicit election.
+  Ask about annualized income, farming/fishing, waivers, disaster/special
+  deadlines, fiscal years and estate/trust methods before confirming regular.
+  For regular pricing collect the preceding CA return's year, filed/full-year
+  facts, reviewed PartII tax base, CA AGI and withholding. Confirm the current
+  line34 split between lump-sum and accumulation-distribution taxes and line63's
+  actual IRC453A interest. Choose deemed withholding or reconcile every actual
+  covered-year withholding date to lines71+73 and set
+  `actual_withholding_confirmed` only after reviewing that date evidence. Preserve payment dates; separately
+  confirm any return-balance payments' CA destination, credited year, ownership
+  and claimable share, without adding those payments to line72 or duplicating
+  estimate IDs. Ask whether an early return was filed AND the entire balance
+  paid by the fetched effective deadline; verify both facts before claiming
+  its fourth-installment exception. See the compute reference and maintained CA
+  contract for exact profile fields. Unnecessary prior facts may stay unanswered
+  when known facts independently prove zero; never guess a larger penalty.
 - Will any California overpayment be applied to next year? → `ca_applies_overpayment_forward`.
   Record the amount in `california_540.line_98`, including a deliberate zero,
   and document **[ca_overpayment_election]**. The amount cannot exceed line97;

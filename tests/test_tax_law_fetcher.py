@@ -3095,3 +3095,60 @@ def test_invalid_conformity_row_refuses_without_writing(tmp_path,bad):
     with pytest.raises(TaxLawSetError):
         _set(tmp_path,'retirement_conformity.CA',bad)
     assert _read(tmp_path) == before
+
+
+class TestStateWriteAndExportConsistency:
+    @pytest.mark.parametrize('legacy', ['lowercase', 'name_only'])
+    def test_state_leaf_uses_the_same_canonical_schema_as_export(self, tmp_path, legacy):
+        from agents.lib.secure_fs import secure_path
+        from agents.lib.tax_law_export import audit_schema
+        from agents.lib.tax_law_fetcher import state_schema
+        secure_path(tmp_path)
+        data = create_empty_tax_law(2026)
+        data['state'] = create_state_template('CA', tax_year=2026)
+        if legacy == 'lowercase':
+            data['state']['code'] = 'ca'
+        else:
+            data['state'].pop('code')
+        save_tax_law(2026, data, str(tmp_path))
+        # Synthetic rate tests schema selection, not any filing-year figure.
+        set_figure(2026, 'state.sdi_rate', .01, FTB, str(tmp_path))
+        updated = load_tax_law(2026, str(tmp_path))
+        assert audit_schema(updated, 2026)['state_seed'] == state_schema('CA', 2026)
+        assert updated['state']['sdi_rate'] == .01
+
+    def test_whole_state_refetch_removes_old_leaf_and_pin_provenance(self, tmp_path):
+        from datetime import timedelta
+        from agents.lib.secure_fs import secure_path
+        secure_path(tmp_path)
+        data = create_empty_tax_law(2026)
+        data['state'] = create_state_template('FL', tax_year=2026)
+        data['state']['sales_tax'] = {'state_rate': .05, 'county_surtax_rate': .01}
+        save_tax_law(2026, data, str(tmp_path))
+        now = datetime.now().replace(microsecond=0)
+        data = load_tax_law(2026, str(tmp_path))
+        data['_meta']['fetched'] = (now-timedelta(days=90)).isoformat()
+        save_tax_law(2026, data, str(tmp_path), stamp_fetched=False)
+        set_figure(2026, 'state.sales_tax.state_rate', .05, FTB, str(tmp_path), now=now-timedelta(days=90))
+        set_figure(2026, 'state.sales_tax.county_surtax_rate', .01, FTB, str(tmp_path), now=now-timedelta(days=90))
+        state = load_tax_law(2026, str(tmp_path))['state']
+        set_figure(2026, 'state', state, FTB, str(tmp_path), now=now)
+        updated = load_tax_law(2026, str(tmp_path))
+        assert set(updated['_provenance']) == {'state.FL'}
+        assert updated['_provenance']['state.FL']['retrieved'] == now.isoformat()
+        fresh = check_freshness(2026, str(tmp_path))
+        assert fresh['block_ages']['state.FL'] == 0
+        assert fresh['block_ages']['state.FL.county_surtax_rate'] == 0
+
+    def test_unresolved_legacy_state_uses_the_bare_expected_pin(self, tmp_path):
+        from agents.lib.secure_fs import secure_path
+        secure_path(tmp_path)
+        data = create_empty_tax_law(2026)
+        save_tax_law(2026, data, str(tmp_path))
+        state = create_state_template('UNRESOLVED', tax_year=2026)
+        state['brackets'] = [{'min': 0, 'max': None, 'rate': .05}]
+        result = set_figure(2026, 'state', state, FTB, str(tmp_path))
+        assert result['pin'] == 'state'
+        updated = load_tax_law(2026, str(tmp_path))
+        assert ('state', 'state') in _expected_pins(updated)
+        assert 'state.state' not in updated['_sources']

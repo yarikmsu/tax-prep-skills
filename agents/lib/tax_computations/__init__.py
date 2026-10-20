@@ -3700,6 +3700,7 @@ from agents.lib.tax_computations.federal.gambling_income import (  # noqa: E402,
 # California — same contract as New York below, and the same reason for it.
 from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
     compute_ca_540,
+    compute_ca_5805,
     compute_ca_exemption_credit,
     compute_ca_itemized,
     compute_ca_schedule_p,

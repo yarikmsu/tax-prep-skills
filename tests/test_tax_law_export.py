@@ -28,6 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from agents.lib import tax_law_export  # noqa: E402
+from agents.lib.secure_fs import secure_path, write_secure  # noqa: E402
 from agents.lib.tax_law_export import (  # noqa: E402
     SCHEMA_NAME,
     ExportError,
@@ -62,11 +63,24 @@ posix_only = pytest.mark.skipif(os.name != "posix",
 
 
 def _workspace(tmp_path: Path, cache: dict, year: int = 2026) -> Path:
+    secure_path(tmp_path)
     ws = tmp_path / "workspace"
     ws.mkdir(exist_ok=True)
-    (ws / f"tax_law_{year}.json").write_text(json.dumps(cache, indent=2),
-                                             encoding="utf-8")
+    secure_path(ws)
+    write_secure(ws / f"tax_law_{year}.json", json.dumps(cache, indent=2))
     return ws
+
+
+def _fail_schema_write(monkeypatch):
+    real = tax_law_export.write_secure
+
+    def failing(path, text):
+        if Path(path).name == SCHEMA_NAME:
+            raise OSError("disk full")
+        real(path, text)
+
+    monkeypatch.setattr(tax_law_export, "write_secure", failing)
+    return real
 
 
 def _minimal(year: int = 2026) -> dict:
@@ -346,15 +360,12 @@ class TestTheSchemaTravelsWithTheCopy:
         assert self._schema(tmp_path, cache)["state_seed"] == state_schema("CA", 2026)
 
     def test_a_lower_case_code_gets_the_template_set_used(self, tmp_path):
-        """`create_state_template("ca")` is the GENERIC template, and that is
-        what `set` validated a block coded `ca` against. Normalising the code
-        here, as the pin does, handed the auditor California's keys for a block
-        never written from them."""
+        """Writes, validation and export use California's canonical schema."""
         cache = _minimal()
         cache["state"]["code"] = "ca"
         seed = self._schema(tmp_path, cache)["state_seed"]
-        assert seed == state_schema("ca", 2026)
-        assert seed != state_schema("CA", 2026)
+        assert seed == state_schema("CA", 2026)
+        assert seed != state_schema("ca", 2026)
 
     @pytest.mark.parametrize("state, expected", [
         ({"code": "fl", "type": "none"}, "FL"),
@@ -367,19 +378,17 @@ class TestTheSchemaTravelsWithTheCopy:
         ({"name": "Atlantis"}, None),
         (None, None),
     ])
-    def test_the_regime_code_is_normalised_apart_from_the_seed(
+    def test_the_regime_and_seed_use_the_same_normalised_code(
             self, tmp_path, state, expected):
-        """Item 8 looks the regime up by the code `check_freshness` uses, while
-        the seed keeps the code as written. A block coded `fl` and typed `none`
+        """Every reader uses the code `check_freshness` uses. A block coded `fl` and typed `none`
         is Florida's claim, not an unknown state's. A block the engine resolves
         no code for is None, never the pin suffix `state`."""
         cache = _minimal()
         cache["state"] = state
         schema = self._schema(tmp_path, cache)
         assert schema["state_regime_code"] == expected
-        raw_code = state.get("code") if isinstance(state, dict) else None
         assert schema["state_seed"] == (
-            None if raw_code is None else state_schema(raw_code, 2026))
+            None if expected is None else state_schema(expected, 2026))
 
     def test_the_pin_tables_are_the_engines(self, tmp_path):
         """Items 4 and 9 read these instead of restating the rules that build
@@ -433,16 +442,20 @@ class TestTheSchemaTravelsWithTheCopy:
 
     @pytest.mark.parametrize("state", [{}, {"name": "California"}],
                              ids=["empty", "legacy-by-name"])
-    def test_a_block_with_no_code_gets_no_state_seed(self, tmp_path, state):
-        """`set` refuses every write under a block with no code, so no template
-        was ever applied to it — a seed would grade it against keys nobody
-        validated. The refusal is asserted too, so the two cannot drift."""
+    def test_only_an_unresolvable_state_gets_no_seed(self, tmp_path, state):
+        """A legacy name selects the same seed for writes and the export."""
         cache = _minimal()
         cache["state"] = state
-        assert self._schema(tmp_path, cache)["state_seed"] is None
-        with pytest.raises(TaxLawSetError, match="no state block yet"):
+        seed = self._schema(tmp_path, cache)["state_seed"]
+        if state.get("name") == "California":
+            assert seed == state_schema("CA", 2026)
             set_figure(2026, "state.sdi_rate", 0.01, "https://edd.ca.gov/x",
                        str(tmp_path / "workspace"))
+        else:
+            assert seed is None
+            with pytest.raises(TaxLawSetError, match="no state block yet"):
+                set_figure(2026, "state.sdi_rate", 0.01, "https://edd.ca.gov/x",
+                           str(tmp_path / "workspace"))
 
     # Hosts the rule must answer for, the regression first: real caches pin
     # statutes at www.law.cornell.edu, and the first published policy had no
@@ -510,14 +523,7 @@ class TestTheSchemaTravelsWithTheCopy:
         scratch = tmp_path / "scratch"
         scratch.mkdir()
         monkeypatch.setattr(tempfile, "tempdir", str(scratch))
-        real = tax_law_export.write_secure
-
-        def failing(path, text):
-            if Path(path).name == SCHEMA_NAME:
-                raise OSError("disk full")
-            real(path, text)
-
-        monkeypatch.setattr(tax_law_export, "write_secure", failing)
+        _fail_schema_write(monkeypatch)
         with pytest.raises(OSError, match="disk full"):
             build_audit_copy(2026, ws)
         assert list(scratch.iterdir()) == []
@@ -526,14 +532,9 @@ class TestTheSchemaTravelsWithTheCopy:
         """The half-built directory used to block the re-run as one that
         "already holds files"."""
         ws = _workspace(tmp_path, _minimal())
-        real = tax_law_export.write_secure
-
-        def failing(path, text):
-            if Path(path).name == SCHEMA_NAME:
-                raise OSError("disk full")
-            real(path, text)
-
-        monkeypatch.setattr(tax_law_export, "write_secure", failing)
+        _dest(tmp_path).mkdir()
+        secure_path(_dest(tmp_path))
+        real = _fail_schema_write(monkeypatch)
         with pytest.raises(OSError):
             build_audit_copy(2026, ws, dest=_dest(tmp_path))
         assert list(_dest(tmp_path).iterdir()) == []
@@ -541,25 +542,80 @@ class TestTheSchemaTravelsWithTheCopy:
         target = build_audit_copy(2026, ws, dest=_dest(tmp_path))
         assert (target.parent / SCHEMA_NAME).is_file()
 
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_a_failed_new_named_dest_removes_only_the_directories_it_created(
+            self, tmp_path, monkeypatch, nested):
+        ws = _workspace(tmp_path, _minimal())
+        target = tmp_path / "new-parent" / "audit" if nested else tmp_path / "audit"
+        _fail_schema_write(monkeypatch)
+        with pytest.raises(OSError, match="disk full"):
+            build_audit_copy(2026, ws, dest=target)
+        assert not target.exists()
+        if nested:
+            assert not target.parent.exists()
+        assert ws.is_dir() and (ws / "tax_law_2026.json").is_file()
+
+    def test_success_secures_new_named_parent_directories(self, tmp_path):
+        ws = _workspace(tmp_path, _minimal())
+        target = tmp_path / "new-parent" / "audit"
+        copy = build_audit_copy(2026, ws, dest=target)
+        assert copy.is_file()
+        if os.name == "posix":
+            assert target.stat().st_mode & 0o777 == 0o700
+            assert target.parent.stat().st_mode & 0o777 == 0o700
+
+    def test_a_directory_security_failure_removes_new_empty_parents(
+            self, tmp_path, monkeypatch):
+        ws = _workspace(tmp_path, _minimal())
+        target = tmp_path / "new-parent" / "audit"
+        real = tax_law_export.secure_path
+
+        def denied(path):
+            if Path(path) == target:
+                raise PermissionError("cannot secure new directory")
+            real(path)
+
+        monkeypatch.setattr(tax_law_export, "secure_path", denied)
+        with pytest.raises(PermissionError, match="cannot secure"):
+            build_audit_copy(2026, ws, dest=target)
+        assert not target.parent.exists()
+
+    def test_cleanup_preserves_a_file_another_writer_added(self, tmp_path, monkeypatch):
+        ws = _workspace(tmp_path, _minimal())
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        secure_path(scratch)
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+        real, added = tax_law_export.write_secure, []
+
+        def failing(path, text):
+            if Path(path).name == SCHEMA_NAME:
+                other = Path(path).parent / "unrelated.txt"
+                real(other, "keep this file")
+                added.append(other)
+                raise OSError("disk full")
+            real(path, text)
+
+        monkeypatch.setattr(tax_law_export, "write_secure", failing)
+        with pytest.raises(OSError, match="disk full"):
+            build_audit_copy(2026, ws)
+        assert added[0].read_text() == "keep this file"
+        assert list(added[0].parent.iterdir()) == added
+
     def test_a_cleanup_that_fails_does_not_replace_the_cause(
             self, tmp_path, monkeypatch):
         """The write failure is what the user acts on. A copy the cleanup
         could not remove raised over it, reporting a permission problem where
         the disk was full."""
         ws = _workspace(tmp_path, _minimal())
-        real_write, real_unlink = tax_law_export.write_secure, Path.unlink
-
-        def failing(path, text):
-            if Path(path).name == SCHEMA_NAME:
-                raise OSError("disk full")
-            real_write(path, text)
+        _fail_schema_write(monkeypatch)
+        real_unlink = Path.unlink
 
         def stuck(self, *args, **kwargs):
             if self.name == "tax_law_2026.json":
                 raise PermissionError("cannot remove the copy")
             real_unlink(self, *args, **kwargs)
 
-        monkeypatch.setattr(tax_law_export, "write_secure", failing)
         monkeypatch.setattr(Path, "unlink", stuck)
         with pytest.raises(OSError, match="disk full"):
             build_audit_copy(2026, ws, dest=_dest(tmp_path))

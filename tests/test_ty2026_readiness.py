@@ -280,3 +280,32 @@ class TestTY2026AbsenceMatrix:
         r = tc.compute_underpayment_interest(10000, "2026-04-15", "2026-10-15", [])
         assert r["computed"] is False
         assert r["interest"] is None
+
+
+class TestCaliforniaPenaltyReadiness:
+    """New cache wiring, restricted to the separately reviewed TY2025 form."""
+
+    def test_fetched_policy_and_half_year_schedule_price_the_reviewed_form(self):
+        from tests.test_ca_5805 import inputs
+        # WorksheetII synthetic case:270*(76*.08+289*.07)/365 +
+        # 360*(14*.08+289*.07)/365 +270*90*.07/365 =45.18.
+        assert tc.compute_ca_5805(**inputs())['total'] == 45.18
+
+    @pytest.mark.parametrize('block', ['estimated_tax_safe_harbor', 'underpayment_rates'])
+    def test_absent_pricing_blocks_fail_closed_when_the_penalty_needs_them(self, block):
+        from tests.test_ca_5805 import inputs, law
+        state = law()
+        del state[block]
+        with pytest.raises(ValueError):
+            tc.compute_ca_5805(**inputs(state_law=state))
+
+    def test_empty_rate_schedule_is_safe_only_when_known_credits_prove_zero(self):
+        from tests.test_ca_5805 import inputs, law
+        state = law(); state['underpayment_rates'] = []
+        assert tc.compute_ca_5805(**inputs(state_law=state, withholding=900,
+            prior_tax=None, prior_full_year=None))['total'] == 0
+
+    def test_new_year_law_does_not_attest_a_new_form_line_map(self):
+        from tests.test_ca_5805 import inputs
+        with pytest.raises(ValueError, match='form year'):
+            tc.compute_ca_5805(**inputs(tax_year=2026))
