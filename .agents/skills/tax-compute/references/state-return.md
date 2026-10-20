@@ -122,7 +122,10 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    itemized total where the coupling bars it (over-stating), and the standard
    deduction where the coupling forces itemizing (the election FTB forbids).
    Use `itemized_total if use_itemized else ca_standard_deduction`.
-6. CA tax from FTB tables (use brackets from tax_law JSON)
+6. `compute_ca_540` derives line 31 from the published Tax Table at or below
+   `state.tax_table.max_taxable_income`, and the fetched rate schedule above
+   that ceiling. Fetch a missing row; never substitute bracket math or an
+   inferred midpoint for a published table amount.
 7. CA exemption credits — run `compute_ca_exemption_credit()` for Form 540
    line 32, including the AGI Limitation Worksheet. Pass **federal AGI**
    (Form 540 line 13), `filing_status`, the eligible box counts from lines
