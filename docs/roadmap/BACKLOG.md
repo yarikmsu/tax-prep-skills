@@ -709,6 +709,8 @@ at all.
   Needs AA70. Split from AA70 by its fourth review.
 
 - **AA71 (P1, M): Compute the Schedule CA adjustments the persona meets.**
+  Implementation: [PR #21](https://github.com/yarikmsu/tax-prep-skills/pull/21),
+  open for review; not merged. Depends on PR #20.
   Compute the common adjustments AA68 names instead of refusing them. Each
   needs its parse field, ledger category and line:
   - US-obligation interest (1099-INT box 3) is a subtraction. Today `/tax-parse` merges box 3 into
@@ -716,13 +718,16 @@ at all.
   - Non-CA municipal interest and exempt-interest dividends are additions:
     1099-INT box 8 by issuer state, and 1099-DIV box 12, which `/tax-parse`
     does not capture.
-  - Fund dividends follow CA's 50% rule (R&TC §17145; Schedule CA line 2's
-    instructions; FTB Pub. 1001). Only a fund holding at least 50% of its
-    assets in US obligations passes a US-obligation share through as a
-    subtraction, or, for an exempt-interest dividend, in US and CA
-    obligations. Below that nothing is subtracted, and a federally exempt
-    dividend is an addition in full. Subtracting a share from a fund below 50%
-    under-states CA tax.
+  - Fund dividends follow R&TC §17145 (Schedule CA line 2's instructions;
+    FTB Pub. 1001). The ordinary asset-test route uses the fetched threshold
+    at every quarter-end, with assets whose interest would be CA-exempt in
+    an individual's hands, including US and CA obligations. Confirm US RIC
+    status and keep the asset test separate from the income percentage. An
+    eligible fund passes its US-obligation share through as a subtraction;
+    exempt-interest dividends add only their nonexempt share. Below the
+    ordinary asset threshold nothing is subtracted and the federally exempt
+    dividend is an addition in full. A claimed qualified-fund-of-funds
+    exception under §17145(d) needs separate source confirmation.
   - Social Security is subtracted at its federally taxable amount (line 6b),
     and a state income tax refund at the part federally included, which
     needs a field.
