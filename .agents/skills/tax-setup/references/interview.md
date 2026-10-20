@@ -686,6 +686,13 @@ federal credit is computed by the engine.
   treatment; do not label them as family leave. Confirm applicable same-year
   UI repayments and UI contribution reductions, including zero; employee PFL
   contributions do not reduce family benefits under the TY2025+ rule.
+- Did you receive a Form 1099-MISC, including prizes, awards, substitute
+  payments or a direct-sales notice? → `has_1099_misc`. Review the source year
+  and payment's nature; box 3 is generally Schedule1 other income, with a
+  separately confirmed business route. Box 4 is withholding; box 7 is a checkbox
+  about products sold TO you. Ask for actual resale receipts and expenses,
+  never infer sales from the checkbox. Resolve Schedule F, legal exclusions
+  and other uncomputed payments separately before preparing the return.
 - Do you have self-employment income (1099-NEC, freelance, business)? → triggers Schedule C (`has_self_employment`)
   - **If yes (or you have K-1 pass-through business income):** Is that income
     from an ACTIVE qualified trade or business you materially participate in —

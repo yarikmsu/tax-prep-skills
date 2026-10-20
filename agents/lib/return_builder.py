@@ -172,6 +172,8 @@ from agents.lib.tie_out import (  # noqa: E402
     ca_values_agree,
     derive_government_workpaper,
     government_workpaper_differences,
+    derive_schedule1_other_workpaper,
+    schedule1_other_differences,
     CATEGORY_TARGETS,
     TieOutError,
     _SIGNED_CATEGORIES as SIGNED_CATEGORIES,
@@ -1013,6 +1015,13 @@ def government_workpaper(result: dict, ledger, profile: dict) -> "dict | None":
         raise Blocked(f"Government benefits: {redact(exc)}") from None
 
 
+def schedule1_other_workpaper(result: dict, ledger, profile: dict) -> "dict | None":
+    try:
+        return derive_schedule1_other_workpaper(ledger, result, profile)
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        raise Blocked(f"Schedule1 other income: {redact(exc)}") from None
+
+
 def government_differences(result: dict, built: "dict | None") -> list[str]:
     try:
         return government_workpaper_differences(result, built)
@@ -1032,10 +1041,13 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
     """
     if not isinstance(result, dict) or not isinstance(result.get("form_1040"), dict):
         raise ReturnBuilderError(f"{RESULT_NAME} has no form_1040 section")
+    other_income = schedule1_other_workpaper(result, ledger, profile or {})
     government = government_workpaper(result, ledger, profile or {})
+    settled_income = (government["total"] if government is not None else
+                      other_income["total"] if other_income is not None else None)
     result = ({**result, "form_1040": {**result["form_1040"],
-                                     "line_8_schedule1_other": government["total"]}}
-              if government is not None else result)
+                                     "line_8_schedule1_other": settled_income}}
+              if settled_income is not None else result)
     check(result, profile)
 
     working = {**result["form_1040"], **ledger_income(ledger),
@@ -1468,7 +1480,7 @@ def california_differences(result: dict, derived: dict) -> list[str]:
 
 
 def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None,
-          government=None) -> bool:
+          government=None, other_income=None) -> bool:
     """Publish the derived lines. Returns whether anything was written.
 
     NOT WRITING AN UNCHANGED FILE IS THE CONTRACT, not an optimization: V8's
@@ -1483,9 +1495,18 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
             or any(existing.get(k) for k in ("unemployment_gross", "family_leave_gross", "total"))):
         raise Blocked("publish the active government-benefits workpaper with its checked line8")
     gov_changes = government_differences(result, government)
-    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes:
+    existing_other = result.get("schedule_1_other_income")
+    if other_income is None and isinstance(existing_other, dict) and (any(
+            existing_other.get(k) is not None for k in ("remaining_income", "computed_tax_year"))
+            or any(existing_other.get(k) for k in ("miscellaneous_other_income", "total"))):
+        raise Blocked("publish the Schedule1 other-income workpaper with its checked line8")
+    other_changes = schedule1_other_differences(result, other_income, government)
+    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes:
         return False
     updated = {**result, "form_1040": {**result["form_1040"], **derived}}
+    if other_income is not None:
+        updated["schedule_1_other_income"] = other_income
+        updated["form_1040"]["line_8_schedule1_other"] = other_income["total"]
     if government is not None:
         updated["schedule_1_government_benefits"] = government
         updated["form_1040"]["line_8_schedule1_other"] = government["total"]
@@ -1595,7 +1616,12 @@ def _main(argv: list) -> int:
             # certifying a return it never saw, which is what the receipt
             # exists to catch (V8).
             inputs = receipt.gate_inputs(workspace, GATE, contents=contents)
+        other_income = schedule1_other_workpaper(result, ledger, profile)
         government = government_workpaper(result, ledger, profile)
+        other_changes = schedule1_other_differences(result, other_income, government)
+        if args.check and other_changes:
+            print("BLOCKED: Schedule1 other income disagrees: " + ", ".join(other_changes), file=sys.stderr)
+            return _record_the_check(workspace, inputs, "FAILED", 2)
         gov_changes = government_differences(result, government)
         if args.check and gov_changes:
             print("BLOCKED: government benefits disagree: " + ", ".join(gov_changes), file=sys.stderr)
@@ -1624,13 +1650,15 @@ def _main(argv: list) -> int:
             return _record_the_check(workspace, inputs, receipt.PASS, 0)
         california = build_california({**result, "form_1040": {**result["form_1040"], **derived}},
                                       tax_law, ledger, profile)
-        if write(workspace, result, derived, california=california, government=government):
+        if write(workspace, result, derived, california=california, government=government, other_income=other_income):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "
                   "highest line listed.")
             if government is not None:
                 print("Rebuilt the government-benefits workpaper and Form1040 line8; re-run --check.")
+            if other_income is not None:
+                print("Rebuilt the Schedule1 other-income workpaper and Form1040 line8; re-run --check.")
             if california:
                 print("Rebuilt Form 540 and Schedule P; re-run --check before generating a package.")
                 print(california["line_113_note"])

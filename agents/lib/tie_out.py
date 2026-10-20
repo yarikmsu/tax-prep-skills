@@ -95,6 +95,9 @@ from agents.lib.tax_computations.state.ca import CA_INVESTMENT_COMPONENTS, _ca_i
 from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E402
     BENEFIT_CATEGORIES, compute_government_benefits, validate_government_benefits,
 )
+from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402
+    MISC_OTHER, compute_schedule1_other, validate_misc_income,
+)
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -182,6 +185,7 @@ _ADVISORY_MISMATCH_CATEGORIES = {"retirement_taxable"}
 # category → (result section, [field names summed on the result side]).
 # The comparison is sum(ledger category) == sum(present mapped fields).
 CATEGORY_TARGETS = {
+    MISC_OTHER: ("schedule_1_other_income", [MISC_OTHER]),
     "unemployment_compensation": ("schedule_1_government_benefits", ["unemployment_gross"]),
     "government_family_leave": ("schedule_1_government_benefits", ["family_leave_gross"]),
     # W-2 box 1 ties to line 1a (the pure "total from Forms W-2, box 1"), NOT
@@ -229,7 +233,7 @@ CATEGORY_TARGETS = {
     # never landed in result.json therefore FAILS the hard gate — the
     # double-taxation scenario this category exists to kill.
     "employer_stock_basis_adjustment": ("schedule_d", ["_adjustments_total"]),
-    # 1099-NEC box 1 / 1099-MISC box 3-7 / 1099-K box 1a → Schedule C gross
+    # 1099-NEC compensation / reviewed MISC business box3,5,6 / business-K → C gross
     # receipts. AT-LEAST check (not equality): gross receipts may legitimately
     # EXCEED the 1099 totals (cash income without an information return), but
     # ledger > result is the under-report direction and fails. Section absent
@@ -567,6 +571,7 @@ class LedgerRecord:
     other_state_withholding_by_state: "tuple[tuple[str, float], ...]" = ()
     ca_investments: "dict | None" = None
     government_benefits: "dict | None" = None
+    misc_income: "dict | None" = None
 
 
 @dataclass(frozen=True)
@@ -720,6 +725,13 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             except ValueError as exc:
                 raise TieOutError(f"{where}: {exc}") from None
         ca_investments = None
+        misc_income = None
+        is_misc = "1099MISC" in re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
+        if (skipped is None and (is_misc or MISC_OTHER in boxes)) or "misc_income" in rec:
+            try:
+                misc_income = validate_misc_income(rec.get("misc_income"), boxes, skipped=skipped is not None)
+            except ValueError as exc:
+                raise TieOutError(f"{where}: {exc}") from None
         if "ca_investments" in rec:
             from agents.lib.tax_computations.state.ca import validate_ca_investments
             try:
@@ -735,7 +747,7 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
             other_state_withholding_by_state=other_states, ca_investments=ca_investments,
-            government_benefits=government_benefits))
+            government_benefits=government_benefits, misc_income=misc_income))
     return records
 
 
@@ -1593,6 +1605,76 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
     return errors
 
 
+def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
+    """Non-benefit income: tracked MISC plus a separately confirmed remainder."""
+    records, source_years = [], []
+    for rec in ledger:
+        boxes = dict(rec.key_boxes)
+        related = (rec.misc_income is not None or MISC_OTHER in boxes
+                   or "1099MISC" in re.sub(r"[^a-zA-Z0-9]", "", rec.form_type).upper())
+        if not related:
+            continue
+        if rec.skipped is not None:
+            if rec.misc_income is not None:
+                source = validate_misc_income(rec.misc_income, boxes, skipped=True)
+                source_years.append(source["tax_year"])
+            continue
+        source = validate_misc_income(rec.misc_income, boxes)
+        source_years.append(source["tax_year"])
+        records.append({"key_boxes": boxes, "misc_income": rec.misc_income})
+    if not source_years and (profile.get("flags") or {}).get("has_1099_misc") is True:
+        raise ValueError("1099-MISC was reported at intake but has no reviewed source inventory")
+    sheet = result.get("schedule_1_other_income")
+    scaffold = (isinstance(sheet, dict) and sheet.get("remaining_income") is None
+                and sheet.get("computed_tax_year") is None
+                and not any(sheet.get(k) for k in (MISC_OTHER, "total")))
+    positive = any(dict(r["key_boxes"]).get(MISC_OTHER, 0) for r in records)
+    inactive = not positive and (sheet is None or scaffold)
+    if not source_years and inactive:
+        return None
+    result_year = (result.get("meta") or {}).get("tax_year")
+    profile_year = profile.get("tax_year")
+    if any(v is not None and type(v) is not int for v in (result_year, profile_year)):
+        raise ValueError("MISC return years must be integers")
+    if result_year is not None and profile_year is not None and result_year != profile_year:
+        raise ValueError("MISC return/profile years disagree")
+    year = result_year if result_year is not None else profile_year
+    if type(year) is not int or any(source_year != year for source_year in source_years):
+        raise ValueError("MISC source year must match the covered return year, including business-only and zero-income forms")
+    if inactive:
+        return None
+    if not isinstance(sheet, dict) or scaffold:
+        raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC and government benefits, including zero")
+    return compute_schedule1_other(tax_year=year, records=records,
+        remaining_income=sheet.get("remaining_income"),
+        remaining_income_confirmed=sheet.get("remaining_income_confirmed"))
+
+
+def schedule1_other_differences(result: dict, built: "dict | None", government: "dict | None") -> list[str]:
+    if built is None:
+        return []
+    out = []
+    stored = result.get("schedule_1_other_income")
+    if not ca_values_agree(stored, built):
+        out.append("schedule_1_other_income")
+    if not isinstance(stored, dict) or type(stored.get("computed_tax_year")) is not int:
+        out.append("schedule_1_other_income.computed_tax_year")
+    total = government["total"] if government is not None else built["total"]
+    if not ca_values_agree((result.get("form_1040") or {}).get("line_8_schedule1_other"), total):
+        out.append("form_1040.line_8_schedule1_other")
+    return out
+
+
+def _schedule1_other_checks(ledger: "list[LedgerRecord]", result: dict, profile) -> list[str]:
+    try:
+        built = derive_schedule1_other_workpaper(ledger, result, profile or {})
+        government = derive_government_workpaper(ledger, result, profile or {}) if built is not None else None
+        return ["Schedule1 other income disagrees: " + field
+                for field in schedule1_other_differences(result, built, government)]
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        return [f"Schedule1 other income: {redact(exc)}"]
+
+
 def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
     """The additional Schedule1 source-to-income check; legacy no-benefit path stays manual."""
     records = []
@@ -1630,7 +1712,10 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # With no benefit, an unconfirmed copy of line 8 is not a figure to
     # restore: keep following line 8 rather than reverting a later edit.
     unconfirmed = isinstance(sheet, dict) and sheet.get("other_income_confirmed") is not True
-    if sheet is None or scaffold or (not positive and unconfirmed):
+    other_sheet = derive_schedule1_other_workpaper(ledger, result, profile)
+    if other_sheet is not None:
+        other, confirmed = other_sheet["total"], True
+    elif sheet is None or scaffold or (not positive and unconfirmed):
         if positive:
             raise ValueError("record and confirm Schedule1 income EXCLUDING these government benefits, including zero")
         other = (result.get("form_1040") or {}).get("line_8_schedule1_other")
@@ -1939,6 +2024,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
+    missing_targets.extend(_schedule1_other_checks(ledger, result, profile))
     missing_targets.extend(_government_income_checks(ledger, result, profile))
     missing_targets.extend(_ca_return_checks(
         result, profile, sums.get("state_refund_1099g", 0) > 0, tolerance))

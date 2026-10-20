@@ -216,3 +216,12 @@ a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
   subtracts only included UI and eligible PFL; unknown program treatment blocks.
   Refund-only forms still need a zero-benefit inventory. Rebuilds are idempotent,
   source changes invalidate receipts, and net-zero Schedule 1 still attaches.
+
+- **MISC source boxes preserve tax character (`test_misc_income.py`):** Both
+  reviewed revisions split nonbusiness box3 and box8 from Schedule C receipts.
+  Withholding and direct-sales notices cannot inflate income. Legacy MISC
+  inventories, unknown treatment and nonfinite amounts refuse. The separate
+  signed Schedule1 remainder excludes tracked MISC and UI/PFL; when benefits
+  also exist it supplies their non-benefit component. Actual line8, federal/CA
+  AGI, withholding, idempotence, source receipt invalidation and the scope-waiver
+  boundary are checked. Both detail workpapers attach even at a zero net total.

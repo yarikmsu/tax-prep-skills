@@ -75,13 +75,30 @@ once in Schedule 1 line 1 / `line_8_schedule1_other`. A California return
 subtracts that same taxable part on Schedule CA; the gross 1099-G refund is
 not its subtraction.
 
+**Form 1099-MISC:** record **[misc_income_sources]** and
+**[schedule1_remaining_income]** in `answers.md`. Follow the parse skill's
+`references/misc-income.md`. For nonbusiness MISC income, set
+`schedule_1_other_income.remaining_income` to signed Schedule1 income EXCLUDING
+both tracked MISC and UI/family benefits; confirm it explicitly, including zero.
+Include business NET profit/loss, taxable refunds and other applicable sources.
+Call `compute_schedule1_other` using the covered year and source records before
+Social Security or AGI/MAGI-dependent worksheets. Persist its output; without a
+benefits workpaper, its total supplies actual Form1040 line8 programmatically.
+With UI/PFL, its total supplies the government-benefits `other_income` argument;
+copy that derived amount into the non-benefit answer instead of summing it again.
+The builder repeats and checks both workpapers and actual line8 before any scope
+waiver. Business-only/zero-MISC legacy Schedule1 paths remain manual unless this
+workpaper is explicitly adopted. Never put MISC withholding or a box-7 threshold
+in business receipts. Refresh affected worksheets after an income change.
+
 **Government benefits (1099-G):** record **[government_benefit_sources]** and
 **[schedule1_nonbenefit_income]** in `answers.md`. Confirm source year/revision,
 UI versus family/medical program identity, actual receipts and applicable
 same-year UI repayments/contribution reductions. Never reduce PFL by the old
 nonitemizer contribution rule. The parse skill's government-benefits reference
 defines `government_benefits` metadata and revision-aware withholding boxes.
-Set `schedule_1_government_benefits.other_income` to the signed total of ALL
+When a MISC workpaper applies, use its derived total as the following non-benefit
+input; otherwise set `schedule_1_government_benefits.other_income` to the signed total of ALL
 OTHER Schedule1 income, including refunds/business/K-1 income/losses, and set
 `other_income_confirmed: true`. Include a deliberate zero. Do not reuse an old
 aggregate that may already contain some benefits. Before any Social Security,

@@ -3690,6 +3690,9 @@ from agents.lib.tax_computations.federal.amt import (  # noqa: E402,F401
 from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E402,F401
     compute_government_benefits,
 )
+from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402,F401
+    classify_misc_income, compute_schedule1_other,
+)
 
 # California — same contract as New York below, and the same reason for it.
 from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401

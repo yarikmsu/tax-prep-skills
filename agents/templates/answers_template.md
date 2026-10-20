@@ -26,6 +26,18 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
+### Confirm the MISC year/revision, box3 business/other split, substitute payments, withholding, business receipts and direct-sales checkbox. Resolve unknown or Schedule F payments rather than defaulting them to Schedule C.
+
+*Asked by tax-compute income-and-agi.md; required when a 1099-MISC is present.*
+
+- **[misc_income_sources]**
+
+### Confirm signed remaining Schedule1 income EXCLUDING tracked nonbusiness MISC and UI/family benefits, including a deliberate zero. Include business NET income and losses, taxable refunds and other sources. Never reuse an old aggregate.
+
+*Asked by tax-compute income-and-agi.md; required when a 1099-MISC is present.*
+
+- **[schedule1_remaining_income]**
+
 ### Confirm the 1099-G year/revision, unemployment versus governmental family/medical programs, actual gross receipts, same-year UI repayments and eligible UI contribution reductions. Identify CA EDD PFL separately; unknown or medical benefits need resolution.
 
 *Asked by tax-compute income-and-agi.md; required when governmental UI or family benefits are reported.*

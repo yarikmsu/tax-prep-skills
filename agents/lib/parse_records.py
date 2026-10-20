@@ -57,6 +57,7 @@ LEDGER_FIELDS = frozenset({
     "doc_id", "file", "form_type", "payer", "person", "key_boxes", "skipped",
     "foreign", "second_read", "retirement_kind", "other_state_withholding_by_state", "ca_investments",
     "government_benefits",
+    "misc_income",
 })
 RECORD_ONLY_FIELDS = frozenset({
     # The boxes AS READ, label by label, before any category judgement. This is

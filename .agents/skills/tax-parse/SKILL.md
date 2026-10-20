@@ -241,7 +241,7 @@ After all agents complete:
    - Total interest (from 1099-INTs + foreign interest)
    - Total dividends (from 1099-DIVs)
    - Total capital gains/losses (from 1099-Bs + foreign trades)
-   - Total other income (1099-NEC, misc)
+   - Business receipts (NEC / reviewed MISC business income) and separate nonbusiness MISC income
 3. Update `result.json` with aggregated values in the `form_1040` section
 4. Update `answers.md` with:
    - Institutions & Accounts table
@@ -348,6 +348,7 @@ Rules:
 - For every retirement distribution, record `retirement_kind`: `traditional_ira`, `sep_ira`, `simple_ira`, `pension`, `roth_ira` or `inherited_ira`, confirmed from source evidence. IRA `person` is **primary/spouse**, never joint. Keep the source `doc_id` for that individual's Form 8606 allocation; do not infer recipient from the household total. Missing ownership/kind must be resolved before the individual IRA tie-out can pass.
 - Withholding breakdowns, legacy-record migration and source instructions: [withholding reference](references/withholding.md).
 - Investment components and California source/asset-test evidence: [California investments](references/california-investments.md). Preserve these in `ca_investments`; the ledger builder must not discard them.
+- Every 1099-MISC needs the [reviewed box inventory](references/misc-income.md); preserve `misc_income`. Box 4 is withholding and box 7 is a checkbox, never receipts.
 - Every 1099-G, even a refund-only form, needs the [government-benefit inventory](references/government-benefits.md). Preserve `government_benefits` when deriving the ledger; an older withholding-only record cannot establish that benefit boxes were zero.
 - `key_boxes` is keyed by CANONICAL CATEGORY (unknown keys hard-error):
   | Form box | Category |
@@ -368,11 +369,12 @@ Rules:
   | 1099-DA box 1f proceeds total | `capital_proceeds` (its per-transaction rows feed `/tax-parse-crypto`'s `broker_reporting`, which routes them to Form 8949). Box 11c (first-sale NFT proceeds, kept out of 1f) → `nft_first_sale_proceeds`, which BLOCKS the tie-out gate |
   | Any 1099 federal withholding box | `federal_withholding_1099` |
   | SSA-1099 box 5 | `ss_benefits` (may be NEGATIVE when repayments exceed gross — record the negative as-is; the gate switches to a Pub 915 advisory instead of a sum tie) |
-  | 1099-NEC box 1 / 1099-MISC boxes 3-7 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below) |
+  | 1099-NEC box 1 / reviewed 1099-MISC business box 3 and boxes 5/6 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below) |
   | 1099-K box 1a (personal-item sales / reimbursements) | `personal_1099k` (informational — NOT Schedule C: gains go to Form 8949, losses non-deductible; ASK the taxpayer which it is and record the answer in answers.md — the gate emits a verify advisory) |
   | 1099-SA box 1 | `hsa_distributions` |
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
+  | 1099-MISC nonbusiness box 3 / box 8 substitute payments | `miscellaneous_other_income` → checked non-benefit Schedule1 workpaper, then actual Form1040 line8 |
   | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
   | 1099-G box 1, unemployment portion | `unemployment_compensation` (gross, before tax withholding; source-reviewed reductions are separate). The benefits workpaper derives its taxable amount and actual Form1040 line8 |
   | TY2025 legacy box-1 PFL / TY2026 box 10 | `government_family_leave` (gross). Identify the program and reporting route separately; family benefits do not take the old nonitemizer contribution reduction. Never classify medical or private benefits as governmental family leave by default |

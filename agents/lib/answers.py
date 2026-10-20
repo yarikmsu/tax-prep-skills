@@ -184,6 +184,11 @@ def _ca_refund_worksheet_needed(inputs: _Inputs) -> bool:
             or _get_path(inputs.result, "form_1040.taxable_state_refund") is not None))
 
 
+def _misc_income_needed(inputs: _Inputs) -> bool:
+    return (inputs.flags.get("has_1099_misc") is True
+            or _amount(_get_path(inputs.result, "schedule_1_other_income.miscellaneous_other_income")) > 0)
+
+
 def _government_benefits_needed(inputs: _Inputs) -> bool:
     return (inputs.flags.get("has_1099g_benefits") is True
             or _amount(_get_path(inputs.result, "schedule_1_government_benefits.unemployment_gross")) > 0
@@ -226,6 +231,22 @@ def _crypto_disposals_lack_basis(inputs: _Inputs) -> bool:
 
 # Every registered question, with the condition that makes a workspace owe it.
 REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
+    RequiredAnswer(
+        id="misc_income_sources", kind=FACT,
+        question="Confirm the MISC year/revision, box3 business/other split, substitute payments, "
+                 "withholding, business receipts and direct-sales checkbox. Resolve unknown or "
+                 "Schedule F payments rather than defaulting them to Schedule C.",
+        asked_by="tax-compute income-and-agi.md", required_when="a 1099-MISC is present",
+        when=_misc_income_needed,
+    ),
+    RequiredAnswer(
+        id="schedule1_remaining_income", kind=FACT,
+        question="Confirm signed remaining Schedule1 income EXCLUDING tracked nonbusiness MISC "
+                 "and UI/family benefits, including a deliberate zero. Include business NET income "
+                 "and losses, taxable refunds and other sources. Never reuse an old aggregate.",
+        asked_by="tax-compute income-and-agi.md", required_when="a 1099-MISC is present",
+        when=_misc_income_needed,
+    ),
     RequiredAnswer(
         id="government_benefit_sources", kind=FACT,
         question="Confirm the 1099-G year/revision, unemployment versus governmental family/medical "

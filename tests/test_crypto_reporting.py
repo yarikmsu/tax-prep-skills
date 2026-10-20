@@ -714,9 +714,13 @@ def test_the_gate_reads_the_option_answer_from_the_profile(tmp_path, capsys, ans
 
 
 def _ledgered_1099da(form_type='1099-DA', skipped=None):
-    return tie_out.load_ledger({'records': [dict(
-        doc_id='da', file='documents/da.pdf', form_type=form_type, payer='Exchange',
-        person='primary', key_boxes={} if skipped else {'capital_proceeds': 0}, skipped=skipped)]})
+    row = dict(doc_id='da', file='documents/da.pdf', form_type=form_type, payer='Exchange',
+        person='primary', key_boxes={} if skipped else {'capital_proceeds': 0}, skipped=skipped)
+    if '1099-MISC' in form_type and not skipped:
+        from tests.test_misc_income import source
+        row['misc_income'] = source(box_3=0,box_3_business=0,box_3_other=0,
+            box_4=0,box_5=0,box_6=0,box_7=False)
+    return tie_out.load_ledger({'records':[row]})
 
 
 @pytest.mark.parametrize('form_type', ['1099-DA', 'Form 1099-da', '1099DA', '1099-DA (Corrected)',
