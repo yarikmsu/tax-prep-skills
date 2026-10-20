@@ -116,6 +116,9 @@ credit; status changes involving a joint source require allocation review.
 An affirmative archived election with a missing amount refuses rather than
 silently skipping the credit. Source: TY2025 Form 540 instructions, lines 72,
 98 and 99, linked above. No new tax-law rate or threshold is introduced.
+The [TY2024 Form 540](https://www.ftb.ca.gov/forms/2024/2024-540.pdf), line 98,
+also confirms the opening credit for TY2025. Reviewing that carry line does
+not extend the builder's reviewed form years.
 
 Line 18 is the larger of itemized and standard deductions, so an itemized
 amount below the standard deduction refuses except for a separate filer

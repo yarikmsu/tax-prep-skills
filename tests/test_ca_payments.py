@@ -198,6 +198,16 @@ def test_rollover_keeps_the_ca_credit_separate_and_invalidates_old_verification(
     assert rows['prior_year.ca_estimated_payments_applied'].action_suggested == 'apply'
 
 
+def test_reviewed_2024_line_98_supplies_the_2025_opening_credit():
+    # TY2024 Form 540 line 98 applies the elected amount to TY2025 estimates.
+    p = prior()
+    p.year = 2024
+    p.result['meta']['tax_year'] = 2024
+    rows = {c.json_path: c for c in changes(p, current(year=2025))}
+    assert rows['prior_year.ca_estimated_payments_applied'].prior_value == 500
+    assert rows['estimated_payments.ca_verified'].prior_value is False
+
+
 def test_rollover_worked_zero_retires_a_stale_credit_and_status_changes_need_review():
     assert changes(prior(0, elected=False), current(0, status='Single')) == []
     rows = {c.json_path: c for c in changes(prior(0, elected=False), current(500))}
