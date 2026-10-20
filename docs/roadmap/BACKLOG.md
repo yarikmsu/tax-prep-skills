@@ -334,6 +334,8 @@ AA57 finds why.
   Schedule A recipe, widened by its fourth review.
 
 - **AA65 (P1, S): Record Form 1099-G's unemployment and family leave benefits.**
+  Implementation: [PR #22](https://github.com/yarikmsu/tax-prep-skills/pull/22),
+  open for review; not merged. Depends on PR #21.
   `/tax-parse` gives Form 1099-G's box 2 its own category
   (`state_refund_1099g`), and its box 4 and its state tax withheld go through
   the generic withholding rows, but no ledger category or tie-out target holds
