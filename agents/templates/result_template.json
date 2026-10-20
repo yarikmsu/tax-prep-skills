@@ -111,6 +111,25 @@
 
   "_optional_sections_below": "Include only if applicable to this taxpayer. Remove sections that don't apply.",
 
+  "schedule_1_government_benefits": {
+    "_include_if": "government benefits sources or an explicitly adopted benefits workpaper",
+    "other_income": null,
+    "other_income_confirmed": false,
+    "computed_tax_year": null,
+    "unemployment_gross": 0,
+    "family_leave_gross": 0,
+    "unemployment_repaid": 0,
+    "unemployment_contribution_reduction": 0,
+    "unemployment_taxable": 0,
+    "family_leave_taxable": 0,
+    "schedule1_line_7": 0,
+    "family_leave_other_income": 0,
+    "total": 0,
+    "ca_family_leave_exempt": null,
+    "ca_family_leave_line_7": null,
+    "source_note": null
+  },
+
   "schedule_1a": {
     "_include_if": "compute_schedule_1a ran and total > 0 (any of tips/overtime-premium/car-loan/senior allowed) — TY2025-2028 only (OBBBA)",
     "note": "OBBBA Schedule 1-A deductions, BELOW AGI (line 13b). Copy compute_schedule_1a's NESTED per-provision objects here VERBATIM (each carries allowed / disallowed_by_cap / disallowed_by_phaseout) and ALSO record the raw input amount + magi, so the Schedule 1-A worksheet (lines 4-38) can be reconstructed/audited from result.json — not just the allowed totals. total → form_1040.line_13b_schedule_1a_deductions; senior.allowed → form_6251.senior_deduction (AMT addback). NOT in line 10 — these do not reduce AGI or any MAGI-gated computation.",
@@ -476,7 +495,11 @@
       "has_us_obligation_income": false,
       "has_nonca_muni_interest": false,
       "municipal_workpaper": [],
-      "source_note": null
+      "source_note": null,
+      "unemployment_subtraction": 0,
+      "paid_family_leave_subtraction": 0,
+      "section_b_line_7_column_b": 0,
+      "section_b_other_income_subtraction": 0
     },
     "ca_agi": 0,
     "ca_taxable_income": 0,

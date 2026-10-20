@@ -151,6 +151,7 @@ def validate_ca_investments(raw, boxes: dict) -> dict:
 def compute_ca_schedule_ca(
     *, tax_year: int, investment_records: list, fund_asset_minimum,
     taxable_social_security: float, taxable_state_refund: float,
+    taxable_unemployment: float, taxable_ca_family_leave: float, ca_family_line_7: float,
     hsa_employer_addback: float, hsa_deduction_addback: float,
     hsa_interest_addback: float, hsa_dividend_addback: float,
     other_additions: float, other_subtractions: float,
@@ -219,6 +220,8 @@ def compute_ca_schedule_ca(
            "exempt_interest_dividend_addition": round(fund_add, 2),
            "taxable_social_security_subtraction": _ca_input(taxable_social_security, "taxable Social Security"),
            "taxable_state_refund_subtraction": _ca_input(taxable_state_refund, "taxable state refund"),
+           "unemployment_subtraction": _ca_input(taxable_unemployment, "federally taxable unemployment"),
+           "paid_family_leave_subtraction": _ca_input(taxable_ca_family_leave, "federally taxable CA-exempt family benefits"),
            "other_additions": _ca_input(other_additions, "other CA additions"),
            "other_subtractions": _ca_input(other_subtractions, "other CA subtractions"),
            "investment_workpaper": workpaper,
@@ -231,10 +234,16 @@ def compute_ca_schedule_ca(
     # HSA"; Section C line 13 column B adds back the federal HSA deduction.
     out["line_2_column_c"] = round(muni_add + fund_add + out["hsa_interest_addback"]
                                    + out["hsa_dividend_addback"], 2)
+    family7 = _ca_input(ca_family_line_7, "CA-exempt family income on Schedule1 line7")
+    if family7 > out["paid_family_leave_subtraction"]:
+        raise ValueError("CA family line7 subtraction cannot exceed total exempt family income")
+    out["section_b_line_7_column_b"] = round(out["unemployment_subtraction"] + family7, 2)
+    out["section_b_other_income_subtraction"] = round(out["paid_family_leave_subtraction"] - family7, 2)
     out["total_additions"] = round(sum(out[k] for k in ("hsa_employer_addback", "hsa_deduction_addback",
         "other_additions")) + out["line_2_column_c"], 2)
     out["total_subtractions"] = round(sum(out[k] for k in ("taxable_social_security_subtraction",
-        "taxable_state_refund_subtraction", "other_subtractions")) + out["line_2_column_b"], 2)
+        "taxable_state_refund_subtraction", "other_subtractions", "unemployment_subtraction",
+        "paid_family_leave_subtraction")) + out["line_2_column_b"], 2)
     for key in ("line_2_column_b", "line_2_column_c", "total_additions", "total_subtractions"):
         _ca_input(out[key], key)  # a finite record must not overflow in aggregate
     return out

@@ -17,7 +17,10 @@ design here:
 
 This module owns the second kind, plus the eight lines that are a straight
 sum of parse records. It is the same line V2 drew through `tax-parse`: the
-ASSEMBLY moves, the judgement does not.
+ASSEMBLY moves, the judgement does not. AA65 additionally owns line 8 when
+its government-benefits workpaper applies: confirmed non-benefit income plus
+taxable UI and governmental family benefits. The extended workpaper check and
+CA check run before a federal scope waiver; the base line roster stays stable.
 
 WHY THIS IS WORTH A MODULE. The 1040's own arithmetic had NO check at all.
 `tie_out` proves each document reached a line and `capabilities` proves the
@@ -167,6 +170,8 @@ from agents.lib.tax_law_fetcher import load_tax_law  # noqa: E402
 from agents.lib.tie_out import (  # noqa: E402
     derive_ca_schedule_ca,
     ca_values_agree,
+    derive_government_workpaper,
+    government_workpaper_differences,
     CATEGORY_TARGETS,
     TieOutError,
     _SIGNED_CATEGORIES as SIGNED_CATEGORIES,
@@ -1001,6 +1006,20 @@ def _context(result: dict, tax_law: dict, filing_status: str) -> _Context:
     )
 
 
+def government_workpaper(result: dict, ledger, profile: dict) -> "dict | None":
+    try:
+        return derive_government_workpaper(ledger, result, profile)
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        raise Blocked(f"Government benefits: {redact(exc)}") from None
+
+
+def government_differences(result: dict, built: "dict | None") -> list[str]:
+    try:
+        return government_workpaper_differences(result, built)
+    except ValueError as exc:
+        raise Blocked(f"Government benefits: {redact(exc)}") from None
+
+
 def build(result: dict, tax_law: dict, ledger, filing_status: str,
           profile: "dict | None" = None) -> "dict[str, float]":
     """Every derived line of Form 1040 lines 1-38, from the components.
@@ -1013,6 +1032,10 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
     """
     if not isinstance(result, dict) or not isinstance(result.get("form_1040"), dict):
         raise ReturnBuilderError(f"{RESULT_NAME} has no form_1040 section")
+    government = government_workpaper(result, ledger, profile or {})
+    if government is not None:
+        result = {**result, "form_1040": {**result["form_1040"],
+                                        "line_8_schedule1_other": government["total"]}}
     check(result, profile)
 
     working = {**result["form_1040"], **ledger_income(ledger),
@@ -1444,7 +1467,8 @@ def california_differences(result: dict, derived: dict) -> list[str]:
     return fields
 
 
-def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None) -> bool:
+def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None,
+          government=None) -> bool:
     """Publish the derived lines. Returns whether anything was written.
 
     NOT WRITING AN UNCHANGED FILE IS THE CONTRACT, not an optimization: V8's
@@ -1453,9 +1477,18 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
     invalidates a pass that is still true. `/tax-generate --filing-package`
     then refuses a package whose gates did run.
     """
-    if not differences(result, derived) and not california_differences(result, california or {}):
+    existing = result.get("schedule_1_government_benefits")
+    if government is None and isinstance(existing, dict) and (existing.get("other_income") is not None
+            or existing.get("computed_tax_year") is not None
+            or any(existing.get(k) for k in ("unemployment_gross", "family_leave_gross", "total"))):
+        raise Blocked("publish the active government-benefits workpaper with its checked line8")
+    gov_changes = government_differences(result, government)
+    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes:
         return False
     updated = {**result, "form_1040": {**result["form_1040"], **derived}}
+    if government is not None:
+        updated["schedule_1_government_benefits"] = government
+        updated["form_1040"]["line_8_schedule1_other"] = government["total"]
     if california:
         updated["california_540"] = {**result["california_540"], **california}
         summary = california_summary(updated, california)
@@ -1468,6 +1501,14 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
             notes.append(california["ca_payment_note"])
         if california["schedule_ca_adjustments"].get("source_note"):
             notes.append(california["schedule_ca_adjustments"]["source_note"])
+        updated["meta"] = {**meta, "limitations": notes}
+    meta = dict(updated.get("meta") or {})
+    notes = meta.get("limitations", [])
+    if government is not None or (isinstance(notes, list) and any(
+            isinstance(n, str) and n.startswith("Government benefits:") for n in notes)):
+        notes = [n for n in notes if not n.startswith("Government benefits:")]
+        if government is not None and government.get("source_note"):
+            notes.append(government["source_note"])
         updated["meta"] = {**meta, "limitations": notes}
     # `write_secure` is temp-then-replace with the descriptor secured before
     # the first byte, so there is nothing to chmod afterwards; the trailing
@@ -1554,6 +1595,11 @@ def _main(argv: list) -> int:
             # certifying a return it never saw, which is what the receipt
             # exists to catch (V8).
             inputs = receipt.gate_inputs(workspace, GATE, contents=contents)
+        government = government_workpaper(result, ledger, profile)
+        gov_changes = government_differences(result, government)
+        if args.check and gov_changes:
+            print("BLOCKED: government benefits disagree: " + ", ".join(gov_changes), file=sys.stderr)
+            return _record_the_check(workspace, inputs, "FAILED", 2)
         california = build_california(result, tax_law, ledger, profile) if args.check else {}
         ca_changes = california_differences(result, california)
         if args.check and ca_changes:
@@ -1578,11 +1624,13 @@ def _main(argv: list) -> int:
             return _record_the_check(workspace, inputs, receipt.PASS, 0)
         california = build_california({**result, "form_1040": {**result["form_1040"], **derived}},
                                       tax_law, ledger, profile)
-        if write(workspace, result, derived, california=california):
+        if write(workspace, result, derived, california=california, government=government):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "
                   "highest line listed.")
+            if government is not None:
+                print("Rebuilt the government-benefits workpaper and Form1040 line8; re-run --check.")
             if california:
                 print("Rebuilt Form 540 and Schedule P; re-run --check before generating a package.")
                 print(california["line_113_note"])

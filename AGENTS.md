@@ -252,10 +252,8 @@ scripts/                         # pre-commit-pii-scan.sh
 tests/                           # pytest suite
 ```
 
-`agents/lib/` holds the computation engine: the parameterized tax math, the
-cache, the engine gate, `run.sh` for the launcher every skill invokes, and one
-module per gate and per planning skill. The roster is not listed here — it
-changes, and a list in prose goes stale silently. **Every module a SKILL invokes is RUNNABLE through
+Engine inventory: `docs/contributing/skill-catalog.md`.
+**Every module a SKILL invokes is RUNNABLE through
 the launcher and none imports anything agent-specific**; one nothing invokes
 needs no entry point. Four self-test with no arguments (`tax_computations`,
 `secure_fs`, `irs_dates`, `crypto_importer` — pinned by test); `preflight`
@@ -412,6 +410,7 @@ in full, so a new file in either goes in this table.
 | Skill contracts and scope | `docs/contributing/skill-catalog.md` |
 | Paystub projection intake | `docs/contributing/paystub-intake.md` |
 | Individual IRA basis | `docs/contributing/individual-ira-basis.md` |
+| Government benefits and Schedule 1 | `docs/contributing/government-benefits.md` |
 | Crypto account FIFO | `docs/contributing/crypto-accounts.md` |
 | Charitable vintage accounting | `docs/contributing/charitable-carryovers.md` |
 | State effects in income planning | `docs/contributing/state-planning.md` |

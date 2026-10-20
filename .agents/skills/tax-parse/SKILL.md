@@ -348,6 +348,7 @@ Rules:
 - For every retirement distribution, record `retirement_kind`: `traditional_ira`, `sep_ira`, `simple_ira`, `pension`, `roth_ira` or `inherited_ira`, confirmed from source evidence. IRA `person` is **primary/spouse**, never joint. Keep the source `doc_id` for that individual's Form 8606 allocation; do not infer recipient from the household total. Missing ownership/kind must be resolved before the individual IRA tie-out can pass.
 - Withholding breakdowns, legacy-record migration and source instructions: [withholding reference](references/withholding.md).
 - Investment components and California source/asset-test evidence: [California investments](references/california-investments.md). Preserve these in `ca_investments`; the ledger builder must not discard them.
+- Every 1099-G, even a refund-only form, needs the [government-benefit inventory](references/government-benefits.md). Preserve `government_benefits` when deriving the ledger; an older withholding-only record cannot establish that benefit boxes were zero.
 - `key_boxes` is keyed by CANONICAL CATEGORY (unknown keys hard-error):
   | Form box | Category |
   |---|---|
@@ -373,6 +374,8 @@ Rules:
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
   | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
+  | 1099-G box 1, unemployment portion | `unemployment_compensation` (gross, before tax withholding; source-reviewed reductions are separate). The benefits workpaper derives its taxable amount and actual Form1040 line8 |
+  | TY2025 legacy box-1 PFL / TY2026 box 10 | `government_family_leave` (gross). Identify the program and reporting route separately; family benefits do not take the old nonitemizer contribution reduction. Never classify medical or private benefits as governmental family leave by default |
   | Broker supplemental statement / Form 3922 / vest confirmation (adjusted basis − 1099-B-reported basis, for lots SOLD this year) | `employer_stock_basis_adjustment` (→ the Schedule D `adjustment` fields — the Form 8949 code-B correction that stops RSU/ESPP/NQSO double-taxation). Record the **POSITIVE SUM** of (adjusted basis − reported basis) across all employer-stock lots sold this year; per-lot detail goes in the summary markdown. A supplemental statement whose adjustment never lands in result.json FAILS the tie-out hard gate (the double-tax scenario). Only from DOCUMENTED basis — never inferred. |
   | Form 3922 (ESPP) boxes 3/4/5/8 | `espp_purchase_info` (informational — grant-date FMV / purchase-date FMV / price paid / shares; feeds the §423 disposition split and FUTURE basis math). A 3922 for shares NOT sold this year is a documented informational record, NOT a skip-error — it feeds later-year basis; keep the 3922s in `documents/`. |
   | W-2 box 14 SDI/CASDI (per person, summed across employers) | `sdi_withheld` (→ `california_540.ca_sdi_box14` — feeds the pre-TY2024 excess-SDI credit; TY2024+ has no wage cap but the figure still ties out) |
@@ -396,11 +399,7 @@ Rules:
   On a re-run, carry any existing `crypto-csv` records over verbatim —
   rewriting them back to "pending" would erase `/tax-parse-crypto`'s
   reconciliation trail (and re-block the gate).
-- The builder restricts `parse_ledger.json` as it writes it (it carries dollar
-  figures; already gitignored), through the cross-platform helper and never a
-  bare permission command — on
-  Windows under a POSIX-compatible shell, `chmod` only flips the read-only DOS
-  attribute and leaves the file readable by every other local account.
+- The builder restricts `parse_ledger.json` through cross-platform `secure_fs`; never use bare permission commands. See the [withholding reference](references/withholding.md) for the Windows constraint.
 
 ### 6.7. Second-read verification for high-value records (A3)
 

@@ -26,6 +26,18 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
+### Confirm the 1099-G year/revision, unemployment versus governmental family/medical programs, actual gross receipts, same-year UI repayments and eligible UI contribution reductions. Identify CA EDD PFL separately; unknown or medical benefits need resolution.
+
+*Asked by tax-compute income-and-agi.md; required when governmental UI or family benefits are reported.*
+
+- **[government_benefit_sources]**
+
+### What is the signed Schedule1 income EXCLUDING these unemployment and family benefits, including a deliberate zero? Reconcile refunds, business/K-1 income, losses and other sources; an old aggregate may already contain benefits.
+
+*Asked by tax-compute income-and-agi.md; required when governmental UI or family benefits are reported.*
+
+- **[schedule1_nonbenefit_income]**
+
 ### Confirm the investment-source split for California: direct US-obligation interest, municipal interest by issuer, fund ordinary/exempt dividends, US RIC status and annual asset-test evidence and income percentages. Record an explicit none when absent; an unknown source or qualification is not zero.
 
 *Asked by tax-compute state-return.md; required when this run selects a CA return.*

@@ -7,6 +7,10 @@ AGENTS.md points here; nothing else should duplicate it.
 
 ## Auditing which skills call the engine
 
+`agents/lib/` holds the computation engine: parameterized tax math, the cache,
+engine gates, the `run.sh` launcher and planning modules. Inspect the module
+tree for the roster; it changes, so a list in prose goes stale silently.
+
 The engine is invoked in TWO forms, and any audit of which skills reach it has
 to match both:
 

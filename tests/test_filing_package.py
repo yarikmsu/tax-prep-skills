@@ -448,3 +448,23 @@ def test_a_state_section_with_only_parsed_data_refuses_the_package(
         FP.assembly_order(r)
     with pytest.raises(FP.FilingPackageError, match="no computed"):
         FP.attachment_checklist(r)
+
+
+def test_zero_net_schedule1_still_attaches_and_renders_government_benefit_detail():
+    # UI850 + governmental PFL500 - unrelated Schedule1 loss1350 =0;
+    # a zero aggregate does not erase the income and loss lines to be filed.
+    r=_result(schedule_1_government_benefits={
+        "computed_tax_year":2025,"unemployment_gross":1000,"family_leave_gross":500,
+        "unemployment_repaid":100,"other_income":-1350,"total":0})
+    r["form_1040"]["line_8_schedule1_other"]=0
+    entry=next(e for e in FP.assembly_order(r) if e["sequence"]=="01")
+    assert entry["key"]=="schedule_1_government_benefits"
+    r["schedule_1_government_benefits"]["total"]=500
+    with pytest.raises(FP.FilingPackageError,match="total must equal"):
+        FP.assembly_order(r)
+
+
+def test_inactive_government_scaffold_does_not_conjure_a_schedule1_attachment():
+    r=_result(schedule_1_government_benefits={
+        "computed_tax_year":None,"other_income":None,"total":0})
+    assert not any(e["sequence"]=="01" for e in FP.assembly_order(r))

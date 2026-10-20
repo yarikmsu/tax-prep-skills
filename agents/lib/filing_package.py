@@ -134,17 +134,24 @@ def _derived_schedules(result: dict) -> list:
 
     Each entry is (title, sequence, section_key). section_key is None for the
     reconstructed schedules that have NO same-named result section (Schedule
-    1/2/3/B/SE/8812); Schedule 1-A is the exception — it has a real
-    `schedule_1a` section, so its key is set and the filing package renders
+    1/2/3/B/SE/8812); Schedule 1 with a benefits workpaper and Schedule
+    1-A have real result sections, so their keys are set and the package renders
     the per-provision worksheet detail rather than a bare assembly line."""
     f1040 = result.get("form_1040") or {}
     sch_c = result.get("schedule_c") or {}
+    government = result.get("schedule_1_government_benefits")
+    government_computed = isinstance(government, dict) and type(government.get("computed_tax_year")) is int
+    government_income = government_computed and any(_field_num(government, k, "government benefits") != 0 for k in
+        ("unemployment_gross", "family_leave_gross", "unemployment_repaid"))
+    if government_computed and round(_field_num(government, "total", "government benefits total"), 2) != round(
+            _field_num(f1040, "line_8_schedule1_other", "line_8"), 2):
+        raise FilingPackageError("Government-benefits workpaper total must equal Form1040 line8")
     out = []
     if (_field_num(f1040, "line_8_schedule1_other", "line_8") != 0
             or _field_num(f1040, "line_10_adjustments", "line_10") != 0
-            or _section_present(result, "schedule_c")):
+            or _section_present(result, "schedule_c") or government_income):
         out.append(("Schedule 1 (Additional Income and Adjustments)", "01",
-                    None))
+                    "schedule_1_government_benefits" if government_computed else None))
     # Schedule 1-A (OBBBA tips/overtime/car-loan/senior below-AGI deductions) —
     # gated on the computed line-13b total. The official form prints Attachment
     # Sequence No. "1A"; _seq_sort_key parses it to (1, "A"), which sorts after

@@ -26,6 +26,9 @@ intake-to-output MAPPING instead:
     2a vs line 4b/5b) WARN on mismatch instead of failing; potentially
     taxable informational categories (state refund, personal 1099-K) emit
     loud advisories rather than being silently skipped.
+    Government-benefit gross categories also require their recomputed taxable
+    workpaper and actual Form 1040 line 8 settlement, so merely populating
+    gross target fields cannot hide a dropped benefit.
   Check D (verifiability): ledger income whose result SECTION is absent
     FAILS (the form was never computed); a present section whose comparable
     figures are genuinely unavailable (zero-scaffold Schedule D proceeds
@@ -89,6 +92,9 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_ca_schedule_ca,
 )
 from agents.lib.tax_computations.state.ca import CA_INVESTMENT_COMPONENTS, _ca_input  # noqa: E402
+from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E402
+    BENEFIT_CATEGORIES, compute_government_benefits, validate_government_benefits,
+)
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -176,6 +182,8 @@ _ADVISORY_MISMATCH_CATEGORIES = {"retirement_taxable"}
 # category → (result section, [field names summed on the result side]).
 # The comparison is sum(ledger category) == sum(present mapped fields).
 CATEGORY_TARGETS = {
+    "unemployment_compensation": ("schedule_1_government_benefits", ["unemployment_gross"]),
+    "government_family_leave": ("schedule_1_government_benefits", ["family_leave_gross"]),
     # W-2 box 1 ties to line 1a (the pure "total from Forms W-2, box 1"), NOT
     # line 1z. Line 1z = the sum of lines 1a–1h, which can legitimately EXCEED
     # the W-2 total (line 1h carries non-W-2 earned income — e.g. a J2 ESPP
@@ -558,6 +566,7 @@ class LedgerRecord:
     # payment cannot hide in the informational category.
     other_state_withholding_by_state: "tuple[tuple[str, float], ...]" = ()
     ca_investments: "dict | None" = None
+    government_benefits: "dict | None" = None
 
 
 @dataclass(frozen=True)
@@ -701,6 +710,15 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                                             or retirement_kind not in RETIREMENT_KINDS):
             raise TieOutError(f"{where}.retirement_kind must be a recognized IRA/pension kind")
         other_states = _other_withholding_states(rec, boxes, where)
+        government_benefits = None
+        is_1099g = "1099G" in re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
+        if (skipped is None and (is_1099g or any(k in boxes for k in BENEFIT_CATEGORIES))) or "government_benefits" in rec:
+            try:
+                if skipped is not None:
+                    raise ValueError("a skipped record cannot carry benefit amounts")
+                government_benefits = validate_government_benefits(rec.get("government_benefits"), boxes)
+            except ValueError as exc:
+                raise TieOutError(f"{where}: {exc}") from None
         ca_investments = None
         if "ca_investments" in rec:
             from agents.lib.tax_computations.state.ca import validate_ca_investments
@@ -716,7 +734,8 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
-            other_state_withholding_by_state=other_states, ca_investments=ca_investments))
+            other_state_withholding_by_state=other_states, ca_investments=ca_investments,
+            government_benefits=government_benefits))
     return records
 
 
@@ -1574,6 +1593,88 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
     return errors
 
 
+def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
+    """The additional Schedule1 source-to-income check; legacy no-benefit path stays manual."""
+    records = []
+    for rec in ledger:
+        boxes = dict(rec.key_boxes)
+        related = (rec.government_benefits is not None or any(k in boxes for k in BENEFIT_CATEGORIES)
+                   or "1099G" in re.sub(r"[^a-zA-Z0-9]", "", rec.form_type).upper())
+        if rec.skipped is not None:
+            if rec.government_benefits is not None or any(k in boxes for k in BENEFIT_CATEGORIES):
+                raise ValueError("a skipped benefits record cannot carry amounts or source facts")
+            continue
+        if related:
+            records.append({"key_boxes": boxes, "government_benefits": rec.government_benefits})
+    sheet = result.get("schedule_1_government_benefits")
+    flags = profile.get("flags") or {}
+    if not records and flags.get("has_1099g_benefits") is True:
+        raise ValueError("government benefits were reported at intake but have no source ledger record")
+    scaffold = (isinstance(sheet, dict) and sheet.get("other_income") is None
+                and sheet.get("computed_tax_year") is None
+                and not any(sheet.get(k) for k in ("unemployment_gross", "family_leave_gross", "total")))
+    if not records and (sheet is None or scaffold):
+        return None
+    result_year = (result.get("meta") or {}).get("tax_year")
+    profile_year = profile.get("tax_year")
+    if any(v is not None and type(v) is not int for v in (result_year, profile_year)):
+        raise ValueError("government benefit return years must be integers")
+    if result_year is not None and profile_year is not None and result_year != profile_year:
+        raise ValueError("government benefit return/profile years disagree")
+    year = result_year if result_year is not None else profile_year
+    positive = any(dict(r["key_boxes"]).get(k, 0) for r in records for k in BENEFIT_CATEGORIES)
+    if sheet is None or scaffold:
+        if positive:
+            raise ValueError("record and confirm Schedule1 income EXCLUDING these government benefits, including zero")
+        other = (result.get("form_1040") or {}).get("line_8_schedule1_other")
+        confirmed = False
+    elif isinstance(sheet, dict):
+        other, confirmed = sheet.get("other_income"), sheet.get("other_income_confirmed")
+    else:
+        raise ValueError("schedule_1_government_benefits must be an object or absent")
+    from agents.lib.tax_computations import ny_it203_plan
+    from agents.lib.projection import _ca_section_computed
+    address = profile.get("address") or {}
+    require_ca = (isinstance(address, dict) and isinstance(address.get("state"), str)
+                  and address["state"].strip().upper() == "CA" and not ny_it203_plan(profile))
+    require_ca = require_ca or _ca_section_computed(result)
+    built = compute_government_benefits(tax_year=year, records=records, other_income=other,
+        other_income_confirmed=confirmed, require_ca=require_ca)
+    built["computed_tax_year"] = year
+    return built
+
+
+def government_workpaper_differences(result: dict, built: "dict | None") -> list[str]:
+    notes = (result.get("meta") or {}).get("limitations", [])
+    if not isinstance(notes, list) or any(not isinstance(n, str) for n in notes):
+        if built is not None:
+            raise ValueError("government benefits require meta.limitations to be disclosure strings")
+        return []
+    out = []
+    note = built.get("source_note") if built is not None else None
+    if built is not None:
+        if not ca_values_agree(result.get("schedule_1_government_benefits"), built):
+            out.append("schedule_1_government_benefits")
+        stored = result.get("schedule_1_government_benefits") or {}
+        if type(stored.get("computed_tax_year")) is not int:
+            out.append("schedule_1_government_benefits.computed_tax_year")
+        if not ca_values_agree((result.get("form_1040") or {}).get("line_8_schedule1_other"), built["total"]):
+            out.append("form_1040.line_8_schedule1_other")
+        if note and note not in notes:
+            out.append("meta.limitations (government benefits)")
+    if any(n.startswith("Government benefits:") and n != note for n in notes):
+        out.append("meta.limitations (stale government benefits disclosure)")
+    return out
+
+
+def _government_income_checks(ledger: "list[LedgerRecord]", result: dict, profile) -> list[str]:
+    try:
+        built = derive_government_workpaper(ledger, result, profile or {})
+        return ["Government benefits disagree: " + field for field in government_workpaper_differences(result, built)]
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        return [f"Government benefits: {redact(exc)}"]
+
+
 def ca_values_agree(was, value) -> bool:
     """Cent-precision workpapers, preserving boolean types inside lists too."""
     if isinstance(value, bool):
@@ -1662,10 +1763,14 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
     if state.get("code") != "CA" or type(law_year) is not int or law_year != year:
         raise ValueError("Schedule CA needs the covered-year California law block")
     schedule = state.get("schedule_ca") or {}
+    government = derive_government_workpaper(ledger, result, profile)
     built = compute_ca_schedule_ca(tax_year=year, investment_records=investment_records,
         fund_asset_minimum=schedule.get("fund_asset_minimum"), taxable_social_security=ss,
         taxable_state_refund=refund, other_additions=other_add, other_subtractions=other_sub,
         hsa_deduction_addback=hsa_deduction,
+        taxable_unemployment=government["unemployment_taxable"] if government else 0,
+        taxable_ca_family_leave=government["ca_family_leave_exempt"] if government else 0,
+        ca_family_line_7=government["ca_family_leave_line_7"] if government else 0,
         **{k: adjustments.get(k) for k in ("hsa_employer_addback", "hsa_interest_addback", "hsa_dividend_addback")})
     for key, field in (("ca_has_us_obligation_income", "has_us_obligation_income"),
                        ("ca_has_nonca_muni_interest", "has_nonca_muni_interest")):
@@ -1823,6 +1928,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
+    missing_targets.extend(_government_income_checks(ledger, result, profile))
     missing_targets.extend(_ca_return_checks(
         result, profile, sums.get("state_refund_1099g", 0) > 0, tolerance))
     missing_targets.extend(_ca_schedule_checks(ledger, result, profile, tax_law))

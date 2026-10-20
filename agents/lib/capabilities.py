@@ -107,7 +107,7 @@ RULES: "tuple[Rule, ...]" = (
          "Confirm each filer's eligibility and any required doctor's statement. The checked Form 540 builder computes the eligible credit.", state="CA"),
     Rule("ca_other_schedule_ca", "ca_has_other_schedule_ca_adjustments", UNSUPPORTED,
          "Other California/federal income differences", "Schedule CA (540) Part I",
-         "Unemployment/PFL, section 1202, basis/depreciation, K-1, moving expenses, IRA basis, "
+         "Section 1202, basis/depreciation, K-1, moving expenses, IRA basis, "
          "California lottery, educator expenses and FEIE adjustments are not computed; prepare each applicable line.", state="CA"),
     Rule("ca_state_refund", "has_1099g_state_refund", MANUAL,
          "State refund requiring the federal tax-benefit worksheet", "Schedule 1 line 1 / Schedule CA (540)",

@@ -87,6 +87,15 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
      the federal worksheet's confirmed taxable part, including zero. The builder
      derives both subtractions and the totals; the tie-out checks them even if
      a screening flag says no or a limitation was acknowledged.
+   - The checked government-benefits workpaper derives net UI and eligible
+     governmental PFL subtractions from amounts actually included federally.
+     `unemployment_subtraction` and `paid_family_leave_subtraction` are derived;
+     their source-reviewed routes populate Section B line 7 column B or the
+     Other Income subtraction. Follow `references/government-benefits.md` in
+     the parse skill; unknown CA treatment of non-EDD programs must be resolved.
+     Do not add gross benefits or duplicate these amounts in other subtractions.
+     UI/PFL alone no longer sets `ca_has_other_schedule_ca_adjustments`;
+     re-answer an older flag set only by these now-computed benefits.
    - Enter other acknowledged source worksheets only in `other_additions` and
      `other_subtractions`, with `other_adjustments_confirmed: true`, including
      a worked zero when the other-adjustment screen is yes. Retain the separate

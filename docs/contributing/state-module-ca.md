@@ -21,7 +21,7 @@ Primary sources, read live on 2026-10-19:
 | # | Question | California answer |
 |---|---|---|
 | 1 | Starting point | Federal AGI, Form 540 line 13; Schedule CA subtractions and additions produce line 17. |
-| 2 | Modifications | The builder derives common US-obligation/municipal/fund, Social Security and state-refund adjustments. HSA components and other acknowledged conformity worksheets remain separate inputs; their totals are derived. AA68 gates uncomputed cases. |
+| 2 | Modifications | The builder derives common US-obligation/municipal/fund, Social Security, state-refund and UI/eligible PFL adjustments. HSA components and other acknowledged conformity worksheets remain separate inputs; their totals are derived. AA68 gates uncomputed cases. |
 | 3 | Credits | Personal, blind, senior and dependent exemptions are credits. The line-32 federal-AGI limitation applies separately per eligible head. Other credits are separately worked allowed amounts, subject to their own worksheets and existing gates. |
 | 4 | Local income taxes | No CA local income-tax return is computed or required by this module. |
 | 5 | Surtax | Form 540 line 62 is Behavioral Health Services Tax in TY2025. The existing statutory-fixed `mental_health_surcharge` cache block retains its stable key. |
@@ -141,7 +141,16 @@ Section A line 2, column B. Nonexempt municipal interest and exempt-interest
 dividends go to line 2, column C. Section A line 6 subtracts federally taxable
 Social Security; Section B line 1 subtracts the federally included state refund,
 never either document's gross amount. The existing federal refund tax-benefit
-worksheet remains required. Unemployment/PFL is AA65's separate work.
+worksheet remains required. AA65's source-reviewed government-benefits workpaper
+also subtracts federally included net UI and eligible governmental PFL. Its
+`unemployment_subtraction` and `paid_family_leave_subtraction` feed Section B
+line 7 column B or the Other Income subtraction according to the family's
+reviewed reporting route. CA EDD PFL is exempt; other-government programs need
+an explicit confirmed CA decision. Unknown treatment refuses, and gross
+benefits before federal UI reductions are never subtracted. See
+[the source/revision contract](government-benefits.md). UI/PFL alone no longer
+sets the generic other-adjustment flag; re-answer older flags set only by
+these benefits and remove duplicate amounts from manual other subtractions.
 
 Keep `taxable_interest` inclusive of 1099-INT boxes 1 and 3, and
 `tax_exempt_interest` inclusive of INT box 8 and DIV box 12. Supporting ledger
