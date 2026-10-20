@@ -95,6 +95,9 @@ ANSWERS = f"""# Answers — {CASE}
 Synthetic. Every question this return raises is answered here, so a headless run
 never has to ask one.
 
+- **[ca_state_payments]** No CA estimates, extension, K-1 payments or prior applied credit; sources reconciled.
+- **[ca_overpayment_election]** Deliberate zero; no CA overpayment is elected forward.
+
 - **Estimated tax payments made for {YEAR}:** none. All federal tax was withheld
   by the employer (Form W-2 box 2).
 - **Prior-year ({YEAR - 1}) return:** AGI {PRIOR_YEAR_AGI:,.0f}, total tax
@@ -144,6 +147,9 @@ ZERO_INCOME_ANSWERS = f"""# Answers — zero_income
 
 Synthetic. Every question this return raises is answered here, so a headless run
 never has to ask one.
+
+- **[ca_state_payments]** No CA estimates, extension, K-1 payments or prior applied credit; sources reconciled.
+- **[ca_overpayment_election]** Deliberate zero; no CA overpayment is elected forward.
 
 - **Income:** NONE, for either taxpayer, of any kind. No wages, no interest, no
   dividends, no distributions, no sales, no self-employment, no rents. {YEAR} was
@@ -312,6 +318,7 @@ def taxpayer_profile() -> dict:
     for rule in RULES:
         if rule.state == "CA":
             profile["flags"][rule.flag] = False
+    profile["flags"].update(ca_has_nonw2_payments=False, ca_applies_overpayment_forward=False)
     profile["flags"]["has_capital_gains"] = True
     return profile
 

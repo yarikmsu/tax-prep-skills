@@ -14,6 +14,12 @@ rule visible; the modifying-templates section links here.
 a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
 
 ## The suite
+- CA payments (`test_ca_payments.py`) derives line72 from dated, state/year-tagged
+  source records and opening applied credit, rejects duplicates and malformed
+  records even inside a positive total, and verifies ownership and forward
+  elections. Rollover preserves zero, separates federal/CA credits, resets
+  confirmation after a changed carry and requires allocation review across
+  status changes. Receipt tests invalidate edits to payments and disclosures.
 - Checked Form 540 (`test_ca_540_builder.py`) pins the reviewed-year line map,
   published-table ceiling, exemption and tax floors, signed Schedule P
   adjustments, MFS addback and payment waterfall. CLI tests bind its verdict

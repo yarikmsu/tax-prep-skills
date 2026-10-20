@@ -211,6 +211,7 @@
     "unused_business_credit_carryforward": 0,
     "nol_carryforward": 0,
     "estimated_payments_applied": 0,
+    "ca_estimated_payments_applied": 0,
     "ira_basis": 0,
     "ira_basis_owner": null,
     "ira_basis_by_taxpayer": {},
@@ -224,7 +225,9 @@
   "estimated_payments": {
     "_comment": "Current-year 1040-ES and state estimated payments",
     "federal": [],
-    "state": []
+    "state": [],
+    "ca_verified": null,
+    "_comment_state": "Each state record: payment_id (opaque unique local ID), state (uppercase USPS), tax_year (return credited), date (ISO or explicit null), kind (estimate/extension/k1_estimate), amount (claimable share on this return), person (primary/spouse/joint account). Preserve dates for FTB5805. CA opening applied credit is prior_year.ca_estimated_payments_applied, never duplicated here. ca_verified confirms source reconciliation, credited year and ownership/allocation."
   },
   "foreign_currencies": [],
   "expected_sources": {

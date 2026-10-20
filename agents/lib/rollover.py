@@ -118,6 +118,13 @@ FIELD_MAP: dict[str, dict] = {
         "target_path": "prior_year.estimated_payments_applied",
         "transform": "abs",
     },
+    "ca_prior_overpayment_applied": {
+        "category": "carryforwards",
+        "source_path": "california_540.line_98",
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.ca_estimated_payments_applied",
+        "transform": "ca_applied_payment",
+    },
     # Category 2: Static identity
     "primary_first_name": {
         "category": "identity",
@@ -614,10 +621,78 @@ def _ira_changes(prior: PriorReturn, current: CurrentState) -> list[Change]:
                    action, "Independent Form 8606 line 14 balances; confirm any existing conflict")]
 
 
+def _ca_applied_payment_changes(prior: PriorReturn, current: CurrentState, entry: dict) -> list[Change]:
+    """A dated, jurisdiction-specific payment; never abs() a malformed credit."""
+    def amount(value, where):
+        try:
+            valid = _is_amount(value)
+        except OverflowError:
+            valid = False
+        if not valid or value < 0:
+            raise RolloverError(f"{where} must be a finite nonnegative amount")
+        return float(value)
+
+    raw = _get_path(prior.result, entry["source_path"])
+    elected = _get_path(prior.profile, "flags.ca_applies_overpayment_forward")
+    if elected is not None and not isinstance(elected, bool):
+        raise RolloverError("Archived CA forward-election answer must be a boolean or an absent legacy answer")
+    if raw is None:
+        if elected is True or _get_path(current.profile, entry["target_path"], 0):
+            raise RolloverError("CA applied credit cannot be reconciled because prior Form540 line98 is missing; resolve the source amount")
+        return []
+    raw = amount(raw, "Prior CA Form540 line98")
+    if isinstance(elected, bool) and elected != (raw > 0):
+        raise RolloverError("Prior CA forward-election answer contradicts Form540 line98")
+    result_year = _get_path(current.result, "meta.tax_year")
+    profile_year = current.profile.get("tax_year")
+    for value_year in (result_year, profile_year):
+        if value_year is not None and (type(value_year) is not int or not 2000 <= value_year <= 2099):
+            raise RolloverError("Current CA payment destination must identify a valid tax year")
+    if result_year is not None and profile_year is not None and result_year != profile_year:
+        raise RolloverError("Current result/profile tax years disagree; resolve before carrying a CA payment")
+    target_year = result_year if result_year is not None else profile_year
+    if type(prior.year) is not int or not 2000 <= prior.year <= 2099:
+        raise RolloverError("CA applied payment source must identify a valid tax year")
+    archived_year = _get_path(prior.result, "meta.tax_year")
+    if archived_year is not None and (type(archived_year) is not int or archived_year != prior.year):
+        raise RolloverError("Archived CA payment source tax year disagrees with the selected prior year")
+    if type(target_year) is not int or not 2000 <= target_year <= 2099 or target_year != prior.year + 1:
+        if raw:
+            raise RolloverError("CA line98 applies only to the immediately following tax year")
+        return []
+    limit = _get_path(prior.result, "california_540.line_97")
+    if limit is not None and raw > amount(limit, "Prior CA Form540 line97"):
+        raise RolloverError("Prior CA line98 cannot exceed its verified line97 overpayment")
+    path = entry["target_path"]
+    current_value = _get_path(current.profile, path, 0)
+    current_value = amount(current_value, "Current CA opening applied payment")
+    value = round(raw, 2)
+    old_status = _status_code(_get_path(prior.result, "california_540.ca_filing_status")
+                              or _get_path(prior.result, "meta.filing_status") or prior.profile.get("filing_status"))
+    new_status = _status_code(current.profile.get("filing_status")
+                              or _get_path(current.result, "meta.filing_status"))
+    if value == current_value and (not value or (old_status == new_status and old_status is not None)):
+        return []
+    review = bool(current_value) or old_status is None or new_status is None or old_status != new_status
+    reason = "CA line98 becomes next year's line72 opening credit; reconcile its ownership/allocation before claiming"
+    if old_status != new_status or old_status is None or new_status is None:
+        reason += "; filing status changed or is unknown, so never assume the full joint payment belongs to one filer"
+    return [
+        Change("carryforwards", path, entry["target_file"], value, current_value,
+               "ask" if review else "apply", reason),
+        Change("carryforwards", "estimated_payments.ca_verified", "taxpayer_profile.json", False,
+               _get_path(current.profile, "estimated_payments.ca_verified"), "apply",
+               "A changed CA opening credit invalidates the previous payment reconciliation"),
+    ]
+
+
 def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Change]:
     out: list[Change] = []
     for key, entry in FIELD_MAP.items():
         if entry["category"] != "carryforwards":
+            continue
+        if entry.get("transform") == "ca_applied_payment":
+            out.extend(_ca_applied_payment_changes(prior, current, entry))
             continue
         if entry.get("transform") == "charitable_ledger":
             out.extend(_charitable_changes(prior, current, entry))

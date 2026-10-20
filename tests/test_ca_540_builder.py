@@ -168,7 +168,8 @@ def case():
     ca.update(ca_filing_status="Single", ca_deduction=10000, ca_deduction_method="standard", ca_preference_adjustments=0,
               ca_preference_adjustments_confirmed=True)
     profile = {"tax_year": 2025, "filing_status": "Single", "address": {"state": "CA"},
-        "flags": {"age_65_plus_primary": True, "ca_has_blind_exemption": True},
+        "flags": {"age_65_plus_primary": True, "ca_has_blind_exemption": True,
+                  "ca_has_nonw2_payments": False, "ca_applies_overpayment_forward": False},
         "dependents": [{"relationship": "child"}],
         "ca_exemptions": {"primary_can_be_claimed": False, "primary_blind": True}}
     result = {"meta": {"tax_year": 2025, "filing_status": "Single"},
@@ -367,6 +368,9 @@ def test_write_uses_new_federal_agi_before_validating_ca_settlement(tmp_path):
     # the builder must replace the AGI before validating that election.
     result['form_1040']['line_11_agi'] = 1000000
     result['california_540']['line_98'] = 100
+    profile = json.loads((ws / 'taxpayer_profile.json').read_text())
+    profile['flags']['ca_applies_overpayment_forward'] = True
+    write_secure(ws / 'taxpayer_profile.json', json.dumps(profile))
     write_secure(ws / 'result.json', json.dumps(result))
     assert B._main(["--workspace", str(ws)]) == 0
     written = json.loads((ws / 'result.json').read_text())

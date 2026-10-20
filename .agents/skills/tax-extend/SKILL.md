@@ -67,9 +67,12 @@ Work down this ladder and TELL the user which rung was used:
      line 33 total payments), floored at $0.
    - CA payment for a checked Form 540 (`computed_tax_year` present) is
      `ca_amount_owed` (line 114), which includes the separately worked credits
-     and other settlement components. For a legacy partial return use `ca_total_tax` −
-     (`ca_withholding_box17` + `ca_withholding_1099` +
-     `ca_withholding_592b_593` + CA estimates paid), floored at $0.
+     and other settlement components. Line72 was derived from reviewed
+     `estimated_payments.state` records plus `prior_year.ca_estimated_payments_applied`;
+     do not subtract those payments a second time. Rebuild/check a legacy
+     partial CA return before treating it as a computed balance. If its form
+     year is not reviewed, use the projection/user-estimate rung below and
+     reconcile those payment sources; do not invent a legacy payment total.
    - NY payment (if `new_york_it201` computed) = `line_80_amount_owed`, which
      is already line 60's total taxes less line 76's total payments. **Line 60,
      not line 46** — the New York balance a taxpayer must pay to hold the

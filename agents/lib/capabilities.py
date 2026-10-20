@@ -141,14 +141,6 @@ RULES: "tuple[Rule, ...]" = (
     Rule("ca_other_credit_carryover", "ca_has_other_credit_carryover", UNSUPPORTED,
          "Other CA special-credit carryovers", "Form 540 lines 43-45 / FTB 3540",
          "Existing credit carryovers must be worked separately; omitting them overstates CA tax.", state="CA"),
-    Rule("ca_nonw2_payments", "ca_has_nonw2_payments", UNSUPPORTED,
-         "CA estimated, extension and applied payments", "Form 540 line 72",
-         "Estimates, extension payments, prior overpayments, payments allocated by an estate/trust/S "
-         "corporation are not routed to the return. W-2/1099/W-2G and Forms 592-B/593 withholding "
-         "have separate supported routes and do not trigger this rule.", state="CA"),
-    Rule("ca_overpayment_forward", "ca_applies_overpayment_forward", UNSUPPORTED,
-         "CA overpayment applied to next year", "Form 540 line 98",
-         "The applied overpayment is not recorded; omitting it overstates the cash refund.", state="CA"),
     Rule("ca_use_tax", "ca_owes_use_tax", UNSUPPORTED,
          "CA use tax due", "Form 540 line 91",
          "Use tax is not computed; leaving it zero understates the amount payable.", state="CA"),

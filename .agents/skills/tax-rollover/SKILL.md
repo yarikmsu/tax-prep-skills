@@ -69,6 +69,16 @@ The `foreign_holdings` category carries each prior-year PFIC/§988 fund forward 
 
 If every change in a category has `action_suggested == "skip"`, do not ask — just note it in the summary.
 
+California Form540 line98 carries separately to
+`prior_year.ca_estimated_payments_applied`, never the federal credit field or
+the cash-payment list. It belongs only to the immediately following tax year.
+A worked zero can retire a stale target. A missing affirmative source election
+or malformed amount refuses; resolve it from the archived return. Status or
+target conflicts are `ask`, particularly a joint credit becoming one filer's.
+Changed CA opening credit resets `estimated_payments.ca_verified` to false;
+reconcile the claimable allocation and record **[ca_state_payments]** before
+computing. Never set verification true merely to clear that refusal.
+
 ### 4. Apply selected categories
 
 Run:

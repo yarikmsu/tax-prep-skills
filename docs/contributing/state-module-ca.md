@@ -62,8 +62,60 @@ The builder takes separately worked Schedule CA totals, elected deduction,
 eligible exemption counts, allowed nonrefundable credits, other taxes, use tax,
 ISR penalty and refundable credits. Each input is finite and explicit. It
 derives AGI, taxable income, tax, credit floors, every settlement line and
-stable aliases. AA70's payment/forward-election fields remain gated until its
-implementation; the pure form function can accept already-worked components.
+stable aliases. Line 72 is derived from the profile's reviewed payment records
+and opening applied overpayment; line 98 is the confirmed forward election.
+
+## State payments and the forward election
+
+`estimated_payments.state` is the one dated state-payment list. Each record
+has exactly `payment_id`, `state`, `tax_year`, `date`, `kind`, `amount` and
+`person`. IDs are stable opaque local identifiers, never account numbers.
+State is an uppercase USPS state code; tax year identifies the return credited,
+not the calendar year of the payment. Kind is `estimate`, `extension` or
+`k1_estimate` (only CA estimates allocated on K-1 (541)/(100S), never a PTET
+credit or nonconsenting-nonresident tax). Person identifies the credited account: `primary`, `spouse` or
+`joint`. Amount is the share CLAIMABLE ON THIS RETURN, after any allocation;
+never copy the full joint receipt onto two separate returns. Duplicate IDs,
+nonfinite/negative amounts and malformed records refuse. Old untagged records
+must be re-read, not guessed into a state or year.
+
+Dates are ISO calendar dates. An explicit null date preserves a known payment
+when timing is unavailable (a K-1 allocation can lack installment dates); it
+creates a visible timing disclosure and cannot support a priced FTB 5805.
+Keep dates even though AA76 owns penalty pricing. Payments allocated to a
+different state or tax year remain in the list and receive an advisory; they
+never pay this return. A spouse's separate-account payment is not claimable on
+a nonjoint return. Joint-account payments on a separate return require the
+FTB allocation described in the line-72 instructions; individual-account
+payments combined onto a joint return need the required explanation.
+
+`flags.ca_has_nonw2_payments` is an explicit screen for current-year CA line-72
+payments, opening applied credit included. A yes, positive source records or
+an opening credit requires `estimated_payments.ca_verified: true`: the filer
+has reconciled the claimable amounts, tax-year allocation and ownership with
+source confirmations/MyFTB. A no must agree with the source amounts. Neither
+an unknown flag nor an unverified payment is zero.
+
+`prior_year.ca_estimated_payments_applied` carries the prior Form 540 line 98
+and is added once, outside the payment list. It is distinct from the federal
+applied credit and from new cash payments. Line 72 sums only current-year CA
+estimates, extension payments, K-1 allocations and this opening credit.
+`ca_payment_summary` records that derivation; original dated records stay in
+the profile and are covered by the validation receipt. Schedule A's separate
+cash-year deduction question remains authoritative for federal deductions;
+line 72 is not automatically a Schedule A deduction.
+
+`california_540.line_98` remains the single election amount. The explicit
+`ca_applies_overpayment_forward` answer must agree with it; the form function
+refuses an election above line 97. Record a deliberate zero and disclose the
+binding nature of the election before filing. Rollover carries line 98 to the
+CA opening-credit field only for the immediately following year, preserving
+worked zero and refusing malformed/negative source amounts. A changed carried
+amount resets `ca_verified` so a previous confirmation cannot authorize a new
+credit; status changes involving a joint source require allocation review.
+An affirmative archived election with a missing amount refuses rather than
+silently skipping the credit. Source: TY2025 Form 540 instructions, lines 72,
+98 and 99, linked above. No new tax-law rate or threshold is introduced.
 
 Line 18 is the larger of itemized and standard deductions, so an itemized
 amount below the standard deduction refuses except for a separate filer

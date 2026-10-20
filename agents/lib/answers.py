@@ -165,12 +165,16 @@ def _capital_loss_split_unknown(inputs: _Inputs) -> bool:
     return bool(combined) and not split
 
 
-def _ca_amt_credit_needed(inputs: _Inputs) -> bool:
+def _ca_return_needed(inputs: _Inputs) -> bool:
     from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
     address = inputs.profile.get("address")
     address = address if isinstance(address, dict) else {}
     return (isinstance(address.get("state"), str) and address["state"].strip().upper() == "CA"
-            and not ny_it203_plan(inputs.profile)
+            and not ny_it203_plan(inputs.profile))
+
+
+def _ca_amt_credit_needed(inputs: _Inputs) -> bool:
+    return (_ca_return_needed(inputs)
             and (inputs.flags.get("ca_has_amt_credit") is True
                  or _amount(inputs.prior_year.get("ca_amt_credit_carryforward")) > 0))
 
@@ -211,6 +215,22 @@ def _crypto_disposals_lack_basis(inputs: _Inputs) -> bool:
 
 # Every registered question, with the condition that makes a workspace owe it.
 REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
+    RequiredAnswer(
+        id="ca_state_payments", kind=FACT,
+        question="What CA estimates, extension payments, K-1 allocations and prior applied "
+                 "overpayment are credited to this tax year? Confirm their dates, account ownership "
+                 "and claimable shares from source records, including an explicit none; identify "
+                 "the opening applied credit separately from new payments.",
+        asked_by="tax-compute state-return.md", required_when="this run selects a CA return",
+        when=_ca_return_needed,
+    ),
+    RequiredAnswer(
+        id="ca_overpayment_election", kind=FACT,
+        question="How much of California line97 should be applied to next year's estimates? "
+                 "This is a binding election; confirm the amount, including a deliberate zero.",
+        asked_by="tax-compute state-return.md", required_when="this run selects a CA return",
+        when=_ca_return_needed,
+    ),
     RequiredAnswer(
         id="ca_amt_credit_worksheet",
         kind=FACT,

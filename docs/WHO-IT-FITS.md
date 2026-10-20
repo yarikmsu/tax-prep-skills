@@ -142,9 +142,13 @@ prepared elsewhere; acknowledgement does not compute the line:
 - PTET credits/carryovers (`ca_ptet_credit`), the AMT credit (`ca_amt_credit`),
   and other credit carryovers (`ca_other_credit_carryover`). An acknowledged
   AMT-credit case still needs a worked FTB 3510 and a preserved carryforward.
-- Estimated, extension and applied CA payments (`ca_nonw2_payments`), an overpayment applied
-  forward (`ca_overpayment_forward`), use tax (`ca_use_tax`), and a coverage
-  penalty (`ca_coverage_penalty`).
+- Use tax (`ca_use_tax`) and a coverage penalty (`ca_coverage_penalty`).
+
+CA estimates, extension payments, K-1 allocations and prior applied credits
+now reach line 72 from reviewed source records. The checked builder also
+records a binding line-98 election and rollover preserves it for next year.
+Unverified ownership, an unanswered election or conflicting payment data
+still stops the build; no acknowledgement substitutes for those facts.
 
 The TY2023 Historic Table 2 provides these additional measurements. They
 overlap one another and the common blocks, so do not add the shares:

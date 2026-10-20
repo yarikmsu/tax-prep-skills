@@ -511,6 +511,12 @@
     "computed_tax_year": null,
     "ca_deduction": null,
     "ca_lump_sum_tax": 0,
+    "ca_payment_summary": {
+      "estimates": 0, "extension": 0, "k1_allocations": 0,
+      "prior_applied": 0, "total": 0, "payment_count": 0,
+      "unknown_date_count": 0, "external_record_count": 0
+    },
+    "ca_payment_note": null,
     "ca_deduction_method": null,
     "ca_preference_adjustments": null,
     "ca_preference_adjustments_confirmed": false,

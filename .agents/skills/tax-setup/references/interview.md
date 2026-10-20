@@ -543,8 +543,27 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
 - For each CA entity in `flags.k1_states`, did it elect PTET and report a credit? Also ask about unused FTB 3804-CR carryovers even without a current CA K-1/election → `ca_has_ptet_credit` if either applies. The credit is not a payment.
 - A CA AMT credit from an earlier return, including one prepared elsewhere? → `ca_has_amt_credit`. A nonzero `prior_year.ca_amt_credit_carryforward` sets the situation at the gate even if this answer is false. If acknowledged, work FTB 3510 and record its available and allowable amounts; preserve the remainder for rollover.
 - Any other unused California credit carryover? → `ca_has_other_credit_carryover`.
-- Any CA estimated or extension payment, prior overpayment applied to this year, payment allocated by an estate/trust/S corporation on K-1? → `ca_has_nonw2_payments`. W-2/1099/W-2G and Forms 592-B/593 withholding have supported parse routes and do not trigger this flag; ask for those statements separately. Re-answer an older true flag if withholding alone set it.
+- Any CA estimated or extension payment, prior overpayment applied to this year, or estate/trust/S corporation K-1 allocation claimable on this return? → `ca_has_nonw2_payments`. W-2/1099/W-2G and Forms 592-B/593 withholding have supported parse routes and do not trigger this flag; ask for those statements separately. Re-answer an older true flag if withholding alone set it.
+  Reconcile positive payments with confirmations/MyFTB and record the claimable
+  shares in `estimated_payments.state`: one stable opaque `payment_id`, uppercase
+  `state`, credited `tax_year`, ISO `date` (or explicit null if unknown), `kind`
+  (`estimate`, `extension`, `k1_estimate`), finite nonnegative `amount`, and
+  `person` (`primary`, `spouse`, `joint` account). A payment made in the next
+  calendar year can still credit this tax year. Keep other-year/state records
+  distinct; never infer jurisdiction from the mailing address. Store opening
+  CA applied credit only in `prior_year.ca_estimated_payments_applied`, not in
+  this list. Confirm allocations when filing status/account ownership changed,
+  including FTB notification or the required joint-return explanation. Set
+  `estimated_payments.ca_verified: true` only after reviewing the claimable
+  amount and destination of each source. An explicit no must agree with zero
+  CA records and zero opening credit. Document **[ca_state_payments]**.
 - Will any California overpayment be applied to next year? → `ca_applies_overpayment_forward`.
+  Record the amount in `california_540.line_98`, including a deliberate zero,
+  and document **[ca_overpayment_election]**. The amount cannot exceed line97;
+  explain the binding election before filing. The builder checks the answer
+  against the amount and rollover carries it separately from the federal credit.
+  The former payment/forward capability blocks are retired; remove obsolete
+  acknowledgements for them after migrating and confirming these inputs.
 - Any California use tax due on untaxed purchases? Work the covered-year use-tax instructions to determine the answer → `ca_owes_use_tax`.
 - Any health-coverage penalty after working FTB 3853's coverage and exemption rules? → `ca_has_coverage_penalty`.
 - Rent paid for a California residence? → `ca_paid_rent`; check the year's renter's-credit worksheet.
