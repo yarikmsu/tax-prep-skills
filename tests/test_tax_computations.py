@@ -4556,7 +4556,7 @@ class TestCaSchedulePAMT:
         r = compute_ca_schedule_p(
             ca_taxable_income=400000, ca_regular_tax=line_31,
             filing_status="MFJ", exemption=123667, phaseout_start=463745,
-            iso_bargain_element=250000)
+            iso_bargain_element=250000, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_exemption_allowed"] == 77103.25
         assert r["ca_tmt"] == 40102.77
         assert r["ca_amt"] == 10102.77
@@ -4571,7 +4571,7 @@ class TestCaSchedulePAMT:
         r = compute_ca_schedule_p(
             ca_taxable_income=300000, ca_regular_tax=25000,
             filing_status="Single", exemption=92749, phaseout_start=347808,
-            iso_bargain_element=200000)
+            iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_amti"] == 500000.0
         assert r["ca_exemption_allowed"] == 54701.0
         assert r["ca_tmt"] == 31170.93
@@ -4585,7 +4585,7 @@ class TestCaSchedulePAMT:
         r = compute_ca_schedule_p(
             ca_taxable_income=300000, ca_regular_tax=25000,
             filing_status="Single", exemption=92749, phaseout_start=347808,
-            iso_bargain_element=0)
+            iso_bargain_element=0, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_amt"] == 0.0
         assert r["schedule_p_carryforward"] == 0.0
 
@@ -4596,7 +4596,7 @@ class TestCaSchedulePAMT:
         r = compute_ca_schedule_p(
             ca_taxable_income=600000, ca_regular_tax=40000,
             filing_status="Single", exemption=92749, phaseout_start=347808,
-            iso_bargain_element=200000)
+            iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_exemption_allowed"] == 0.0
         assert r["ca_tmt"] == 56000.0
         assert r["ca_amt"] == 16000.0
@@ -4605,7 +4605,7 @@ class TestCaSchedulePAMT:
         r = compute_ca_schedule_p(
             ca_taxable_income=400000, ca_regular_tax=30000,
             filing_status="MFJ", exemption=123667, phaseout_start=463745,
-            iso_bargain_element=200000)
+            iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
         # AMTI 600,000; exemption 123,667 − 0.25×(600,000−463,745)=123,667−34,063.75
         # = 89,603.25; TMT 0.07×(600,000−89,603.25)=0.07×510,396.75=35,727.77;
         # CA AMT 35,727.77 − 30,000 = 5,727.77
@@ -4626,7 +4626,7 @@ class TestCaSchedulePAMT:
         r = compute_ca_schedule_p(
             ca_taxable_income=300000, ca_regular_tax=15000,
             filing_status="Single", exemption=92749, phaseout_start=347808,
-            ca_preference_adjustments=50000, iso_bargain_element=200000)
+            ca_preference_adjustments=50000, iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_amt"] == 20545.93
         assert r["schedule_p_carryforward"] == 17500.00
         assert r["ca_amt"] > r["schedule_p_carryforward"]  # exclusion part not in cf
@@ -4634,12 +4634,12 @@ class TestCaSchedulePAMT:
     def test_unfetched_exemption_hard_errors(self):
         with pytest.raises(ValueError, match="unfetched"):
             compute_ca_schedule_p(
-                300000, 25000, "Single", None, 347808, iso_bargain_element=200000)
+                300000, 25000, "Single", None, 347808, iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
 
     def test_unfetched_phaseout_start_hard_errors(self):
         with pytest.raises(ValueError, match="unfetched"):
             compute_ca_schedule_p(
-                300000, 25000, "Single", 92749, None, iso_bargain_element=200000)
+                300000, 25000, "Single", 92749, None, iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
 
     def test_negative_ca_taxable_income_accepted(self):
         """Deductions exceeding CA AGI → negative line 19; AMTI still adds the
@@ -4647,18 +4647,18 @@ class TestCaSchedulePAMT:
         phase-out); TMT 0.07×(145,000−123,667) = 1,493.31; regular 0 → AMT."""
         r = compute_ca_schedule_p(
             ca_taxable_income=-5000, ca_regular_tax=0, filing_status="MFJ",
-            exemption=123667, phaseout_start=463745, iso_bargain_element=150000)
+            exemption=123667, phaseout_start=463745, iso_bargain_element=150000, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_amt"] == 1493.31
 
     def test_nan_rate_rejected(self):
         with pytest.raises(ValueError):
             compute_ca_schedule_p(
                 300000, 25000, "Single", 92749, 347808,
-                iso_bargain_element=200000, tmt_rate=float("nan"))
+                iso_bargain_element=200000, tmt_rate=float("nan"), phaseout_rate=.25)
 
     def test_iso_bargain_echoed(self):
         r = compute_ca_schedule_p(
-            300000, 25000, "Single", 92749, 347808, iso_bargain_element=200000)
+            300000, 25000, "Single", 92749, 347808, iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
         assert r["iso_bargain_element"] == 200000.0
 
     def test_breakdown_reconciles(self):
@@ -4668,7 +4668,7 @@ class TestCaSchedulePAMT:
         r = compute_ca_schedule_p(
             ca_taxable_income=321433, ca_regular_tax=18761.07,
             filing_status="Single", exemption=92749, phaseout_start=347808,
-            iso_bargain_element=133337)
+            iso_bargain_element=133337, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_amt"] == round(r["ca_tmt"] - r["ca_regular_tax"], 2)
 
 
@@ -4682,7 +4682,7 @@ class TestCaSchedulePMfsRecapture:
         r = compute_ca_schedule_p(
             ca_taxable_income=300000, ca_regular_tax=10000,
             filing_status="MFS", exemption=61830, phaseout_start=231868,
-            iso_bargain_element=200000)
+            iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
         assert r["ca_exemption_allowed"] == 0.0  # fully phased out (modeled)
         assert r["ca_amti"] == 505203
         assert r["ca_amt"] == 25364.21
@@ -4691,7 +4691,7 @@ class TestCaSchedulePMfsRecapture:
         r = compute_ca_schedule_p(
             ca_taxable_income=150000, ca_regular_tax=5000,
             filing_status="MFS", exemption=58111, phaseout_start=217924,
-            iso_bargain_element=50000)
+            iso_bargain_element=50000, tmt_rate=.07, phaseout_rate=.25)
         assert not any("recapture" in n for n in r["notes"])
 
 

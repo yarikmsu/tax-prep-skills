@@ -157,10 +157,17 @@ a figure from a prior year.
   `"California Schedule P 540 {year} AMT exemption amount phase-out"` → populate
   `state.amt.exemption` and `state.amt.phaseout_start` (both keyed
   `single`/`mfj`/`mfs`/`hoh`, indexed annually — FTB publishes them in the
-  Schedule P instructions). Record the URL under `_sources` (K2). The 7% TMT
-  rate and 25% phase-out are statutory and coded in `compute_ca_schedule_p`;
-  only these indexed figures are fetched. Unfetched HARD-ERRORS at compute for a
+  Schedule P instructions). Record the URL under `_sources` (K2). Also fetch `state.amt.tmt_rate` and
+  `state.amt.phaseout_rate` from that covered-year form; unindexed rates are
+  not an exception to fetching. Unfetched HARD-ERRORS at compute for a
   CA return (never a guessed exemption that would zero the CA AMT).
+- For CA owner PTET credit/carryovers, fetch `state.ptet_credit.carryforward_years` and `.first_tax_year`
+  from the covered-year FTB3804-CR instructions and source-pin it to CA. The first
+  year includes eligible predecessor-regime carryovers; a successor statute
+  does not restart the vintage clock. Read
+  current FTB SB132 guidance for years from2026: the successor is R&TC17052.11,
+  with a June-payment shortfall reduction; never apply the2025 sunset to2026.
+  A new year still requires review of Form540 before enabling its builder.
 - **For every CA return:** fetch Form 540 line 32's AGI Limitation Worksheet
   into `state.exemption_phaseout`: `threshold` and `band` keyed by all five
   statuses (`single`/`mfj`/`mfs`/`hoh`/`qss`), and `reduction_per_step`.

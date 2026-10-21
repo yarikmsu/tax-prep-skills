@@ -247,3 +247,13 @@ a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
   required from intake or raw/allowed/disallowed workpaper evidence; overtime
   alone does not require a tip occupation answer. The existing occupation,
   Form4137, SE-income-cap and QBI-source limits remain explicit.
+
+
+- **California owner credits (AA72, `test_ca_owner_credits.py`):** hand-worked
+  FTB3510 PartII uses exemptions and earlier A credits before TMT, while
+  FTB3804-CR code242 follows OSTC and can use regular tax below TMT. K-1 full
+  credit dollars reconcile independently of the limited claim, and PTET
+  vintages retain oldest-first usage, expiry and origin years through rollover.
+  Old entered AMT allowable amounts cannot influence a rebuilt return. Missing
+  eligibility/source facts and unfetched AMT rates/carry period refuse. The
+  independent tie-out and checked builder both verify the workpapers and lines.

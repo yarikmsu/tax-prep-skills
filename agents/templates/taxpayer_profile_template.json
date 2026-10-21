@@ -244,9 +244,18 @@
     "ira_basis_unresolved": null,
     "amt_credit_carryforward": 0,
     "ca_amt_credit_carryforward": 0,
+    "ca_ptet_credit_carryovers": [],
     "_comment_amt_credit": "Form 8801 minimum tax credit from prior-year deferral-item AMT (ISO exercises). Rolled forward by /tax-rollover from prior result.json form_6251.form_8801_carryforward_to_next_year; consumed via compute_form_8801_credit (Schedule 3 line 6b).",
     "_comment_ca_amt_credit": "CA Schedule P (540) AMT credit from prior-year deferral-item CA AMT (ISO exercises). A SEPARATE carryforward from the federal one (CA exemption/TMT differ). Rolled forward by /tax-rollover from prior result.json california_540.schedule_p.carryforward_to_next_year.",
     "_comment_ira_basis": "Individual Form 8606 line 14 balances belong in ira_basis_by_taxpayer (primary/spouse). A legacy scalar maps to primary on an individual return; MFJ requires confirmed ira_basis_owner. Conflicting scalar/map or ira_basis_unresolved blocks. Never pool spouses; see docs/contributing/individual-ira-basis.md."
+  },
+  "ca_credits": {
+    "amt_opening_confirmed": false,
+    "other_credits": null,
+    "ptet_eligibility_confirmed": false,
+    "ptet_owner_type": null,
+    "ptet_current": [],
+    "_comment": "TY2025 direct individual owner credits. Reconcile qualified opening AMT balance to prior return. other_credits is an explicit list of {code,amount} already allowed by separate worksheets; 188/242 are derived. PTET current rows are {credit_id,source_id,amount} from K-1 credit statements, allocated to this return before the tax limit. Prior PTET lots preserve {credit_id,origin_year,amount}. See state-module-ca.md."
   },
   "estimated_payments": {
     "_comment": "Current-year 1040-ES and state estimated payments",

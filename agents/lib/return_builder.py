@@ -1431,6 +1431,69 @@ def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: st
     return paper, note
 
 
+def ca_credit_inputs(profile: dict, ledger, state: dict, tax_year: int | None) -> dict | None:
+    """Bind owner-credit facts to their prior-return and current K-1 sources."""
+    from agents.lib.tax_computations.state.ca_credits import validate_ca_ptet_carryovers
+    from agents.lib.tax_computations.state.ca import _ca_input
+    flags = profile.get("flags") or {}
+    prior = profile.get("prior_year") or {}
+    opening = _ca_input(prior.get("ca_amt_credit_carryforward", 0), "qualified opening CA AMT credit")
+    raw_carry = prior.get("ca_ptet_credit_carryovers", [])
+    if not isinstance(raw_carry, list):
+        raise ValueError("CA PTET carryovers must be a vintage list")
+    facts = profile.get("ca_credits", {})
+    if not isinstance(facts, dict):
+        raise ValueError("ca_credits must be an object")
+    current = facts.get("ptet_current", [])
+    reported = category_sums(ledger).get("ca_ptet_credit", 0)
+    active = (opening > 0 or bool(raw_carry) or bool(current) or reported > 0
+              or isinstance(facts.get("other_credits"), list)
+              or flags.get("ca_has_amt_credit") is True or flags.get("ca_has_ptet_credit") is True)
+    if not active:
+        return None
+    if type(tax_year) is not int:
+        raise ValueError("record the return tax year before computing CA owner credits")
+    carry = validate_ca_ptet_carryovers(raw_carry, tax_year)
+    for flag in ("ca_has_amt_credit", "ca_has_ptet_credit"):
+        if type(flags.get(flag)) is not bool:
+            raise ValueError(f"answer {flag} before computing CA credits")
+    if (opening > 0 or flags.get("ca_has_amt_credit")) and facts.get("amt_opening_confirmed") is not True:
+        raise ValueError("reconcile and confirm the qualified FTB3510 opening balance, including a worked zero")
+    if "other_credits" not in facts:
+        raise ValueError("list ca_credits.other_credits, including an explicit empty list")
+    if current or carry or reported or flags.get("ca_has_ptet_credit"):
+        if facts.get("ptet_eligibility_confirmed") is not True:
+            raise ValueError("confirm CA PTET election/payment eligibility and owner/spouse allocation")
+        if facts.get("ptet_owner_type") != "direct_individual":
+            raise ValueError("FTB3804-CR: disregarded SMLLC owners need a separate reviewed tax-difference limit; direct individual ownership must be confirmed")
+    if not isinstance(current, list):
+        raise ValueError("ca_credits.ptet_current must be a list")
+    sources: dict[str, float] = {}
+    for row in current:
+        if not isinstance(row, dict) or not isinstance(row.get("source_id"), str):
+            raise ValueError("CA PTET current credits require a ledger source_id")
+        amount = _ca_input(row.get("amount"), "reported owner PTET credit")
+        sources[row["source_id"]] = round(sources.get(row["source_id"], 0) + amount, 2)
+    expected = {r.doc_id: round(dict(r.key_boxes)["ca_ptet_credit"], 2)
+                for r in ledger if "ca_ptet_credit" in dict(r.key_boxes)}
+    if sources != expected:
+        raise ValueError("CA PTET reported owner credits must reconcile by source_id to every K-1 ledger credit")
+    block = state.get("ptet_credit")
+    years = block.get("carryforward_years") if isinstance(block, dict) else None
+    first = block.get("first_tax_year") if isinstance(block, dict) else None
+    # The period is only needed for PTET, not an AMT-credit-only return.
+    if current or carry or reported or flags.get("ca_has_ptet_credit"):
+        if type(years) is not int or not 0 < years <= 100:
+            raise ValueError("fetch state.ptet_credit.carryforward_years before computing owner credits")
+        if type(first) is not int or not 2000 <= first <= tax_year:
+            raise ValueError("fetch state.ptet_credit.first_tax_year before computing owner credits")
+    else:
+        years = first = None
+    return {"opening_amt_credit": opening, "other_credits": facts["other_credits"],
+            "ptet_current": current, "ptet_carryovers": carry, "ptet_carryforward_years": years,
+            "ptet_first_tax_year": first}
+
+
 def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict:
     """The CA half of the receipted check, independently of federal scope."""
     from agents.lib.capabilities import _profile_state
@@ -1510,6 +1573,14 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         payments, payment_note = _ca_payments(profile, _tax_year(result, profile), fs)
         components["line_72"] = payments["total"]
         components["line_113"] = 0  # derived after the provisional tax build
+        credit_inputs = ca_credit_inputs(profile, ledger, state, _tax_year(result, profile))
+        if credit_inputs is None:
+            if isinstance(ca.get("credit_workpaper"), dict):
+                raise ValueError("reconcile the previous owner-credit workpaper; supply an explicit other_credits list before clearing derived claims")
+            old = ca.get("schedule_p") or {}
+            if any(old.get(k) not in (None, 0) for k in ("ftb3510_credit_available", "ftb3510_credit_allowable")):
+                if (profile.get("ca_credits") or {}).get("amt_opening_confirmed") is not True:
+                    raise ValueError("reconcile the old entered FTB3510 amount to the qualified opening balance before removing it")
         forward = flags.get("ca_applies_overpayment_forward")
         amount = _num(components["line_98"], "CA line98 forward election")
         # Form 540 stores this component to cents; rebuilding must ask the
@@ -1524,33 +1595,37 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
             personal_count=personal, blind_count=blind, senior_count=senior, dependent_count=count,
             ca_preference_adjustments=_num(ca.get("ca_preference_adjustments"), "CA Schedule P adjustments"),
             lump_sum_tax=_num(ca.get("ca_lump_sum_tax"), "CA Schedule G-1 tax in line 34"),
-            iso_bargain_element=_num((ca.get("schedule_p") or {}).get("iso_bargain_element"), "CA ISO spread"), components=components)
+            iso_bargain_element=_num((ca.get("schedule_p") or {}).get("iso_bargain_element"), "CA ISO spread"),
+            components=components, credits=credit_inputs)
         built["ca_lump_sum_tax"] = ca.get("ca_lump_sum_tax")
         paper, penalty_note = derive_ca_5805(built, profile, state, _tax_year(result, profile), fs)
         from agents.lib.tax_computations.state.ca import settle_ca_5805
         built.update(settle_ca_5805(built, paper), ftb_5805=paper, line_113_note=penalty_note)
         p = {**(ca.get("schedule_p") or {}), **built["schedule_p"]}
         generated = p["schedule_p_carryforward"]
-        prior = _num((profile.get("prior_year") or {}).get("ca_amt_credit_carryforward", 0), "prior CA AMT credit")
+        prior = round(_num((profile.get("prior_year") or {}).get("ca_amt_credit_carryforward", 0), "prior CA AMT credit"), 2)
         if prior < 0:
             raise ValueError("prior CA AMT credit cannot be negative")
-        opening = flags.get("ca_has_amt_credit") or prior
-        supplied_credit = any(p.get(key) not in (None, 0) for key in
-                              ("ftb3510_credit_available", "ftb3510_credit_allowable"))
-        if supplied_credit and not opening:
-            raise ValueError("resolve ca_has_amt_credit before dropping a supplied FTB 3510 amount")
-        if opening:
-            available = _num(p.get("ftb3510_credit_available"), "FTB 3510 credit available")
-            allowable = _num(p.get("ftb3510_credit_allowable"), "FTB 3510 credit allowable")
-            if p.get("ftb3510_worksheet_confirmed") is not True or not 0 <= allowable <= available:
-                raise ValueError("confirm the worked FTB 3510 available and allowable credit")
-            if p["ca_amt"] > 0 and allowable > 0:
-                raise ValueError("a current CA AMT liability permits no prior-year AMT credit")
-        else:
-            available = allowable = 0
+        # These aliases replace the old entered worksheet fields. A stale
+        # result never supplies the opening or allowable amount to the math.
+        available = prior
+        allowable = built["schedule_p"].get("ftb3510_credit_allowable", 0)
         p.update(iso_credit_generated=generated,
+                 ftb3510_credit_available=available, ftb3510_credit_allowable=allowable,
+                 ftb3510_worksheet_confirmed=True,
                  carryforward_to_next_year=round(available - allowable + generated, 2))
+        credit_note = None
+        if credit_inputs is not None or generated > 0:
+            credit_note = ("CA owner credits: FTB3510 PartII uses the reconciled qualified opening balance; "
+                "prior-return exclusion refigures and non-ISO deferrals require reviewed worksheets. "
+                "Current deferral-credit attribution is ISO-only. FTB3804-CR covers reviewed reported "
+                "credits of direct individual owners; disregarded SMLLC tax-difference limits need separate support.")
+            ptet = built.get("ftb_3804_cr") or {}
+            if ptet.get("expired_before_this_year") or any(r["expires_after_this_year"] and r["unused"]
+                                                          for r in ptet.get("vintages", [])):
+                credit_note += " PTET vintages expire before or after this return year; review the explicit expiry workpaper."
         built.update(schedule_p=p, schedule_ca_adjustments=adjustments,
+            ca_credit_note=credit_note,
             ca_withholding_box17=sums.get("state_withholding_ca", 0),
             ca_payment_summary=payments, ca_payment_note=payment_note,
             ca_withholding_1099=sums.get("ca_1099_withholding", 0),
@@ -1590,6 +1665,10 @@ def california_differences(result: dict, derived: dict) -> list[str]:
         fields.append("meta.limitations (stale Form 540 line 113 disclosure)")
     if derived.get("ca_payment_note") and derived["ca_payment_note"] not in notes:
         fields.append("meta.limitations (CA payments)")
+    if derived.get("ca_credit_note") and derived["ca_credit_note"] not in notes:
+        fields.append("meta.limitations (CA owner credits)")
+    if derived and any(n.startswith("CA owner credits:") and n != derived.get("ca_credit_note") for n in notes):
+        fields.append("meta.limitations (stale CA credit disclosure)")
     if derived and any(n.startswith("CA payments:") and n != derived.get("ca_payment_note") for n in notes):
         fields.append("meta.limitations (stale CA payment disclosure)")
     source_note = (derived.get("schedule_ca_adjustments") or {}).get("source_note")
@@ -1650,10 +1729,12 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
         if summary:
             updated["balance_due_summary"] = {**result["balance_due_summary"], **summary}
         meta = dict(result.get("meta") or {})
-        notes = [n for n in meta.get("limitations", []) if not n.startswith(("Form 540 line 113:", "CA payments:", "CA investment worksheets:"))]
+        notes = [n for n in meta.get("limitations", []) if not n.startswith(("Form 540 line 113:", "CA payments:", "CA investment worksheets:", "CA owner credits:"))]
         notes.append(california["line_113_note"])
         if california.get("ca_payment_note"):
             notes.append(california["ca_payment_note"])
+        if california.get("ca_credit_note"):
+            notes.append(california["ca_credit_note"])
         if california["schedule_ca_adjustments"].get("source_note"):
             notes.append(california["schedule_ca_adjustments"]["source_note"])
         updated["meta"] = {**meta, "limitations": notes}

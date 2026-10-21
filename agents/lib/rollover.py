@@ -88,15 +88,21 @@ FIELD_MAP: dict[str, dict] = {
     },
     "ca_amt_credit_carryforward": {
         "category": "carryforwards",
-        # CA Schedule P (540) analogue of the federal Form 8801 carryforward
-        # (N1): this year's deferral-attributable CA AMT
-        # (compute_ca_schedule_p schedule_p_carryforward) PLUS any unused prior
-        # CA credit. A separate carryforward from the federal one — the CA
-        # exemption and TMT differ, so the CA deferral AMT is its own figure.
+        # The checked builder writes the AGGREGATE: qualified opening credit
+        # less FTB3510's credit ALLOWABLE, plus current ISO deferral AMT.
+        # compute_ca_schedule_p alone supplies only the NEW deferral amount.
+        # Never add the prior credit again during rollover.
         "source_path": "california_540.schedule_p.carryforward_to_next_year",
         "target_file": "taxpayer_profile.json",
         "target_path": "prior_year.ca_amt_credit_carryforward",
         "transform": "abs",
+    },
+    "ca_ptet_credit_carryovers": {
+        "category": "carryforwards",
+        "source_path": "california_540.ftb_3804_cr.carryovers_to_next_year",
+        "target_file": "taxpayer_profile.json",
+        "target_path": "prior_year.ca_ptet_credit_carryovers",
+        "transform": "ca_ptet_vintages",
     },
     "prior_overpayment_applied": {
         "category": "carryforwards",
@@ -710,12 +716,18 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         if entry.get("transform") == "capital_loss_split":
             out.extend(_capital_loss_changes(prior, current.profile, raw))
             continue
+        if entry.get("transform") == "ca_ptet_vintages":
+            from agents.lib.tax_computations.state.ca_credits import validate_ca_ptet_carryovers
+            try:
+                raw = validate_ca_ptet_carryovers(raw, prior.year + 1)
+            except ValueError as exc:
+                raise RolloverError(str(exc)) from None
         transform = TRANSFORMS.get(entry.get("transform"))
         prior_value = transform(raw) if transform else raw
-        if not prior_value:  # zero or empty → no diff entry
-            continue
         target_doc = current.profile if entry["target_file"] == "taxpayer_profile.json" else current.result
         current_value = _get_path(target_doc, entry["target_path"], default=0)
+        if not prior_value and not (entry.get("transform") == "ca_ptet_vintages" and current_value):
+            continue
         if current_value and current_value != prior_value:
             action = "ask"
             reason = f"Current value ({current_value}) differs from prior ({prior_value})"

@@ -197,8 +197,8 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     keyed by status (map MFS→`mfs`, QSS→`mfj`) — unfetched HARD-ERRORS (never a
     guessed exemption). Pass `iso_bargain_element` (same CA-conforming spread as
     federal — CA conforms to the ISO adjustment) and any other CA Schedule P
-    preference/adjustment items via `ca_preference_adjustments`. The 7% TMT rate
-    and 25% phase-out are statutory (in the function). **`ca_amt` is ADDED to
+    preference/adjustment items via `ca_preference_adjustments`. Pass `tmt_rate=state.amt.tmt_rate` and
+    `phaseout_rate=state.amt.phaseout_rate`, fetched for the covered year. **`ca_amt` is ADDED to
     the CA tax** (write the `schedule_p` block: ca_amti / ca_exemption_allowed /
     ca_tmt / ca_amt / iso_bargain_element / carryforward_to_next_year). The
     `schedule_p_carryforward` is the deferral-attributable (ISO) CA AMT credit —
@@ -206,18 +206,36 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     with no opening AMT credit it also becomes `carryforward_to_next_year`, so
     /tax-rollover carries it to `prior_year.ca_amt_credit_carryforward` (a
     SEPARATE carryforward from the federal Form 8801).
-    **Opening CA AMT credit:** when `ca_has_amt_credit` is set or
-    `prior_year.ca_amt_credit_carryforward` is nonzero, WRITE the `schedule_p`
-    block even without an ISO exercise. Acknowledge `ca_amt_credit` only after
-    working FTB 3510 and record **[ca_amt_credit_worksheet]** in `answers.md`.
-    Store `ftb3510_credit_available`, `ftb3510_credit_allowable` and
-    `ftb3510_worksheet_confirmed: true`; null refuses and zero must be a worked
-    result. Reconcile the opening amount to the prior-year source. Write
-    `carryforward_to_next_year = available - allowable + iso_credit_generated`
-    (the new ISO figure is zero without an ISO exercise). Claim the allowable
-    code-188 credit from its own worksheet; it is not a payment. An unclaimed
-    allowable credit needs an amended return, not a larger carryforward. The
-    tie-out refuses a missing worksheet, dropped opening credit or wrong sum.
+    **Opening CA AMT credit and owner PTET credit:** reconcile
+    `prior_year.ca_amt_credit_carryforward` to the prior return's qualified
+    balance (FTB3510 line32), including the exclusion refigure for an external
+    prior return; confirm `ca_credits.amt_opening_confirmed` and record
+    **[ca_amt_credit_worksheet]** in `answers.md`. Do not enter the allowable
+    credit. The checked builder computes FTB3510 PartII and replaces
+    `ftb3510_credit_available` / `ftb3510_credit_allowable`, then writes the
+    aggregate unused opening credit plus new ISO credit for rollover.
+    An unclaimed allowable credit requires an amended return, not more carry.
+    For PTET, retain each K-1's full owner credit allocated to this return, before
+    the tax limit, in the ledger's
+    `ca_ptet_credit` key box and `ca_credits.ptet_current` rows
+    (`credit_id`, ledger `source_id`, `amount`). Retain whole-source amounts and the separate-spouse allocation worksheet
+    in the summary. These are allocated credit dollars; do not multiply them by an entity tax rate again. Reconcile
+    `prior_year.ca_ptet_credit_carryovers` by `credit_id`, `origin_year`, `amount`.
+    Confirm eligibility/election/payment and spouse allocation in
+    `ptet_eligibility_confirmed` and **[ca_ptet_owner_credits]**. Set
+    `ptet_owner_type: "direct_individual"`; a disregarded SMLLC needs a separately
+    reviewed tax-difference limit and refuses this path. Fetch
+    `state.ptet_credit.carryforward_years` and `.first_tax_year`. List `ca_credits.other_credits` as
+    `{code, amount}` already allowed by their own worksheets, including an
+    explicit empty list. Lines40/46 retain their separate allowed worksheets.
+    The builder computes code188 after A1/other A2 using exemptions and TMT,
+    then code242 after B3 OSTC using the remaining regular tax, including tax
+    below TMT. Neither credit uses Box C. It derives lines43–45, FTB3804-CR,
+    vintage expiry/carryforward and settlement before FTB5805. Never put
+    either credit in payments. Check the generated credit disclosure and
+    preserve the full workpapers; the tie-out independently recomputes them.
+    Other special-credit eligibility, business-credit limits and Section C
+    solar offsets remain named manual/unsupported worksheets.
     **General Schedule P input worksheets remain manual:** an ISO-only call does not price
     all Part I adjustments. Read the covered-year form, including standard
     deduction (line 1), medical (2), property taxes (3), non-acquisition-debt

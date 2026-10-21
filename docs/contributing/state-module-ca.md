@@ -22,14 +22,14 @@ Primary sources, read live on 2026-10-19:
 |---|---|---|
 | 1 | Starting point | Federal AGI, Form 540 line 13; Schedule CA subtractions and additions produce line 17. |
 | 2 | Modifications | The builder derives common US-obligation/municipal/fund, Social Security, state-refund and UI/eligible PFL adjustments. HSA components and other acknowledged conformity worksheets remain separate inputs; their totals are derived. AA68 gates uncomputed cases. |
-| 3 | Credits | Personal, blind, senior and dependent exemptions are credits. The line-32 federal-AGI limitation applies separately per eligible head. Other credits are separately worked allowed amounts, subject to their own worksheets and existing gates. |
+| 3 | Credits | Personal, blind, senior and dependent exemptions are credits. The line-32 federal-AGI limitation applies separately per eligible head. FTB3510 PartII and FTB3804-CR owner credits are derived under AA72 below. Other credits are separately worked allowed amounts, subject to their own worksheets and existing gates. |
 | 4 | Local income taxes | No CA local income-tax return is computed or required by this module. |
 | 5 | Surtax | Form 540 line 62 is Behavioral Health Services Tax in TY2025. The existing statutory-fixed `mental_health_surcharge` cache block retains its stable key. |
 | 6 | Estimates | Calendar-year regular-method FTB5805 uses its fetched weighted installments for BOTH the requirement and deemed withholding. Prior/current-year floors precede the current-AGI override; prior-year AGI controls the step-up. AA70's dated records supply actual payments. Annualized, farmer, waiver and special-deadline cases require their own reviewed worksheets. The extension contract below governs line113 pricing. |
 | 7 | Payroll items | SDI has no wage ceiling from TY2024. Employer errors are recovered from the employer. TY2025 line 74 is the refundable Motion Picture credit, never excess SDI. |
 | 8 | Withholding form | DE 4 is the payroll analogue; actual W-2/1099/W-2G and 592-B/593 withholding is routed by AA60. |
 | 9 | Extension | Automatic filing extension, payment via FTB 3519; a filing extension does not defer payment. |
-| 10 | PTET | FTB 3804-CR is a nonrefundable credit, gated pending its own computation. It is never a payment. |
+| 10 | PTET | FTB3804-CR is a derived nonrefundable owner credit with vintage carryovers, subject to AA72's scope and eligibility facts below. It is never a payment. |
 | 11 | Community property | CA is already in the global community-property/MFS gate. |
 | 12 | Itemized deduction | Schedule CA Part II, with its own mortgage, charitable, miscellaneous and high-AGI rules. The builder takes the reviewed deduction and method, respecting separate-filer/dependent worksheets. |
 | 13 | Table versus rates | Published Tax Table at/below its fetched ceiling, rate schedule above. No inferred midpoint replaces a published row. |
@@ -222,8 +222,9 @@ answer `ca_exemptions.primary_schedule_p_child`, and a yes refuses.
 The MFS Part I line-21 worksheet adds the smaller of one exemption or the
 phaseout fraction of AMTI above the exemption-elimination ceiling. Both the
 ceiling and cap derive from the fetched exemption/phaseout values. Credit
-carryforward attribution remains ISO-only; other deferral items and credit
-limits need their separately worked worksheets and disclosures.
+carryforward attribution remains ISO-only; other deferral items need their
+separately worked worksheets and disclosures. AA72 below derives the current
+AMT and owner PTET credit limits.
 
 ## Gates, registrations and checks
 
@@ -341,3 +342,85 @@ generic. Ordinary projection/withholding forecasts retain their advisory
 timing disclosures. The freshness-auditor definition edit, optional-schema
 coverage fix and revised acceptance digests require the same fresh-session
 replay as AA52, using prewritten criteria and the known-answer fixtures.
+
+## AMT and owner PTET credits extension contract (AA72)
+
+Contract recorded before implementation, 2026-10-21. The thirteen questionnaire
+answers above remain in force; answers 3 and 10 now include calculated FTB3510
+Part II and FTB3804-CR owner credits. The reviewed form year remains TY2025.
+Sources read live, including visual inspection of the printed credit columns:
+[FTB3510](https://www.ftb.ca.gov/forms/2025/2025-3510.pdf),
+[its instructions](https://www.ftb.ca.gov/forms/2025/2025-3510-instructions.html),
+[FTB3804-CR](https://www.ftb.ca.gov/forms/2025/2025-3804-cr.pdf),
+[its instructions](https://www.ftb.ca.gov/forms/2025/2025-3804-cr-instructions.html),
+and the Schedule P sources above.
+
+The opening `prior_year.ca_amt_credit_carryforward` is the qualified credit
+available this year (FTB3510 line32), reconciled to the prior return. It includes
+unused older credit and the prior year's deferral AMT. For an external return,
+work Part I's exclusion refigure before recording that balance; the engine does
+not reconstruct an unparsed prior return. Confirm that reconciliation in
+`ca_credits.amt_opening_confirmed` and the existing headless worksheet answer.
+FTB3510 lines33–39 are derived: line33 is Form540 line31; line34 is exemptions
+plus the other allowed A1/A2 credits; line36 is current TMT. The line38 allowable
+credit replaces the old entered `ftb3510_credit_allowable`. The next balance is
+opening minus ALLOWABLE plus current ISO-attributable AMT. Existing ISO-only
+attribution remains disclosed; other deferrals need their separately worked
+exclusion/deferral worksheet. No amount is carried twice or preserved simply
+because the filer omitted an allowable claim.
+
+`ca_credits.other_credits` identifies separately worked special credits by
+printed code and allowed amount. The TY2025 Schedule P code table determines
+their section; the caller cannot relabel A credits as B. Line40 dependent care
+is A1 and line46 renter credit is B1. Other credits must already satisfy their
+own eligibility, business-credit and carryover worksheets. Their allowed amounts
+must fit the appropriate remaining tax; unknown codes and Section C solar AMT
+offsets require separate support and refuse this path. The builder orders A1,
+other A2, code188, B1/B2, B3 OSTC and finally code242. It derives lines43/44 for
+one or two positive special credits, or line45 alone for more than two. Credit
+names/codes and the workpapers persist beside the amounts. Neither new credit
+uses `amt_screening` or Box C as a limit.
+
+`ca_credits.ptet_current` records the owner's K-1 credit amounts allocated to this return before the tax limit, not
+entity QNI multiplied again. Each record has an opaque `credit_id`, `source_id`
+matching the parse ledger, and amount. The ledger's separate
+`ca_ptet_credit` key box ties to the full reported credit, including any allocated amount
+limited this year. Retain the whole reported amount and separate-spouse allocation
+in the source summary; the source ledger and current credit rows carry the same
+reviewed share for this return. Confirm election/payment eligibility and separate-spouse
+allocation in `ptet_eligibility_confirmed`. This path covers direct individual
+owners; a disregarded SMLLC's additional tax-difference limit requires a
+separate reviewed worksheet and is refused by `ptet_owner_type` until supported.
+`prior_year.ca_ptet_credit_carryovers` preserves credit_id, origin_year and
+amount. Apply oldest first, preserve remaining vintages and report expired
+amounts explicitly. The fetched `state.ptet_credit.carryforward_years` supplies
+the expiry period and `.first_tax_year` rejects vintages before the programme
+(including predecessor-regime carryovers; a successor statute does not reset their origin); no inline annual or unindexed credit figure is added.
+FTB3804-CR PartII lines1–5 are derived. B4 uses remaining regular tax after
+OSTC, including tax below TMT; it cannot offset Schedule P's AMT.
+
+CA AMT rates move into fetched `state.amt.tmt_rate` and `.phaseout_rate`, with
+empty seeds and the existing annual CA source pin, alongside exemptions and
+phaseout thresholds. Missing/nonfinite values refuse checked computation.
+The public math functions take those rates as parameters. No new exception to
+AGENTS §2 is created.
+
+The current-law check is distinct from enabling a new form year. FTB's
+[current SB132 guidance](https://www.ftb.ca.gov/file/business/credits/pass-through-entity-elective-tax/help.html)
+confirms the successor credit under **R&TC17052.11** for 2026–2030, including
+the June-payment shortfall reduction and fiscal-year-owner timing. Section
+17052.10's older sunset in the TY2025 booklet is not the current 2026 rule.
+The legislature site refused direct access; the FTB's live primary-authority
+explanation establishes the enacted change. TY2026 Form540 and that reduction
+need their own reviewed form contract before computation is enabled.
+
+Registrations: the existing CA registry, PDF, verification, withholding,
+projection and YoY tables remain applicable; no new state row is needed.
+Public helpers are re-exported. The checked builder derives and checks credits
+before settlement and FTB5805; the independent tie-out checks reported K-1
+credits and carry balances. Rollover preserves PTET vintages. Capability and
+headless intake retain explicit unanswered screens, with worksheet disclosures
+for facts the new computation needs. Old acknowledgement IDs remain valid.
+Tests use hand-worked forms and synthetic law, including exemption-vs-line31,
+nonzero TMT with zero AMT, B3-before-B4, carry expiry, line45 routing, missing
+facts, nonfinite values, rebuilt checks and deliberate omission mutations.

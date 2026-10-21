@@ -390,6 +390,13 @@ def attachment_checklist(result: dict) -> list:
             "present, and a COMPLETE copy of the federal return whenever "
             "any federal schedule other than A or B was filed — for this "
             "toolkit's returns that is almost always.")
+        ca = result.get("california_540") or {}
+        amt_credit = (ca.get("schedule_p") or {}).get("ftb_3510") or {}
+        ptet = ca.get("ftb_3804_cr") or {}
+        if _field_num(amt_credit, "line_32", "FTB3510 available credit") > 0:
+            lines.append("CA prior-year AMT credit: attach official FTB3510; retain the Schedule P credit-limit worksheet and attach Schedule P as required.")
+        if _field_num(ptet, "line_3", "FTB3804-CR available credit") > 0:
+            lines.append("CA owner PTET credit: attach official FTB3804-CR, including additional entity pages when needed; retain the Schedule P credit-limit worksheet.")
         penalty = (result.get("california_540") or {}).get("ftb_5805")
         if isinstance(penalty, dict):
             method = penalty.get("method")

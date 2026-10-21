@@ -509,18 +509,14 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             # None until fetched — compute_ca_itemized then SKIPS the
             # phase-out with a loud overstatement note.
             "itemized_phaseout": {"single": None, "mfj": None, "hoh": None},
-            # CA Schedule P (540) AMT (N1). The 7% TMT rate and 25% exemption
-            # phase-out are statutory (R&TC §17062) and live in
-            # compute_ca_schedule_p; ONLY the indexed exemption amounts and
-            # phase-out-start thresholds are fetched here (per filing status —
-            # map MFS to its own key). None until fetched: compute_ca_schedule_p
-            # hard-errors when a CA ISO exerciser needs it, so a guessed value
-            # can't silently zero CA AMT. REQUIRED for every CA return,
-            # including one without an ISO exercise.
+            # Covered-year Schedule P law, all fetched and source-pinned.
             "amt": {
                 "exemption": {"single": None, "mfj": None, "mfs": None, "hoh": None},
                 "phaseout_start": {"single": None, "mfj": None, "mfs": None, "hoh": None},
+                "tmt_rate": None,
+                "phaseout_rate": None,
             },
+            "ptet_credit": {"carryforward_years": None, "first_tax_year": None},
             "no_city_income_tax": True,
         },
         "NY": {

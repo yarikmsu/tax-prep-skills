@@ -245,7 +245,8 @@ def tax_law() -> dict:
         "tax_table": {"max_taxable_income": 100000, "rows": [
             {"min": 0, "max": 100001, "tax": dict.fromkeys(
                 ("single", "mfj", "mfs", "hoh", "qss"), 0)}]},
-        "amt": {"exemption": dict.fromkeys(("single", "mfj", "mfs", "hoh"), 100000),
+        "ptet_credit": {"carryforward_years": 5, "first_tax_year": 2021},
+        "amt": {"tmt_rate": .07, "phaseout_rate": .25, "exemption": dict.fromkeys(("single", "mfj", "mfs", "hoh"), 100000),
                 "phaseout_start": dict.fromkeys(("single", "mfj", "mfs", "hoh"), 1000000)},
         "underpayment_screen": {"minimum_balance": dict.fromkeys(
             ("single", "mfj", "mfs", "hoh", "qss"), 500), "tax_fraction": .1},

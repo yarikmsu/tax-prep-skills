@@ -468,3 +468,17 @@ def test_inactive_government_scaffold_does_not_conjure_a_schedule1_attachment():
     r=_result(schedule_1_government_benefits={
         "computed_tax_year":None,"other_income":None,"total":0})
     assert not any(e["sequence"]=="01" for e in FP.assembly_order(r))
+
+
+def test_ca_owner_credit_attachments_are_conditional_on_available_credit():
+    r = _result(california_540={"ca_taxable_income": 10000,
+        "schedule_p": {"ftb_3510": {"line_32": 100}},
+        "ftb_3804_cr": {"line_3": 200}})
+    lines = "\n".join(FP.attachment_checklist(r))
+    assert "attach official FTB3510" in lines
+    assert "attach official FTB3804-CR" in lines
+    r["california_540"]["schedule_p"]["ftb_3510"]["line_32"] = 0
+    r["california_540"]["ftb_3804_cr"]["line_3"] = 0
+    lines = "\n".join(FP.attachment_checklist(r))
+    assert "attach official FTB3510" not in lines
+    assert "attach official FTB3804-CR" not in lines

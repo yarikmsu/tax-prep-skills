@@ -145,14 +145,17 @@ prepared elsewhere; acknowledgement does not compute the line:
 - Special distribution taxes (`ca_distribution_taxes`) and other additional
   taxes (`ca_other_taxes`). Blind-exemption eligibility and source AMT
   adjustment worksheets are manual inputs to the checked Form 540 builder.
-- PTET credits/carryovers (`ca_ptet_credit`), the AMT credit (`ca_amt_credit`),
-  and other credit carryovers (`ca_other_credit_carryover`). An acknowledged
-  AMT-credit case still needs a worked FTB 3510 and a preserved carryforward.
+- Other credit carryovers (`ca_other_credit_carryover`). Other special-credit
+  eligibility worksheets remain manual inputs.
 - Use tax (`ca_use_tax`) and a coverage penalty (`ca_coverage_penalty`).
 
 CA estimates, extension payments, K-1 allocations and prior applied credits
 now reach line 72 from reviewed source records. The checked builder also
 records a binding line-98 election and rollover preserves it for next year.
+It computes FTB3510 PartII and the direct individual owner's FTB3804-CR credit,
+including their ordered Schedule P limits and carryforwards. Prior-return
+exclusion refigures and disregarded SMLLC tax-difference limits need separate
+reviewed support.
 Unverified ownership, an unanswered election or conflicting payment data
 still stops the build; no acknowledgement substitutes for those facts.
 
