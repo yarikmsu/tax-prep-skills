@@ -70,7 +70,10 @@ in a second state (`statutory_residency_second_state`), income sourced to anothe
 (`nonresident_source_income`), Schedule H (`household_employees`), kiddie tax
 (`kiddie_tax`), PFIC with a taxable event (`pfic_taxable_event`), and a digital asset
 sold, exchanged or spent because an option was exercised, or from a lot an option's
-exercise bought in any year (`digital_asset_option_exercise`). CA's, NC's and WA's own
+exercise bought in any year (`digital_asset_option_exercise`), and specific
+identification of digital-asset lots at any broker or wallet, including standing
+instructions (`crypto_specific_identification`). Acknowledgement does not enable
+FIFO pricing for selected lots. CA's, NC's and WA's own
 rules block only on the state declared in each rule's state metadata, and a test holds this
 list to the registry. New York City's full-year resident tax is
 computed, not blocked; a City resident for only part of the year is refused at compute
@@ -161,8 +164,9 @@ Life-event flags read False when absent, so a legacy profile still passes.
   Acquisition so it's not double-taxed on later sale); (3) the **wash-sale rule (§1091) does
   NOT apply** — the exact INVERSE of `/tax-harvest` (which is for "stock or securities");
   loudly caveated; (4) the digital-asset question is "Yes" iff any disposal OR income receipt
-  (acquire-and-hold = "No"). **Bias-direction decisions:** FIFO only (IRS default; HIFO/LIFO
-  would under-report → forbidden in v1). AA40 segregates FIFO by explicit account
+  (acquire-and-hold = "No"). **Bias-direction decisions:** FIFO only after an explicit
+  lot-selection answer; specific identification can move basis in either direction
+  and requires external preparation (`crypto_specific_identification`). AA40 segregates FIFO by explicit account
   IDs in one import and moves reviewed original lot slices through linked transfers.
   Missing acquisition/basis/ownership/transfer evidence blocks completion, including
   when there are no taxable disposals. Output remains diagnostic until complete;

@@ -27,7 +27,8 @@ def report(records, result):
         result = copy.deepcopy(result)
         result.setdefault("meta", {}).setdefault("tax_year", 2025)
     return T.evaluate(T.load_ledger({"records": records}), result,
-                      [r["file"] for r in records], option_exercise_answer=False)
+                      [r["file"] for r in records], option_exercise_answer=False,
+                      specific_identification_answer=False)
 
 
 def it203(**payments):

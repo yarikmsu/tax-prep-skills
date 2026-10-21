@@ -613,7 +613,7 @@ class TestUnroutedStateWithholding:
     def test_a_zero_amount_blocks_nothing(self):
         # The 1099-DA owes the option answer whatever its boxes hold (AA59).
         assert not T.evaluate(self._recs(0.0), _result(), self.FILES[:2],
-                              option_exercise_answer=False).failed
+                              option_exercise_answer=False, specific_identification_answer=False).failed
 
     def test_first_sale_nft_proceeds_block_too(self):
         """Box 11c's proceeds are kept out of 1f, so `capital_proceeds` never
@@ -628,7 +628,7 @@ class TestUnroutedStateWithholding:
         return filed elsewhere: blocking the federal return over it is a block
         with no way through, and dropping it silently loses the reminder."""
         report = T.evaluate(self._recs(300.0, "other_state_withholding"), _result(), self.FILES[:2],
-                            option_exercise_answer=False)
+                            option_exercise_answer=False, specific_identification_answer=False)
         assert not report.failed
         (advisory,) = [a for a in report.advisories if a.startswith("other_state_withholding")]
         # The amount is on this return too, for an itemizer, once.

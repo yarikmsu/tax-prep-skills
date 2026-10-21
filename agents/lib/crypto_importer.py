@@ -21,8 +21,8 @@ CORE TAX MODEL (IRS Notice 2014-21 — virtual currency is PROPERTY):
     "Yes"; acquire-and-hold only (buy/receive with no disposals, no rewards) is "No".
 
 DESIGN (bias-direction taxonomy — see CLAUDE.md):
-  - FIFO only (the IRS default absent a contemporaneous specific-ID election). HIFO/LIFO
-    minimize gains and would UNDER-report tax if chosen silently → forbidden in v1.
+  - FIFO only, after explicit lot-selection screening. Valid specific identification
+    can change basis in either direction; this engine never substitutes FIFO for it.
   - Unmatched disposals (no acquisition on record, e.g. a transfer-in with no basis) get
     diagnostic $0 cost basis + a `needs_basis` flag. In account mode missing basis
     or transfer evidence BLOCKS return preparation; diagnostic totals are not filing values.
@@ -861,6 +861,8 @@ _SCHEDULE_D_TARGETS = {
 # disagrees with FIFO without code T.
 _FORM_FIELDS = {'form_id', 'form_type', 'account_id', 'txn_id', 'asset', 'quantity',
                 'date_sold', 'proceeds', 'cost_basis', 'basis_reported_to_irs', 'term'}
+_FORM_FIELDS_BY_TYPE = {'1099-B': frozenset(),
+                        '1099-DA': frozenset({'customer_acquisition_info'})}
 # Form boxes this engine does not model. Each is REQUIRED — null, false or 0
 # when blank — because a box nobody copied must not read as a blank one; filled
 # in, it refuses: each changes the row (debt, tokenized securities, a loss the
@@ -872,16 +874,14 @@ _FORM_UNSUPPORTED = {'ordinary', 'accrued_market_discount', 'wash_sale_loss_disa
 # not price; "Gross" can show on an ordinary sale and an option's sale alike, so
 # it is no key, and the capability gate asks about a sale an option's exercise
 # caused instead), a
-# QOF disposition in 3b (its deferred gain owes a code-Y row and Form 8997), box 8 (the broker
-# used the customer's acquisition dates, which can carry a specific
-# identification this FIFO engine does not make), an optional aggregate report
+# QOF disposition in 3b (its deferred gain owes a code-Y row and Form 8997), an optional aggregate report
 # in 11a and first-sale NFT proceeds in 11c (neither one disposal's figures;
 # 11c is kept out of 1f), and a CUSIP, which marks a tokenized security that
 # §1091 reaches. The 1099-B set is empty because its own boxes are unreviewed
 # (AA61), not because it lacks them.
 _FORM_UNSUPPORTED_BY_TYPE = {
     '1099-B': frozenset(),
-    '1099-DA': frozenset({'net_proceeds', 'qof', 'customer_acquisition_info',
+    '1099-DA': frozenset({'net_proceeds', 'qof',
                           'optional_method', 'primary_sale_proceeds', 'cusip'}),
 }
 _RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs'},
@@ -966,13 +966,19 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
     # First, because the type decides which keys the form must carry.
     if form.get('form_type') != regime['form_type']:
         raise CryptoImportError(f"{label}.form_type must be {regime['form_type']} for TY{tax_year}")
+    # Box 8 can supply dates for FIFO as well as a specific identification.
+    # The explicit lot-selection answer guards the entire import before matching.
+    reviewed = _FORM_FIELDS_BY_TYPE[regime['form_type']]
+    if reviewed and form.get('customer_acquisition_info') is not None and not isinstance(
+            form['customer_acquisition_info'], bool):
+        raise CryptoImportError(f'{label}.customer_acquisition_info must be boolean or null')
     unsupported = _FORM_UNSUPPORTED | _FORM_UNSUPPORTED_BY_TYPE[regime['form_type']]
     filled = sorted(key for key in unsupported & set(form) if form[key] not in (None, False, 0))
     if filled:
         raise CryptoImportError(f'{label} fills {filled}, which this engine does not model; '
                                 'report that disposal manually (a blank box is copied as null, false or 0)')
-    missing = (_FORM_FIELDS | unsupported) - set(form)
-    unknown = set(form) - _FORM_FIELDS - unsupported
+    missing = (_FORM_FIELDS | unsupported | reviewed) - set(form)
+    unknown = set(form) - _FORM_FIELDS - unsupported - reviewed
     if missing or unknown:
         # A summary parsed before a box was read cannot say it was blank.
         hint = ('; re-read each missing box from the form itself, never from a summary that did '
@@ -1002,7 +1008,8 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
             'asset': _req_str(form['asset'], f'{label}.asset').upper(),
             'proceeds': _form_cents(form['proceeds'], f'{label}.proceeds'),
             'cost_basis': None if shown is None else _form_cents(shown, f'{label}.cost_basis'),
-            'reported': reported, 'term': term}
+            'reported': reported, 'term': term,
+            'customer_acquisition_info': form.get('customer_acquisition_info')}
 
 
 def _resolutions_input(raw_resolutions, ids) -> dict:
@@ -1037,6 +1044,7 @@ def _form_record(form, group, fifo_proceeds, fifo_basis, reasons, codes='', appl
     return {
         'form_id': form['form_id'], 'account_id': group[0].account_id, 'txn_id': group[0].txn_id,
         'term': form['term'], 'basis_reported_to_irs': form['reported'],
+        'customer_acquisition_info': form['customer_acquisition_info'],
         'date_sold': group[0].date_sold, 'broker_date_sold': form['date_sold'].isoformat(),
         'broker_proceeds': _money(form['proceeds'] / 100), 'fifo_proceeds': _money(sum(fifo_proceeds) / 100),
         'broker_cost_basis': None if shown is None else _money(shown / 100),
@@ -1338,6 +1346,7 @@ def _schedule_d_routing(rows) -> 'dict[str, dict]':
 
 def build_crypto_import(transactions: 'list[dict]', *,
                         tax_year: 'int | None' = None,
+                        specific_identification: bool | None = None,
                         per_account: bool = False,
                         account_aware: bool | None = None,
                         transfer_links: dict | None = None,
@@ -1350,6 +1359,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
     (per-asset realized gain), needs_basis (disposals lacking an acquisition), and caveats.
     broker_reporting is the reviewed broker-form evidence that routes each reported
     row to a Form 8949 box; without it no row carries a box (AA41).
+    specific_identification must be explicitly False before any FIFO lot removal.
+    True requires external lot-selection preparation; None never means FIFO.
     """
     if not isinstance(transactions, list):
         raise CryptoImportError("transactions must be a JSON array.")
@@ -1366,6 +1377,18 @@ def build_crypto_import(transactions: 'list[dict]', *,
         raise CryptoImportError('Tagged accounts cannot use a universal FIFO pool')
     account_mode = tagged or account_aware is True or transfer_links is not None
     txns = [_coerce_transaction(t, i) for i, t in enumerate(transactions)]
+    if specific_identification is not None and not isinstance(specific_identification, bool):
+        raise CryptoImportError('specific_identification must be boolean or null')
+    if specific_identification is True:
+        raise CryptoImportError('Specific identification is not modeled by this FIFO engine; '
+                                'prepare the selected lots and Form 8949 externally. '
+                                'Acknowledging a capability limitation does not enable FIFO pricing.')
+    removes_lots = any(t.kind in ('sell', 'spend', 'trade') or
+                       (t.kind == 'send' and (account_mode or per_account)) for t in txns)
+    if removes_lots and specific_identification is not False:
+        raise CryptoImportError('specific_identification is unanswered: ask about lot selection at '
+                                'every broker and wallet, including standing instructions and prior '
+                                'history. Record an explicit false only after FIFO is confirmed.')
     if account_mode:
         txns = [replace(t, date=_account_datetime(raw['date']),
                         acquired_date=_account_datetime(raw['acquired']) if raw.get('acquired') else None)
@@ -2237,7 +2260,9 @@ def _cli_compute(argv: 'list[str]') -> int:
                                  wa_domicile_by_date=(data.get("wa_domicile_by_date")
                                                      if isinstance(data, dict) else None),
                                  broker_reporting=(data.get('broker_reporting')
-                                                   if isinstance(data, dict) else None))
+                                                   if isinstance(data, dict) else None),
+                                 specific_identification=(data.get('specific_identification')
+                                                          if isinstance(data, dict) else None))
     if "--markdown" in argv:
         print(render_markdown(result))
     else:
@@ -2258,7 +2283,7 @@ def _self_test() -> int:
         {"date": "2024-09-01", "kind": "trade", "asset": "ETH", "quantity": 2.0,
          "usd_amount": 5000, "received_asset": "SOL", "received_quantity": 100},
     ]
-    r = build_crypto_import(txns, tax_year=2024)
+    r = build_crypto_import(txns, tax_year=2024, specific_identification=False)
     assert r["digital_asset_question"] == "Yes", r["digital_asset_question"]
     # BTC: 0.5 sold, proceeds 24975, basis = 0.5 * 20050 = 10025, gain 14950, long-term.
     lt = r["schedule_d"]["long_term"]
@@ -2273,7 +2298,7 @@ def _self_test() -> int:
     # account with a reviewed no-form declaration route TY2024's C/F.
     assert r["crypto_summary"]["reporting_complete"] is False, r["broker_reporting"]
     account = [dict(t, account_id="exchange-A", txn_id=f"t{i}") for i, t in enumerate(txns)]
-    r = build_crypto_import(account, tax_year=2024, broker_reporting={"accounts": {
+    r = build_crypto_import(account, tax_year=2024, specific_identification=False, broker_reporting={"accounts": {
         "exchange-A": {"forms_received": False, "evidence": "self-test-declaration"}}})
     assert r["crypto_summary"]["reporting_complete"] is True, r["broker_reporting"]
     boxes = [(row["box"], row["gain_loss"]) for part in r["form_8949"].values() for row in part]

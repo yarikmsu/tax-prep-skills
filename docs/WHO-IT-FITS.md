@@ -100,6 +100,11 @@ commutes is one blocked return, so this undercounts joint returns.
   the tables above is cut by it.
 - **A foreign fund's distribution or sale** (`pfic_taxable_event`), which is
   computed once you accept it (above).
+- **Specific identification of digital-asset lots**, including standing instructions
+  at any broker or wallet (`crypto_specific_identification`). The importer supports
+  FIFO only; selected lots require external Form 8949 preparation. An unasked
+  lot-selection question blocks before matching, and a checked 1099-DA box 8
+  can proceed after explicit FIFO confirmation.
 - **A digital asset sold, exchanged or spent because an option was exercised,
   or from a lot an option's exercise bought in any year**
   (`digital_asset_option_exercise`). The option's premium moves the sale's

@@ -236,7 +236,7 @@ def test_per_account_send_removes_lot_so_later_sale_needs_basis():
         {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 25000},
     ]
-    r = ci.build_crypto_import(txns, per_account=True)
+    r = ci.build_crypto_import(txns, per_account=True, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 1
     assert r["schedule_d"]["net_gain"] == 25000.0          # $0 basis, not 5000
     assert r["crypto_summary"]["disposals"] == 1            # the sale; send is not counted
@@ -253,7 +253,7 @@ def test_universal_pool_self_transfer_preserves_basis():
         {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 25000, "exchange": "kraken"},
     ]
-    r = ci.build_crypto_import(txns)  # universal default
+    r = ci.build_crypto_import(txns, specific_identification=False)  # universal default
     assert r["crypto_summary"]["needs_basis_count"] == 0
     assert r["schedule_d"]["net_gain"] == 5000.0
 
@@ -270,7 +270,7 @@ def test_per_account_send_then_receive_with_basis_preserves_basis():
         {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 25000},
     ]
-    r = ci.build_crypto_import(txns, per_account=True)
+    r = ci.build_crypto_import(txns, per_account=True, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 0
     assert r["schedule_d"]["net_gain"] == 5000.0
 
@@ -313,7 +313,7 @@ def test_same_day_sale_before_buy_is_needs_basis():
         {"date": "2024-06-01T12:00:00Z", "kind": "buy", "asset": "BTC", "quantity": 1,
          "usd_amount": 18000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 1
     row = r["form_8949"]["part_i_short_term"][0]
     assert row["needs_basis"] is True and row["cost_basis"] == 0.0
@@ -328,7 +328,7 @@ def test_same_day_buy_before_sale_matches():
         {"date": "2024-06-01T12:00:00Z", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 25000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 0
     assert r["schedule_d"]["short_term"]["gain"] == 7000.0
 
@@ -347,7 +347,7 @@ def test_fifo_partial_then_unmatched_remainder():
 # --------------------------------------------------------------------------
 
 def test_build_end_to_end_from_fixture():
-    r = ci.build_crypto_import(_txns())
+    r = ci.build_crypto_import(_txns(), specific_identification=False)
     assert r["digital_asset_question"] == "Yes"
     # BTC LT gain = 29900 + 10950 = 40850.
     assert r["schedule_d"]["long_term"]["gain"] == 40850.0
@@ -366,7 +366,7 @@ def test_digital_asset_no_when_only_acquire_and_hold():
          "basis_usd": 2000},
         {"date": "2024-03-01", "kind": "send", "asset": "BTC", "quantity": 0.1},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["digital_asset_question"] == "No"
     assert r["schedule_d"]["net_gain"] == 0.0
 
@@ -380,7 +380,7 @@ def test_receive_acquired_date_drives_holding_period():
         {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 30000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["schedule_d"]["long_term"]["gain"] == 10000.0
     assert r["schedule_d"]["short_term"]["rows"] == 0
 
@@ -395,7 +395,7 @@ def test_receive_acquired_date_does_not_make_lot_available_before_transfer():
         {"date": "2024-05-01", "kind": "receive", "asset": "BTC", "quantity": 1,
          "basis_usd": 20000, "acquired": "2022-01-01"},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 1
     assert r["schedule_d"]["short_term"]["gain"] == 30000.0  # $0 basis, not 10000 long-term
 
@@ -408,7 +408,7 @@ def test_receive_without_acquired_uses_transfer_date():
         {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 30000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["schedule_d"]["short_term"]["gain"] == 10000.0
 
 
@@ -419,7 +419,7 @@ def test_received_lot_basis_used_on_later_sale():
         {"date": "2024-06-01", "kind": "sell", "asset": "ETH", "quantity": 1,
          "usd_amount": 3000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 0
     assert r["schedule_d"]["short_term"]["gain"] == 1000.0
 
@@ -431,13 +431,13 @@ def test_loss_is_negative_gain():
         {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 20000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["schedule_d"]["short_term"]["gain"] == -10000.0
 
 
 def test_build_rejects_non_list():
     with pytest.raises(ci.CryptoImportError):
-        ci.build_crypto_import({"not": "a list"})
+        ci.build_crypto_import({"not": "a list"}, specific_identification=False)
 
 
 def test_out_of_year_disposal_excluded_from_totals():
@@ -449,7 +449,7 @@ def test_out_of_year_disposal_excluded_from_totals():
         {"date": "2023-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 15000},   # 2023 disposal — excluded from a 2024 return
     ]
-    r = ci.build_crypto_import(txns, tax_year=2024)
+    r = ci.build_crypto_import(txns, tax_year=2024, specific_identification=False)
     assert any("EXCLUDED from the totals" in c for c in r["caveats"])
     assert r["schedule_d"]["net_gain"] == 0.0          # excluded, not 5000
     assert r["digital_asset_question"] == "No"          # no 2024 activity
@@ -466,7 +466,7 @@ def test_filing_year_sale_reported_prior_year_sale_excluded():
         {"date": "2024-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 18000},                                   # 2024 — reported
     ]
-    r = ci.build_crypto_import(txns, tax_year=2024)
+    r = ci.build_crypto_import(txns, tax_year=2024, specific_identification=False)
     # Only the 2024 sale: proceeds 18000, basis 10000 → 8000 LT gain.
     assert r["schedule_d"]["net_gain"] == 8000.0
     assert r["schedule_d"]["long_term"]["rows"] == 1
@@ -479,7 +479,7 @@ def test_no_year_filter_reports_all_years():
         {"date": "2023-06-01", "kind": "sell", "asset": "BTC", "quantity": 1,
          "usd_amount": 15000},
     ]
-    r = ci.build_crypto_import(txns)  # no tax_year → no filtering
+    r = ci.build_crypto_import(txns, specific_identification=False)  # no tax_year → no filtering
     assert r["schedule_d"]["net_gain"] == 5000.0
 
 
@@ -491,7 +491,7 @@ def test_basisless_receive_then_sale_flags_needs_basis():
         {"date": "2024-06-01", "kind": "sell", "asset": "ETH", "quantity": 1,
          "usd_amount": 3000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 1
     row = r["form_8949"]["part_i_short_term"][0]
     assert row["needs_basis"] is True and row["cost_basis"] == 0.0
@@ -505,7 +505,7 @@ def test_explicit_zero_basis_receive_is_not_flagged():
         {"date": "2024-06-01", "kind": "sell", "asset": "ETH", "quantity": 1,
          "usd_amount": 3000},
     ]
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 0
     assert r["schedule_d"]["short_term"]["gain"] == 3000.0
 
@@ -526,7 +526,7 @@ def test_coinbase_adapter():
 
 def test_coinbase_adapter_feeds_build():
     txns = ci.adapt_coinbase(_csv("coinbase.csv"), assume_self_transfers=True)
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     # BTC sell 0.5 of the 1.0 lot: proceeds 24975, basis 0.5*20050=10025 → 14950 LT.
     assert r["schedule_d"]["long_term"]["gain"] == 14950.0
     # ETH staking → trade: 1000 ST gain. Plus the DOGE receive (no disposal) is held.
@@ -543,12 +543,12 @@ def test_coinbase_total_fallback_does_not_double_count_fee():
             ["2024-01-01", "Buy", "BTC", "1", "20050", "50"]]
     txns = ci.adapt_coinbase(rows)
     assert txns[0]["usd_amount"] == "20050" and txns[0]["fee_usd"] == "0"
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["per_asset"] == {}  # no disposal yet
     # Verify the lot basis via a follow-on sale at cost → zero gain.
     txns.append({"date": "2024-02-01", "kind": "sell", "asset": "BTC", "quantity": 1,
                  "usd_amount": 20050})
-    r2 = ci.build_crypto_import(txns)
+    r2 = ci.build_crypto_import(txns, specific_identification=False)
     assert r2["schedule_d"]["short_term"]["gain"] == 0.0
 
 
@@ -652,7 +652,7 @@ def test_coinbase_signed_disposal_quantity_normalized():
     txns = ci.adapt_coinbase(rows)
     assert txns[0]["kind"] == "sell" and txns[0]["quantity"] == "0.5"
     # And it builds without the negative-quantity rejection.
-    ci.build_crypto_import(txns)
+    ci.build_crypto_import(txns, specific_identification=False)
 
 
 def test_coinbase_crypto_quoted_product_column_rejected():
@@ -801,7 +801,7 @@ def test_gemini_signed_sell_quantity_normalized():
     txns = ci.adapt_gemini(rows)
     assert txns[0]["kind"] == "sell" and txns[0]["quantity"] == "0.5"
     # And it builds without the negative-quantity rejection.
-    ci.build_crypto_import(txns)
+    ci.build_crypto_import(txns, specific_identification=False)
 
 
 def test_gemini_adapter():
@@ -821,7 +821,7 @@ def test_gemini_combines_date_and_time_for_intraday_order():
     ]
     txns = ci.adapt_gemini(rows)
     assert txns[0]["date"] == "2024-06-01 09:00:00"
-    r = ci.build_crypto_import(txns)
+    r = ci.build_crypto_import(txns, specific_identification=False)
     assert r["crypto_summary"]["needs_basis_count"] == 1
     assert r["form_8949"]["part_i_short_term"][0]["needs_basis"] is True
 
@@ -1019,10 +1019,10 @@ def test_read_csv_is_the_parse_utils_boundary(tmp_path):
 
 def test_wa_allocation_flows_through_import_and_markdown():
     # 1.5 BTC: 75k proceeds - 75 fee - (20050 + 14025) FIFO basis = 40850 LT.
-    baseline = ci.build_crypto_import(_txns(), tax_year=2024)
+    baseline = ci.build_crypto_import(_txns(), tax_year=2024, specific_identification=False)
     dates = {r['date_sold']: 'WA' for r in baseline['form_8949']['part_ii_long_term']}
     assert dates  # The integration assertion must exercise actual LT rows.
-    result = ci.build_crypto_import(_txns(), tax_year=2024, wa_domicile_by_date=dates)
+    result = ci.build_crypto_import(_txns(), tax_year=2024, wa_domicile_by_date=dates, specific_identification=False)
     assert result['washington_allocation']['allocated_lt_gain_loss'] == 40850
     assert result['washington_allocation']['adjustments'] == []
     assert result['schedule_d'] == baseline['schedule_d']

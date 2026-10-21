@@ -748,6 +748,15 @@ federal credit is computed by the engine.
 **Group 6 — Income estimates:**
 - Approximate total W-2 income? (for threshold screening: AMT, NIIT, Medicare surtax)
 - Any gig/freelance income (1099-NEC)? Crypto transactions (buy/sell/exchange)?
+  - **If crypto: did you specifically identify any units sold, exchanged, spent
+    or transferred at any broker or wallet, including standing instructions,
+    HIFO or LIFO, in any history used to establish this return's inventory?**
+    Include prior-year lot choices and identifications recorded in your own
+    books under applicable relief. → sets `has_crypto_specific_identification`
+    true or false. With no crypto, leave it `null`. Confirm FIFO explicitly;
+    customer-provided acquisition dates (Form 1099-DA box 8) can support FIFO
+    and do not answer this question. A yes requires external lot-selection
+    and Form 8949 preparation because the importer supports FIFO only.
   - **If crypto: was any digital asset sold, exchanged or spent this year because an option was
     exercised, or from a lot an option's exercise bought in any year**, an
     option the taxpayer held or wrote? A covered call that was assigned, so

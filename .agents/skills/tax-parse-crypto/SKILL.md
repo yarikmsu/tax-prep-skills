@@ -65,6 +65,26 @@ sibling of `.agents/skills/` that does not travel with a copied skill — which
 then still reads as a complete procedure while every script it names is absent.
 So a failure to RUN this check IS the blocking condition, never a step to skip.
 
+### 0.5 Confirm lot selection before FIFO matching
+
+Set `flags.has_crypto = true`. If `flags.has_crypto_specific_identification` is
+absent or null, ask whether the taxpayer specifically identified units sold,
+exchanged, spent or transferred at any broker or wallet, including standing
+instructions, HIFO or LIFO, and prior history affecting this return's inventory.
+Include identifications recorded in their own books under applicable relief.
+Record the answer in `answers.md` and the profile as true or false; never infer
+it from Form 1099-DA box 8, missing broker basis, or an exchange's default.
+Immediately after writing those files, run
+`sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json answers.md`.
+
+**A yes STOPs FIFO computation:** prepare the selected lots and Form 8949
+externally. A capability acknowledgement does not enable this importer to
+substitute FIFO for selected lots. An unanswered question STOPs until answered.
+A false is the taxpayer's explicit FIFO confirmation across the relevant history.
+Copy that answer to the merged normalized input's top-level
+`specific_identification` field before step 4. Adapters and normalization
+workers never supply or default this answer.
+
 ### 1. Scan for crypto CSVs
 
 Run the document scanner and identify exchange exports among the CSVs:
@@ -175,6 +195,7 @@ object per economic event:
 
 ```json
 {
+  "specific_identification": false,
   "transactions": [
     {"date": "2024-06-01", "kind": "sell",  "asset": "BTC", "quantity": 0.5,
      "usd_amount": 25000, "fee_usd": 25, "exchange": "coinbase"},
@@ -219,7 +240,8 @@ and disposal history and reviewed pre-2025 wallet allocation evidence. Never inf
 account ownership, acquisition date or basis. Obtain missing answers before import.
 
 Concatenate all reviewed arrays into ONE `crypto_transactions.json`, retaining
-both internal transfer legs. Add `transfer_links`, keyed by their shared
+both internal transfer legs. Set top-level `specific_identification` from the
+explicit profile answer collected in step 0.5. Add `transfer_links`, keyed by their shared
 `transfer_id`, with `ownership_confirmed: true` and a secured evidence reference.
 Missing matches remain unresolved; never drop a transfer to make the report pass.
 Input order within an account declares the reviewed order at equal timestamps;

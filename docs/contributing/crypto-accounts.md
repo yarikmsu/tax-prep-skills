@@ -5,6 +5,19 @@ FIFO remains the only selection method. Exchange names identify formats, not
 accounts: two accounts at the same exchange require different opaque IDs.
 IDs and evidence references must contain no identity values or credentials.
 
+Before matching lots, ask about specific identification at every broker and wallet,
+including standing instructions and prior sales/transfers affecting opening
+inventory. Record `flags.has_crypto_specific_identification` and the answer in
+`answers.md`; leave an unasked question null. The normalized input and pure API
+take `specific_identification`: only explicit `false` permits FIFO lot removal.
+True requires external selected-lot/Form 8949 preparation, even after a capability
+acknowledgement. The CLI never supplies an answer on the taxpayer's behalf.
+Regulations [§1.1012-1(j)](https://www.ecfr.gov/current/title-26/section-1.1012-1)
+cover both broker and unhosted-wallet identification, including standing orders.
+Include identification recorded in the taxpayer's books under applicable relief
+([Notice 2025-7](https://www.irs.gov/irb/2025-05_IRB#NOT-2025-7)); broker reports
+can therefore disagree with the taxpayer's lot choice without reporting a basis.
+
 ## Reviewed input contract
 
 Every event carries `account_id` and an account-unique `txn_id`. Adapt with
@@ -21,6 +34,7 @@ in the secured workspace. Missing history cannot borrow another account's lots.
 
 ```json
 {
+  "specific_identification": false,
   "transactions": [
     {"account_id": "exchange-A", "txn_id": "buy-1", "date": "2023-01-01",
      "kind": "buy", "asset": "BTC", "quantity": "2", "usd_amount": 200},
@@ -268,7 +282,7 @@ with no key cannot change the row.
 | `loss_not_allowed` | 5 | 5 | Loss not allowed based on box 1f; checked, refuses the import. |
 | `net_proceeds` | 3a | 3a | "Net proceeds" checked: box 1f was reduced by option premiums, which the import does not price; checked, refuses the import, and a blank 3a is false. "Gross proceeds" is no key, because it cannot clear a sale either way. The instructions complete box 3a "if the digital assets were sold because of the exercise of an option" yet leave it off the boxes "completed only if applicable", and box 1f says "Otherwise, check 'Gross proceeds' in box 3a", so a broker may check it on every sale; and on an option's sale it means the premium was NOT netted, which §1.6045-1(m) does not require for an option granted or acquired before 2026, or held outside the broker's account. Refusing it would refuse ordinary forms, and accepting it as "no option" would pass that unadjusted sale. An option exercise affecting a disposal (sale, exchange or spending), through its proceeds or the lot's basis, blocks at the capability gate instead (`digital_asset_option_exercise`), whichever box shows. |
 | `qof` | 3b | 3b | Disposition of an interest in a qualified opportunity fund; checked, refuses the import, since gain previously deferred into the fund needs its own code-Y row and Form 8997. |
-| `customer_acquisition_info` | 8 | 8 | The broker took customer-provided acquisition information into account when identifying the units sold (§1.6045-1(d)(2)(ii)(B)(4)). It can date a purchase for the broker's FIFO or, under (B)(2), support the customer's own specific identification, and the form cannot say which; for transferred-in units the broker reports no basis or date, so no difference would show. Checked, refuses the import until AA62 asks the taxpayer. |
+| `customer_acquisition_info` | 8 | 8 | The broker took customer-provided acquisition information into account when identifying units (§1.6045-1(d)(2)(ii)(B)(4)). Copy a boolean or null, retaining the field when blank. It can supply dates for FIFO or support specific identification; the form cannot establish the method. A checked box is accepted only after the import's explicit FIFO confirmation. Specific identification at any broker or wallet blocks FIFO pricing, whether this box is checked or blank. |
 | `optional_method` | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional aggregate method; either box checked refuses the import, since an aggregate is not one disposal's figures (AA47). |
 | `primary_sale_proceeds` | 11c | 11c | Specified NFTs' first-sale proceeds, kept out of box 1f; a nonzero amount refuses the import. `/tax-parse` also records it as `nft_first_sale_proceeds`, which blocks the tie-out gate, so a form that never reaches `broker_reporting` cannot lose it. |
 | `cusip` | CUSIP | CUSIP | CUSIP or other identifying number of a tokenized security, which the wash-sale rules reach (box 1i) while the import models none; filled in, refuses the import. A tokenized security with no applicable number leaves it blank and passes; box 1i still refuses a wash sale the broker reports. |
