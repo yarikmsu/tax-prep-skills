@@ -24,10 +24,13 @@ silent schedule as a finding rather than as quiet.
 A concurrency group cancels a superseded PR run and NEVER one on main: the
 push-run is the only thing that scans the commit that actually landed, and a
 second merge arriving while it runs would cancel it, leaving that commit
-unscanned under a green tick from the run that replaced it. On the repository
-recreated 2026-10-10 that push-run has never registered, nor has the weekly
-schedule, so until AA57 in `docs/roadmap/BACKLOG.md` finds why, the scan of each
-merge runs by hand and the weekly run is dispatched by hand.
+unscanned under a green tick from the run that replaced it.
+
+Verify an actual event run before treating its checks as coverage. GitHub can
+delay or drop scheduled runs under load; it promises no fifteen-minute maximum
+([schedule documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)).
+A successful manual dispatch establishes neither automatic trigger registration
+nor the push/PR PII scan: the range script deliberately skips that scan on dispatch.
 
 ## The scan range is a script, not a workflow expression
 
