@@ -219,13 +219,15 @@ Trigger and range behavior is documented in
   recorded Y2 as shipped.
 
 - **AA57 (P2, S): Verify recovery of automatic CI triggers.**
+  Implementation: [PR #29](https://github.com/yarikmsu/tax-prep-skills/pull/29),
+  open; not merged. Depends on PR #28.
   Verified 2026-10-20 from retained GitHub run records: the earliest automatic
   [PR run](https://github.com/yarikmsu/tax-prep-skills/actions/runs/38818547702)
   used PR #9's head, whose workflow edit changed only a comment; its
   [merge push run](https://github.com/yarikmsu/tax-prep-skills/actions/runs/38831006834)
   followed with the trigger declarations unchanged. The 2026-10-15 report of
   dispatch-only CI became stale during the PR that filed this item. Recovery
-  coincided with that workflow-file touch; the original backend cause was not
+  coincided with that workflow-file touch; the historical cause was not
   established, so this is evidence of recovery, not proof of a registration bug.
   A later [main push](https://github.com/yarikmsu/tax-prep-skills/actions/runs/39210300945)
   actually scanned one commit and two changed files, rather than taking the
