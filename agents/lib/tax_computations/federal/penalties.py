@@ -107,6 +107,8 @@ def _f2210_rate_periods(underpayment_rates) -> list:
         if not isinstance(entry, dict):
             raise ValueError(f"{where} must be an object")
         eff = _f2210_date(entry.get("effective_from"), f"{where}.effective_from")
+        if eff != _quarter_start_on_or_before(eff):
+            raise ValueError(f"{where}.effective_from must be a §6621 quarter start")
         rate = entry.get("annual_rate")
         if isinstance(rate, bool) or not isinstance(rate, (int, float)) \
                 or not math.isfinite(float(rate)) or not (0 < float(rate) < 1):
@@ -198,7 +200,7 @@ def compute_form_2210(
             April underpayment retroactively).
         underpayment_rates: federal.underpayment_rates from the tax_law cache
             (IRC §6621 quarterly rates: {"effective_from", "annual_rate"}).
-            Empty/None → the quarterly underpayments are still reported but
+            Empty/None or a missing accruing quarter → underpayments are still reported but
             the dollar penalty is NOT computed (loud note), never guessed.
 
     The annualized-income method (Schedule AI) is NOT modeled — for lumpy
@@ -535,16 +537,24 @@ def compute_form_2210(
             f"underpayment_rates start {periods[0][0].isoformat()}, after "
             f"the earliest accruing underpayment ({earliest.isoformat()}) — "
             "the rate timeline must cover the whole accrual span")
-    # The accrual span runs through Apr 15 of tax_year+1 and §6621 resets
-    # quarterly — a timeline whose last entry predates Apr 1 of tax_year+1
-    # is extrapolating the final segment (Jan-1-only coverage would silently
-    # price Apr 1-15 at the Q1 rate).
-    if periods[-1][0] < datetime.date(tax_year + 1, 4, 1):
-        notes.append(
-            f"underpayment_rates' last change is {periods[-1][0].isoformat()} "
-            f"— rate periods through Apr 15 {tax_year + 1} assume that rate "
-            "persists (§6621 resets quarterly; the Apr 1 rate is not in the "
-            "cache); re-fetch the quarterly rates near filing")
+    # A rate is authoritative only for its own quarter, including when the
+    # next published rate happens to be identical. Check each actual debt
+    # window, so an early payment needs no later quarter. A later cached rate
+    # also cannot bridge a missing middle quarter.
+    starts = {eff for eff, _ in periods}
+    for _, start, end in accruing:
+        quarter = _quarter_start_on_or_before(start)
+        while quarter < end:
+            if quarter not in starts:
+                notes.append(
+                    f"federal.underpayment_rates is missing the §6621 quarter "
+                    f"beginning {quarter.isoformat()} — a penalty APPLIES on "
+                    "the quarterly underpayments above but the dollar amount is NOT "
+                    "computed; fetch the missing quarterly rate via /tax-setup, "
+                    "or file without line 38 and let the IRS bill it. "
+                    "A cached rate is never carried into an unfetched quarter.")
+                return result
+            quarter = _next_quarter_start(quarter)
     penalty = sum(_f2210_accrue(amount, start, end, periods)
                   for amount, start, end in accruing)
     result["penalty"] = round(penalty, 2)

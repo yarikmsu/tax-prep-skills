@@ -1792,10 +1792,13 @@ class TestFullPipeline:
 # Form 2210 — underpayment of estimated tax (1040 line 38)
 # ============================================================
 
-# §6621 quarterly rate fixture fully covering Apr 15 2025 → Apr 15 2026
-# (including the Apr 1 2026 reset, so no coverage-gap note fires).
+# Synthetic §6621 quarterly fixture: 8% through Sep2025, then 7% through
+# Apr15 2026. Every quarter is explicit even when the rate is unchanged;
+# the worksheet arithmetic below is unchanged by those repeated rows.
 _2210_RATES = [
     {"effective_from": "2025-01-01", "annual_rate": 0.08},
+    {"effective_from": "2025-04-01", "annual_rate": 0.08},
+    {"effective_from": "2025-07-01", "annual_rate": 0.08},
     {"effective_from": "2025-10-01", "annual_rate": 0.07},
     {"effective_from": "2026-01-01", "annual_rate": 0.07},
     {"effective_from": "2026-04-01", "annual_rate": 0.07},
@@ -2001,7 +2004,9 @@ class TestForm2210:
         Monday that year) and accrues to Apr 15 2024 over 90 days in a leap
         year: 500 × 0.08 × 90/366 = 9.8360 (365 would give 9.86; the
         statutory Jan 15 start would give 9.95)."""
-        rates = [{"effective_from": "2023-01-01", "annual_rate": 0.08}]
+        # Only Q4's Jan16–Apr15 debt accrues, so earlier quarters need no rate.
+        rates = [{"effective_from": "2024-01-01", "annual_rate": 0.08},
+                 {"effective_from": "2024-04-01", "annual_rate": 0.08}]
         r = compute_form_2210(20000, 8000, "Single", 2023,
                               prior_year_tax=10000, prior_year_agi=100000,
                               estimated_payments=[
@@ -2033,15 +2038,14 @@ class TestForm2210:
                                    "annual_rate": 0.08}])
 
     def test_rate_timeline_gap_note_when_fetched_early(self):
-        """Rates fetched only through mid-TY assume the last rate persists —
-        noted, not silent."""
+        """A January rate cannot price the April quarter's debt."""
         r = compute_form_2210(20000, 8000, "Single", 2025,
                               prior_year_tax=10000, prior_year_agi=100000,
                               underpayment_rates=[
                                   {"effective_from": "2025-01-01",
                                    "annual_rate": 0.08}])
-        assert r["penalty_computed"]
-        assert any("assume that rate persists" in n for n in r["notes"])
+        assert not r["penalty_computed"] and r["penalty"] is None
+        assert any("2025-04-01" in n and "missing" in n for n in r["notes"])
 
     def test_missing_prior_year_degrades_to_90pct(self):
         r = compute_form_2210(20000, 8000, "Single", 2025,
@@ -2187,18 +2191,17 @@ class TestForm2210:
                               prior_year_tax=5000, prior_year_agi=60000)
         assert r["no_penalty"] and "de minimis" in r["no_penalty_reason"]
 
-    def test_rates_missing_apr1_reset_noted(self):
-        """Codex P2: coverage through Jan 1 still extrapolates Apr 1-15 at
-        the Q1 rate — that must be noted, not silent."""
+    def test_rates_missing_apr1_reset_are_not_computed(self):
+        """A filing-year January row never authorizes April1–15 pricing."""
         r = compute_form_2210(20000, 8000, "Single", 2025,
                               prior_year_tax=10000, prior_year_agi=100000,
-                              underpayment_rates=_2210_RATES[:3])
-        assert r["penalty_computed"]
-        assert any("assume that rate persists" in n for n in r["notes"])
+                              underpayment_rates=_2210_RATES[:-1])
+        assert not r["penalty_computed"] and r["penalty"] is None
+        assert any("2026-04-01" in n and "missing" in n for n in r["notes"])
         full = compute_form_2210(20000, 8000, "Single", 2025,
                                  prior_year_tax=10000, prior_year_agi=100000,
                                  underpayment_rates=_2210_RATES)
-        assert not any("assume that rate persists" in n for n in full["notes"])
+        assert full["penalty_computed"] and full["penalty"] is not None
 
 
 # ============================================================
