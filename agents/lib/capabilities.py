@@ -1129,10 +1129,32 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     except ValueError as exc:
         raise CapabilityError(f"NY filing plan: {exc}") from None
     state = "NY" if ny_plan else _profile_state(profile)
+    rental_plan = profile.get("rental_return")
+    prior = profile.get("prior_year", {})
+    if not isinstance(prior, dict):
+        raise CapabilityError("prior_year must be an object")
+    rental_opening = prior.get("rental_carryforward")
+    derived["has_rental_income"] = rental_plan is not None or rental_opening is not None
+    rental_computed_scope = False
+    if rental_plan is not None:
+        from agents.lib.tax_computations.federal.rentals import validate_rental_scope, rental_has_ca_history
+        try:
+            validate_rental_scope(rental_plan)
+            rental_computed_scope = (profile.get("tax_year") == rental_plan["tax_year"]
+                                     and not ny_plan and state in _NO_INCOME_TAX_STATES | {"CA", "WA"}
+                                     and (state == "CA" or not rental_has_ca_history(rental_opening)))
+        except ValueError:
+            pass  # The existing named unsupported rule remains, without enabling math.
+        properties = rental_plan.get("properties") if isinstance(rental_plan, dict) else None
+        if not isinstance(properties, list) or not properties:
+            rental_computed_scope = False
+        for prop in properties if isinstance(properties, list) else []:
+            code = (prop.get("address") or {}).get("state") if isinstance(prop, dict) else None
+            if code not in _USPS_STATES - _TERRITORIES:
+                raise CapabilityError("rental property source state must be a real U.S. state code")
+            if code != state and code not in _NO_INCOME_TAX_STATES | {"WA"}:
+                derived["has_nonresident_source_income"] = True
     if state == "CA":
-        prior = profile.get("prior_year", {})
-        if not isinstance(prior, dict):
-            raise CapabilityError("prior_year must be an object")
         carried = prior.get("ca_amt_credit_carryforward", 0)
         if (isinstance(carried, bool) or not isinstance(carried, (int, float))
                 or not math.isfinite(carried) or carried < 0):
@@ -1148,6 +1170,14 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         if not (_flag_value(flags, rule.flag) or derived.get(rule.flag)):
             continue
         form, note = rule.form, rule.note
+        level = rule.level
+        if rule.rule_id == "rental_income" and rental_computed_scope:
+            level = MANUAL
+            note = ("Reviewed TY2025 direct U.S. residential ScheduleE, building/structural GDS depreciation "
+                    "and passive-loss limits are computed from property books with separate CA balances. "
+                    "Basis/at-risk, other loss limits, QBI, NIIT, federal/CA AMT and income-dependent "
+                    "worksheets require input-bound review. Equipment, ADS, bonus/section179, method changes, "
+                    "personal/short-term/self-rental, royalties, dispositions and special passive cases remain outside scope.")
         if state == "CA" and rule.rule_id == "dependent_care":
             form += "; California FTB 3506 / Form 540 line 40"
             note += " California FTB 3506 is NOT computed; prepare its separate covered-year eligibility and credit worksheet."
@@ -1162,7 +1192,7 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
             note = ("EIC eligibility and source shares are not computed. Supply reviewed federal, "
                     "NY pre-allocation state EIC and IT-203-ATT refundable-credit worksheets. "
                     "Omitting a credit understates the refund or overstates the tax owed.")
-        _place(Finding(rule.rule_id, rule.level, rule.situation, form,
+        _place(Finding(rule.rule_id, level, rule.situation, form,
                        note, rule.rule_id in acknowledged_ids))
 
     # Migration guard (fail closed): the gate-era flags must be explicitly

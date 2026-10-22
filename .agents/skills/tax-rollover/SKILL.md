@@ -57,6 +57,15 @@ Where `{current_year}` is read from `result.json` `meta.tax_year`. Parse the JSO
 
 ### 3. Present each category and ask the user
 
+Rental `schedule_e_rentals.carryforward` becomes
+`prior_year.rental_carryforward`: retain each property's separate federal/CA
+active-origin and other-origin suspended losses and every asset's independent
+accumulated depreciation and source facts. The engine validates inventories
+and refuses a missing closing record on a computed rental return. Conflicting
+current balances require resolution, never silent zeroing. Inventory facts
+are proposals to re-review, not next year's participation/basis confirmations;
+they contain no addresses or source filenames. Do not add prior losses again.
+
 For each of the five categories (`carryforwards`, `identity`, `dependents`, `expected_sources`, `foreign_holdings`) that has at least one change in the diff:
 
 1. Render a brief preview of the changes (3–8 lines): show `json_path`, `prior_value`, `current_value`, `action_suggested`, `reason` for each change.

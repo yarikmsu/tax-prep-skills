@@ -33,6 +33,9 @@ from agents.lib.secure_fs import (  # noqa: E402
     atomic_write, first_non_finite, is_reparse_point)
 from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
 from agents.lib.tax_computations._shared import _STATE_NAME_TO_CODE  # noqa: E402
+from agents.lib.tax_computations.federal.rentals import (  # noqa: E402
+    create_rental_law_template, validate_rental_law, validate_rental_percentages,
+)
 from agents.lib.tax_computations.state.ca import (  # noqa: E402
     _SDI_NO_CEILING_FROM,
     validate_ca_exemption_phaseout,
@@ -217,6 +220,7 @@ def create_empty_tax_law(year: int) -> dict:
                 "lookback_years": 2,
                 "tiers": {"single": [], "mfj": []},
             },
+            "rental": create_rental_law_template(),
             # Four status keys, not two (X1); the statute and the legacy-cache
             # behaviour are at the one read site, `projection.capital_gains_limits`.
             "capital_gains_rates": {
@@ -517,6 +521,7 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "phaseout_rate": None,
             },
             "ptet_credit": {"carryforward_years": None, "first_tax_year": None},
+            "rental": create_rental_law_template(),
             "no_city_income_tax": True,
         },
         "NY": {
@@ -1548,6 +1553,10 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     _EMPTY_LIST_BY_DESIGN = {
         "state.tax_table.table_bases",
         "state.nyc_tax.tax_table.table_bases",
+        # Formula users need no published table; table users hard-require
+        # their complete month/age row at computation, never infer a rate.
+        "federal.rental.gds_percentages",
+        "state.rental.gds_percentages",
     }
 
     if (isinstance(data.get("state"), dict) and data["state"].get("code") == "WA"
@@ -1555,6 +1564,8 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         _EMPTY_LIST_BY_DESIGN.add("state.brackets")
 
     def _walk(obj, path=""):
+        if path in ("federal.rental", "state.rental") and not _has_real_data(obj):
+            return  # opt-in return worksheet, not a requirement on non-landlords
         # Optional CA planning figures are required by the state repricer,
         # not by every filed-return workflow. The cache validator still audits
         # populated values; missing ones yield a named planning limitation.
@@ -2205,6 +2216,7 @@ _TABLE_VALIDATORS = (
     (re.compile(r"^state\.estimated_tax_safe_harbor\.installment_shares$"), "ca_installment_shares"),
     (re.compile(r"^state\.estimated_tax_safe_harbor\.due_dates$"), "ca_due_dates"),
     (re.compile(r"^state\.tax_table\.rows$"), "ca_tax_rows"),
+    (re.compile(r"^(federal|state)\.rental\.gds_percentages$"), "rental_gds"),
     (re.compile(r"^state\.wa_capital_gains\.rates$"), "brackets"),
     (re.compile(r"^(federal\.filing_statuses\.[a-z]+|state)\.brackets$"), "brackets"),
     # New York's brackets are keyed by §601 rate schedule, the State's and the
@@ -2410,7 +2422,12 @@ def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None
     """`writing` is False for the freshness audit, which reads a cache as
     stored: a rule that normalises in place must not let the audit pass a
     value the file still holds un-normalised."""
-    if kind == "brackets":
+    if kind == "rental_gds":
+        try:
+            validate_rental_percentages(value)
+        except ValueError as exc:
+            raise TaxLawSetError(str(exc)) from None
+    elif kind == "brackets":
         _check_brackets(dotted, value)
     elif kind == "ca_tax_rows":
         from agents.lib.tax_computations.state.planning import validate_ca_tax_rows
@@ -2771,6 +2788,13 @@ def validate_cache(data: dict, year: int) -> "list[str]":
     its seed (unfetched leaves allowed), then the cross-field orderings. One
     string per violation, for `check_freshness` to report as INCOMPLETE."""
     problems = []
+    for parent in (data.get("federal"), data.get("state")):
+        block = parent.get("rental") if isinstance(parent, dict) else None
+        if _has_real_data(block):
+            try:
+                validate_rental_law(block)
+            except ValueError as exc:
+                problems.append(str(exc))
     state = data.get("state")
     if isinstance(state, dict) and _state_pin_code(state) == "CA":
         try:

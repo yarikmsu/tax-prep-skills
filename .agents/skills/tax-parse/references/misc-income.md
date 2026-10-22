@@ -6,9 +6,10 @@ box and identify the recipient/payment before classifying income.
 
 | Box | Route for an individual |
 |---|---|
+| 1 | `rental_reported_rents`, reconciled property evidence; use the rental source inventory, never Schedule C or extra rent beside full books |
 | 3 | Generally Schedule1 other income; source-confirmed business income may go to Schedule C. Split mixed payments explicitly. Schedule F, exclusions and unknown treatment must be resolved, never guessed |
 | 4 | `federal_withholding_1099`, never receipts or an income reduction |
-| 1 / 2 / 9 / 10 / 15 | Rents, royalties, crop insurance, attorney gross proceeds and nonqualified deferred compensation: no route here. A positive amount refuses; prepare that income outside this toolkit |
+| 2 / 9 / 10 / 15 | Royalties, crop insurance, attorney gross proceeds and nonqualified deferred compensation: no route here. A positive amount refuses; prepare that income outside this toolkit |
 | 5 / 6 / 11 | `self_employment_gross` (fishing boat proceeds / medical-service receipts / fish purchased for resale) |
 | 7 | Boolean direct-sales notice. No dollar amount. Obtain actual resale books separately |
 | 8 | `miscellaneous_other_income`, ordinary Schedule1 other income; never qualified dividends or exempt interest |
@@ -25,7 +26,8 @@ record/ledger validator checks the same mapping. Required fields:
   amounts, including zeros. The three components reconcile to box 3. A positive
   unresolved component blocks parsing until its treatment is resolved.
 - `box_1`, `box_2`, `box_4`, `box_5`, `box_6`, `box_8`, `box_9`, `box_10`,
-  `box_11`, `box_15`: actual source amounts, including zero.
+  `box_11`, `box_15`: actual source amounts, including zero. Positive box1
+  requires the reviewed property information-return rows, separately from full books.
 - `box_7`: actual boolean checked/unchecked, never a numeric threshold or "X".
 - `other_business_gross`: separately reviewed business receipts from other boxes
   or subforms in this physical document, including zero; never withholding.

@@ -18,7 +18,7 @@ below; they are not included in those totals, and some remain unmeasured.
   nothing after it runs.
 - **Accepting it does not fill the gap.** Naming the rule in
   `acknowledged_limitations` lets the return finish with that part marked NOT
-  COMPUTED. The rental schedule, the part-year return or the premium credit
+  COMPUTED. An outside-scope rental schedule, the part-year return or the premium credit
   reconciliation still has to be prepared somewhere else and added before you
   file. So "hits a block" below means the toolkit alone cannot produce the return
   you file, with one exception.
@@ -57,6 +57,15 @@ is one figure. How each was measured, and what it misses, is at the end.
 | Moved to or from another country during the year (`move_abroad`) | 0.15% | 0.19% | 0.23% | 0.13% | 0.32% |
 | Works in another state (`nonresident_source_income`) ³ | 0.26% | 1.0% | 2.5% | 2.4% | 0.36% |
 | **At least one block** ² | **22–27%** · 16% | **24–29%** · 27% | **22–27%** · 18% | **24–29%** · 22% | **21–26%** · 18% |
+
+The rental row and totals describe the previously measured broad population,
+including royalties. AA73 now computes the reviewed TY2025 direct U.S.
+long-term residential building/structural-improvement subset for CA, Florida
+and Washington ordinary-income returns, with separate basis/at-risk and
+related-form review. Outside-scope cases and NY/NC rental conformity remain
+gated. The public aggregate cannot size that subset, so these rental-inclusive
+figures are upper bounds on the remaining block, not a newly measured coverage
+claim. See [the rental contract](contributing/rental-income.md).
 
 ¹ Of the 8.8%, 6.7% cross a state line, which the gate stops, and 2.0% move
 between the City and the rest of New York State; each is rounded on its own.

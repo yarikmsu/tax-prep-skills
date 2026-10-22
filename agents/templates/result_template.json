@@ -112,6 +112,16 @@
 
   "_optional_sections_below": "Include only if applicable to this taxpayer. Remove sections that don't apply.",
 
+  "schedule_e_rentals": {
+    "_include_if": "rental income, rental plan or opening rental carryforward is present",
+    "_note": "Replace with the complete return_builder workpaper; never enter net rental income or derived depreciation/PAL lines. The rental reference defines source facts, supported scope and related-form review.",
+    "gross_rents": 0,
+    "reported_rents": 0,
+    "operating_expenses": 0,
+    "properties": [],
+    "computed_tax_year": null
+  },
+
   "other_forms_withholding": {
     "_include_if": "W-2G federal withholding or an explicitly adopted line25c workpaper",
     "remaining_withholding": null,

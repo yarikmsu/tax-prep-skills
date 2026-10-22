@@ -8258,6 +8258,8 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/federal/amt.py::compute_form_6251": "direct",
         "tax_computations/federal/international.py::check_form_8938_required": "direct",
         "tax_computations/federal/penalties.py::compute_form_2210": "direct",
+        "tax_computations/federal/rentals.py::compute_rental_passive_losses": "direct",
+        "tax_computations/federal/rentals.py::compute_residential_rental_return": "direct",
         "tax_computations/state/ca.py::compute_ca_schedule_p": "direct",
         "tax_computations/state/ca.py::compute_ca_exemption_credit": "direct",
         "tax_computations/state/ca.py::compute_ca_540": "direct",
@@ -8285,7 +8287,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "scenario.py::salt_cap_may_move": "direct",
 
         "ptet.py::analyze": "delegates: _salt_cap",
-        "return_builder.py::build": "delegates: _context",
+        "return_builder.py::build": "direct",
 
         "projection/__init__.py::compute_safe_harbor": (
             "conditional: the status picks the 110% factor on the PRIOR-YEAR "
@@ -8602,7 +8604,8 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         like a guard is not a guard — the probe the state sweep also keeps."""
         import agents.lib.retirement_dashboard as rd
         from agents.lib.tax_computations.state import ny
-        for wrapper, expected in ((rd._status, "MFJ"), (ny._ny_status, "mfj")):
+        from agents.lib.tax_computations.federal import rentals
+        for wrapper, expected in ((rd._status, "MFJ"), (ny._ny_status, "mfj"), (rentals._status, "MFJ")):
             assert wrapper("MFJ") == expected
             assert wrapper("mfj") == expected
             for rejected in ("Married Filing Jointly", "", None):

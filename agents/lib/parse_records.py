@@ -58,6 +58,7 @@ LEDGER_FIELDS = frozenset({
     "foreign", "second_read", "retirement_kind", "other_state_withholding_by_state", "ca_investments",
     "government_benefits",
     "misc_income",
+    "rental_source",
     "w2g_income",
 })
 RECORD_ONLY_FIELDS = frozenset({

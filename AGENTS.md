@@ -407,6 +407,7 @@ in full, so a new file in either goes in this table.
 | Agent compatibility | `docs/contributing/agents-compat.md` |
 | Skill contracts and scope | `docs/contributing/skill-catalog.md` |
 | Paystub projection intake | `docs/contributing/paystub-intake.md` |
+| Residential rental return contract | `docs/contributing/rental-income.md` |
 | Individual IRA basis | `docs/contributing/individual-ira-basis.md` |
 | Government benefits and Schedule 1 | `docs/contributing/government-benefits.md` |
 | 1099-MISC source classification | `docs/contributing/misc-income.md` |

@@ -9,7 +9,7 @@ from agents.lib.tax_computations.federal.misc_income import (
 
 def source(year=2025, **changes):
     raw = dict(tax_year=year, form_revision='04/2025' if year == 2025 else '12/2026',
-        reviewed=True, box_3=1200, box_3_business=200, box_3_other=1000,
+        reviewed=True, box_1=0, box_3=1200, box_3_business=200, box_3_other=1000,
         box_3_unresolved=0, box_4=300, box_5=400, box_6=600, box_7=True,box_8=0,other_federal_withholding=0,
         other_business_gross=0, box_1=0, box_2=0, box_9=0, box_10=0, box_11=0, box_15=0)
     raw.update(changes)

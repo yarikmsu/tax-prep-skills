@@ -154,6 +154,7 @@ def compute_ca_schedule_ca(
     hsa_employer_addback: float, hsa_deduction_addback: float,
     hsa_interest_addback: float, hsa_dividend_addback: float,
     other_additions: float, other_subtractions: float,
+    rental_addition: float = 0, rental_subtraction: float = 0,
 ) -> dict:
     """TY2025 ScheduleCA Part I lines2/6 and SectionB line1, without defaults."""
     if type(tax_year) is not int or tax_year not in _CA_540_REVIEWED_YEARS:
@@ -225,6 +226,8 @@ def compute_ca_schedule_ca(
            "ca_lottery_subtraction": _ca_input(ca_lottery_winnings, "federally included California lottery winnings"),
            "other_additions": _ca_input(other_additions, "other CA additions"),
            "other_subtractions": _ca_input(other_subtractions, "other CA subtractions"),
+           "section_b_line_5_column_c": _ca_input(rental_addition, "CA allowed rental net addition"),
+           "section_b_line_5_column_b": _ca_input(rental_subtraction, "CA allowed rental net subtraction"),
            "investment_workpaper": workpaper,
            "municipal_workpaper": municipal_workpaper,
            "source_note": ("CA investment worksheets: " + " ".join(sorted(source_notes))) if source_notes else None,
@@ -241,10 +244,10 @@ def compute_ca_schedule_ca(
     out["section_b_line_7_column_b"] = round(out["unemployment_subtraction"] + family7, 2)
     out["section_b_other_income_subtraction"] = round(out["paid_family_leave_subtraction"] - family7, 2)
     out["total_additions"] = round(sum(out[k] for k in ("hsa_employer_addback", "hsa_deduction_addback",
-        "other_additions")) + out["line_2_column_c"], 2)
+        "other_additions", "section_b_line_5_column_c")) + out["line_2_column_c"], 2)
     out["total_subtractions"] = round(sum(out[k] for k in ("taxable_social_security_subtraction",
         "taxable_state_refund_subtraction", "other_subtractions", "unemployment_subtraction",
-        "paid_family_leave_subtraction", "ca_lottery_subtraction")) + out["line_2_column_b"], 2)
+        "paid_family_leave_subtraction", "ca_lottery_subtraction", "section_b_line_5_column_b")) + out["line_2_column_b"], 2)
     for key in ("line_2_column_b", "line_2_column_c", "total_additions", "total_subtractions"):
         _ca_input(out[key], key)  # a finite record must not overflow in aggregate
     return out

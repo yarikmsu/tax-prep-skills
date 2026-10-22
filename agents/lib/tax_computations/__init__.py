@@ -3722,6 +3722,12 @@ from agents.lib.tax_computations.state.generic import (  # noqa: E402,F401
     state_rules_for_year,
 )
 
+from agents.lib.tax_computations.federal.rentals import (  # noqa: E402,F401
+    compute_residential_depreciation,
+    compute_rental_passive_losses,
+    compute_residential_rental_return,
+)
+
 from agents.lib.tax_computations.state.ca_credits import (  # noqa: E402,F401
     compute_ca_amt_credit,
     compute_ca_ptet_owner,

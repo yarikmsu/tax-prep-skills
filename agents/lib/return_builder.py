@@ -172,6 +172,8 @@ from agents.lib.tie_out import (  # noqa: E402
     ca_values_agree,
     derive_government_workpaper,
     government_workpaper_differences,
+    derive_rental_workpaper,
+    rental_workpaper_differences,
     derive_schedule1_other_workpaper,
     schedule1_other_differences,
     derive_other_forms_withholding,
@@ -1017,6 +1019,13 @@ def government_workpaper(result: dict, ledger, profile: dict) -> "dict | None":
         raise Blocked(f"Government benefits: {redact(exc)}") from None
 
 
+def rental_workpaper(result: dict, ledger, profile: dict, tax_law: dict) -> "dict | None":
+    try:
+        return derive_rental_workpaper(ledger, result, profile, tax_law)
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError, TieOutError) as exc:
+        raise Blocked(f"Residential rentals: {redact(exc)}") from None
+
+
 def schedule1_other_workpaper(result: dict, ledger, profile: dict) -> "dict | None":
     try:
         return derive_schedule1_other_workpaper(ledger, result, profile)
@@ -1064,6 +1073,11 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
     """
     if not isinstance(result, dict) or not isinstance(result.get("form_1040"), dict):
         raise ReturnBuilderError(f"{RESULT_NAME} has no form_1040 section")
+    # Validate before branching into optional income workpapers too.
+    _full_status_key(filing_status, "return builder")
+    rental = rental_workpaper(result, ledger, profile or {}, tax_law)
+    if rental is not None:
+        result = {**result, "schedule_e_rentals": rental}
     other_income = schedule1_other_workpaper(result, ledger, profile or {})
     government = government_workpaper(result, ledger, profile or {})
     other_withholding = other_forms_workpaper(result, ledger, profile or {})
@@ -1698,7 +1712,7 @@ def california_differences(result: dict, derived: dict) -> list[str]:
 
 
 def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None,
-          government=None, other_income=None, other_withholding=None) -> bool:
+          government=None, other_income=None, other_withholding=None, rental=None) -> bool:
     """Publish the derived lines. Returns whether anything was written.
 
     NOT WRITING AN UNCHANGED FILE IS THE CONTRACT, not an optimization: V8's
@@ -1707,6 +1721,10 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
     invalidates a pass that is still true. `/tax-generate --filing-package`
     then refuses a package whose gates did run.
     """
+    existing_rental = result.get("schedule_e_rentals")
+    if rental is None and isinstance(existing_rental, dict) and existing_rental.get("computed_tax_year") is not None:
+        raise Blocked("publish the active residential-rental workpaper with its derived line8")
+    rental_changes = rental_workpaper_differences(result, rental, require_review=False)
     existing = result.get("schedule_1_government_benefits")
     if government is None and isinstance(existing, dict) and (existing.get("other_income") is not None
             or existing.get("computed_tax_year") is not None
@@ -1725,9 +1743,12 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
             or any(existing_withholding.get(k) for k in ("w2g_withholding", "total"))):
         raise Blocked("publish the other-form withholding workpaper with its checked line25c")
     withholding_changes = other_forms_changes(result, other_withholding)
-    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes and not withholding_changes:
+    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes and not withholding_changes and not rental_changes:
         return False
     updated = {**result, "form_1040": {**result["form_1040"], **derived}}
+    if rental is not None:
+        updated["schedule_e_rentals"] = rental
+        updated["form_1040"]["line_8_schedule1_other"] = rental["total_schedule1"]
     if other_withholding is not None:
         updated["other_forms_withholding"] = other_withholding
         updated["form_1040"]["line_25c_other_withholding"] = other_withholding["total"]
@@ -1754,6 +1775,10 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
         updated["meta"] = {**meta, "limitations": notes}
     meta = dict(updated.get("meta") or {})
     notes = meta.get("limitations", [])
+    if rental is not None:
+        notes = [n for n in notes if not (isinstance(n, str) and n.startswith("Residential rentals:"))]
+        notes.append(rental["source_note"])
+        updated["meta"] = {**meta, "limitations": notes}
     if other_income is not None or (isinstance(notes, list) and any(
             isinstance(n, str) and n.startswith("W-2G income:") for n in notes)):
         notes = [n for n in notes if not (isinstance(n, str) and n.startswith("W-2G income:"))]
@@ -1851,6 +1876,14 @@ def _main(argv: list) -> int:
             # certifying a return it never saw, which is what the receipt
             # exists to catch (V8).
             inputs = receipt.gate_inputs(workspace, GATE, contents=contents)
+        rental = rental_workpaper(result, ledger, profile, tax_law)
+        rental_changes = rental_workpaper_differences(result, rental, require_review=args.check)
+        if args.check and rental_changes:
+            print("BLOCKED: residential rentals disagree: " + ", ".join(rental_changes), file=sys.stderr)
+            return _record_the_check(workspace, inputs, "FAILED", 2)
+        original_result = result
+        if rental is not None:
+            result = {**result, "schedule_e_rentals": rental}
         other_withholding = other_forms_workpaper(result, ledger, profile)
         withholding_changes = other_forms_changes(result, other_withholding)
         if args.check and withholding_changes:
@@ -1890,8 +1923,8 @@ def _main(argv: list) -> int:
             return _record_the_check(workspace, inputs, receipt.PASS, 0)
         california = build_california({**result, "form_1040": {**result["form_1040"], **derived}},
                                       tax_law, ledger, profile)
-        if write(workspace, result, derived, california=california, government=government,
-                 other_income=other_income, other_withholding=other_withholding):
+        if write(workspace, original_result, derived, california=california, government=government,
+                 other_income=other_income, other_withholding=other_withholding, rental=rental):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "
@@ -1902,6 +1935,8 @@ def _main(argv: list) -> int:
                 print("Rebuilt the Schedule1 other-income workpaper and Form1040 line8; re-run --check.")
             if other_withholding is not None:
                 print("Rebuilt other-form withholding and Form1040 line25c; re-run --check.")
+            if rental is not None:
+                print("Rebuilt residential ScheduleE, depreciation and passive-loss workpapers. Refresh QBI, NIIT and income-dependent forms; bind rental_return.related_forms_review to related_forms_input_digest, then re-run --check.")
             if california:
                 print("Rebuilt Form 540 and Schedule P; re-run --check before generating a package.")
                 print(california["line_113_note"])

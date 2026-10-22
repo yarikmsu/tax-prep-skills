@@ -166,9 +166,26 @@ def _derived_schedules(result: dict) -> list:
         if round(total, 2) != round(_field_num({"target": target}, "target", "Schedule1 other-income settlement"), 2):
             raise FilingPackageError("Schedule1 other-income workpaper must equal its actual income component")
     out = []
+    rental = result.get("schedule_e_rentals") or {}
+    rental_active = type(rental.get("computed_tax_year")) is int
+    if rental_active:
+        if rental["computed_tax_year"] != 2025 or not rental.get("properties"):
+            raise FilingPackageError("Residential rentals need the reviewed covered-year property workpapers")
+        if rental.get("related_forms_review_current") is not True:
+            raise FilingPackageError("Residential rentals need current QBI, NIIT, AMT and income-dependent worksheet review")
+        if round(_field_num(rental, "total_schedule1", "rental settlement"), 2) != round(_field_num(f1040, "line_8_schedule1_other", "line8"), 2):
+            raise FilingPackageError("Rental workpaper must settle to Form1040 line8")
+        # TY2025 printed sequence numbers: ScheduleE13,4562=179,8582=858.
+        out.append(("Schedule E (Residential Rental Real Estate)", "13", "schedule_e_rentals"))
+        out.append(("Form 8582 passive-loss worksheet", "858", "schedule_e_rentals.federal"))
+        for i, prop in enumerate(rental["properties"]):
+            if any(a["source"]["placed_in_service"].startswith("2025-") for a in prop["assets"]):
+                out.append((f"Form 4562 — {prop['property_id']}", "179", f"schedule_e_rentals.properties.{i}.form_4562"))
+    elif any(rental.get(k) for k in ("gross_rents", "operating_expenses", "reported_rents", "properties", "computed_tax_year")):
+        raise FilingPackageError("Rental workpapers need their computed tax-year witness")
     if (_field_num(f1040, "line_8_schedule1_other", "line_8") != 0
             or _field_num(f1040, "line_10_adjustments", "line_10") != 0
-            or _section_present(result, "schedule_c") or government_income or misc_income or gambling_income):
+            or _section_present(result, "schedule_c") or government_income or misc_income or gambling_income or rental_active):
         out.append(("Schedule 1 (Additional Income and Adjustments)", "01",
                     "schedule_1_government_benefits" if government_computed else
                     "schedule_1_other_income" if other_computed else None))
@@ -332,6 +349,13 @@ def assembly_order(result: dict) -> list:
     for key, title in _STATE_SECTIONS.items():
         if _section_present(result, key):
             order.append({"key": key, "title": title, "sequence": "STATE"})
+    rental = result.get("schedule_e_rentals") or {}
+    if rental.get("california") is not None:
+        order.append({"key": "schedule_e_rentals.california", "title": "FTB 3801 passive-loss worksheet", "sequence": "STATE"})
+        for i, prop in enumerate(rental["properties"]):
+            worksheet = prop.get("ftb_3885a") or {}
+            if worksheet.get("line_8a") or worksheet.get("line_8b"):
+                order.append({"key": f"schedule_e_rentals.properties.{i}.ftb_3885a", "title": f"FTB 3885A — {prop['property_id']}", "sequence": "STATE"})
     return order
 
 
@@ -346,6 +370,11 @@ def attachment_checklist(result: dict) -> list:
         "(e.g. 1099-R with withholding).",
     ]
     f1040 = result.get("form_1040") or {}
+    rental = result.get("schedule_e_rentals") or {}
+    if type(rental.get("computed_tax_year")) is int:
+        lines.append("Residential rentals: transfer the property ScheduleE and depreciation workpapers to official covered-year forms. Attach Form4562 for newly placed assets and Form8582 when required by its filing exceptions; retain every asset schedule and suspended-loss origin record. These summary workpapers are not completed official forms.")
+        if rental.get("california") is not None:
+            lines.append("CA rentals: retain the separate FTB3885A depreciation and FTB3801 passive-loss workpapers; complete and attach official forms when required. ScheduleCA SectionB line5 uses only the final allowed-net difference after both PAL limits, not the raw depreciation difference again.")
     if _field_num(result.get("other_forms_withholding") or {}, "w2g_withholding", "W-2G withholding") > 0:
         lines.append("Attach each Form W-2G, Copy B, showing federal withholding in box 4 to the front of Form 1040.")
 

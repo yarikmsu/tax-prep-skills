@@ -783,6 +783,79 @@ independently validated and are not acceptance evidence about current code.
 historical file and a Glob of its scratch directory, which held only that file
 under `agents/lib/`. No current engine, tests or taxpayer files were read.
 
+## Results — 2026-10-21
+
+Re-run for AA73: adding the optional rental-law seed changed Replay B's exported
+cache. Neither reviewer definition changed. Both ran in fresh native headless
+sessions using Claude Code 2.1.307 in a clean, source-only local clone, with their
+tracked definitions and exact read-only tool grants. Hooks and MCP servers were
+disabled. No taxpayer runtime files were copied. Criteria were written to disk
+before dispatch; the initial prompts supplied only the historical file (A) or
+exported directory (B), without defect hints. Both sessions completed successfully.
+
+### `tax-law-freshness-auditor` — PASS
+
+**Definition.** `.claude/agents/tax-law-freshness-auditor.md`,
+sha256 `234c6542e38eb0bf0b1be70a01f9c6b00f08e6591c9fd32933db5d0d1f72c759`.
+
+**Input.** The cache Replay B's generator exports, copied byte for byte,
+sha256 `e03f3b0379db751edcc95b29245b457b807141b0e89fe81d06bd03098515235d`.
+
+**Model.** `claude-opus-5-5`. The session also reported `claude-haiku-5-5`
+usage for web-tool processing.
+
+The STALE finding identified the SALT plant by VALUE: 10,000 / 5,000 in the
+cache versus 40,400 / 20,200 for TY2026, citing section164(b)(7) on Cornell LII
+and year-named IRS Publication505. Both cached amounts were independently checked
+against `_salt_cap(2024, …)`, and the reported replacements against the TY2026
+schedule. The unsupported Topic503 pin and missing retrieval date were additional
+findings, not the bar.
+
+Six numeric seed groups were UNVERIFIED for period: simplified FTC, Form8938,
+FBAR, QBI rate, IRMAA lookback and the combined SE rate. Four groups were VERIFIED
+against year-named IRS publications: Additional Medicare, NIIT, the SE earnings
+factor and the employee Social Security rate. The report placed the boolean
+capital-gains flag in its UNVERIFIED table but explicitly recognized it as a
+nonnumeric flag. It did not enumerate every populated leaf as wrong. The conservative
+SE-rate finding declined to treat the separately verified components' sum as a
+verified combined rate; this is recorded, not endorsed as a defect in the seed.
+The optional rental-law block remained empty and was reported as unfetched.
+
+**Contamination, read from the trace.** Fourteen tool calls: one Glob of the
+export, two Reads for its cache and schema, six WebFetch calls and five WebSearch
+calls. Fetch hosts were IRS and Cornell LII. Secondary search results were mentioned
+only as unaccepted evidence. No other file was read, including any host-saved
+fetch output. No permission denials occurred. This checks actual reads on this run;
+the directory scope remains an instruction rather than a Read-tool boundary.
+
+### `bias-direction-reviewer` — PASS
+
+**Definition.** `.claude/agents/bias-direction-reviewer.md`,
+sha256 `bd3025c7093e6681f66d52696933ea42888d1c50a6cf0a9f41c856d80ea3bf91`.
+
+**Input.** `2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py`,
+sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
+
+**Model.** `claude-opus-5-5`.
+
+Finding3 identified the missing Form8995 overall taxable-income-less-net-capital-
+gain cap in `compute_qbi_deduction` at line742. It explained the resulting
+OVER-statement of the deduction, UNDER-statement of tax and conversion cost, and
+over-recommendation in planning, with a worked example. The criterion's own case
+was independently reproduced against the handed function: 100,000 QBI and no
+REIT dividends returns 20,000; no taxable-income parameter exists; the overall
+cap at 30,000 taxable income is 6,000.
+
+Finding9 also caught the Form8959 wage-versus-SE withholding-credit defect.
+The optional ODC/ACTC item was not earned. All seventeen findings concerned
+bias direction or unstated preconditions. The other claims were not independently
+validated and are not acceptance evidence about the current engine.
+
+**Contamination, read from the trace.** One tool call: a Read of the supplied
+historical file. No current engine, tests or taxpayer files were read, and no
+permission denials occurred. Both sessions' complete reports and traces were
+retained locally with owner-only permissions.
+
 ## The parse worker is accepted differently, and this is why
 
 `tax-parse-worker` is in `.claude/agents/` and has **no replay section above, on

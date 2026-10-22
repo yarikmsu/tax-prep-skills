@@ -62,6 +62,18 @@ Last updated: {{DATE}}
 
 - **[misc_income_sources]**
 
+### Confirm residential rental scope, every property/book and overlapping information return, ownership/active-participation history, separate federal/CA basis, depreciation method and suspended-loss origins. Confirm basis/at-risk and other loss limits, MAGI components and remaining Schedule1 income excluding rentals, including zero; unresolved facts block computation.
+
+*Asked by tax-compute rental-income.md; required when rental income, a plan or prior rental balances are present.*
+
+- **[rental_sources_and_scope]**
+
+### After rebuilding rentals, refresh QBI, NIIT, federal/CA AMT and every affected income-dependent worksheet. Record the reviewed input digest in rental_return.related_forms_review; gross rent is not the signed allowed Form8960 rental contribution.
+
+*Asked by tax-compute rental-income.md; required when a computed rental workpaper is present.*
+
+- **[rental_related_forms_review]**
+
 ### Confirm signed remaining Schedule1 income EXCLUDING tracked nonbusiness MISC, mapped casual W-2G and UI/family benefits, including a deliberate zero. Include business NET income and losses, taxable refunds and other sources. Never reuse an old aggregate.
 
 *Asked by tax-compute income-and-agi.md; required when a 1099-MISC is present.*
