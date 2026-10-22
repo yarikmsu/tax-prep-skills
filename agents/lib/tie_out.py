@@ -396,6 +396,13 @@ def _eic_lines_still_zero(result: dict) -> "tuple[str, ...]":
         if not _is_figure(variant.get("line_43_earned_income")) or variant.get("line_43_earned_income") == 0:
             out.append("IT-203 line43 state EIC (IT-215 worksheet input)")
         out.append("IT-203-ATT refundable EIC/NYC EIC must be checked separately; line61 aggregate does not prove eligibility was reviewed")
+    from agents.lib.tax_computations.state.registry import ca_section_key
+    nr = _section(result, (ca_section_key("540NR"),))
+    if nr is not None and (nr.get("computed_tax_year") or (result.get("meta") or {}).get("ca_return_type") == "540NR"):
+        for line, label in ((85, "CalEITC"), (86, "Young Child Tax Credit"), (87, "Foster Youth Tax Credit")):
+            value = nr.get(f"line_{line}")
+            if not _is_figure(value) or value == 0:
+                out.append(f"CA Form540NR line{line} ({label})")
     return tuple(out)
 
 
@@ -856,7 +863,13 @@ def foreign_payers(ledger: "list[LedgerRecord]") -> "list[str]":
 
 def _category_target(result: dict, category: str):
     from agents.lib.projection import _section_computed
-    from agents.lib.tax_computations.state.registry import BY_CODE, BY_SECTION
+    from agents.lib.tax_computations.state.registry import BY_CODE, BY_SECTION, selected_ca_return, ca_section_key
+    try:
+        ca_form = selected_ca_return(result)
+    except ValueError as exc:
+        raise TieOutError(str(exc)) from None
+    if ca_form == "540NR" and CATEGORY_TARGETS[category][0] == BY_CODE["CA"].section:
+        return ca_section_key(ca_form), CATEGORY_TARGETS[category][1]
     row = BY_SECTION["new_york_it203"]
     from agents.lib.tax_computations.state.registry import selected_ny_return
     try:
@@ -1606,10 +1619,9 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
         if _section_computed(result, section, row.evidence_fields):
             computed[code] = category
     if isinstance(profile, dict):
-        from agents.lib.capabilities import CapabilityError, _profile_state
-        from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+        from agents.lib.capabilities import CapabilityError, _filing_state
         try:
-            selected = "NY" if ny_it203_plan(profile) else _profile_state(profile)
+            selected = _filing_state(profile)
         except (CapabilityError, ValueError):
             return ["other_state_withholding: resolve the profile state/NY filing plan before choosing the payment's return"]
         # Dropping a selected state's entire result cannot turn its payment
@@ -1750,6 +1762,9 @@ def derive_rental_workpaper(ledger, result: dict, profile: dict, tax_law: dict) 
     """Independent reading, without trusting stored rental net or stale AGI."""
     if not rental_is_active(ledger, result, profile):
         return None
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    if ca_540nr_plan(profile):
+        raise ValueError("move-year rental passive/depreciation worksheets are outside the Form540NR path")
     from agents.lib.tax_computations.federal.rentals import compute_residential_rental_return
     from agents.lib.capabilities import _NO_INCOME_TAX_STATES, _profile_state
     from agents.lib.return_builder import ledger_income, _LINE_1Z_TERMS
@@ -1955,12 +1970,14 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
         other, confirmed = sheet.get("other_income"), sheet.get("other_income_confirmed")
     else:
         raise ValueError("schedule_1_government_benefits must be an object or absent")
-    from agents.lib.tax_computations import ny_it203_plan
+    from agents.lib.tax_computations import ny_it203_plan, ca_540nr_plan
+    from agents.lib.tax_computations.state.registry import selected_ca_return
     from agents.lib.projection import _ca_section_computed
     address = profile.get("address") or {}
     require_ca = (isinstance(address, dict) and isinstance(address.get("state"), str)
                   and address["state"].strip().upper() == "CA" and not ny_it203_plan(profile))
     require_ca = require_ca or _ca_section_computed(result)
+    require_ca = require_ca or bool(ca_540nr_plan(profile)) or selected_ca_return(result) == "540NR"
     built = compute_government_benefits(tax_year=year, records=records, other_income=other,
         other_income_confirmed=confirmed, require_ca=require_ca)
     # Schedule 1 line 7: only a filer who does not itemize nets contributions
@@ -2004,27 +2021,28 @@ def _government_income_checks(ledger: "list[LedgerRecord]", result: dict, profil
         return [f"Government benefits: {redact(exc)}"]
 
 
-def ca_values_agree(was, value) -> bool:
-    """Cent-precision workpapers, preserving boolean types inside lists too."""
+def ca_values_agree(was, value, *, exact: bool = False) -> bool:
+    """Monetary workpapers, with exact mode for form rates and source proof."""
     if isinstance(value, bool):
         return isinstance(was, bool) and was == value
     if isinstance(value, (int, float)):
         try:
             return (not isinstance(was, bool) and isinstance(was, (int, float))
-                    and math.isfinite(was) and round(float(was), 2) == round(float(value), 2))
+                    and math.isfinite(was) and (float(was) == float(value) if exact
+                        else round(float(was), 2) == round(float(value), 2)))
         except OverflowError:
             return False
     if isinstance(value, dict):
         return (isinstance(was, dict) and set(was) == set(value)
-                and all(ca_values_agree(was[k], v) for k, v in value.items()))
+                and all(ca_values_agree(was[k], v, exact=exact) for k, v in value.items()))
     if isinstance(value, list):
         return (isinstance(was, list) and len(was) == len(value)
-                and all(ca_values_agree(a, b) for a, b in zip(was, value)))
+                and all(ca_values_agree(a, b, exact=exact) for a, b in zip(was, value)))
     return type(was) is type(value) and was == value
 
 
 def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: dict,
-                          tax_law: dict) -> dict:
+                          tax_law: dict, *, section_key: str | None = None) -> dict:
     """One source-to-worksheet reading shared by the builder and tie-out."""
     result_year = (result.get("meta") or {}).get("tax_year")
     profile_year = profile.get("tax_year")
@@ -2033,7 +2051,10 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
     if result_year is not None and profile_year is not None and result_year != profile_year:
         raise ValueError("CA investment source/return years disagree")
     year = result_year if result_year is not None else profile_year
-    ca = result.get("california_540") or {}
+    if section_key is None:
+        from agents.lib.tax_computations.state.registry import ca_section_key, selected_ca_return
+        section_key = ca_section_key(selected_ca_return(result) or "540")
+    ca = result.get(section_key) or {}
     adjustments = ca.get("schedule_ca_adjustments")
     flags = profile.get("flags")
     if not isinstance(adjustments, dict) or not isinstance(flags, dict):
@@ -2118,25 +2139,30 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
 def _ca_schedule_checks(ledger: "list[LedgerRecord]", result: dict, profile, tax_law) -> list[str]:
     from agents.lib.projection import _ca_section_computed
     from agents.lib.tax_computations import ny_it203_plan
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    from agents.lib.tax_computations.state.registry import selected_ca_return, ca_section_key
     profile = profile if isinstance(profile, dict) else {}
     address = profile.get("address") or {}
     try:
-        selected = (isinstance(address, dict) and isinstance(address.get("state"), str)
+        nr_plan = ca_540nr_plan(profile)
+        selected_form = selected_ca_return(result)
+        selected = bool(nr_plan) or (isinstance(address, dict) and isinstance(address.get("state"), str)
                     and address["state"].strip().upper() == "CA"
                     and not ny_it203_plan(profile))
+        section = ca_section_key("540NR" if nr_plan else selected_form or "540")
     except ValueError:
         return ["CA Schedule CA: resolve the malformed NY filing plan before selecting state adjustments"]
-    if not selected and not _ca_section_computed(result):
+    if not selected and selected_form != "540NR" and not _ca_section_computed(result):
         return []
-    ca = result.get("california_540")
+    ca = result.get(section)
     if not isinstance(ca, dict):
-        return ["CA Schedule CA: selected California return has no california_540 section"]
+        return [f"CA Schedule CA: selected California return has no {section} section"]
     if (type(ca.get("computed_tax_year")) is not int
             and not any(r.ca_investments is not None or any(dict(r.key_boxes).get(k, 0)
                         for k in CA_INVESTMENT_COMPONENTS) for r in ledger if r.skipped is None)):
         return []
     try:
-        built = derive_ca_schedule_ca(ledger, result, profile or {}, tax_law or {})
+        built = derive_ca_schedule_ca(ledger, result, profile or {}, tax_law or {}, section_key=section)
     except (ValueError, TypeError, AttributeError, OverflowError) as exc:
         return [f"CA Schedule CA: {redact(exc)}"]
     if not ca_values_agree(ca.get("schedule_ca_adjustments"), built):
@@ -2148,6 +2174,16 @@ def _ca_5805_checks(ledger, result: dict, profile, tax_law) -> list[str]:
     """Independently rebuild computed CA returns before any federal waiver."""
     from agents.lib.return_builder import build_california, california_differences, Blocked
     from agents.lib.projection import _ca_section_computed
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    from agents.lib.tax_computations.state.registry import selected_ca_return
+    try:
+        if ca_540nr_plan(profile or {}) or selected_ca_return(result) == "540NR":
+            built = build_california(result, tax_law or {}, ledger, profile or {})
+            if not built or california_differences(result, built):
+                return ["CA Form540NR: source allocation, review, arithmetic, FTB5805, credits or disclosures disagree; rebuild the return"]
+            return []
+    except (Blocked, ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        return [f"CA Form540NR: {redact(exc)}"]
     ca = result.get("california_540")
     if not isinstance(ca, dict) or (not _ca_section_computed(result)
             and ca.get("computed_tax_year") is None and ca.get("ftb_5805") is None):
@@ -2168,8 +2204,12 @@ def _ca_owner_credit_checks(ledger, result: dict, profile, tax_law) -> list[str]
     from agents.lib.tax_computations.state.ca_credits import compute_ca_credit_order
     if not isinstance(profile, dict):
         return []
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    from agents.lib.tax_computations.state.registry import selected_ca_return
     from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
     try:
+        if ca_540nr_plan(profile) or selected_ca_return(result) == "540NR":
+            return []  # The independent NR constructor checks these with source TMT/proration.
         address = profile.get("address") or {}
         if str(address.get("state", "")).strip().upper() != "CA":
             return []
@@ -2200,6 +2240,13 @@ def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: boo
                       tolerance: float) -> list[str]:
     """CA subtractions and carried AMT credit cannot vanish behind an acknowledgement."""
     profile = profile if isinstance(profile, dict) else {}
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    from agents.lib.tax_computations.state.registry import selected_ca_return
+    try:
+        if ca_540nr_plan(profile) or selected_ca_return(result) == "540NR":
+            return []  # NR source columns/credits are independently rebuilt by _ca_5805_checks.
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        return [f"CA return selection: {redact(exc)}"]
     flags = profile.get("flags") if isinstance(profile.get("flags"), dict) else {}
     prior = profile.get("prior_year") if isinstance(profile.get("prior_year"), dict) else {}
     carried = _get_num({"prior": prior}, "prior.ca_amt_credit_carryforward")
@@ -2506,7 +2553,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                     "each IT-201 line from the form named beside it above")
             if any(line.startswith("CA ") for line in zero_lines):
                 where.append(
-                    "each California Form 540 line 75-77 from the covered year's "
+                    "each California family-credit line named above from the covered year's "
                     "FTB 3514 eligibility and credit worksheets")
             advisories.append(
                 opening + " Nothing in this toolkit computes the EIC — not "

@@ -84,6 +84,8 @@ def ny_it203_plan(profile):
     plan = filings.get("NY")
     if plan is None:
         return None
+    if filings.get("CA") is not None:
+        raise ValueError("simultaneous CA and NY allocation plans require unmodeled other-state returns")
     if not isinstance(plan, dict) or plan.get("form") != "IT203":
         raise ValueError("state_filings.NY must declare form IT203")
     year = profile.get("tax_year")

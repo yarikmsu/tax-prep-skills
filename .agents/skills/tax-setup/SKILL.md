@@ -169,6 +169,11 @@ sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json
 
 ### 4. Fetch Current Tax Law
 
+For a validated `state_filings.CA` Form540NR plan, select the existing complete
+CA annual schema even when the mailing address is elsewhere. Its reviewed
+TY2025 part-year worksheets use the same fetched rates/tables, exemptions,
+AMT and FTB5805 blocks; no prior-year or resident-month shortcut is valid.
+
 For a validated `state_filings.NY` IT203 plan, fetch NY as the selected filing
 state even if the mailing address is elsewhere. Seed/replace `state` with
 `create_state_template("NY", tax_year=year)` through the fetcher's `set` command,

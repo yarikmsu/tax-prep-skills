@@ -1064,5 +1064,93 @@
     "deduction_regime": "",
     "line_38_tax_method": "",
     "notes": []
+  },
+  "california_540nr": {
+    "_include_if": "state_filings.CA declares reviewed Form540NR; remove california_540 and its resident-only itemized scaffold",
+    "_note": "TY2025 part-year variant. Raw source rows live in profile.state_filings.CA. Builder derives all output lines and source workpapers; draft writes do not satisfy final allocation review. See tax-compute/references/state-return-ca-part-year.md.",
+    "computed_tax_year": null,
+    "ca_filing_status": null,
+    "form_inputs": {
+      "line_41": null,
+      "line_50": null,
+      "line_51": null,
+      "line_52": null,
+      "line_53": null,
+      "line_61": null,
+      "line_73": null,
+      "line_84": null,
+      "line_85": null,
+      "line_86": null,
+      "line_87": null,
+      "line_91": null,
+      "line_102": null,
+      "line_120": null,
+      "line_122": null,
+      "claim_of_right_credit": null
+    },
+    "deduction_inputs": {
+      "method": null,
+      "itemized_before_limitation": null,
+      "itemized_after_limitation": null,
+      "dependent_filer": null,
+      "dependent_standard_deduction": null
+    },
+    "amt_inputs": {
+      "world_adjustments": null,
+      "ca_adjustments": null,
+      "iso_world": null,
+      "iso_ca": null,
+      "itemized_amt_disallowances": null
+    },
+    "iso_basis_reconciliation": {
+      "adjustment": null,
+      "confirmed": false,
+      "source_ids": []
+    },
+    "schedule_ca_adjustments": {
+      "hsa_employer_addback": 0,
+      "hsa_interest_addback": 0,
+      "hsa_dividend_addback": 0,
+      "taxable_social_security_subtraction": 0,
+      "taxable_state_refund_subtraction": 0,
+      "total_additions": 0,
+      "total_subtractions": 0,
+      "other_additions": 0,
+      "other_subtractions": 0,
+      "other_adjustments_confirmed": false,
+      "us_obligation_interest_subtraction": 0,
+      "us_obligation_fund_subtraction": 0,
+      "nonca_municipal_interest_addition": 0,
+      "exempt_interest_dividend_addition": 0,
+      "line_2_column_b": 0,
+      "line_2_column_c": 0,
+      "investment_workpaper": [],
+      "has_us_obligation_income": false,
+      "has_nonca_muni_interest": false,
+      "municipal_workpaper": [],
+      "source_note": null,
+      "unemployment_subtraction": 0,
+      "paid_family_leave_subtraction": 0,
+      "section_b_line_7_column_b": 0,
+      "section_b_other_income_subtraction": 0
+    },
+    "schedule_ca": {},
+    "schedule_p": {},
+    "ftb_3804_cr": {},
+    "ftb_5805": null,
+    "line_35": 0,
+    "line_74": 0,
+    "line_125": 0,
+    "ca_total_tax": 0,
+    "ca_refund": 0,
+    "ca_amount_owed": 0,
+    "allocation_input_digest": null,
+    "allocation_review_current": false,
+    "source_note": null,
+    "conformity_manual_rows": [],
+    "w2_ca_wages": {
+      "confirmed": false,
+      "sources": []
+    }
   }
 }

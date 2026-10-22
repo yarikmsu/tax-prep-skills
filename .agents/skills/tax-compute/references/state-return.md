@@ -34,6 +34,13 @@ regime and LONG-TERM base; never an ordinary-income bracket estimate.
 
 ### Step 10: State Return
 
+**Declared CA part-year filing first:** validate `ca_540nr_plan(profile)` through the
+launcher. A valid Form540NR plan selects CA law regardless of mailing address;
+require matching covered-year CA law, read
+[state-return-ca-part-year.md](state-return-ca-part-year.md), and return to Step11.
+Never run the full-year Form540 branch for this plan. Malformed or competing
+plans stop.
+
 **Declared NY filing first:** validate `ny_it203_plan(profile)` through the
 launcher. A valid IT203 plan selects NY law regardless of mailing address:
 require `tax_law.state.code == "NY"` and matching year, then read

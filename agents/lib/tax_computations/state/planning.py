@@ -294,6 +294,14 @@ def price_state_points(result: dict, tax_law: dict, year: int, status: str | Non
     Each unavailable verdict carries its specific reason, while federal planning
     can continue. The fingerprint lets stacks refuse changed state evidence/law.
     """
+    from agents.lib.tax_computations.state.registry import selected_ca_return
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    try:
+        if selected_ca_return(result) == "540NR" or ca_540nr_plan(profile or {}):
+            return {"modeled": False, "limitations": ["CA Form540NR source allocation cannot use full-year resident state planning; rework the actual part-year worksheets."],
+                    "fingerprint": None, "points": []}
+    except ValueError as exc:
+        return {"modeled": False, "limitations": [str(exc)], "fingerprint": None, "points": []}
     plan = result.get("state_planning_inputs")
     if plan is None:
         return {"modeled": False, "limitations": ["State/local tax not modeled: record reviewed state_planning_inputs"],

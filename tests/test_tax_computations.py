@@ -8068,7 +8068,7 @@ class TestEveryStateEntryPointValidatesItsFilingStatus:
     # a module-local wrapper whose whole body delegates to it (NY keys its
     # tables lowercase, so it has one). A wrapper is proved to delegate below,
     # rather than trusted by name.
-    NORMALISERS = {"_normalize_filing_status", "_ny_status"}
+    NORMALISERS = {"_normalize_filing_status", "_ny_status", "_status"}
 
     def _normalises_its_own_status(self, func) -> bool:
         """An UNCONDITIONAL normalising call HANDED the `filing_status` param.
@@ -8125,7 +8125,7 @@ class TestEveryStateEntryPointValidatesItsFilingStatus:
         # status somewhere, so a run that inspected neither has lost its
         # subject — a renamed directory, a changed predicate — rather than
         # found nothing to report.
-        assert {p.split("::")[0] for p in seen} == {"ca.py", "nc.py", "ny.py", "wa.py", "ny_nonresident.py"}, (
+        assert {p.split("::")[0] for p in seen} == {"ca.py", "ca_nonresident.py", "nc.py", "ny.py", "wa.py", "ny_nonresident.py"}, (
             f"the sweep inspected {sorted(set(p.split('::')[0] for p in seen))} "
             "— it is meant to read every depth module, and a module it cannot "
             "see is a module it cannot hold")
@@ -8140,11 +8140,15 @@ class TestEveryStateEntryPointValidatesItsFilingStatus:
         NOTHING — a name spelled like a guard is not a guard, and the sweep
         would read as green over exactly the defect it was written for."""
         from agents.lib.tax_computations.state import ny
+        from agents.lib.tax_computations.state import ca_nonresident
         assert ny._ny_status("MFJ") == "mfj"
         assert ny._ny_status("mfj") == "mfj"
         for rejected in ("qualifying_widow", "Married Filing Jointly", "", None):
             with pytest.raises((ValueError, TypeError, AttributeError)):
                 ny._ny_status(rejected)
+            with pytest.raises(ValueError):
+                ca_nonresident._status(rejected)
+        assert ca_nonresident._status("MFJ") == "mfj"
 
     def test_the_sweep_sees_a_function_that_skips_the_validator(self):
         """Cry-wolf's opposite: proof the detector fires. A function shaped
@@ -8264,6 +8268,8 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/state/ca.py::compute_ca_exemption_credit": "direct",
         "tax_computations/state/ca.py::compute_ca_540": "direct",
         "tax_computations/state/ca.py::compute_ca_5805": "direct",
+        "tax_computations/state/ca_nonresident.py::compute_ca_540nr": "direct",
+        "tax_computations/state/ca_nonresident.py::compute_ca_540nr_amt": "direct",
         "tax_computations/state/ny.py::compute_ny_agi": "direct",
         "tax_computations/state/ny.py::compute_ny_tax": "direct",
         "tax_computations/state/ny.py::compute_ny_household_credit": "direct",

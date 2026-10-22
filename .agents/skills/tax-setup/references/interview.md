@@ -246,6 +246,14 @@ interview never captures is invisible to every downstream check.
 
   Both are required-present for the same reason `nyc_resident` is: absence
   reads as False and drops a real liability.
+- Before finalizing state scope, ask whether California residence changed.
+  A reviewed TY2025 part-year plan uses `state_filings.CA`, Form540NR, actual
+  residence dates and income-source allocations, identical joint periods and
+  a complete resident/source-state obligation inventory. Follow tax-compute's
+  `references/state-return-ca-part-year.md` for every required fact. Confirm
+  separate deduction/AMT/ISO basis and credit worksheets, separate CDTFA use
+  tax, and keep true move/source flags. Validate `ca_540nr_plan` through the
+  launcher before selecting CA law. Do not infer CA filing from an address.
 - Before finalizing state scope, ask whether NY residence changed during the
   year or nonresident NY-source income exists. For TY2025 IT203, record the
   complete `state_filings.NY` plan: actual continuous NY/NYC residence dates,

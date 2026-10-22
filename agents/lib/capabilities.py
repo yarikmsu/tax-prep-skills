@@ -786,6 +786,21 @@ def _profile_state(profile: dict) -> "str | None":
     return code
 
 
+def _filing_state(profile: dict) -> "str | None":
+    """Declared filing plans select law independently of the mailing address."""
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    try:
+        ny = ny_it203_plan(profile)
+    except ValueError as exc:
+        raise CapabilityError(f"NY filing plan: {exc}") from None
+    try:
+        ca = ca_540nr_plan(profile)
+    except ValueError as exc:
+        raise CapabilityError(f"CA filing plan: {exc}") from None
+    return "CA" if ca else "NY" if ny else _profile_state(profile)
+
+
 # --- Residency -------------------------------------------------------------
 #
 # New York's statutory-residency test, and the ONLY state whose test this engine
@@ -891,7 +906,7 @@ def _ny_statutory_resident(profile: dict) -> bool:
 
 
 def _state_note(profile: dict) -> str:
-    code = _profile_state(profile)
+    code = _filing_state(profile)
     if code is None:
         return "State: none configured — no state return computed."
     if code in _TERRITORIES:
@@ -910,6 +925,11 @@ def _state_note(profile: dict) -> str:
                 "worksheets are inputs. Other-state returns/credits, mixed spouses, MFS, IT-230 special ratios and IT-203 Yonkers tax remain manual. "
                 "Ordinary state projections and IT-203 withholding forecasts are not modeled.")
     if code == "CA":
+        from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan, CA_NR_NOTE
+        if ca_540nr_plan(profile):
+            return ("State (CA): " + CA_NR_NOTE + " FTB5805 regular-method pricing uses CA-source AGI; "
+                    "special penalty methods require reviewed worksheets or an eligible FTB-billing election. "
+                    "Ordinary projections and withholding forecasts do not allocate part-year income.")
         return ("State: California Form 540 arithmetic and Schedule P are computed by a checked builder "
                 "for the reviewed form year, from separately worked Schedule CA, deduction, credit and tax components. "
                 "HSA adjustments, exemption-credit math, FTB3510 PartII and direct-owner PTET credits have engine support; "
@@ -1128,7 +1148,12 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         ny_plan = ny_it203_plan(profile)
     except ValueError as exc:
         raise CapabilityError(f"NY filing plan: {exc}") from None
-    state = "NY" if ny_plan else _profile_state(profile)
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    try:
+        ca_plan = ca_540nr_plan(profile)
+    except ValueError as exc:
+        raise CapabilityError(f"CA filing plan: {exc}") from None
+    state = "CA" if ca_plan else "NY" if ny_plan else _profile_state(profile)
     rental_plan = profile.get("rental_return")
     prior = profile.get("prior_year", {})
     if not isinstance(prior, dict):
@@ -1154,7 +1179,8 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         derived["ca_has_amt_credit"] = carried > 0
     applicable_rules = tuple(rule for rule in RULES if rule.state is None or rule.state == state)
     for rule in applicable_rules:
-        if (ny_plan and ny_plan["fully_covered"] and rule.rule_id in
+        covered_plan = ca_plan or ny_plan
+        if (covered_plan and covered_plan["fully_covered"] and rule.rule_id in
                 {"part_year_residency", "nonresident_source_income"}):
             _flag_value(flags, rule.flag)  # Still reject malformed flag values.
             continue
@@ -1162,6 +1188,23 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         if not (_flag_value(flags, rule.flag) or derived.get(rule.flag)):
             continue
         form, note = rule.form, rule.note
+        if ca_plan and rule.state == "CA":
+            form = form.replace("Schedule CA (540)", "Schedule CA (540NR)").replace("Schedule P (540)", "Schedule P (540NR)")
+            replacements = {"ca_blind_exemption": "Form540NR line8", "ca_use_tax": "CDTFA separate use-tax filing",
+                            "ca_coverage_penalty": "Form540NR line91 / FTB3853",
+                            "ca_noniso_amt": "ScheduleP (540NR) / Form540NR line71",
+                            "ca_distribution_taxes": "Form540NR line41 / ScheduleG-1 / FTB5870A",
+                            "ca_other_taxes": "Form540NR line73 / FTB3805P",
+                            "ca_ptet_credit": "FTB3804-CR / Form540NR lines58-60",
+                            "ca_other_credit_carryover": "Form540NR lines58-60 / FTB3540",
+                            "ca_renters_credit": "Form540NR line61, renter's credit worksheet",
+                            "ca_special_credits": "Form540NR lines51-60 / ScheduleP (540NR)"}
+            if rule.rule_id in replacements:
+                form = replacements[rule.rule_id]
+            if rule.rule_id == "ca_noniso_amt":
+                note = "Record separate reviewed worldwide and CA-source AMT adjustments, including itemized disallowances and ISO basis differences. The builder computes both ScheduleP (540NR) columns."
+            if rule.rule_id == "ca_use_tax":
+                note = "Form540NR has no use-tax line; review and pay the separate CDTFA obligation. NR line91 is the health-coverage penalty."
         level = rule.level
         if rule.rule_id == "rental_income" and rental_computed_scope:
             level = MANUAL
@@ -1171,10 +1214,10 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
                     "worksheets require input-bound review. Equipment, ADS, bonus/section179, method changes, "
                     "personal/short-term/self-rental, royalties, dispositions and special passive cases remain outside scope.")
         if state == "CA" and rule.rule_id == "dependent_care":
-            form += "; California FTB 3506 / Form 540 line 40"
+            form += "; California FTB 3506 / " + ("Form540NR line50" if ca_plan else "Form 540 line 40")
             note += " California FTB 3506 is NOT computed; prepare its separate covered-year eligibility and credit worksheet."
         if state == "CA" and rule.rule_id == "earned_income_credit":
-            form = "Form 1040 line 27; California Form 540 lines 75-77 / FTB 3514"
+            form = "Form 1040 line 27; California " + ("Form540NR lines85-87" if ca_plan else "Form 540 lines 75-77") + " / FTB 3514"
             note = ("Federal EIC, CalEITC, Young Child Tax Credit and Foster Youth Tax Credit "
                     "are NOT computed. Work each covered-year eligibility worksheet separately; "
                     "a federal no does not rule out California's credits, including ITIN filers "

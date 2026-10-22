@@ -8,6 +8,10 @@ results are required, and if web access is unavailable or cached-only you STOP
 and ask the user to paste the current figures with their source URL. Never infer
 a figure from a prior year.
 
+For a validated California Form540NR plan, the selected filing state is CA
+regardless of mailing address. Fetch the entire existing CA schema for the
+covered year; part-year deductions, tax and AMT use these annual inputs.
+
 ## Contents
 
 - Federal (IRS.gov)

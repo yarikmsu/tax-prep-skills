@@ -62,6 +62,7 @@ def workspace(tmp_path_factory):
 # no business, no HSA, no foreign account, no education or retirement activity,
 # and a safe harbour met by withholding alone.
 _INAPPLICABLE_SECTIONS = (
+    "california_540nr",  #Both golden households are full-year CA residents.
     "schedule_e_rentals",  #Neither golden owns rental property or carries rental losses.
     "state_planning_inputs",
     "social_security_worksheet", "schedule_1_government_benefits", "schedule_1_other_income", "other_forms_withholding",

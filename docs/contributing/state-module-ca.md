@@ -4,8 +4,10 @@
 
 Full-year resident Form 540, **TY2025 only** for the checked builder. A new
 form year must be reviewed before adding it to the engine's reviewed-year set.
-Form 540NR, RDP pro-forma federal returns and the situations named by the CA
-capability rules retain their gates. Acknowledging a gate permits a separately
+A separately declared TY2025 part-year Form540NR follows
+[state-module-ca-part-year.md](state-module-ca-part-year.md); it never uses this
+resident builder. RDP pro-forma federal returns and the situations named by the
+CA capability rules retain their gates. Acknowledging a gate permits a separately
 worked component; it does not turn that worksheet into an engine computation.
 `ca_filing_status` must be confirmed and match the federal return; a differing
 status refuses because the checked builder cannot reuse that federal AGI.

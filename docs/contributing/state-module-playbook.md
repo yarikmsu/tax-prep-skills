@@ -7,7 +7,9 @@ a technical limit — the resident modules are a worked pattern this playbook wr
 down.
 
 - **California, Form 540** — the first, and the one this playbook's examples
-  are drawn from.
+  are drawn from. A separately declared TY2025 part-year Form540NR uses
+  reviewed actual source allocations, separate regular/AMT ratios and a bound
+  worksheet review; see [its contract](state-module-ca-part-year.md).
 - **New York, Form IT-201**, FULL-YEAR RESIDENT only — the State tax, and the
   New York City resident tax with the metropolitan commuter transportation
   mobility tax (lines 47-58). Line 47a reads the City's own tax table below its
@@ -275,7 +277,7 @@ Grep-verify each of these — they are the places "state" is enumerated:
   8863 groups QSS with Single; states vary).
 - Don't reuse `california_540` for a second state or overload its fields.
 - New resident modules keep part-year/nonresident allocation gated; NY IT203
-  is the declared, reviewed exception. The general multi-state work is the gated
+  and CA Form540NR have separately declared, reviewed allocation variants. The general multi-state work is the gated
   community track (`moved_states_this_year` blocks at C1) and a much
   bigger design.
 

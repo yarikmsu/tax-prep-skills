@@ -329,3 +329,10 @@ plan clears move/source blocks only for covered no-income-tax states needing
 no return. NJ and other taxable-state resident returns and their credits still
 need separate preparation. A City move within full-year NY remains the
 unmodeled IT-201 part-year City branch; this IT203 addition does not clear it.
+
+A declared TY2025 California part-year Form540NR plan now computes reviewed
+source allocations with separate worldwide/CA deductions and AMT, credit/payment
+workpapers and a current input-bound review. This does not clear another taxable
+state's return, foreign/statutory second residency or the explicitly excluded
+household/worksheet cases. Full-year state planning cannot forecast NR source
+allocations. See [the maintained contract](contributing/state-module-ca-part-year.md).

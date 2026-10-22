@@ -3707,6 +3707,9 @@ from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
     compute_ca_schedule_ca,
     compute_excess_sdi,
 )
+from agents.lib.tax_computations.state.ca_nonresident import (  # noqa: E402,F401
+    ca_540nr_plan, compute_ca_540nr, compute_ca_540nr_amt,
+)
 
 
 # North Carolina — the same contract as California and New York above.

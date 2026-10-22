@@ -28,6 +28,7 @@ NOT AN E-FILE ARTIFACT: no MeF XML, no Form 8879. The filing package
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -140,7 +141,9 @@ def _title(key: str) -> str:
     """
     words = []
     for word in key.split("_"):
-        if word.isdigit() or (word[:1].isdigit() and word[-1:].isalpha()):
+        if word[:1].isdigit() and word.endswith(("nr", "sr")):
+            words.append(word.upper())
+        elif word.isdigit() or (word[:1].isdigit() and word[-1:].isalpha()):
             words.append(word)
         elif word in ("hsa", "qbi", "ftc", "fatca", "fbar", "pfic", "ira",
                       "agi", "amt", "fx", "ca", "us",
@@ -183,6 +186,16 @@ _NOT_THE_OFFICIAL_LINE = {
     ("schedule_d", "line_8a_1099b_box_d"):
         "1099-B Box D (Schedule D line 8a, or 8b via Form 8949 if adjusted)",
 }
+
+# The same printed line number is monetary in another worksheet. Keep units
+# scoped to the full path, including the ISO counterfactual ScheduleP.
+_CA_NR_RATIO_PATHS = frozenset({
+    ("line_36",), ("line_38",), ("line_54",),
+    ("schedule_ca", "part_iv", "line_3"),
+    ("schedule_p", "line_38"), ("schedule_p", "line_42"),
+    ("schedule_p", "without_iso", "line_38"),
+    ("schedule_p", "without_iso", "line_42"),
+})
 
 
 def _label(key: str, section: str = "") -> str:
@@ -273,24 +286,32 @@ def _display(value, key: str = "") -> "str | None":
     return str(value)
 
 
-def _rows(node, prefix: str = "", section: str = "") -> "list[tuple[str, str]]":
+def _rows(node, prefix: str = "", section: str = "", *, path: tuple = ()) -> "list[tuple[str, str]]":
     """(label, value) for every figure under `node`, nested keys indented.
 
     A list of objects becomes one indented block per entry, which is what a
     Schedule B item list or a PFIC fund list is; a list of scalars is joined.
     """
     out: "list[tuple[str, str]]" = []
+    from agents.lib.tax_computations.state.registry import ca_section_key
     if isinstance(node, list):
         # A section can BE a list — `dependents` is one — and a walker that only
         # descended into dicts dropped the whole section without a word.
-        return _rows({"": node}, prefix, section)[1:] if node else []
+        return _rows({"": node}, prefix, section, path=path)[1:] if node else []
     if isinstance(node, dict):
-        for key, value in node.items():
+        items = list(node.items())
+        if section == ca_section_key("540NR") and not path:
+            def form_order(item):
+                key = item[0].split("_")
+                return ((0, int(key[1])) if len(key) >= 2 and key[0] == "line" and key[1].isdigit()
+                        else (1, 0))
+            items = sorted(items, key=form_order)
+        for key, value in items:
             if _is_commentary(key) or key in _MACHINE_KEYS:
                 continue
             label = f"{prefix}{_label(key, section)}"
             if isinstance(value, dict):
-                nested = _rows(value, prefix + "    ", section)
+                nested = _rows(value, prefix + "    ", section, path=(*path, key))
                 if nested:
                     out.append((label, ""))
                     out.extend(nested)
@@ -301,16 +322,21 @@ def _rows(node, prefix: str = "", section: str = "") -> "list[tuple[str, str]]":
                 out.append((label, ""))
                 for i, entry in enumerate(entries, 1):
                     if isinstance(entry, dict):
-                        nested = _rows(entry, prefix + "    ", section)
+                        nested = _rows(entry, prefix + "    ", section, path=(*path, key))
                         if nested:
                             out.append((f"{prefix}    #{i}", ""))
-                            out.extend(_rows(entry, prefix + "        ", section))
+                            out.extend(_rows(entry, prefix + "        ", section, path=(*path, key)))
                     else:
                         shown = _display(entry, key)
                         if shown is not None:
                             out.append((f"{prefix}    #{i}", shown))
             else:
-                shown = _display(value, key)
+                if section == ca_section_key("540NR") and (*path, key) in _CA_NR_RATIO_PATHS and value is not None:
+                    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                        raise PdfRenderError("Form540NR ratios must be finite numeric fractions")
+                    shown = f"{value:.4f}"
+                else:
+                    shown = _display(value, key)
                 if shown is not None:
                     out.append((label, shown))
     return out
@@ -526,9 +552,16 @@ def render(result: dict, out_path: Path, *,
     and not arithmetic. AGENTS.md §8's rule for every parse boundary applies to
     the boundary where a figure is PRINTED too.
     """
-    from agents.lib.tax_computations.state.registry import selected_ny_return
+    from agents.lib.tax_computations.state.registry import selected_ny_return, selected_ca_return, ca_section_key
     try:
         selected_ny_return(result)
+        ca_form = selected_ca_return(result)
+        if ca_form == "540NR":
+            nr = result.get(ca_section_key(ca_form))
+            if (not isinstance(nr, dict) or type(nr.get("computed_tax_year")) is not int
+                    or nr["computed_tax_year"] != 2025
+                    or nr["computed_tax_year"] != (result.get("meta") or {}).get("tax_year")):
+                raise ValueError("selected Form540NR needs its reviewed-year computed return section")
     except ValueError as exc:
         raise PdfRenderError(str(exc)) from None
     bad = first_non_finite(result)

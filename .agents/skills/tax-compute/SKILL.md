@@ -160,6 +160,7 @@ Read each reference file when you reach its steps; do not read them all up front
 | Before AGI-dependent worksheets, when rentals apply | Reviewed TY2025 residential Schedule E, depreciation, passive losses and CA difference | [references/rental-income.md](references/rental-income.md) |
 | 6 – 9.5 | Tax, AMT, credits, other taxes, payments, estimated-tax penalty (1040 lines 16-38) | [references/tax-and-credits.md](references/tax-and-credits.md) |
 | 10 | State return — California, no-income-tax states, the generic bracket estimate | [references/state-return.md](references/state-return.md) |
+| 10 | State return — **California Form540NR** (reviewed TY2025 part-year allocation plan) | [references/state-return-ca-part-year.md](references/state-return-ca-part-year.md) |
 | 10 | State return — **New York** (Form IT-201, full-year resident) | [references/state-return-ny.md](references/state-return-ny.md) |
 | 10 | State return — **New York IT-203** (reviewed TY2025 part-year/nonresident plan; NYC IT-360.1) | [references/state-return-ny-nonresident.md](references/state-return-ny-nonresident.md) |
 | 10 | State return — **North Carolina** (Form D-400, full-year resident, TY2025) | [references/state-return-nc.md](references/state-return-nc.md) |

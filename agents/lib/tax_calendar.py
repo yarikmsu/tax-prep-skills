@@ -590,7 +590,7 @@ def events_ca_es(tax_year: int) -> list[CalendarEvent]:
     return out
 
 
-def events_extension(tax_year: int, *, state: "str | None" = None, ny_return_type: str = "IT201") -> list[CalendarEvent]:
+def events_extension(tax_year: int, *, state: "str | None" = None, ny_return_type: str = "IT201", ca_return_type: str = "540") -> list[CalendarEvent]:
     """Extension deadlines for a taxpayer who filed (or will file) Form 4868.
 
     Both events land in {tax_year + 1} — the filing season for tax_year.
@@ -612,6 +612,8 @@ def events_extension(tax_year: int, *, state: "str | None" = None, ny_return_typ
     estimated tax balances due."
     """
     _validate_tax_year(tax_year)
+    if not isinstance(ca_return_type, str) or ca_return_type not in {"540", "540NR"}:
+        raise CalendarError("CA extension form must be 540 or 540NR")
     filing_year = tax_year + 1
     ca = (state == "CA")
     ny = (state == "NY")
@@ -645,7 +647,7 @@ def events_extension(tax_year: int, *, state: "str | None" = None, ny_return_typ
     if ny and ny_return_type == "IT203":
         apr_desc = apr_desc.replace("IT-201 line 80", "IT-203 line 70")
     if ca:
-        extended_state_form = " and CA Form 540"
+        extended_state_form = " and CA Form " + ca_return_type
     elif ny:
         extended_state_form = " and NY Form IT-203" if ny_return_type == "IT203" else " and NY Form IT-201"
     elif state == "WA":
@@ -1295,7 +1297,12 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
         ny_plan = ny_it203_plan(profile)
     except ValueError as exc:
         raise CalendarError(f"NY filing plan: {exc}") from None
-    filing_state = "NY" if ny_plan else resident_state
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    try:
+        ca_plan = ca_540nr_plan(profile)
+    except ValueError as exc:
+        raise CalendarError(f"CA filing plan: {exc}") from None
+    filing_state = "CA" if ca_plan else "NY" if ny_plan else resident_state
     if filing_state == "CA":
         events.extend(events_ca_es(tax_year))
     elif filing_state == "NY":
@@ -1315,7 +1322,8 @@ def build_events(profile: dict, tax_year: int) -> list[CalendarEvent]:
     # October extended filing deadline (both in tax_year + 1).
     if _strict_bool(flags, "filed_extension"):
         events.extend(events_extension(tax_year, state=filing_state,
-                                       ny_return_type="IT203" if ny_plan else "IT201"))
+                                       ny_return_type="IT203" if ny_plan else "IT201",
+                                       ca_return_type="540NR" if ca_plan else "540"))
 
     # Signature authority over someone else's foreign account (an employer's,
     # a parent's) triggers FBAR Part IV even with no financial interest — a

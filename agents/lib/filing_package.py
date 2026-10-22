@@ -83,9 +83,17 @@ def _refuse_uncomputed_states(result: dict) -> None:
     the balance-due line, a confident under-statement. Present is not
     computed (`projection._section_computed`), so refuse, as the package does
     an uncomputed Form 1040."""
-    from agents.lib.tax_computations.state.registry import selected_ny_return
+    from agents.lib.tax_computations.state.registry import selected_ny_return, selected_ca_return, ca_section_key
     try:
         selected_ny_return(result)
+        ca_form = selected_ca_return(result)
+        if ca_form == "540NR":
+            nr = result.get(ca_section_key(ca_form))
+            if (not isinstance(nr, dict) or type(nr.get("computed_tax_year")) is not int
+                    or nr["computed_tax_year"] != 2025
+                    or nr["computed_tax_year"] != (result.get("meta") or {}).get("tax_year")
+                    or nr.get("allocation_review_current") is not True):
+                raise ValueError("selected Form540NR needs its computed return and current allocation review before packaging")
     except ValueError as exc:
         raise FilingPackageError(str(exc)) from None
     for s in STATE_SECTIONS:
@@ -349,6 +357,14 @@ def assembly_order(result: dict) -> list:
     for key, title in _STATE_SECTIONS.items():
         if _section_present(result, key):
             order.append({"key": key, "title": title, "sequence": "STATE"})
+    from agents.lib.tax_computations.state.registry import selected_ca_return, ca_section_key
+    if selected_ca_return(result) == "540NR":
+        key = ca_section_key("540NR")
+        for suffix, title in (("schedule_ca", "Schedule CA (540NR) allocation worksheet"),
+                              ("schedule_p", "Schedule P (540NR) AMT worksheet"),
+                              ("schedule_p.ftb_3510", "FTB3510 prior AMT credit worksheet"),
+                              ("ftb_3804_cr", "FTB3804-CR owner PTET credit worksheet")):
+            order.append({"key": key + "." + suffix, "title": title, "sequence": "STATE"})
     rental = result.get("schedule_e_rentals") or {}
     if rental.get("california") is not None:
         order.append({"key": "schedule_e_rentals.california", "title": "FTB 3801 passive-loss worksheet", "sequence": "STATE"})
@@ -409,24 +425,27 @@ def attachment_checklist(result: dict) -> list:
             "with nondeductible basis or a conversion files their OWN "
             "8606; individual worksheets in this package are labeled "
             "primary/spouse. Resolve any legacy joint section before filing.")
-    if _section_present(result, "california_540"):
+    from agents.lib.tax_computations.state.registry import selected_ca_return, ca_section_key
+    ca_form = selected_ca_return(result) or "540"
+    ca_key = ca_section_key(ca_form)
+    if _section_present(result, ca_key):
         lines.append(
-            "California Form 540 mails in its OWN envelope to the FTB — "
+            f"California Form {ca_form} mails in its OWN envelope to the FTB — "
             "the payment and refund addresses are DIFFERENT PO boxes; "
             "confirm the current addresses on ftb.ca.gov.")
         lines.append(
-            "CA 540 attachments: W-2s (Copy 2) and W-2G/1099/592-B/593 forms showing CA withholding, Schedule CA (540) when "
+            f"CA {ca_form} attachments: W-2s (Copy 2) and W-2G/1099/592-B/593 forms showing CA withholding, Schedule CA ({ca_form}) when "
             "present, and a COMPLETE copy of the federal return whenever "
             "any federal schedule other than A or B was filed — for this "
             "toolkit's returns that is almost always.")
-        ca = result.get("california_540") or {}
+        ca = result.get(ca_key) or {}
         amt_credit = (ca.get("schedule_p") or {}).get("ftb_3510") or {}
         ptet = ca.get("ftb_3804_cr") or {}
         if _field_num(amt_credit, "line_32", "FTB3510 available credit") > 0:
             lines.append("CA prior-year AMT credit: attach official FTB3510; retain the Schedule P credit-limit worksheet and attach Schedule P as required.")
         if _field_num(ptet, "line_3", "FTB3804-CR available credit") > 0:
             lines.append("CA owner PTET credit: attach official FTB3804-CR, including additional entity pages when needed; retain the Schedule P credit-limit worksheet.")
-        penalty = (result.get("california_540") or {}).get("ftb_5805")
+        penalty = (result.get(ca_key) or {}).get("ftb_5805")
         if isinstance(penalty, dict):
             method = penalty.get("method")
             lines.append("CA estimated-tax penalty: " + (
@@ -436,8 +455,8 @@ def attachment_checklist(result: dict) -> list:
                 if method == "ftb_bill" else
                 "confirmed external FTB5805/5805F; attach the applicable official form and required waiver/annualized statements."
             ) + " This workpaper is not the official filing form.")
-        if balance_due >= 0 and _section_present(result, "california_540"):
-            ca = result.get("california_540") or {}
+        if balance_due >= 0 and _section_present(result, ca_key):
+            ca = result.get(ca_key) or {}
             ca_tax = _field_num(ca, "ca_total_tax", "ca_total_tax")
             ca_paid = (_field_num(ca, "ca_withholding_box17", "ca_wh")
                        + _field_num(ca, "ca_withholding_1099", "ca_1099_wh")
@@ -455,9 +474,11 @@ def attachment_checklist(result: dict) -> list:
             if ca_due > 0:
                 lines.append(
                     "CA balance due: check payable to 'Franchise Tax "
-                    "Board' with SSN and '{tax year} Form 540' in the "
-                    "memo, or pay via FTB Web Pay (mandatory e-pay may "
+                    f"Board' with SSN and the covered year and Form {ca_form} in the "
+                    f"memo, or pay via FTB Web Pay (mandatory e-pay may "
                     "apply — R&TC §19011.5).")
+        if ca_form == "540NR":
+            lines.append("Form540NR: attach ScheduleCA (540NR), applicable ScheduleP (540NR), official credit forms and required federal/withholding attachments. Confirm the current booklet attachment rules. Use tax is reported and paid separately to CDTFA; Form540NR line91 is the ISR penalty.")
     if _section_present(result, "new_york_it201"):
         # The TY2025 IT-201 instructions: Step 11 ("Finish your return"),
         # line 56, line 72's withholding forms and line 80's payment.

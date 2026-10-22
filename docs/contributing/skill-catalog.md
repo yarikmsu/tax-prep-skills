@@ -557,8 +557,9 @@ kept at full precision (the IRS 3-dp form rule injects error — matches tax sof
   given as an amount to pay now. And the CA branch keyed on RESIDENCE, so a taxpayer with
   California-source income living elsewhere collected no CA figures and read the
   every-other-state paragraph about their home state, with the state they actually owe
-  unmentioned. Form 540NR is out of scope for the toolkit, and AGENTS.md's rule is that out
-  of scope is SAID with the form named rather than falling through quietly.
+  unmentioned. The safe-harbor advisory does not prepare Form540NR; its current scope must
+  be said explicitly. The separately declared TY2025 part-year compute variant
+  now has a reviewed allocation contract; all-year nonresident cases remain outside it.
 
   A seventh pass read the FORMS rather than the law, at `irs.gov/pub/irs-prior/`: the 2019
   Form 1040 (AGI line 8b, taxable income 11b, total tax line 16, **estimated tax penalty
@@ -1252,8 +1253,17 @@ the multi-agent move.
   has no side effects, and a contributor asking "add Washington" should get it
   without knowing its name.
 
-NY IT203's declared TY2025 plan is the reviewed exception to the general
-part-year/nonresident block: all other state obligations remain gated unless
+NY IT203 and CA Form540NR have declared TY2025 plans as reviewed exceptions
+to the general part-year/nonresident block: all other state obligations remain gated unless
 covered no-income-tax states require no return. City IT360.1, variant payment
 tie-out and refusal of competing NY returns are included; credit/modification
 worksheets remain inputs. IT203 NY forecasts are skipped explicitly.
+
+CA Form540NR uses the same fetched CA law with separate worldwide/source
+ScheduleCA and ScheduleP calculations, input-bound worksheet review and checked
+FTB5805 pricing. Credit eligibility and source/basis worksheets remain inputs.
+Full-year rental and planning paths cannot substitute for NR allocations;
+ordinary projections, scenarios/Roth state effects and withholding forecasts
+carry a named limitation. Rollover reads qualified credits, PTET vintages and
+line102 from the selected CA form. Use tax is a separate CDTFA obligation.
+The maintained scope is `docs/contributing/state-module-ca-part-year.md`.

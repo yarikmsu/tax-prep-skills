@@ -127,9 +127,62 @@ STATE_SECTIONS += (StateSection(
     package_forms=(("new_york_it203", "New York Form IT-203"),),
 ),)
 
+STATE_SECTIONS += (StateSection(
+    code="CA", section="california_540nr", variant="540NR",
+    evidence_fields=("computed_tax_year",),
+    mover_fields=(("State taxable income", "california_540nr.line_35"),
+                  ("State total tax", "california_540nr.line_74"),
+                  ("State refund", "california_540nr.line_125")),
+    package_forms=(("california_540nr", "California Form 540NR"),),
+),)
+
 # Primary full-year rows retain their identities. Variants cannot overwrite them.
 BY_CODE: "dict[str, StateSection]" = {s.code: s for s in STATE_SECTIONS if s.variant is None}
 BY_SECTION: dict[str, StateSection] = {s.section: s for s in STATE_SECTIONS}
+
+
+def selected_ca_return(result: dict) -> str | None:
+    """Select a single CA variant without treating withholding as computation."""
+    import math
+    computed = []
+    for row in (s for s in STATE_SECTIONS if s.code == "CA"):
+        node = result.get(row.section)
+        if node is None:
+            continue
+        if not isinstance(node, dict):
+            raise ValueError("CA return section must be an object")
+        if row.variant is not None and node.get("computed_tax_year") is not None:
+            year = node["computed_tax_year"]
+            if type(year) is not int or not 2000 <= year <= 2099:
+                raise ValueError("CA variant computation witness must be an integer tax year")
+        for path in row.evidence_fields:
+            value: object = node
+            for part in path.split("."):
+                value = value.get(part) if isinstance(value, dict) else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value != 0:
+                computed.append(row.variant or "540")
+                break
+    meta = result.get("meta")
+    if meta is None:
+        meta = {}
+    if not isinstance(meta, dict):
+        raise ValueError("result metadata must be an object")
+    selected = meta.get("ca_return_type")
+    if selected is not None and (not isinstance(selected, str) or selected not in {"540", "540NR"}):
+        raise ValueError("unknown California return variant")
+    if len(computed) > 1 or (selected and computed and selected != computed[0]):
+        raise ValueError("competing California return variants; select and compute one return")
+    return selected or (computed[0] if computed else None)
+
+
+def ca_section_key(form: str = "540") -> str:
+    """Read the registered CA section for a validated form name."""
+    if form == "540":
+        return BY_CODE["CA"].section
+    row = next((s for s in STATE_SECTIONS if s.code == "CA" and s.variant == form), None)
+    if row is None:
+        raise ValueError("unknown California return variant")
+    return row.section
 
 
 def selected_ny_return(result: dict) -> str | None:
