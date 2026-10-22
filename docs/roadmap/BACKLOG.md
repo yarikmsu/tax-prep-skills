@@ -811,6 +811,9 @@ at all.
   stays blocked.
 
 - **AA74 (P2, L): Prepare a part-year California return (Form 540NR).**
+  Implementation is open in [PR #32](https://github.com/yarikmsu/tax-prep-skills/pull/32),
+  stacked on AA73 and left unmerged for owner review. The reviewed TY2025 scope
+  is in [the maintained contract](../contributing/state-module-ca-part-year.md).
   `part_year_residency` blocks 3.7% of California returns, a figure that covers
   every income. NY has IT-203 for
   TY2025 behind a reviewed filing plan; CA has nothing. Build Form 540NR, with
