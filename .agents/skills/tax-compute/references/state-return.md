@@ -123,7 +123,7 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
 9.5. **CA Schedule P (540) AMT** — run `compute_ca_schedule_p()` whenever
     `has_iso_exercise` (the same trigger as federal Form 6251). The CA analogue
     of Form 6251: pass `ca_taxable_income` (Form 540 line 19), `ca_regular_tax`
-    (the CA tax before AMT — step 8's tax after credits), the CA
+    (Form 540 line 31 — step 6's tax before credits), the CA
     `filing_status`, and `exemption` / `phaseout_start` from **`state.amt`**
     keyed by status (map MFS→`mfs`, QSS→`mfj`) — unfetched HARD-ERRORS (never a
     guessed exemption). Pass `iso_bargain_element` (same CA-conforming spread as

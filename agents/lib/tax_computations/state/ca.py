@@ -633,8 +633,8 @@ def compute_ca_schedule_p(
     Args:
         ca_taxable_income: Form 540 line 19 (CA regular taxable income) — the
             Schedule P Part I line 1 starting point. May be negative (accepted).
-        ca_regular_tax: the CA regular tax before AMT (the Schedule P comparison
-            base) — CA AMT is the excess of TMT over this.
+        ca_regular_tax: Form 540 line 31, regular tax BEFORE exemption and other
+            credits (Schedule P line 25). CA AMT is the excess of TMT over this.
         exemption / phaseout_start: the CA AMT exemption and its phase-out
             threshold for the filing status, from state.amt in the tax_law
             cache (INDEXED annually — REQUIRED, never hardcoded; an unfetched

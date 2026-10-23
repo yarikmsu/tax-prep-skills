@@ -392,6 +392,7 @@ at all.
   case. Found by the CA plan's fourteenth review, which reproduced the
   error at $1,256 for a joint return with two children and a $250,000 ISO
   spread.
+  **Implementation awaiting owner review:** [PR #15](https://github.com/yarikmsu/tax-prep-skills/pull/15).
 
 - **AA75 (P1, S): Run line 32's exemption credit phase-out on the return.**
   Line 32's credit phases out above a federal AGI threshold ($252,203 single
