@@ -127,7 +127,10 @@ Trigger and range behavior is documented in
   `set` defects.
 
 - **AA53 (P3, S): The IRMAA top-tier rule trusts the cached list to be
-  complete.** `_irmaa_tiers_reached` gives "at least" to whichever tier is last
+  complete.**
+  Implementation: [PR #34](https://github.com/yarikmsu/tax-prep-skills/pull/34),
+  open for review with AA42; not merged. Depends on PR #33.
+  `_irmaa_tiers_reached` gives "at least" to whichever tier is last
   in the cache, not to the statutory top tier, so a partial list charges a MAGI
   exactly at its last threshold one tier early. That over-states the
   surcharge, and the crossing label prints `≥` where CMS prints "greater
@@ -829,6 +832,8 @@ AMT basis rollover, NIIT projection, full-status capital-gains cache and
 CA/NY/NC withholding true-ups already exist and are not reopened.
 
 - **AA42 (P2, L): Add AMT and IRMAA exposure to the mid-year projection.**
+  Implementation: [PR #34](https://github.com/yarikmsu/tax-prep-skills/pull/34),
+  open for review with AA53; not merged. Depends on PR #33.
   NIIT projection is already implemented. The federal projection total still
   omits AMT, and the report has no IRMAA layer. Reuse the existing AMT and Roth
   premium computations with explicit projected inputs and covered-year fetched
