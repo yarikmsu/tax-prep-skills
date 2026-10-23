@@ -4525,8 +4525,9 @@ class TestComputeUnderpaymentInterest:
 class TestCaSchedulePAMT:
     """CA Schedule P (540) AMT (N1) — compute_ca_schedule_p. Expected values
     hand-computed from R&TC §17062 (7% flat TMT, 25% exemption phase-out) with
-    representative CA 2025 indexed figures (single exemption $92,749, phase-out
-    start $347,808; MFJ exemption $123,667, phase-out start $463,809)."""
+    the CA 2025 indexed figures from Schedule P (540) line 22 (single exemption
+    $92,749, phase-out start $347,808; MFJ exemption $123,667, phase-out start
+    $463,745)."""
 
     def test_compute_recipe_passes_line_31_before_credits(self):
         """The engine accepts either number; the recipe selects its input."""
@@ -4600,14 +4601,14 @@ class TestCaSchedulePAMT:
     def test_mfj_status_uses_its_exemption(self):
         r = compute_ca_schedule_p(
             ca_taxable_income=400000, ca_regular_tax=30000,
-            filing_status="MFJ", exemption=123667, phaseout_start=463809,
+            filing_status="MFJ", exemption=123667, phaseout_start=463745,
             iso_bargain_element=200000)
-        # AMTI 600,000; exemption 123,667 − 0.25×(600,000−463,809)=123,667−34,047.75
-        # = 89,619.25; TMT 0.07×(600,000−89,619.25)=0.07×510,380.75=35,726.65;
-        # CA AMT 35,726.65 − 30,000 = 5,726.65
-        assert r["ca_exemption_allowed"] == 89619.25
-        assert r["ca_tmt"] == 35726.65
-        assert r["ca_amt"] == 5726.65
+        # AMTI 600,000; exemption 123,667 − 0.25×(600,000−463,745)=123,667−34,063.75
+        # = 89,603.25; TMT 0.07×(600,000−89,603.25)=0.07×510,396.75=35,727.77;
+        # CA AMT 35,727.77 − 30,000 = 5,727.77
+        assert r["ca_exemption_allowed"] == 89603.25
+        assert r["ca_tmt"] == 35727.77
+        assert r["ca_amt"] == 5727.77
 
     def test_deferral_split_isolates_iso_portion(self):
         """When there are non-ISO CA preferences too, only the ISO-attributable
@@ -4643,7 +4644,7 @@ class TestCaSchedulePAMT:
         phase-out); TMT 0.07×(145,000−123,667) = 1,493.31; regular 0 → AMT."""
         r = compute_ca_schedule_p(
             ca_taxable_income=-5000, ca_regular_tax=0, filing_status="MFJ",
-            exemption=123667, phaseout_start=463809, iso_bargain_element=150000)
+            exemption=123667, phaseout_start=463745, iso_bargain_element=150000)
         assert r["ca_amt"] == 1493.31
 
     def test_nan_rate_rejected(self):
