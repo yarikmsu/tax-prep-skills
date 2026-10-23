@@ -203,6 +203,22 @@ schema fails to define.
 
 ## The STOP rule — this is not advisory
 
+**Finish the full-cache walk while live access is usable.** A failed URL is
+not a finding that every other populated group is unverifiable. For each
+populated numeric group, including numbers equal to `cache_seed`, seek an
+authoritative source naming its applicable period. Try an authoritative
+alternative when a particular page is unavailable or names no year; annual IRS
+publications and instructions often provide the covered-year version. Do not
+reuse another year's figure or relax the period rule. A source that saves an
+unreadable PDF outside the supplied directory remains off limits.
+
+Report which groups were actually verified and which could not be verified,
+with the attempted source and reason for each unresolved group. Do not describe
+an unattempted group as if its sources were checked. A STOP verdict blocks use
+of the cache; it does not waive the remaining independent checks when live web
+access works. If live access itself is unavailable, cached or time-shifted,
+STOP immediately rather than pretending to finish the walk.
+
 If live web access is unavailable, returns cached or time-shifted results, or
 you cannot confirm a figure names its applicable period (normally the filing
 year; the quarter, historical-year, and governed CA surcharge exceptions above

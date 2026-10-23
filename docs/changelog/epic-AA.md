@@ -3131,3 +3131,33 @@ deduction. Income, deduction and tax-table notes, including unfetched table
 departures, reach the forecast output. Regression tests were checked with
 deliberate reversals of the guards and arithmetic; each fault was rejected
 and the implementation restored before verification.
+
+## AA42 / AA53 — projected AMT and separate Medicare premium exposure
+
+Reviewed full-year Form 6251 inputs now feed federal projected tax, balance,
+the current-year safe-harbor prong, vouchers and W-4 guidance. The adapter
+reuses the existing AMT and Form 8801 engines with covered-year law. It
+preserves negative line-1 refigures, reverses section 68 for AMT, adds only
+the applied senior deduction, coordinates FTC and minimum-tax credits, and
+lets CTC offset AMT. Unsupported preference items require a separate reviewed
+model; a missing worksheet banners an AMT-excluding estimate rather than
+claiming zero AMT. Projected carryforwards never update the return.
+Known foreign tax or an opening minimum-tax credit requires the reviewed
+worksheet; omitting those credits cannot silently inflate the fallback.
+
+IRMAA uses separately reviewed full-year MAGI addbacks, beneficiary counts
+and coverage, and the independently fetched premium-year cache two years
+after the income year. Unpublished future figures remain unresolved. Annual
+surcharges are per beneficiary and household, separate from income tax and
+its payment targets. QSS/HOH use unmarried Medicare tiers, while MFS needs
+an explicit lived-apart answer and its own table when spouses lived together.
+
+The Roth ladder and projection share a tier reader that requires all five
+unmarried/joint surcharge rows, or both cohabiting-MFS rows, from premium year
+2019; earlier ordinary tables have four rows and 2018 MFS has one. It rejects
+duplicate, nonfinite, nonpositive and old first-dollar boundaries. The frozen
+2018/2019 half-thousand boundaries remain valid. From 2019 only the statutory
+top is inclusive; an omitted
+last row cannot turn a lower tier into the top. Empty tables remain explicitly
+unmodeled. The input templates, skill interviews and cache contract name the
+same scope.

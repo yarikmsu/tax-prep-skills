@@ -35,9 +35,14 @@ covered-year inputs, retirement ownership/basis and named limitations.
   dividends or a net long-term gain: the engine REFUSES to price that income at ordinary
   rates and names `/tax-setup` as the fix. A wages-only return runs without them.
 - `taxpayer_profile.json` (for CTC-eligible dependent count).
-- **For IRMAA flags:** `tax_law_{year}.json` must have `federal.irmaa.tiers.{single|mfj}`
+- **For IRMAA flags:** `tax_law_{year}.json` must have `federal.irmaa.tiers.{single|mfj|mfs}`
   populated (MAGI thresholds + per-beneficiary annual surcharge). If empty, the ladder
   still runs but reports "IRMAA not modeled" — re-run `/tax-setup` to fetch the tiers.
+  Populated tables must be complete (five unmarried/joint rows, two cohabiting MFS
+  rows from 2019), finite and increasing, with printed rounded boundaries;
+  earlier years use their historical row counts and frozen boundaries.
+  For MFS, ask and store the explicit boolean
+  `taxpayer_profile.json.medicare_lived_apart_all_year`; no single-table default.
 - **For Form 8606 basis pro-rata (optional):** pass `--ira-value` (total beginning-of-year
   traditional/SEP/SIMPLE IRA balance) to dilute each rung's taxable conversion by the basis
   ratio. On a joint return pass `--ira-owner primary|spouse`; the value and basis are only that person's traditional/SEP/SIMPLE pool. `--ira-basis` defaults to the selected owner in `prior_year.ira_basis_by_taxpayer` (legacy scalars follow the confirmed-owner migration rule). Without
@@ -133,7 +138,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   re-computed: the medical-expense floor, and for TY2025-2029 the SALT cap's phasedown
   on modified AGI (§164(b)(7)(B)). A conversion can cost more than shown; the output
   says so wherever either can move.
-- MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` is keyed `single`/`mfj` only).
+- HOH/QSS use unmarried IRMAA tiers. MFS living apart uses unmarried tiers;
+  MFS living together requires the fetched separate-return table.
 - **Binding charitable caps require confirmed classifications.** Complete
   Schedule A inputs re-price the AGI cap only when
   `schedule_a.charitable_limits_confirmed` is true, confirming public-charity

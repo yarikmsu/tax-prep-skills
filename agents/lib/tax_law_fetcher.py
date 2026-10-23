@@ -218,7 +218,7 @@ def create_empty_tax_law(year: int) -> dict:
             # Each tier: {"magi_threshold": <printed $>, "annual_surcharge_per_person": <$>}.
             "irmaa": {
                 "lookback_years": 2,
-                "tiers": {"single": [], "mfj": []},
+                "tiers": {"single": [], "mfj": [], "mfs": []},
             },
             "rental": create_rental_law_template(),
             # Four status keys, not two (X1); the statute and the legacy-cache
@@ -2226,7 +2226,7 @@ _TABLE_VALIDATORS = (
      "ny_recapture_tiers"),
     (re.compile(r"^federal\.underpayment_rates$"), "underpayment_rates"),
     (re.compile(r"^ptet\.[A-Z]{2}\.schedule$"), "ptet_schedule"),
-    (re.compile(r"^federal\.irmaa\.tiers\.(single|mfj)$"), "tiers"),
+    (re.compile(r"^federal\.irmaa\.tiers\.(single|mfj|mfs)$"), "tiers"),
     (re.compile(r"^state\.(nyc_tax\.)?tax_table\.table_bases$"), "table_bases"),
     (_NC_CHILD_TABLE, "nc_child_deduction"),
 )

@@ -22,6 +22,10 @@
     "medicare_withheld": null
   },
   "state_projection": null,
+  "amt_projection": null,
+  "_comment_amt_projection": "Reviewed full-year Form 6251 preference, deduction and credit worksheet; see tax-project/references/amt-irmaa.md. Null leaves AMT explicitly unmodeled: federal total and payment targets then exclude it and may be low. A present incomplete or unsupported worksheet refuses computation. No archived ISO spread or guessed zero preferences.",
+  "irmaa_projection": null,
+  "_comment_irmaa_projection": "Reviewed full-year Medicare MAGI and beneficiary/coverage worksheet; see tax-project/references/amt-irmaa.md. Premium year is income year+2; CLI reads that premium year's separately fetched tax_law cache. Unpublished or empty future tiers leave the premium estimate unresolved, never replaced by income-year rates. Surcharges stay separate from income tax and payment targets.",
   "_comment_state_projection": "Optional dedicated full-year NY/NC forecast; null leaves the state unmodeled. Complete the interview and reviewed worksheet contract in docs/contributing/state-planning.md and tax-project/references/state-estimates.md. Binds tax_year, uppercase filing_status, full-year household residency and projected federal AGI/SE income. All state/local withholding is combined in ytd.state_withholding. Supply completed prior-year estimated-tax base and eligibility, never archived gross tax. Missing local/allocation answers refuse any state balance or payment schedule. Initial reviewed form year: 2025; fetched later-year rates do not authorize a later form.",
   "forecast_overrides": {
     "_comment": "Lumpy/known items entered as FULL-YEAR amounts; NOT annualized. Prefer the capital_gains_short/_long split — short-term gains are ordinary-rate income, and the legacy combined capital_gains field is treated as LONG-term. Supplying both the legacy field and the split is an error.",

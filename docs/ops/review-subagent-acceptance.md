@@ -856,6 +856,80 @@ historical file. No current engine, tests or taxpayer files were read, and no
 permission denials occurred. Both sessions' complete reports and traces were
 retained locally with owner-only permissions.
 
+## Results — 2026-10-22
+
+Re-run for AA42/AA53: the separate-return IRMAA seed changed Replay B's cache.
+Criteria were written before dispatch. The accepted runs used fresh native
+Claude Code 2.1.307 sessions in a source-only local clone, with read-only tool
+grants, hooks and MCP disabled, and no taxpayer runtime files copied. Their
+initial user-message echoes contain only the intended file or directory path.
+
+**Rejected attempts.** An initial harness inherited controller text alongside
+the target; its bias reviewer grepped the fixed checkout and tests. That was
+**FAIL**, despite finding the benchmark defect. Explicit one-frame input fixed
+the contamination. The next freshness attempt found the SALT value but left
+several numeric groups unattempted, so it also was not accepted. The freshness
+definition now clarifies that a failed or year-less URL does not waive the
+remaining full-cache walk while live access works. It seeks authoritative
+alternatives without relaxing the period, directory-scope or STOP rules.
+The final freshness run used that revised definition in a new session.
+The bias definition also stopped assuming every PR already has a bot review:
+bot review is disabled. A fresh replay of that corrected definition passed.
+
+### `tax-law-freshness-auditor` — PASS
+
+**Definition.** `.claude/agents/tax-law-freshness-auditor.md`,
+sha256 `60a118c84d045c33f2d91ec8e1d456a311363af80583834fa5c0d7c3a4d6a610`.
+
+**Input.** The cache Replay B's generator exports, copied byte for byte,
+sha256 `354044de500b19dee927ba40a365ef250c1d606a4a8d26f6fac9e66384757f93`.
+
+**Model.** `claude-opus-5-5`, with `claude-haiku-5-5` reported for web-tool processing.
+
+The wrong-value finding compared cached 10,000 / 5,000 with 40,400 / 20,200 for
+TY2026 under section164(b)(7). Both cached amounts and both replacements were
+independently checked against the engine's statutory schedule. The unsupported
+Topic503 pin and absent retrieval dates were additional findings, not the bar.
+
+**Negative control.** All ten numeric seed groups were attempted. Additional
+Medicare, NIIT and employee Social Security were value-verified against year-named
+Publications505 and15: nine numeric leaves in three groups. Fifteen leaves in
+seven groups remained UNVERIFIED: simplified FTC, Form8938, FBAR, QBI rate,
+SE rate, SE earnings factor and IRMAA lookback. The report identified attempted
+sources and period/access limitations rather than claiming those figures were
+wrong. Missing retrieval dates kept the entire cache unverified for age. This
+is a passing detection replay on an intentionally defective cache, not a clean
+full-cache audit or an endorsement of the unresolved sources.
+
+**Contamination, read from the trace.** Twenty tool calls: one Glob of the
+export, two Reads (cache and schema), eleven WebFetch and six WebSearch calls.
+Fetches were to IRS, SSA and Cornell LII. No other file was read, including
+host-saved fetch output; no permission denial occurred. The source limits
+remain instructions, not an enforced Read-tool directory boundary.
+
+### `bias-direction-reviewer` — PASS
+
+**Definition.** `.claude/agents/bias-direction-reviewer.md`,
+sha256 `efa085d1cd8249183dbab4e664bdcce65cff64bc7e83d98e573803576cf52167`.
+
+**Input.** `2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py`,
+sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
+
+**Model.** `claude-opus-5-5`.
+
+Finding8 locates the missing overall QBI cap at line742, in
+`compute_qbi_deduction`, identifies the OVER-stated deduction and UNDER-stated
+tax, and supplies a worked example. The criterion's own case was independently
+reproduced: 100,000 QBI returns20,000, with no taxable-income argument, where
+30,000 taxable income permits6,000. Neither optional bonus was earned.
+All twelve findings concern directional bias or unstated preconditions. Other
+claims and test-coverage assertions were not independently validated.
+
+**Contamination, read from the trace.** One Read of the historical file and
+one Glob inside its isolated fixture, which listed only that same file. No
+fixed engine, tests or taxpayer files were read, and no permission denial
+occurred. Complete reports and traces remain owner-only locally.
+
 ## The parse worker is accepted differently, and this is why
 
 `tax-parse-worker` is in `.claude/agents/` and has **no replay section above, on

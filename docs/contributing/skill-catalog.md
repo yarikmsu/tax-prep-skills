@@ -239,6 +239,13 @@ Life-event flags read False when absent, so a legacy profile still passes.
   explicit, completed `projection_inputs.json.prior_year_form_2210_tax_base`
   (never derived from archived Form 1040 line 24), else degrades to the
   90%-of-current test — see "Step 0's handoff" below.
+  A reviewed `amt_projection` adds Form 6251 AMT and eligible FTC/Form 8801
+  credits to federal liability and payment targets. Missing inputs banner an
+  AMT-excluding estimate; present unsupported preferences refuse. A separate
+  `irmaa_projection` estimates per-beneficiary Part B+D premium surcharges
+  using the income-year-plus-two cache, never folding premiums into income tax
+  or substituting current law for unpublished future figures. The maintained
+  interview and field contract are `tax-project/references/amt-irmaa.md`.
 - **`/tax-withholding`** — withholding true-up: after `/tax-compute`, compares YTD federal
   withholding (projected to year-end at current pace) against the actual computed liability
   in `result.json`, and recommends a W-4 4(c) and/or 1040-ES schedule to hit the

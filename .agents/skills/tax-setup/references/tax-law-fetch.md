@@ -53,11 +53,15 @@ covered year; part-year deductions, tax and AMT use these annual inputs.
   makes the engine REFUSE to price preferential income for an HoH or MFS
   filer rather than use the single figure.
 - Search: `"Medicare IRMAA {year} income brackets Part B Part D"` — populate `federal.irmaa.tiers`
-  (`single`/`mfj` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
+  (`single`/`mfj`/`mfs` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
   monthly Part B + Part D surcharge above the standard premium). `magi_threshold` is the
   figure CMS prints for the tier, never the first dollar past it: a tier applies above it
-  and the top tier at it. Optional but unlocks IRMAA
-  flags in `/tax-roth-convert`; leave as `[]` if not relevant to the taxpayer.
+  and the top tier at it. From premium year 2020, fetch all five surcharge rows
+  for unmarried/joint and the two separate-return rows, with printed whole-thousand
+  thresholds. QSS/HOH use unmarried; MFS needs an explicit lived-apart answer.
+  Optional but unlocks IRMAA flags in `/tax-roth-convert`; leave as `[]` if not
+  relevant. These are the named PREMIUM year's figures. `/tax-project` needs
+  the income-year-plus-two cache separately; unpublished future law stays unmodeled.
 - Search: `"IRS {year} AMT exemption amount phase out"` — populate `federal.amt`
   (`exemption` + `phaseout_start` by status, and `rate_28_breakpoint` — the
   26%→28% figure, published with the Rev. Proc. inflation adjustments;

@@ -6171,27 +6171,17 @@ class TestACaveatMatchesTheSchemaItDescribes:
             "is a caveat that is simply false, and a false one is worse than "
             "none: it invites a reader to discount a figure that is right.")
 
-    def test_the_half_of_that_caveat_that_IS_true_survived(self):
-        """Non-vacuity, and the other direction.
-
-        The sentence carried TWO facts — capital gains AND IRMAA — and only
-        one of them moved. Deleting the whole line would have withdrawn a
-        disclosure that is still owed: `federal.irmaa.tiers` really is keyed
-        `single`/`mfj` alone, so an MFS or HOH ladder really is reading the
-        single schedule. One symbol, two concepts: the fix was to split them,
-        not to drop the sentence.
+    def test_the_irmaa_caveat_matches_the_expanded_mfs_schema(self):
+        """AA42/AA53 add a distinct cohabiting-MFS table. The Medicare status
+        mapping must remain distinct from ordinary capital-gains keying.
         """
         from agents.lib.tax_law_fetcher import create_empty_tax_law
         tiers = create_empty_tax_law(2026)["federal"]["irmaa"]["tiers"]
-        assert set(tiers) == {"single", "mfj"}, (
-            f"irmaa.tiers is keyed {sorted(tiers)} — if it grew MFS and HOH "
-            "the surviving half of the caveat is stale in its turn")
+        assert set(tiers) == {"single", "mfj", "mfs"}
         texts = self._texts()
-        assert re.search(r"single-status IRMAA", texts["roth_ladder.py"]), (
-            "the IRMAA disclosure went with the capital-gains one; it is the "
-            "half that is still true")
-        assert re.search(r"single-status IRMAA", texts["tax-roth-convert"]), (
-            "the skill dropped the IRMAA disclosure its engine still owes")
+        for name in ("roth_ladder.py", "tax-roth-convert"):
+            assert "HOH/QSS use" in texts[name] and "unmarried" in texts[name]
+            assert "separate-return table" in texts[name]
 
 
 class TestTheBacklogSaysWhatIsOpen:

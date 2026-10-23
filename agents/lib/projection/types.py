@@ -85,6 +85,8 @@ class ProjectedInputs:
     # Confirmed full-year worksheet outputs and jurisdiction answers (W10).
     state_modification_amounts: "dict | None" = None
     state_local_applicability: "dict | None" = None
+    # Reviewed full-year Form 6251 preferences and credit worksheets (AA42).
+    amt_projection: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +116,11 @@ class FederalProjection:
     charitable_non_itemizer_deduction: float = 0.0  # §170(p), line 13c
     schedule_a_repriced: bool = False
     schedule_a_notes: list[str] = field(default_factory=list)
+    amt: float | None = None
+    amt_details: dict | None = None
+    amt_note: str | None = None
+    foreign_tax_credit: float = 0.0
+    minimum_tax_credit: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -402,6 +409,7 @@ class ProjectionReport:
     ca_safe_harbor: "CaSafeHarbor | None" = None
     ca_vouchers: "list[Voucher]" = field(default_factory=list)
     state_payment_schedule: StatePaymentSchedule | None = None
+    irmaa: dict | None = None
     # The voucher catch-up notes, decided in build_report so the markdown and
     # the `--json` payload cannot disagree about them. They were computed
     # inside the renderer, which put them in the one output both consuming
