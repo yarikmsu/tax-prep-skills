@@ -109,7 +109,11 @@ other-state return evidence, required federal copy and retirement/service
 proof. Capability depth is advertised only after those registrations exist.
 
 NC projections skip the generic bracket path: missing Schedule S, child and
-NC Schedule A inputs cannot safely become zero. Completed-return true-up
+NC Schedule A inputs cannot safely become zero. A reviewed full-year
+`projection_inputs.state_projection` forecast now reuses those raw form
+inputs and emits NC-40 equal quarters; its contract and covered-year boundary
+are in [state planning](state-planning.md#mid-year-payment-forecasts-aa43).
+Completed-return true-up
 excludes use tax from the estimated income-tax harbor and includes it in
 the balance target. A positive prior-year prong requires a filed twelve-month
 return confirmation; the no-liability exception is separately recorded and

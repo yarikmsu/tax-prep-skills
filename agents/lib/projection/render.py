@@ -31,6 +31,12 @@ from agents.lib.tax_computations import (
 )
 
 
+def _payment_money(value: float) -> str:
+    """Keep the cents people pay, so displayed vouchers sum to the target."""
+    body = f"${abs(value):,.2f}"
+    return f"({body})" if value < 0 else body
+
+
 _DEGRADED_MODE_LINE = (
     "- **Degraded mode:** no completed covered-year Form 2210 line-8 "
     "pre-factor prior-tax base was supplied. The prior-year prong is "
@@ -848,25 +854,51 @@ def render_markdown(r: ProjectionReport) -> str:
             lines.append("_Skipped — no prior-year state baseline or no state brackets in tax_law._")
     else:
         s = r.state
+        state_money = _payment_money if s.form_modeled else _money
         # The TABLE carries the bracket-estimate qualification too, not only
         # the W-4 lede. Qualifying one surface and not the other is worse than
         # qualifying neither: the lede says "see the state section below" and
         # sends the reader from the hedged sentence to a bolded, unhedged
         # restatement of the same figure, which reads as the authoritative one.
-        # Only California has a dedicated projection block (other states are
-        # bracket estimates here); the Caveats line about scheduling qualifies
+        # Dedicated CA/NY/NC forecasts omit the generic bracket banner;
+        # the Caveats line about scheduling qualifies
         # the SCHEDULE, never the amount.
         lines += ["| Item | Amount |", "|---|---:|",
-                  f"| State ({s.code}) deduction ({'itemized' if s.itemized else 'standard'}) | {_money(s.deduction)} |",
-                  f"| State ({s.code}) taxable income | {_money(s.taxable_income)} |",
-                  f"| State tax | {_money(s.tax)} |",
-                  f"| State withholding | {_money(-s.withholding)} |",
-                  f"| **State balance** | {_money(s.balance)} "
+                  f"| State ({s.code}) deduction ({'itemized' if s.itemized else 'standard'}) | {state_money(s.deduction)} |",
+                  f"| State ({s.code}) taxable income | {state_money(s.taxable_income)} |",
+                  f"| State tax{' and local taxes/use tax' if s.form_modeled else ''} | {state_money(s.tax)} |",
+                  f"| State withholding | {state_money(-s.withholding)} |",
+                  *([f"| Refundable credits | {state_money(-s.refundable_credits)} |"] if s.form_modeled else []),
+                  f"| State estimates paid | {state_money(-s.estimates_paid)} |",
+                  f"| **State balance** | {state_money(s.balance)} "
                   f"{'(refund)' if s.balance < 0 else '(owed)'} |"]
         if r.state_bracket_estimate_note:
             lines += ["", f"> **⚠ {r.state_bracket_estimate_note}**"]
         if r.state_mfs_deduction_note:
             lines += ["", f"> **⚠ {r.state_mfs_deduction_note}**"]
+        if s.form_modeled:
+            lines += [f"| State income tax after nonrefundable credits | {state_money(s.state_income_tax)} |",
+                      f"| Local/commuter income taxes | {state_money(s.local_income_tax)} |",
+                      f"| Sales/use tax (excluded from estimated income-tax base) | {state_money(s.use_tax)} |"]
+    if r.state_payment_schedule is not None:
+        shs = r.state_payment_schedule
+        lines += ["", f"### {shs.code} required annual payment ({shs.form})", "",
+                  "| Test | Amount |", "|---|---:|",
+                  f"| Current-year share | {_payment_money(shs.options['current_year'])} |"]
+        if "prior_year" in shs.options:
+            lines.append(f"| Prior-year share | {_payment_money(shs.options['prior_year'])} |")
+        lines += [f"| **Required annual payment** | {_payment_money(shs.required_annual)} |",
+                  f"| Withholding + estimates paid | {_payment_money(shs.withholding + shs.estimates_paid)} |",
+                  f"| **Shortfall** | {_payment_money(shs.shortfall)} |", ""]
+        lines.extend(f"- {note}" for note in shs.notes)
+        lines += ["", f"### {shs.form} regular installment schedule (four EQUAL quarters)", "",
+                  "Amounts below target the annual requirement from the as-of date forward.", ""]
+        lines += ["| Installment | Due | Amount |", "|---|---|---:|"]
+        lines.extend(f"| Q{v.quarter} | {v.due_date} | {_payment_money(v.amount)} |" for v in shs.vouchers)
+        lines.append("")
+        for note in (shs.voucher_dates_note, shs.voucher_catchup_note):
+            if note:
+                lines += [note, ""]
     if r.ca_safe_harbor is not None:
         csh = r.ca_safe_harbor
         lines += ["", "### CA safe harbor (FTB 5805)", "",
@@ -935,7 +967,7 @@ def render_markdown(r: ProjectionReport) -> str:
                      "payment exceeds $20,000 or total tax liability exceeds $80,000, ALL "
                      "subsequent CA payments must be made electronically (FTB Web Pay) — "
                      "a 1% penalty applies to paper payments.")
-    else:
+    elif r.state_payment_schedule is None:
         lines.append("- State estimated-payment scheduling is informational; state rules vary.")
     if r.itemized_deduction_note:
         lines.append(f"- **Declared itemized deductions:** {r.itemized_deduction_note}")

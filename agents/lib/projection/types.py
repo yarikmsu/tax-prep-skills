@@ -130,6 +130,35 @@ class StateProjection:
     agi: float = 0.0
     deduction: float = 0.0       # the larger of the standard and the declared itemized
     itemized: bool = False       # whether the declared itemized total was it
+    # Dedicated NY/NC forecasts distinguish income taxes, refundable credits
+    # and use tax. `tax` is the total before payments; no hidden credit netting.
+    form_modeled: bool = False
+    state_income_tax: float = 0.0
+    local_income_tax: float = 0.0
+    refundable_credits: float = 0.0
+    use_tax: float = 0.0
+
+
+@dataclass(frozen=True)
+class StatePaymentSchedule:
+    code: str
+    form: str
+    current_year_base: float
+    options: dict
+    required_annual: float
+    withholding: float
+    estimates_paid: float
+    shortfall: float
+    de_minimis: bool
+    prior_no_liability: bool
+    vouchers: list
+    notes: list[str]
+    voucher_catchup_note: str | None = None
+    voucher_dates_note: str | None = None
+
+    @property
+    def jurisdiction(self) -> str:
+        return self.code
 
 
 @dataclass(frozen=True)
@@ -369,10 +398,10 @@ class ProjectionReport:
     vouchers: "list[Voucher]"
     w4_penalty: W4Adjustment
     w4_zero: W4Adjustment
-    # Present only when the state projection ran AND the state is CA — the
-    # only state whose estimated-payment weighting (30/40/0/30) is modeled.
+    # CA's weighted schedule stays separate from the NY/NC equal quarters.
     ca_safe_harbor: "CaSafeHarbor | None" = None
     ca_vouchers: "list[Voucher]" = field(default_factory=list)
+    state_payment_schedule: StatePaymentSchedule | None = None
     # The voucher catch-up notes, decided in build_report so the markdown and
     # the `--json` payload cannot disagree about them. They were computed
     # inside the renderer, which put them in the one output both consuming
