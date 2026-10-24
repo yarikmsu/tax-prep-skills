@@ -26,6 +26,18 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
+### Confirm the investment-source split for California: direct US-obligation interest, municipal interest by issuer, fund ordinary/exempt dividends, US RIC status and annual asset-test evidence and income percentages. Record an explicit none when absent; an unknown source or qualification is not zero.
+
+*Asked by tax-compute state-return.md; required when this run selects a CA return.*
+
+- **[ca_investment_sources]**
+
+### From the federal state-refund tax-benefit worksheet, what refund amount was included in federal income, including a worked zero? Confirm that amount before its CA subtraction.
+
+*Asked by tax-compute state-return.md; required when a CA return has a state refund or worked taxable-refund field.*
+
+- **[ca_state_refund_worksheet]**
+
 ### What CA estimates, extension payments, K-1 allocations and prior applied overpayment are credited to this tax year? Confirm their dates, account ownership and claimable shares from source records, including an explicit none; identify the opening applied credit separately from new payments.
 
 *Asked by tax-compute state-return.md; required when this run selects a CA return.*

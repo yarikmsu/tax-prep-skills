@@ -473,6 +473,7 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "minimum_balance": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
                 "tax_fraction": None,
             },
+            "schedule_ca": {"fund_asset_minimum": None},
             "hsa_conformity": False,
             "hsa_note": "CA does not recognize HSA. Add back employer contributions and HSA earnings.",
             # Statutory-structural (R&TC §17043): the 1% Mental Health

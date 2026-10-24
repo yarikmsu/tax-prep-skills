@@ -14,6 +14,11 @@ rule visible; the modifying-templates section links here.
 a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
 
 ## The suite
+- Schedule CA (`test_ca_schedule_ca.py`) checks per-document components against
+  inclusive federal totals, issuer jurisdictions, RIC status and each quarter's
+  fetched asset threshold. It pins the at-threshold exemption, full addition
+  below the threshold, taxable SS/refund amounts, source disclosures, legacy
+  migration, standalone tie-out and receipt invalidation after source edits.
 - CA payments (`test_ca_payments.py`) derives line72 from dated, state/year-tagged
   source records and opening applied credit, rejects duplicates and malformed
   records even inside a positive total, and verifies ownership and forward

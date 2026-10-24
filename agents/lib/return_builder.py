@@ -165,6 +165,8 @@ from agents.lib.tax_computations import (  # noqa: E402
 )
 from agents.lib.tax_law_fetcher import load_tax_law  # noqa: E402
 from agents.lib.tie_out import (  # noqa: E402
+    derive_ca_schedule_ca,
+    ca_values_agree,
     CATEGORY_TARGETS,
     TieOutError,
     _SIGNED_CATEGORIES as SIGNED_CATEGORIES,
@@ -1347,6 +1349,7 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         method = ca.get("ca_deduction_method")
         if not isinstance(state, dict) or not isinstance(method, str):
             raise ValueError("record the CA law block and elected deduction method")
+        adjustments = derive_ca_schedule_ca(ledger, result, profile, tax_law)
         components = {f"line_{n}": ca.get(f"line_{n}") for n in CA_540_COMPONENT_LINES}
         sums = category_sums(ledger)
         components["line_71"] = round(sums.get("state_withholding_ca", 0) + sums.get("ca_1099_withholding", 0), 2)
@@ -1389,7 +1392,8 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
             available = allowable = 0
         p.update(iso_credit_generated=generated,
                  carryforward_to_next_year=round(available - allowable + generated, 2))
-        built.update(schedule_p=p, ca_withholding_box17=sums.get("state_withholding_ca", 0),
+        built.update(schedule_p=p, schedule_ca_adjustments=adjustments,
+            ca_withholding_box17=sums.get("state_withholding_ca", 0),
             ca_payment_summary=payments, ca_payment_note=payment_note,
             ca_withholding_1099=sums.get("ca_1099_withholding", 0),
             ca_withholding_592b_593=sums.get("ca_592b_593_withholding", 0))
@@ -1415,16 +1419,7 @@ def california_summary(result: dict, derived: dict) -> dict:
 def california_differences(result: dict, derived: dict) -> list[str]:
     ca = result.get("california_540") or {}
     # Nested workpapers and the screened note are load-bearing too.
-    def agrees(was, value):
-        if isinstance(value, bool):
-            return isinstance(was, bool) and was == value
-        if isinstance(value, (int, float)):
-            actual = _maybe_num(was)
-            return actual is not None and abs(actual - value) < CENT
-        if isinstance(value, dict):
-            return (isinstance(was, dict) and set(was) == set(value)
-                    and all(agrees(was[k], v) for k, v in value.items()))
-        return type(was) is type(value) and was == value
+    agrees = ca_values_agree
     fields = [field for field, value in derived.items() if field not in ca or not agrees(ca.get(field), value)]
     if derived and type(ca.get("computed_tax_year")) is not int and "computed_tax_year" not in fields:
         fields.append("computed_tax_year")
@@ -1437,6 +1432,11 @@ def california_differences(result: dict, derived: dict) -> list[str]:
         fields.append("meta.limitations (CA payments)")
     if derived and any(n.startswith("CA payments:") and n != derived.get("ca_payment_note") for n in notes):
         fields.append("meta.limitations (stale CA payment disclosure)")
+    source_note = (derived.get("schedule_ca_adjustments") or {}).get("source_note")
+    if source_note and source_note not in notes:
+        fields.append("meta.limitations (CA investment worksheets)")
+    if derived and any(n.startswith("CA investment worksheets:") and n != source_note for n in notes):
+        fields.append("meta.limitations (stale CA investment disclosure)")
     summary = california_summary(result, derived)
     for key, value in summary.items():
         if not agrees(result["balance_due_summary"].get(key), value):
@@ -1462,10 +1462,12 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
         if summary:
             updated["balance_due_summary"] = {**result["balance_due_summary"], **summary}
         meta = dict(result.get("meta") or {})
-        notes = [n for n in meta.get("limitations", []) if not n.startswith(("Form 540 line 113:", "CA payments:"))]
+        notes = [n for n in meta.get("limitations", []) if not n.startswith(("Form 540 line 113:", "CA payments:", "CA investment worksheets:"))]
         notes.append(california["line_113_note"])
         if california.get("ca_payment_note"):
             notes.append(california["ca_payment_note"])
+        if california["schedule_ca_adjustments"].get("source_note"):
+            notes.append(california["schedule_ca_adjustments"]["source_note"])
         updated["meta"] = {**meta, "limitations": notes}
     # `write_secure` is temp-then-replace with the descriptor secured before
     # the first byte, so there is nothing to chmod afterwards; the trailing

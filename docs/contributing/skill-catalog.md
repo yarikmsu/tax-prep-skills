@@ -68,8 +68,7 @@ list to the registry. New York City's full-year resident tax is
 computed, not blocked; a City resident for only part of the year is refused at compute
 time.
 
-California's blocking rules are `ca_us_obligation_income`,
-`ca_nonca_muni_interest`, `ca_other_schedule_ca`, `ca_state_refund`,
+California's blocking rules are `ca_other_schedule_ca`,
 `ca_distribution_taxes`, `ca_other_taxes`, `ca_ptet_credit`,
 `ca_amt_credit`, `ca_other_credit_carryover`, `ca_use_tax` and
 `ca_coverage_penalty`. Each has a
@@ -83,6 +82,11 @@ Security and state refunds must be subtracted on Schedule CA whatever a
 screening answer says. CA renter's credit and self-claimed special credits
 are manual notes; the dependent-care and EIC notes also name the distinct CA
 worksheets. Line 113's FTB 5805 penalty is unpriced; the FTB may bill it.
+The checked TY2025 builder derives US-obligation, municipal/fund, Social
+Security and state-refund Schedule CA adjustments from reviewed source
+components. Missing qualification or incomplete component splits block computation. The
+state-refund note is manual because the federal tax-benefit worksheet
+must be confirmed before its taxable amount can be subtracted for CA.
 
 **Manual-worksheet items** never block. They join the state-scope note in the
 `meta.limitations` manifest, which is copied VERBATIM into `result.json` and printed on

@@ -179,6 +179,11 @@ def _ca_amt_credit_needed(inputs: _Inputs) -> bool:
                  or _amount(inputs.prior_year.get("ca_amt_credit_carryforward")) > 0))
 
 
+def _ca_refund_worksheet_needed(inputs: _Inputs) -> bool:
+    return (_ca_return_needed(inputs) and (inputs.flags.get("has_1099g_state_refund") is True
+            or _get_path(inputs.result, "form_1040.taxable_state_refund") is not None))
+
+
 def _charitable_carryovers_unresolved(inputs: _Inputs) -> bool:
     ledgers = inputs.prior_year.get("charitable_carryforward_ledger") or {}
     if not isinstance(ledgers, dict):
@@ -215,6 +220,22 @@ def _crypto_disposals_lack_basis(inputs: _Inputs) -> bool:
 
 # Every registered question, with the condition that makes a workspace owe it.
 REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
+    RequiredAnswer(
+        id="ca_investment_sources", kind=FACT,
+        question="Confirm the investment-source split for California: direct US-obligation interest, "
+                 "municipal interest by issuer, fund ordinary/exempt dividends, US RIC status and annual "
+                 "asset-test evidence and income percentages. Record an explicit none when absent; "
+                 "an unknown source or qualification is not zero.",
+        asked_by="tax-compute state-return.md", required_when="this run selects a CA return",
+        when=_ca_return_needed,
+    ),
+    RequiredAnswer(
+        id="ca_state_refund_worksheet", kind=FACT,
+        question="From the federal state-refund tax-benefit worksheet, what refund amount was included "
+                 "in federal income, including a worked zero? Confirm that amount before its CA subtraction.",
+        asked_by="tax-compute state-return.md", required_when="a CA return has a state refund or worked taxable-refund field",
+        when=_ca_refund_worksheet_needed,
+    ),
     RequiredAnswer(
         id="ca_state_payments", kind=FACT,
         question="What CA estimates, extension payments, K-1 allocations and prior applied "

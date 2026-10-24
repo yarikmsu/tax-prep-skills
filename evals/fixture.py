@@ -95,6 +95,7 @@ ANSWERS = f"""# Answers — {CASE}
 Synthetic. Every question this return raises is answered here, so a headless run
 never has to ask one.
 
+- **[ca_investment_sources]** Synthetic source inventory confirmed; TY2026 retains the historical CA baseline, without a checked TY2025 Form540 build.
 - **[ca_state_payments]** No CA estimates, extension, K-1 payments or prior applied credit; sources reconciled.
 - **[ca_overpayment_election]** Deliberate zero; no CA overpayment is elected forward.
 
@@ -148,6 +149,7 @@ ZERO_INCOME_ANSWERS = f"""# Answers — zero_income
 Synthetic. Every question this return raises is answered here, so a headless run
 never has to ask one.
 
+- **[ca_investment_sources]** Synthetic source inventory confirmed; TY2026 retains the historical CA baseline, without a checked TY2025 Form540 build.
 - **[ca_state_payments]** No CA estimates, extension, K-1 payments or prior applied credit; sources reconciled.
 - **[ca_overpayment_election]** Deliberate zero; no CA overpayment is elected forward.
 
@@ -245,6 +247,7 @@ def tax_law() -> dict:
                 "phaseout_start": dict.fromkeys(("single", "mfj", "mfs", "hoh"), 1000000)},
         "underpayment_screen": {"minimum_balance": dict.fromkeys(
             ("single", "mfj", "mfs", "hoh", "qss"), 500), "tax_fraction": .1},
+        "schedule_ca": {"fund_asset_minimum": .5},
         # Required by the freshness gate: absent, the whole cache reads
         # INCOMPLETE and an agent following /tax-compute Step 0.5 correctly
         # STOPS — at which point the eval is measuring the gate and not the
@@ -318,7 +321,8 @@ def taxpayer_profile() -> dict:
     for rule in RULES:
         if rule.state == "CA":
             profile["flags"][rule.flag] = False
-    profile["flags"].update(ca_has_nonw2_payments=False, ca_applies_overpayment_forward=False)
+    profile["flags"].update(ca_has_nonw2_payments=False, ca_applies_overpayment_forward=False,
+                            ca_has_us_obligation_income=False, ca_has_nonca_muni_interest=False)
     profile["flags"]["has_capital_gains"] = True
     return profile
 

@@ -86,7 +86,9 @@ from agents.lib.tax_computations import (  # noqa: E402
     ny_household_refusals,
     compute_pfic_1291,
     compute_pfic_excess_distribution,
+    compute_ca_schedule_ca,
 )
+from agents.lib.tax_computations.state.ca import CA_INVESTMENT_COMPONENTS, _ca_input  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -120,6 +122,8 @@ _SIGNED_CATEGORIES = {"ss_benefits"}
 # ss_tips. The deduction is capped and MAGI-phased, so the ledger figure won't
 # equal any result line; the record just makes the raw amount traceable.
 _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
+                  # Components already included in the federal aggregates.
+                  # The reviewed CA derivation below checks their use.
                   "state_refund_1099g", "personal_1099k",
                   "qualified_tips", "qualified_overtime_premium",
                   # Form 3922 ESPP boxes — feed the §423 disposition split and
@@ -128,6 +132,7 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   # AA59: withholding for a state whose return this run does
                   # not compute; it is claimed on that state's own return.
                   "other_state_withholding"}
+_INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS)
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
@@ -552,6 +557,7 @@ class LedgerRecord:
     # the breakdown, not just the category total, so a computed state's
     # payment cannot hide in the informational category.
     other_state_withholding_by_state: "tuple[tuple[str, float], ...]" = ()
+    ca_investments: "dict | None" = None
 
 
 @dataclass(frozen=True)
@@ -695,13 +701,22 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                                             or retirement_kind not in RETIREMENT_KINDS):
             raise TieOutError(f"{where}.retirement_kind must be a recognized IRA/pension kind")
         other_states = _other_withholding_states(rec, boxes, where)
+        ca_investments = None
+        if "ca_investments" in rec:
+            from agents.lib.tax_computations.state.ca import validate_ca_investments
+            try:
+                if skipped is not None:
+                    raise ValueError("a skipped record cannot carry investment inputs")
+                ca_investments = validate_ca_investments(rec["ca_investments"], boxes)
+            except ValueError as exc:
+                raise TieOutError(f"{where}: {exc}") from None
         records.append(LedgerRecord(
             doc_id=doc_id, file=file,
             form_type=_require_str(rec.get("form_type"), f"{where}.form_type"),
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
-            other_state_withholding_by_state=other_states))
+            other_state_withholding_by_state=other_states, ca_investments=ca_investments))
     return records
 
 
@@ -1559,6 +1574,136 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
     return errors
 
 
+def ca_values_agree(was, value) -> bool:
+    """Cent-precision workpapers, preserving boolean types inside lists too."""
+    if isinstance(value, bool):
+        return isinstance(was, bool) and was == value
+    if isinstance(value, (int, float)):
+        try:
+            return (not isinstance(was, bool) and isinstance(was, (int, float))
+                    and math.isfinite(was) and round(float(was), 2) == round(float(value), 2))
+        except OverflowError:
+            return False
+    if isinstance(value, dict):
+        return (isinstance(was, dict) and set(was) == set(value)
+                and all(ca_values_agree(was[k], v) for k, v in value.items()))
+    if isinstance(value, list):
+        return (isinstance(was, list) and len(was) == len(value)
+                and all(ca_values_agree(a, b) for a, b in zip(was, value)))
+    return type(was) is type(value) and was == value
+
+
+def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: dict,
+                          tax_law: dict) -> dict:
+    """One source-to-worksheet reading shared by the builder and tie-out."""
+    result_year = (result.get("meta") or {}).get("tax_year")
+    profile_year = profile.get("tax_year")
+    if any(value is not None and type(value) is not int for value in (result_year, profile_year)):
+        raise ValueError("CA return years must be integers")
+    if result_year is not None and profile_year is not None and result_year != profile_year:
+        raise ValueError("CA investment source/return years disagree")
+    year = result_year if result_year is not None else profile_year
+    ca = result.get("california_540") or {}
+    adjustments = ca.get("schedule_ca_adjustments")
+    flags = profile.get("flags")
+    if not isinstance(adjustments, dict) or not isinstance(flags, dict):
+        raise ValueError("CA adjustments and explicit screening answers are required")
+    investment_records = []
+    relevant = set(CA_INVESTMENT_COMPONENTS) | {"taxable_interest", "tax_exempt_interest", "ordinary_dividends"}
+    for rec in ledger:
+        if rec.skipped is not None:
+            continue
+        boxes = dict(rec.key_boxes)
+        if rec.ca_investments is not None or any(boxes.get(k, 0) for k in relevant):
+            if rec.ca_investments is None:
+                raise ValueError("re-read investment sources: legacy federal totals need ca_investments and explicit component splits")
+            investment_records.append({"key_boxes": boxes, "ca_investments": rec.ca_investments})
+    federal = result.get("form_1040") or {}
+    ss = _ca_input(federal.get("line_6b_taxable_ss", 0), "federally taxable Social Security")
+    if any(dict(r.key_boxes).get("ss_benefits", 0) > 0 for r in ledger if r.skipped is None) \
+            and "line_6b_taxable_ss" not in federal:
+        raise ValueError("work the federal taxable Social Security amount before its CA subtraction")
+    refund_records = [dict(r.key_boxes)["state_refund_1099g"] for r in ledger
+                      if r.skipped is None and "state_refund_1099g" in dict(r.key_boxes)]
+    refund = federal.get("taxable_state_refund")
+    if refund_records or flags.get("has_1099g_state_refund") is True or refund is not None:
+        refund = _ca_input(refund, "federally taxable state refund")
+        if federal.get("taxable_state_refund_worksheet_confirmed") is not True:
+            raise ValueError("confirm the federal state-refund tax-benefit worksheet, including a worked zero")
+        if refund_records and refund > sum(refund_records) + .005:
+            raise ValueError("federally taxable state refund exceeds its source refunds")
+    else:
+        refund = 0.0
+    other_flag = flags.get("ca_has_other_schedule_ca_adjustments")
+    if type(other_flag) is not bool:
+        raise ValueError("answer ca_has_other_schedule_ca_adjustments explicitly")
+    other_add = _ca_input(adjustments.get("other_additions"), "other CA additions")
+    other_sub = _ca_input(adjustments.get("other_subtractions"), "other CA subtractions")
+    confirmed = adjustments.get("other_adjustments_confirmed")
+    if type(confirmed) is not bool:
+        raise ValueError("other_adjustments_confirmed must be an explicit boolean")
+    if (other_add or other_sub) and not other_flag:
+        raise ValueError("other CA adjustments contradict their screening answer")
+    if other_flag and not confirmed:
+        raise ValueError("confirm the separately worked other CA adjustments, including a worked zero")
+    # CA does not conform to section 223: the federal deduction (Form 8889
+    # line 13) comes back in full, and the employer add-back is line 9's
+    # W-2 box 12 code W amount, so the typed figure must agree with it.
+    hsa = result.get("form_8889_hsa")
+    if hsa is not None and not isinstance(hsa, dict):
+        raise ValueError("form_8889_hsa must be an object")
+    hsa_deduction = _ca_input((hsa or {}).get("line_13_hsa_deduction", 0), "Form 8889 line 13 HSA deduction")
+    if hsa:
+        employer = _ca_input(hsa.get("line_9_employer_contributions", 0), "Form 8889 line 9")
+        if abs(_ca_input(adjustments.get("hsa_employer_addback"), "HSA employer addback") - employer) > .005:
+            raise ValueError("hsa_employer_addback must equal Form 8889 line 9 employer contributions")
+    state = tax_law.get("state") or {}
+    law_year = tax_law.get("tax_year", year)
+    if state.get("code") != "CA" or type(law_year) is not int or law_year != year:
+        raise ValueError("Schedule CA needs the covered-year California law block")
+    schedule = state.get("schedule_ca") or {}
+    built = compute_ca_schedule_ca(tax_year=year, investment_records=investment_records,
+        fund_asset_minimum=schedule.get("fund_asset_minimum"), taxable_social_security=ss,
+        taxable_state_refund=refund, other_additions=other_add, other_subtractions=other_sub,
+        hsa_deduction_addback=hsa_deduction,
+        **{k: adjustments.get(k) for k in ("hsa_employer_addback", "hsa_interest_addback", "hsa_dividend_addback")})
+    for key, field in (("ca_has_us_obligation_income", "has_us_obligation_income"),
+                       ("ca_has_nonca_muni_interest", "has_nonca_muni_interest")):
+        if type(flags.get(key)) is not bool or flags[key] != built[field]:
+            raise ValueError(f"answer {key} and reconcile it with the source investment components")
+    built["other_adjustments_confirmed"] = confirmed
+    return built
+
+
+def _ca_schedule_checks(ledger: "list[LedgerRecord]", result: dict, profile, tax_law) -> list[str]:
+    from agents.lib.projection import _ca_section_computed
+    from agents.lib.tax_computations import ny_it203_plan
+    profile = profile if isinstance(profile, dict) else {}
+    address = profile.get("address") or {}
+    try:
+        selected = (isinstance(address, dict) and isinstance(address.get("state"), str)
+                    and address["state"].strip().upper() == "CA"
+                    and not ny_it203_plan(profile))
+    except ValueError:
+        return ["CA Schedule CA: resolve the malformed NY filing plan before selecting state adjustments"]
+    if not selected and not _ca_section_computed(result):
+        return []
+    ca = result.get("california_540")
+    if not isinstance(ca, dict):
+        return ["CA Schedule CA: selected California return has no california_540 section"]
+    if (type(ca.get("computed_tax_year")) is not int
+            and not any(r.ca_investments is not None or any(dict(r.key_boxes).get(k, 0)
+                        for k in CA_INVESTMENT_COMPONENTS) for r in ledger if r.skipped is None)):
+        return []
+    try:
+        built = derive_ca_schedule_ca(ledger, result, profile or {}, tax_law or {})
+    except (ValueError, TypeError, AttributeError, OverflowError) as exc:
+        return [f"CA Schedule CA: {redact(exc)}"]
+    if not ca_values_agree(ca.get("schedule_ca_adjustments"), built):
+        return ["CA Schedule CA: adjustments/workpaper disagree with the source components and federal taxable amounts"]
+    return []
+
+
 def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: bool,
                       tolerance: float) -> list[str]:
     """CA subtractions and carried AMT credit cannot vanish behind an acknowledgement."""
@@ -1650,7 +1795,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              eic_screening: "bool | None" = False,
              profile_flags: "dict | None" = None,
              option_exercise_answer: "bool | None" = None,
-             profile: "dict | None" = None) -> TieOutReport:
+             profile: "dict | None" = None,
+             tax_law: "dict | None" = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
     source files that exist under documents/."""
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) \
@@ -1679,6 +1825,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
     missing_targets.extend(_ca_return_checks(
         result, profile, sums.get("state_refund_1099g", 0) > 0, tolerance))
+    missing_targets.extend(_ca_schedule_checks(ledger, result, profile, tax_law))
     crypto = result.get("crypto_summary")
     form8949 = result.get("form_8949") or {}
     account_rows = (isinstance(form8949, dict) and any(
@@ -2494,6 +2641,7 @@ def _main(argv: list) -> int:
         eic_screening: "bool | None" = None
         profile_flags: "dict | None" = None
         prof: "dict | None" = None
+        ca_law: "dict | None" = None
         option_exercise_answer: "bool | None" = None
         profile_path = (workspace / "taxpayer_profile.json").resolve()
         if profile_path.exists():
@@ -2531,6 +2679,7 @@ def _main(argv: list) -> int:
                     try:
                         _law = _read_json(_validate_subpath(_law_path, workspace),
                                           f"tax_law_{_cy}.json")
+                        ca_law = _law
                         _fed = _law.get("federal") if isinstance(_law.get("federal"), dict) else {}
                         _htr = _fed.get("historical_top_rate")
                         if isinstance(_htr, dict) and _htr:
@@ -2558,7 +2707,7 @@ def _main(argv: list) -> int:
                           eic_screening=eic_screening,
                           profile_flags=profile_flags,
                           option_exercise_answer=option_exercise_answer,
-                          profile=prof)
+                          profile=prof, tax_law=ca_law)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
