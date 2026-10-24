@@ -11,7 +11,7 @@ import json
 import math
 
 from agents.lib.tax_computations._shared import _amount, _normalize_filing_status
-from agents.lib.tax_computations.state.ca import compute_ca_itemized
+from agents.lib.tax_computations.state.ca import compute_ca_exemption_credit, compute_ca_itemized
 from agents.lib.tax_computations.state.nc import compute_nc_d400
 from agents.lib.tax_computations.state.ny import (
     compute_city_and_yonkers_total,
@@ -167,19 +167,13 @@ def _ca(fagi: float, taxable_ss: float, plan: dict, cfg: dict, status: str, year
     elected = deduction["itemized_total"] if deduction["use_itemized"] else standard
     taxable = round(max(0.0, agi - elected), 2)
     tax = _ca_tax(taxable, status, cfg)
-    # Form 540 line 32 AGI Limitation Worksheet: distinct groups and per-head
-    # ceiling reductions. None of its amounts is an engine default.
-    ph = _obj(cfg.get("exemption_phaseout"), "state.exemption_phaseout")
-    threshold = _number(ph.get("threshold", {}).get(status), "CA exemption threshold")
-    band = _number(ph.get("band", {}).get(status), "CA exemption band", positive=True)
-    reduction = _number(ph.get("reduction_per_step"), "CA exemption reduction")
-    steps = math.ceil(max(0.0, fagi - threshold) / band)
-    heads = _count(p.get("personal_blind_senior_count"), "CA personal/blind/senior count")
-    dependents = _count(p.get("dependent_count"), "CA dependent count")
-    personal = _number(cfg.get("personal_exemption", {}).get("amount"), "CA personal exemption")
-    dependent = _number(cfg.get("dependent_exemption", {}).get("amount"), "CA dependent exemption")
-    credit = round(heads * max(0.0, personal - steps * reduction)
-                   + dependents * max(0.0, dependent - steps * reduction), 2)
+    credit = compute_ca_exemption_credit(
+        fagi, status,
+        _count(p.get("personal_blind_senior_count"), "CA personal/blind/senior count"),
+        _count(p.get("dependent_count"), "CA dependent count"),
+        cfg.get("personal_exemption", {}).get("amount"),
+        cfg.get("dependent_exemption", {}).get("amount"),
+        _obj(cfg.get("exemption_phaseout"), "state.exemption_phaseout"))["exemption_credit"]
     surcharge = _obj(cfg.get("mental_health_surcharge"), "CA mental health surcharge")
     extra = round(max(0.0, taxable - _number(surcharge.get("threshold"), "CA surcharge threshold"))
                   * _number(surcharge.get("rate"), "CA surcharge rate"), 2)

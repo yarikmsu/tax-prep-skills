@@ -69,15 +69,18 @@ and fetched Form 540 Box C ceiling. Special credits/taxes remain outside scope.
 
 The optional fetched CA cache blocks are `state.tax_table` (covered-year ceiling
 and sparse published `rows` with `min`, `max`, and `tax` by lower-case filing
-status), `state.exemption_phaseout` (`threshold` and `band` by all five statuses,
-`reduction_per_step`), and `state.amt_screening` by all five statuses. Rows use
+status), and `state.amt_screening` by all five statuses. The required
+`state.exemption_phaseout` holds `threshold` and `band` by all five statuses
+and `reduction_per_step`, shared with the filed return through
+`compute_ca_exemption_credit`. Rows use
 inclusive minimum/exclusive maximum; transcribe the published range accordingly
 and include the covered ceiling's final row. Missing rows refuse; do not invent
 a midpoint rule. Above the ceiling, use the fetched contiguous rate schedule.
 The exemption credit re-prices the line-32 per-head ceiling steps independently
 for personal/blind/senior and dependent credits. All new amounts are fetched,
-source-pinned and covered-year checked, never engine defaults. These blocks are
-optional for the return freshness walker and required by this planner.
+source-pinned and covered-year checked, never engine defaults. The tax-table
+and AMT-screening blocks are optional for the return freshness walker and
+required by this planner; the exemption phase-out is required for both.
 
 **NY**: `ny` contains the actual `additions` and `subtractions` dictionaries for
 `compute_ny_agi`, `dependent_count`, `claimed_as_dependent`, and `itemized`

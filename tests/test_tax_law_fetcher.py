@@ -61,12 +61,20 @@ def _nc_filled(year=2025):
     return block
 
 
+def _ca_synthetic_exemption_phaseout():
+    """Complete, invented worksheet inputs for tests of unrelated cache gates."""
+    statuses = ("single", "mfj", "mfs", "hoh", "qss")
+    return {"threshold": {s: 100000 for s in statuses},
+            "band": {s: 1000 for s in statuses}, "reduction_per_step": 10}
+
+
 def _write_cache(tmp_path, year, sdi_wage_limit="omit"):
     """A minimal fresh cache: only fields the walker will see. Pass
     sdi_wage_limit="omit" to simulate a legacy cache created before the field
     existed (key absent entirely)."""
     state = {"name": "California", "type": "graduated_income",
              "sdi_rate": 0.012,
+             "exemption_phaseout": _ca_synthetic_exemption_phaseout(),
              "itemized_phaseout": {"single": 244000, "mfj": 488000,
                                    "hoh": 366000}}
     if sdi_wage_limit != "omit":
@@ -135,6 +143,7 @@ def test_empty_underpayment_rates_not_flagged(tmp_path):
         "federal": {"fbar_threshold": 10000, "underpayment_rates": [], "amt": {"exemption": {"single": 88100, "mfj": 137000, "mfs": 68500}, "phaseout_start": {"single": 626350, "mfj": 1252700, "mfs": 626350}, "rate_28_breakpoint": 239100}},
         "state": {"name": "California", "type": "graduated_income",
                   "sdi_rate": 0.012,
+                  "exemption_phaseout": _ca_synthetic_exemption_phaseout(),
                   "itemized_phaseout": {"single": 244000, "mfj": 488000,
                                         "hoh": 366000}},
         "exchange_rates": {"EUR": 1.08},
@@ -396,6 +405,7 @@ def test_freshness_unpinned_is_advisory_not_status_flip(tmp_path):
         },
         "state": {"name": "California", "type": "graduated_income",
                   "sdi_rate": 0.012,
+                  "exemption_phaseout": _ca_synthetic_exemption_phaseout(),
                   "itemized_phaseout": {"single": 244000, "mfj": 488000,
                                         "hoh": 366000}},
         "exchange_rates": {"EUR": 1.08},

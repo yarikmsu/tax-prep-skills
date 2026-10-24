@@ -35,6 +35,7 @@ from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
 from agents.lib.tax_computations._shared import _STATE_NAME_TO_CODE  # noqa: E402
 from agents.lib.tax_computations.state.ca import (  # noqa: E402
     _SDI_NO_CEILING_FROM,
+    validate_ca_exemption_phaseout,
 )
 from agents.lib.tax_computations.state.nc import _nc_check_child_table  # noqa: E402
 from agents.lib.tax_computations.state.ny import (  # noqa: E402
@@ -456,11 +457,12 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             "brackets": [],  # [{"rate": 0.01, "min": 0, "max": 10412}, ...]
             "personal_exemption": {"amount": None},
             "dependent_exemption": {"amount": None},
-            # Optional planning inputs, fetched from the covered-year Form 540.
+            # Planning tax-table inputs, fetched from the covered-year Form 540.
             # Published rows avoid assuming that the tax table is a schedule
             # evaluated at an inferred midpoint. Each row: min/max, tax by
             # canonical lower-case status. Fetch every row the sweep touches.
             "tax_table": {"max_taxable_income": None, "rows": []},
+            # Required for every CA return's line-32 credit limitation.
             "exemption_phaseout": {
                 "threshold": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
                 "band": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
@@ -1542,7 +1544,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         # not by every filed-return workflow. The cache validator still audits
         # populated values; missing ones yield a named planning limitation.
         if (isinstance(data.get("state"), dict) and data["state"].get("code") == "CA"
-                and path in ("state.tax_table", "state.exemption_phaseout", "state.amt_screening")):
+                and path in ("state.tax_table", "state.amt_screening")):
             return
         # These optional tagged blocks have their own complete validators;
         # empty confirmed lists and inactive null parameters are valid data.
@@ -2700,6 +2702,11 @@ def validate_cache(data: dict, year: int) -> "list[str]":
     string per violation, for `check_freshness` to report as INCOMPLETE."""
     problems = []
     state = data.get("state")
+    if isinstance(state, dict) and _state_pin_code(state) == "CA":
+        try:
+            validate_ca_exemption_phaseout(state.get("exemption_phaseout"))
+        except ValueError as exc:
+            problems.append(str(exc))
     if isinstance(state, dict):
         from agents.lib.tax_computations.state.generic import (
             validate_state_local, validate_state_modifications,

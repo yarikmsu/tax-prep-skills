@@ -47,8 +47,9 @@ def case(code="NC", agi=60000, status="MFJ"):
              standard_deduction={s: 10000 for s in ("single", "mfj", "mfs", "hoh", "qss")},
              itemized_phaseout={s: 100000 for s in ("single", "mfj", "hoh")},
              personal_exemption={"amount": 200}, dependent_exemption={"amount": 400},
-             exemption_phaseout={"threshold": {status.lower(): 100000},
-                                  "band": {status.lower(): 1000}, "reduction_per_step": 10},
+             exemption_phaseout={"threshold": {s: 100000 for s in ("single", "mfj", "mfs", "hoh", "qss")},
+                                  "band": {s: 1000 for s in ("single", "mfj", "mfs", "hoh", "qss")},
+                                  "reduction_per_step": 10},
              amt_screening={status.lower(): 1000000},
              mental_health_surcharge={"threshold": 2000000, "rate": .01},
              tax_table={"max_taxable_income": 20000, "rows": [

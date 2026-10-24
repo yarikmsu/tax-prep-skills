@@ -113,7 +113,30 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    deduction where the coupling forces itemizing (the election FTB forbids).
    Use `itemized_total if use_itemized else ca_standard_deduction`.
 6. CA tax from FTB tables (use brackets from tax_law JSON)
-7. CA exemption credits (personal + dependent, amounts from tax_law JSON)
+7. CA exemption credits — run `compute_ca_exemption_credit()` for Form 540
+   line 32, including the AGI Limitation Worksheet. Pass **federal AGI**
+   (Form 540 line 13), `filing_status`, the eligible box counts from lines
+   7-9 as `personal_blind_senior_count` and line 10 as `dependent_count`,
+   `state.personal_exemption.amount`, `state.dependent_exemption.amount`,
+   and the REQUIRED `state.exemption_phaseout` block from the tax-law cache.
+   Build the senior part of the count from `flags.age_65_plus_primary` and,
+   on a joint return only, `flags.age_65_plus_spouse`; add the eligible
+   personal and blind counts under the filing year's Form 540 instructions.
+   Confirm eligibility (including whether another filer can claim either
+   spouse as a dependent) and any unanswered age/blindness facts before
+   counting; never assume an unanswered count is zero. Do not count a senior
+   or blind exemption for a person another filer can claim as a dependent.
+   The function applies the fetched per-status threshold and ceiling steps,
+   flooring the two credit groups independently. Use `exemption_credit` as
+   line 32's credit in step 8 and `ca_exemption_credits.total`. Store
+   `personal_blind_senior_credit` in `ca_exemption_credits.personal.total`
+   and `dependent_credit` in `ca_exemption_credits.dependent.total`; keep
+   each group's eligible count and fetched unit amount, and record the
+   `phaseout_steps` / `reduction_per_head` workpaper in `answers.md` so the
+   reduced totals are explained. Unfetched inputs HARD-ERROR even below the
+   threshold: re-fetch via `/tax-setup`, never keep the full credit as a
+   fallback. Run this worksheet above the Schedule P screening ceiling too;
+   the planner's separate AMT screen is not a limit on this function.
 8. CA tax after credits — **floored at zero**. The exemption credit is
    NON-refundable, so `max(0, tax_from_table - credits)`: a return with no CA
    tax still earns 2 x $150 for two filers, and subtracting it without the
