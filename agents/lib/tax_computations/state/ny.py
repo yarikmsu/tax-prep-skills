@@ -1107,7 +1107,11 @@ _NY_REFUNDABLE_CREDIT_LINES = (
     ("real_property_tax", 67),
     ("college_tuition", 68),
     ("nyc_school_tax_fixed", 69),
+    # IT-201 69a and 70a are the rate-reduction school tax credit and the
+    # City income tax elimination credit; IT-2105.9 lines 8 and 9a take them.
+    ("nyc_school_tax_rate_reduction", "69a"),
     ("nyc_earned_income", 70),
+    ("nyc_income_tax_elimination", "70a"),
     ("other_refundable", 71),
 )
 

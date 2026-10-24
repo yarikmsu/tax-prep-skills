@@ -112,6 +112,21 @@ def test_nyc_whole_liability_withholding_credits_and_use_tax():
     assert not state.balance < -5000  # historic state-only refund regression
 
 
+def test_nyc_rate_reduction_and_elimination_credits_reduce_the_requirement():
+    # IT-2105.9 line 8 takes IT-201 lines 69 AND 69a, and line 9a takes 70a;
+    # without them the NYC requirement was over-stated (69a 407 here).
+    args = list(forecast("NY", 200000))
+    city(args)
+    args[0]["use_tax"] = 250
+    args[0]["ny"]["credit_worksheets"]["refundable"] = {
+        "nyc_school_tax_fixed": 125, "nyc_school_tax_rate_reduction": 407,
+        "nyc_income_tax_elimination": 0}
+    args[1] = replace(args[1], state_withholding=17500)
+    _, h = run(args)
+    assert h.current_year_base == 17632 - 407
+    assert h.options["current_year"] == round((17632 - 407) * .9, 2)
+
+
 def test_ny_prior_base_uses_nyagi_and_mctd_not_federal_agi():
     args = list(forecast("NY", 200000))
     args[0]["prior_year"] = dict(tax_year=2024, method="filed_return", tax_base=8000,

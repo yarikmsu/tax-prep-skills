@@ -97,7 +97,8 @@ SE income require reconciliation rather than an invented zero mobility tax.
 Use explicit zeroes and `{}` only after reviewing eligibility and all credit
 forms; the projection engine assembles these outputs but does not calculate
 their source worksheets. Resident-credit allocations remain unavailable.
-Refundable keys follow compute_ny_settlement, including school-tax credits;
+Refundable keys follow compute_ny_settlement, including both school-tax credits
+(line 69 fixed, 69a rate reduction) and the line 70a City elimination credit;
 the college tuition credit and deduction cannot both be claimed. Confirm every
 amount belongs to the same income forecast. Nonrefundable caps, household
 credits, NY recapture, NYC and Yonkers tax and MCTMT are calculated by their
@@ -147,7 +148,7 @@ the federal forecast omitted.
 NY's base follows the covered-year IT-2105.9 prior-tax worksheet: exclude
 sales/use tax and voluntary contributions, subtract the named refundable
 credits and STAR payment, and resolve filing-status changes. Never enter gross
-IT-201 line 60 from an archive. The annual safe harbor combines all four taxes,
+IT-201 line 61 (total taxes; line 60 is voluntary contributions) from an archive. The annual safe harbor combines all four taxes,
 refundable credits and withholding before comparing current and prior shares.
 The separate IT-2105 voucher columns have different minima and thresholds;
 their sum cannot replace this combined underpayment requirement. The NY floor
