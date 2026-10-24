@@ -118,6 +118,31 @@ def test_wrong_credit_arithmetic_refuses(field, value):
     assert tie_out.evaluate([], result, [], profile=profile).failed
 
 
+@pytest.mark.parametrize("update,message", [
+    # Internally consistent (900 - 200 = 700) but not the 1,000 carried in.
+    (dict(ftb3510_credit_available=900, carryforward_to_next_year=700), "opening credit"),
+    # The sum guard also fires (1,000 - 1,200 is negative); the ceiling is
+    # still the error a preparer needs to read.
+    (dict(ftb3510_credit_allowable=1200, carryforward_to_next_year=0), "exceeds the available"),
+])
+def test_each_credit_guard_names_its_own_failure(update, message):
+    profile, result = _credit_case()
+    result["california_540"]["schedule_p"].update(update)
+    report = tie_out.evaluate([], result, [], profile=profile)
+    assert report.failed
+    assert any(message in m for m in report.missing_result_targets)
+
+
+def test_a_typed_refund_still_needs_its_confirmed_worksheet():
+    result = {"form_1040": {"taxable_state_refund": 100},
+              "california_540": {"schedule_ca_adjustments": {
+                  "taxable_state_refund_subtraction": 100, "total_subtractions": 100}}}
+    profile = _profile({"has_1099g_state_refund": True})
+    assert tie_out.evaluate([], result, [], profile=profile).failed
+    result["form_1040"]["taxable_state_refund_worksheet_confirmed"] = True
+    assert not tie_out.evaluate([], result, [], profile=profile).failed
+
+
 def test_worked_zero_allowable_preserves_the_entire_opening_credit_without_iso():
     profile, result = _credit_case()
     p = result["california_540"]["schedule_p"]
