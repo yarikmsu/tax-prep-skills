@@ -49,14 +49,18 @@ def validate_irmaa_tiers(raw, premium_year, *, separate=False) -> list[dict]:
             if not math.isfinite(number) or number <= 0:
                 raise ValueError(f"IRMAA tier has a non-numeric, nonfinite or nonpositive {key}")
             item[key] = number
-        # (i)(5)(A) freezes 2018/2019 rather than indexing: their published
-        # tables retain half-thousand boundaries. (i)(5)(B) rounds indexed
-        # years to thousands. Neither encoding admits a first-dollar +1.
-        quantum = 500 if premium_year in {2018, 2019} else 1000
-        if item["magi_threshold"] % quantum:
-            raise ValueError("IRMAA threshold must be the printed rounded boundary, never the old first-dollar value; refetch")
         cleaned.append(item)
     cleaned.sort(key=lambda t: t["magi_threshold"])
+    for index, item in enumerate(cleaned):
+        # (i)(5)(A) freezes 2018/2019 rather than indexing: their published
+        # tables retain half-thousand boundaries. (i)(5)(B) rounds indexed
+        # years to thousands. Neither encoding admits a first-dollar +1. From
+        # 2028 the joint top tier is 150% of an indexed, thousand-rounded
+        # figure ((i)(3)(C)(ii), (i)(5)(C)), so it may land on a half-thousand.
+        top_of_joint = not separate and premium_year >= 2028 and index == len(cleaned) - 1
+        quantum = 500 if premium_year in {2018, 2019} or top_of_joint else 1000
+        if item["magi_threshold"] % quantum:
+            raise ValueError("IRMAA threshold must be the printed rounded boundary, never the old first-dollar value; refetch")
     if any(b["magi_threshold"] <= a["magi_threshold"]
            or b["annual_surcharge_per_person"] <= a["annual_surcharge_per_person"]
            for a, b in zip(cleaned, cleaned[1:])):

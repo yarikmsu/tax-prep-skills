@@ -19,7 +19,9 @@ Reviewed full-year NY/NC forecasts also produce equal-quarter IT-2105/NC-40
 annual targets, with complete state/local worksheets and fetched safe-harbor law.
 Reviewed Form 6251 forecasts add AMT and applicable credits to federal payments.
 Medicare IRMAA is a separate per-beneficiary premium estimate using the normal
-two-year lookback and that premium year's independently fetched law.
+two-year lookback and that premium year's independently fetched law. CMS
+publishes that table the November before it applies, so a mid-year run
+normally reports the projected MAGI and "IRMAA not modeled", not a dollar figure.
 
 ## Prerequisites
 - `taxpayer_profile.json` and `tax_law_{year}.json` exist (else: run `/tax-setup {year}` first).

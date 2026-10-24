@@ -744,3 +744,20 @@ def test_an_itemizer_with_recorded_inputs_is_repriced_per_rung():
     assert steps == [10000.0, 10000.0]
     assert held.schedule_a_repriced is False
     assert held.medical_floor_may_move is True
+
+
+def test_an_indexed_joint_top_tier_may_be_a_half_thousand_from_2028():
+    # (i)(3)(C)(ii): the joint top is 150% of the indexed $500,000, which
+    # (i)(5)(B) rounds to $1,000 first, so 513,000 gives 769,500. Surcharges
+    # are synthetic. Lower tiers and a first-dollar +1 still refuse.
+    rows=[{"magi_threshold":t,"annual_surcharge_per_person":1000*(i+1)}
+          for i,t in enumerate([218000,274000,342000,410000,769500])]
+    law={"tax_year":2028,"federal":{"irmaa":{"tiers":{"mfj":rows}}}}
+    assert rl._irmaa_tiers(law,"MFJ")[-1]["magi_threshold"]==769500
+    rows[1]["magi_threshold"]=274500
+    with pytest.raises(rl.RothLadderError,match="first-dollar"):
+        rl._irmaa_tiers(law,"MFJ")
+    rows[1]["magi_threshold"]=274000
+    rows[-1]["magi_threshold"]=769501
+    with pytest.raises(rl.RothLadderError,match="first-dollar"):
+        rl._irmaa_tiers(law,"MFJ")

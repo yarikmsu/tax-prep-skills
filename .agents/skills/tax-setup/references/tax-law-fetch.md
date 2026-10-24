@@ -56,9 +56,9 @@ covered year; part-year deductions, tax and AMT use these annual inputs.
   (`single`/`mfj`/`mfs` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
   monthly Part B + Part D surcharge above the standard premium). `magi_threshold` is the
   figure CMS prints for the tier, never the first dollar past it: a tier applies above it
-  and the top tier at it. From premium year 2020, fetch all five surcharge rows
-  for unmarried/joint and the two separate-return rows, with printed whole-thousand
-  thresholds. QSS/HOH use unmarried; MFS needs an explicit lived-apart answer.
+  and the top tier at it. From premium year 2019, fetch all five surcharge rows
+  for unmarried/joint and the two separate-return rows, with the printed rounded
+  thresholds (from 2028 the joint top tier may be a half-thousand). QSS/HOH use unmarried; MFS needs an explicit lived-apart answer.
   Optional but unlocks IRMAA flags in `/tax-roth-convert`; leave as `[]` if not
   relevant. These are the named PREMIUM year's figures. `/tax-project` needs
   the income-year-plus-two cache separately; unpublished future law stays unmodeled.

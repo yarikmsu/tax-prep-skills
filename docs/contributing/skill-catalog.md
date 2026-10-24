@@ -243,7 +243,8 @@ Life-event flags read False when absent, so a legacy profile still passes.
   credits to federal liability and payment targets. Missing inputs banner an
   AMT-excluding estimate; present unsupported preferences refuse. A separate
   `irmaa_projection` estimates per-beneficiary Part B+D premium surcharges
-  using the income-year-plus-two cache, never folding premiums into income tax
+  using the income-year-plus-two cache (normally unpublished during the income
+  year, so the usual output is the projected MAGI and a not-modeled note), never folding premiums into income tax
   or substituting current law for unpublished future figures. The maintained
   interview and field contract are `tax-project/references/amt-irmaa.md`.
 - **`/tax-withholding`** — withholding true-up: after `/tax-compute`, compares YTD federal
