@@ -545,7 +545,7 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
   treated as zero. Capture issuer jurisdictions for direct municipal interest;
   the broker's address is not the bond issuer. The parse skill's California
   investment reference defines the per-record fields and federal total rules.
-- Any other Schedule CA Part I difference: section 1202, federal/CA basis or depreciation, CA K-1 amounts, moving expenses, IRA basis, California lottery winnings, educator expenses, or the foreign earned income exclusion add-back? Ask about each category, recording the applicable lines → `ca_has_other_schedule_ca_adjustments`. Record their acknowledged worksheets separately as `other_additions`/`other_subtractions` and confirm them, including a worked zero. HSA add-backs retain their existing components; federally taxable Social Security, the confirmed federally taxable state refund, net UI and eligible governmental PFL are derived subtractions. UI/PFL alone does not set this flag; re-answer an older true flag if these benefits alone set it. Do not include them again in other_subtractions.
+- Any other Schedule CA Part I difference: section 1202, federal/CA basis or depreciation, CA K-1 amounts, moving expenses, IRA basis, California lottery winnings not reported on a W-2G (a W-2G's are derived), educator expenses, or the foreign earned income exclusion add-back? Ask about each category, recording the applicable lines → `ca_has_other_schedule_ca_adjustments`. Record their acknowledged worksheets separately as `other_additions`/`other_subtractions` and confirm them, including a worked zero. HSA add-backs retain their existing components; federally taxable Social Security, the confirmed federally taxable state refund, net UI and eligible governmental PFL are derived subtractions. UI/PFL alone does not set this flag; re-answer an older true flag if these benefits alone set it. Do not include them again in other_subtractions.
 - Any Schedule P Box A preferences/adjustments after applying the filing year's trade/business gross-receipts carve-out, or Box B investment-interest expense/installment-sale income? Any mortgage interest on debt not used to buy or improve the home? → `ca_has_noniso_amt_items`. Read the covered-year booklet's carve-out; do not block an exempt business item merely because it appears in Box A. ISO income keeps its existing `has_iso_exercise` question. Standard/itemized-deduction AMT adjustments are return figures, not another yes/no question.
 - A lump-sum distribution requiring Schedule G-1 or an accumulation distribution requiring FTB 5870A? → `ca_has_special_distribution_tax`.
 - California early-distribution or other additional taxes, including FTB 3805P? → `ca_has_other_taxes`.
@@ -772,7 +772,13 @@ federal credit is computed by the engine.
     `/tax-compute` applies the Form 8949 code-B basis adjustment only from that
     documentation (never inferred).
 - K-1 income from partnerships or S-corporations? If yes, ask **which states the entities are based in** (sets `flags.k1_states`, e.g. `["CA", "NY"]`). PTET is an entity-level state tax — the partnership / S-corp files in its operating state, not the partner's resident state — so a TX-resident partner in a CA partnership needs `k1_states: ["CA"]` to get the right PTET reminders in `tax_calendar_{year}.ics`.
-- Gambling income (W-2G)? → sets `has_gambling_income` flag
+- Gambling income, including winnings without a W-2G? → `has_gambling_income`.
+  Did you receive any W-2G (including a corrected or zero form)? → `has_w2g`.
+  Record both answers explicitly. Reconcile actual winnings and losses with
+  forms and annual books, distinguish casual gambling from a trade/business,
+  and resolve shared winners using Form5754/payer-issued allocations before
+  claiming winnings or withholding. Loss/expense limits remain manual; do not
+  net annual casual losses against the separately reported winnings.
 - **OBBBA Schedule 1-A deductions (TY2025-2028 only — BELOW-AGI, line 13b).**
   Ask the unreported/allocated-tips question below in EVERY year:
   `has_unreported_or_allocated_tips` is a required gate question, and Form

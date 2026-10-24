@@ -14,7 +14,7 @@ import pytest
 
 from agents.lib import crypto_importer as C
 from agents.lib import tie_out
-from tests.skill_text import listed_boxes
+from tests.skill_text import listed_boxes, skill_text
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -983,7 +983,7 @@ def test_tax_parse_captures_every_1099da_box_a_key_or_category_reads():
     """A key the parse never captured has nothing to copy from, and a box
     copied from nothing reads as blank: AA59 began with every new key in
     that state."""
-    skill = (REPO / '.agents' / 'skills' / 'tax-parse' / 'SKILL.md').read_text(encoding='utf-8')
+    skill = skill_text('tax-parse')
     listed = skill[skill.index('### 1099-DA Extraction'):].splitlines()[1]
     assert set(_1099DA_KEY_BOXES.values()) <= listed_boxes(listed.split(':', 1)[1]), listed
 

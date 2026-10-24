@@ -37,7 +37,7 @@ judgment; a broad range of numbered boxes must never be summed as receipts.
 
 `schedule_1_other_income` derives the non-benefit Schedule 1 component from
 tracked MISC income plus signed `remaining_income`. The latter EXCLUDES both
-this tracked MISC income and the separate UI/family benefits; it includes
+this tracked MISC income, separately mapped casual W-2G income and the separate UI/family benefits; it includes
 Schedule C net profit/loss, taxable refunds and all remaining applicable
 sources. Require `remaining_income_confirmed`, including a deliberate zero.
 Do not reuse an old line-8 aggregate or a government-workpaper input that may
@@ -63,3 +63,9 @@ deferred compensation (12/15), and TY2026 tips/occupation/overtime (13a/13b/14).
 Do not treat substitute payments as qualified dividends or exempt interest, or
 attorney gross proceeds as the attorney's fee. AA64 owns the new TY2026
 qualification-box review; this inventory does not assert those deductions.
+
+The [W-2G extension](gambling-intake.md) adds reported source winnings and
+reviewed casual/business contributions to this workpaper. Adding those sources
+requires a new explicit exclusion from remaining income; an older MISC-only
+answer is not reused by default. W-2G credits use line25c separately, never the
+1099 withholding category.

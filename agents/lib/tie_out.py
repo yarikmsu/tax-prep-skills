@@ -98,6 +98,10 @@ from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E
 from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402
     MISC_OTHER, compute_schedule1_other, validate_misc_income,
 )
+from agents.lib.tax_computations.federal.gambling_income import (  # noqa: E402
+    GAMBLING_REPORTED, GAMBLING_WITHHOLDING, is_w2g_form, validate_w2g_income,
+    compute_other_forms_withholding, compute_w2g_totals,
+)
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -185,6 +189,8 @@ _ADVISORY_MISMATCH_CATEGORIES = {"retirement_taxable"}
 # category → (result section, [field names summed on the result side]).
 # The comparison is sum(ledger category) == sum(present mapped fields).
 CATEGORY_TARGETS = {
+    GAMBLING_REPORTED: ("schedule_1_other_income", [GAMBLING_REPORTED]),
+    GAMBLING_WITHHOLDING: ("other_forms_withholding", ["w2g_withholding"]),
     MISC_OTHER: ("schedule_1_other_income", [MISC_OTHER]),
     "unemployment_compensation": ("schedule_1_government_benefits", ["unemployment_gross"]),
     "government_family_leave": ("schedule_1_government_benefits", ["family_leave_gross"]),
@@ -572,6 +578,7 @@ class LedgerRecord:
     ca_investments: "dict | None" = None
     government_benefits: "dict | None" = None
     misc_income: "dict | None" = None
+    w2g_income: "dict | None" = None
 
 
 @dataclass(frozen=True)
@@ -740,6 +747,13 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 ca_investments = validate_ca_investments(rec["ca_investments"], boxes)
             except ValueError as exc:
                 raise TieOutError(f"{where}: {exc}") from None
+        w2g_income = None
+        if (skipped is None and (is_w2g_form(rec.get("form_type")) or any(
+                k in boxes for k in (GAMBLING_REPORTED, GAMBLING_WITHHOLDING)))) or "w2g_income" in rec:
+            try:
+                w2g_income = validate_w2g_income(rec.get("w2g_income"), boxes, skipped=skipped is not None)
+            except ValueError as exc:
+                raise TieOutError(f"{where}: {exc}") from None
         records.append(LedgerRecord(
             doc_id=doc_id, file=file,
             form_type=_require_str(rec.get("form_type"), f"{where}.form_type"),
@@ -747,7 +761,7 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
             other_state_withholding_by_state=other_states, ca_investments=ca_investments,
-            government_benefits=government_benefits, misc_income=misc_income))
+            government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income))
     return records
 
 
@@ -1621,6 +1635,84 @@ def _schedule_c_net_stated(sheet: dict, result: dict, where: str) -> "float | No
     return net
 
 
+def _w2g_sources(ledger: "list[LedgerRecord]", profile: dict) -> tuple[list, list]:
+    records, years = [], []
+    for rec in ledger:
+        boxes = dict(rec.key_boxes)
+        related = (rec.w2g_income is not None or is_w2g_form(rec.form_type)
+                   or any(k in boxes for k in (GAMBLING_REPORTED, GAMBLING_WITHHOLDING)))
+        if not related:
+            continue
+        if rec.skipped is not None:
+            if any(k in boxes for k in (GAMBLING_REPORTED, GAMBLING_WITHHOLDING)):
+                raise ValueError("a skipped W-2G cannot carry source categories")
+            if rec.w2g_income is not None:
+                source = validate_w2g_income(rec.w2g_income, boxes, skipped=True)
+                years.append(source["tax_year"])
+            continue
+        source = validate_w2g_income(rec.w2g_income, boxes)
+        records.append({"key_boxes": boxes, "w2g_income": source})
+        years.append(source["tax_year"])
+    if not years and (profile.get("flags") or {}).get("has_w2g") is True:
+        raise ValueError("W-2G was reported at intake but has no reviewed source inventory")
+    return records, years
+
+
+def _covered_source_year(result: dict, profile: dict, years: list, label: str) -> int:
+    result_year = (result.get("meta") or {}).get("tax_year")
+    profile_year = profile.get("tax_year")
+    if any(v is not None and type(v) is not int for v in (result_year, profile_year)):
+        raise ValueError(f"{label} return years must be integers")
+    if result_year is not None and profile_year is not None and result_year != profile_year:
+        raise ValueError(f"{label} return/profile years disagree")
+    year = result_year if result_year is not None else profile_year
+    if type(year) is not int or any(source_year != year for source_year in years):
+        raise ValueError(f"{label} source year must match the covered return year, including zero-income forms")
+    return year
+
+
+def derive_other_forms_withholding(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
+    records, years = _w2g_sources(ledger, profile)
+    sheet = result.get("other_forms_withholding")
+    scaffold = (isinstance(sheet, dict) and sheet.get("remaining_withholding") is None
+                and sheet.get("computed_tax_year") is None
+                and not any(sheet.get(k) for k in ("w2g_withholding", "total")))
+    positive = any(r["w2g_income"]["box_4"] for r in records)
+    inactive = not positive and (sheet is None or scaffold)
+    if not years and inactive:
+        return None
+    year = _covered_source_year(result, profile, years, "W-2G withholding")
+    if inactive:
+        return None
+    if not isinstance(sheet, dict) or scaffold:
+        raise ValueError("confirm remaining line25c withholding EXCLUDING W-2Gs, W-2s and 1099s, including zero")
+    return compute_other_forms_withholding(tax_year=year, records=records,
+        remaining_withholding=sheet.get("remaining_withholding"),
+        remaining_withholding_confirmed=sheet.get("remaining_withholding_confirmed"))
+
+
+def other_forms_withholding_differences(result: dict, built: "dict | None") -> list[str]:
+    if built is None:
+        return []
+    fields = []
+    stored = result.get("other_forms_withholding")
+    if not ca_values_agree(stored, built):
+        fields.append("other_forms_withholding")
+    if not isinstance(stored, dict) or type(stored.get("computed_tax_year")) is not int:
+        fields.append("other_forms_withholding.computed_tax_year")
+    if not ca_values_agree((result.get("form_1040") or {}).get("line_25c_other_withholding"), built["total"]):
+        fields.append("form_1040.line_25c_other_withholding")
+    return fields
+
+
+def _other_forms_withholding_checks(ledger: "list[LedgerRecord]", result: dict, profile) -> list[str]:
+    try:
+        built = derive_other_forms_withholding(ledger, result, profile or {})
+        return ["Other-form withholding disagrees: " + f for f in other_forms_withholding_differences(result, built)]
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        return [f"Other-form withholding: {redact(exc)}"]
+
+
 def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
     """Non-benefit income: tracked MISC plus a separately confirmed remainder."""
     records, source_years = [], []
@@ -1640,40 +1732,49 @@ def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict,
         records.append({"key_boxes": boxes, "misc_income": rec.misc_income})
     if not source_years and (profile.get("flags") or {}).get("has_1099_misc") is True:
         raise ValueError("1099-MISC was reported at intake but has no reviewed source inventory")
+    w2g_records, w2g_years = _w2g_sources(ledger, profile)
+    source_years.extend(w2g_years)
     sheet = result.get("schedule_1_other_income")
     scaffold = (isinstance(sheet, dict) and sheet.get("remaining_income") is None
                 and sheet.get("computed_tax_year") is None
-                and not any(sheet.get(k) for k in (MISC_OTHER, "total")))
+                and not any(sheet.get(k) for k in (MISC_OTHER, GAMBLING_REPORTED, "gambling_income", "gambling_business_gross", "total")))
     positive = any(dict(r["key_boxes"]).get(MISC_OTHER, 0) for r in records)
+    positive = positive or any(r["w2g_income"]["box_1"] or r["w2g_income"]["schedule_1_income"]
+        or r["w2g_income"]["schedule_c_gross"] or r["w2g_income"]["income_method"] == "reviewed_worksheet"
+        for r in w2g_records)
     inactive = not positive and (sheet is None or scaffold)
     if not source_years and inactive:
         return None
-    result_year = (result.get("meta") or {}).get("tax_year")
-    profile_year = profile.get("tax_year")
-    if any(v is not None and type(v) is not int for v in (result_year, profile_year)):
-        raise ValueError("MISC return years must be integers")
-    if result_year is not None and profile_year is not None and result_year != profile_year:
-        raise ValueError("MISC return/profile years disagree")
-    year = result_year if result_year is not None else profile_year
-    if type(year) is not int or any(source_year != year for source_year in source_years):
-        raise ValueError("MISC source year must match the covered return year, including business-only and zero-income forms")
+    year = _covered_source_year(result, profile, source_years, "Schedule1")
     if inactive:
         return None
     if not isinstance(sheet, dict) or scaffold:
-        raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC and government benefits, including zero")
+        raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC, casual W-2G and government benefits, including zero")
     stated = _schedule_c_net_stated(sheet, result, "schedule_1_other_income.remaining_income")
     built = compute_schedule1_other(tax_year=year, records=records,
         remaining_income=sheet.get("remaining_income"),
-        remaining_income_confirmed=sheet.get("remaining_income_confirmed"))
+        remaining_income_confirmed=sheet.get("remaining_income_confirmed"),
+        w2g_records=w2g_records, w2g_excluded_from_remaining=sheet.get("w2g_excluded_from_remaining", False))
     if stated is not None:  # the rebuilt sheet keeps its own statement
         built["schedule_c_net_included"] = stated
     return built
 
 
 def schedule1_other_differences(result: dict, built: "dict | None", government: "dict | None") -> list[str]:
-    if built is None:
+    notes = (result.get("meta") or {}).get("limitations", [])
+    if not isinstance(notes, list) or any(not isinstance(n, str) for n in notes):
+        if built is not None:
+            raise ValueError("Schedule1 workpapers require meta.limitations to be disclosure strings")
         return []
-    out = []
+    note = built.get("source_note") if built is not None else None
+    disclosures = []
+    if note and note not in notes:
+        disclosures.append("meta.limitations (gambling income worksheet)")
+    if any(n.startswith("W-2G income:") and n != note for n in notes):
+        disclosures.append("meta.limitations (stale gambling income worksheet)")
+    if built is None:
+        return disclosures
+    out = disclosures
     stored = result.get("schedule_1_other_income")
     if not ca_values_agree(stored, built):
         out.append("schedule_1_other_income")
@@ -1884,6 +1985,8 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
         raise ValueError("Schedule CA needs the covered-year California law block")
     schedule = state.get("schedule_ca") or {}
     government = derive_government_workpaper(ledger, result, profile)
+    w2g_records, _ = _w2g_sources(ledger, profile)
+    lottery = compute_w2g_totals(tax_year=year, records=w2g_records)["ca_lottery_income"] if w2g_records else 0
     built = compute_ca_schedule_ca(tax_year=year, investment_records=investment_records,
         fund_asset_minimum=schedule.get("fund_asset_minimum"), taxable_social_security=ss,
         taxable_state_refund=refund, other_additions=other_add, other_subtractions=other_sub,
@@ -1891,6 +1994,7 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
         taxable_unemployment=government["unemployment_taxable"] if government else 0,
         taxable_ca_family_leave=government["ca_family_leave_exempt"] if government else 0,
         ca_family_line_7=government["ca_family_leave_line_7"] if government else 0,
+        ca_lottery_winnings=lottery,
         **{k: adjustments.get(k) for k in ("hsa_employer_addback", "hsa_interest_addback", "hsa_dividend_addback")})
     for key, field in (("ca_has_us_obligation_income", "has_us_obligation_income"),
                        ("ca_has_nonca_muni_interest", "has_nonca_muni_interest")):
@@ -2048,6 +2152,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
+    missing_targets.extend(_other_forms_withholding_checks(ledger, result, profile))
     missing_targets.extend(_schedule1_other_checks(ledger, result, profile))
     missing_targets.extend(_government_income_checks(ledger, result, profile))
     missing_targets.extend(_ca_return_checks(

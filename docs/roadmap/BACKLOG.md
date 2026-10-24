@@ -352,6 +352,8 @@ AA57 finds why.
   over-states CA tax. Found by AA59's fourth review.
 
 - **AA66 (P1, S): Give Form W-2G a parse route.**
+  Implementation: [PR #24](https://github.com/yarikmsu/tax-prep-skills/pull/24),
+  open for review; not merged. Depends on PR #23.
   Gambling is a MANUAL capability rule, so a return with a W-2G computes, but
   `/tax-parse` has no W-2G extraction list and no category for box 1
   (winnings, Schedule 1 line 8b) or box 4 (federal income tax withheld, which

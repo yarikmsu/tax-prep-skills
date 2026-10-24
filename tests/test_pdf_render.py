@@ -408,6 +408,14 @@ class TestTheCodexRoundRules:
             "carryforward_to_next_year": 12345.67}))).split())
         assert "$12,345.67" in text
 
+    def test_a_withholding_workpaper_year_is_not_a_dollar_amount(self, tmp_path):
+        text = " ".join(_text(_render(tmp_path, _result(other_forms_withholding={
+            "w2g_withholding": 200, "remaining_withholding": 300,
+            "total": 500, "computed_tax_year": 2025}))).split())
+        assert "Computed tax year 2025" in text
+        assert "$2,025.00" not in text
+        assert "W2g withholding $200.00" in text
+
     def test_box_a_and_box_d_name_both_destinations(self, tmp_path):
         """A Box A transaction goes to Schedule D line 1a only when it carries
         no adjustment; an adjusted one routes through Form 8949 to line 1b. A

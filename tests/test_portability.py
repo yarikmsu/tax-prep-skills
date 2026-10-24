@@ -2541,8 +2541,11 @@ class TestSelfTestClaim:
     def test_both_documents_name_the_same_modules(self):
         agents = (REPO / "AGENTS.md").read_text()
         contributing = (REPO / "CONTRIBUTING.md").read_text()
+        inventory_path = "docs/contributing/skill-catalog.md"
+        assert f"Engine inventory: `{inventory_path}`" in agents
+        inventory = (REPO / inventory_path).read_text()
         for name in self.SELF_TESTING:
-            assert f"`{name}`" in agents, f"AGENTS.md §5 does not name {name}"
+            assert f"`{name}`" in inventory, f"linked engine inventory does not name {name}"
             assert f"`{name}`" in contributing, f"CONTRIBUTING.md does not name {name}"
 
 

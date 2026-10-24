@@ -358,6 +358,8 @@ Rules:
   | W-2 box 3 / box 7 / box 5 | `ss_wages` / `ss_tips` / `medicare_wages` (informational — box 7 social-security tips are their own category, not folded into box 3) |
   | W-2 box 7 / box 14 / employer statement / 1099 (SE) — OBBBA qualified tips | `qualified_tips` (informational — feeds the Schedule 1-A BELOW-AGI deduction, line 13b, NOT a 1040 income line; TY2025-2028). Record ONLY tips whose income is ALREADY captured elsewhere on the return: the employer's designated qualified-tip amount (box 14 code / separate statement) if provided, ELSE **W-2 box 7 (Social Security tips)** — a single-employer tipped worker usually has no separate statement, so box 7 is the tip source (don't leave it as `ss_tips` only). **Box 7 is capped at the Social Security wage base**, so for a high earner whose W-2 box 1/box 5 exceeds that base, box 7 UNDERSTATES tips — ask for the Form 4070 monthly-tip total (or actual charged + cash tips) and use that figure instead. **UNREPORTED tips and employer-ALLOCATED tips (W-2 box 8) are OUT OF SCOPE — do NOT fold them into `qualified_tips`:** they run through **Form 4137**, which adds the amount to wages on **1040 line 1c** AND computes employee SS/Medicare tax on **Schedule 2 line 5**, and the v1 engine does NOT compute Form 4137. Folding them into the deduction while the engine leaves out the paired income + payroll tax would understate tax — so flag unreported/allocated tips as a MANUAL, not-modeled item. They ARE qualified tips (Schedule 1-A Part II has a Form 4137 line), so once the paired Form 4137 income + FICA are entered BY HAND the tip amount CAN be included in `qualified_tips` for the deduction — do not permanently lose it; only exclude it while the paired income + payroll tax are unhandled. For a SELF-EMPLOYED tipped taxpayer, qualified tips reported on **1099-NEC/MISC/K** count (Schedule 1-A Part II line 5), but the engine does NOT apply the trade-or-business cap — reduce the tip figure to the business NET PROFIT further reduced by the allocable ½-SE-tax / SE-retirement / SE-health-insurance deductions (Schedule 1-A line 5 per the final instructions), and exclude SSTB tips (unless the occupation customarily received tips pre-2025 — transition relief), BEFORE recording it, since `compute_schedule_1a` takes an already-capped amount. Subject to occupation/voluntary/valid-SSN qualification; the capped + MAGI-phased deduction won't equal this raw figure |
   | W-2 box 14 / employer statement / 1099-NEC-MISC (Part III line 14b) — OBBBA overtime PREMIUM | `qualified_overtime_premium` (informational — the FLSA §7 premium portion ONLY, the "half" of time-and-a-half, NOT gross overtime; feeds Schedule 1-A line 13b). Primarily W-2, but Schedule 1-A Part III line 14b also accepts qualified overtime reported on **1099-NEC/MISC** — do not categorically reject a 1099 source. The FLSA-eligibility screen still applies: only overtime actually required under FLSA §7 qualifies (a true independent contractor's pay generally is not FLSA overtime), so confirm eligibility rather than treating all 1099 pay as overtime |
+  | W-2G box 1 | `gambling_winnings` (reported source gross; reviewed casual/business contributions determine actual income) |
+  | W-2G box 4 | `federal_withholding_w2g` → checked other-form withholding and actual Form1040 line25c; never the 1099 line25b |
   | State/local withholding (W-2, 1099/W-2G, CA Forms 592-B/593) | Use the separate [withholding routes](references/withholding.md); never combine jurisdictions or CA lines 71 and 73 |
   | 1099-INT box 1 (+3) | `taxable_interest` stays inclusive; preserve the federally included box-3 part as `us_obligation_interest`. Box 8 → both inclusive `tax_exempt_interest` and component `municipal_interest`, with issuer-state detail |
   | 1099-DIV box 1a / 1b | `ordinary_dividends` / `qualified_dividends` |
@@ -459,42 +461,6 @@ Print:
 
 ## Document-Specific Parsing Notes
 
-### W-2 Extraction
-Must capture: Boxes 1-8, 10-11, 12 (all codes), 13, 14 (14a-14b from TY2026; every label, SDI, PFL and UI among them), 15-20 (state and local wages, tax withheld and locality, every row)
-Check: Box 12 codes (AA=Roth 401k, C=life ins, D=401k, DD=health, W=HSA)
-
-### 1099-DIV Extraction
-Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (cap gain dist), 5 (Sec 199A), 12 (exempt-interest dividends), 14-16 (state, state tax withheld). For CA, obtain the annual fund supplement and follow [California investments](references/california-investments.md).
-Note: Foreign tax paid in Box 7 → feeds Form 1116
-
-### 1099-B Extraction
-Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, boxes 14-16 (state, state tax withheld)
-Note Box type (Form 8949 checkboxes):
-A (short-term, basis reported to IRS), B (short-term, basis NOT reported to IRS),
-C (short-term, no 1099-B received),
-D (long-term, basis reported to IRS), E (long-term, basis NOT reported to IRS),
-F (long-term, no 1099-B received)
-Foreign brokerages: typically Box B or E (basis not reported to IRS)
-
-### 1099-DA Extraction
-Must capture, per transaction: boxes 1a-1i (blank stays blank), 2, 3a, 3b, 4-6, 8, 9, 11a, 11c, 14-16 and CUSIP.
-From TY2025 a digital asset never uses C/F: `/tax-parse-crypto` routes each
-transaction G-L from these boxes, so never pick its Form 8949 box here.
-
-### 1099-R Extraction
-Must capture: Boxes 1, 2a, 2b, 4, 5, 7 (distribution code), 14-19 (state and local tax withheld, state, locality, distributions)
-Code G = direct rollover (not taxable but report on 1040 line 5a)
-Code 1 = early distribution (10% penalty unless exception)
-
-### Form 3921 (ISO exercise)
-One 3921 PER EXERCISE — a combined annual PDF holds several.
-Must capture (PER exercise): Box 1 (grant date), Box 2 (exercise date),
-Box 3 (exercise price PER SHARE), Box 4 (FMV PER SHARE on exercise date),
-Box 5 (number of shares), corporation name.
-The AMT bargain element is (box 4 − box 3) × box 5 per exercise — the
-ledger row in step 6.5 explains held-vs-sold and the per-FILE record rule.
-
-
-### HSA (1099-SA + 5498-SA)
-1099-SA: Boxes 1 (distributions), 2 (earnings on excess), 3 (distribution code)
-5498-SA: Boxes 1 (contributions), 2 (employer contributions)
+Follow the [standard extraction lists](references/form-extraction.md) and the
+[W-2G source and extraction guide](references/w2g-intake.md). Read the covered
+year and source labels; never infer winnings or withholding from an identifier.

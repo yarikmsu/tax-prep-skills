@@ -152,6 +152,7 @@ def compute_ca_schedule_ca(
     *, tax_year: int, investment_records: list, fund_asset_minimum,
     taxable_social_security: float, taxable_state_refund: float,
     taxable_unemployment: float, taxable_ca_family_leave: float, ca_family_line_7: float,
+    ca_lottery_winnings: float,
     hsa_employer_addback: float, hsa_deduction_addback: float,
     hsa_interest_addback: float, hsa_dividend_addback: float,
     other_additions: float, other_subtractions: float,
@@ -222,6 +223,8 @@ def compute_ca_schedule_ca(
            "taxable_state_refund_subtraction": _ca_input(taxable_state_refund, "taxable state refund"),
            "unemployment_subtraction": _ca_input(taxable_unemployment, "federally taxable unemployment"),
            "paid_family_leave_subtraction": _ca_input(taxable_ca_family_leave, "federally taxable CA-exempt family benefits"),
+           # Section B line 8b, column B: California lottery winnings in federal income.
+           "ca_lottery_subtraction": _ca_input(ca_lottery_winnings, "federally included California lottery winnings"),
            "other_additions": _ca_input(other_additions, "other CA additions"),
            "other_subtractions": _ca_input(other_subtractions, "other CA subtractions"),
            "investment_workpaper": workpaper,
@@ -243,7 +246,7 @@ def compute_ca_schedule_ca(
         "other_additions")) + out["line_2_column_c"], 2)
     out["total_subtractions"] = round(sum(out[k] for k in ("taxable_social_security_subtraction",
         "taxable_state_refund_subtraction", "other_subtractions", "unemployment_subtraction",
-        "paid_family_leave_subtraction")) + out["line_2_column_b"], 2)
+        "paid_family_leave_subtraction", "ca_lottery_subtraction")) + out["line_2_column_b"], 2)
     for key in ("line_2_column_b", "line_2_column_c", "total_additions", "total_subtractions"):
         _ca_input(out[key], key)  # a finite record must not overflow in aggregate
     return out

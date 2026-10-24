@@ -154,9 +154,11 @@ def _derived_schedules(result: dict) -> list:
     other_computed = isinstance(other_income, dict) and type(other_income.get("computed_tax_year")) is int
     if isinstance(other_income, dict) and not other_computed and (
             other_income.get("remaining_income") is not None or other_income.get("computed_tax_year") is not None
-            or any(other_income.get(k) for k in ("miscellaneous_other_income", "total"))):
+            or any(other_income.get(k) for k in ("miscellaneous_other_income", "gambling_winnings", "gambling_income", "gambling_business_gross", "total"))):
         raise FilingPackageError("Schedule1 other-income workpaper needs its computed tax-year witness")
     misc_income = other_computed and _field_num(other_income, "miscellaneous_other_income", "MISC other income") != 0
+    gambling_income = other_computed and any(_field_num(other_income, k, "W-2G income") != 0 for k in
+        ("gambling_winnings", "gambling_income", "gambling_business_gross"))
     if other_computed:
         total = _field_num(other_income, "total", "non-benefit Schedule1 total")
         target = (government.get("other_income") if government_computed else
@@ -166,7 +168,7 @@ def _derived_schedules(result: dict) -> list:
     out = []
     if (_field_num(f1040, "line_8_schedule1_other", "line_8") != 0
             or _field_num(f1040, "line_10_adjustments", "line_10") != 0
-            or _section_present(result, "schedule_c") or government_income or misc_income):
+            or _section_present(result, "schedule_c") or government_income or misc_income or gambling_income):
         out.append(("Schedule 1 (Additional Income and Adjustments)", "01",
                     "schedule_1_government_benefits" if government_computed else
                     "schedule_1_other_income" if other_computed else None))
@@ -310,6 +312,17 @@ def assembly_order(result: dict) -> list:
         federal.append({"key": dkey, "title": title, "sequence": seq})
     federal.sort(key=lambda e: _seq_sort_key(e["sequence"]))
     order.extend(federal)
+    withholding = result.get("other_forms_withholding")
+    withholding_computed = isinstance(withholding, dict) and type(withholding.get("computed_tax_year")) is int
+    if isinstance(withholding, dict) and not withholding_computed and (
+            withholding.get("remaining_withholding") is not None or withholding.get("computed_tax_year") is not None
+            or any(withholding.get(k) for k in ("w2g_withholding", "total"))):
+        raise FilingPackageError("Other-form withholding needs its computed tax-year witness")
+    if withholding_computed:
+        if round(_field_num(withholding, "total", "other-form withholding total"), 2) != round(
+                _field_num(result.get("form_1040"), "line_25c_other_withholding", "line25c"), 2):
+            raise FilingPackageError("Other-form withholding workpaper must equal Form1040 line25c")
+        order.append({"key": "other_forms_withholding", "title": "Form 1040 line 25c withholding reconciliation", "sequence": None})
     # Form 8938 files WITH the return but the template models it as an
     # international-compliance block; keep it after the sequenced forms.
     if _section_present(result, "form_8938_fatca"):
@@ -333,6 +346,8 @@ def attachment_checklist(result: dict) -> list:
         "(e.g. 1099-R with withholding).",
     ]
     f1040 = result.get("form_1040") or {}
+    if _field_num(result.get("other_forms_withholding") or {}, "w2g_withholding", "W-2G withholding") > 0:
+        lines.append("Attach each Form W-2G, Copy B, showing federal withholding in box 4 to the front of Form 1040.")
 
     if _section_present(result, "form_8949"):
         lines.append(

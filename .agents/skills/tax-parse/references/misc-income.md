@@ -29,8 +29,9 @@ record/ledger validator checks the same mapping. Required fields:
 - `box_7`: actual boolean checked/unchecked, never a numeric threshold or "X".
 - `other_business_gross`: separately reviewed business receipts from other boxes
   or subforms in this physical document, including zero; never withholding.
-- `other_federal_withholding`: federal withholding from other subforms in a
+- `other_federal_withholding`: line25b 1099 withholding from other subforms in a
   combined physical document, including zero. Add it to box4 withholding once.
+  Exclude W-2G and other line25c amounts; those use their own source workpaper.
 
 The mapper emits positive monetary categories, omitting zero categories. A
 checkbox-only notice with zero monetary boxes can carry an informational skip

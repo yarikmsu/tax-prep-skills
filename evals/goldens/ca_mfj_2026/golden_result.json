@@ -240,6 +240,7 @@
       "source_note": null,
       "unemployment_subtraction": 0,
       "paid_family_leave_subtraction": 0,
+      "ca_lottery_subtraction": 0,
       "section_b_line_7_column_b": 0,
       "section_b_other_income_subtraction": 0
     },

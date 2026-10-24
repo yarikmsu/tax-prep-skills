@@ -26,13 +26,31 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
+### Confirm W-2G year/revision, winnings and withholding ownership, identical wagers and casual versus business income contributions. Reconcile all forms and books, Form5754/corrected forms and any separately reviewed income worksheet; never net casual losses.
+
+*Asked by tax-compute income-and-agi.md; required when W-2G sources are present.*
+
+- **[w2g_sources]**
+
+### Reconfirm remaining Schedule1 income EXCLUDING separately mapped casual W-2G, MISC and UI/family income, including zero. Retain reviewed Schedule C NET income and other actual winning income absent from mapped contributions; never reuse an old aggregate.
+
+*Asked by tax-compute income-and-agi.md; required when W-2G sources are present.*
+
+- **[w2g_remaining_income]**
+
+### Confirm remaining Form1040 line25c withholding EXCLUDING W-2Gs and all W-2/1099 line25a/b amounts, including zero. Use actual Form8959 line24, not net over-withholding credit, and other qualifying K-1/withholding forms for the covered year.
+
+*Asked by tax-compute tax-and-credits.md; required when W-2G sources or an adopted line25c workpaper are present.*
+
+- **[line25c_remaining_withholding]**
+
 ### Confirm the MISC year/revision, box3 business/other split, substitute payments, withholding, business receipts and direct-sales checkbox. Resolve unknown or Schedule F payments rather than defaulting them to Schedule C.
 
 *Asked by tax-compute income-and-agi.md; required when a 1099-MISC is present.*
 
 - **[misc_income_sources]**
 
-### Confirm signed remaining Schedule1 income EXCLUDING tracked nonbusiness MISC and UI/family benefits, including a deliberate zero. Include business NET income and losses, taxable refunds and other sources. Never reuse an old aggregate.
+### Confirm signed remaining Schedule1 income EXCLUDING tracked nonbusiness MISC, mapped casual W-2G and UI/family benefits, including a deliberate zero. Include business NET income and losses, taxable refunds and other sources. Never reuse an old aggregate.
 
 *Asked by tax-compute income-and-agi.md; required when a 1099-MISC is present.*
 

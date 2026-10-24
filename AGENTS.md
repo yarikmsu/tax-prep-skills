@@ -255,9 +255,7 @@ tests/                           # pytest suite
 Engine inventory: `docs/contributing/skill-catalog.md`.
 **Every module a SKILL invokes is RUNNABLE through
 the launcher and none imports anything agent-specific**; one nothing invokes
-needs no entry point. Four self-test with no arguments (`tax_computations`,
-`secure_fs`, `irs_dates`, `crypto_importer` — pinned by test); `preflight`
-exits 0, 2 or 1; the rest report usage.
+needs no entry point. CLI behavior is in that engine inventory.
 
 ## 6. Runtime files (created per taxpayer, all gitignored)
 
@@ -412,6 +410,7 @@ in full, so a new file in either goes in this table.
 | Individual IRA basis | `docs/contributing/individual-ira-basis.md` |
 | Government benefits and Schedule 1 | `docs/contributing/government-benefits.md` |
 | 1099-MISC source classification | `docs/contributing/misc-income.md` |
+| W-2G income and withholding | `docs/contributing/gambling-intake.md` |
 | Crypto account FIFO | `docs/contributing/crypto-accounts.md` |
 | Charitable vintage accounting | `docs/contributing/charitable-carryovers.md` |
 | State effects in income planning | `docs/contributing/state-planning.md` |

@@ -41,7 +41,7 @@ def inputs(record=None, **changes):
         fund_asset_minimum=.5, taxable_social_security=1700, taxable_state_refund=300,
         hsa_employer_addback=10, hsa_deduction_addback=0, hsa_interest_addback=20,
         hsa_dividend_addback=30, taxable_unemployment=0, taxable_ca_family_leave=0,
-        ca_family_line_7=0, other_additions=40, other_subtractions=50)
+        ca_family_line_7=0, ca_lottery_winnings=0, other_additions=40, other_subtractions=50)
     data.update(changes)
     return data
 

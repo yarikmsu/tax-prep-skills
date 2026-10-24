@@ -3693,6 +3693,9 @@ from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E
 from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402,F401
     classify_misc_income, compute_schedule1_other,
 )
+from agents.lib.tax_computations.federal.gambling_income import (  # noqa: E402,F401
+    classify_w2g_income, compute_w2g_totals, compute_other_forms_withholding,
+)
 
 # California — same contract as New York below, and the same reason for it.
 from agents.lib.tax_computations.state.ca import (  # noqa: E402,F401
