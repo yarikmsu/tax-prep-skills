@@ -107,7 +107,9 @@ def test_external_and_generic_estimate_states_remain_advisory(result, breakdown)
 
 
 @pytest.mark.parametrize("breakdown", [None, {}, [], {"ca": 125}, {"ZZ": 125},
-    {"CA": True}, {"CA": -125}, {"CA": float("nan")}, {"CA": float("inf")}, {"CA": 124}])
+    {"CA": True}, {"CA": -125}, {"CA": float("nan")}, {"CA": float("inf")}, {"CA": 124},
+    # Sums to 125, so only the per-state sign check can refuse it.
+    {"CO": 250, "NJ": -125}])
 def test_other_state_breakdowns_require_valid_states_finite_amounts_and_a_complete_sum(breakdown):
     with pytest.raises(T.TieOutError):
         T.load_ledger({"records": [record({"other_state_withholding": 125}, breakdown=breakdown)]})
@@ -160,6 +162,8 @@ def test_a_declared_ny_plan_selects_ny_independently_of_the_mailing_address():
     ("Form 593 Real Estate Withholding Statement", "ca-593"),
     ("Form 593 Real Estate Withholding Statement. Do not use Form 592-B.", "ca-593"),
     ("Form 592-B Resident and Nonresident Withholding Tax Statement. See Form 593.", "ca-592b"),
+    # The W-2 pattern is checked before 592-B, so only the title rule keeps this.
+    ("Form 592-B Resident and Nonresident Withholding Tax Statement. Wages belong on Form W-2.", "ca-592b"),
 ])
 def test_ca_statements_are_classified_for_the_parse_route(text, kind):
     assert parse_utils.classify_document(text) == kind
