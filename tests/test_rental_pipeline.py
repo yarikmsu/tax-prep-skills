@@ -305,3 +305,35 @@ def test_planners_refuse_to_freeze_income_dependent_rental_losses(surface, evide
     else:
         with pytest.raises(ProjectionError, match='passive-loss'):
             project_federal_tax(None, profile, {})
+
+
+@pytest.mark.parametrize('block', ['missing', 'null'])
+def test_a_california_rental_refuses_without_its_state_rental_block(tmp_path, block):
+    # Without CA basis, method and FTB 3801 limits the federal-only path would
+    # copy federal results onto Form 540 and over-state CA income by 2,500.
+    ws = rental_workspace(tmp_path)
+    law = read(ws, 'tax_law_2025.json')
+    if block == 'missing':
+        del law['state']['rental']
+    else:
+        law['state']['rental'] = None
+    save(ws, 'tax_law_2025.json', law)
+    assert B._main(['--workspace', str(ws)]) == 2
+    result, profile, ledger, law, _ = B.load(ws)
+    assert any('state.rental' in m for m in T._rental_checks(ledger, result, profile, law))
+
+
+@pytest.mark.parametrize('acknowledged', [True, False])
+def test_an_acknowledged_out_of_scope_rental_finishes_on_external_worksheets(tmp_path, acknowledged):
+    # No reviewed residential plan: acknowledging the named limitation lets
+    # the return finish with the rental net typed in remaining income.
+    ws = workspace(tmp_path)
+    profile = read(ws, 'taxpayer_profile.json')
+    profile['flags']['has_rental_income'] = True
+    if acknowledged:
+        profile['acknowledged_limitations'] = ['rental_income']
+    save(ws, 'taxpayer_profile.json', profile)
+    result = read(ws, 'result.json')
+    result['schedule_1_other_income'] = dict(remaining_income=5000, remaining_income_confirmed=True)
+    save(ws, 'result.json', result)
+    assert (B._main(['--workspace', str(ws)]) == 0) is acknowledged

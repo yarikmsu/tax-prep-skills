@@ -1135,19 +1135,11 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         raise CapabilityError("prior_year must be an object")
     rental_opening = prior.get("rental_carryforward")
     derived["has_rental_income"] = rental_plan is not None or rental_opening is not None
-    rental_computed_scope = False
+    from agents.lib.tax_computations.federal.rentals import rental_in_computed_scope
+    # Out of scope, the named unsupported rule remains, without enabling math.
+    rental_computed_scope = rental_in_computed_scope(profile, state, ny_plan)
     if rental_plan is not None:
-        from agents.lib.tax_computations.federal.rentals import validate_rental_scope, rental_has_ca_history
-        try:
-            validate_rental_scope(rental_plan)
-            rental_computed_scope = (profile.get("tax_year") == rental_plan["tax_year"]
-                                     and not ny_plan and state in _NO_INCOME_TAX_STATES | {"CA", "WA"}
-                                     and (state == "CA" or not rental_has_ca_history(rental_opening)))
-        except ValueError:
-            pass  # The existing named unsupported rule remains, without enabling math.
         properties = rental_plan.get("properties") if isinstance(rental_plan, dict) else None
-        if not isinstance(properties, list) or not properties:
-            rental_computed_scope = False
         for prop in properties if isinstance(properties, list) else []:
             code = (prop.get("address") or {}).get("state") if isinstance(prop, dict) else None
             if code not in _USPS_STATES - _TERRITORIES:

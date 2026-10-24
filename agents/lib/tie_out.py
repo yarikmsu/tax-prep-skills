@@ -1731,6 +1731,14 @@ def _other_forms_withholding_checks(ledger: "list[LedgerRecord]", result: dict, 
 
 
 def rental_is_active(ledger, result: dict, profile: dict) -> bool:
+    # An acknowledged rental outside the reviewed scope is prepared on external
+    # worksheets, as the capability note says; deriving it would refuse forever.
+    if "rental_income" in (profile.get("acknowledged_limitations") or []):
+        from agents.lib.capabilities import _profile_state
+        from agents.lib.tax_computations import ny_it203_plan
+        from agents.lib.tax_computations.federal.rentals import rental_in_computed_scope
+        if not rental_in_computed_scope(profile, _profile_state(profile), ny_it203_plan(profile)):
+            return False
     return (profile.get("rental_return") is not None
         or (profile.get("flags") or {}).get("has_rental_income") is True
         or (profile.get("prior_year") or {}).get("rental_carryforward") is not None
@@ -1754,6 +1762,10 @@ def derive_rental_workpaper(ledger, result: dict, profile: dict, tax_law: dict) 
     if law_state.get("code") != state or law_state.get("type") != expected_type:
         raise ValueError("rental state regime must match the covered return")
     year = _covered_source_year(result, profile, [tax_law.get("tax_year")], "rental")
+    # A California return needs California's own basis, method and passive
+    # limits; the federal-only path would copy federal results onto Form 540.
+    if state == "CA" and not isinstance(law_state.get("rental"), dict):
+        raise ValueError("a California rental needs the covered-year state.rental block (FTB 3885A/3801); fetch it via /tax-setup")
     other = derive_schedule1_other_workpaper(ledger, result, profile, include_rentals=False)
     government = derive_government_workpaper(ledger, result, profile, include_rentals=False)
     if other is None:

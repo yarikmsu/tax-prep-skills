@@ -122,6 +122,25 @@ def validate_rental_scope(plan) -> dict:
     return plan
 
 
+def rental_in_computed_scope(profile: dict, state, ny_plan) -> bool:
+    """Whether this return's rental is the reviewed residential path the engine
+    computes. The capability gate and the tie-out both ask, so they agree."""
+    from agents.lib.capabilities import _NO_INCOME_TAX_STATES
+    plan = profile.get("rental_return")
+    if plan is None:
+        return False
+    try:
+        validate_rental_scope(plan)
+        opening = (profile.get("prior_year") or {}).get("rental_carryforward")
+        properties = plan.get("properties")
+        return (isinstance(properties, list) and bool(properties)
+                and profile.get("tax_year") == plan["tax_year"] and not ny_plan
+                and state in _NO_INCOME_TAX_STATES | {"CA", "WA"}
+                and (state == "CA" or not rental_has_ca_history(opening)))
+    except ValueError:
+        return False
+
+
 def rental_planning_block(profile: dict, result: dict | None = None) -> bool:
     """PAL and depreciation must be repriced rather than frozen in projections."""
     return (profile.get("rental_return") is not None
