@@ -1623,7 +1623,14 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
         raise ValueError("government benefit return/profile years disagree")
     year = result_year if result_year is not None else profile_year
     positive = any(dict(r["key_boxes"]).get(k, 0) for r in records for k in BENEFIT_CATEGORIES)
-    if sheet is None or scaffold:
+    # Any 1099-G record satisfied the intake flag, so a refund-only form
+    # stood in for the unemployment form that never reached documents/.
+    if not positive and flags.get("has_1099g_benefits") is True:
+        raise ValueError("government benefits were reported at intake but no source record carries a benefit amount")
+    # With no benefit, an unconfirmed copy of line 8 is not a figure to
+    # restore: keep following line 8 rather than reverting a later edit.
+    unconfirmed = isinstance(sheet, dict) and sheet.get("other_income_confirmed") is not True
+    if sheet is None or scaffold or (not positive and unconfirmed):
         if positive:
             raise ValueError("record and confirm Schedule1 income EXCLUDING these government benefits, including zero")
         other = (result.get("form_1040") or {}).get("line_8_schedule1_other")
@@ -1640,6 +1647,10 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     require_ca = require_ca or _ca_section_computed(result)
     built = compute_government_benefits(tax_year=year, records=records, other_income=other,
         other_income_confirmed=confirmed, require_ca=require_ca)
+    # Schedule 1 line 7: only a filer who does not itemize nets contributions
+    # to a governmental UI program; an itemizer takes them on Schedule A.
+    if built["unemployment_contribution_reduction"] and (result.get("schedule_a") or {}).get("use_itemized") is True:
+        raise ValueError("an itemizer deducts UI program contributions on Schedule A, not on Schedule 1 line 7")
     built["computed_tax_year"] = year
     return built
 

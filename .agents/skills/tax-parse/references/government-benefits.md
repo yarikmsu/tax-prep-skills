@@ -30,7 +30,9 @@ metadata on its per-document record:
   INCLUDED in the reported gross, never a repayment already netted out.
 - `unemployment_contribution_reduction`: only the reduction permitted by the
   covered-year UI worksheet and deduction election. Resolve it explicitly,
-  including zero. Do not copy a PFL contribution reduction here.
+  including zero. Do not copy a PFL contribution reduction here. An
+  itemizer records zero: Schedule 1 line 7 nets contributions only for a
+  filer who does not itemize, and the tie-out refuses otherwise.
 - `reviewed`: true only after source program, year, gross receipts and all
   adjustments are resolved. Fraudulent/unreceived benefits need corrected
   source resolution; do not treat them as actual receipts.

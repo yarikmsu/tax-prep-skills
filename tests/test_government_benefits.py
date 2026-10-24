@@ -133,6 +133,42 @@ def test_refund_only_zero_benefits_preserves_existing_schedule1_income_without_g
     assert out['total']==out['other_income']==300 and out['other_income_confirmed'] is False
 
 
+def test_an_unconfirmed_refund_only_sheet_follows_later_line8_edits():
+    # The first build copied line 8 (300) into an unconfirmed sheet; a later
+    # 5,000 of Schedule C income must not be reverted to that copy.
+    row=source(ui=0,family=0)
+    row['key_boxes']['state_refund_1099g']=1000
+    ledger=T.load_ledger({'records':[row]})
+    result={'meta':{'tax_year':2025},'form_1040':{'line_8_schedule1_other':300}}
+    result['schedule_1_government_benefits']=T.derive_government_workpaper(ledger,result,{'tax_year':2025})
+    result['form_1040']['line_8_schedule1_other']=5300
+    out=T.derive_government_workpaper(ledger,result,{'tax_year':2025})
+    assert out['total']==out['other_income']==5300
+
+
+def test_the_benefits_flag_needs_a_record_that_carries_a_benefit():
+    # A refund-only 1099-G is not the unemployment form intake reported.
+    row=source(ui=0,family=0)
+    row['key_boxes']['state_refund_1099g']=1000
+    ledger=T.load_ledger({'records':[row]})
+    result={'meta':{'tax_year':2025},'form_1040':{'line_8_schedule1_other':300}}
+    with pytest.raises(ValueError,match='no source record carries a benefit'):
+        T.derive_government_workpaper(ledger,result,{'tax_year':2025,'flags':{'has_1099g_benefits':True}})
+
+
+def test_an_itemizer_cannot_net_ui_contributions_on_schedule_1():
+    # Schedule 1 line 7: "and you aren't itemizing deductions"; an itemizer
+    # takes the contributions on Schedule A instead.
+    ledger=T.load_ledger({'records':[source()]})
+    result={'meta':{'tax_year':2025},'form_1040':{'line_8_schedule1_other':0},
+            'schedule_1_government_benefits':{'other_income':0,'other_income_confirmed':True},
+            'schedule_a':{'use_itemized':True}}
+    with pytest.raises(ValueError,match='itemizer'):
+        T.derive_government_workpaper(ledger,result,{'tax_year':2025})
+    result['schedule_a']['use_itemized']=False
+    assert T.derive_government_workpaper(ledger,result,{'tax_year':2025})['unemployment_contribution_reduction']==50
+
+
 def government_workspace(tmp_path):
     ws=workspace(tmp_path)
     row=source()
