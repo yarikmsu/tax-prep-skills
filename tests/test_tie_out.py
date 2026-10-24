@@ -725,7 +725,7 @@ class TestUnroutedStateWithholding:
         line = " ".join(recipe[recipe.index("- `state_local_income_taxes` ="):].split("\n- ")[0].split())
         for item in ("W-2 box 17 (all states)", "counted once from its own form",
                      "box 19 (every locality's income tax", "local tax withheld (1099-R box 17)",
-                     "a W-2G's (boxes 15 and 17)",
+                     "a W-2G's (boxes 15 and 17)", "Forms 592-B and 593",
                      "state's own disability fund", "unemployment fund (AK, CA, NJ, PA)",
                      "paid family or medical leave program", "Rev. Rul. 2025-4",
                      "State and local estimated payments", "prior-year overpayment credited",

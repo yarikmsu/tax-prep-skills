@@ -656,7 +656,9 @@ persona SALT usually exceeds the OBBBA cap by itself):
   occupational privilege tax or Pennsylvania's Local Services Tax is not an
   income tax, one levied as a percentage of wages is),
   every 1099's state tax withheld (all states, routed or not) and local tax
-  withheld (1099-R box 17), and a W-2G's (boxes 15 and 17). Each mandatory
+  withheld (1099-R box 17), a W-2G's (boxes 15 and 17), and the recipient's
+  California tax withheld on Forms 592-B and 593 (the amount Form 540 line 73
+  claims: tax withheld, though no wage form shows it). Each mandatory
   contribution that list describes, read from W-2 box 14 (14a from TY2026) by
   its label: to a state's own disability fund (CA SDI, NJ, RI, and NY's
   Nonoccupational Disability Benefit Fund), unemployment fund (AK, CA, NJ,
