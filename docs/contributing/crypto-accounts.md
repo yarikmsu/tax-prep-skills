@@ -14,8 +14,10 @@ True requires external selected-lot/Form 8949 preparation, even after a capabili
 acknowledgement. The CLI never supplies an answer on the taxpayer's behalf.
 Regulations [§1.1012-1(j)](https://www.ecfr.gov/current/title-26/section-1.1012-1)
 cover both broker and unhosted-wallet identification, including standing orders.
+A broker offering only one method makes it a standing order ((j)(3)(ii)).
 Include identification recorded in the taxpayer's books under applicable relief
-([Notice 2025-7](https://www.irs.gov/irb/2025-05_IRB#NOT-2025-7)); broker reports
+([Notice 2025-7](https://www.irs.gov/irb/2025-05_IRB#NOT-2025-7), broker-held
+units disposed of in 2025 only); broker reports
 can therefore disagree with the taxpayer's lot choice without reporting a basis.
 
 ## Reviewed input contract

@@ -52,6 +52,23 @@ def test_acquisitions_alone_do_not_run_lot_selection():
     assert result['crypto_summary']['disposals'] == 0
 
 
+def test_a_yes_does_not_refuse_an_import_that_removes_no_lots():
+    # Specific identification in an earlier year, only a buy this year:
+    # nothing here depends on which lots were chosen.
+    result = C.build_crypto_import(BASE[:1], specific_identification=True)
+    assert result['crypto_summary']['disposals'] == 0
+
+
+def test_the_question_names_a_brokers_only_method_and_the_relief_limits():
+    # Reg. 1.1012-1(j)(3)(ii): a broker's only method is a standing order;
+    # Notice 2025-7 covers broker-held units disposed of in 2025 only.
+    for path in ('.agents/skills/tax-setup/references/interview.md',
+                 '.agents/skills/tax-parse-crypto/SKILL.md'):
+        text = ' '.join((REPO / path).read_text().split())
+        assert 'only one' in text and '1.1012-1(j)(3)(ii)' in text, path
+        assert 'disposed of in 2025' in text and 'after the sale is not adequate' in text, path
+
+
 @pytest.mark.parametrize('checked', [True, False, None])
 def test_box8_is_evidence_not_a_selection_method(checked):
     # Two possible bases: oldest lot $100, a specifically selected later lot $300.
@@ -122,12 +139,16 @@ def test_unasked_capability_question_is_not_an_acknowledgeable_limitation():
 
 
 @pytest.mark.parametrize('answer', [None, True, 0, 1, 'false', False])
-def test_tie_out_requires_fifo_confirmation_independently_of_has_crypto(answer):
+def test_tie_out_requires_an_explicit_answer_independently_of_has_crypto(answer):
+    # As for the option-exercise question, the capability gate blocks a yes
+    # until it is acknowledged; the tie-out needs only an explicit answer, or
+    # an acknowledged yes with external Form 8949 rows could never complete.
     report = tie_out.evaluate([], {'crypto_summary': COMPLETE}, [],
                               option_exercise_answer=False,
                               specific_identification_answer=answer)
-    assert report.failed is (answer is not False)
-    assert any('has_crypto_specific_identification' in t for t in report.missing_result_targets) is (answer is not False)
+    unanswered = not isinstance(answer, bool)
+    assert report.failed is unanswered
+    assert any('has_crypto_specific_identification' in t for t in report.missing_result_targets) is unanswered
 
 
 def test_zero_proceeds_loss_still_owes_screening_when_the_summary_was_dropped():
@@ -160,8 +181,9 @@ def test_tie_out_reads_the_actual_profile_answer(tmp_path, capsys, answer):
             'has_crypto_specific_identification': answer}},
     }.items():
         write_secure(tmp_path / name, json.dumps(data))
-    assert tie_out._main(['--workspace', str(tmp_path)]) == (0 if answer is False else 2)
-    assert ('has_crypto_specific_identification' in capsys.readouterr().out) is (answer is not False)
+    answered = isinstance(answer, bool)
+    assert tie_out._main(['--workspace', str(tmp_path)]) == (0 if answered else 2)
+    assert ('has_crypto_specific_identification' in capsys.readouterr().out) is (not answered)
 
 
 def test_skipped_interview_never_answers_fifo_for_a_later_crypto_import():

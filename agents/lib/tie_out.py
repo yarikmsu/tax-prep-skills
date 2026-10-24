@@ -2232,11 +2232,12 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                                "year because an option was exercised, or from a lot an option's exercise bought "
                                "in any year, set it true or false, and re-run the capability gate, which blocks "
                                "a yes until it is acknowledged")
-    if (crypto_present or form_da) and specific_identification_answer is not False:
+    if (crypto_present or form_da) and not isinstance(specific_identification_answer, bool):
         missing_targets.append("digital assets are on this return but flags.has_crypto_specific_identification "
-                               "does not confirm FIFO: answer the lot-selection question at every broker "
-                               "and wallet, including standing instructions and prior history. "
-                               "Specific identification requires external Form 8949 preparation")
+                               "is unanswered: answer the lot-selection question at every broker and wallet, "
+                               "including standing instructions, a broker's only offered method and prior "
+                               "history, and re-run the capability gate, which blocks a yes until it is "
+                               "acknowledged; specific identification requires external Form 8949 preparation")
     for cat in sorted(sums):
         if cat in _BLOCKING_CATEGORIES:
             if sums[cat]:

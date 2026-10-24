@@ -752,7 +752,12 @@ federal credit is computed by the engine.
     or transferred at any broker or wallet, including standing instructions,
     HIFO or LIFO, in any history used to establish this return's inventory?**
     Include prior-year lot choices and identifications recorded in your own
-    books under applicable relief. → sets `has_crypto_specific_identification`
+    books under applicable relief. Also ask whether any broker offered only one
+    lot-selection method: under Reg. 1.1012-1(j)(3)(ii) that method is the
+    taxpayer's standing order, so a broker offering only HIFO is a yes. Notice
+    2025-7's own-records relief covers only broker-held units disposed of in
+    2025, and an identification made after the sale is not adequate.
+    → sets `has_crypto_specific_identification`
     true or false. With no crypto, leave it `null`. Confirm FIFO explicitly;
     customer-provided acquisition dates (Form 1099-DA box 8) can support FIFO
     and do not answer this question. A yes requires external lot-selection

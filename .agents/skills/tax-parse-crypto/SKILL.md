@@ -72,8 +72,12 @@ absent or null, ask whether the taxpayer specifically identified units sold,
 exchanged, spent or transferred at any broker or wallet, including standing
 instructions, HIFO or LIFO, and prior history affecting this return's inventory.
 Include identifications recorded in their own books under applicable relief.
+A broker that offers only one method makes that method the taxpayer's standing
+order (Reg. 1.1012-1(j)(3)(ii)); ask about it, since a broker offering only HIFO
+is a yes. Notice 2025-7's own-records relief covers only broker-held units
+disposed of in 2025, and an identification made after the sale is not adequate.
 Record the answer in `answers.md` and the profile as true or false; never infer
-it from Form 1099-DA box 8, missing broker basis, or an exchange's default.
+it from Form 1099-DA box 8 or missing broker basis.
 Immediately after writing those files, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs taxpayer_profile.json answers.md`.
 

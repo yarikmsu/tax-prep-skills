@@ -1379,12 +1379,13 @@ def build_crypto_import(transactions: 'list[dict]', *,
     txns = [_coerce_transaction(t, i) for i, t in enumerate(transactions)]
     if specific_identification is not None and not isinstance(specific_identification, bool):
         raise CryptoImportError('specific_identification must be boolean or null')
-    if specific_identification is True:
+    removes_lots = any(t.kind in ('sell', 'spend', 'trade') or
+                       (t.kind == 'send' and (account_mode or per_account)) for t in txns)
+    # Only removing lots depends on their selection; rewards and buys still price.
+    if removes_lots and specific_identification is True:
         raise CryptoImportError('Specific identification is not modeled by this FIFO engine; '
                                 'prepare the selected lots and Form 8949 externally. '
                                 'Acknowledging a capability limitation does not enable FIFO pricing.')
-    removes_lots = any(t.kind in ('sell', 'spend', 'trade') or
-                       (t.kind == 'send' and (account_mode or per_account)) for t in txns)
     if removes_lots and specific_identification is not False:
         raise CryptoImportError('specific_identification is unanswered: ask about lot selection at '
                                 'every broker and wallet, including standing instructions and prior '
