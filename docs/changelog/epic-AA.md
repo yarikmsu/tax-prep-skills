@@ -3069,3 +3069,22 @@ a stop with nothing to record, a `/tax-review` that drops the stop, and a
 `--help` without the refundable limit. From the twelfth: no floor, no
 per-state netting, a stopped state left in the run, a stop limited to
 itemizers, `--help` without "refundable", and a changed worked example. The full suite passed locally on Python 3.14.
+
+## AA77 — Schedule P compares the tentative minimum tax with tax before credits (#15)
+
+`/tax-compute`'s step 9.5 passed `compute_ca_schedule_p` step 8's tax after
+the exemption credits as `ca_regular_tax`. Schedule P (540) line 25 reads
+"Regular tax before credits from Form 540, line 31", so whenever the CA AMT
+bound it rose by the whole exemption credit and the return over-stated CA tax
+by that amount. The recipe now passes line 31, step 6's tax before credits,
+and the engine's docstring names both lines. The engine cannot tell the two
+figures apart, so the guard is a test over the recipe's text, which goes red
+when the old wording is restored. A TY2025 joint return with two dependent
+credits and a $250,000 ISO spread is the worked case: AMT $10,102.77, not the
+$11,358.77 the old input produced.
+
+The merge review found the Schedule P test class calling $463,809 the 2025
+joint phase-out start. The 2025 form's line 22 prints $463,745, which the new
+case used, so the class contradicted itself; both older joint cases moved to
+the form's figure. Part III's credit limits, which start from line 35 after
+the exemption credits, remain AA72's.
