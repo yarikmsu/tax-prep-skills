@@ -100,7 +100,7 @@ from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402
 )
 from agents.lib.tax_computations.federal.gambling_income import (  # noqa: E402
     GAMBLING_REPORTED, GAMBLING_WITHHOLDING, is_w2g_form, validate_w2g_income,
-    compute_other_forms_withholding,
+    compute_other_forms_withholding, compute_w2g_totals,
 )
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
@@ -1985,6 +1985,8 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
         raise ValueError("Schedule CA needs the covered-year California law block")
     schedule = state.get("schedule_ca") or {}
     government = derive_government_workpaper(ledger, result, profile)
+    w2g_records, _ = _w2g_sources(ledger, profile)
+    lottery = compute_w2g_totals(tax_year=year, records=w2g_records)["ca_lottery_income"] if w2g_records else 0
     built = compute_ca_schedule_ca(tax_year=year, investment_records=investment_records,
         fund_asset_minimum=schedule.get("fund_asset_minimum"), taxable_social_security=ss,
         taxable_state_refund=refund, other_additions=other_add, other_subtractions=other_sub,
@@ -1992,6 +1994,7 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
         taxable_unemployment=government["unemployment_taxable"] if government else 0,
         taxable_ca_family_leave=government["ca_family_leave_exempt"] if government else 0,
         ca_family_line_7=government["ca_family_leave_line_7"] if government else 0,
+        ca_lottery_winnings=lottery,
         **{k: adjustments.get(k) for k in ("hsa_employer_addback", "hsa_interest_addback", "hsa_dividend_addback")})
     for key, field in (("ca_has_us_obligation_income", "has_us_obligation_income"),
                        ("ca_has_nonca_muni_interest", "has_nonca_muni_interest")):

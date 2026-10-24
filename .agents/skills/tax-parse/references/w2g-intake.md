@@ -1,7 +1,8 @@
 # W-2G source extraction
 
 Read the calendar-year header and revision. Reviewed pairs: TY2025 `12/2023`
-(the prior continuous-use form), TY2026 `01/2026`. Do not infer tax year from
+(the prior continuous-use form) or `01/2026` (continuous-use, so a 2025 W-2G
+may be printed on it), TY2026 `01/2026`. Do not infer tax year from
 the date won: an annuity payment can relate to an older winning event.
 
 Capture boxes1/4/7 (reported winnings / federal withholding / identical wagers),
@@ -25,6 +26,11 @@ Preserve `w2g_income` on the per-document record. Required fields:
 - `tax_year`, `form_revision`, `reviewed: true` and `ownership_confirmed: true`.
   Resolve shared winners via Form5754 and payer-issued allocated/corrected
   W-2Gs before claiming these amounts. Do not claim another person's share.
+- `ca_lottery_income`: the part of this form's federally included income that
+  is California State Lottery winnings, including zero (box 13 state and the
+  payer identify it). California excludes it; the builder derives the
+  Schedule CA Section B line 8b, column B subtraction. Another state's lottery
+  stays CA-taxable.
 - `box_1`, `box_4`, `box_7`: actual source amounts, including zero. Do not
   subtract withholding or annual gambling losses from reported winnings.
 - `identical_wagers_reviewed`: explicit boolean. Positive box7 requires true
@@ -32,7 +38,8 @@ Preserve `w2g_income` on the per-document record. Required fields:
 - `schedule_1_income`, `schedule_c_gross`: explicit source contributions,
   including zero. Review casual versus trade/business status; combined physical
   statements may include both. A business contribution is receipts, not profit.
-- `income_method: reported`: the two income contributions sum to box1;
+- `income_method: reported`: the two income contributions sum to box1 plus
+  box7 (box 7 is "additional winnings from identical wagers");
   `worksheet_confirmed: false`, `worksheet_id: null`.
 - Alternatively `income_method: reviewed_worksheet`: a separately reviewed
   source/session worksheet supplies the contributions, with

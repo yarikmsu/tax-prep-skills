@@ -77,6 +77,8 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
      The builder also adds back the federal HSA deduction from Form 8889
      line 13 (Section C line 13, column B) and puts HSA earnings in line 2
      column C; never type either.
+   - California lottery winnings on a W-2G (`w2g_income.ca_lottery_income`) are
+     derived as `ca_lottery_subtraction` (Section B line 8b, column B).
    - Subtract the federally taxable Social Security on Form 1040 line 6b,
      recording `schedule_ca_adjustments.taxable_social_security_subtraction`.
      Do not subtract the gross SSA-1099 benefits.

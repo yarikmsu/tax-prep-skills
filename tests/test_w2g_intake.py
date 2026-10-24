@@ -13,7 +13,7 @@ def source(year=2025, **changes):
         reviewed=True,ownership_confirmed=True,box_1=1200,box_4=200,box_7=0,
         identical_wagers_reviewed=False,schedule_1_income=1200,schedule_c_gross=0,
         income_method='reported',worksheet_confirmed=False,worksheet_id=None,
-        other_business_gross=0)
+        other_business_gross=0,ca_lottery_income=0)
     raw.update(changes)
     return raw
 
@@ -53,12 +53,29 @@ def test_bad_money_cannot_become_a_credit(bad):
         classify_w2g_income(source(box_4=bad))
 
 
-def test_identical_wagers_require_review_without_blind_double_addition():
+def test_identical_wager_winnings_are_additional_to_box_1():
+    # W-2G instructions, box 7: "the amount of additional winnings from
+    # identical wagers", so 1,200 + 500 = 1,700 is reported and taxable.
     with pytest.raises(ValueError,match='identical'):
         classify_w2g_income(source(box_7=500))
-    raw=source(box_7=500,identical_wagers_reviewed=True)
-    assert classify_w2g_income(raw)['gambling_winnings']==1200
-    assert compute_w2g_totals(tax_year=2025,records=[record(raw)])['gambling_income']==1200
+    with pytest.raises(ValueError,match='box1 plus box7'):
+        classify_w2g_income(source(box_7=500,identical_wagers_reviewed=True))
+    raw=source(box_7=500,identical_wagers_reviewed=True,schedule_1_income=1700)
+    assert classify_w2g_income(raw)['gambling_winnings']==1700
+    assert compute_w2g_totals(tax_year=2025,records=[record(raw)])['gambling_income']==1700
+
+
+def test_a_2025_w2g_may_use_the_continuous_use_2026_revision():
+    assert classify_w2g_income(source(form_revision='01/2026'))['gambling_winnings']==1200
+    with pytest.raises(ValueError,match='revision'):
+        classify_w2g_income(source(2026,form_revision='12/2023'))
+
+
+def test_california_lottery_income_is_bounded_by_the_federal_inclusion():
+    raw=source(ca_lottery_income=1200)
+    assert compute_w2g_totals(tax_year=2025,records=[record(raw)])['ca_lottery_income']==1200
+    with pytest.raises(ValueError,match='California lottery'):
+        classify_w2g_income(source(ca_lottery_income=1300))
 
 
 def test_reviewed_source_worksheet_does_not_force_raw_reported_winnings_into_income():
@@ -126,6 +143,20 @@ def w2g_workspace(tmp_path, *, context='none', remaining=-200, raw=None):
     write_secure(ws/'taxpayer_profile.json',json.dumps(profile))
     write_secure(ws/'result.json',json.dumps(result))
     return ws
+
+
+def test_california_lottery_winnings_stay_federal_but_leave_ca_income(tmp_path):
+    # Schedule CA Section B line 8b, column B: "California excludes California
+    # lottery winnings"; federal AGI keeps them (1,200 - separate loss 200).
+    import json
+    from agents.lib import return_builder as B
+    ws=w2g_workspace(tmp_path,raw=source(ca_lottery_income=1200))
+    assert B._main(['--workspace',str(ws)])==0
+    result=json.loads((ws/'result.json').read_text())
+    assert result['form_1040']['line_11_agi']==101000
+    assert result['california_540']['schedule_ca_adjustments']['ca_lottery_subtraction']==1200
+    assert result['california_540']['line_17']==101000-1200
+    assert B._main(['--workspace',str(ws),'--check'])==0
 
 
 @pytest.mark.parametrize('context',['none','misc','benefits','both'])
