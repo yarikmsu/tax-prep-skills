@@ -68,9 +68,9 @@ list to the registry. New York City's full-year resident tax is
 computed, not blocked; a City resident for only part of the year is refused at compute
 time.
 
-California's blocking rules are `ca_blind_exemption`, `ca_us_obligation_income`,
+California's blocking rules are `ca_us_obligation_income`,
 `ca_nonca_muni_interest`, `ca_other_schedule_ca`, `ca_state_refund`,
-`ca_noniso_amt`, `ca_distribution_taxes`, `ca_other_taxes`, `ca_ptet_credit`,
+`ca_distribution_taxes`, `ca_other_taxes`, `ca_ptet_credit`,
 `ca_amt_credit`, `ca_other_credit_carryover`, `ca_nonw2_payments`,
 `ca_overpayment_forward`, `ca_use_tax` and `ca_coverage_penalty`. Each has a
 specific setup question. See WHO-IT-FITS for measured subsets and bounds.

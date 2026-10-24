@@ -233,6 +233,12 @@ income checks can no longer see on their own: six of its category sums now
 PRODUCE the lines they are compared against, so a later edit is the failure mode
 that survived deriving them.
 
+For a selected or computed California return this also checks Form540's
+derived lines, Schedule P, withholding, settlement and screened line113 note.
+That CA check still runs when the federal Form1040 is out of scope. Its
+reviewed-year contract and required component worksheets are in
+`docs/contributing/state-module-ca.md` and Step10's state reference.
+
 - **Exit 0:** every derived line matches. Continue. **Unless it printed `NOT
   CHECKED`** — this return carries something the builder does not govern (a
   computed PFIC fund), so lines 1-38 are yours by hand and nothing verified

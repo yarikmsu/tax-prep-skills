@@ -303,9 +303,9 @@ _SECOND_READ_VALUES = {"match", "mismatch_resolved"}
 # over-reports, which is the loud direction.
 _EIC_LINES = (
     ("Form 1040 line 27", ("form_1040", "line_27_eic"), None),
-    ("CA Form 540 line 75 (CalEITC)", ("california_540", "line_75_caleitc"), None),
-    ("CA Form 540 line 76 (Young Child Tax Credit)", ("california_540", "line_76_young_child_credit"), None),
-    ("CA Form 540 line 77 (Foster Youth Tax Credit)", ("california_540", "line_77_foster_youth_credit"), None),
+    ("CA Form 540 line 75 (CalEITC)", ("california_540", "line_75"), None),
+    ("CA Form 540 line 76 (Young Child Tax Credit)", ("california_540", "line_76"), None),
+    ("CA Form 540 line 77 (Foster Youth Tax Credit)", ("california_540", "line_77"), None),
     ("NY IT-201 line 65 (Form IT-215)",
      ("new_york_it201", "refundable_credits_and_payments",
       "line_65_earned_income"), None),

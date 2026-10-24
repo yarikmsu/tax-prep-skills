@@ -230,6 +230,15 @@ def tax_law() -> dict:
         "dependent_exemption": {"amount": 466},
         "hsa_conformity": False,
         "mental_health_surcharge": {"rate": 0.01, "threshold": 1000000},
+        # Synthetic completeness inputs only: these TY2026 golden cases
+        # exercise federal arithmetic; checked Form540 is reviewed for2025.
+        "tax_table": {"max_taxable_income": 100000, "rows": [
+            {"min": 0, "max": 100001, "tax": dict.fromkeys(
+                ("single", "mfj", "mfs", "hoh", "qss"), 0)}]},
+        "amt": {"exemption": dict.fromkeys(("single", "mfj", "mfs", "hoh"), 100000),
+                "phaseout_start": dict.fromkeys(("single", "mfj", "mfs", "hoh"), 1000000)},
+        "underpayment_screen": {"minimum_balance": dict.fromkeys(
+            ("single", "mfj", "mfs", "hoh", "qss"), 500), "tax_fraction": .1},
         # Required by the freshness gate: absent, the whole cache reads
         # INCOMPLETE and an agent following /tax-compute Step 0.5 correctly
         # STOPS — at which point the eval is measuring the gate and not the

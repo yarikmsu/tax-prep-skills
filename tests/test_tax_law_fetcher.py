@@ -68,6 +68,18 @@ def _ca_synthetic_exemption_phaseout():
             "band": {s: 1000 for s in statuses}, "reduction_per_step": 10}
 
 
+def _ca_synthetic_form540_law():
+    """Required, invented CA law unrelated to the specific cache gate tested."""
+    statuses = ("single", "mfj", "mfs", "hoh", "qss")
+    return {"code": "CA",
+            "tax_table": {"max_taxable_income": 10000, "rows": [
+                {"min": 0, "max": 10001, "tax": dict.fromkeys(statuses, 0)}]},
+            "amt": {"exemption": dict.fromkeys(statuses[:-1], 1000),
+                    "phaseout_start": dict.fromkeys(statuses[:-1], 100000)},
+            "underpayment_screen": {"minimum_balance": dict.fromkeys(statuses, 500),
+                                    "tax_fraction": .1}}
+
+
 def _write_cache(tmp_path, year, sdi_wage_limit="omit"):
     """A minimal fresh cache: only fields the walker will see. Pass
     sdi_wage_limit="omit" to simulate a legacy cache created before the field
@@ -75,6 +87,7 @@ def _write_cache(tmp_path, year, sdi_wage_limit="omit"):
     state = {"name": "California", "type": "graduated_income",
              "sdi_rate": 0.012,
              "exemption_phaseout": _ca_synthetic_exemption_phaseout(),
+                      **_ca_synthetic_form540_law(),
              "itemized_phaseout": {"single": 244000, "mfj": 488000,
                                    "hoh": 366000}}
     if sdi_wage_limit != "omit":
@@ -144,6 +157,7 @@ def test_empty_underpayment_rates_not_flagged(tmp_path):
         "state": {"name": "California", "type": "graduated_income",
                   "sdi_rate": 0.012,
                   "exemption_phaseout": _ca_synthetic_exemption_phaseout(),
+                      **_ca_synthetic_form540_law(),
                   "itemized_phaseout": {"single": 244000, "mfj": 488000,
                                         "hoh": 366000}},
         "exchange_rates": {"EUR": 1.08},
@@ -406,6 +420,7 @@ def test_freshness_unpinned_is_advisory_not_status_flip(tmp_path):
         "state": {"name": "California", "type": "graduated_income",
                   "sdi_rate": 0.012,
                   "exemption_phaseout": _ca_synthetic_exemption_phaseout(),
+                      **_ca_synthetic_form540_law(),
                   "itemized_phaseout": {"single": 244000, "mfj": 488000,
                                         "hoh": 366000}},
         "exchange_rates": {"EUR": 1.08},

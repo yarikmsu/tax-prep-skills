@@ -198,6 +198,15 @@ class TestItReproducesTheHandComputedGolden:
     @pytest.mark.parametrize("case", ["ca_mfj_2026", "zero_income"])
     def test_the_cli_writes_the_stripped_return_back_to_the_golden(self, tmp_path, case):
         ws, golden = self._fixture_workspace(tmp_path, case)
+        # This golden covers Form1040 TY2026, not an unreviewed Form540.
+        # Exercise the federal CLI in isolation; CA's own suite proves the
+        # TY2026 refusal and its separately reviewed TY2025 arithmetic.
+        result = json.loads((ws / "result.json").read_text())
+        result.pop("california_540", None)
+        (ws / "result.json").write_text(json.dumps(result))
+        profile = json.loads((ws / "taxpayer_profile.json").read_text())
+        profile["address"]["state"] = "TX"
+        (ws / "taxpayer_profile.json").write_text(json.dumps(profile))
         assert RB._main(["--workspace", str(ws)]) == 0
         written = json.loads((ws / "result.json").read_text(encoding="utf-8"))
         assert written["form_1040"] == golden["form_1040"]

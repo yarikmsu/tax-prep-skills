@@ -355,7 +355,16 @@ def attachment_checklist(result: dict) -> list:
                        + _field_num(ca, "ca_withholding_1099", "ca_1099_wh")
                        + _field_num(ca, "ca_withholding_592b_593", "ca_other_wh")
                        + _field_num(ca, "ca_excess_sdi_credit", "ca_sdi"))
-            if ca_tax > ca_paid:
+            if ca.get("computed_tax_year") is not None:
+                from agents.lib.tax_computations.state.ca import _CA_540_REVIEWED_YEARS
+                if (type(ca["computed_tax_year"]) is not int
+                        or ca["computed_tax_year"] not in _CA_540_REVIEWED_YEARS
+                        or ca.get("ca_amount_owed") is None):
+                    raise FilingPackageError("checked Form 540 needs its reviewed year and final amount owed")
+                ca_due = _field_num(ca, "ca_amount_owed", "CA checked balance")
+            else:
+                ca_due = max(0, ca_tax - ca_paid)
+            if ca_due > 0:
                 lines.append(
                     "CA balance due: check payable to 'Franchise Tax "
                     "Board' with SSN and '{tax year} Form 540' in the "

@@ -1,6 +1,8 @@
 # tax-compute Step 10 — state return
 
-California Form 540 uses engine functions and manual worksheets; New York has its own file; every other state is
+California Form 540 uses the checked engine builder and manual component worksheets;
+the reviewed form contract is `docs/contributing/state-module-ca.md` (TY2025).
+New York has its own file; every other state is
 a bracket estimate. A `type: "none"` state is a positive declaration, not an
 empty section.
 
@@ -120,7 +122,10 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    itemized total where the coupling bars it (over-stating), and the standard
    deduction where the coupling forces itemizing (the election FTB forbids).
    Use `itemized_total if use_itemized else ca_standard_deduction`.
-6. CA tax from FTB tables (use brackets from tax_law JSON)
+6. `compute_ca_540` derives line 31 from the published Tax Table at or below
+   `state.tax_table.max_taxable_income`, and the fetched rate schedule above
+   that ceiling. Fetch a missing row; never substitute bracket math or an
+   inferred midpoint for a published table amount.
 7. CA exemption credits — run `compute_ca_exemption_credit()` for Form 540
    line 32, including the AGI Limitation Worksheet. Pass **federal AGI**
    (Form 540 line 13), `filing_status`, the eligible box counts from lines
@@ -151,8 +156,8 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    floor produces a negative tax that becomes an invented refund downstream.
    Over-stating a refund is the direction AGENTS.md §4 calls a hard error.
 9. Mental health surcharge (1% on income > $1M)
-9.5. **CA Schedule P (540) AMT** — run `compute_ca_schedule_p()` whenever
-    `has_iso_exercise` (the same trigger as federal Form 6251). The CA analogue
+9.5. **CA Schedule P (540) AMT** — run `compute_ca_schedule_p()` on EVERY CA
+    return, including one without an ISO exercise. The CA analogue
     of Form 6251: pass `ca_taxable_income` (Form 540 line 19), `ca_regular_tax`
     (Form 540 line 31 — step 6's tax before credits), the CA
     `filing_status`, and `exemption` / `phaseout_start` from **`state.amt`**
@@ -180,7 +185,7 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     code-188 credit from its own worksheet; it is not a payment. An unclaimed
     allowable credit needs an amended return, not a larger carryforward. The
     tie-out refuses a missing worksheet, dropped opening credit or wrong sum.
-    **General Schedule P remains manual:** an ISO-only call does not price
+    **General Schedule P input worksheets remain manual:** an ISO-only call does not price
     all Part I adjustments. Read the covered-year form, including standard
     deduction (line 1), medical (2), property taxes (3), non-acquisition-debt
     interest (4), miscellaneous deductions (5), property-tax refunds (6), and
@@ -188,18 +193,25 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     not additional interview answers. Prepare the general worksheet when
     required, including on a non-ISO return; never infer zero AMT from a no to
     Boxes A/B or from the Box C special-credit screen. The checked Form 540
-    builder is tracked as AA69. A non-ISO return without an opening AMT credit
-    keeps no ISO-path block unless a separate manual Schedule P needs one.
+    builder combines them as the signed `ca_preference_adjustments` net and
+    adds the elected standard deduction automatically. Exclude both the
+    standard deduction and ISO spread from that net to avoid doubling them.
+    Include lines 16, 17, 18 and 20 with their proper directions, too.
+    Record the net and `ca_preference_adjustments_confirmed: true` only after
+    working the complete Part I; unknown is not zero. The builder uses the
+    unfloored line 17 minus 18 for Schedule P's taxable-income starting point.
 10. CA withholding: write W-2 box 17 alone to `ca_withholding_box17`,
     1099/W-2G California income tax withheld to `ca_withholding_1099`, and
     Forms 592-B/593 recipient withholding to `ca_withholding_592b_593`.
     Form 540 line 71 is the first two totals; line 73 is the third.
     Tie each to its own ledger category. Include all three exactly once in
     payments and the refund/balance calculation; none reduces tax itself.
-    (`ca_total_tax` = CA tax after exemption credits minus the separately worked
-    allowable nonrefundable credits, floored at zero, plus mental-health surcharge + `ca_amt`
-    from step 9.5 when present.)
-11. Excess SDI/VPDI credit (Form 540 line 74): run `compute_excess_sdi()`
+    (`ca_total_tax` is Form 540 line 64: line 48, which is the CA tax after
+    exemption credits plus line 34's distribution taxes less the separately
+    worked allowable nonrefundable credits, floored at zero; plus `ca_amt`
+    from step 9.5 (line 61), the mental-health surcharge (62) and line 63's
+    other taxes. The step 13 builder derives it.)
+11. Historical excess SDI/VPDI: run `compute_excess_sdi()`
     for EVERY person with any CA-wage W-2 — no trigger condition (cheap pure
     function, zeros when nothing is wrong; conditional triggers miss
     below-cap wage-relative employer errors, and TY2024+ has no cap to
@@ -214,11 +226,26 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     fetch it; treating it as no-ceiling would silently drop a refundable
     credit). A nonzero `employer_error_amount` means that portion is
     recovered from the employer (EDD DE 1964), not the return; only
-    `excess_credit` goes on the 540. Write it to `ca_excess_sdi_credit`.
+    a historical `excess_credit` may be claimed on its reviewed year's form.
+    Write it to `ca_excess_sdi_credit` for the workpaper only. **TY2025 line 74
+    is the refundable Motion Picture credit, never excess SDI.**
 12. CA refund/owed. Claim each separately worked CA credit once in the proper
     place: nonrefundable credits reduce regular tax under their Schedule P
     limitations, while CalEITC / young-child / foster-youth credits on lines
     75-77 add to payments. Never copy a federal credit onto a California line.
+13. **Checked Form 540 build:** record the elected deduction in `ca_deduction`
+    and `ca_deduction_method` (`standard`, `itemized`, or `dependent_worksheet`),
+    the Schedule CA totals, confirmed exemption eligibility in the profile,
+    and separately worked amounts in the `line_<number>` component fields.
+    All `CA_540_COMPONENT_LINES` must be present, including worked zeros.
+    Record the Schedule G-1 portion of line 34 separately as `ca_lump_sum_tax`
+    for the line-113 screen; do not classify FTB 5870A tax as lump-sum tax.
+    Existing capability gates still govern uncomputed credits/taxes/payments.
+    Run `sh agents/lib/run.sh -m agents.lib.return_builder`; the CA withholding
+    lines come from the ledger and the builder writes the entire arithmetic,
+    Schedule P and screened FTB5805 note. Run Step 12.6's `--check` after every
+    final edit. A federal out-of-scope waiver does not waive the CA check.
+    An unreviewed form year refuses; fetching rates alone never reviews a form.
 
 **No-income-tax states (`tax_law state.type == "none"` — FL):**
 1. Do NOT compute a state return and do NOT leave the section empty.

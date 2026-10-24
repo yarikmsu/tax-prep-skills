@@ -610,6 +610,8 @@ at all.
   tests that assert it.
 
 - **AA69 (P1, M): Build Form 540 in the engine and check it.**
+  Implementation: [PR #19](https://github.com/yarikmsu/tax-prep-skills/pull/19),
+  open for review; not merged. Depends on PRs #15, #16, #17 and #18.
   Nothing derives Form 540's arithmetic. NC's D-400 comes from one
   `compute_nc_d400` call and NY settles through `compute_ny_settlement`. CA's
   lines 17-115 are typed, and the tie-out checks only box 17 withholding. Line

@@ -102,9 +102,9 @@ class CapabilityReport:
 # /tax-setup interview is what sets them, so a rule keyed on a flag the
 # interview never asks is dead (the D1 lesson from expected_sources).
 RULES: "tuple[Rule, ...]" = (
-    Rule("ca_blind_exemption", "ca_has_blind_exemption", UNSUPPORTED,
+    Rule("ca_blind_exemption", "ca_has_blind_exemption", MANUAL,
          "CA blind exemption", "Form 540 line 8",
-         "The blind exemption is not assembled by the return engine; prepare the eligible credit manually.", state="CA"),
+         "Confirm each filer's eligibility and any required doctor's statement. The checked Form 540 builder computes the eligible credit.", state="CA"),
     Rule("ca_us_obligation_income", "ca_has_us_obligation_income", UNSUPPORTED,
          "US-obligation interest or fund distributions", "Schedule CA (540) interest/dividend subtractions",
          "The California-exempt US-obligation portion is not computed. Omitting it overstates CA tax.", state="CA"),
@@ -118,10 +118,11 @@ RULES: "tuple[Rule, ...]" = (
     Rule("ca_state_refund", "has_1099g_state_refund", UNSUPPORTED,
          "State refund requiring the federal tax-benefit worksheet", "Schedule 1 line 1 / Schedule CA (540)",
          "Determine the federally taxable refund and subtract that amount for CA; the 1099-G gross refund is not the taxable amount.", state="CA"),
-    Rule("ca_noniso_amt", "ca_has_noniso_amt_items", UNSUPPORTED,
-         "CA AMT items outside the modeled ISO path", "Schedule P (540), Form 540 line 61",
+    Rule("ca_noniso_amt", "ca_has_noniso_amt_items", MANUAL,
+         "CA AMT adjustments requiring source worksheets", "Schedule P (540), Form 540 line 61",
          "Box A/B preferences and adjustments, investment interest, installment-sale income and "
-         "mortgage interest on debt not used to buy or improve the home require a separate Schedule P worksheet.", state="CA"),
+         "mortgage interest on debt not used to buy or improve the home require separate source worksheets. "
+         "Record their signed net as ca_preference_adjustments; the checked builder computes Schedule P on every return.", state="CA"),
     Rule("ca_distribution_taxes", "ca_has_special_distribution_tax", UNSUPPORTED,
          "Lump-sum or accumulation distribution tax", "Form 540 line 34 / Schedule G-1 / FTB 5870A",
          "These additional distribution taxes are not computed.", state="CA"),
@@ -911,8 +912,9 @@ def _state_note(profile: dict) -> str:
                 "worksheets are inputs. Other-state returns/credits, mixed spouses, MFS, IT-230 special ratios and IT-203 Yonkers tax remain manual. "
                 "Ordinary state projections and IT-203 withholding forecasts are not modeled.")
     if code == "CA":
-        return ("State: California Form 540 is partially assembled from manual worksheets. "
-                "HSA adjustments, exemption-credit math and the ISO Schedule P path have engine support; "
+        return ("State: California Form 540 arithmetic and Schedule P are computed by a checked builder "
+                "for the reviewed form year, from separately worked Schedule CA, deduction, credit and tax components. "
+                "HSA adjustments and exemption-credit math have engine support; "
                 "other situations are gated or marked NOT COMPUTED. FTB 5805's underpayment penalty "
                 "on line 113 is NOT COMPUTED; the FTB may figure it and send a bill.")
     if code == "NY":

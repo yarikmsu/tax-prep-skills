@@ -132,12 +132,13 @@ California's additional gates cover the following situations. A yes blocks
 until the limitation is explicitly acknowledged and the named worksheet is
 prepared elsewhere; acknowledgement does not compute the line:
 
-- Blind exemption (`ca_blind_exemption`); US-obligation interest/fund income
+- US-obligation interest/fund income
   (`ca_us_obligation_income`); non-CA municipal interest (`ca_nonca_muni_interest`);
   other Schedule CA differences (`ca_other_schedule_ca`); and a state-refund
   tax-benefit worksheet (`ca_state_refund`).
-- General AMT items outside the ISO path (`ca_noniso_amt`), special distribution
-  taxes (`ca_distribution_taxes`), and other additional taxes (`ca_other_taxes`).
+- Special distribution taxes (`ca_distribution_taxes`) and other additional
+  taxes (`ca_other_taxes`). Blind-exemption eligibility and source AMT
+  adjustment worksheets are manual inputs to the checked Form 540 builder.
 - PTET credits/carryovers (`ca_ptet_credit`), the AMT credit (`ca_amt_credit`),
   and other credit carryovers (`ca_other_credit_carryover`). An acknowledged
   AMT-credit case still needs a worked FTB 3510 and a preserved carryforward.

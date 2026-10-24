@@ -217,7 +217,8 @@ def test_a_computed_state_is_wired_into_every_module(s):
     # not that it is a bracket estimate.
     note = capabilities._state_note({"address": {"state": s.code}})
     if s.code == "CA":
-        assert "Form 540 is partially assembled from manual worksheets" in note
+        assert "Form 540 arithmetic and Schedule P" in note
+        assert "checked builder" in note and "separately worked" in note
         assert "NOT COMPUTED" in note
     else:
         assert "computed in depth" in note, (s.code, note)

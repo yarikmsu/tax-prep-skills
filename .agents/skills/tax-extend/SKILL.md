@@ -65,7 +65,9 @@ Work down this ladder and TELL the user which rung was used:
    `form_1040.line_24_total_tax` (and the meta.tax_year matches):
    - Federal extension payment = line 37 amount owed (line 24 total tax −
      line 33 total payments), floored at $0.
-   - CA payment (if `california_540` computed) = `ca_total_tax` −
+   - CA payment for a checked Form 540 (`computed_tax_year` present) is
+     `ca_amount_owed` (line 114), which includes the separately worked credits
+     and other settlement components. For a legacy partial return use `ca_total_tax` −
      (`ca_withholding_box17` + `ca_withholding_1099` +
      `ca_withholding_592b_593` + CA estimates paid), floored at $0.
    - NY payment (if `new_york_it201` computed) = `line_80_amount_owed`, which
