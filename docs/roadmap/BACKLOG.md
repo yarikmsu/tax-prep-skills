@@ -56,6 +56,12 @@ citations; they no longer direct contributor work in the current checkout.
 
 ## Status
 
+**Order: California filers first** (owner, 2026-10-24). Every current user
+files in California, so the plan finishes what a CA filer needs before anything
+else: CA work, then federal work a CA filer reaches, then other states, then
+the repository itself. An entry's priority is its severity for a filer it
+reaches; the plan's order is who those filers are.
+
 **Engineering: the original V, W and X queue is complete.** The 2026-10-03
 review of the retired design directory recovered useful, unimplemented extensions;
 AA44-AA46 below now carry the rest of that scope (AA42 and AA43 have shipped) instead of relying on historical plans.
@@ -79,10 +85,12 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **Now, before the 2027-01-15 estimated payment** | **AA78** — let a foreign-tax filer's projection take a reviewed credit without the full AMT worksheet. **AA79** — review TY2026 for the NY and NC payment forecasts. **AA82** — check IRMAA tiers when `set` writes them. | AA78 and AA79 are refusals that stop `/tax-project` for a routine profile and for every TY2026 NY and NC forecast, in the weeks the last 2026 payment is set. AA82 is small and lands before CMS's November table. |
+| **1. California filers: ready now** | **AA81** — show the CA payment total where the reconciliation is asked. **AA78** — let a foreign-tax filer's projection take a reviewed credit without the full AMT worksheet. **AA82** — check IRMAA tiers when `set` writes them. **AA61** — review the TY2023-2024 Form 1099-B boxes the import never names. **AA47**, **AA49**, **AA50** — the crypto follow-ups AA41 filed. | Nothing here waits on a publication. AA81 is the one CA item that can ship before FTB publishes TY2026. The rest is federal work a CA filer reaches: AA78 stops `/tax-project` for a routine profile, and AA82 lands before CMS's November table. AA61 is P2, because crypto on a 1099-B stopped with TY2024's forms. AA47 turns a permanent block into a return. AA49 must be reproduced first, and AA50 is a performance change, so it needs a before-and-after benchmark. |
+| **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
+| **3. California filers: larger extensions** | AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. | Larger product extensions. |
+| **4. Other states** | **AA79** — review TY2026 for the NY and NC payment forecasts. **AA63** — say when a local tax is withheld that no return here claims. | No current user files in New York, North Carolina or a locality with a return of its own. AA79 moves up the day one does, since the last 2026 estimate is due 2027-01-15. |
+| **5. The repository** | **AA56** — tell the shipped index's two PR numberings apart. | It changes a test, not a return. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
-| **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. | Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so this row is the reminder to fetch it. The TY2026 Form 540 also needs AA69's checked builder reviewed for that form year, and AA80 waits on FTB's 2026 540NR booklet. |
-| **Later** | **AA47**, **AA49**, **AA50** — the crypto follow-ups AA41 filed. **AA56** — tell the shipped index's two PR numberings apart. **AA61** and **AA63** — the TY2023-2024 Form 1099-B box review, and an advisory for local tax withheld that no return here claims. AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. **AA81** — show the CA payment total where the reconciliation is asked. | AA47 turns a permanent block into a return. AA49 must be reproduced first, and AA50 is a performance change, so it needs a before-and-after benchmark. AA56 changes a test, not a return. AA61 and AA63 are P2: crypto on a 1099-B stopped with TY2024's forms, and a local amount no return claims still reaches Schedule A line 5a. AA44-AA46 are larger product extensions. AA81 strengthens a control that already blocks. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -198,7 +206,7 @@ Trigger and range behavior is documented in
   the path is limited to the §904(j) election, its ceiling is statutory but
   must still be fetched or listed in AGENTS.md §2. Found by AA42's review.
 
-- **AA79 (P1, M): Review TY2026 for the NY and NC payment forecasts.** AA43
+- **AA79 (P2, M): Review TY2026 for the NY and NC payment forecasts.** AA43
   shipped for the TY2025 form year only: `_REVIEWED_YEARS` in
   `agents/lib/tax_computations/state/planning.py` holds 2025 for CA, NY and
   NC, and `/tax-project` refuses a TY2026 NY or NC forecast ("State forecast
@@ -210,8 +218,9 @@ Trigger and range behavior is documented in
   are published. Decide whether the review can rest on those, re-reading the
   TY2025 forms' deduction, credit and local contracts against them, or must
   wait for the TY2026 IT-201 and D-400; if it must wait, add AA79 to the
-  blocked table. CA's TY2026 review is Y8's, through AA69's checked builder.
-  Found by AA43's review.
+  blocked table. CA's TY2026 reviews are AA83, for the return, and AA84, for
+  planning. P2 while no current user files in NY or NC (owner, 2026-10-24);
+  the 2027-01-15 estimate makes it P1 the day one does. Found by AA43's review.
 
 - **AA80 (P2, M): Review AA74's part-year return for TY2026, with the renter's
   credit six-month test.** AA74 computes a reviewed CA part-year return for
@@ -253,6 +262,36 @@ Trigger and range behavior is documented in
   validator from `set` with the cache's `tax_year`, the premium year the read
   already uses, before CMS publishes the next premium-year table in November.
   Found by AA53's review.
+
+- **AA83 (P1, M): Review the TY2026 Form 540 before TY2026 CA returns.** The
+  CA return path is reviewed for TY2025 only, at four gates:
+  `_CA_540_REVIEWED_YEARS` in `agents/lib/tax_computations/state/ca.py` holds
+  2025 for the Form 540 line map ("Form 540 line map has not been reviewed for
+  this tax year"), for Schedule CA, which the tie-out gate rebuilds, and for
+  FTB 5805; `ca_credits.py`'s credit lines accept 2025 alone; and the filing
+  package refuses a checked Form 540 outside that set. Until each is reviewed,
+  no CA resident can finish a TY2026 return here. This was one clause in Y8's
+  plan row. When FTB publishes the 2026 Form 540 booklet
+  ([its year-pinned URL](https://www.ftb.ca.gov/forms/2026/2026-540-booklet.pdf)
+  returned 404 on 2026-10-24) and the year's Schedule CA and FTB 5805
+  instructions, re-read every line AA69's checked builder computes, and every
+  line it leaves manual or refuses, against them before adding 2026; carry no
+  TY2025 line forward unread. AA80 is the part-year half. Found by the
+  2026-10-24 California-first review of the plan.
+
+- **AA84 (P1, S): Review TY2026 for CA tax in Roth and scenario planning.**
+  `_REVIEWED_YEARS` in `agents/lib/tax_computations/state/planning.py` holds
+  2025 for CA, a gate separate from AA83's, so `/tax-roth-convert` and
+  `/tax-scenario` price no CA tax for TY2026 and print "State/local tax not
+  modeled". The degrade under-states, as AGENTS.md §4 allows, but a 2026
+  conversion has to be made by December 31, so a CA filer deciding one now sees
+  no state cost. The planner reads CA's brackets, standard deduction and
+  exemption credits from the cache, and the 2026 Form 540-ES worksheet prices
+  tax from the 2025 table, so it cannot stand in. This waits on FTB's TY2026
+  indexed amounts, which FTB announced for TY2025 in its
+  [October 2025 Tax News](https://www.ftb.ca.gov/about-ftb/newsroom/tax-news/2025/10.html)
+  (the October 2026 issue returned 404 on 2026-10-24), and then on re-reading
+  the planner's CA contracts against them. Found by the same review.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
@@ -336,7 +375,9 @@ and vendor-CI rulings remain closed.
 | **Y1** | The owner enabling Discussions. Verified 2026-10-15: public, Discussions off, 0 stars. |
 | **Y8** | The 2027 §6621 quarters, published one quarter at a time; the IRS's 2026 yearly average exchange rates, in January; and the TY2026 state tables, NY's included. |
 | **AA48** | The IRS publishing the TY2026 Form 8949 instructions. The entry dates the last check, and the season-open runbook's Form 8949 step repeats it. |
-| **AA80** | FTB publishing the 2026 Form 540NR booklet, whose renter's credit qualification record and line 61 the review reads. |
+| **AA83** | FTB publishing the 2026 Form 540 booklet and the year's Schedule CA and FTB 5805 instructions. The booklet's year-pinned URL returned 404 on 2026-10-24. |
+| **AA84** | FTB publishing the TY2026 indexed amounts. Its October 2026 Tax News returned 404 on 2026-10-24. |
+| **AA80** | FTB publishing the 2026 Form 540NR booklet, whose renter's credit qualification record and line 61 the review reads. Its year-pinned URL returned 404 on 2026-10-24. |
 
 ## Declined, with the reasoning kept so it is not re-proposed
 
