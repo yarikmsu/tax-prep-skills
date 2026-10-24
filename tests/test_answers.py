@@ -38,6 +38,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from tests.test_ca_part_year import profile as ca_part_year_profile
 from agents.lib import answers as A  # noqa: E402
 from skill_text import SKILLS_DIR, skill_text  # noqa: E402
 
@@ -87,6 +88,7 @@ _TRIGGERS = {
     "schedule1_remaining_income": dict(profile={"flags":{"has_1099_misc":True}}),
     "government_benefit_sources": dict(profile={"flags":{"has_1099g_benefits":True}}),
     "schedule1_nonbenefit_income": dict(profile={"flags":{"has_1099g_benefits":True}}),
+    "ca_part_year_allocation": dict(profile=ca_part_year_profile()),
     "ca_investment_sources": dict(profile={"address": {"state": "CA"}}),
     "ca_state_refund_worksheet": dict(profile={"address": {"state": "CA"},
         "flags": {"has_1099g_state_refund": True}}),

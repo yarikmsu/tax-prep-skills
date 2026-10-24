@@ -1351,12 +1351,22 @@ def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | Non
     return totals, ("CA payments: " + " ".join(notes)) if notes else None
 
 
-def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: str) -> tuple[dict, str]:
+def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: str,
+                   *, return_form: str = "540") -> tuple[dict, str]:
     """Rebuild line113 from reviewed inputs; never read its stored total."""
     import datetime
     from agents.lib.tax_computations.state.ca import (
         compute_ca_5805, _ca_input, _ca_5805_events,
     )
+    if return_form == "540NR":
+        net_line, amt_line, surcharge_line, other_line = 63, 71, 72, 73
+        distribution_line, agi_line, withholding_lines, penalty_line = 41, 32, (81, 83), 123
+    elif return_form == "540":
+        net_line, amt_line, surcharge_line, other_line = 48, 61, 62, 63
+        distribution_line, agi_line, withholding_lines, penalty_line = 34, 17, (71, 73), 113
+    else:
+        raise ValueError("unknown California form for FTB5805")
+    title = f"Form {return_form} line {penalty_line}"
     inputs = profile.get("ca_5805")
     if not isinstance(inputs, dict):
         raise ValueError("record ca_5805 inputs and an explicit penalty method")
@@ -1369,13 +1379,13 @@ def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: st
             if inputs.get("ftb_bill_eligible_confirmed") is not True:
                 raise ValueError("confirm no FTB5805 PartI attachment requirement before choosing FTB billing")
             amount = 0.0
-            note = "Form 540 line 113: FTB billing explicitly elected; penalty NOT COMPUTED and excluded from this balance."
+            note = f"{title}: FTB billing explicitly elected; penalty NOT COMPUTED and excluded from this balance."
         else:
             if (inputs.get("manual_worksheet_confirmed") is not True
                     or inputs.get("manual_form") not in ("FTB5805", "FTB5805F")):
                 raise ValueError("confirm the worked FTB5805/5805F for the selected special method")
             amount = _ca_input(inputs.get("manual_penalty"), "CA manual penalty")
-            note = "Form 540 line 113: confirmed external FTB5805/5805F worksheet; special method is not engine-computed."
+            note = f"{title}: confirmed external FTB5805/5805F worksheet; special method is not engine-computed."
         return {"computed_tax_year": year, "method": method, "total": amount,
             "source_review": inputs.copy()}, note
     if method != "regular":
@@ -1385,10 +1395,10 @@ def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: st
     interest = _ca_input(inputs.get("section_453a_interest"), "CA IRC453A interest")
     accumulation = _ca_input(inputs.get("accumulation_distribution_tax"), "CA accumulation-distribution tax")
     lump = _ca_input(form.get("ca_lump_sum_tax", 0), "CA ScheduleG1 tax")
-    if round(lump + accumulation, 2) != form["line_34"] or interest > form["line_63"]:
-        raise ValueError("reconcile excluded distribution taxes to line34 and IRC453A interest to line63")
-    current = round(max(0, form["line_48"] - lump - accumulation)
-        + form["line_61"] + form["line_62"] + interest, 2)
+    if round(lump + accumulation, 2) != form[f"line_{distribution_line}"] or interest > form[f"line_{other_line}"]:
+        raise ValueError(f"reconcile excluded distribution taxes to line{distribution_line} and IRC453A interest to line{other_line}")
+    current = round(max(0, form[f"line_{net_line}"] - lump - accumulation)
+        + form[f"line_{amt_line}"] + form[f"line_{surcharge_line}"] + interest, 2)
     # _ca_payments has already validated every AA70 source's destination,
     # ownership and claimable share. Unknown dates cannot price a penalty;
     # they may be ignored only when known credits independently prove zero.
@@ -1425,8 +1435,8 @@ def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: st
     if not isinstance(withholding_method, str) or inputs.get("regular_method_confirmed") is not True:
         raise ValueError("confirm regular-method eligibility and the CA withholding method")
     paper = compute_ca_5805(tax_year=year, filing_status=status, state_law=state,
-        current_tax=current, current_agi=form["line_17"],
-        withholding=round(form["line_71"] + form["line_73"], 2),
+        current_tax=current, current_agi=form[f"line_{agi_line}"],
+        withholding=round(sum(form[f"line_{n}"] for n in withholding_lines), 2),
         prior_tax=previous.get("tax") if reviewed else None,
         prior_agi=previous.get("agi") if reviewed else None,
         prior_withholding=previous.get("withholding") if reviewed else None,
@@ -1441,7 +1451,7 @@ def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: st
         raise ValueError("resolve unknown CA payment dates before pricing FTB5805")
     paper["source_review"] = inputs.copy()
     paper["payment_sources"] = selected
-    note = "Form 540 line 113: FTB5805 regular-method penalty computed from reviewed PartII tax, withholding and dated payments."
+    note = f"{title}: FTB5805 regular-method penalty computed from reviewed PartII tax, withholding and dated payments."
     return paper, note
 
 
@@ -1513,6 +1523,198 @@ def ca_credit_inputs(profile: dict, ledger, state: dict, tax_year: int | None) -
             "ptet_first_tax_year": first}
 
 
+def _ca_exemption_facts(profile: dict, status: str) -> tuple[dict, bool]:
+    """540NR exemption eligibility facts, never inferred from mailing data."""
+    status = _full_status_key(status)
+    flags, eligibility = profile.get("flags"), profile.get("ca_exemptions")
+    if not isinstance(flags, dict) or not isinstance(eligibility, dict):
+        raise ValueError("record California exemption eligibility and age answers")
+
+    def fact(key, source):
+        value = source.get(key)
+        if type(value) is not bool:
+            raise ValueError(f"answer California exemption eligibility: {key}")
+        return value
+
+    own_claimed = fact("primary_can_be_claimed", eligibility)
+    if status == "qss" and own_claimed:
+        raise ValueError("resolve QSS eligibility before counting personal exemptions")
+    own_blind = fact("primary_blind", eligibility)
+    own_senior = fact("age_65_plus_primary", flags)
+    spouse_claimed = fact("spouse_can_be_claimed", eligibility) if status == "mfj" else True
+    spouse_blind = fact("spouse_blind", eligibility) if status == "mfj" else False
+    spouse_senior = fact("age_65_plus_spouse", flags) if status == "mfj" else False
+    personal = (2 if status == "qss" else int(not own_claimed)) + (int(not spouse_claimed) if status == "mfj" else 0)
+    dependents = profile.get("dependents")
+    if (not isinstance(dependents, list) or any(not isinstance(d, dict) for d in dependents)
+            or any(type(d.get("_template_placeholder", False)) is not bool for d in dependents)):
+        raise ValueError("record the confirmed dependent list and boolean template markers")
+    counts = {"personal": personal,
+              "blind": int(own_blind and not own_claimed) + int(spouse_blind and not spouse_claimed),
+              "senior": int(own_senior and not own_claimed) + int(spouse_senior and not spouse_claimed),
+              "dependent": sum(not d.get("_template_placeholder", False) for d in dependents)}
+    return counts, own_claimed or (status == "mfj" and spouse_claimed)
+
+
+def _ca_nr_federal_components(result: dict, ledger, profile: dict) -> dict:
+    """Re-read source-derived federal components even under a federal waiver."""
+    federal = result.get("form_1040")
+    if not isinstance(federal, dict):
+        raise ValueError("Form540NR needs the checked federal return")
+    components = {**federal, **ledger_income(ledger)}
+    components["line_1z_total_wages"] = round(sum(_num(components.get(k, 0), "federal wage component") for k in _LINE_1Z_TERMS), 2)
+    other = derive_schedule1_other_workpaper(ledger, result, profile)
+    government = derive_government_workpaper(ledger, result, profile)
+    if government is not None:
+        components["line_8_schedule1_other"] = government["total"]
+    elif other is not None:
+        components["line_8_schedule1_other"] = other["total"]
+    fields = ("line_1z_total_wages", "line_2b_taxable_interest", "line_3b_ordinary_dividends",
+              "line_4b_taxable_ira", "line_5b_taxable_pensions", "line_6b_taxable_ss",
+              "line_7_capital_gain", "line_8_schedule1_other")
+    components["line_11_agi"] = round(sum(_num(components.get(k), "federal income component") for k in fields)
+        - _num(components.get("line_10_adjustments"), "federal adjustments"), 2)
+    if any(not ca_values_agree(federal.get(k), components[k]) for k in (*fields, "line_11_agi")):
+        raise ValueError("refresh the checked federal income/AGI from its source components before Form540NR")
+    return components
+
+
+def _build_ca_540nr(result: dict, tax_law: dict, ledger, profile: dict) -> dict:
+    from dataclasses import asdict
+    from agents.lib.tie_out import _ca_input
+    from agents.lib.tax_computations import compute_ca_540nr
+    from agents.lib.tax_computations.state.ca_nonresident import CA_NR_COMPONENT_LINES, _whole
+    from agents.lib.tax_computations.state.registry import ca_section_key
+    from agents.lib.tax_computations._shared import _normalize_filing_status
+    section = ca_section_key("540NR")
+    ca = result.get(section)
+    if not isinstance(ca, dict):
+        raise ValueError("selected Form540NR has no registered result section")
+    year, status = _tax_year(result, profile), _filing_status(profile, result)
+    fs = _full_status_key(status)
+    if _normalize_filing_status(ca.get("ca_filing_status")).lower() != fs:
+        raise ValueError("different CA/federal filing status requires a separate pro-forma return")
+    if type(tax_law.get("tax_year")) is not int or tax_law["tax_year"] != year:
+        raise ValueError("Form540NR requires covered-year CA law matching the return")
+    state = tax_law.get("state")
+    if not isinstance(state, dict):
+        raise ValueError("fetch the covered California law block")
+    counts, dependent = _ca_exemption_facts(profile, fs)
+    deductions, amt = ca.get("deduction_inputs"), ca.get("amt_inputs")
+    if not isinstance(deductions, dict) or deductions.get("dependent_filer") is not dependent:
+        raise ValueError("Form540NR dependent-deduction answer disagrees with eligibility facts")
+    if not isinstance(amt, dict):
+        raise ValueError("record the separate worldwide/source AMT input worksheets")
+    raw = ca.get("form_inputs")
+    manual = {f"line_{n}" for n in CA_NR_COMPONENT_LINES if n not in (12, 81, 82, 83, 123)} | {"claim_of_right_credit"}
+    if not isinstance(raw, dict) or set(raw) != manual:
+        raise ValueError("record the explicit manual Form540NR form_inputs, including worked zeros")
+    components = {**raw, "line_123": 0.0}
+    wage_facts = ca.get("w2_ca_wages")
+    if (not isinstance(wage_facts, dict) or set(wage_facts) != {"confirmed", "sources"}
+            or wage_facts["confirmed"] is not True or not isinstance(wage_facts["sources"], list)):
+        raise ValueError("confirm CA W-2 Box16 wages by source, including zero for each W-2 without CA wages")
+    wage_sources = {}
+    for row in wage_facts["sources"]:
+        if (not isinstance(row, dict) or set(row) != {"source_id", "amount"}
+                or not isinstance(row["source_id"], str) or row["source_id"] in wage_sources):
+            raise ValueError("CA W-2 Box16 rows require distinct source_id and nonnegative amount")
+        wage_sources[row["source_id"]] = _ca_input(row["amount"], "CA W-2 Box16 wages")
+    if set(wage_sources) != {r.doc_id for r in ledger if r.skipped is None and r.form_type.upper() == "W-2"}:
+        raise ValueError("CA W-2 Box16 reconciliation must cover every active W-2 ledger source exactly once")
+    components["line_12"] = round(sum(wage_sources.values()), 2)
+    sums = category_sums(ledger)
+    iso = ca.get("iso_basis_reconciliation")
+    if (not isinstance(iso, dict) or set(iso) != {"adjustment", "confirmed", "source_ids"}
+            or iso.get("confirmed") is not True or not isinstance(iso.get("source_ids"), list)
+            or any(not isinstance(s, str) for s in iso["source_ids"])
+            or len(set(iso["source_ids"])) != len(iso["source_ids"])):
+        raise ValueError("confirm the CA ISO basis reconciliation and source_ids, including a worked zero")
+    basis_delta = _num(iso["adjustment"], "CA ISO basis adjustment")
+    if not set(iso["source_ids"]) <= {r.doc_id for r in ledger} or (basis_delta and not iso["source_ids"]):
+        raise ValueError("CA ISO basis differences require supporting ledger source_ids")
+    if not ca_values_agree(amt.get("iso_world"), round(sums.get("iso_bargain", 0) + basis_delta, 2)):
+        raise ValueError("CA worldwide ISO spread must reconcile to every ledger ISO amount plus the reviewed CA basis adjustment")
+    components["line_81"] = round(sums.get("state_withholding_ca", 0) + sums.get("ca_1099_withholding", 0), 2)
+    components["line_83"] = sums.get("ca_592b_593_withholding", 0)
+    payments, payment_note = _ca_payments(profile, year, fs)
+    components["line_82"] = payments["total"]
+    flags = profile.get("flags") or {}
+    election = _whole(_num(raw["line_102"], "Form540NR forward election"))
+    if type(flags.get("ca_applies_overpayment_forward")) is not bool or flags["ca_applies_overpayment_forward"] != (election > 0):
+        raise ValueError("reconcile ca_applies_overpayment_forward with explicit NR line102")
+    credits = ca_credit_inputs(profile, ledger, state, year)
+    if credits is None:
+        raise ValueError("list reviewed ca_credits.other_credits explicitly, including an empty list")
+    federal = _ca_nr_federal_components(result, ledger, profile)
+    adjustments = derive_ca_schedule_ca(ledger, result, profile, tax_law, section_key=section)
+    manual_conformity = ca.get("conformity_manual_rows")
+    if not isinstance(manual_conformity, list):
+        raise ValueError("list separately reviewed NR conformity_manual_rows, including an empty list")
+    built = compute_ca_540nr(tax_year=year, filing_status=status, state_law=state, profile=profile,
+        federal_components=federal, exemption_counts=counts, deductions=deductions,
+        amt_inputs=amt, credit_inputs=credits, components=components,
+        source_witness={"ledger": [asdict(r) for r in ledger],
+                        "payments": profile.get("estimated_payments"), "ca_5805": profile.get("ca_5805"),
+                        "conformity": adjustments, "conformity_manual_rows": manual_conformity,
+                        "iso_basis_reconciliation": iso, "w2_ca_wages": wage_facts})
+    columns = {**built["schedule_ca"]["income_lines"], **built["schedule_ca"]["adjustment_lines"]}
+    expected_columns = {line: {"subtractions": 0.0, "additions": 0.0} for line in columns}
+    known = (("A1z", "additions", "hsa_employer_addback"),
+             ("A2b", "additions", "hsa_interest_addback"),
+             ("A3b", "additions", "hsa_dividend_addback"),
+             ("A2b", "subtractions", "line_2_column_b"),
+             ("A2b", "additions", "line_2_column_c"),
+             ("A6b", "subtractions", "taxable_social_security_subtraction"),
+             ("B1", "subtractions", "taxable_state_refund_subtraction"),
+             ("B7", "subtractions", "section_b_line_7_column_b"),
+             ("B8z", "subtractions", "section_b_other_income_subtraction"))
+    for line, col, field in known:
+        expected_columns[line][col] += adjustments[field]
+    for row in manual_conformity:
+        if (not isinstance(row, dict) or set(row) != {"line", "subtractions", "additions"}
+                or not isinstance(row["line"], str) or row["line"] not in columns):
+            raise ValueError("NR manual conformity rows require a printed line and both law-difference columns")
+        for col in ("subtractions", "additions"):
+            expected_columns[row["line"]][col] += _num(row[col], "reviewed manual CA law difference")
+    if any(not ca_values_agree(columns[line][col], round(value, 2))
+           for line, values in expected_columns.items() for col, value in values.items()):
+        raise ValueError("NR per-line conformity columns disagree with known source components plus explicit manual rows")
+    raw_agi = built["schedule_ca"]["agi"]
+    if not ca_values_agree(round(raw_agi["additions"] - raw_agi["subtractions"], 2),
+            round(adjustments["total_additions"] - adjustments["total_subtractions"], 2)):
+        raise ValueError("NR columnB/C net disagrees with the source-derived CA conformity workpaper")
+    refund = federal.get("taxable_state_refund") or 0
+    if not ca_values_agree(built["schedule_ca"]["income_lines"]["B1"]["federal"], refund):
+        raise ValueError("NR state-refund row must equal the confirmed federal tax-benefit worksheet")
+    government = derive_government_workpaper(ledger, result, profile)
+    benefit_line = government["schedule1_line_7"] if government else 0
+    taxable_family = (benefit_line - government["unemployment_taxable"] - government["ca_family_leave_line_7"]
+                      if government else 0)
+    benefit_row = built["schedule_ca"]["income_lines"]["B7"]
+    if (not ca_values_agree(benefit_row["federal"], benefit_line)
+            or not ca_values_agree(benefit_row["all_source"], round(taxable_family, 2))):
+        raise ValueError("NR ScheduleCA B7 must reconcile federal UI/family benefits and the source-reviewed CA exclusions")
+    paper, penalty_note = derive_ca_5805(built, profile, state, year, fs, return_form="540NR")
+    penalty = _whole(paper["total"])
+    paper["form_penalty"] = penalty
+    settlement = _whole(sum(built[f"line_{n}"] for n in (104, 93, 120, 122)) + penalty - built["line_103"])
+    built.update(line_123=penalty, line_124=max(0.0, settlement), line_125=max(0.0, -settlement),
+        ca_amount_owed=max(0.0, settlement), ca_refund=max(0.0, -settlement),
+        ftb_5805=paper, line_123_note=penalty_note, ca_filing_status=ca["ca_filing_status"],
+        form_inputs=raw.copy(), deduction_inputs=deductions.copy(), amt_inputs=amt.copy(),
+        iso_basis_reconciliation=iso.copy(),
+        conformity_manual_rows=manual_conformity.copy(),
+        w2_ca_wages=wage_facts.copy(),
+        schedule_ca_adjustments=adjustments, ca_payment_summary=payments,
+        ca_payment_note=payment_note.replace("Form540", "Form540NR") if payment_note else None,
+        ca_withholding_box17=sums.get("state_withholding_ca", 0),
+        ca_withholding_1099=sums.get("ca_1099_withholding", 0),
+        ca_withholding_592b_593=sums.get("ca_592b_593_withholding", 0),
+        ca_credit_note="CA owner credits: NR claims use prorated exemptions, CA TMT and input-bound source/rounding proof. Prior exclusion refigures and non-ISO deferrals require reviewed worksheets; PTET owner eligibility and vintages remain separate from payments.")
+    return built
+
+
 def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict:
     """The CA half of the receipted check, independently of federal scope."""
     from agents.lib.capabilities import _profile_state
@@ -1520,6 +1722,16 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
     from agents.lib.tax_computations import compute_ca_540, ny_it203_plan
     from agents.lib.tax_computations.state.ca import CA_540_COMPONENT_LINES
     from agents.lib.tax_computations._shared import _normalize_filing_status
+    from agents.lib.tax_computations import ca_540nr_plan
+    from agents.lib.tax_computations.state.registry import selected_ca_return
+    try:
+        nr_plan, selected_form = ca_540nr_plan(profile), selected_ca_return(result)
+        if nr_plan or selected_form == "540NR":
+            if nr_plan is None or selected_form not in (None, "540NR"):
+                raise ValueError("select one CA form with a complete matching Form540NR plan")
+            return _build_ca_540nr(result, tax_law, ledger, profile)
+    except (ValueError, TypeError, KeyError, AttributeError, ReturnBuilderError) as exc:
+        raise Blocked(f"Form540NR: {redact(exc)}") from None
     try:
         address = profile.get("address") or {}
         selected = (bool(address.get("state")) and _profile_state(profile) == "CA"
@@ -1678,19 +1890,36 @@ def california_summary(result: dict, derived: dict) -> dict:
 
 
 def california_differences(result: dict, derived: dict) -> list[str]:
-    ca = result.get("california_540") or {}
+    if not derived:
+        return []
+    from agents.lib.tax_computations.state.registry import ca_section_key
+    form = derived.get("return_form", "540")
+    ca = result.get(ca_section_key(form)) or {}
     # Nested workpapers and the screened note are load-bearing too.
-    agrees = ca_values_agree
+    agrees = (lambda was, value: ca_values_agree(was, value, exact=True)) if form == "540NR" else ca_values_agree
     fields = [field for field, value in derived.items() if field not in ca or not agrees(ca.get(field), value)]
     if derived and type(ca.get("computed_tax_year")) is not int and "computed_tax_year" not in fields:
         fields.append("computed_tax_year")
     notes = (result.get("meta") or {}).get("limitations", [])
     if derived and (not isinstance(notes, list) or any(not isinstance(n, str) for n in notes)):
         raise Blocked("Form 540 requires meta.limitations to be a list of disclosure strings")
-    if derived and derived["line_113_note"] not in notes:
-        fields.append("meta.limitations (Form 540 line 113)")
-    if derived and any(n.startswith("Form 540 line 113:") and n != derived["line_113_note"] for n in notes):
-        fields.append("meta.limitations (stale Form 540 line 113 disclosure)")
+    penalty_line = 123 if form == "540NR" else 113
+    if derived[f"line_{penalty_line}_note"] not in notes:
+        fields.append(f"meta.limitations (Form {form} line {penalty_line})")
+    if form == "540NR":
+        if (result.get("meta") or {}).get("ca_return_type") != form:
+            fields.append("meta.ca_return_type")
+        if derived.get("allocation_review_current") is not True:
+            fields.append("state_filings.CA.worksheet_review (refresh input-bound NR worksheets)")
+        if derived.get("source_note") not in notes:
+            fields.append("meta.limitations (Form540NR scope)")
+        if any(n.startswith("Form540NR:") and n != derived.get("source_note") for n in notes):
+            fields.append("meta.limitations (stale Form540NR scope)")
+    # The writer strips both spellings of the 540NR prefix; match them here too.
+    prefixes = (("Form 540NR line 123:", "Form540NR line123:") if form == "540NR"
+                else ("Form 540 line 113:",))
+    if any(n.startswith(prefixes) and n != derived[f"line_{penalty_line}_note"] for n in notes):
+        fields.append(f"meta.limitations (stale Form {form} line {penalty_line} disclosure)")
     if derived.get("ca_payment_note") and derived["ca_payment_note"] not in notes:
         fields.append("meta.limitations (CA payments)")
     if derived.get("ca_credit_note") and derived["ca_credit_note"] not in notes:
@@ -1759,13 +1988,26 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
         updated["schedule_1_government_benefits"] = government
         updated["form_1040"]["line_8_schedule1_other"] = government["total"]
     if california:
-        updated["california_540"] = {**result["california_540"], **california}
+        from agents.lib.tax_computations.state.registry import ca_section_key, selected_ca_return
+        form = california.get("return_form", "540")
+        try:
+            selected = selected_ca_return(result)
+            if selected is not None and selected != form:
+                raise ValueError("do not publish competing California return variants")
+            section = ca_section_key(form)
+        except ValueError as exc:
+            raise Blocked(str(exc)) from None
+        updated[section] = {**(result.get(section) or {}), **california}
         summary = california_summary(updated, california)
         if summary:
             updated["balance_due_summary"] = {**result["balance_due_summary"], **summary}
         meta = dict(result.get("meta") or {})
-        notes = [n for n in meta.get("limitations", []) if not n.startswith(("Form 540 line 113:", "CA payments:", "CA investment worksheets:", "CA owner credits:"))]
-        notes.append(california["line_113_note"])
+        notes = [n for n in meta.get("limitations", []) if not n.startswith(("Form 540 line 113:", "Form 540NR line 123:", "Form540NR line123:", "Form540NR:", "CA payments:", "CA investment worksheets:", "CA owner credits:"))]
+        penalty_line = 123 if form == "540NR" else 113
+        notes.append(california[f"line_{penalty_line}_note"])
+        if form == "540NR":
+            meta["ca_return_type"] = form
+            notes.append(california["source_note"])
         if california.get("ca_payment_note"):
             notes.append(california["ca_payment_note"])
         if california.get("ca_credit_note"):
@@ -1902,13 +2144,14 @@ def _main(argv: list) -> int:
         california = build_california(result, tax_law, ledger, profile) if args.check else {}
         ca_changes = california_differences(result, california)
         if args.check and ca_changes:
-            print("BLOCKED: Form 540 derived fields disagree: " + ", ".join(ca_changes), file=sys.stderr)
+            print(f"BLOCKED: Form {california.get('return_form', '540')} derived fields disagree: " + ", ".join(ca_changes), file=sys.stderr)
             return _record_the_check(workspace, inputs, "FAILED", 2)
         # This CA check precedes the federal scope decision: a PFIC waiver
         # of Form 1040 arithmetic must never waive the separate state return.
         if args.check and california:
-            print("Form 540 derived lines, Schedule P, FTB5805 and final settlement agree.")
-            print(california["line_113_note"])
+            form = california.get("return_form", "540")
+            print(f"Form {form} derived lines, Schedule P, FTB5805 and final settlement agree.")
+            print(california[f"line_{123 if form == '540NR' else 113}_note"])
         derived = build(result, tax_law, ledger,
                         _filing_status(profile, result), profile)
         changes = differences(result, derived)
@@ -1921,7 +2164,12 @@ def _main(argv: list) -> int:
             print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "agree with their components.")
             return _record_the_check(workspace, inputs, receipt.PASS, 0)
-        california = build_california({**result, "form_1040": {**result["form_1040"], **derived}},
+        federal_for_state = {**result["form_1040"], **derived}
+        if government is not None:
+            federal_for_state["line_8_schedule1_other"] = government["total"]
+        elif other_income is not None:
+            federal_for_state["line_8_schedule1_other"] = other_income["total"]
+        california = build_california({**result, "form_1040": federal_for_state},
                                       tax_law, ledger, profile)
         if write(workspace, original_result, derived, california=california, government=government,
                  other_income=other_income, other_withholding=other_withholding, rental=rental):
@@ -1938,8 +2186,9 @@ def _main(argv: list) -> int:
             if rental is not None:
                 print("Rebuilt residential ScheduleE, depreciation and passive-loss workpapers. Refresh QBI, NIIT and income-dependent forms; bind rental_return.related_forms_review to related_forms_input_digest, then re-run --check.")
             if california:
-                print("Rebuilt Form 540 and Schedule P; re-run --check before generating a package.")
-                print(california["line_113_note"])
+                form = california.get("return_form", "540")
+                print(f"Rebuilt Form {form} and Schedule P; re-run --check before generating a package.")
+                print(california[f"line_{123 if form == '540NR' else 113}_note"])
         else:
             print(f"All {len(derived)} derived lines of Form 1040 lines 1-38 "
                   "already agree with their components; nothing written.")

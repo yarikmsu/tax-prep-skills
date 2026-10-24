@@ -8,6 +8,12 @@ license: Apache-2.0
 
 Roll forward data from a prior year's archived return into the current-year workspace. Eliminates manual re-typing of carryforward dollar amounts.
 
+For an archived Form540NR, select `california_540nr`: qualified AMT closing
+balance, PTET vintages and line102 applied overpayment retain their ownership
+and source checks. Never take Form540 line98 or add the opening AMT credit
+again. FTB5805 prior full-year means a twelve-month taxable year, not twelve
+months of CA residence. New-year residency/allocations must be interviewed again.
+
 ## Usage
 ```
 /tax-rollover <prior_year>

@@ -271,6 +271,7 @@ class TrueUpReport:
     # and the under-stating one for a payment.
     ny_cache_missing: bool = False
     ny_it203_manual: bool = False
+    ca_540nr_manual: bool = False
     # The federal schedule's catch-up note (None when it is not true of the
     # table). Only the PENALTY column can carry it: the note is about
     # instalments, and an instalment is measured against the safe harbor.
@@ -813,9 +814,10 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
     Without it their blocks are omitted with explicit missing-cache notes;
     federal and CA advice retains the existing cache-independent behavior.
     """
-    from agents.lib.tax_computations.state.registry import selected_ny_return
+    from agents.lib.tax_computations.state.registry import selected_ny_return, selected_ca_return
     try:
         ny_form = selected_ny_return(result)
+        ca_form = selected_ca_return(result)
     except ValueError as exc:
         raise WithholdingError(str(exc)) from None
     pay_frequency = validate_pay_frequency(proj_inputs.get("pay_frequency", "biweekly"))
@@ -877,6 +879,7 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
         spec.report_field: _build_state_true_up(
             spec, result, proj_inputs, prior, filing_status, as_of,
             inputs.paychecks_remaining, year, tax_law, today)
+        if not (spec.code == "CA" and ca_form == "540NR") else None
         for spec in _STATE_TRUE_UP_SPECS.values()
     }
     cache_missing = {
@@ -900,6 +903,7 @@ def build_report(result: dict, proj_inputs: dict, prior, year: int,
         ny_cache_missing=cache_missing.get("ny_cache_missing", False),
         nc_cache_missing=cache_missing.get("nc_cache_missing", False),
         ny_it203_manual=ny_form == "IT203",
+        ca_540nr_manual=ca_form == "540NR",
         voucher_catchup_note=_voucher_catchup_note(
             _FEDERAL_CATCHUP, vouchers_penalty, safe_harbor, as_of),
         voucher_dates_note=_voucher_dates_note(
@@ -1063,11 +1067,13 @@ def render_markdown(r: TrueUpReport) -> str:
             lines.append(spec.caveat)
     if r.ny_it203_manual:
         lines += ["> **NY IT-203 payment targets require manual worksheets:** future NY withholding, residency changes and prior-year resident eligibility cannot be inferred from mixed-state YTD totals. No NY target or refund is forecast here.", ""]
+    if r.ca_540nr_manual:
+        lines += ["> **CA Form540NR payment targets require part-year worksheets:** future source income, residency and prior-return eligibility need review. No CA target or refund is forecast here.", ""]
     for spec in _STATE_TRUE_UP_SPECS.values():
         if (spec.cache_missing_field and getattr(r, spec.cache_missing_field)
                 and spec.cache_missing_note):
             lines.append(spec.cache_missing_note)
-    if (not r.ny_it203_manual
+    if (not r.ny_it203_manual and not r.ca_540nr_manual
             and not any(getattr(r, spec.report_field) is not None
                         or (spec.cache_missing_field and getattr(r, spec.cache_missing_field))
                         for spec in _STATE_TRUE_UP_SPECS.values())):
@@ -1106,6 +1112,7 @@ def _report_to_dict(r: TrueUpReport) -> dict:
         "w4_penalty": vars(r.w4_penalty), "w4_zero": vars(r.w4_zero),
         "ny_cache_missing": r.ny_cache_missing,
         "ny_it203_manual": r.ny_it203_manual,
+        "ca_540nr_manual": r.ca_540nr_manual,
         **{spec.cache_missing_field: getattr(r, spec.cache_missing_field)
            for spec in _STATE_TRUE_UP_SPECS.values() if spec.cache_missing_field},
         **{spec.report_field: _state_to_dict(spec, getattr(r, spec.report_field))

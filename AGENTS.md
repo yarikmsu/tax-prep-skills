@@ -422,6 +422,7 @@ in full, so a new file in either goes in this table.
 | State contract template | `docs/contributing/state-module-template.md` |
 | CA contract | `docs/contributing/state-module-ca.md` |
 | NY contracts | `docs/contributing/state-module-ny.md` |
+| CA NR | `docs/contributing/state-module-ca-part-year.md` |
 | NC contract | `docs/contributing/state-module-nc.md` |
 | WA contract | `docs/contributing/state-module-wa.md` |
 | What the PII gate matches and how it fails | `docs/contributing/pii-gate.md` |
@@ -430,7 +431,7 @@ in full, so a new file in either goes in this table.
 | Why residency is asserted, not inferred from the address | `docs/contributing/residency-guardrails.md` |
 | CI triggers, the three locks, and why they are separate | `docs/contributing/ci-and-locks.md` |
 | Claude Code hooks and subagents, in depth | `docs/contributing/claude-automation.md` |
-| Accepting a review subagent before trusting it | `docs/ops/review-subagent-acceptance.md` |
+| Review subagent acceptance | `docs/ops/review-subagent-acceptance.md` |
 | Opening a filing season | `docs/ops/season-open-runbook.md` |
 | Per-epic implementation history | `docs/changelog/` |
 

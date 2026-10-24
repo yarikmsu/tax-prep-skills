@@ -167,11 +167,19 @@ def _capital_loss_split_unknown(inputs: _Inputs) -> bool:
 
 
 def _ca_return_needed(inputs: _Inputs) -> bool:
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    if ca_540nr_plan(inputs.profile):
+        return True
     from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
     address = inputs.profile.get("address")
     address = address if isinstance(address, dict) else {}
     return (isinstance(address.get("state"), str) and address["state"].strip().upper() == "CA"
             and not ny_it203_plan(inputs.profile))
+
+
+def _ca_nr_needed(inputs: _Inputs) -> bool:
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
+    return ca_540nr_plan(inputs.profile) is not None
 
 
 def _ca_amt_credit_needed(inputs: _Inputs) -> bool:
@@ -372,6 +380,12 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
                  "losses and other sources; an old aggregate may already contain benefits.",
         asked_by="tax-compute income-and-agi.md", required_when="governmental UI or family benefits are reported",
         when=_government_benefits_needed,
+    ),
+    RequiredAnswer(
+        id="ca_part_year_allocation", kind=FACT,
+        question="Confirm the 540NR resident/source inventory, actual allocation rows and separate worldwide/CA deduction, AMT, ISO basis and credit worksheets. Record the current allocation digest in state_filings.CA.worksheet_review; use tax is a separate CDTFA obligation.",
+        asked_by="tax-compute state-return-ca-part-year.md", required_when="a California Form540NR plan is declared",
+        when=_ca_nr_needed,
     ),
     RequiredAnswer(
         id="ca_investment_sources", kind=FACT,

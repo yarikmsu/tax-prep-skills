@@ -184,7 +184,7 @@ NC legal-holiday dates; the engine rolls weekends only conservatively.
 
    **`as_of_date` must be null, not empty, to mean "absent".** In an OPEN year every PRESENT value is validated and a malformed one is refused outright — the run produces no report at all, because substituting today's date would silently relabel the YTD figures beside it. A workspace created from an older template may carry `"as_of_date": ""` (or `0`), which used to fall through to today's date and now blocks: edit it to `null`, to the MM-DD the YTD figures are current to, or pass `--as-of MM-DD` for this run.
 
-   **Read these fourteen things out of the payload before you summarize anything.** The
+   **Read these fifteen things out of the payload before you summarize anything.** The
    markdown in the next step carries them in prose, but the audit line below is written
    from HERE, and `safe_harbor.covered` alone is not the verdict:
 
@@ -276,6 +276,10 @@ NC legal-holiday dates; the engine rolls weekends only conservatively.
      withholding forecast. Relay that source-specific future income, withholding
      and prior-year residence eligibility require reviewed IT-2105 worksheets;
      a skipped NY forecast is no estimate of NY liability or refund.
+   - **`ca_540nr_manual`** — true means the selected California part-year return
+     needs source-specific future income, withholding and prior-return review.
+     No CA payment target or refund is forecast; use the reviewed 540NR/540-ES
+     worksheets. Relay this limit even when federal advice is available.
    - **`ny_cache_missing`** — true means result.json carries a COMPUTED Form IT-201
      but no tax-law cache reached this run, so `ny` is null and NO New York true-up
      was computed. Report it as a missing input, never as a finding: the Tax Law

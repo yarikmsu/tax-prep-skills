@@ -15,6 +15,15 @@ Parse all source tax documents in the workspace and extract structured data.
 /tax-parse --group foreign  # Parse only foreign documents
 ```
 
+For a declared California Form540NR part-year plan, retain actual receipt and
+service dates, each W-2 CA Box16 wage amount (including a confirmed zero
+when absent), payroll workday/source evidence, stock-exercise source/basis
+worksheets and resident/nonresident income allocations. Keep law differences
+separate from sourcing; annual wages divided by residence days is not evidence.
+Use the existing CA withholding/PTET/ISO ledger categories once, regardless of
+mailing address. Unknown allocations remain unresolved for tax-compute's
+`state-return-ca-part-year.md` reference; parsing never guesses domicile.
+
 ## Prerequisites
 - `taxpayer_profile.json` must exist (run `/tax-setup` first)
 - Source documents (PDFs, XLSX, CSV) in the `documents/` directory — or an

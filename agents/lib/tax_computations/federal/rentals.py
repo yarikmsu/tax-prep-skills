@@ -126,6 +126,7 @@ def rental_in_computed_scope(profile: dict, state, ny_plan) -> bool:
     """Whether this return's rental is the reviewed residential path the engine
     computes. The capability gate and the tie-out both ask, so they agree."""
     from agents.lib.capabilities import _NO_INCOME_TAX_STATES
+    from agents.lib.tax_computations.state.ca_nonresident import ca_540nr_plan
     plan = profile.get("rental_return")
     if plan is None:
         return False
@@ -135,6 +136,7 @@ def rental_in_computed_scope(profile: dict, state, ny_plan) -> bool:
         properties = plan.get("properties")
         return (isinstance(properties, list) and bool(properties)
                 and profile.get("tax_year") == plan["tax_year"] and not ny_plan
+                and not ca_540nr_plan(profile)
                 and state in _NO_INCOME_TAX_STATES | {"CA", "WA"}
                 and (state == "CA" or not rental_has_ca_history(opening)))
     except ValueError:

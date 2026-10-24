@@ -92,6 +92,12 @@ Last updated: {{DATE}}
 
 - **[schedule1_nonbenefit_income]**
 
+### Confirm the 540NR resident/source inventory, actual allocation rows and separate worldwide/CA deduction, AMT, ISO basis and credit worksheets. Record the current allocation digest in state_filings.CA.worksheet_review; use tax is a separate CDTFA obligation.
+
+*Asked by tax-compute state-return-ca-part-year.md; required when a California Form540NR plan is declared.*
+
+- **[ca_part_year_allocation]**
+
 ### Confirm the investment-source split for California: direct US-obligation interest, municipal interest by issuer, fund ordinary/exempt dividends, US RIC status and annual asset-test evidence and income percentages. Record an explicit none when absent; an unknown source or qualification is not zero.
 
 *Asked by tax-compute state-return.md; required when this run selects a CA return.*

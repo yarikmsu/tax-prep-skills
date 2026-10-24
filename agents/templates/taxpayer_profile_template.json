@@ -276,5 +276,6 @@
     "brokerages": [],
     "foreign_accounts": []
   },
-  "state_filings": {}
+  "state_filings": {},
+  "_comment_state_filings": "Optional declared filing plans. CA form540NR: reviewed TY2025 part-year period, resident/source inventory, actual income_rows and adjustment_rows, scope facts and input-bound worksheet_review. Never infer from address or replace true move flags. See docs/contributing/state-module-ca-part-year.md and tax-compute/references/state-return-ca-part-year.md. NY IT203 retains its separate contract; simultaneous CA/NY plans refuse."
 }

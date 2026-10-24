@@ -11,6 +11,12 @@ address is elsewhere. IT-370 is still separate; pay the reviewed IT-203 line 70
 balance at the original deadline. Ask the calendar for `ny_return_type="IT203"`;
 do not copy IT-201 line 80 or treat an extension as extra time to pay.
 
+For a validated CA Form540NR plan, use CA regardless of mailing address.
+The automatic extension and FTB3519 payment guidance still apply; the final
+reviewed balance is NR line124, not Form540 line114. Ask the calendar for
+`ca_return_type="540NR"`. Generic projections cannot supply part-year source
+allocations: obtain a reviewed NR estimate if no checked return exists.
+
 Washington capital-gains excise: federal extension is a prerequisite but does
 not itself extend WA. Request a separate extension electronically through
 My DOR by the original April deadline; payment is still due then. Filing is
