@@ -883,8 +883,26 @@ def compute_ca_540(
     standard = _amount(state_law.get("standard_deduction", {}).get(deduction_key), "CA standard deduction")
     if standard <= 0:
         raise ValueError("CA standard deduction must be fetched and positive")
+    # Line 7's box-6 rule drops a personal exemption exactly when someone else
+    # can claim that filer, so a short personal count is the claimable case.
+    claimable = personal_count < (2 if status in ("mfj", "qss") else 1)
+    if deduction_method == "standard" and claimable:
+        raise ValueError("a filer who can be claimed needs the dependent deduction worksheet")
     if deduction_method == "standard" and elected != standard:
         raise ValueError("elected standard deduction differs from the fetched CA amount")
+    if deduction_method == "dependent_worksheet":
+        if not claimable:
+            raise ValueError("the dependent deduction worksheet is only for a filer someone else can claim")
+        # Its line 5 is the smaller of the earned-income amount and line 4,
+        # the filing status's standard deduction.
+        if elected > standard:
+            raise ValueError("the dependent worksheet deduction cannot exceed the CA standard deduction")
+    # Line 18 takes the larger of the two. Only a separate filer, bound by a
+    # spouse who itemizes, or a claimable filer measured against the smaller
+    # worksheet amount can itemize below the standard deduction.
+    if deduction_method == "itemized" and status != "mfs" and not claimable and elected < standard:
+        raise ValueError("Form 540 line 18 is the larger of itemized and standard deductions; "
+                         "an itemized amount below the standard deduction understates line 18")
     personal = _amount(state_law.get("personal_exemption", {}).get("amount"), "state.personal_exemption.amount")
     dependent = _amount(state_law.get("dependent_exemption", {}).get("amount"), "state.dependent_exemption.amount")
     out.update(line_7=round(personal_count * personal, 2), line_8=round(blind_count * personal, 2),

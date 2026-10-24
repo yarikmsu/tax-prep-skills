@@ -9,6 +9,7 @@ import pytest
 from agents.lib import return_builder as B
 from agents.lib import receipt
 from agents.lib import filing_package
+from agents.lib import tie_out as T
 from agents.lib.secure_fs import secure_path, write_secure
 from agents.lib.tax_computations import compute_ca_540, compute_ca_schedule_p
 from agents.lib.tax_computations.state.ca import CA_540_COMPONENT_LINES
@@ -167,7 +168,8 @@ def case():
     ca.update(ca_filing_status="Single", ca_deduction=10000, ca_deduction_method="standard", ca_preference_adjustments=0,
               ca_preference_adjustments_confirmed=True)
     profile = {"tax_year": 2025, "filing_status": "Single", "address": {"state": "CA"},
-        "flags": {"age_65_plus_primary": True}, "dependents": [{"relationship": "child"}],
+        "flags": {"age_65_plus_primary": True, "ca_has_blind_exemption": True},
+        "dependents": [{"relationship": "child"}],
         "ca_exemptions": {"primary_can_be_claimed": False, "primary_blind": True}}
     result = {"meta": {"tax_year": 2025, "filing_status": "Single"},
               "form_1040": {"line_11_agi": 100000}, "california_540": ca}
@@ -179,10 +181,71 @@ def test_builder_reads_senior_blind_and_dependent_facts():
     out = B.build_california(result, {"state": law()}, [], p)
     # 1 personal+1 blind+1 senior, each10, plus1 dependent at30.
     assert out["line_11"] == out["line_32"] == 60
-    p["ca_exemptions"]["primary_can_be_claimed"] = True
+    p["ca_exemptions"].update(primary_can_be_claimed=True, primary_schedule_p_child=False)
+    p["flags"]["ca_has_blind_exemption"] = False  # a claimable filer is not eligible
     result["california_540"]["ca_deduction_method"] = "dependent_worksheet"
     out = B.build_california(result, {"state": law()}, [], p)
     assert out["line_7"] == out["line_8"] == out["line_9"] == 0
+
+
+@pytest.mark.parametrize("changes,message", [
+    # Line 18 is the larger of the two: a 2,000 itemized total under the
+    # 10,000 standard deduction would tax 98,000 instead of 90,000.
+    (dict(deduction=2000, deduction_method="itemized"), "larger of"),
+    # The dependent worksheet's line 5 is the smaller of its line 3 and the
+    # standard deduction, so it can never reach 60,000.
+    (dict(deduction=60000, deduction_method="dependent_worksheet", personal_count=0),
+     "cannot exceed the CA standard deduction"),
+    # Only a filer someone else can claim (no line 7 exemption) uses it.
+    (dict(deduction=5000, deduction_method="dependent_worksheet"), "only for a filer"),
+    (dict(personal_count=0), "dependent deduction worksheet"),
+])
+def test_the_deduction_method_cannot_misstate_line_18(changes, message):
+    with pytest.raises(ValueError, match=message):
+        compute_ca_540(**inputs(**changes))
+
+
+def test_a_separate_filer_and_a_claimable_filer_may_itemize_below_standard():
+    # A spouse who itemizes binds an MFS filer whatever the totals, and a
+    # claimable filer compares itemized with the smaller worksheet amount.
+    assert compute_ca_540(**inputs(filing_status="MFS", deduction=2000,
+                                   deduction_method="itemized"))["line_18"] == 2000
+    assert compute_ca_540(**inputs(personal_count=0, deduction=2000,
+                                   deduction_method="itemized"))["line_18"] == 2000
+
+
+@pytest.mark.parametrize("flag", [False, None])
+def test_the_blind_flag_must_agree_with_the_eligible_blind_filers(flag):
+    # The case's single filer is blind and unclaimable, so line 8 has one box.
+    p, result = case()
+    p["flags"]["ca_has_blind_exemption"] = flag
+    with pytest.raises(B.Blocked, match="ca_has_blind_exemption"):
+        B.build_california(result, {"state": law()}, [], p)
+
+
+@pytest.mark.parametrize("child,message", [
+    (True, "child exemption limit is not computed"),
+    (None, "primary_schedule_p_child"),
+])
+def test_a_claimable_child_cannot_take_the_full_amt_exemption(child, message):
+    # Booklet line 61: a child under 19 or a full-time student under 24 may
+    # owe AMT above 9,750 plus earned income, a limit the builder lacks.
+    p, result = case()
+    p["ca_exemptions"].update(primary_can_be_claimed=True, primary_schedule_p_child=child)
+    p["flags"]["ca_has_blind_exemption"] = False
+    result["california_540"]["ca_deduction_method"] = "dependent_worksheet"
+    with pytest.raises(B.Blocked, match=message):
+        B.build_california(result, {"state": law()}, [], p)
+
+
+def test_a_worked_family_credit_is_one_field_the_builder_and_tie_out_share():
+    p, result = case()
+    result["california_540"]["line_75"] = 1000
+    out = B.build_california(result, {"state": law()}, [], p)
+    assert out["line_78"] == 1000 + out["line_71"]
+    result["california_540"].update(out)
+    assert not any("CA Form 540 line 75" in line for line in T._eic_lines_still_zero(result))
+    assert "line_75_caleitc" not in result["california_540"]
 
 
 def test_builder_requires_explicit_preferences_and_cannot_drop_the_ca_section():

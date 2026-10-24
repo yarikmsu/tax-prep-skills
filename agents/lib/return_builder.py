@@ -1219,6 +1219,16 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
             personal += int(not spouse_claimed)
         blind = int(own_blind and not own_claimed) + int(spouse_blind and not spouse_claimed)
         senior = int(own_senior and not own_claimed) + int(spouse_senior and not spouse_claimed)
+        # The screening flag and the per-person answers describe one fact;
+        # disagreeing, the line 8 credit would follow whichever was wrong.
+        if flags.get("ca_has_blind_exemption") is not (blind > 0):
+            raise ValueError("flags.ca_has_blind_exemption must agree with the eligible blind filers in ca_exemptions")
+        # Schedule P line 22 limits a child's exemption (under 19, or a full-time
+        # student under 24, not filing jointly) to earned income plus a yearly
+        # base. The builder applies the full exemption, so it cannot price one.
+        if fs != "mfj" and own_claimed and fact("primary_schedule_p_child"):
+            raise ValueError("Schedule P line 22's child exemption limit is not computed; prepare Form 540 "
+                             "line 61 and Schedule P outside this toolkit")
         deps = profile.get("dependents")
         if not isinstance(deps, list) or any(not isinstance(d, dict) for d in deps):
             raise ValueError("profile.dependents must be the confirmed dependent list")
@@ -1234,8 +1244,6 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         method = ca.get("ca_deduction_method")
         if not isinstance(state, dict) or not isinstance(method, str):
             raise ValueError("record the CA law block and elected deduction method")
-        if (own_claimed or (fs == "mfj" and spouse_claimed)) and method == "standard":
-            raise ValueError("a filer who can be claimed needs the dependent deduction worksheet")
         components = {f"line_{n}": ca.get(f"line_{n}") for n in CA_540_COMPONENT_LINES}
         sums = category_sums(ledger)
         components["line_71"] = round(sums.get("state_withholding_ca", 0) + sums.get("ca_1099_withholding", 0), 2)

@@ -65,6 +65,14 @@ derives AGI, taxable income, tax, credit floors, every settlement line and
 stable aliases. AA70's payment/forward-election fields remain gated until its
 implementation; the pure form function can accept already-worked components.
 
+Line 18 is the larger of itemized and standard deductions, so an itemized
+amount below the standard deduction refuses except for a separate filer
+(bound by a spouse who itemizes) or a filer someone else can claim. The
+dependent worksheet is for a claimable filer only, never above the standard
+deduction (its line 5 takes the smaller), and the standard method is not.
+Claimability is read from line 7's box-6 count. `flags.ca_has_blind_exemption`
+must agree with the eligible blind filers in `ca_exemptions`.
+
 ## Schedule P
 
 Every return runs Schedule P. The standard deduction addback is derived when
@@ -77,6 +85,10 @@ limitation reversal and AMT NOL deduction. ISO spread is separate. Do not put
 the standard deduction or ISO spread in this net a second time. An unanswered
 worksheet is not zero. Schedule P line 15 uses the *unfloored* line 17 minus
 18 when Form 540 line 19 is zero. Line 25 uses Form 540 line 31 before credits.
+Schedule P line 22 limits the exemption of a child (under 19, or a full-time
+student under 24, not filing jointly) to earned income plus a yearly base;
+the builder applies the full exemption, so a claimable primary filer must
+answer `ca_exemptions.primary_schedule_p_child`, and a yes refuses.
 
 The MFS Part I line-21 worksheet adds the smaller of one exemption or the
 phaseout fraction of AMTI above the exemption-elimination ceiling. Both the

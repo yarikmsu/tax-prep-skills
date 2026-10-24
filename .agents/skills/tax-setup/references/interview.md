@@ -528,6 +528,11 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
   either filer, even if they will not, and record `primary_can_be_claimed` /
   `spouse_can_be_claimed` in `ca_exemptions`. Explicit booleans are required;
   the builder combines them with the existing senior flags and dependent list.
+  When the primary filer can be claimed and is not filing jointly, also ask
+  whether they are under 19, or a full-time student under 24, at year end →
+  `ca_exemptions.primary_schedule_p_child`. A yes stops the checked build:
+  Schedule P line 22 limits that child's AMT exemption, and the builder does
+  not compute the limit.
 - Did you receive a Form 1099-G state or local tax refund? → the existing `has_1099g_state_refund` flag; do not ask it again if already answered.
 - Any US-obligation interest or fund dividends with a California-exempt US-obligation portion? → `ca_has_us_obligation_income`.
 - Any non-California municipal interest or exempt-interest dividends taxable by California? → `ca_has_nonca_muni_interest`.

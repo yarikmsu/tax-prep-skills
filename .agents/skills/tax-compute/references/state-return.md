@@ -206,9 +206,11 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     Form 540 line 71 is the first two totals; line 73 is the third.
     Tie each to its own ledger category. Include all three exactly once in
     payments and the refund/balance calculation; none reduces tax itself.
-    (`ca_total_tax` = CA tax after exemption credits minus the separately worked
-    allowable nonrefundable credits, floored at zero, plus mental-health surcharge + `ca_amt`
-    from step 9.5 when present.)
+    (`ca_total_tax` is Form 540 line 64: line 48, which is the CA tax after
+    exemption credits plus line 34's distribution taxes less the separately
+    worked allowable nonrefundable credits, floored at zero; plus `ca_amt`
+    from step 9.5 (line 61), the mental-health surcharge (62) and line 63's
+    other taxes. The step 13 builder derives it.)
 11. Historical excess SDI/VPDI: run `compute_excess_sdi()`
     for EVERY person with any CA-wage W-2 — no trigger condition (cheap pure
     function, zeros when nothing is wrong; conditional triggers miss

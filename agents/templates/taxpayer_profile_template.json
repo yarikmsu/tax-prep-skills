@@ -48,6 +48,7 @@
   ],
   "ca_exemptions": {
     "primary_can_be_claimed": null,
+    "primary_schedule_p_child": null,
     "spouse_can_be_claimed": null,
     "primary_blind": null,
     "spouse_blind": null
