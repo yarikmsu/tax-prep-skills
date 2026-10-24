@@ -167,7 +167,7 @@ def test_rent_box_cannot_route_to_business_or_hide_without_property_evidence():
     with pytest.raises(T.TieOutError, match='rental_source'):
         T.load_ledger({'records': [row]})
     del raw['box_1']
-    with pytest.raises(ValueError, match='box1'):
+    with pytest.raises(ValueError, match='every reviewed income box'):
         classify_misc_income(raw)
 
 
