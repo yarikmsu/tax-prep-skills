@@ -79,9 +79,10 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
+| **Now, before the 2027-01-15 estimated payment** | **AA78** — let a foreign-tax filer's projection take a reviewed credit without the full AMT worksheet. **AA79** — review TY2026 for the NY and NC payment forecasts. **AA82** — check IRMAA tiers when `set` writes them. | AA78 and AA79 are refusals that stop `/tax-project` for a routine profile and for every TY2026 NY and NC forecast, in the weeks the last 2026 payment is set. AA82 is small and lands before CMS's November table. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
-| **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so this row is the reminder to fetch it. The TY2026 Form 540 also needs AA69's checked builder reviewed for that form year. |
-| **Later** | **AA47**, **AA49**, **AA50** — the crypto follow-ups AA41 filed. **AA56** — tell the shipped index's two PR numberings apart. **AA61** and **AA63** — the TY2023-2024 Form 1099-B box review, and an advisory for local tax withheld that no return here claims. AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. | AA47 turns a permanent block into a return. AA49 must be reproduced first, and AA50 is a performance change, so it needs a before-and-after benchmark. AA56 changes a test, not a return. AA61 and AA63 are P2: crypto on a 1099-B stopped with TY2024's forms, and a local amount no return claims still reaches Schedule A line 5a. AA44-AA46 are larger product extensions. |
+| **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. | Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so this row is the reminder to fetch it. The TY2026 Form 540 also needs AA69's checked builder reviewed for that form year, and AA80 waits on FTB's 2026 540NR booklet. |
+| **Later** | **AA47**, **AA49**, **AA50** — the crypto follow-ups AA41 filed. **AA56** — tell the shipped index's two PR numberings apart. **AA61** and **AA63** — the TY2023-2024 Form 1099-B box review, and an advisory for local tax withheld that no return here claims. AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. **AA81** — show the CA payment total where the reconciliation is asked. | AA47 turns a permanent block into a return. AA49 must be reproduced first, and AA50 is a performance change, so it needs a before-and-after benchmark. AA56 changes a test, not a return. AA61 and AA63 are P2: crypto on a 1099-B stopped with TY2024's forms, and a local amount no return claims still reaches Schedule A line 5a. AA44-AA46 are larger product extensions. AA81 strengthens a control that already blocks. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
 ---
@@ -179,6 +180,80 @@ Trigger and range behavior is documented in
   return, deciding between them by whether the payment is ever claimed
   without one. Found while fixing AA59's Schedule A recipe.
 
+- **AA78 (P1, S): Let a foreign-tax filer's projection take its credit without
+  the full AMT worksheet.** With no `amt_projection` worksheet, `/tax-project`
+  refuses the payment projection when `has_foreign_tax_paid` is true or the
+  profile carries a prior-year AMT credit (`_unmodeled_credit_screen` in
+  `agents/lib/projection/exposure.py`). The refusal is right on its own terms:
+  the projection's foreign tax credit stays zero unless that worksheet supplies
+  `regular_foreign_tax_credit`, so the AMT-excluding estimate would over-state
+  the payment. But foreign tax paid is routine for anyone holding an
+  international fund in a taxable account, and many such filers can take the
+  credit under §904(j)'s election without Form 1116. Before AA42 they got a
+  silent over-statement; now they get a refusal whose easiest way around is
+  setting the flag false, which the return's own foreign tax credit section
+  also keys on (`result_template.json`). Accept a reviewed regular foreign tax
+  credit on its own, keep the AMT-not-modeled note, and keep refusing a
+  prior-year AMT credit, whose filers are the ones the worksheet exists for. If
+  the path is limited to the §904(j) election, its ceiling is statutory but
+  must still be fetched or listed in AGENTS.md §2. Found by AA42's review.
+
+- **AA79 (P1, M): Review TY2026 for the NY and NC payment forecasts.** AA43
+  shipped for the TY2025 form year only: `_REVIEWED_YEARS` in
+  `agents/lib/tax_computations/state/planning.py` holds 2025 for CA, NY and
+  NC, and `/tax-project` refuses a TY2026 NY or NC forecast ("State forecast
+  form year has not been reviewed"). TY2025's extended deadline passed on
+  2026-10-15, so a TY2025 forecast prices no payment still to be made, while
+  the last 2026 estimate is due 2027-01-15. As of a live check on 2026-10-24,
+  New York's [2026 IT-2105 instructions](https://www.tax.ny.gov/pdf/2026/inc/it2105i_2026.pdf)
+  and North Carolina's [2026 estimator worksheet](https://www.ncdor.gov/taxes-forms/individual-income-tax/estimated-income-tax/2026-individual-income-tax-estimator-worksheet)
+  are published. Decide whether the review can rest on those, re-reading the
+  TY2025 forms' deduction, credit and local contracts against them, or must
+  wait for the TY2026 IT-201 and D-400; if it must wait, add AA79 to the
+  blocked table. CA's TY2026 review is Y8's, through AA69's checked builder.
+  Found by AA43's review.
+
+- **AA80 (P2, M): Review AA74's part-year return for TY2026, with the renter's
+  credit six-month test.** AA74 computes a reviewed CA part-year return for
+  TY2025 only. The renter's credit is computed on neither form: it is a manual
+  capability rule, and on the 540NR path `agents/lib/capabilities.py` swaps
+  only the line, to Form 540NR line 61. Its note warns one way, that omitting
+  an eligible credit over-states CA tax, but a part-year filer's likelier error
+  is the opposite. The 540NR qualification record asks whether the filer was a
+  California resident for at least six full months of the year and paid rent
+  for at least half of it on a California principal residence
+  ([2025 540NR booklet](https://www.ftb.ca.gov/forms/2025/2025-540nr-booklet.pdf),
+  page 25), and one who fails either gets no credit. A banner does not fix a
+  filed position nothing asked about: when FTB publishes the 2026 booklet,
+  review the part-year return against it and give the rule a 540NR note naming
+  that test, as `ca_use_tax` and `ca_noniso_amt` already have, with a test
+  pinning the wording. Found by AA74's review.
+
+- **AA81 (P2, S): Show the CA payment total where the reconciliation is
+  asked.** The CA builder refuses until `estimated_payments.ca_verified` is
+  true, the answer that the payments were reconciled against the FTB account
+  (`agents/lib/return_builder.py`). It refuses a repeated `payment_id`, but one
+  payment entered twice under two ids passes once that answer is given, and
+  under-states the balance due by the whole payment. Reconciling against the
+  account is the right control, since two equal payments on one day can both
+  be real, but a total is easier to check against the account than a list.
+  Where `ca_verified` is asked, state the payment count and the total claimed
+  for the credited year, and record a question in `answers.md`, not a refusal,
+  for two records sharing state, credited year, kind, person, date and amount.
+  Found by AA70's review.
+
+- **AA82 (P3, XS): Check the IRMAA tiers when `set` writes them.** The
+  fetcher's `set` checks a `federal.irmaa.tiers.*` list for shape and order
+  (`_check_ascending` in `agents/lib/tax_law_fetcher.py`). AA53's
+  `validate_irmaa_tiers` (`agents/lib/tax_computations/federal/irmaa.py`),
+  with the statutory row count, the printed boundaries and the first-dollar
+  refusal, runs only when `/tax-roth-convert` or `/tax-project` reads the
+  table. A malformed table still cannot price anything, but the refusal
+  arrives at planning time, far from the fetch that caused it. Call the same
+  validator from `set` with the cache's `tax_year`, the premium year the read
+  already uses, before CMS publishes the next premium-year table in November.
+  Found by AA53's review.
+
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
 These are extensions, not unfinished portions of the shipped v1 deliveries.
@@ -261,6 +336,7 @@ and vendor-CI rulings remain closed.
 | **Y1** | The owner enabling Discussions. Verified 2026-10-15: public, Discussions off, 0 stars. |
 | **Y8** | The 2027 §6621 quarters, published one quarter at a time; the IRS's 2026 yearly average exchange rates, in January; and the TY2026 state tables, NY's included. |
 | **AA48** | The IRS publishing the TY2026 Form 8949 instructions. The entry dates the last check, and the season-open runbook's Form 8949 step repeats it. |
+| **AA80** | FTB publishing the 2026 Form 540NR booklet, whose renter's credit qualification record and line 61 the review reads. |
 
 ## Declined, with the reasoning kept so it is not re-proposed
 
