@@ -602,13 +602,21 @@ BELOW-AGI deductions; they never touch line 10/11.
 - **Overtime is the FLSA premium portion ONLY** (the "half" of
   time-and-a-half), not gross overtime pay — pass the premium, and surface
   the function's warning note.
+  Follow the [covered-year source review](../../tax-parse/references/tips-overtime.md)
+  and require `tips_source_review` / `overtime_source_review` in `answers.md`
+  where applicable. TY2026 W-2 TP, NEC1b and MISC13a supply cash-tip evidence;
+  TT, NEC1d and MISC14 ALREADY supply the overtime premium. Do not divide it
+  again or add any of these subamounts to wages/business income. Occupation
+  codes gate tips, not overtime; preserve raw source evidence separately
+  from eligible/capped engine inputs and the allowed deduction.
 - **SSTB tips are excluded for EVERYONE** — tips earned in a specified service
   trade or business (§199A(d)(2)) don't qualify whether the earner is a W-2
   employee OF the SSTB or self-employed IN it. Screen SSTB out of
   `qualified_tips` for both sources before calling (v1 doesn't model it).
   **Transition-relief exception:** a worker in an occupation that CUSTOMARILY
   and regularly received tips before 2025 is treated as NON-SSTB under the
-  final Schedule 1-A instructions' transition relief (until final regs) — do
+  applicable Schedule 1-A instructions' transition relief (until the separate
+  SSTB regulations end it; the April 2026 occupation/tip regulations do not) — do
   NOT strip those tips even if the business is otherwise an SSTB.
 - **Unreported / employer-allocated tips (Form 4137) — MANUAL, CONDITIONAL:**
   those amounts belong on 1040 line 1c (wages) and Schedule 2 line 5 (employee

@@ -57,8 +57,11 @@ NII, and active business income/UI/PFL must not be swept into NII with it.
 
 Box 12's section 409A deferrals are informational; box 15 is the income.
 Never force an unrouted box into the mapped ones, and do not repeat box 11
-in `other_business_gross`. Capture TY2026 13a/13b/14 tips,
-occupation and overtime labels for the separate AA64 qualification review.
+in `other_business_gross`. Capture TY2026 13a cash tips,
+13b TTOC and 14 qualified overtime premium for the
+[covered-year tip/overtime review](tips-overtime.md). Both monetary subamounts
+are already included in box3: classify the gross once, then review the
+informational deduction inputs separately. Neither subamount is extra receipts.
 
 Sources: [TY2025 recipient instructions](https://www.irs.gov/pub/irs-prior/f1099msc--2025.pdf),
 [TY2025 payer instructions](https://www.irs.gov/pub/irs-prior/i1099mec--2025.pdf),

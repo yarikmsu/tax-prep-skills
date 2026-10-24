@@ -125,7 +125,7 @@
     "fl_new_homestead": false,
     "fl_homestead_unfiled": false,
     "has_qualified_tips": false,
-    "_comment_obbba_sch1a": "has_qualified_tips / has_qualified_overtime / has_car_loan_interest drive the OBBBA Schedule 1-A BELOW-AGI deductions (line 13b, TY2025-2028). Overtime is the FLSA premium portion only. These are computed, not gated.",
+    "_comment_obbba_sch1a": "has_qualified_tips / has_qualified_overtime / has_car_loan_interest drive the OBBBA Schedule 1-A BELOW-AGI deductions (line 13b, TY2025-2028). Review source year/revision: TY2026 W-2 TP/TT, NEC1b/1d and MISC13a/14 are included in income, never extra income; TT/1d/14 already contain the FLSA premium. Tip occupation eligibility and overtime FLSA eligibility are separate. Record the applicable source-review answers; the deduction engine does not screen eligibility.",
     "has_qualified_overtime": false,
     "has_car_loan_interest": false,
     "has_unreported_or_allocated_tips": null,
