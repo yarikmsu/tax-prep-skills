@@ -100,7 +100,7 @@ def _workspace(tmp_path, form_1040=None, *, records=(), law=None, extra=None,
         document = f"doc{i}.pdf"
         (ws / "documents" / document).write_bytes(b"%PDF-1.4 synthetic\n")
         PR.write_record(ws, {"doc_id": f"d{i}", "file": f"documents/{document}",
-                             "form_type": "1099-MISC", "payer": "synthetic",
+                             "form_type": "synthetic information return", "payer": "synthetic",
                              "person": "primary", "key_boxes": key_boxes})
     PR.write_ledger(ws)
     return ws

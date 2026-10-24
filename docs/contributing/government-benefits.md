@@ -53,6 +53,11 @@ blocks a selected CA return, not a federal-only return. The metadata must
 reconcile to both category totals and the revision's boxes. Unknown or malformed
 facts refuse before a ledger is written.
 
+When the [MISC workpaper](misc-income.md) applies, its recomputed total supplies
+the benefits workpaper's non-benefit input. Do not add MISC a second time or
+reuse an older benefits input that already contained it. The source-only
+benefits calculation remains unchanged; its caller composes the inputs.
+
 `schedule_1_government_benefits` holds `other_income` and
 `other_income_confirmed`, alongside the derived gross, reductions, taxable
 amounts and total. Positive source benefits require an explicit non-benefit

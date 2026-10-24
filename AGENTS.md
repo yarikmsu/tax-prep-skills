@@ -411,6 +411,7 @@ in full, so a new file in either goes in this table.
 | Paystub projection intake | `docs/contributing/paystub-intake.md` |
 | Individual IRA basis | `docs/contributing/individual-ira-basis.md` |
 | Government benefits and Schedule 1 | `docs/contributing/government-benefits.md` |
+| 1099-MISC source classification | `docs/contributing/misc-income.md` |
 | Crypto account FIFO | `docs/contributing/crypto-accounts.md` |
 | Charitable vintage accounting | `docs/contributing/charitable-carryovers.md` |
 | State effects in income planning | `docs/contributing/state-planning.md` |

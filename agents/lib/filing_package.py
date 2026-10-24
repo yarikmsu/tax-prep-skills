@@ -141,17 +141,37 @@ def _derived_schedules(result: dict) -> list:
     sch_c = result.get("schedule_c") or {}
     government = result.get("schedule_1_government_benefits")
     government_computed = isinstance(government, dict) and type(government.get("computed_tax_year")) is int
+    if isinstance(government, dict) and not government_computed and (
+            government.get("other_income") is not None or government.get("computed_tax_year") is not None
+            or any(government.get(k) for k in ("unemployment_gross", "family_leave_gross", "total"))):
+        raise FilingPackageError("Government-benefits workpaper needs its computed tax-year witness")
     government_income = government_computed and any(_field_num(government, k, "government benefits") != 0 for k in
         ("unemployment_gross", "family_leave_gross", "unemployment_repaid"))
     if government_computed and round(_field_num(government, "total", "government benefits total"), 2) != round(
             _field_num(f1040, "line_8_schedule1_other", "line_8"), 2):
         raise FilingPackageError("Government-benefits workpaper total must equal Form1040 line8")
+    other_income = result.get("schedule_1_other_income")
+    other_computed = isinstance(other_income, dict) and type(other_income.get("computed_tax_year")) is int
+    if isinstance(other_income, dict) and not other_computed and (
+            other_income.get("remaining_income") is not None or other_income.get("computed_tax_year") is not None
+            or any(other_income.get(k) for k in ("miscellaneous_other_income", "total"))):
+        raise FilingPackageError("Schedule1 other-income workpaper needs its computed tax-year witness")
+    misc_income = other_computed and _field_num(other_income, "miscellaneous_other_income", "MISC other income") != 0
+    if other_computed:
+        total = _field_num(other_income, "total", "non-benefit Schedule1 total")
+        target = (government.get("other_income") if government_computed else
+                  f1040.get("line_8_schedule1_other"))
+        if round(total, 2) != round(_field_num({"target": target}, "target", "Schedule1 other-income settlement"), 2):
+            raise FilingPackageError("Schedule1 other-income workpaper must equal its actual income component")
     out = []
     if (_field_num(f1040, "line_8_schedule1_other", "line_8") != 0
             or _field_num(f1040, "line_10_adjustments", "line_10") != 0
-            or _section_present(result, "schedule_c") or government_income):
+            or _section_present(result, "schedule_c") or government_income or misc_income):
         out.append(("Schedule 1 (Additional Income and Adjustments)", "01",
-                    "schedule_1_government_benefits" if government_computed else None))
+                    "schedule_1_government_benefits" if government_computed else
+                    "schedule_1_other_income" if other_computed else None))
+        if government_computed and other_computed:
+            out.append(("Schedule 1 non-benefit income worksheet", "01", "schedule_1_other_income"))
     # Schedule 1-A (OBBBA tips/overtime/car-loan/senior below-AGI deductions) —
     # gated on the computed line-13b total. The official form prints Attachment
     # Sequence No. "1A"; _seq_sort_key parses it to (1, "A"), which sorts after

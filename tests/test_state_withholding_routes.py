@@ -64,6 +64,11 @@ def test_ca_nonwage_withholding_ties_without_a_w2(form):
         result.update(meta={"tax_year":2025},form_1040={"line_8_schedule1_other":0})
         result["schedule_1_government_benefits"] = T.derive_government_workpaper(
             T.load_ledger({"records":records}),result,{"tax_year":2025})
+    if form == "1099-MISC":
+        from tests.test_misc_income import source
+        records[0]["misc_income"] = source(box_3=0,box_3_business=0,box_3_other=0,
+            box_4=0,box_5=0,box_6=0,box_7=False)
+        result["meta"] = {"tax_year":2025}
     assert not report(records, result).failed
     bad = copy.deepcopy(result)
     bad["california_540"] = {"ca_withholding_box17":300}

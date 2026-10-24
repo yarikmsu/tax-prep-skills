@@ -345,6 +345,12 @@ The over-withholding credit goes to 1040 line 25c.
 
 **NIIT (Form 8960):**
 If MAGI > threshold (from tax_law JSON): 3.8% on lesser of net investment income or excess MAGI.
+Include 1099-MISC box8 substitute interest/dividend payments in the reviewed
+NII input (Form8960 line7 under the [TY2025 instructions](https://www.irs.gov/instructions/i8960));
+they are already ordinary Schedule1 income and must not be added to AGI again.
+Do not include all MISC income, active business income or UI/PFL indiscriminately.
+Confirm the covered year's Form8960 worksheet and deductible investment expenses.
+
 
 ### Step 9: Compute Payments and Result (Form 1040 Lines 25-38)
 

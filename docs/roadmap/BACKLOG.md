@@ -363,6 +363,8 @@ AA57 finds why.
   review.
 
 - **AA67 (P1, S): Map Form 1099-MISC's boxes by the current form.**
+  Implementation: [PR #23](https://github.com/yarikmsu/tax-prep-skills/pull/23),
+  open for review; not merged. Depends on PR #22.
   `/tax-parse`'s `self_employment_gross` row reads "1099-MISC boxes 3-7", the
   layout from before nonemployee compensation moved to Form 1099-NEC. On the
   Rev. April 2025 Form 1099-MISC, box 4 is federal income tax withheld, box 7
