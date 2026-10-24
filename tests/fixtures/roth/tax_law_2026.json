@@ -118,6 +118,18 @@
           {
             "magi_threshold": 133000,
             "annual_surcharge_per_person": 2800
+          },
+          {
+            "magi_threshold": 167000,
+            "annual_surcharge_per_person": 3500
+          },
+          {
+            "magi_threshold": 200000,
+            "annual_surcharge_per_person": 4000
+          },
+          {
+            "magi_threshold": 500000,
+            "annual_surcharge_per_person": 5000
           }
         ],
         "mfj": [
@@ -128,8 +140,21 @@
           {
             "magi_threshold": 266000,
             "annual_surcharge_per_person": 2800
+          },
+          {
+            "magi_threshold": 334000,
+            "annual_surcharge_per_person": 3500
+          },
+          {
+            "magi_threshold": 400000,
+            "annual_surcharge_per_person": 4000
+          },
+          {
+            "magi_threshold": 750000,
+            "annual_surcharge_per_person": 5000
           }
-        ]
+        ],
+        "mfs": []
       }
     },
     "capital_gains_rates": {

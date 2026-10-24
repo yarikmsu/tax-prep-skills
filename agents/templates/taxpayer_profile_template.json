@@ -251,6 +251,8 @@
     "_comment_ira_basis": "Individual Form 8606 line 14 balances belong in ira_basis_by_taxpayer (primary/spouse). A legacy scalar maps to primary on an individual return; MFJ requires confirmed ira_basis_owner. Conflicting scalar/map or ira_basis_unresolved blocks. Never pool spouses; see docs/contributing/individual-ira-basis.md."
   },
   "rental_return": null,
+  "medicare_lived_apart_all_year": null,
+  "_comment_medicare_lived_apart_all_year": "For MFS Roth IRMAA planning, explicitly confirm whether spouses lived apart throughout the income year. True selects the unmarried Medicare table; false requires the fetched separate-return table. Null is unanswered, never a single-table fallback. Projection records this answer in its dedicated full-year worksheet instead.",
   "_comment_rental_return": "Select residential_rental_v1 only after reviewing docs/contributing/rental-income.md and the tax-compute rental reference. No placeholder confirmations: every scope/property/source/asset/history/MAGI fact is explicit. Review QBI, NIIT, federal/CA AMT and affected forms against the derived input digest. Outside-scope rentals retain rental_income.",
   "ca_credits": {
     "amt_opening_confirmed": false,

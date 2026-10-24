@@ -17,6 +17,11 @@ payment, 30% Jan 15 — R&TC §19136.1). Read-only: never modifies result.json o
 taxpayer_profile.json. Re-runnable quarterly.
 Reviewed full-year NY/NC forecasts also produce equal-quarter IT-2105/NC-40
 annual targets, with complete state/local worksheets and fetched safe-harbor law.
+Reviewed Form 6251 forecasts add AMT and applicable credits to federal payments.
+Medicare IRMAA is a separate per-beneficiary premium estimate using the normal
+two-year lookback and that premium year's independently fetched law. CMS
+publishes that table the November before it applies, so a mid-year run
+normally reports the projected MAGI and "IRMAA not modeled", not a dollar figure.
 
 ## Prerequisites
 - `taxpayer_profile.json` and `tax_law_{year}.json` exist (else: run `/tax-setup {year}` first).
@@ -132,6 +137,10 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    `/tax-setup`'s §170(p) search for the year alone and run again, the answers unchanged.
    Validate inputs (no shell metacharacters; numeric fields numeric). Immediately after
    writing the file, run `sh agents/lib/run.sh -m agents.lib.secure_fs projection_inputs.json`.
+   Complete the [AMT and IRMAA interview](references/amt-irmaa.md) before claiming
+   either exposure is modeled. Null AMT inputs leave an explicitly incomplete,
+   potentially low federal estimate; present unfinished/unsupported inputs refuse.
+   Unpublished future Medicare law leaves the premium estimate unresolved.
 
 3. **Resolve prior-year baseline.** If `archive/{year-1}/` exists, read its
    `result.json` to pre-fill `recurring_from_prior` (interest/dividends) as editable
@@ -237,10 +246,18 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
    **`as_of_date` must be null, not empty, to mean "absent".** In an OPEN year every PRESENT value is validated and a malformed one is refused outright — the run produces no report at all, because substituting today's date would silently relabel the YTD figures beside it. A workspace created from an older template may carry `"as_of_date": ""` (or `0`), which used to fall through to today's date and now blocks: edit it to `null`, to the MM-DD the YTD figures are current to, or pass `--as-of MM-DD` for this run.
 
-   **Read these eighteen things out of the payload before you summarize anything.** The
+   **Read these twenty things out of the payload before you summarize anything.** The
    markdown in the next step carries them in prose, but the audit line below is written
    from HERE, and `safe_harbor.covered` alone is not the verdict:
 
+   - **`federal.amt`**, **`federal.amt_note`** — null AMT is unmodeled, never zero.
+     Keep the AMT-excluding estimate and payment caveat visible even when the
+     harbor says covered. A modeled amount and the FTC/Form 8801 credits already
+     enter total tax, balance and payment targets; never add them a second time.
+   - **`irmaa`** — read `modeled`, `note`, income/premium years, MAGI and beneficiary
+     count. Report modeled annual surcharges per beneficiary and household separately
+     from income tax. An unavailable premium-year cache gives no verified future
+     dollar estimate; preserve that limitation instead of substituting current rates.
    - **`safe_harbor.de_minimis`** — true means the PENALTY target is met by §6654(e)(1)
      (projected tax minus WITHHOLDING under $1,000), so `covered` reads true and every
      voucher prints $0.00. It says NOTHING about whether tax is due: the test is a

@@ -722,6 +722,8 @@ def render_markdown(r: ProjectionReport) -> str:
     lines = [f"# Mid-Year Tax Projection — TY{r.year} (as of {r.as_of})", ""]
     if r.stale_as_of_note:
         lines += [r.stale_as_of_note, ""]
+    if f.amt_note:
+        lines += [f"> **{f.amt_note}**", ""]
 
     lines += ["## Assumptions", ""]
     lines.append(f"- Elapsed fraction of year: {r.proj.elapsed_fraction:.0%}")
@@ -777,7 +779,12 @@ def render_markdown(r: ProjectionReport) -> str:
         lines.append(f"| QBI deduction | {_money(f.qbi_deduction)} |")
     lines += [f"| Taxable income | {_money(f.taxable_income)} |",
               f"| Tax before credits{' (QDCG worksheet)' if f.used_qdcg else ''} | {_money(f.tax_before_credits)} |",
-              f"| Child Tax Credit | {_money(-f.ctc)} |",
+              f"| Child Tax Credit | {_money(-f.ctc)} |"]
+    if f.amt is not None:
+        lines += [f"| AMT (Form 6251) | {_money(f.amt)} |",
+                  f"| Foreign tax credit | {_money(-f.foreign_tax_credit)} |",
+                  f"| Prior minimum tax credit (Form 8801) | {_money(-f.minimum_tax_credit)} |"]
+    lines += [
               f"| SE tax | {_money(f.se_tax)} |",
               f"| Additional Medicare | {_money(f.additional_medicare)} |",
               f"| NIIT (Form 8960) | {_money(f.niit)} |",
@@ -788,6 +795,18 @@ def render_markdown(r: ProjectionReport) -> str:
               ""]
     if r.mfs_deduction_note:
         lines += [f"> **⚠ {r.mfs_deduction_note}**", ""]
+
+    if r.irmaa is not None:
+        premium = r.irmaa
+        lines += ["## Medicare IRMAA premium exposure", "",
+                  f"Income year {premium['income_year']} generally affects premium year {premium['premium_year']} (two-year lookback).", ""]
+        if premium["projected_magi"] is not None:
+            lines += [f"- Projected Medicare MAGI: {_money(premium['projected_magi'])}",
+                      f"- Declared beneficiaries: {premium['beneficiaries']}"]
+        if premium["modeled"]:
+            lines += [f"- Annual Part B + D surcharge per beneficiary: {_payment_money(premium['annual_surcharge_per_beneficiary'])}",
+                      f"- Annual household surcharge: {_payment_money(premium['annual_household_surcharge'])}"]
+        lines += [f"> {premium['note']}", ""]
 
     lines += ["## Safe harbor analysis", "",
               "| Test | Amount |", "|---|---:|",

@@ -2,6 +2,7 @@
 import dataclasses
 import datetime
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -93,29 +94,22 @@ def test_net_investment_income_loss_floored():
 
 
 def test_irmaa_tiers_sorted():
-    law = {"federal": {"irmaa": {"tiers": {"mfj": [
-        {"magi_threshold": 266000, "annual_surcharge_per_person": 2800},
-        {"magi_threshold": 212000, "annual_surcharge_per_person": 1000},
-    ]}}}}
+    law = _load("tax_law_2026.json")
+    law["federal"]["irmaa"]["tiers"]["mfj"].reverse()
     tiers = rl._irmaa_tiers(law, "MFJ")
-    assert [t["magi_threshold"] for t in tiers] == [212000, 266000]
+    assert [t["magi_threshold"] for t in tiers] == [212000, 266000, 334000, 400000, 750000]
 
 
 def test_irmaa_tiers_malformed_threshold_raises():
-    # A present-but-bad tier must NOT be silently dropped (would vanish a real crossing).
-    law = {"federal": {"irmaa": {"tiers": {"mfj": [
-        {"magi_threshold": 212000, "annual_surcharge_per_person": 1000},
-        {"magi_threshold": "bad", "annual_surcharge_per_person": 2800},
-    ]}}}}
+    law = _load("tax_law_2026.json")
+    law["federal"]["irmaa"]["tiers"]["mfj"][1]["magi_threshold"] = "bad"
     with pytest.raises(rl.RothLadderError, match="magi_threshold"):
         rl._irmaa_tiers(law, "MFJ")
 
 
 def test_irmaa_tiers_malformed_surcharge_raises():
-    # A valid threshold with a bad surcharge would otherwise flag a tier at $0/yr.
-    law = {"federal": {"irmaa": {"tiers": {"mfj": [
-        {"magi_threshold": 212000},  # missing surcharge
-    ]}}}}
+    law = _load("tax_law_2026.json")
+    del law["federal"]["irmaa"]["tiers"]["mfj"][1]["annual_surcharge_per_person"]
     with pytest.raises(rl.RothLadderError, match="annual_surcharge_per_person"):
         rl._irmaa_tiers(law, "MFJ")
 
@@ -126,32 +120,90 @@ def test_irmaa_tiers_empty_degrades():
 
 
 def test_irmaa_surcharge_picks_highest_crossed_tier():
-    tiers = [{"magi_threshold": 212000, "annual_surcharge_per_person": 1000},
-             {"magi_threshold": 266000, "annual_surcharge_per_person": 2800}]
+    tiers = rl._irmaa_tiers(_load("tax_law_2026.json"), "MFJ")
     assert rl._irmaa_surcharge(200000, tiers) == 0.0
     assert rl._irmaa_surcharge(220000, tiers) == 1000.0
     assert rl._irmaa_surcharge(300000, tiers) == 2800.0
 
 
-# 42 U.S.C. §1395r(i)(3)(C)(i)(III): every tier but the top begins at "More than"
-# its threshold, the top at "At least" its own; CMS's 2026 tables say "Greater
-# than $109,000" and "Greater than or equal to $500,000". Three tiers, so the
-# boundary is asserted on a lower, a middle and the top one.
-_STATUTE_TIERS = [{"magi_threshold": 109000, "annual_surcharge_per_person": 1000},
-                  {"magi_threshold": 205000, "annual_surcharge_per_person": 2800},
-                  {"magi_threshold": 500000, "annual_surcharge_per_person": 3600}]
+# 42 USC1395r(i)(3)(C)(i)(III) has five surcharge tiers. Synthetic surcharges
+# pair with the CMS2026 printed single thresholds: strict lower, inclusive top.
+_STATUTE_TIERS = [{"magi_threshold":t,"annual_surcharge_per_person":s} for t,s in
+                 [(109000,1000),(137000,2000),(171000,2700),(205000,2800),(500000,3600)]]
 
 
 def test_irmaa_lower_tiers_start_above_their_threshold():
     assert rl._irmaa_surcharge(109000, _STATUTE_TIERS) == 0.0
     assert rl._irmaa_surcharge(109000.01, _STATUTE_TIERS) == 1000.0
-    assert rl._irmaa_surcharge(205000, _STATUTE_TIERS) == 1000.0
+    assert rl._irmaa_surcharge(205000, _STATUTE_TIERS) == 2700.0
     assert rl._irmaa_surcharge(205000.01, _STATUTE_TIERS) == 2800.0
 
 
 def test_irmaa_top_tier_starts_at_its_threshold():
     assert rl._irmaa_surcharge(499999.99, _STATUTE_TIERS) == 2800.0
     assert rl._irmaa_surcharge(500000, _STATUTE_TIERS) == 3600.0
+
+
+@pytest.mark.parametrize("size",[1,2,3,4,6])
+def test_irmaa_partial_or_extra_table_refuses_instead_of_promoting_last_row(size):
+    law=_load("tax_law_2026.json")
+    rows=law["federal"]["irmaa"]["tiers"]["mfj"]
+    law["federal"]["irmaa"]["tiers"]["mfj"]=(rows*2)[:size]
+    with pytest.raises(rl.RothLadderError,match="complete statutory"):
+        rl._irmaa_tiers(law,"MFJ")
+
+
+@pytest.mark.parametrize("bad",[True,None,math.nan,math.inf,-1,0,"1000",10**1000])
+@pytest.mark.parametrize("field",["magi_threshold","annual_surcharge_per_person"])
+def test_irmaa_rows_refuse_nonfinite_or_invalid_numbers(field,bad):
+    law=_load("tax_law_2026.json")
+    law["federal"]["irmaa"]["tiers"]["mfj"][1][field]=bad
+    with pytest.raises(rl.RothLadderError):
+        rl._irmaa_tiers(law,"MFJ")
+
+
+def test_irmaa_legacy_first_dollar_and_duplicate_rows_refuse():
+    law=_load("tax_law_2026.json")
+    law["federal"]["irmaa"]["tiers"]["mfj"][0]["magi_threshold"]+=1
+    with pytest.raises(rl.RothLadderError,match="first-dollar"):
+        rl._irmaa_tiers(law,"MFJ")
+    law=_load("tax_law_2026.json")
+    law["federal"]["irmaa"]["tiers"]["mfj"][1]=law["federal"]["irmaa"]["tiers"]["mfj"][0].copy()
+    with pytest.raises(rl.RothLadderError,match="duplicates"):
+        rl._irmaa_tiers(law,"MFJ")
+
+
+def test_qss_irmaa_uses_single_and_mfs_needs_evidence():
+    law=_load("tax_law_2026.json")
+    assert rl._irmaa_tiers(law,"QSS")[0]["magi_threshold"]==106000
+    with pytest.raises(rl.RothLadderError,match="lived-apart"):
+        rl._irmaa_tiers(law,"MFS")
+    assert rl._irmaa_tiers(law,"MFS",lived_apart=True)==rl._irmaa_tiers(law,"SINGLE")
+
+
+@pytest.mark.parametrize("year",[2018,2019])
+def test_irmaa_frozen_half_thousand_boundaries_remain_valid(year):
+    # CMS2018/2019 tables retain133500; statutory five-row/top-inclusive rule
+    # starts2019. Premium surcharges are synthetic, not copied current law.
+    thresholds=[85000,107000,133500,160000]+([500000] if year==2019 else [])
+    rows=[{"magi_threshold":t,"annual_surcharge_per_person":1000*(i+1)} for i,t in enumerate(thresholds)]
+    law={"tax_year":year,"federal":{"irmaa":{"tiers":{"single":rows}}}}
+    tiers=rl._irmaa_tiers(law,"SINGLE")
+    assert rl._irmaa_surcharge(133500,tiers,premium_year=year)==2000
+    assert rl._irmaa_surcharge(133500.01,tiers,premium_year=year)==3000
+    assert rl._irmaa_surcharge(thresholds[-1],tiers,premium_year=year)==(5000 if year==2019 else 3000)
+    rows[2]["magi_threshold"]+=1
+    with pytest.raises(rl.RothLadderError,match="first-dollar"):
+        rl._irmaa_tiers(law,"SINGLE")
+
+
+def test_irmaa_2018_cohabiting_mfs_has_one_strict_row():
+    # CMS2018 MFS table: no surcharge at85K; one surcharge row strictly above.
+    law={"tax_year":2018,"federal":{"irmaa":{"tiers":{"mfs":[
+        {"magi_threshold":85000,"annual_surcharge_per_person":4000}]}}}}
+    tiers=rl._irmaa_tiers(law,"MFS",lived_apart=False)
+    assert rl._irmaa_surcharge(85000,tiers,separate=True,premium_year=2018)==0
+    assert rl._irmaa_surcharge(85000.01,tiers,separate=True,premium_year=2018)==4000
 
 
 def test_niit_params_full_then_binary_key():
@@ -233,11 +285,11 @@ def test_niit_onset_flag_at_first_crossing_only():
 def test_irmaa_tier_flags_at_both_crossings():
     r = _build()
     irmaa_amounts = [x.amount for x in r.rungs if any("IRMAA" in f for f in x.flags)]
-    assert irmaa_amounts == [20000, 70000]  # MAGI 220000 (>212K), 270000 (>=266K)
+    assert irmaa_amounts == [20000, 70000]  # MAGI 220000 (>212K), 270000 (>266K)
 
 
 def test_irmaa_a_rung_exactly_on_a_lower_threshold_is_not_a_crossing():
-    # The fixture's MFJ tiers are 212K (lower) and 266K (top) over a 200K baseline,
+    # The fixture's first MFJ tiers are 212K and 266K over a 200K baseline,
     # so the 12K rung lands on 212K exactly: "More than", so not yet charged.
     r = _build(max_amount=24000, step=12000)
     irmaa = [c for c in r.crossings if c.kind == "irmaa"]
@@ -246,11 +298,11 @@ def test_irmaa_a_rung_exactly_on_a_lower_threshold_is_not_a_crossing():
 
 
 def test_irmaa_a_rung_exactly_on_the_top_threshold_is_a_crossing():
-    # "At least" the top threshold: the 66K rung lands on 266K and is charged.
-    r = _build(max_amount=66000, step=33000)
+    # The complete fixture's top is750K:200K baseline+550K conversion reaches it.
+    r = _build(max_amount=550000, step=110000)
     irmaa = [c for c in r.crossings if c.kind == "irmaa"]
-    assert [(c.at_amount, c.magi) for c in irmaa] == [(33000, 233000), (66000, 266000)]
-    assert "MAGI ≥ $266,000" in irmaa[1].label
+    assert (irmaa[-1].at_amount,irmaa[-1].magi)==(550000,750000)
+    assert "MAGI ≥ $750,000" in irmaa[-1].label
 
 
 def test_ltcg_15_to_20_flag_but_not_0_to_15():
@@ -692,3 +744,20 @@ def test_an_itemizer_with_recorded_inputs_is_repriced_per_rung():
     assert steps == [10000.0, 10000.0]
     assert held.schedule_a_repriced is False
     assert held.medical_floor_may_move is True
+
+
+def test_an_indexed_joint_top_tier_may_be_a_half_thousand_from_2028():
+    # (i)(3)(C)(ii): the joint top is 150% of the indexed $500,000, which
+    # (i)(5)(B) rounds to $1,000 first, so 513,000 gives 769,500. Surcharges
+    # are synthetic. Lower tiers and a first-dollar +1 still refuse.
+    rows=[{"magi_threshold":t,"annual_surcharge_per_person":1000*(i+1)}
+          for i,t in enumerate([218000,274000,342000,410000,769500])]
+    law={"tax_year":2028,"federal":{"irmaa":{"tiers":{"mfj":rows}}}}
+    assert rl._irmaa_tiers(law,"MFJ")[-1]["magi_threshold"]==769500
+    rows[1]["magi_threshold"]=274500
+    with pytest.raises(rl.RothLadderError,match="first-dollar"):
+        rl._irmaa_tiers(law,"MFJ")
+    rows[1]["magi_threshold"]=274000
+    rows[-1]["magi_threshold"]=769501
+    with pytest.raises(rl.RothLadderError,match="first-dollar"):
+        rl._irmaa_tiers(law,"MFJ")

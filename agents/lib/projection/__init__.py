@@ -1319,7 +1319,7 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
     total_tax = max(0.0, tax_before_credits - ctc) + se["se_tax"] + addl + niit
     balance = round(total_tax - proj.federal_withholding - proj.estimated_fed_paid, 2)
 
-    return FederalProjection(
+    federal = FederalProjection(
         gross_income=round(gross, 2), adjustments=round(adjustments, 2), agi=round(agi, 2),
         taxable_income=round(taxable_income, 2), tax_before_credits=round(tax_before_credits, 2),
         ctc=round(ctc, 2), se_tax=round(se["se_tax"], 2), additional_medicare=round(addl, 2),
@@ -1333,6 +1333,9 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         schedule_a_repriced=schedule_a is not None,
         schedule_a_notes=[] if schedule_a is None else schedule_a["notes"],
     )
+    from agents.lib.projection.exposure import apply_projected_amt
+    return apply_projected_amt(federal, proj, profile, tax_law, fs, proj_year,
+                               net_ltcg, cg_zero, cg_fifteen, schedule_a)
 
 
 def _de_minimis_cliff_paths(projected_tax: float, withholding: float,
@@ -2283,7 +2286,8 @@ def _validate_tax_law_year(tax_law: dict, year: int) -> None:
 
 def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
                  year: int, as_of: datetime.date,
-                 today: "datetime.date | None" = None) -> ProjectionReport:
+                 today: "datetime.date | None" = None,
+                 irmaa_tax_law: dict | None = None) -> ProjectionReport:
     """Build the report. `today` is the real date, NOT the as-of date.
 
     Optional because calendar notes and payment-lever availability need it;
@@ -2292,7 +2296,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     clock: the CLI already carries a `--today` override the tests drive.
     """
     _validate_tax_law_year(tax_law, year)
-    if inputs.get("state_projection") is not None:
+    if any(inputs.get(key) is not None for key in ("state_projection", "amt_projection", "irmaa_projection")):
         from agents.lib.projection.states import _year, validate_forecast_profile
         validate_forecast_profile(profile, year)
         _year(inputs.get("tax_year"), year, "projection_inputs.tax_year")
@@ -2311,6 +2315,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
                      inputs.get("estimated_payments_made", {}))
     proj = replace(
         proj,
+        amt_projection=inputs.get("amt_projection"),
         paychecks_remaining=paychecks_available_for_year(
             pay_frequency, year, today, proj.paychecks_remaining))
     # The same check one level out, because this `fs` reaches the state
@@ -2321,6 +2326,8 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     # failure of the two.
     fs = _canonical_status(profile.get("filing_status"), "projection")
     federal = project_federal_tax(proj, profile, tax_law, requested_year=year)
+    from agents.lib.projection.exposure import project_irmaa
+    irmaa = project_irmaa(inputs.get("irmaa_projection"), federal, fs, year, irmaa_tax_law)
     address = profile.get("address")
     resident_state = address.get("state") if isinstance(address, dict) else None
     from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
@@ -2487,6 +2494,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         safe_harbor=safe_harbor, vouchers=vouchers, w4_penalty=w4_penalty, w4_zero=w4_zero,
         ca_safe_harbor=ca_safe_harbor, ca_vouchers=ca_vouchers,
         state_payment_schedule=state_schedule,
+        irmaa=irmaa,
         voucher_catchup_note=voucher_catchup_note,
         ca_voucher_catchup_note=ca_voucher_catchup_note,
         voucher_dates_note=voucher_dates_note,
@@ -3587,6 +3595,7 @@ def _report_to_dict(r: ProjectionReport) -> dict:
         "baseline_source": r.baseline_source, "degraded": r.degraded,
         "has_prior_archive": r.has_prior_archive,
         "proj": vars(r.proj), "federal": vars(r.federal),
+        "irmaa": r.irmaa,
         "state": (vars(r.state) if r.state is not None else None),
         "safe_harbor": vars(r.safe_harbor),
         "vouchers": [vars(v) for v in r.vouchers],
@@ -3672,6 +3681,10 @@ def _main(argv: list) -> int:
 
         tax_law_path = workspace / f"tax_law_{year}.json"
         tax_law = _read_json(tax_law_path) if tax_law_path.exists() else {}
+        premium_path = workspace / f"tax_law_{year + 2}.json"
+        irmaa_law = (_read_json(premium_path)
+                     if inputs.get("irmaa_projection") is not None and premium_path.exists()
+                     else None)
         profile = _read_json(workspace / "taxpayer_profile.json")
         prior = load_prior_baseline(workspace / "archive" / str(year - 1), year - 1)
     except (WorkspaceError, ProjectionError) as e:
@@ -3683,7 +3696,7 @@ def _main(argv: list) -> int:
 
     try:
         report = build_report(inputs, profile, tax_law, prior, year, as_of,
-                              today=today)
+                              today=today, irmaa_tax_law=irmaa_law)
     except (ProjectionError, ValueError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1

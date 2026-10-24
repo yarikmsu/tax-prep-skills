@@ -11,10 +11,19 @@ map goes stale in a way the schema cannot.
 - `federal.child_tax_credit.phase_out_start`
 - `federal.additional_medicare_tax.threshold`
 - `federal.niit.threshold`
-- `federal.irmaa.tiers.<single|mfj>` — a list of
+- `federal.irmaa.tiers.<single|mfj|mfs>` — a list of
   `{magi_threshold, annual_surcharge_per_person}`, each threshold the figure
-  CMS prints. A tier applies ABOVE it, and the top tier AT it (42 U.S.C.
-  §1395r(i)(3)(C)), which `roth_ladder._irmaa_tiers_reached` applies
+  CMS prints. A tier applies ABOVE it, and from 2019 the top tier AT it
+  (42 U.S.C. §1395r(i)(3)(C)), applied by the shared `federal/irmaa.py` reader.
+  From premium year 2019 a populated unmarried/joint table needs all five
+  surcharge rows, cohabiting MFS all two. Finite positive rows must increase
+  strictly; rounded thresholds reject the old first-dollar spelling. Earlier
+  ordinary tables have four rows and 2018 MFS has one. Frozen 2018/2019
+  half-thousand boundaries are valid; indexed years use whole thousands.
+  HOH/QSS use `single`; MFS requires explicit lived-apart evidence and otherwise
+  uses `mfs`, never an unexamined unmarried default. The cache year names the
+  premium year. Projection loads its income-year-plus-two cache separately;
+  current law is not a verified future-year estimate.
 - `federal.salt_cap` — `{amount, mfs_amount}`
 - `state.{brackets,standard_deduction}`
 - `state.modifications` — optional `{tax_year, coverage_confirmed, rules}`.

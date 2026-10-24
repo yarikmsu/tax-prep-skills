@@ -183,55 +183,29 @@ def _niit_params(tax_law: dict, filing_status: "str | None") -> "tuple[float | N
     return threshold, rate
 
 
-def _irmaa_tiers(tax_law: dict, filing_status: "str | None") -> "list[dict]":
-    """Sorted IRMAA tiers for the (binary) filing status; [] when not fetched.
-
-    An EMPTY tier list is a legitimate "not applicable / not fetched" state (the
-    schema ships empty) and degrades to "IRMAA not modeled". But a PRESENT-yet-malformed
-    tier (non-object, or non-numeric threshold/surcharge) is a data error and raises —
-    silently dropping it would make a real Medicare-premium crossing vanish or render a
-    misleading $0 surcharge. Mirrors the hard-error-on-bad-data philosophy of scenario.py.
-
-    IRMAA brackets split single vs. married-filing-jointly; MFS has a special rule
-    not modeled in v1 (collapses to the single schedule — flagged in caveats).
-    """
-    irmaa = (tax_law.get("federal", {}) or {}).get("irmaa", {}) or {}
-    tiers = (irmaa.get("tiers") or {}).get(_binary_status_key(filing_status)) or []
-    cleaned = []
-    for i, t in enumerate(tiers):
-        if not isinstance(t, dict):
-            raise RothLadderError(f"IRMAA tier #{i} in tax_law is not an object: {t!r}")
-        thr = t.get("magi_threshold")
-        if not isinstance(thr, (int, float)) or isinstance(thr, bool):
-            raise RothLadderError(
-                f"IRMAA tier #{i} has a non-numeric magi_threshold: {thr!r}")
-        sur = t.get("annual_surcharge_per_person")
-        if not isinstance(sur, (int, float)) or isinstance(sur, bool):
-            raise RothLadderError(
-                f"IRMAA tier #{i} has a non-numeric annual_surcharge_per_person: {sur!r}")
-        cleaned.append({"magi_threshold": float(thr), "annual_surcharge_per_person": float(sur)})
-    return sorted(cleaned, key=lambda t: t["magi_threshold"])
+def _irmaa_tiers(tax_law: dict, filing_status: "str | None", *, lived_apart=None) -> "list[dict]":
+    """Read a complete premium-year table; empty is explicitly unmodeled."""
+    from agents.lib.tax_computations.federal.irmaa import read_irmaa_tiers
+    try:
+        return read_irmaa_tiers(tax_law, filing_status, lived_apart=lived_apart)
+    except ValueError as exc:
+        raise RothLadderError(str(exc)) from None
 
 
-def _irmaa_tiers_reached(magi: float, tiers: "list[dict]") -> int:
-    """How many of the sorted `tiers` apply at `magi`.
-
-    42 U.S.C. §1395r(i)(3)(C)(i)(III) starts every tier but the top at "More
-    than" its threshold and the top at "At least" its own, and CMS's tables say
-    "Greater than" and "Greater than or equal to" to match. A uniform `>=`
-    charged a MAGI of exactly a lower threshold one tier early; a uniform `>`
-    would undercharge at exactly the top one.
-    """
-    top = len(tiers) - 1
-    return sum(1 for i, t in enumerate(tiers)
-               if magi > t["magi_threshold"]
-               or (i == top and magi == t["magi_threshold"]))
+def _irmaa_tiers_reached(magi: float, tiers: "list[dict]", *, separate=False, premium_year=2020) -> int:
+    from agents.lib.tax_computations.federal.irmaa import irmaa_tiers_reached
+    try:
+        return irmaa_tiers_reached(magi, tiers, separate=separate, premium_year=premium_year)
+    except ValueError as exc:
+        raise RothLadderError(str(exc)) from None
 
 
-def _irmaa_surcharge(magi: float, tiers: "list[dict]") -> float:
-    """Per-beneficiary annual surcharge for the highest tier that applies at magi."""
-    reached = _irmaa_tiers_reached(magi, tiers)
-    return tiers[reached - 1]["annual_surcharge_per_person"] if reached else 0.0
+def _irmaa_surcharge(magi: float, tiers: "list[dict]", *, separate=False, premium_year=2020) -> float:
+    from agents.lib.tax_computations.federal.irmaa import irmaa_surcharge
+    try:
+        return irmaa_surcharge(magi, tiers, separate=separate, premium_year=premium_year)
+    except ValueError as exc:
+        raise RothLadderError(str(exc)) from None
 
 
 def _resolve_basis(profile: dict, ira_basis, ira_value, ira_owner=None) -> "tuple[bool, float | None, float | None]":
@@ -302,7 +276,9 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
 
     nii = _net_investment_income(base_inputs)
     niit_threshold, niit_rate = _niit_params(tax_law, filing_status)
-    irmaa_tiers = _irmaa_tiers(tax_law, filing_status)
+    lived_apart = profile.get("medicare_lived_apart_all_year")
+    irmaa_tiers = _irmaa_tiers(tax_law, filing_status, lived_apart=lived_apart)
+    irmaa_separate = _full_status_key(filing_status) == "mfs" and lived_apart is False
     cg_zero = rate_kwargs.get("cg_zero_limit")
     cg_fifteen = rate_kwargs.get("cg_fifteen_limit")
     preferential = (max(0.0, base_inputs.get("capital_gains", 0.0))
@@ -310,9 +286,9 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
                           max(0.0, base_inputs.get("ordinary_dividends", 0.0))))
 
     base_niit = compute_niit(base_out["agi"], nii, niit_threshold, rate=niit_rate)
-    base_irmaa_surcharge = _irmaa_surcharge(base_out["agi"], irmaa_tiers)
+    base_irmaa_surcharge = _irmaa_surcharge(base_out["agi"], irmaa_tiers, separate=irmaa_separate, premium_year=year)
     # IRMAA tiers already in effect at $0 are not "crossings"; only flag NEW tiers.
-    base_irmaa_idx = _irmaa_tiers_reached(base_out["agi"], irmaa_tiers)
+    base_irmaa_idx = _irmaa_tiers_reached(base_out["agi"], irmaa_tiers, separate=irmaa_separate, premium_year=year)
 
     amounts = parse_sweep(max_amount, step)
     # When pro-rata is modeled, truncate the sweep at the IRA balance so every rung is an
@@ -406,10 +382,10 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
 
         # IRMAA tiers — each new tier crossed by the conversion. est_annual_cost is the
         # INCREMENT over the previously-crossed tier so the crossings list sums correctly.
-        tiers_now = _irmaa_tiers_reached(scen["agi"], irmaa_tiers)
+        tiers_now = _irmaa_tiers_reached(scen["agi"], irmaa_tiers, separate=irmaa_separate, premium_year=year)
         while tiers_now > irmaa_crossed:
             tier = irmaa_tiers[irmaa_crossed]
-            at_least = irmaa_crossed == len(irmaa_tiers) - 1
+            at_least = year >= 2019 and irmaa_crossed == len(irmaa_tiers) - 1
             irmaa_crossed += 1
             incremental = round(tier["annual_surcharge_per_person"] - last_irmaa_surcharge, 2)
             last_irmaa_surcharge = tier["annual_surcharge_per_person"]
@@ -587,8 +563,9 @@ def render_markdown(r: LadderReport) -> str:
               "is per beneficiary; double it if both spouses are on Medicare.",
               "- Marginal-rate column already reflects LTCG bracket bumping (the QDCG "
               "worksheet stacks the conversion under preferential income).",
-              "- MFS/HOH use the single-status IRMAA schedule (`federal.irmaa.tiers` "
-              "is keyed `single`/`mfj` only).",
+              "- HOH/QSS use the unmarried Medicare table. MFS requires an explicit "
+              "`medicare_lived_apart_all_year` answer; spouses who lived together "
+              "use the separate-return table, never the single schedule.",
               "- OBBBA Schedule 1-A (line 13b) deductions, the senior deduction "
               "among them, are held at the baseline amount: a rung that carries "
               "MAGI through a phase-out removes deduction this table does not, "

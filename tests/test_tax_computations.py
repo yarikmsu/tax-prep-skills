@@ -8260,6 +8260,8 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/__init__.py::compute_charitable_non_itemizer": "direct",
         "tax_computations/__init__.py::compute_education_credits": "direct",
         "tax_computations/federal/amt.py::compute_form_6251": "direct",
+        "tax_computations/federal/irmaa.py::irmaa_status_key": "direct",
+        "tax_computations/federal/irmaa.py::read_irmaa_tiers": "direct",
         "tax_computations/federal/international.py::check_form_8938_required": "direct",
         "tax_computations/federal/penalties.py::compute_form_2210": "direct",
         "tax_computations/federal/rentals.py::compute_rental_passive_losses": "direct",

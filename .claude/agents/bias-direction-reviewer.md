@@ -11,9 +11,9 @@ at a boundary?**
 
 ## Report nothing else
 
-Every PR here is already reviewed by the Codex bot for general correctness,
-style, naming and structure. A second general reviewer is noise, and noise is
-what gets a reviewer ignored. If a finding is not a directional-bias or
+This reviewer supplies one specialised lens within the primary reviewer's
+whole-change review. Do not assume an automated general review has run; it is
+disabled by repository policy. If a finding is not a directional-bias or
 unstated-precondition finding, do not report it — not as a nitpick, not as a
 "while I was here". An empty report is a valid and useful result.
 
