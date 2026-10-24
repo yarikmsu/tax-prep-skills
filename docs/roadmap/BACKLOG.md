@@ -243,6 +243,8 @@ AA57 finds why.
   `README.md`'s CI section. Found by the review that recorded Y2 as shipped.
 
 - **AA58 (P2, S): Stop Form 2210 pricing a quarter the cache does not hold.**
+  Implementation: [PR #28](https://github.com/yarikmsu/tax-prep-skills/pull/28),
+  open; not merged. Depends on PR #27.
   `compute_form_2210` in `agents/lib/tax_computations/federal/penalties.py`
   accrues the penalty through April 15 of the year after the tax year. When the
   cached §6621 rates stop before April 1 of that year, it prices the rest at the

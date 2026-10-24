@@ -567,10 +567,14 @@ Act on the result:
     overpayment, the remainder becomes the line 37 balance due, from the same
     three figures rather than a second branch. Line 34 itself is taken BEFORE
     the penalty — it is the form's "amount overpaid", payments against tax.
-- penalty applies but `penalty_computed` is false (rates unfetched) → keep
+- penalty applies but `penalty_computed` is false (rates unfetched or a quarter
+  with accruing debt is missing) → keep
   line 38 at 0, include the `form_2210` section with its notes, and tell the
   user: fetch the §6621 quarterly rates via `/tax-setup`, or file without
   line 38 and let the IRS bill the penalty. Never guess a rate.
+  An unchanged rate still needs its own quarter entry; neither an earlier nor
+  a later cached rate covers a missing quarter. Debts paid before a missing
+  quarter do not require that future rate.
 - Surface the Schedule AI note when income was concentrated late in the year
   (RSU vest, year-end sale) — the annualized method usually reduces the
   penalty but is manual.
