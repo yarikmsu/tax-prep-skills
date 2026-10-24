@@ -643,6 +643,8 @@ at all.
   Correct the excess-SDI label: 2025 line 74 is the Motion Picture credit.
 
 - **AA70 (P1, M): Record California estimated payments and next year's applied overpayment.**
+  Implementation: [PR #20](https://github.com/yarikmsu/tax-prep-skills/pull/20),
+  open for review; not merged. Depends on PR #19.
   Form 540 line 72 takes the year's estimated payments (those paid on the
   taxpayer's behalf on Schedule K-1 (541) or (100S) included), an extension
   payment and last year's overpayment applied, and the return has no field for any of

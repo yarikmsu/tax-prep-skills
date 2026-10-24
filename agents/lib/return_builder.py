@@ -1173,6 +1173,109 @@ def load(workspace: Path) -> tuple:
     return result, profile, ledger, tax_law, contents
 
 
+def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | None]:
+    """Reviewed Form540 line72 sources, never a second manually typed total."""
+    import datetime
+    from agents.lib.capabilities import _USPS_STATES
+    status = _full_status_key(status)
+    if type(year) is not int or not 2000 <= year <= 2099:
+        raise ValueError("CA payment destination must be a valid tax year")
+    flags = profile.get("flags") or {}
+    if not isinstance(flags, dict):
+        raise ValueError("profile.flags must be an object")
+    answered = flags.get("ca_has_nonw2_payments")
+    if not isinstance(answered, bool):
+        raise ValueError("answer ca_has_nonw2_payments, including an explicit no")
+    payments = profile.get("estimated_payments", {})
+    if not isinstance(payments, dict) or not isinstance(payments.get("state", []), list):
+        raise ValueError("estimated_payments.state must be the reviewed payment list")
+    if payments.get("ca_verified") is not None and not isinstance(payments["ca_verified"], bool):
+        raise ValueError("estimated_payments.ca_verified must be a boolean or unanswered null")
+    prior = profile.get("prior_year", {})
+    if not isinstance(prior, dict):
+        raise ValueError("prior_year must be an object")
+
+    def money(value, where):
+        # Refusals identify fields, not account identifiers or raw source data.
+        try:
+            checked = _maybe_num(value)
+        except OverflowError:
+            checked = None
+        if checked is None or checked < 0:
+            raise ValueError(f"{where} must be a finite nonnegative amount")
+        return round(checked, 2)
+
+    opening = money(prior.get("ca_estimated_payments_applied", 0), "prior_year.ca_estimated_payments_applied")
+    totals = dict(estimates=0.0, extension=0.0, k1_allocations=0.0,
+                  prior_applied=opening, total=0.0, payment_count=0, unknown_date_count=0,
+                  external_record_count=0)
+    kinds = {"estimate": "estimates", "extension": "extension", "k1_estimate": "k1_allocations"}
+    keys = {"payment_id", "state", "tax_year", "date", "kind", "amount", "person"}
+    ids = set()
+    joint_separate = individual_joint = False
+    for index, record in enumerate(payments.get("state", [])):
+        where = f"estimated_payments.state[{index}]"
+        if not isinstance(record, dict) or set(record) != keys:
+            raise ValueError(f"{where}: re-read/migrate the source; require payment_id, state, tax_year, date, kind, amount and person")
+        identifier = record["payment_id"]
+        if (not isinstance(identifier, str) or not identifier.strip()
+                or identifier != identifier.strip() or identifier in ids):
+            raise ValueError(f"{where}: payment_id must be nonempty and unique")
+        ids.add(identifier)
+        state = record["state"]
+        if not isinstance(state, str) or state not in _USPS_STATES:
+            raise ValueError(f"{where}: require a valid uppercase state code")
+        destination = record["tax_year"]
+        if type(destination) is not int or not 2000 <= destination <= 2099:
+            raise ValueError(f"{where}: require the credited tax year")
+        kind, person = record["kind"], record["person"]
+        if not isinstance(kind, str) or kind not in kinds:
+            raise ValueError(f"{where}: kind must be estimate, extension or k1_estimate; opening credit is separate")
+        if not isinstance(person, str) or person not in ("primary", "spouse", "joint"):
+            raise ValueError(f"{where}: person must identify primary, spouse or joint account ownership")
+        date = record["date"]
+        if date is not None:
+            try:
+                if not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                    raise ValueError
+                if datetime.date.fromisoformat(date) > datetime.date.today():
+                    raise ValueError
+            except ValueError:
+                raise ValueError(f"{where}: date must be an actual ISO payment date, not in the future, or explicit null") from None
+        amount = money(record["amount"], where + ".amount")
+        if not amount:
+            continue
+        if state != "CA" or destination != year:
+            totals["external_record_count"] += 1
+            continue
+        if person == "spouse" and status != "mfj":
+            raise ValueError(f"{where}: a spouse's separate-account payment cannot pay a nonjoint return")
+        totals[kinds[kind]] += amount
+        totals["payment_count"] += 1
+        totals["unknown_date_count"] += int(date is None)
+        joint_separate |= person == "joint" and status != "mfj"
+        # Booklet line 72: a statement is due when payments were made under
+        # both SSNs, which the spouse's own account means on a joint return.
+        individual_joint |= person == "spouse" and status == "mfj"
+    totals["total"] = money(sum(totals[k] for k in ("estimates", "extension", "k1_allocations", "prior_applied")), "CA line72 total")
+    for key in ("estimates", "extension", "k1_allocations"):
+        totals[key] = round(totals[key], 2)
+    if answered != (totals["total"] > 0):
+        raise ValueError("ca_has_nonw2_payments disagrees with the current-year CA payments/opening credit; reconcile the sources")
+    if answered and payments.get("ca_verified") is not True:
+        raise ValueError("reconcile claimable CA payment amounts, ownership/allocation and credited year; set estimated_payments.ca_verified")
+    notes = []
+    if totals["unknown_date_count"]:
+        notes.append("Some credited payments have unknown dates; FTB5805 timing is not computed.")
+    if totals["external_record_count"]:
+        notes.append("Payments for other states/tax years are excluded; confirm the appropriate returns claim them.")
+    if joint_separate:
+        notes.append("Confirm the joint-estimate allocation was arranged with FTB before separate filing.")
+    if individual_joint:
+        notes.append("Attach the required Form540 explanation for individual-account payments combined onto a joint return.")
+    return totals, ("CA payments: " + " ".join(notes)) if notes else None
+
+
 def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict:
     """The CA half of the receipted check, independently of federal scope."""
     from agents.lib.capabilities import _profile_state
@@ -1248,6 +1351,14 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         sums = category_sums(ledger)
         components["line_71"] = round(sums.get("state_withholding_ca", 0) + sums.get("ca_1099_withholding", 0), 2)
         components["line_73"] = sums.get("ca_592b_593_withholding", 0)
+        payments, payment_note = _ca_payments(profile, _tax_year(result, profile), fs)
+        components["line_72"] = payments["total"]
+        forward = flags.get("ca_applies_overpayment_forward")
+        amount = _num(components["line_98"], "CA line98 forward election")
+        # Form 540 stores this component to cents; rebuilding must ask the
+        # same election question as the rounded return and rollover.
+        if not isinstance(forward, bool) or forward != (round(amount, 2) > 0):
+            raise ValueError("answer ca_applies_overpayment_forward and reconcile it with the explicit line98 election")
         built = compute_ca_540(tax_year=_tax_year(result, profile), filing_status=status,
             state_law=state, federal_agi=_num((result.get("form_1040") or {}).get("line_11_agi"), "federal AGI"),
             schedule_ca_additions=_num(adjustments.get("total_additions"), "Schedule CA additions"),
@@ -1279,6 +1390,7 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         p.update(iso_credit_generated=generated,
                  carryforward_to_next_year=round(available - allowable + generated, 2))
         built.update(schedule_p=p, ca_withholding_box17=sums.get("state_withholding_ca", 0),
+            ca_payment_summary=payments, ca_payment_note=payment_note,
             ca_withholding_1099=sums.get("ca_1099_withholding", 0),
             ca_withholding_592b_593=sums.get("ca_592b_593_withholding", 0))
         return built
@@ -1313,7 +1425,7 @@ def california_differences(result: dict, derived: dict) -> list[str]:
             return (isinstance(was, dict) and set(was) == set(value)
                     and all(agrees(was[k], v) for k, v in value.items()))
         return type(was) is type(value) and was == value
-    fields = [field for field, value in derived.items() if not agrees(ca.get(field), value)]
+    fields = [field for field, value in derived.items() if field not in ca or not agrees(ca.get(field), value)]
     if derived and type(ca.get("computed_tax_year")) is not int and "computed_tax_year" not in fields:
         fields.append("computed_tax_year")
     notes = (result.get("meta") or {}).get("limitations", [])
@@ -1321,6 +1433,10 @@ def california_differences(result: dict, derived: dict) -> list[str]:
         raise Blocked("Form 540 requires meta.limitations to be a list of disclosure strings")
     if derived and derived["line_113_note"] not in notes:
         fields.append("meta.limitations (Form 540 line 113)")
+    if derived.get("ca_payment_note") and derived["ca_payment_note"] not in notes:
+        fields.append("meta.limitations (CA payments)")
+    if derived and any(n.startswith("CA payments:") and n != derived.get("ca_payment_note") for n in notes):
+        fields.append("meta.limitations (stale CA payment disclosure)")
     summary = california_summary(result, derived)
     for key, value in summary.items():
         if not agrees(result["balance_due_summary"].get(key), value):
@@ -1346,8 +1462,10 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
         if summary:
             updated["balance_due_summary"] = {**result["balance_due_summary"], **summary}
         meta = dict(result.get("meta") or {})
-        notes = [n for n in meta.get("limitations", []) if not n.startswith("Form 540 line 113:")]
+        notes = [n for n in meta.get("limitations", []) if not n.startswith(("Form 540 line 113:", "CA payments:"))]
         notes.append(california["line_113_note"])
+        if california.get("ca_payment_note"):
+            notes.append(california["ca_payment_note"])
         updated["meta"] = {**meta, "limitations": notes}
     # `write_secure` is temp-then-replace with the descriptor secured before
     # the first byte, so there is nothing to chmod afterwards; the trailing

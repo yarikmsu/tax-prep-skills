@@ -26,6 +26,18 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
+### What CA estimates, extension payments, K-1 allocations and prior applied overpayment are credited to this tax year? Confirm their dates, account ownership and claimable shares from source records, including an explicit none; identify the opening applied credit separately from new payments.
+
+*Asked by tax-compute state-return.md; required when this run selects a CA return.*
+
+- **[ca_state_payments]**
+
+### How much of California line97 should be applied to next year's estimates? This is a binding election; confirm the amount, including a deliberate zero.
+
+*Asked by tax-compute state-return.md; required when this run selects a CA return.*
+
+- **[ca_overpayment_election]**
+
 ### From the worked FTB 3510, what CA AMT credit is available and ALLOWABLE this year, including a worked zero? Preserve the available amount less the allowable credit plus new ISO credit for rollover.
 
 *Asked by tax-compute state-return.md; required when a CA return has a prior-year AMT credit flag or carryforward.*

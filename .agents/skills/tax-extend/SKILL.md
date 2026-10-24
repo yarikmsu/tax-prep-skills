@@ -67,9 +67,12 @@ Work down this ladder and TELL the user which rung was used:
      line 33 total payments), floored at $0.
    - CA payment for a checked Form 540 (`computed_tax_year` present) is
      `ca_amount_owed` (line 114), which includes the separately worked credits
-     and other settlement components. For a legacy partial return use `ca_total_tax` −
-     (`ca_withholding_box17` + `ca_withholding_1099` +
-     `ca_withholding_592b_593` + CA estimates paid), floored at $0.
+     and other settlement components. Line72 was derived from reviewed
+     `estimated_payments.state` records plus `prior_year.ca_estimated_payments_applied`;
+     do not subtract those payments a second time. Rebuild/check a legacy
+     partial CA return before treating it as a computed balance. If its form
+     year is not reviewed, use the projection/user-estimate rung below and
+     reconcile those payment sources; do not invent a legacy payment total.
    - NY payment (if `new_york_it201` computed) = `line_80_amount_owed`, which
      is already line 60's total taxes less line 76's total payments. **Line 60,
      not line 46** — the New York balance a taxpayer must pay to hold the
@@ -190,6 +193,14 @@ Work down this ladder and TELL the user which rung was used:
    NY: Form IT-370 filed on {date}, payment made: yes/no | not modeled}.
    Estimate source: {computed result.json | projection | user estimate}.
    ```
+   **CA, when an FTB 3519 payment was made:** line 72 reads payments only
+   from `estimated_payments.state`, so add the payment there as
+   `{"payment_id", "state": "CA", "tax_year": {year}, "date", "kind": "extension",
+   "amount", "person"}` with the FTB confirmation's actual date and the
+   paying account's owner, set `flags.ca_has_nonw2_payments: true`, and set
+   `estimated_payments.ca_verified: false` so the payment is reconciled
+   again before the return is built. Re-confirm **[ca_state_payments]**
+   then: an earlier "none" no longer holds.
 4. Re-restrict both files you just wrote. An editor that REPLACES a file
    rather than editing it in place leaves the replacement at the default
    mode — owner-only is not inherited from the file it overwrote — so this

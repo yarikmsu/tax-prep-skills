@@ -211,6 +211,21 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     worked allowable nonrefundable credits, floored at zero; plus `ca_amt`
     from step 9.5 (line 61), the mental-health surcharge (62) and line 63's
     other taxes. The step 13 builder derives it.)
+    **Line72 payments:** resolve **[ca_state_payments]** from source confirmations,
+    including a confirmed none. Use the existing `estimated_payments.state`
+    list and the record contract in `docs/contributing/state-module-ca.md`:
+    `payment_id`, state, credited tax year, actual date (or explicit null),
+    kind, claimable amount and account owner. Verify allocations and reconcile
+    MyFTB/receipts/K-1s; set `estimated_payments.ca_verified` only after doing so.
+    Keep `prior_year.ca_estimated_payments_applied` outside that list. The builder
+    derives line72 and the payment workpaper, excludes other states/years with
+    a disclosure, and refuses unverified or contradictory inputs. Never type a
+    second line72 total. Unknown timing receives a disclosure; AA76 owns pricing.
+    **Line98 election:** resolve **[ca_overpayment_election]**, record the explicit
+    amount in `line_98` and the matching `ca_applies_overpayment_forward` flag,
+    including zero. Explain that the election is binding before filing. The
+    builder enforces the line97 limit, reduces the cash refund and rollover
+    carries the elected amount only to the immediately following CA tax year.
 11. Historical excess SDI/VPDI: run `compute_excess_sdi()`
     for EVERY person with any CA-wage W-2 — no trigger condition (cheap pure
     function, zeros when nothing is wrong; conditional triggers miss
@@ -237,7 +252,9 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     and `ca_deduction_method` (`standard`, `itemized`, or `dependent_worksheet`),
     the Schedule CA totals, confirmed exemption eligibility in the profile,
     and separately worked amounts in the `line_<number>` component fields.
-    All `CA_540_COMPONENT_LINES` must be present, including worked zeros.
+    All `CA_540_COMPONENT_LINES` must be present, including worked zeros;
+    the builder overwrites lines 71, 72 and 73 from the ledger and the
+    payment records, so never type a total there.
     Record the Schedule G-1 portion of line 34 separately as `ca_lump_sum_tax`
     for the line-113 screen; do not classify FTB 5870A tax as lump-sum tax.
     Existing capability gates still govern uncomputed credits/taxes/payments.

@@ -681,6 +681,10 @@ persona SALT usually exceeds the OBBBA cap by itself):
   separately, take only this filer's own payments, and of a joint state or
   local return's payments only the share Pub. 17 gives (Taxes, "Joint state
   and local returns").
+  California's dated `estimated_payments.state` records identify the return
+  credited by `tax_year`; that is not automatically the Schedule A payment
+  year. Keep the cash-year/credited-overpayment answer above separate from
+  Form540 line72 and never infer the federal deduction from that line's total.
 - **FL filer ordering — compute `state_local_sales_taxes` BEFORE this call
   (Codex round-18 P1):** when the profile state is FL (`type: "none"`,
   `code: "FL"`), the line-5a income-vs-sales election needs the FL sales-tax
