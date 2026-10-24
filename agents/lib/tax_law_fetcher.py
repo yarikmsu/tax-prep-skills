@@ -1561,6 +1561,11 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         if (isinstance(data.get("state"), dict) and data["state"].get("code") == "CA"
                 and path == "state.amt_screening"):
             return
+        # The PTET credit's carryover period matters only to an owner with a
+        # credit; ca_credit_inputs refuses that return while it is unfetched.
+        if (isinstance(data.get("state"), dict) and data["state"].get("code") == "CA"
+                and path == "state.ptet_credit"):
+            return
         # These optional tagged blocks have their own complete validators;
         # empty confirmed lists and inactive null parameters are valid data.
         if path in ("state.modifications", "state.local"):
@@ -1587,7 +1592,9 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 # it would nag INCOMPLETE forever (the underpayment_rates /
                 # sdi_wage_limit precedent). A non-null corrupt value still
                 # hard-errors at compute time (_resolve_amt_phaseout_rate).
-                if k == "phaseout_rate" and v is None:
+                # Scoped to federal.amt: CA's state.amt.phaseout_rate is a
+                # required fetched figure that compute_ca_540 refuses unfetched.
+                if k == "phaseout_rate" and v is None and path == "federal.amt":
                     continue
                 # federal.schedule_1a is OPT-IN per taxpayer (tips/overtime/
                 # car-loan/senior) — a null block is the DEFAULT, not a gap.

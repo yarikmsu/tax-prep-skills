@@ -119,6 +119,12 @@ def builder_case():
     ledger = T.load_ledger({"records": [{"doc_id": "k1-a", "file": "documents/k1.pdf",
         "form_type": "CA K-1", "payer": "Synthetic entity", "person": "primary",
         "key_boxes": {"ca_ptet_credit": 5000}, "skipped": None}]})
+    # The entity deducted its 5,000 PTE tax federally, so federal AGI is 95,000
+    # and Schedule CA adds it back: CA AGI stays 100,000 (FTB PTE elective tax).
+    result["form_1040"]["line_11_agi"] = 95000
+    profile["flags"]["ca_has_other_schedule_ca_adjustments"] = True
+    result["california_540"]["schedule_ca_adjustments"].update(
+        other_additions=5000, other_adjustments_confirmed=True)
     return profile, result, ledger
 
 
@@ -141,6 +147,31 @@ def test_builder_derives_claims_settlement_and_does_not_use_entered_allowable():
     assert not T._ca_owner_credit_checks(ledger, result, profile, {"state": law()})
     result["california_540"]["schedule_p"]["ftb_3510"]["line_38"] += 1
     assert T._ca_owner_credit_checks(ledger, result, profile, {"state": law()})
+
+
+@pytest.mark.parametrize("change", ["no_flag", "short"])
+def test_a_ptet_credit_needs_its_california_addback(change):
+    # FTB: a PTE elective tax the entity deducted federally is added back for
+    # California; claiming the credit without it under-states CA income.
+    profile, result, ledger = builder_case()
+    if change == "no_flag":
+        profile["flags"]["ca_has_other_schedule_ca_adjustments"] = False
+        result["california_540"]["schedule_ca_adjustments"]["other_additions"] = 0
+    else:
+        result["california_540"]["schedule_ca_adjustments"]["other_additions"] = 4999
+    with pytest.raises(B.Blocked, match="add back the PTE elective tax"):
+        B.build_california(result, {"state": law()}, ledger, profile)
+
+
+@pytest.mark.parametrize("opening", [0, None])
+def test_an_amt_credit_flag_cannot_pair_with_an_absent_opening_credit(opening):
+    profile, result, ledger = builder_case()
+    if opening is None:
+        del profile["prior_year"]["ca_amt_credit_carryforward"]
+    else:
+        profile["prior_year"]["ca_amt_credit_carryforward"] = 0
+    with pytest.raises(B.Blocked, match="ca_has_amt_credit says"):
+        B.build_california(result, {"state": law()}, ledger, profile)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -316,3 +347,20 @@ def test_independent_tieout_fails_cleanly_on_missing_year_or_malformed_address()
 
 def test_credit_check_does_not_demand_unrelated_facts_without_credit_activity():
     assert not T._ca_owner_credit_checks([], {"form_1040": {}}, {"address": {"state": "CA"}}, None)
+
+
+def test_freshness_skips_ptet_seeds_but_flags_an_unfetched_ca_amt_rate(tmp_path):
+    # A non-PTET filer must not read INCOMPLETE for the carryover period, but
+    # CA's AMT phase-out rate is required where the federal one is a default.
+    import json
+    from datetime import datetime
+    from agents.lib import tax_law_fetcher as F
+    from agents.lib.secure_fs import write_secure
+    data = F.create_empty_tax_law(2025)
+    data["state"] = F.create_state_template("CA", tax_year=2025)
+    data["_meta"] = {"fetched": datetime.now().isoformat()}
+    write_secure(tmp_path / "tax_law_2025.json", json.dumps(data))
+    nulls = F.check_freshness(2025, str(tmp_path))["null_fields"]
+    assert not any(n.startswith("state.ptet_credit") for n in nulls)
+    assert any(n == "state.amt.phaseout_rate" for n in nulls)
+    assert not any(n == "federal.amt.phaseout_rate" for n in nulls)

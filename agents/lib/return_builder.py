@@ -1459,6 +1459,11 @@ def ca_credit_inputs(profile: dict, ledger, state: dict, tax_year: int | None) -
             raise ValueError(f"answer {flag} before computing CA credits")
     if (opening > 0 or flags.get("ca_has_amt_credit")) and facts.get("amt_opening_confirmed") is not True:
         raise ValueError("reconcile and confirm the qualified FTB3510 opening balance, including a worked zero")
+    # Absent is not zero: the template's 0 would otherwise drop a credit the
+    # flag says exists, and roll it forward as 0 for good.
+    if flags.get("ca_has_amt_credit") is True and not opening:
+        raise ValueError("ca_has_amt_credit says a prior CA AMT credit exists; record "
+                         "prior_year.ca_amt_credit_carryforward from the prior FTB3510")
     if "other_credits" not in facts:
         raise ValueError("list ca_credits.other_credits, including an explicit empty list")
     if current or carry or reported or flags.get("ca_has_ptet_credit"):
@@ -1574,6 +1579,15 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         components["line_72"] = payments["total"]
         components["line_113"] = 0  # derived after the provisional tax build
         credit_inputs = ca_credit_inputs(profile, ledger, state, _tax_year(result, profile))
+        # FTB: a PTE elective tax the entity deducted federally is added back for
+        # California, so the owner's CA K-1 income exceeds the federal one by it
+        # (the NY owner credit refuses the same way without its addition).
+        current_ptet = round(sum(_num(r.get("amount"), "reported owner PTET credit")
+                                 for r in (credit_inputs or {}).get("ptet_current", [])), 2)
+        if current_ptet > 0 and (flags.get("ca_has_other_schedule_ca_adjustments") is not True
+                                 or adjustments.get("other_additions", 0) + .005 < current_ptet):
+            raise ValueError("add back the PTE elective tax the entity deducted federally in Schedule CA "
+                             "other_additions (the CA K-1 difference), at least the current-year PTET credit")
         if credit_inputs is None:
             if isinstance(ca.get("credit_workpaper"), dict):
                 raise ValueError("reconcile the previous owner-credit workpaper; supply an explicit other_credits list before clearing derived claims")
