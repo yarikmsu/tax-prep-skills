@@ -25,7 +25,7 @@ Primary sources, read live on 2026-10-19:
 | 3 | Credits | Personal, blind, senior and dependent exemptions are credits. The line-32 federal-AGI limitation applies separately per eligible head. Other credits are separately worked allowed amounts, subject to their own worksheets and existing gates. |
 | 4 | Local income taxes | No CA local income-tax return is computed or required by this module. |
 | 5 | Surtax | Form 540 line 62 is Behavioral Health Services Tax in TY2025. The existing statutory-fixed `mental_health_surcharge` cache block retains its stable key. |
-| 6 | Estimates | Weighted installments and high-income safe-harbor rules remain in the planning engine; AA70 owns recording line-72 payments. Line-113 screening is advisory, not a computed penalty. |
+| 6 | Estimates | Calendar-year regular-method FTB5805 uses its fetched weighted installments for BOTH the requirement and deemed withholding. Prior/current-year floors precede the current-AGI override; prior-year AGI controls the step-up. AA70's dated records supply actual payments. Annualized, farmer, waiver and special-deadline cases require their own reviewed worksheets. The extension contract below governs line113 pricing. |
 | 7 | Payroll items | SDI has no wage ceiling from TY2024. Employer errors are recovered from the employer. TY2025 line 74 is the refundable Motion Picture credit, never excess SDI. |
 | 8 | Withholding form | DE 4 is the payroll analogue; actual W-2/1099/W-2G and 592-B/593 withholding is routed by AA60. |
 | 9 | Extension | Automatic filing extension, payment via FTB 3519; a filing extension does not defer payment. |
@@ -44,15 +44,15 @@ Every CA return requires `state.tax_table` (`max_taxable_income`, published
 existing standard deduction, exemptions, exemption phaseout and rate schedule.
 All annual figures are fetched for the covered year and source-pinned.
 `state.underpayment_screen` holds per-status `minimum_balance` and the
-`tax_fraction` for Form 540 line 113's two screens. Missing or malformed
+`tax_fraction` for FTB5805's current-year floor and annual-payment share. Missing or malformed
 figures refuse, including on a zero-income return.
 
 `california_540` keeps its stable `ca_*` fields and adds `line_<number>` fields
 for the reviewed form. `computed_tax_year` records that reviewed year; the
 positive fetched `ca_standard_deduction` preserves the existing registry's
 zero-income computation evidence and compatibility with prior returns. The builder
-also returns the Schedule P and exemption workpapers, and stores the screened
-line-113 note; that note must reach `meta.limitations`.
+also returns the Schedule P, exemption and FTB5805 workpapers, and stores the
+selected method's line-113 note; that note must reach `meta.limitations`.
 When `balance_due_summary` is present, its federal and California settlements
 are signed (refund positive, amount owed negative); `net_refund` is their sum.
 Those summary fields are derived and checked too. Filing and extension
@@ -247,9 +247,97 @@ Mutation checks remove the new checks to prove their tests detect omissions.
 
 ## Limits
 
-This builder derives arithmetic over reviewed components. It does not price
-the manually gated credits, Schedule CA exceptions, late-payment interest or
-FTB 5805 penalty, and does not file a return. Line 113 is screened from its own
-lines 100 and 48 (excluding only `ca_lump_sum_tax`, the Schedule G-1 part of
-line 34, not FTB 5870A tax), using fetched thresholds. A possible penalty
-is disclosed as uncomputed; the FTB may compute and bill it.
+This builder derives arithmetic over reviewed components and prices TY2025
+FTB5805's regular method. Manually gated credits, Schedule CA exceptions,
+late-payment interest and special penalty methods require their named
+worksheets. A confirmed external FTB5805/5805F worksheet or eligible FTB billing
+is explicit and disclosed. It does not file a return.
+
+## FTB5805 regular-method extension contract (AA76)
+
+Primary sources read live 2026-10-20: [TY2025 form](https://www.ftb.ca.gov/forms/2025/2025-5805.pdf),
+[instructions, PartII and WorksheetII](https://www.ftb.ca.gov/forms/2025/2025-5805-instructions.html)
+and [FTB interest/estimate penalty schedule](https://www.ftb.ca.gov/pay/penalties-and-interest/interest-and-estimate-penalty-rates.html).
+This extends questionnaire item6. Items1-5 and7-13 keep their reviewed Form540
+answers above; this computation introduces no new residency, income, credit,
+local-tax, payroll, PTET, deduction or ordinary-tax regime.
+
+The covered scope is TY2025, calendar-year individuals filing the existing
+full-year resident Form540. Compute the regular method, including early/late
+payments and either deemed withholding or a reviewed actual-date election.
+Form5805F, fiscal years, estates/trusts, annualized income, disaster/other special
+deadlines, waiver requests and separately prepared exceptional worksheets must
+be identified and handled explicitly. A regular-method amount cannot stand in
+for a potentially smaller annualized or waived amount without the taxpayer's
+recorded method decision. An explicit choice for the FTB to calculate and bill
+the penalty is a disclosed manual route, never a computed-zero claim.
+
+The fetched CA parameters must supply the minimum balance, current-year share,
+prior-year factors and AGI thresholds, current-AGI override and installment
+shares. Reuse the existing `underpayment_screen` amounts where the worksheet
+uses the same quantities. New figures ship unfetched and are collected by
+`tax-setup`; no rate, factor, threshold or share is introduced as an engine
+default. Keep planning computations in their existing scope.
+
+The additional annual block is `state.estimated_tax_safe_harbor`:
+`prior_year_share`, `prior_year_share_high_income`, five-status
+`prior_agi_threshold` and `current_agi_override`, four `installment_shares`,
+four effective ISO `due_dates`, `penalty_end` and `early_filing_deadline`.
+The latter is the effective, legally rolled filing/payment deadline, not an
+unadjusted nominal date. `underpayment_screen.minimum_balance` and
+`underpayment_screen.tax_fraction` remain the shared floor/current-year share.
+Rate rows carry `effective_from` (January1 or July1) and `annual_rate`; each row
+expires at the end of its own half-year even if the next row is absent.
+
+`state.underpayment_rates` is a separate fetched schedule of effective dates
+and annual rates, spanning the underpayment periods through the following
+April15. Source-pinning and provenance use **only**
+`state.CA.underpayment_rates` as its independent multi-period pin. The ordinary
+`state.CA` pin remains annual. Half-year provenance periods must be validated;
+rate rows must be finite, ordered, nonoverlapping and cover every day actually
+priced. A missing future period cannot inherit the last rate. The auditor's
+schema, multi-period roster and instructions must reflect the same rule.
+
+PartII line1 uses checked Form540 lines48+61+62 plus the actual IRC453A
+interest component of line63, excluding lump-sum and accumulation-distribution
+tax. Do not use all of line63 or total tax indiscriminately. Line3 includes
+BOTH lines71 and73. Prior-year tax is the analogous reviewed worksheet amount;
+the prior-year floor needs the amount net of its relevant credits/withholding,
+not a total-tax upper bound incorrectly treated as proof that the floor fails.
+Full-year/prior-return facts and California AGI are distinct from federal ones.
+Unknown necessary prior facts cannot silently select the more expensive prong.
+
+Use the same fetched installment weights for required installments and deemed
+withholding. Preserve actual payment dates and apply money to the oldest unpaid
+installment first, regardless of a payment's designation. The opening applied
+overpayment belongs in the first period once; it is not new cash. Actual-date
+withholding must reconcile to both checked withholding lines. Unknown dates
+cannot support pricing. A filed-and-paid early-return exception may remove the
+last installment's penalty only under its reviewed covered-year conditions.
+
+Price simple per-day penalty, splitting at rate changes, payments and calendar
+year boundaries (the denominator follows the actual year). Do not reuse federal
+equal-quarter requirements, federal rates, or daily-compounded interest.
+Keep intermediate precision and round the published result to cents. Hand-worked
+tests must cover a rate change, leap-year denominator validation, an early
+payment allocated backward, deemed versus actual withholding, each zero-penalty
+screen and incomplete rate coverage.
+
+The result needs a dedicated checked `california_540.ftb_5805` workpaper with input
+echoes, method, required annual payment, installment/payment/penalty detail,
+total and `computed_tax_year`. Its priced total owns Form540 line113 before
+settlement lines114/115 and balance summaries are derived. Builder checks and
+standalone tie-out must recompute it from the same profile, law and checked
+Form540 components, before any federal scope waiver. Rebuilds are idempotent;
+source changes invalidate the receipt. Retire the old uncomputed-penalty note
+only when the selected route supports that change; a manual route keeps an
+explicit disclosure. Required facts belong in the setup interview, profile and
+registered answer contract. Filing-package instructions must name the method
+and the official form/attachment conditions without claiming an e-file artifact.
+
+No new state row or withholding category is introduced. Register any additional
+CA package workpaper on the existing row; PDF and verification remain section
+generic. Ordinary projection/withholding forecasts retain their advisory
+timing disclosures. The freshness-auditor definition edit, optional-schema
+coverage fix and revised acceptance digests require the same fresh-session
+replay as AA52, using prewritten criteria and the known-answer fixtures.

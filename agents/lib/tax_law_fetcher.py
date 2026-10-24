@@ -473,6 +473,18 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "minimum_balance": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
                 "tax_fraction": None,
             },
+            "estimated_tax_safe_harbor": {
+                # FTB 5805 Part II line 2 (90%), not line 113's 10% screen.
+                "current_year_share": None,
+                "prior_year_share": None, "prior_year_share_high_income": None,
+                "prior_agi_threshold": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
+                "current_agi_override": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
+                "installment_shares": [], "due_dates": [],
+                "penalty_end": None, "early_filing_deadline": None,
+            },
+            # Independently fetched R&TC19521 half-years, including the
+            # following calendar year through the return's penalty cutoff.
+            "underpayment_rates": [],
             "schedule_ca": {"fund_asset_minimum": None},
             "hsa_conformity": False,
             "hsa_note": "CA does not recognize HSA. Add back employer contributions and HSA earnings.",
@@ -1353,6 +1365,8 @@ def _expected_pins(data: dict) -> "list[tuple[str, str]]":
                 "state.FL.county_surtax_rate",
                 "state.sales_tax.county_surtax_rate",
             ))
+        if code == "CA" and _has_real_data(state.get("underpayment_rates")):
+            expected.append(("state.CA.underpayment_rates", "state.underpayment_rates"))
     # exchange_rates is fetched data (IRS yearly-average rates) that directly
     # scales reported USD foreign income / FBAR values — audit it too.
     if _block_populated(data, "exchange_rates"):
@@ -1928,6 +1942,7 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     now = datetime.now()
     expected = _expected_pins(data)
     expected_pins = {pin for pin, _p in expected}
+    pin_paths = dict(expected)
     provenance = data.get("_provenance")
     if provenance is not None and not isinstance(provenance, dict):
         null_fields.append(
@@ -1940,7 +1955,9 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
     # pin `_pin_key` gives its path, and the OLDEST entry under a pin dates
     # the block — one re-fetched leaf never re-dates its siblings.
     entry_ages: dict = {}
+    individual_ages: dict = {}
     for key, entry in provenance.items():
+        individual_ages[key] = None
         pin = key if key in expected_pins else _pin_key(key, data)
         try:
             if not isinstance(entry, dict):
@@ -1959,7 +1976,13 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
             entry_ages.setdefault(pin, []).append(None)
             continue
         entry_ages.setdefault(pin, []).append((now - retrieved).days)
+        individual_ages[key] = (now - retrieved).days
         period = entry.get("applies_to")
+        if pin == "state.CA.underpayment_rates" and period is not None:
+            try:
+                _check_applies_to(pin, key, period, year)
+            except TaxLawSetError as exc:
+                null_fields.append(f"_provenance.{key}: {exc}")
         if pin not in _MULTI_PERIOD_PINS and period is not None and (
                 isinstance(period, bool) or not isinstance(period, int)
                 or period != year):
@@ -1991,10 +2014,23 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         # is — a state pin is `state.TX` over a block at `state`, so matching
         # entry keys against leaf paths alone would leave every state figure
         # uncovered and the block dated by a stamp its own entry supersedes.
-        leaves = _populated_leaves(_get_path(data, path), path)
+        leaves = [leaf for leaf in _populated_leaves(_get_path(data, path), path)
+                  if _pin_key(leaf, data) == pin]
         covered = bool(ages) and (pin in provenance or all(
             any(leaf == key or leaf.startswith(f"{key}.") for key in provenance)
             for leaf in leaves))
+        if not covered:
+            # A whole state write covers its independently pinned children
+            # too. Resolve PIN keys to data paths before comparing ancestry;
+            # state.FL encloses data at state, not a literal state.FL object.
+            ancestors = [(len(parent.split(".")), individual_ages[key])
+                for key in provenance
+                if (parent := pin_paths.get(key, key)) != path
+                and path.startswith(parent + ".")]
+            if ancestors:
+                deepest = max(depth for depth, _age in ancestors)
+                ages.extend(age for depth, age in ancestors if depth == deepest)
+                covered = True
         if not covered:
             ages.append(legacy_age)
         block_ages[pin] = (None if not ages or any(a is None for a in ages)
@@ -2088,13 +2124,16 @@ _DYNAMIC = {
 # `_provenance.applies_to` naming another period is correct there and nowhere
 # else: a calendar year for the historical top rate, `YYYY-Qn` for an
 # underpayment-rate quarter.
-_MULTI_PERIOD_PINS = frozenset({"federal.underpayment_rates",
+_MULTI_PERIOD_PINS = frozenset({"state.CA.underpayment_rates", "federal.underpayment_rates",
                                 "federal.historical_top_rate"})
 _QUARTER = re.compile(r"^(19|20)[0-9]{2}-Q[1-4]$")
+_HALF_YEAR = re.compile(r"^(19|20)[0-9]{2}-H[12]$")
 # (higher, lower) pairs that are NOT sibling single/mfj leaves — those are
 # derived from the schema by `_sibling_pairs`, so a block the table has not
 # met is covered the day it is seeded.
 _ORDERED_PAIRS = (
+    ("state.estimated_tax_safe_harbor.prior_year_share_high_income",
+     "state.estimated_tax_safe_harbor.prior_year_share"),
     # The four standard deductions sit transposed (filing_statuses.<status>.
     # standard_deduction), so the chain rule cannot see them; the joint/single
     # pair is stated directly so it holds before head of household is fetched.
@@ -2159,6 +2198,9 @@ _STRUCTURAL_BLOCKS = ("federal.se_tax", "federal.niit",
 # PATH, never the bare leaf name: a future key called `schedule` or `brackets`
 # elsewhere in the schema must not inherit a validator meant for another.
 _TABLE_VALIDATORS = (
+    (re.compile(r"^state\.underpayment_rates$"), "ca_underpayment_rates"),
+    (re.compile(r"^state\.estimated_tax_safe_harbor\.installment_shares$"), "ca_installment_shares"),
+    (re.compile(r"^state\.estimated_tax_safe_harbor\.due_dates$"), "ca_due_dates"),
     (re.compile(r"^state\.tax_table\.rows$"), "ca_tax_rows"),
     (re.compile(r"^state\.wa_capital_gains\.rates$"), "brackets"),
     (re.compile(r"^(federal\.filing_statuses\.[a-z]+|state)\.brackets$"), "brackets"),
@@ -2176,7 +2218,9 @@ _TABLE_VALIDATORS = (
 # Leaves whose fetched value is an ISO calendar date, not a number. The seed is
 # None (unfetched), which the generic checker otherwise reads as a NUMBER — so
 # `set` refused every date and a correctly fetched one read as malformed.
-_ISO_DATE_PATHS = frozenset({"state.irc_conformity_date"})
+_ISO_DATE_PATHS = frozenset({"state.irc_conformity_date",
+    "state.estimated_tax_safe_harbor.penalty_end",
+    "state.estimated_tax_safe_harbor.early_filing_deadline"})
 
 
 def _is_number(v) -> bool:
@@ -2387,6 +2431,25 @@ def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None
             check(value if writing else stored, schedule)
         except ValueError as exc:
             raise TaxLawSetError(f"{dotted}: {exc}") from None
+    elif kind in ("ca_underpayment_rates", "ca_installment_shares", "ca_due_dates"):
+        from agents.lib.tax_computations.state.ca import (
+            validate_ca_underpayment_rates, validate_ca_installment_shares, _ca_5805_date,
+        )
+        try:
+            if kind == "ca_underpayment_rates":
+                if not value:
+                    raise ValueError("fetch the half-year rate schedule")
+                validate_ca_underpayment_rates(value)
+            elif kind == "ca_installment_shares":
+                validate_ca_installment_shares(value)
+            else:
+                if not isinstance(value, list) or len(value) != 4:
+                    raise ValueError("fetch four installment due dates")
+                dates = [_ca_5805_date(v, "CA due date") for v in value]
+                if any(a >= b for a, b in zip(dates, dates[1:])):
+                    raise ValueError("CA due dates must be ordered")
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise TaxLawSetError(f"{dotted}: {exc}") from None
     elif kind == "underpayment_rates":
         _check_ascending(dotted, value, fields=("effective_from", "annual_rate"),
                          order_by="effective_from", rate_fields=("annual_rate",),
@@ -2528,19 +2591,13 @@ def _seed_root(dotted: str, data: dict, year: int):
 
 
 def declared_state_code(data: dict) -> "str | None":
-    """The `state.code` a `set` under the state block is validated by, AS
-    WRITTEN, or None when there is none and `set` refuses the block.
+    """The canonical state used by writes, validation and exported schemas.
 
-    Not `_state_pin_code`, which upper-cases a code and maps a display name for
-    the PIN's sake: `create_state_template("ca")` is the generic template, so a
-    block coded `ca` was validated against generic keys. `tax_law_export` hands
-    the auditor the seed through this, so it is the template the block was
-    actually written against.
+    Codes are case-normalized and legacy display names use the same fallback
+    as source pins and freshness checks. No resolvable state returns None;
+    the bare pin suffix is never a state's template code.
     """
-    state = data.get("state")
-    if isinstance(state, dict) and isinstance(state.get("code"), str):
-        return state["code"]
-    return None
+    return state_regime_code(data)
 
 
 def state_schema(code: str, year: int) -> dict:
@@ -2564,7 +2621,7 @@ def _reference_for(dotted: str, data: dict, value, year: int):
         raise TaxLawSetError("Write the complete optional state rule block with its year and source")
     if segs[:2] in (["state", "modifications"], ["state", "local"]):
         state = data.get("state")
-        if not isinstance(state, dict) or state.get("code") not in _STATE_NAME_TO_CODE.values():
+        if not isinstance(state, dict) or declared_state_code(data) not in _STATE_NAME_TO_CODE.values():
             raise TaxLawSetError("Optional rule blocks require a valid state code")
     if any(seg.startswith("_") for seg in segs) or dotted == "tax_year":
         raise TaxLawSetError(
@@ -2578,7 +2635,8 @@ def _reference_for(dotted: str, data: dict, value, year: int):
         if not isinstance(value, dict) or not isinstance(value.get("code"), str):
             raise TaxLawSetError("state: the whole block must be an object "
                                  "carrying a 2-letter `code`")
-        return create_state_template(value["code"], tax_year=year)
+        code = declared_state_code({"state": value}) or value["code"]
+        return create_state_template(code, tax_year=year)
     node, segs, dotted = _seed_root(dotted, data, year)
     for seg in segs:
         parent = dotted
@@ -2627,11 +2685,15 @@ def _pin_key(dotted: str, data: dict) -> str:
         return ".".join(segs[:2])
     if segs[0] == "state":
         code = _state_pin_code(data.get("state") or {})
+        state_pin = f"state.{code}" if code != "state" else "state"
         if len(segs) >= 2 and segs[1] in ("modifications", "local"):
-            return f"state.{code}.{segs[1]}"
+            return f"{state_pin}.{segs[1]}"
         if code == "FL" and dotted == "state.sales_tax.county_surtax_rate":
             return "state.FL.county_surtax_rate"
-        return f"state.{code}"
+        if code == "CA" and (dotted == "state.underpayment_rates"
+                or dotted.startswith("state.underpayment_rates.")):
+            return "state.CA.underpayment_rates"
+        return state_pin
     return segs[0]
 
 
@@ -2734,7 +2796,7 @@ def validate_cache(data: dict, year: int) -> "list[str]":
             continue
         try:
             if path == "state":
-                ref = create_state_template(_state_pin_code(value), tax_year=year)
+                ref = create_state_template(declared_state_code(data) or "state", tax_year=year)
             else:
                 ref = _reference_for(path, data, value, year)
             _check_against(path, ref, value, top=False, strict=False)
@@ -2803,6 +2865,13 @@ def _check_applies_to(pin: str, dotted: str, period, year: int):
                 f"{dotted}: applies_to must be the calendar year the rate "
                 f"applied to ({key_year})")
         return period
+    if pin == "state.CA.underpayment_rates":
+        if period is None:
+            return year
+        if (type(period) is int and 1900 <= period <= 2099) or (
+                isinstance(period, str) and _HALF_YEAR.fullmatch(period)):
+            return period
+        raise TaxLawSetError(f"{dotted}: applies_to must be a calendar year or a YYYY-Hn half-year")
     # underpayment_rates: every entry carries its own effective date, so the
     # period is optional — a year or a YYYY-Qn quarter when given.
     if period is None:
@@ -2899,7 +2968,8 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
     # inside it is superseded. Left behind, that entry goes on dating the block
     # from a retrieval this write has just overwritten — a re-fetched block
     # could never clear STALE, which is a gate crying wolf on correct data.
-    for superseded in [k for k in provenance if k.startswith(f"{key}.")]:
+    for superseded in [k for k in provenance if k != key and (
+            k == dotted or k.startswith(f"{dotted}.") or k.startswith(f"{key}."))]:
         del provenance[superseded]
     provenance[key] = {"retrieved": when, "applies_to": period, "source": source}
     data["_provenance"] = provenance

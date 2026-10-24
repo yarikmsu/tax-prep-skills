@@ -1337,6 +1337,100 @@ def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | Non
     return totals, ("CA payments: " + " ".join(notes)) if notes else None
 
 
+def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: str) -> tuple[dict, str]:
+    """Rebuild line113 from reviewed inputs; never read its stored total."""
+    import datetime
+    from agents.lib.tax_computations.state.ca import (
+        compute_ca_5805, _ca_input, _ca_5805_events,
+    )
+    inputs = profile.get("ca_5805")
+    if not isinstance(inputs, dict):
+        raise ValueError("record ca_5805 inputs and an explicit penalty method")
+    from agents.lib.secure_fs import first_non_finite
+    if first_non_finite(inputs) is not None:
+        raise ValueError("ca_5805 inputs must not contain nonfinite amounts")
+    method = inputs.get("method")
+    if method in ("manual", "ftb_bill"):
+        if method == "ftb_bill":
+            if inputs.get("ftb_bill_eligible_confirmed") is not True:
+                raise ValueError("confirm no FTB5805 PartI attachment requirement before choosing FTB billing")
+            amount = 0.0
+            note = "Form 540 line 113: FTB billing explicitly elected; penalty NOT COMPUTED and excluded from this balance."
+        else:
+            if (inputs.get("manual_worksheet_confirmed") is not True
+                    or inputs.get("manual_form") not in ("FTB5805", "FTB5805F")):
+                raise ValueError("confirm the worked FTB5805/5805F for the selected special method")
+            amount = _ca_input(inputs.get("manual_penalty"), "CA manual penalty")
+            note = "Form 540 line 113: confirmed external FTB5805/5805F worksheet; special method is not engine-computed."
+        return {"computed_tax_year": year, "method": method, "total": amount,
+            "source_review": inputs.copy()}, note
+    if method != "regular":
+        raise ValueError("choose ca_5805.method: regular, manual or ftb_bill; never assume a zero penalty")
+    if inputs.get("current_tax_components_confirmed") is not True:
+        raise ValueError("confirm FTB5805 current PartII tax components, including excluded distribution taxes and IRC453A interest")
+    interest = _ca_input(inputs.get("section_453a_interest"), "CA IRC453A interest")
+    accumulation = _ca_input(inputs.get("accumulation_distribution_tax"), "CA accumulation-distribution tax")
+    lump = _ca_input(form.get("ca_lump_sum_tax", 0), "CA ScheduleG1 tax")
+    if round(lump + accumulation, 2) != form["line_34"] or interest > form["line_63"]:
+        raise ValueError("reconcile excluded distribution taxes to line34 and IRC453A interest to line63")
+    current = round(max(0, form["line_48"] - lump - accumulation)
+        + form["line_61"] + form["line_62"] + interest, 2)
+    # _ca_payments has already validated every AA70 source's destination,
+    # ownership and claimable share. Unknown dates cannot price a penalty;
+    # they may be ignored only when known credits independently prove zero.
+    records = (profile.get("estimated_payments") or {}).get("state", [])
+    selected = [r for r in records if r["state"] == "CA" and r["tax_year"] == year and r["amount"] > 0]
+    known = [{"payment_id": r["payment_id"], "date": r["date"], "amount": r["amount"]}
+             for r in selected if r["date"] is not None]
+    balances = inputs.get("balance_payments")
+    if not isinstance(balances, list):
+        raise ValueError("record CA return-balance payments, including an explicit empty list")
+    balance_events = _ca_5805_events(balances, "CA return-balance payments")
+    if any(p["date"].year < year or p["date"] > datetime.date.today() for p in balance_events):
+        raise ValueError("CA return-balance payments require actual dates for this return")
+    if balances and inputs.get("balance_payments_confirmed") is not True:
+        raise ValueError("confirm CA return-balance payments' credited year, ownership and claimable shares")
+    actual = inputs.get("actual_withholding")
+    if not isinstance(actual, list):
+        raise ValueError("record CA actual withholding, or an empty list for deemed withholding")
+    actual_events = _ca_5805_events(actual, "CA actual withholding")
+    if any(p["date"].year != year or p["date"] > datetime.date.today() for p in actual_events):
+        raise ValueError("CA actual withholding must have actual covered-year dates")
+    all_credits = selected + balances + actual
+    if len({r["payment_id"] for r in all_credits}) != len(all_credits):
+        raise ValueError("CA estimated, return-balance and withholding IDs must be unique; never claim one payment twice")
+    if inputs.get("withholding_method") == "actual" and inputs.get("actual_withholding_confirmed") is not True:
+        raise ValueError("confirm source evidence for actual CA withholding dates before electing that method")
+    previous = inputs.get("prior_return")
+    if not isinstance(previous, dict):
+        raise ValueError("record the prior CA return facts, or leave its facts unanswered until independently unnecessary")
+    reviewed = previous.get("confirmed") is True
+    if reviewed and previous.get("tax_year") != year - 1:
+        raise ValueError("prior FTB5805 facts must name the preceding tax year")
+    withholding_method = inputs.get("withholding_method")
+    if not isinstance(withholding_method, str) or inputs.get("regular_method_confirmed") is not True:
+        raise ValueError("confirm regular-method eligibility and the CA withholding method")
+    paper = compute_ca_5805(tax_year=year, filing_status=status, state_law=state,
+        current_tax=current, current_agi=form["line_17"],
+        withholding=round(form["line_71"] + form["line_73"], 2),
+        prior_tax=previous.get("tax") if reviewed else None,
+        prior_agi=previous.get("agi") if reviewed else None,
+        prior_withholding=previous.get("withholding") if reviewed else None,
+        prior_full_year=previous.get("full_year") if reviewed else None,
+        prior_return_filed=previous.get("filed") if reviewed else None,
+        payments=known + balances,
+        opening_credit=(profile.get("prior_year") or {}).get("ca_estimated_payments_applied", 0),
+        withholding_method=withholding_method, actual_withholding=actual,
+        regular_method_confirmed=True,
+        early_return=inputs.get("early_return"))
+    if paper["total"] > 0 and any(r["date"] is None for r in selected):
+        raise ValueError("resolve unknown CA payment dates before pricing FTB5805")
+    paper["source_review"] = inputs.copy()
+    paper["payment_sources"] = selected
+    note = "Form 540 line 113: FTB5805 regular-method penalty computed from reviewed PartII tax, withholding and dated payments."
+    return paper, note
+
+
 def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict:
     """The CA half of the receipted check, independently of federal scope."""
     from agents.lib.capabilities import _profile_state
@@ -1415,6 +1509,7 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
         components["line_73"] = sums.get("ca_592b_593_withholding", 0)
         payments, payment_note = _ca_payments(profile, _tax_year(result, profile), fs)
         components["line_72"] = payments["total"]
+        components["line_113"] = 0  # derived after the provisional tax build
         forward = flags.get("ca_applies_overpayment_forward")
         amount = _num(components["line_98"], "CA line98 forward election")
         # Form 540 stores this component to cents; rebuilding must ask the
@@ -1430,6 +1525,10 @@ def build_california(result: dict, tax_law: dict, ledger, profile: dict) -> dict
             ca_preference_adjustments=_num(ca.get("ca_preference_adjustments"), "CA Schedule P adjustments"),
             lump_sum_tax=_num(ca.get("ca_lump_sum_tax"), "CA Schedule G-1 tax in line 34"),
             iso_bargain_element=_num((ca.get("schedule_p") or {}).get("iso_bargain_element"), "CA ISO spread"), components=components)
+        built["ca_lump_sum_tax"] = ca.get("ca_lump_sum_tax")
+        paper, penalty_note = derive_ca_5805(built, profile, state, _tax_year(result, profile), fs)
+        from agents.lib.tax_computations.state.ca import settle_ca_5805
+        built.update(settle_ca_5805(built, paper), ftb_5805=paper, line_113_note=penalty_note)
         p = {**(ca.get("schedule_p") or {}), **built["schedule_p"]}
         generated = p["schedule_p_carryforward"]
         prior = _num((profile.get("prior_year") or {}).get("ca_amt_credit_carryforward", 0), "prior CA AMT credit")
@@ -1487,6 +1586,8 @@ def california_differences(result: dict, derived: dict) -> list[str]:
         raise Blocked("Form 540 requires meta.limitations to be a list of disclosure strings")
     if derived and derived["line_113_note"] not in notes:
         fields.append("meta.limitations (Form 540 line 113)")
+    if derived and any(n.startswith("Form 540 line 113:") and n != derived["line_113_note"] for n in notes):
+        fields.append("meta.limitations (stale Form 540 line 113 disclosure)")
     if derived.get("ca_payment_note") and derived["ca_payment_note"] not in notes:
         fields.append("meta.limitations (CA payments)")
     if derived and any(n.startswith("CA payments:") and n != derived.get("ca_payment_note") for n in notes):
@@ -1678,7 +1779,7 @@ def _main(argv: list) -> int:
         # This CA check precedes the federal scope decision: a PFIC waiver
         # of Form 1040 arithmetic must never waive the separate state return.
         if args.check and california:
-            print("Form 540 derived lines, Schedule P and screened line-113 note agree.")
+            print("Form 540 derived lines, Schedule P, FTB5805 and final settlement agree.")
             print(california["line_113_note"])
         derived = build(result, tax_law, ledger,
                         _filing_status(profile, result), profile)

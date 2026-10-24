@@ -390,6 +390,16 @@ def attachment_checklist(result: dict) -> list:
             "present, and a COMPLETE copy of the federal return whenever "
             "any federal schedule other than A or B was filed — for this "
             "toolkit's returns that is almost always.")
+        penalty = (result.get("california_540") or {}).get("ftb_5805")
+        if isinstance(penalty, dict):
+            method = penalty.get("method")
+            lines.append("CA estimated-tax penalty: " + (
+                "regular FTB5805 workpaper computed; attach the official FTB5805 when PartI requires it (including actual-date withholding)."
+                if method == "regular" else
+                "FTB billing elected; the unpriced penalty is excluded from this package's balance."
+                if method == "ftb_bill" else
+                "confirmed external FTB5805/5805F; attach the applicable official form and required waiver/annualized statements."
+            ) + " This workpaper is not the official filing form.")
         if balance_due >= 0 and _section_present(result, "california_540"):
             ca = result.get("california_540") or {}
             ca_tax = _field_num(ca, "ca_total_tax", "ca_total_tax")

@@ -40,6 +40,8 @@ the enacting statute; state figures come from the state tax authority.
 | `qbi_minimum` `{income_threshold, amount}` | §70105 | loud-degrade (taxpayer-favorable) — fetch so the floor applies |
 | `retirement_401k.secure_2_0_high_earner_threshold` | IRC §414(v)(7)(A) indexed | **FAIL-CLOSED for every covered year** — X10 removed the annual default; fetch the indexed threshold whenever the TY2026+ catch-up rule is evaluated |
 | `underpayment_rates` (§6621 quarterly) | IRS quarterly interest-rate news releases | see the two-window note below |
+| CA `underpayment_screen` + `estimated_tax_safe_harbor` | Covered-year FTB5805/540-ES instructions | Required regular-method parameters: current/prior floors and shares, AGI thresholds, weighted installments, effective due/early-filing/end dates. Ordinary `state.CA` pin stays annual. |
+| CA `underpayment_rates` (R&TC19521 half-years) | FTB interest/estimate-penalty rate schedule + covered-year FTB5805 instructions | Separate `state.CA.underpayment_rates` source/provenance pin. Only this CA sub-pin enters `multi_period_pins`; calendar year or `YYYY-H1`/`YYYY-H2`, never federal quarters. Fetch through TY+1 penalty end; a missing half-year never carries forward. Empty is safe only when checked regular-method facts prove no priced days. |
 
 ### The `underpayment_rates` two-window rule (M3)
 
@@ -295,21 +297,10 @@ a definition loads at SESSION START.
 
 1. **The fetch and the freshness gate above are already done.** If they are not, stop:
    steps 1-4 come first, and this step is worthless before them.
-2. **Make the queued edits, if any are listed here.** One is queued, with the test change
-   it needs, until AA52 lands both with a replay of its own: name `schema.json`'s
-   `retirement_conformity_seed`, which the export writes whenever the cache holds that
-   block, beside `cache_seed` and `state_seed`, and in the same edit build `SCHEMA_KEYS`
-   in `tests/test_claude_agents.py` from a cache holding every optional block. That test
-   holds the definition's names and the export's keys to each other in both directions,
-   so either half alone turns it red. If AA52 is still open when this sitting comes,
-   make both here; its engine fixes stay in the backlog. Y2's sitting (2026-10-12) made
-   the five queued before it: the `_provenance` check (V4), the item-7 keying note (X1),
-   the scope paragraph and schema reads pointed at the export (V7), Replay B handed an
-   exported directory instead of a file path, and item 5's `federal.salt_cap` check
-   (AA19).
-   AA51's four edits followed with a sitting of their own (2026-10-13), the precedent
-   for replaying between seasons. Queue a later edit by listing it here, never by
-   editing the definition ahead of its replay.
+2. **Make the queued edits, if any are listed here.** None are queued. The
+   AA52 and AA76 definition edits were replayed together on 2026-10-20; the
+   results and digests are in the acceptance record. Queue a later edit here,
+   never by editing the definition ahead of its replay.
 3. **Start a FRESH session** at the repository root. Not a new sub-agent, not a cleared
    context — a new session, because that is when the edited definition is loaded.
 4. **Replay both reviewers** exactly per `docs/ops/review-subagent-acceptance.md`: its
@@ -328,6 +319,9 @@ so this step goes AFTER the fetch and the freshness gate, never before them.
 Register it in all the places the invariant requires (mirroring Epic I):
 `create_empty_tax_law` seed, `/tax-setup` fetch bullet + `_sources` pin,
 `check_freshness` treatment (fail-closed / opt-in / statutory-fallback),
+independent sub-pin in `_pin_key` AND `_expected_pins` when a block has its own
+source/effective period (CA rates are `state.CA.underpayment_rates`, never the
+whole annual `state.CA` pin),
 `tests/test_ty2026_readiness.py` present + absence cases, and a row in this
 runbook's table. A block a user's return can depend on but this runbook doesn't
 list is the exact gap M1/M2 exist to close.

@@ -176,6 +176,25 @@ a figure from a prior year.
   `state.underpayment_screen.minimum_balance` and its percentage screen into
   `state.underpayment_screen.tax_fraction`. These are required fetched figures,
   never engine defaults. Source-pin the covered-year instructions.
+- **CA FTB5805 regular method:** fetch the covered year's PartII/WorksheetII
+  into `state.estimated_tax_safe_harbor`: prior-year shares (ordinary and high
+  income), five-status prior-AGI thresholds and current-AGI override thresholds,
+  four installment shares, legally rolled due dates, penalty end date and the
+  effective early-filing/full-payment deadline, and Part II line 2's current-year
+  share into `current_year_share` (the 90%, never line 113's 10% screen). Reuse
+  `underpayment_screen.minimum_balance` for the minimum; all figures remain fetched.
+  When a penalty needs pricing, fetch every R&TC19521 half-year actually used
+  into `state.underpayment_rates` (`effective_from` January1/July1,
+  `annual_rate`), including the following year through the penalty end.
+  A missing successor never carries a rate forward. A published period spanning
+  two half-years can supply both rows, with the source explicitly supporting
+  both. Pin this schedule independently as `state.CA.underpayment_rates`;
+  `--applies-to` accepts a calendar year or `YYYY-H1`/`YYYY-H2` for this pin.
+  Keep the ordinary `state.CA` pin annual, including brackets and exemptions.
+  Verify weekend/holiday treatment for the early-filing deadline rather than
+  copying an unadjusted nominal date. Empty rates are permissible only when
+  computation independently proves no priced days. Sources: the covered-year
+  FTB5805/540-ES instructions and FTB interest/estimate-penalty rate schedule.
 - **For every CA return:** fetch the Schedule CA/Publication 1001 fund asset
   qualification threshold into `state.schedule_ca.fund_asset_minimum` (a
   fraction). Verify the covered year and pin it under `state.CA`. The engine

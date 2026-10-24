@@ -89,7 +89,9 @@ and its carryforward reconciliation at tie-out. Federally taxable Social
 Security and state refunds must be subtracted on Schedule CA whatever a
 screening answer says. CA renter's credit and self-claimed special credits
 are manual notes; the dependent-care and EIC notes also name the distinct CA
-worksheets. Line 113's FTB 5805 penalty is unpriced; the FTB may bill it.
+worksheets. The reviewed-year regular FTB5805 penalty on line113 is checked
+from tax and payment facts. Special methods require a confirmed external
+worksheet; eligible FTB billing is an explicit, disclosed election.
 The checked TY2025 builder derives US-obligation, municipal/fund, Social
 Security and state-refund Schedule CA adjustments from reviewed source
 components. Missing qualification or incomplete component splits block computation. The

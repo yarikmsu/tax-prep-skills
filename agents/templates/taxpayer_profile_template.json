@@ -46,6 +46,28 @@
       "ctc_eligible": false
     }
   ],
+  "ca_5805": {
+    "_comment": "Choose regular, manual or ftb_bill explicitly. Regular eligibility excludes annualized, farmer/fisherman, waiver, disaster/special deadlines, fiscal-year and estate/trust methods. Prior tax is the reviewed FTB5805 PartII base, not aggregate total tax. Balance payments affect penalty timing only and never Form540 line72; reconcile their CA destination/year/ownership and avoid duplicate payment IDs. Actual withholding reconciles to lines71+73. Early-return verification confirms filing AND the entire return fully paid by the fetched effective deadline.",
+    "method": null,
+    "regular_method_confirmed": null,
+    "current_tax_components_confirmed": null,
+    "section_453a_interest": null,
+    "accumulation_distribution_tax": null,
+    "withholding_method": null,
+    "actual_withholding": [],
+    "actual_withholding_confirmed": null,
+    "balance_payments": [],
+    "balance_payments_confirmed": null,
+    "early_return": null,
+    "prior_return": {
+      "tax_year": null, "filed": null, "full_year": null,
+      "tax": null, "agi": null, "withholding": null, "confirmed": null
+    },
+    "manual_form": null,
+    "manual_penalty": null,
+    "manual_worksheet_confirmed": null,
+    "ftb_bill_eligible_confirmed": null
+  },
   "ca_exemptions": {
     "primary_can_be_claimed": null,
     "primary_schedule_p_child": null,

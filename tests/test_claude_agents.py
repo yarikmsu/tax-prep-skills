@@ -28,6 +28,8 @@ import pytest
 from agents.lib.tax_law_export import audit_schema
 from agents.lib.tax_law_fetcher import (
     create_empty_tax_law,
+    create_retirement_conformity_template,
+    state_schema,
     create_state_template,
 )
 
@@ -1074,7 +1076,12 @@ class TestFreshnessAuditorMatchesTheSchema:
         assert "colorado" in text
 
     # Each key `schema.json` carries besides its own `about` note.
-    SCHEMA_KEYS = frozenset(audit_schema(create_empty_tax_law(2026), 2026)) - {"about"}
+    SCHEMA_KEYS = frozenset(audit_schema({
+        **create_empty_tax_law(2026),
+        "state": state_schema("CA", 2026),
+        "retirement_conformity": create_retirement_conformity_template(),
+        "ptet": {"CA": {"schedule": [], "vintage": ""}},
+    }, 2026)) - {"about"}
 
     def test_every_schema_table_is_named_and_every_name_is_a_table(self):
         """Both directions, because each failed once. A table the export ships
@@ -1150,6 +1157,12 @@ class TestFreshnessAuditorMatchesTheSchema:
             r"coverage through the filing deadline\s+in ty\+1 is expected", text
         )
         assert "`federal.historical_top_rate`" in text
+        assert "`state.underpayment_rates`" in text
+        assert '`_sources["state.ca.underpayment_rates"]`' in text
+        assert "`yyyy-h1`/`yyyy-h2`" in text
+        assert re.search(
+            r'does\s+not make the whole `_sources\["state\.ca"\]` pin multi-period', text
+        )
         assert re.search(
             r"historical_top_rate.{0,180}calendar-year\s+key", text, re.DOTALL
         )

@@ -53,7 +53,15 @@ Its `threshold` and `band` use all five statuses, with a shared
 the checked Form 540 selects published table rows and runs Schedule P even
 without an ISO exercise. AMT exemption/phaseout use single/mfj/mfs/hoh
 (QSS maps to mfj). `underpayment_screen.minimum_balance` uses all five
-statuses and `tax_fraction` is a fetched scalar for line113's screen.
+statuses and `tax_fraction` is the fetched current-year annual-payment share.
+`estimated_tax_safe_harbor` carries CA's prior-year shares, five-status prior-
+AGI/current-AGI thresholds, installment shares and effective calendar dates;
+these are fetched rather than defaults. `underpayment_rates` is a separate
+January/July half-year schedule, pinned as `state.CA.underpayment_rates` with
+calendar-year or `YYYY-H1`/`YYYY-H2` provenance. Only this sub-pin is multi-period;
+`state.CA` remains annual. A successor half-year is never inferred from its
+predecessor. Empty rates are permitted when the checked computation has no
+priced days; uncovered days stop the penalty calculation.
 `state.schedule_ca.fund_asset_minimum` is also fetched for the covered year,
 from Schedule CA/Publication 1001. It is the fund asset-qualification fraction,
 separate from each fund's income allocation percentages; missing law refuses

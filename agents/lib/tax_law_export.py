@@ -63,7 +63,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -106,10 +105,9 @@ def audit_schema(data: dict, year: int) -> dict:
     to: a cache declaring another `tax_year` stops there, so a seed for the
     payload's year would only describe a cache it refuses to audit. The state
     seed is the template `set` validated the block against, chosen by the same
-    helper from the code as written, and null when the block carries no code,
-    since `set` validates nothing under such a block. The regime code is the
-    other spelling, normalised as `check_freshness` normalises it, because the
-    regime a block declares does not depend on how `set` spelled its code. The
+    canonical selection helper used by writes and validation, including the
+    display-name fallback for legacy caches. Null means no state can be
+    resolved. The regime code uses that same normalized selection. The
     host policy, the regime table and the two pin tables are the engine's rules
     published as data by the functions beside them, not restated here.
     """
@@ -154,7 +152,14 @@ def identifier_findings(node, dotted: str = "") -> "list[str]":
     return found
 
 
-def _resolve_dest(dest, root: Path, year: int) -> Path:
+def _remove_created(directories: list[Path]) -> None:
+    """Remove only empty directories this call created, inside out."""
+    for directory in reversed(directories):
+        with contextlib.suppress(OSError):
+            directory.rmdir()
+
+
+def _resolve_dest(dest, root: Path, year: int) -> tuple[Path, list[Path]]:
     """A directory of its own — fresh, empty, and not inside the workspace.
 
     `docs/ops/review-subagent-acceptance.md` records this trap in its own words
@@ -167,7 +172,8 @@ def _resolve_dest(dest, root: Path, year: int) -> Path:
     if dest is None:
         # 0700 at creation, unpredictable by name. Two exports of the same year
         # from two workspaces must not collide.
-        return Path(tempfile.mkdtemp(prefix=f"tax-law-audit-{year}-"))
+        chosen = Path(tempfile.mkdtemp(prefix=f"tax-law-audit-{year}-"))
+        return chosen, [chosen]
     text = str(dest).strip()
     if not text:
         # `Path("")` is `.` — it chmodded the current directory and printed
@@ -185,8 +191,22 @@ def _resolve_dest(dest, root: Path, year: int) -> Path:
             f"--dest {redact(chosen)} already holds files. Name a fresh directory: "
             "one that already has a cache in it gives the auditor two and no way "
             "to say which it read.")
-    chosen.mkdir(parents=True, exist_ok=True)
-    return chosen
+    missing, created = [], []
+    ancestor = chosen
+    while not ancestor.exists():
+        missing.append(ancestor)
+        if ancestor.parent == ancestor:
+            raise FileNotFoundError("export destination has no accessible existing ancestor")
+        ancestor = ancestor.parent
+    try:
+        for directory in reversed(missing):
+            directory.mkdir()
+            created.append(directory)
+            secure_path(directory)
+    except BaseException:
+        _remove_created(created)
+        raise
+    return chosen, created
 
 
 def build_audit_copy(year: int, workspace=None, dest=None) -> Path:
@@ -238,21 +258,22 @@ def build_audit_copy(year: int, workspace=None, dest=None) -> Path:
     # Built before anything is created, so an engine that cannot describe this
     # cache leaves no directory behind.
     schema_text = json.dumps(audit_schema(data, year), indent=2) + "\n"
-    directory = _resolve_dest(dest, root, year)
+    directory, created = _resolve_dest(dest, root, year)
     target = directory / source.name
     _write_export(directory, {target: text, directory / SCHEMA_NAME: schema_text},
-                  made_here=dest is None)
+                  created=created)
     return target
 
 
-def _write_export(directory: Path, files: dict, made_here: bool) -> None:
+def _write_export(directory: Path, files: dict, created: list[Path]) -> None:
     """Write every file or none of them.
 
     A copy without its schema sends the auditor looking for one outside the
     directory, and the half-built directory then blocks a re-run to the same
     `--dest` as one that "already holds files". So a failed write takes back
     what this call wrote, and the directory as well when this call made it. A
-    named `--dest` is left in place, empty, which a re-run accepts. The cleanup
+    preexisting `--dest` is left in place, empty, which a re-run accepts. New
+    empty parents are removed too; unrelated files and directories remain. The cleanup
     is best effort: a failure in it would raise over the error that caused it,
     which is the one the user has to act on.
     """
@@ -266,8 +287,7 @@ def _write_export(directory: Path, files: dict, made_here: bool) -> None:
         for path in written:
             with contextlib.suppress(OSError):
                 path.unlink(missing_ok=True)
-        if made_here:
-            shutil.rmtree(directory, ignore_errors=True)
+        _remove_created(created)
         raise
 
 

@@ -2033,6 +2033,24 @@ def _ca_schedule_checks(ledger: "list[LedgerRecord]", result: dict, profile, tax
     return []
 
 
+def _ca_5805_checks(ledger, result: dict, profile, tax_law) -> list[str]:
+    """Independently rebuild computed CA returns before any federal waiver."""
+    from agents.lib.return_builder import build_california, california_differences, Blocked
+    from agents.lib.projection import _ca_section_computed
+    ca = result.get("california_540")
+    if not isinstance(ca, dict) or (not _ca_section_computed(result)
+            and ca.get("computed_tax_year") is None and ca.get("ftb_5805") is None):
+        return []
+    try:
+        built = build_california(result, tax_law or {}, ledger, profile or {})
+        differences = california_differences(result, built)
+    except (Blocked, ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        return [f"CA FTB5805: {redact(exc)}"]
+    if differences:
+        return ["CA FTB5805/Form540: checked workpaper, source inputs, settlement or disclosure disagree; rebuild the CA return"]
+    return []
+
+
 def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: bool,
                       tolerance: float) -> list[str]:
     """CA subtractions and carried AMT credit cannot vanish behind an acknowledgement."""
@@ -2158,6 +2176,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     missing_targets.extend(_ca_return_checks(
         result, profile, sums.get("state_refund_1099g", 0) > 0, tolerance))
     missing_targets.extend(_ca_schedule_checks(ledger, result, profile, tax_law))
+    missing_targets.extend(_ca_5805_checks(ledger, result, profile, tax_law))
     crypto = result.get("crypto_summary")
     form8949 = result.get("form_8949") or {}
     account_rows = (isinstance(form8949, dict) and any(

@@ -698,6 +698,91 @@ What a host loads into every subagent is outside any scope sentence's reach, and
 index reaches the auditor too, the one agent with network access — so it must carry
 nothing a replay is scored on and nothing that identifies a taxpayer.
 
+## Results — 2026-10-20
+
+Re-run for AA52 and AA76 together: canonical state-schema selection, the optional
+`retirement_conformity_seed`, and the independently pinned CA half-year schedule.
+The definition and its schema-contract tests were edited before either reviewer
+started. Each ran in a fresh native headless session in a source-only local clone,
+using the tracked definition and its exact read-only tool grant. Hooks and MCP
+servers were disabled. No taxpayer runtime files were copied into the clone.
+Criteria were written to disk before dispatch; the initial prompts carried only
+the fixture file (A) or exported directory (B), without defect hints.
+
+### `tax-law-freshness-auditor` — PASS
+
+**Definition.** `.claude/agents/tax-law-freshness-auditor.md`,
+sha256 `234c6542e38eb0bf0b1be70a01f9c6b00f08e6591c9fd32933db5d0d1f72c759`.
+
+**Input.** The cache Replay B's generator exports, copied byte for byte,
+sha256 `e2a9d7a31e88195851b429b7100a4eafdd34c456bf42b59f8c9e28ed413ff440`.
+
+**Model.** `claude-opus-5-5`.
+
+Finding 1 identified the SALT plant by VALUE: 10,000 / 5,000 in the cache,
+versus 40,400 / 20,200 for TY2026, citing §164(b)(7) on Cornell LII. The
+cached values were checked against `_salt_cap(2024, …)`. The unsupported Topic
+503 pin and missing retrieval dates were additional findings, not the bar.
+Five seed groups were UNVERIFIED for period: the simplified FTC, Form 8938,
+FBAR, QBI rate and IRMAA lookback. Five numeric seed groups were VERIFIED
+against year-named IRS publications; the boolean flag was separately recognized
+as a flag. This was not an enumeration of every populated leaf as wrong.
+
+**Contamination, read from the trace.** Sixteen tool calls: one Glob of the
+export, two Reads for its cache and schema, twelve WebFetch calls and one
+WebSearch. Fetch hosts were IRS, CMS, SSA and Cornell LII. No other file was read.
+
+**Additional CA check.** The same auditor session, with the unchanged definition,
+then received a separate TY2025 export. Its cache digest is
+sha256 `a8f715ffbd2793c60dd9103af4b22eb644a7ee2b772f26e76449b79795c503ec`.
+The export held a lower-case `ca` code, the optional conformity matrix and
+published January 2025, July 2025 and January 2026 rate rows, with an independent
+rate pin. The report resolved `CA` and `graduated_income`, recognized the matrix
+as its seed, accepted the rate pin's 2026 period, and explicitly kept the ordinary
+CA pin annual. It recognized that the published July 2025–June 2026 interval
+can support two half-year rows. It did not reject the later row for naming TY+1.
+
+The direct FTB fetches returned 403, so its first report correctly left those
+rates UNVERIFIED rather than trusting search excerpts. A follow-up supplied
+the live FTB table text and its URL through the definition's documented source-text
+route; it then VERIFIED all three rate rows while preserving its other findings.
+That follow-up made no tool calls. The original fixture also lacked `source` in its provenance entries and
+the two optional state-rule pins; those defects remain findings, not a clean-cache
+claim. Its UTC retrieval timestamp prompted an unnecessary future-date concern
+because the session date was local; that is recorded rather than counted as a
+passing age check. This support case tests schema and period routing, not a
+fully fetched return cache.
+
+The CA trace held one Glob, two Reads of that export and twenty web calls. No
+outside file was read, including the undecodable IRS PDF saved by WebFetch.
+
+### `bias-direction-reviewer` — PASS
+
+**Definition.** `.claude/agents/bias-direction-reviewer.md`,
+sha256 `bd3025c7093e6681f66d52696933ea42888d1c50a6cf0a9f41c856d80ea3bf91`.
+
+**Input.** `2f83b25f671d194751f9a9b7adce03e9475bfbfb:agents/lib/tax_computations.py`,
+sha256 `de806747050be02c90cdacacd0e6071775e46c30d8658a030a7489e498b8629d`.
+
+**Model.** `claude-opus-5-5`.
+
+Finding 2 identified the missing overall taxable-income cap in the QBI function
+at line 742: 20% of taxable income before QBI less net capital gain. It named
+the direction as OVER-stating the deduction and UNDER-stating tax and planning
+cost, and supplied worked examples. It described the statutory formula rather
+than naming Form 8995. The criterion's own case was independently reproduced:
+100,000 QBI with no REIT dividends returns 20,000, and the function accepts no
+taxable-income argument; at 30,000 taxable income the overall cap is 6,000.
+
+The report also caught the Form 8959 wage-versus-SE withholding-credit defect
+(finding 11); it did not earn the optional ODC/ACTC item. All twelve findings
+were about direction or unstated preconditions. The remaining claims were not
+independently validated and are not acceptance evidence about current code.
+
+**Contamination, read from the trace.** Two tool calls: a Read of the supplied
+historical file and a Glob of its scratch directory, which held only that file
+under `agents/lib/`. No current engine, tests or taxpayer files were read.
+
 ## The parse worker is accepted differently, and this is why
 
 `tax-parse-worker` is in `.claude/agents/` and has **no replay section above, on

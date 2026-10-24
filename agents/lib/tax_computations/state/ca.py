@@ -22,6 +22,8 @@ exemption and its own threshold, the SDI rate and ceiling — are all parameters
 """
 
 import math
+import calendar
+import datetime as dt
 
 
 from agents.lib.tax_computations._shared import (
@@ -33,6 +35,7 @@ from agents.lib.tax_computations._shared import (
     _normalize_filing_status,
     _prorated_mortgage_interest,
     _round_half_up,
+    _split_remainder_last,
     _validated_withholding_list,
 )
 
@@ -250,6 +253,261 @@ def compute_ca_schedule_ca(
     for key in ("line_2_column_b", "line_2_column_c", "total_additions", "total_subtractions"):
         _ca_input(out[key], key)  # a finite record must not overflow in aggregate
     return out
+
+
+def _ca_5805_date(value, name: str) -> dt.date:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a canonical ISO date")
+    try:
+        parsed = dt.date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"{name} must be a canonical ISO date") from None
+    if parsed.isoformat() != value:
+        raise ValueError(f"{name} must be a canonical ISO date")
+    return parsed
+
+
+def _ca_5805_scalar(value, name: str, *, signed: bool = False) -> float:
+    try:
+        return _amount(value, name, allow_negative=signed)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} must be a finite number in its allowed domain") from None
+
+
+def validate_ca_underpayment_rates(rates) -> list[dict]:
+    """Half-years expire independently; an absent successor is not carryable."""
+    if not isinstance(rates, list):
+        raise ValueError("state.underpayment_rates must be a list")
+    checked: list[dict] = []
+    for row in rates:
+        if not isinstance(row, dict) or set(row) != {"effective_from", "annual_rate"}:
+            raise ValueError("CA underpayment rates require effective_from and annual_rate")
+        start = _ca_5805_date(row["effective_from"], "CA rate effective_from")
+        if start.day != 1 or start.month not in (1, 7):
+            raise ValueError("CA rates must begin on January1 or July1")
+        if checked and start <= checked[-1]["start"]:
+            raise ValueError("CA rate half-years must be ordered without duplicates")
+        end = dt.date(start.year, 6, 30) if start.month == 1 else dt.date(start.year, 12, 31)
+        checked.append({"start": start, "end": end,
+            "rate": _ca_input(row["annual_rate"], "CA annual_rate", fraction=True)})
+    return checked
+
+
+def validate_ca_installment_shares(shares) -> list:
+    if not isinstance(shares, list):
+        raise ValueError("CA installment_shares must be four finite fractions summing to one")
+    try:
+        valid = (isinstance(shares, list) and len(shares) == 4 and all(
+            type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1 for v in shares)
+            and math.isclose(sum(shares), 1, abs_tol=1e-9))
+    except (TypeError, OverflowError):
+        valid = False
+    if not valid:
+        raise ValueError("CA installment_shares must be four finite fractions summing to one")
+    return shares
+
+
+def _ca_5805_events(records, name: str) -> list[dict]:
+    if not isinstance(records, list):
+        raise ValueError(f"{name} must be a reviewed payment list")
+    events: list[dict] = []
+    ids = set()
+    for row in records:
+        if not isinstance(row, dict) or set(row) != {"payment_id", "date", "amount"}:
+            raise ValueError(f"{name} requires payment_id, date and amount")
+        identity = row["payment_id"]
+        if (not isinstance(identity, str) or not identity.strip()
+                or identity != identity.strip() or identity in ids):
+            raise ValueError(f"{name} payment identifiers must be nonempty and unique")
+        ids.add(identity)
+        events.append({"date": _ca_5805_date(row["date"], name + " date"),
+                       "amount": _ca_input(row["amount"], name + " amount")})
+    _ca_5805_scalar(sum(p["amount"] for p in events), name + " aggregate")
+    return events
+
+
+def _ca_5805_allocate(amount: float, shares: list) -> list[float]:
+    return _split_remainder_last(amount, shares)
+
+
+def _ca_5805_intervals(required: float, shares: list, dues: list, end: dt.date,
+                       withholding: list, payments: list, opening: float) -> tuple[list, list]:
+    """Apply credits oldest-first; due-day payments accrue no penalty."""
+    requirements = _ca_5805_allocate(required, shares)
+    cash: dict[dt.date, float] = {dues[0]: opening}
+    for item in payments + withholding:
+        date = item["date"]
+        if date <= end:
+            cash[date] = cash.get(date, 0) + item["amount"]
+            _ca_input(cash[date], "CA same-date payment total")
+    dates = sorted(set(dues + [end] + list(cash)))
+    balances, intervals = [0.0] * 4, []
+    available, previous = 0.0, dates[0]
+    for date in dates:
+        if date > previous:
+            for i, principal in enumerate(balances):
+                if principal > 0:
+                    intervals.append({"installment": i + 1, "principal": principal,
+                        "start": previous + dt.timedelta(days=1), "end": date})
+        for i, due in enumerate(dues):
+            if date == due:
+                balances[i] = round(balances[i] + requirements[i], 2)
+        available = _ca_input(available + cash.get(date, 0), "CA available payment total")
+        for i, balance in enumerate(balances):
+            used = min(balance, available)
+            balances[i] = round(balance - used, 2)
+            available = round(available - used, 2)
+        previous = date
+    return intervals, requirements
+
+
+def _ca_5805_price(intervals: list, rates: list, waive_fourth: bool) -> tuple[list, float]:
+    details, total = [], 0.0
+    for interval in intervals:
+        if waive_fourth and interval["installment"] == 4:
+            continue
+        cursor = interval["start"]
+        while cursor <= interval["end"]:
+            row = next((r for r in rates if r["start"] <= cursor <= r["end"]), None)
+            if row is None:
+                raise ValueError("CA underpayment rate coverage is incomplete; fetch every half-year actually priced")
+            stop = min(interval["end"], row["end"], dt.date(cursor.year, 12, 31))
+            days = (stop - cursor).days + 1
+            denominator = 366 if calendar.isleap(cursor.year) else 365
+            charge = interval["principal"] * row["rate"] * days / denominator
+            if not math.isfinite(charge) or not math.isfinite(total + charge):
+                raise ValueError("CA penalty calculation overflowed")
+            total += charge
+            details.append({"installment": interval["installment"], "principal": interval["principal"],
+                "from": cursor.isoformat(), "through": stop.isoformat(), "days": days,
+                "annual_rate": row["rate"], "year_days": denominator, "penalty": round(charge, 2)})
+            cursor = stop + dt.timedelta(days=1)
+    return details, round(total, 2)
+
+
+def compute_ca_5805(*, tax_year: int, filing_status: str, state_law: dict,
+                    current_tax, current_agi, withholding, prior_tax, prior_agi,
+                    prior_withholding, prior_full_year, payments: list, opening_credit,
+                    withholding_method: str, actual_withholding: list,
+                    regular_method_confirmed: bool, early_return: dict | None = None,
+                    prior_return_filed=None) -> dict:
+    """FTB5805 regular method, from reviewed tax bases and fetched CA law.
+
+    Payments include separately identified return-balance payments for timing;
+    those do not become Form540 line72 estimated payments. The caller owns the
+    Form540/PartII tax-base derivation and the explicit eligibility decisions.
+    """
+    status = _normalize_filing_status(filing_status).lower()
+    if type(tax_year) is not int or tax_year not in _CA_540_REVIEWED_YEARS:
+        raise ValueError("FTB5805 form year has not been reviewed")
+    if regular_method_confirmed is not True:
+        raise ValueError("confirm the regular method; annualized, farmer, waiver and special-deadline cases need their own worksheet")
+    if not isinstance(state_law, dict) or state_law.get("code") != "CA":
+        raise ValueError("FTB5805 requires California law")
+    screen, policy = state_law.get("underpayment_screen"), state_law.get("estimated_tax_safe_harbor")
+    if not isinstance(screen, dict) or not isinstance(policy, dict):
+        raise ValueError("fetch CA underpayment_screen and estimated_tax_safe_harbor")
+    minimum = _ca_input((screen.get("minimum_balance") or {}).get(status), "CA minimum_balance")
+    # Part II line 2's share is its own fetched figure: underpayment_screen.
+    # tax_fraction is Form 540 line 113's 10% screen, and reusing it would
+    # price the required payment at a tenth of the tax.
+    fraction = _ca_input(policy.get("current_year_share"), "CA estimated_tax_safe_harbor.current_year_share", fraction=True)
+    low = _ca_input(policy.get("prior_year_share"), "CA prior_year_share", fraction=True)
+    high = _ca_5805_scalar(policy.get("prior_year_share_high_income"), "CA prior_year_share_high_income")
+    threshold = _ca_input((policy.get("prior_agi_threshold") or {}).get(status), "CA prior_agi_threshold")
+    override = _ca_input((policy.get("current_agi_override") or {}).get(status), "CA current_agi_override")
+    if not minimum or not fraction or not low or high < low or not threshold or not override:
+        raise ValueError("CA safe-harbor law must be fetched and internally ordered")
+    shares = validate_ca_installment_shares(policy.get("installment_shares"))
+    raw_dues = policy.get("due_dates")
+    if not isinstance(raw_dues, list) or len(raw_dues) != 4:
+        raise ValueError("fetch four CA installment due_dates")
+    dues = [_ca_5805_date(v, "CA due_dates") for v in raw_dues]
+    end = _ca_5805_date(policy.get("penalty_end"), "CA penalty_end")
+    cutoff = _ca_5805_date(policy.get("early_filing_deadline"), "CA early_filing_deadline")
+    if (any(a >= b for a, b in zip(dues, dues[1:])) or any(d.year != tax_year for d in dues[:3])
+            or dues[3].year != tax_year + 1 or end.year != tax_year + 1
+            or not dues[3] < cutoff < end):
+        raise ValueError("CA installment and cutoff dates must match the covered calendar year")
+    current = _ca_input(current_tax, "CA current-year PartII tax")
+    agi = _ca_5805_scalar(current_agi, "CA current-year AGI", signed=True)
+    withheld = _ca_input(withholding, "CA withholding lines71+73")
+    opening = _ca_input(opening_credit, "CA opening applied credit")
+    pay = _ca_5805_events(payments, "CA payments")
+    held: list[dict]
+    if withholding_method == "deemed":
+        if actual_withholding != []:
+            raise ValueError("deemed withholding must not also carry actual-date credits")
+        held = [{"date": d, "amount": a} for d, a in zip(dues, _ca_5805_allocate(withheld, shares))]
+    elif withholding_method == "actual":
+        held = _ca_5805_events(actual_withholding, "CA actual withholding")
+        if round(sum(p["amount"] for p in held), 2) != withheld:
+            raise ValueError("actual-date withholding must reconcile to Form540 lines71+73")
+    else:
+        raise ValueError("confirm deemed or actual-date CA withholding")
+    early = early_return is not None
+    if early:
+        if not isinstance(early_return, dict) or set(early_return) != {"filed_date", "fully_paid_date", "verified"} or early_return["verified"] is not True:
+            raise ValueError("confirm the early return's filing and full-payment facts")
+        filed = _ca_5805_date(early_return["filed_date"], "CA early filed_date")
+        paid = _ca_5805_date(early_return["fully_paid_date"], "CA early fully_paid_date")
+        if filed > cutoff or paid > cutoff or filed.year != tax_year + 1 or paid.year != tax_year + 1:
+            raise ValueError("early-return exception is outside the fetched filing/payment deadline")
+        if opening + withheld + sum(p["amount"] for p in pay if p["date"] <= paid) < current:
+            raise ValueError("early-return payment records do not cover even the PartII tax; reconcile the full return payment")
+    def output(required, reason, intervals, requirements):
+        checked_rates = validate_ca_underpayment_rates(state_law.get("underpayment_rates", []))
+        details, penalty = _ca_5805_price(intervals, checked_rates, early)
+        return {"computed_tax_year": tax_year, "method": "regular", "basis": reason,
+            "current_tax": current, "current_agi": round(agi, 2), "withholding": withheld,
+            "opening_credit": opening, "withholding_method": withholding_method,
+            "required_annual_payment": required,
+            "required_installments": requirements if required is not None else None,
+            "tested_current_year_installments": requirements if required is None else None,
+            "installment_due_dates": [d.isoformat() for d in dues],
+            "penalty_end": end.isoformat(),
+            "dated_payments": [{"date": p["date"].isoformat(), "amount": p["amount"]} for p in pay],
+            "fourth_installment_exception": early, "penalty_details": details, "total": penalty,
+            "notes": ["FTB5805 regular method: the total uses unrounded daily charges; displayed detail rows are rounded."]}
+    if current - withheld < minimum:
+        return output(0.0, "current_year_floor", [], [0.0] * 4)
+    upper = round(current * fraction, 2)
+    upper_intervals, upper_requirements = _ca_5805_intervals(upper, shares, dues, end, held, pay, opening)
+    if not any(not early or row["installment"] != 4 for row in upper_intervals):
+        return output(None, "current_year_requirement_sufficient", [], upper_requirements)
+    # The IMPORTANT box exempts a below-floor liability in EITHER year.
+    # That fact is independent of whether a full prior return supports the
+    # prior-year annual-payment prong. Do not guess a positive penalty from
+    # an unfiled/short return while its floor remains unknown.
+    prior = _ca_input(prior_tax, "prior-year CA PartII tax")
+    if prior < minimum:
+        return output(0.0, "prior_year_floor", [], [0.0] * 4)
+    previous_withheld = _ca_input(prior_withholding, "prior-year CA withholding")
+    if prior - previous_withheld < minimum:
+        return output(0.0, "prior_year_floor", [], [0.0] * 4)
+    if type(prior_return_filed) is not bool:
+        raise ValueError("confirm whether a prior California return was filed")
+    if prior_return_filed and type(prior_full_year) is not bool:
+        raise ValueError("confirm the prior return's full-year status")
+    required, reason = upper, "current_year"
+    if prior_return_filed and prior_full_year and agi < override:
+        previous_agi = _ca_5805_scalar(prior_agi, "prior-year CA AGI", signed=True)
+        prior_payment = _ca_5805_scalar(prior * (high if previous_agi > threshold else low), "CA prior-year annual payment")
+        required = min(upper, round(prior_payment, 2))
+        reason = "lower_of_current_and_prior_year"
+    intervals, requirements = _ca_5805_intervals(required, shares, dues, end, held, pay, opening)
+    return output(required, reason, intervals, requirements)
+
+
+def settle_ca_5805(form: dict, workpaper: dict) -> dict:
+    """Settle the checked penalty before publishing either balance alias."""
+    penalty = _ca_input(workpaper.get("total"), "FTB5805 total")
+    settlement = _ca_5805_scalar(sum(form[f"line_{n}"] for n in (100, 94, 96, 110, 112))
+        + penalty - form["line_99"], "CA final settlement", signed=True)
+    return {"line_113": penalty, "line_114": max(0.0, round(settlement, 2)),
+        "line_115": max(0.0, round(-settlement, 2)),
+        "ca_amount_owed": max(0.0, round(settlement, 2)),
+        "ca_refund": max(0.0, round(-settlement, 2))}
 
 
 def validate_ca_return_law(state: dict) -> None:
@@ -1168,12 +1426,8 @@ def compute_ca_540(
                        + out["line_112"] + out["line_113"] - out["line_99"], 2)
     out["line_114"] = max(0.0, settlement)
     out["line_115"] = max(0.0, -settlement)
-    screen = state_law["underpayment_screen"]
-    possible = (out["line_100"] >= screen["minimum_balance"][status]
-                and out["line_100"] >= screen["tax_fraction"] * max(0, out["line_48"] - lump_sum))
-    note = ("Form 540 line 113: possible FTB 5805/5805F estimated-tax penalty NOT COMPUTED; "
-            "work the applicable worksheet or let the FTB compute it and send a bill." if possible else
-            "Form 540 line 113: the reviewed balance/percentage screen does not indicate an estimated-tax penalty.")
+    note = ("Form 540 line 113: penalty NOT COMPUTED by the form constructor; "
+            "the checked FTB5805 workpaper must determine the penalty and final settlement.")
     out.update(computed_tax_year=tax_year, ca_agi=out["line_17"], ca_taxable_income=out["line_19"],
         ca_standard_deduction=standard,
         federal_agi=agi, ca_tax_from_table=out["line_31"], ca_tax_after_credits=out["line_33"],

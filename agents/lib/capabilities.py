@@ -902,8 +902,9 @@ def _state_note(profile: dict) -> str:
         return ("State: California Form 540 arithmetic and Schedule P are computed by a checked builder "
                 "for the reviewed form year, from separately worked Schedule CA, deduction, credit and tax components. "
                 "HSA adjustments and exemption-credit math have engine support; "
-                "other situations are gated or marked NOT COMPUTED. FTB 5805's underpayment penalty "
-                "on line 113 is NOT COMPUTED; the FTB may figure it and send a bill.")
+                "other situations are gated or marked NOT COMPUTED. FTB5805's regular-method penalty "
+                "on line113 is rebuilt from reviewed tax and payment facts; special methods require "
+                "a confirmed external worksheet or an explicit eligible FTB-billing election.")
     if code == "NY":
         # THE DEPTH NOTE IS WRITTEN LAST, and the spec says so for a reason:
         # it is the sentence a taxpayer and a reviewer read to decide how far

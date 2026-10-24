@@ -89,6 +89,7 @@ _TRIGGERS = {
     "ca_state_refund_worksheet": dict(profile={"address": {"state": "CA"},
         "flags": {"has_1099g_state_refund": True}}),
     "ca_state_payments": dict(profile={"address": {"state": "CA"}}),
+    "ca_penalty_method": dict(profile={"address": {"state": "CA"}}),
     "ca_overpayment_election": dict(profile={"address": {"state": "CA"}}),
     "ca_amt_credit_worksheet": dict(profile={"address": {"state": "CA"},
         "flags": {"ca_has_amt_credit": True}}),

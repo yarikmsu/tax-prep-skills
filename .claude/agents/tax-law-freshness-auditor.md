@@ -47,10 +47,13 @@ finding, not a pass.
 
 Work from `schema.json`, which the engine generated when the copy was made —
 that is the authoritative schema. Its `cache_seed` is `create_empty_tax_law` for
-the filename's year. Its `state_seed` is `create_state_template` for the state
-block's `code` as written, with the two optional rule blocks; it is null when
-the block carries no `code`, since nothing validated such a block, and that
-block's figures are still audited under item 1. Its `state_regimes` is the
+the filename's year. Its `state_seed` uses the same canonical state selection
+as writes and validation, including upper-casing and the legacy display-name
+fallback, with the two optional rule blocks. It is null only when no state can
+be resolved; those figures are still audited under item 1. Its optional
+`retirement_conformity_seed` describes the retirement-conformity matrix whenever
+that block is present; use it rather than treating that block as unknown.
+Its `state_regimes` is the
 year's expected regime for each state code that has one, and its
 `state_regime_code` is the code the engine looks the block's regime up by —
 upper-cased, or mapped from the display name — or null when it resolves none.
@@ -82,12 +85,19 @@ schema fails to define.
 2. **The applicable period is named, not inferred.** For figures scoped to the
    return's tax year, the source page must explicitly state the tax year being
    filed. A page that gives a number without its applicable period proves
-   nothing; treat it as unverified. Two schema-defined multi-period fields use
+   nothing; treat it as unverified. Three schema-defined multi-period fields use
    their own effective periods instead:
    - Verify each `federal.underpayment_rates` entry against the calendar quarter
      containing its `effective_from` date. Coverage through the filing deadline
      in TY+1 is expected; a TY+1 rate release correctly names that later calendar
      year rather than the return's tax year.
+   - Verify each `state.underpayment_rates` entry against its R&TC19521
+     January/July half-year, using the independent `_sources["state.CA.underpayment_rates"]`
+     pin. TY+1 coverage through the penalty end is expected. A merged published
+     period may support two half-year rows; verify both. Its provenance may name
+     a calendar year or `YYYY-H1`/`YYYY-H2`, never a federal quarter. This does
+     not make the whole `_sources["state.CA"]` pin multi-period: every other CA annual figure
+     still requires the return's tax year.
    - Verify each `federal.historical_top_rate` entry against its calendar-year
      key. These prior-year rates correctly name the historical year rather than
      the return's tax year.
