@@ -447,7 +447,7 @@ instructions positively establish that the taxpayer's actual tax base has no est
 obligation. A generic or current "no income tax" label is not enough: historical regimes can
 differ, and a state may tax a non-income-tax base. **A nonresident with
 California-SOURCE income is not that either**: Form 540NR carries its own estimated-tax
-obligation and is outside this toolkit's scope, so ask whether CA-source income exists rather
+obligation and is outside this skill's scope, so ask whether CA-source income exists rather
 than reading "not a resident" as "no CA exposure", and refuse the CA figure for that reason.
 
 ## Step 6 — What this cannot answer

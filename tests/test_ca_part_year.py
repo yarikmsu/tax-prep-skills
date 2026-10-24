@@ -497,3 +497,26 @@ def test_ca_variant_selection_refuses_competing_computations_and_metadata():
 def test_ca_variant_computation_witness_cannot_be_boolean_or_float(year):
     with pytest.raises(ValueError, match="integer tax year"):
         selected_ca_return({"california_540nr": {"computed_tax_year": year}})
+
+
+def test_the_other_state_tax_credit_stays_outside_the_computed_540nr():
+    # Schedule S (code 187) belongs to the other-state returns this path
+    # excludes, even on a plan whose other states have no income tax.
+    case = return_case()
+    case["credit_inputs"]["other_credits"] = [{"code": "187", "amount": 1000}]
+    with pytest.raises(ValueError, match="code 187"):
+        compute_ca_540nr(**case)
+
+
+@pytest.mark.parametrize("status,allowed", [("Single", True), ("HoH", False)])
+def test_line_51_is_barred_for_head_of_household(status, allowed):
+    # 540NR booklet line 51: not available with the head of household, joint
+    # or qualifying surviving spouse/RDP status.
+    case = return_case(filing_status=status)
+    case["profile"]["filing_status"] = status
+    case["components"]["line_51"] = 600
+    if allowed:
+        assert compute_ca_540nr(**case)["line_51"] == 600
+    else:
+        with pytest.raises(ValueError, match="line51"):
+            compute_ca_540nr(**case)

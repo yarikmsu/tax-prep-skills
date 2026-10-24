@@ -496,6 +496,10 @@ def compute_ca_540nr(
         raise ValueError("Form540NR ScheduleG1/FTB5870A distribution tax needs separate reviewed support")
     if out["line_52"]:
         raise ValueError("dependent-parent credit requires the unsupported MFS household")
+    # Booklet line 51: "You may not claim this credit if you used the head of
+    # household, married/RDP filing jointly, or qualifying surviving spouse/RDP".
+    if out["line_51"] and status not in ("single", "mfs"):
+        raise ValueError("Form540NR line51 is not available to HOH, MFJ or QSS filers")
     count_fields = {"personal", "blind", "senior", "dependent"}
     if not isinstance(exemption_counts, dict) or set(exemption_counts) != count_fields:
         raise ValueError("record all four California exemption counts")
@@ -562,6 +566,10 @@ def compute_ca_540nr(
     for row in credit_inputs["other_credits"]:
         if row.get("code") in ("170", "173", "163"):
             raise ValueError("use NR lines51–53 for credits requiring once-only source proration")
+        # Schedule S's credit for tax paid to another state belongs to the other-
+        # state returns this path excludes, even on a fully covered plan.
+        if row.get("code") == "187":
+            raise ValueError("the other-state tax credit (Schedule S, code 187) is outside the computed Form540NR path")
     credits, credit_rounding = _credit_form_inputs(credit_inputs, tax_year)
     out["line_54"] = out["line_38"]
     prorated = []

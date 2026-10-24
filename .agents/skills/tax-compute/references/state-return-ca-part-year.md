@@ -51,7 +51,9 @@ qualified retirement protection separately from nonqualified deferred
 compensation rather than treating every Form1099-R alike.
 
 Keep only `california_540nr` for CA in `result.json`; metadata records
-`ca_return_type: "540NR"`. Remove the resident Form540/itemized scaffold.
+`ca_return_type: "540NR"`. Remove the resident Form540 scaffold, but keep
+`schedule_ca_itemized` while it carries `charitable_ledger`: it is the CA
+charitable carryover's rollover source.
 Set `ca_filing_status` to the confirmed federal status. Supply every raw field
 in its template; null is unanswered, never a worked zero:
 

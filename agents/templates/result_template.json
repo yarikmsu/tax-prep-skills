@@ -1066,7 +1066,7 @@
     "notes": []
   },
   "california_540nr": {
-    "_include_if": "state_filings.CA declares reviewed Form540NR; remove california_540 and its resident-only itemized scaffold",
+    "_include_if": "state_filings.CA declares reviewed Form540NR; remove california_540, keeping schedule_ca_itemized while it carries charitable_ledger",
     "_note": "TY2025 part-year variant. Raw source rows live in profile.state_filings.CA. Builder derives all output lines and source workpapers; draft writes do not satisfy final allocation review. See tax-compute/references/state-return-ca-part-year.md.",
     "computed_tax_year": null,
     "ca_filing_status": null,
