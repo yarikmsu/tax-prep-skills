@@ -40,7 +40,8 @@ def inputs(record=None, **changes):
     data = dict(tax_year=2025, investment_records=[{k:row[k] for k in ('key_boxes','ca_investments')}],
         fund_asset_minimum=.5, taxable_social_security=1700, taxable_state_refund=300,
         hsa_employer_addback=10, hsa_deduction_addback=0, hsa_interest_addback=20,
-        hsa_dividend_addback=30, other_additions=40, other_subtractions=50)
+        hsa_dividend_addback=30, taxable_unemployment=0, taxable_ca_family_leave=0,
+        ca_family_line_7=0, other_additions=40, other_subtractions=50)
     data.update(changes)
     return data
 
@@ -221,6 +222,10 @@ def test_social_security_and_refund_use_only_the_federally_taxable_amounts():
     p, result, ledger = prepared()
     refund = dict(doc_id='refund',file='documents/refund.pdf',payer='Synthetic state',
                   form_type='1099-G',person='primary',key_boxes={'state_refund_1099g':1000})
+    refund['key_boxes'].update(unemployment_compensation=0,government_family_leave=0)
+    refund['government_benefits']={'tax_year':2025,'form_revision':'03/2024','box_1':0,'box_10':None,
+        'unemployment_repaid':0,'unemployment_contribution_reduction':0,'reviewed':True,'family_programs':[]}
+    result['form_1040']['line_8_schedule1_other']=300
     ledger += T.load_ledger({'records':[refund]})
     # Gross refund1000 is not the confirmed federal inclusion300. SS's
     # subtraction is federal6b1700, never a source gross-benefit amount.

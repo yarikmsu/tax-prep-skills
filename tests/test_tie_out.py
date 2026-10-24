@@ -49,6 +49,17 @@ def _result(wages=100000.0, w2_wh=12000.0, **extra_1040):
     return {"form_1040": f}
 
 
+def _refund_only_case():
+    rec=_record(doc_id='g',file='documents/1099G.pdf',form_type='1099-G',payer='FTB',
+        key_boxes={'state_refund_1099g':800,'unemployment_compensation':0,'government_family_leave':0})
+    rec['government_benefits']={'tax_year':2025,'form_revision':'03/2024','box_1':0,'box_10':None,
+        'unemployment_repaid':0,'unemployment_contribution_reduction':0,'reviewed':True,'family_programs':[]}
+    recs=_ledger(rec)
+    result={'meta':{'tax_year':2025},'form_1040':{'line_8_schedule1_other':0}}
+    result['schedule_1_government_benefits']=T.derive_government_workpaper(recs,result,{'tax_year':2025})
+    return recs,result
+
+
 # --------------------------------------------------------------------------
 # ledger validation
 # --------------------------------------------------------------------------
@@ -902,10 +913,8 @@ def test_negative_ss_benefits_allowed_and_advisory():
 def test_state_refund_emits_advisory():
     """Codex P2 round 10: a 1099-G refund may be taxable (prior-year
     itemizer) — informational must not mean invisible."""
-    recs = _ledger(_record(doc_id="g", file="documents/1099G.pdf",
-                           form_type="1099-G", payer="FTB",
-                           key_boxes={"state_refund_1099g": 800.0}))
-    report = T.evaluate(recs, {"form_1040": {}}, ["documents/1099G.pdf"])
+    recs,result = _refund_only_case()
+    report = T.evaluate(recs, result, ["documents/1099G.pdf"])
     assert not report.failed
     assert any("state_refund_1099g" in a and "itemized" in a
                for a in report.advisories)
@@ -1071,10 +1080,8 @@ def test_state_refund_is_informational():
     """1099-G refunds are taxable only if the prior year itemized — sum-tying
     them against the aggregate Schedule 1 line 8 would false-fail; the
     category exists for coverage, not sums."""
-    recs = _ledger(_record(doc_id="g", file="documents/1099G.pdf",
-                           form_type="1099-G", payer="FTB",
-                           key_boxes={"state_refund_1099g": 800.0}))
-    report = T.evaluate(recs, {"form_1040": {}}, ["documents/1099G.pdf"])
+    recs,result = _refund_only_case()
+    report = T.evaluate(recs, result, ["documents/1099G.pdf"])
     assert not report.failed
     assert not any(c.category == "state_refund_1099g" for c in report.sum_checks)
     assert "state_refund_1099g" not in report.unverifiable

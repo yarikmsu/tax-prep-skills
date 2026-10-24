@@ -184,6 +184,12 @@ def _ca_refund_worksheet_needed(inputs: _Inputs) -> bool:
             or _get_path(inputs.result, "form_1040.taxable_state_refund") is not None))
 
 
+def _government_benefits_needed(inputs: _Inputs) -> bool:
+    return (inputs.flags.get("has_1099g_benefits") is True
+            or _amount(_get_path(inputs.result, "schedule_1_government_benefits.unemployment_gross")) > 0
+            or _amount(_get_path(inputs.result, "schedule_1_government_benefits.family_leave_gross")) > 0)
+
+
 def _charitable_carryovers_unresolved(inputs: _Inputs) -> bool:
     ledgers = inputs.prior_year.get("charitable_carryforward_ledger") or {}
     if not isinstance(ledgers, dict):
@@ -220,6 +226,22 @@ def _crypto_disposals_lack_basis(inputs: _Inputs) -> bool:
 
 # Every registered question, with the condition that makes a workspace owe it.
 REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
+    RequiredAnswer(
+        id="government_benefit_sources", kind=FACT,
+        question="Confirm the 1099-G year/revision, unemployment versus governmental family/medical "
+                 "programs, actual gross receipts, same-year UI repayments and eligible UI contribution "
+                 "reductions. Identify CA EDD PFL separately; unknown or medical benefits need resolution.",
+        asked_by="tax-compute income-and-agi.md", required_when="governmental UI or family benefits are reported",
+        when=_government_benefits_needed,
+    ),
+    RequiredAnswer(
+        id="schedule1_nonbenefit_income", kind=FACT,
+        question="What is the signed Schedule1 income EXCLUDING these unemployment and family "
+                 "benefits, including a deliberate zero? Reconcile refunds, business/K-1 income, "
+                 "losses and other sources; an old aggregate may already contain benefits.",
+        asked_by="tax-compute income-and-agi.md", required_when="governmental UI or family benefits are reported",
+        when=_government_benefits_needed,
+    ),
     RequiredAnswer(
         id="ca_investment_sources", kind=FACT,
         question="Confirm the investment-source split for California: direct US-obligation interest, "

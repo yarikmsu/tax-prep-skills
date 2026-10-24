@@ -206,3 +206,13 @@ a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
   exemptions, MCTMT isolation, jurisdiction-specific payments and actual-date
   plan validation. The documented launcher is executed; malformed plans,
   incomplete worksheets, competing NY variants and dropped City totals refuse.
+
+- **1099-G benefits reach income, not just a tie-out field (`test_government_benefits.py`):**
+  Both reviewed revisions reconcile source boxes, gross categories and program
+  inventory. UI repayments and eligible UI contributions reduce only UI; family
+  income stays gross. A separately confirmed signed non-benefit Schedule 1
+  amount prevents reuse of an old aggregate. The builder derives actual line 8
+  before federal AGI and checks that settlement before any scope waiver. CA
+  subtracts only included UI and eligible PFL; unknown program treatment blocks.
+  Refund-only forms still need a zero-benefit inventory. Rebuilds are idempotent,
+  source changes invalidate receipts, and net-zero Schedule 1 still attaches.

@@ -122,7 +122,11 @@
       "has_us_obligation_income": false,
       "has_nonca_muni_interest": false,
       "municipal_workpaper": [],
-      "source_note": null
+      "source_note": null,
+      "unemployment_subtraction": 0,
+      "paid_family_leave_subtraction": 0,
+      "section_b_line_7_column_b": 0,
+      "section_b_other_income_subtraction": 0
     },
     "ca_agi": 0,
     "ca_taxable_income": 0,

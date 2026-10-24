@@ -54,8 +54,20 @@ def test_ca_line71_components_and_line73_are_separate_and_all_claimed():
                                   "1099-G", "1099-NEC", "1099-MISC", "1099-K", "W-2G"])
 def test_ca_nonwage_withholding_ties_without_a_w2(form):
     records = [record({"ca_1099_withholding": 300}, form=form)]
-    assert not report(records, {"california_540": {"ca_withholding_1099": 300}}).failed
-    assert report(records, {"california_540": {"ca_withholding_box17": 300}}).failed
+    result = {"california_540": {"ca_withholding_1099": 300}}
+    if form == "1099-G":
+        records[0]["key_boxes"].update(unemployment_compensation=0,government_family_leave=0)
+        records[0]["government_benefits"] = {
+            "tax_year":2025,"form_revision":"03/2024","box_1":0,"box_10":None,
+            "unemployment_repaid":0,"unemployment_contribution_reduction":0,
+            "reviewed":True,"family_programs":[]}
+        result.update(meta={"tax_year":2025},form_1040={"line_8_schedule1_other":0})
+        result["schedule_1_government_benefits"] = T.derive_government_workpaper(
+            T.load_ledger({"records":records}),result,{"tax_year":2025})
+    assert not report(records, result).failed
+    bad = copy.deepcopy(result)
+    bad["california_540"] = {"ca_withholding_box17":300}
+    assert report(records, bad).failed
 
 
 @pytest.mark.parametrize("variant", ["IT201", "IT203"])

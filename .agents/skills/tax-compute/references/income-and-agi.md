@@ -75,6 +75,27 @@ once in Schedule 1 line 1 / `line_8_schedule1_other`. A California return
 subtracts that same taxable part on Schedule CA; the gross 1099-G refund is
 not its subtraction.
 
+**Government benefits (1099-G):** record **[government_benefit_sources]** and
+**[schedule1_nonbenefit_income]** in `answers.md`. Confirm source year/revision,
+UI versus family/medical program identity, actual receipts and applicable
+same-year UI repayments/contribution reductions. Never reduce PFL by the old
+nonitemizer contribution rule. The parse skill's government-benefits reference
+defines `government_benefits` metadata and revision-aware withholding boxes.
+Set `schedule_1_government_benefits.other_income` to the signed total of ALL
+OTHER Schedule1 income, including refunds/business/K-1 income/losses, and set
+`other_income_confirmed: true`. Include a deliberate zero. Do not reuse an old
+aggregate that may already contain some benefits. Before any Social Security,
+AGI or MAGI-dependent worksheet, call `compute_government_benefits` with the
+covered year, each record's `key_boxes`/`government_benefits`, the confirmed
+non-benefit amount and whether this run selects CA. Persist its output with
+`computed_tax_year` and set actual Form1040 line8 from its `total`
+programmatically; never type or sum the benefits by hand. If another Schedule1
+component changes later, recompute this workpaper and every affected worksheet.
+The builder repeats that derivation before AGI and tax and checks the
+workpaper on the same validation receipt. No-benefit legacy returns retain
+their manual Schedule1 component path. Medical/unknown benefits need separate
+source resolution; they are not family benefits by default.
+
 Based on `taxpayer_profile.json` flags:
 
 | Flag | Forms Triggered |
@@ -114,7 +135,7 @@ Line 5a/5b: Pensions (1099-R; Code G rollover = 5a only, 5b = $0)
 Line 6a: DERIVED — SSA-1099 box 5 total (the ledger's `ss_benefits` sum)
 Line 6b: taxable amount from compute_taxable_ss below — yours
 Line 7: Capital gain/loss from Schedule D line 16
-Line 8: Other income from Schedule 1 (Schedule C net, etc.)
+Line 8: Other Schedule 1 income; DERIVED from the benefits workpaper when used
 Line 9: DERIVED — TOTAL INCOME = 1z + 2b + 3b + 4b + 5b + 6b + 7 + 8
         (6b — the TAXABLE benefit amount — is IN the sum; omitting it
         understates AGI by exactly what the worksheet just computed, which is

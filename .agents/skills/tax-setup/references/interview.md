@@ -545,7 +545,7 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
   treated as zero. Capture issuer jurisdictions for direct municipal interest;
   the broker's address is not the bond issuer. The parse skill's California
   investment reference defines the per-record fields and federal total rules.
-- Any other Schedule CA Part I difference: unemployment or CA paid family leave, section 1202, federal/CA basis or depreciation, CA K-1 amounts, moving expenses, IRA basis, California lottery winnings, educator expenses, or the foreign earned income exclusion add-back? Ask about each category, recording the applicable lines → `ca_has_other_schedule_ca_adjustments`. Record their acknowledged worksheets separately as `other_additions`/`other_subtractions` and confirm them, including a worked zero. HSA add-backs retain their existing components; federally taxable Social Security and the confirmed federally taxable state refund are derived subtractions.
+- Any other Schedule CA Part I difference: section 1202, federal/CA basis or depreciation, CA K-1 amounts, moving expenses, IRA basis, California lottery winnings, educator expenses, or the foreign earned income exclusion add-back? Ask about each category, recording the applicable lines → `ca_has_other_schedule_ca_adjustments`. Record their acknowledged worksheets separately as `other_additions`/`other_subtractions` and confirm them, including a worked zero. HSA add-backs retain their existing components; federally taxable Social Security, the confirmed federally taxable state refund, net UI and eligible governmental PFL are derived subtractions. UI/PFL alone does not set this flag; re-answer an older true flag if these benefits alone set it. Do not include them again in other_subtractions.
 - Any Schedule P Box A preferences/adjustments after applying the filing year's trade/business gross-receipts carve-out, or Box B investment-interest expense/installment-sale income? Any mortgage interest on debt not used to buy or improve the home? → `ca_has_noniso_amt_items`. Read the covered-year booklet's carve-out; do not block an exempt business item merely because it appears in Box A. ISO income keeps its existing `has_iso_exercise` question. Standard/itemized-deduction AMT adjustments are return figures, not another yes/no question.
 - A lump-sum distribution requiring Schedule G-1 or an accumulation distribution requiring FTB 5870A? → `ca_has_special_distribution_tax`.
 - California early-distribution or other additional taxes, including FTB 3805P? → `ca_has_other_taxes`.
@@ -678,6 +678,14 @@ federal credit is computed by the engine.
   `lives_abroad` (raises the Form 8938 thresholds; the FEIE / Form 2555
   election is NOT modeled — only the FTC path — so this lands on the
   limitations manifest)
+- Did you receive unemployment compensation or governmental paid family or
+  medical leave, including electronic Forms 1099-G? Record an explicit answer
+  in `has_1099g_benefits`; obtain the statements even if no paper form arrived.
+  Separate UI, CA EDD PFL, other governmental family programs and medical or
+  private benefits. Medical/unknown amounts need their own resolved source
+  treatment; do not label them as family leave. Confirm applicable same-year
+  UI repayments and UI contribution reductions, including zero; employee PFL
+  contributions do not reduce family benefits under the TY2025+ rule.
 - Do you have self-employment income (1099-NEC, freelance, business)? → triggers Schedule C (`has_self_employment`)
   - **If yes (or you have K-1 pass-through business income):** Is that income
     from an ACTIVE qualified trade or business you materially participate in —
