@@ -1254,7 +1254,9 @@ def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | Non
         totals["payment_count"] += 1
         totals["unknown_date_count"] += int(date is None)
         joint_separate |= person == "joint" and status != "mfj"
-        individual_joint |= person != "joint" and status == "mfj"
+        # Booklet line 72: a statement is due when payments were made under
+        # both SSNs, which the spouse's own account means on a joint return.
+        individual_joint |= person == "spouse" and status == "mfj"
     totals["total"] = money(sum(totals[k] for k in ("estimates", "extension", "k1_allocations", "prior_applied")), "CA line72 total")
     for key in ("estimates", "extension", "k1_allocations"):
         totals[key] = round(totals[key], 2)

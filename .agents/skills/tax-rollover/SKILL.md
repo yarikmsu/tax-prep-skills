@@ -73,7 +73,9 @@ California Form540 line98 carries separately to
 `prior_year.ca_estimated_payments_applied`, never the federal credit field or
 the cash-payment list. It belongs only to the immediately following tax year.
 A worked zero can retire a stale target. A missing affirmative source election
-or malformed amount refuses; resolve it from the archived return. Status or
+or malformed amount refuses; resolve it from the archived return. An archive
+from before line98 was recorded keeps an opening credit typed at setup, which
+the builder refuses until `estimated_payments.ca_verified`. Status or
 target conflicts are `ask`, particularly a joint credit becoming one filer's.
 Changed CA opening credit resets `estimated_payments.ca_verified` to false;
 reconcile the claimable allocation and record **[ca_state_payments]** before

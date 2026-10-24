@@ -252,7 +252,9 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     and `ca_deduction_method` (`standard`, `itemized`, or `dependent_worksheet`),
     the Schedule CA totals, confirmed exemption eligibility in the profile,
     and separately worked amounts in the `line_<number>` component fields.
-    All `CA_540_COMPONENT_LINES` must be present, including worked zeros.
+    All `CA_540_COMPONENT_LINES` must be present, including worked zeros;
+    the builder overwrites lines 71, 72 and 73 from the ledger and the
+    payment records, so never type a total there.
     Record the Schedule G-1 portion of line 34 separately as `ca_lump_sum_tax`
     for the line-113 screen; do not classify FTB 5870A tax as lump-sum tax.
     Existing capability gates still govern uncomputed credits/taxes/payments.

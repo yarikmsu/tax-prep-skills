@@ -114,7 +114,9 @@ worked zero and refusing malformed/negative source amounts. A changed carried
 amount resets `ca_verified` so a previous confirmation cannot authorize a new
 credit; status changes involving a joint source require allocation review.
 An affirmative archived election with a missing amount refuses rather than
-silently skipping the credit. Source: TY2025 Form 540 instructions, lines 72,
+silently skipping the credit. An archive with no line 98 and no election (it
+predates both) keeps a setup-typed opening credit for the builder's
+`ca_verified` reconciliation instead of refusing the whole rollover. Source: TY2025 Form 540 instructions, lines 72,
 98 and 99, linked above. No new tax-law rate or threshold is introduced.
 The [TY2024 Form 540](https://www.ftb.ca.gov/forms/2024/2024-540.pdf), line 98,
 also confirms the opening credit for TY2025. Reviewing that carry line does

@@ -193,6 +193,14 @@ Work down this ladder and TELL the user which rung was used:
    NY: Form IT-370 filed on {date}, payment made: yes/no | not modeled}.
    Estimate source: {computed result.json | projection | user estimate}.
    ```
+   **CA, when an FTB 3519 payment was made:** line 72 reads payments only
+   from `estimated_payments.state`, so add the payment there as
+   `{"payment_id", "state": "CA", "tax_year": {year}, "date", "kind": "extension",
+   "amount", "person"}` with the FTB confirmation's actual date and the
+   paying account's owner, set `flags.ca_has_nonw2_payments: true`, and set
+   `estimated_payments.ca_verified: false` so the payment is reconciled
+   again before the return is built. Re-confirm **[ca_state_payments]**
+   then: an earlier "none" no longer holds.
 4. Re-restrict both files you just wrote. An editor that REPLACES a file
    rather than editing it in place leaves the replacement at the default
    mode — owner-only is not inherited from the file it overwrote — so this

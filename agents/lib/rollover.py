@@ -637,7 +637,10 @@ def _ca_applied_payment_changes(prior: PriorReturn, current: CurrentState, entry
     if elected is not None and not isinstance(elected, bool):
         raise RolloverError("Archived CA forward-election answer must be a boolean or an absent legacy answer")
     if raw is None:
-        if elected is True or _get_path(current.profile, entry["target_path"], 0):
+        # An archive predating line_98 cannot confirm an opening credit typed
+        # at setup; keep it, since the builder refuses it until ca_verified.
+        # An archived yes, or an archived no beside a typed credit, conflicts.
+        if elected is True or (elected is False and _get_path(current.profile, entry["target_path"], 0)):
             raise RolloverError("CA applied credit cannot be reconciled because prior Form540 line98 is missing; resolve the source amount")
         return []
     raw = amount(raw, "Prior CA Form540 line98")

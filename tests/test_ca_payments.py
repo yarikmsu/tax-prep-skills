@@ -3,6 +3,7 @@
 import copy
 import datetime
 import json
+from pathlib import Path
 
 import pytest
 
@@ -114,6 +115,11 @@ def test_account_ownership_and_required_explanations():
     p["estimated_payments"]["state"] = [payment(person="joint")]
     _, note = B._ca_payments(p, 2025, "mfs")
     assert "allocation" in note
+    # Booklet line 72: the statement is for payments under both SSNs; the
+    # primary filer's own account alone needs none.
+    p["estimated_payments"]["state"] = [payment(person="primary")]
+    _, note = B._ca_payments(p, 2025, "mfj")
+    assert note is None
 
 
 @pytest.mark.parametrize("opening", [True, -1, None, "500", float("nan"), float("inf")])
@@ -259,6 +265,16 @@ def test_rollover_never_credits_a_later_year_or_reuses_a_missing_source():
         changes(p, current(500))
 
 
+def test_an_archive_older_than_line_98_keeps_a_setup_typed_opening_credit():
+    # An archive from before line_98 and its election were recorded cannot
+    # confirm the credit; the builder's ca_verified reconciliation does.
+    p = prior()
+    del p.result['california_540']['line_98']
+    del p.profile['flags']['ca_applies_overpayment_forward']
+    assert not [c for c in changes(p, current(500))
+                if c.json_path == 'prior_year.ca_estimated_payments_applied']
+
+
 def test_rollover_checks_both_source_and_destination_year_metadata():
     c = current()
     c.result['meta'] = {'tax_year': 2025}
@@ -296,3 +312,12 @@ def test_headless_payment_and_election_answers_are_required_even_for_a_zero(tmp_
     write_secure(tmp_path / 'answers.md', '- **[ca_state_payments]** none confirmed\n')
     owed, _ = answers.missing(tmp_path)
     assert 'ca_overpayment_election' in {a.id for a in owed}
+
+
+def test_an_extension_payment_is_recorded_where_line_72_reads_it():
+    text = (Path(__file__).resolve().parents[1] / '.agents/skills/tax-extend/SKILL.md').read_text()
+    step = text[text.index('### 5. Record + calendar'):]
+    for needle in ('estimated_payments.state', '"kind": "extension"',
+                   'flags.ca_has_nonw2_payments: true', 'estimated_payments.ca_verified: false',
+                   '[ca_state_payments]'):
+        assert needle in step, needle
