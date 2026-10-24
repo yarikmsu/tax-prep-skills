@@ -2142,6 +2142,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              eic_screening: "bool | None" = False,
              profile_flags: "dict | None" = None,
              option_exercise_answer: "bool | None" = None,
+             specific_identification_answer: "bool | None" = None,
              profile: "dict | None" = None,
              tax_law: "dict | None" = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
@@ -2199,7 +2200,11 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         missing_targets.append("schedule_d digital-asset row flagged employer_stock: a crypto adjustment "
                                "is never employer stock")
     summary = crypto if isinstance(crypto, dict) else {}
-    merged_crypto = account_rows or any(row.get("proceeds") not in (None, 0) for _, row in digital_rows)
+    # A zero-proceeds loss is still a disposal. Empty template rows are not.
+    merged_crypto = account_rows or any(
+        any(row.get(key) not in (None, 0) for key in ('proceeds', 'cost', 'adjustment', 'gain'))
+        or row.get('adjustment_code') not in (None, '') or row.get('source') not in (None, '')
+        for _, row in digital_rows)
     crypto_present = merged_crypto or summary.get("disposals", 0) != 0 or any(key in summary for key in (
         "basis_mode", "complete", "unresolved_inputs", "reporting_complete", "reporting_unresolved",
         "reporting_proceeds_above_forms"))
@@ -2227,6 +2232,12 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
                                "year because an option was exercised, or from a lot an option's exercise bought "
                                "in any year, set it true or false, and re-run the capability gate, which blocks "
                                "a yes until it is acknowledged")
+    if (crypto_present or form_da) and not isinstance(specific_identification_answer, bool):
+        missing_targets.append("digital assets are on this return but flags.has_crypto_specific_identification "
+                               "is unanswered: answer the lot-selection question at every broker and wallet, "
+                               "including standing instructions, a broker's only offered method and prior "
+                               "history, and re-run the capability gate, which blocks a yes until it is "
+                               "acknowledged; specific identification requires external Form 8949 preparation")
     for cat in sorted(sums):
         if cat in _BLOCKING_CATEGORIES:
             if sums[cat]:
@@ -2994,6 +3005,7 @@ def _main(argv: list) -> int:
         prof: "dict | None" = None
         ca_law: "dict | None" = None
         option_exercise_answer: "bool | None" = None
+        specific_identification_answer: "bool | None" = None
         profile_path = (workspace / "taxpayer_profile.json").resolve()
         if profile_path.exists():
             prof = _read_json(_validate_subpath(profile_path, workspace),
@@ -3012,6 +3024,8 @@ def _main(argv: list) -> int:
             # a non-bool by name at Step 0.7).
             _opt = flags.get("has_digital_asset_option_exercise")
             option_exercise_answer = _opt if isinstance(_opt, bool) else None
+            _lots = flags.get("has_crypto_specific_identification")
+            specific_identification_answer = _lots if isinstance(_lots, bool) else None
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None
@@ -3058,6 +3072,7 @@ def _main(argv: list) -> int:
                           eic_screening=eic_screening,
                           profile_flags=profile_flags,
                           option_exercise_answer=option_exercise_answer,
+                          specific_identification_answer=specific_identification_answer,
                           profile=prof, tax_law=ca_law)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:

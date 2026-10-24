@@ -1,4 +1,5 @@
 {
+  "specific_identification": false,
   "transactions": [
     {"date": "2023-01-10", "kind": "buy", "asset": "BTC", "quantity": 1.0, "usd_amount": 20000, "fee_usd": 50, "exchange": "coinbase"},
     {"date": "2023-05-01", "kind": "buy", "asset": "BTC", "quantity": 1.0, "usd_amount": 28000, "fee_usd": 50, "exchange": "coinbase"},

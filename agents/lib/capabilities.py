@@ -274,6 +274,16 @@ RULES: "tuple[Rule, ...]" = (
          "(Buy-and-hold with NO distribution or sale is not blocked here — the "
          "reporting-only §1298(f) obligation, with its $25K/$50K-MFJ de-minimis "
          "exception, is carried on the has_foreign_mutual_funds manifest note.)"),
+    Rule("crypto_specific_identification", "has_crypto_specific_identification", UNSUPPORTED,
+         "Specific identification of digital-asset lots at any broker or wallet",
+         "Form 8949 (Regs. 1.1012-1(j), 1.6045-1(d)(2)(ii)(B))",
+         "The crypto engine supports FIFO only. Specific identification, including standing "
+         "instructions, HIFO or LIFO, can change basis in either direction even when a "
+         "noncovered Form 1099-DA reports no basis. Include prior disposals and transfers "
+         "whose lot choices affect opening inventory, at every broker and wallet. Prepare "
+         "the selected lots and Form 8949 externally. Acknowledging this limitation does "
+         "not enable FIFO import pricing. Box 8's acquisition information alone does not "
+         "establish the taxpayer's selection method."),
     Rule("digital_asset_option_exercise", "has_digital_asset_option_exercise", UNSUPPORTED,
          "Digital asset sold, exchanged or spent because an option was exercised, "
          "or from a lot an option's exercise bought in any year",
@@ -1234,6 +1244,17 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
             "any year? Absence is not treated as 'no' — the "
             "premium would otherwise be left out of the row. This blocker "
             "cannot be acknowledged; answer the question.",
+            acknowledged=False))
+
+    if _flag_value(flags, "has_crypto") and flags.get("has_crypto_specific_identification") is None:
+        _place(Finding(
+            "unanswered_crypto_lot_selection", UNSUPPORTED,
+            "Has crypto but the lot-selection question is unanswered",
+            "Form 8949 lot selection",
+            "has_crypto_specific_identification is unanswered (absent or null). Ask about "
+            "specific identification at every broker and wallet, including standing instructions "
+            "and relevant prior history. Record true or false; never infer FIFO from box 8 "
+            "or an absent broker basis. This question cannot be acknowledged away.",
             acknowledged=False))
 
     unmodeled = _ny_household_unmodeled(profile)

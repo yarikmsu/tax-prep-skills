@@ -296,6 +296,8 @@ AA57 finds why.
   28%. Found by AA59's design.
 
 - **AA62 (P1, S): Ask about specific identification before FIFO prices a crypto sale.**
+  Implementation: [PR #27](https://github.com/yarikmsu/tax-prep-skills/pull/27),
+  open; not merged. Depends on PR #26.
   The engine is FIFO-only and `crypto-accounts.md` puts specific
   identification outside it, but nothing asks. Under §1.6045-1(d)(2)(ii)(B)(2)
   a taxpayer can identify lots at a broker, by a standing order among other
