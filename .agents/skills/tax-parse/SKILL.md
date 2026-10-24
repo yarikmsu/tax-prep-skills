@@ -357,7 +357,7 @@ Rules:
   | W-2 box 1 | `wages` |
   | W-2 box 2 | `federal_withholding_w2` |
   | W-2 box 3 / box 7 / box 5 | `ss_wages` / `ss_tips` / `medicare_wages` (informational — box 7 social-security tips are their own category, not folded into box 3) |
-  | TY2026 W-2 box12 TP / NEC 1b / MISC 13a; TY2025 box7 or reviewed statement | `qualified_tips` (informational, BELOW-AGI Schedule1-A input after eligibility and SE limits). Follow the [year-specific source and occupation review](references/tips-overtime.md); the amount is already included in source income |
+  | TY2026 W-2 box12 TP / NEC 1b / MISC 13a / 1099-K 1c; TY2025 box7 or reviewed statement | `qualified_tips` (informational, BELOW-AGI Schedule1-A input after eligibility and SE limits). Follow the [year-specific source and occupation review](references/tips-overtime.md); the amount is already included in source income |
   | TY2026 W-2 box12 TT / NEC 1d / MISC 14; TY2025 reviewed premium statement | `qualified_overtime_premium` (informational FLSA premium, already the premium on these TY2026 forms). Follow the [source review](references/tips-overtime.md); never add it to income or divide the reported premium again |
   | W-2G box 1 | `gambling_winnings` (reported source gross; reviewed casual/business contributions determine actual income) |
   | W-2G box 4 | `federal_withholding_w2g` → checked other-form withholding and actual Form1040 line25c; never the 1099 line25b |

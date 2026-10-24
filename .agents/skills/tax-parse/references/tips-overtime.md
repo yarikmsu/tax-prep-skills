@@ -1,7 +1,7 @@
 # Tips and overtime: covered-year source review
 
 Read the calendar year and revision before mapping a source. Reviewed forms:
-TY2025 W-2 and April 2025 NEC/MISC; TY2026 W-2 and December 2026 NEC/MISC.
+TY2025 W-2 and April 2025 NEC/MISC; TY2026 W-2 and December 2026 NEC/MISC/K.
 The published source forms establish the fields below. Use the final covered-year
 return instructions for the deduction worksheet; a draft return is not authority
 for new line numbers or limits. Fetch limits through the normal tax-law cache.
@@ -16,6 +16,7 @@ they do not themselves establish the allowed deduction.
 | W-2 | box 1 | box 12 code TP | box 14b | box 12 code TT |
 | 1099-NEC | box 1a | box 1b | box 1c | box 1d |
 | 1099-MISC | box 3 | box 13a | box 13b | box 14 |
+| 1099-K | box 1a | box 1c | box 1d | — |
 
 Use eligible cash tips for `qualified_tips` and the eligible premium for
 `qualified_overtime_premium`. TT, NEC 1d and MISC 14 already report the
@@ -24,7 +25,8 @@ showing gross overtime needs its own reviewed premium calculation.
 Record these categories only for income already captured on the return;
 resolve missing income and any paired payroll tax before claiming a deduction.
 
-NEC 1b/1d are **included in box 1a**; MISC 13a/14 are **included in box 3**.
+NEC 1b/1d are **included in box 1a**; MISC 13a/14 are **included in box 3**;
+1099-K 1c is **included in box 1a**.
 Never add these subamounts to the income total. Preserve wages from W-2 box 1;
 route NEC 1a and the reviewed MISC box-3 business/other split once using their
 normal income categories. Neither a TTOC nor W-2 code TA (employer Trump-account

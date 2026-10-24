@@ -786,7 +786,8 @@ federal credit is computed by the engine.
   - Any **qualified tip income** in a customarily-tipped occupation? → sets
     `has_qualified_tips` (§224). Review the
     [covered-year sources and occupation codes](../../tax-parse/references/tips-overtime.md).
-    TY2026 uses W-2 box12 TP / 14b TTOC, NEC1b / 1c and MISC13a / 13b.
+    TY2026 uses W-2 box12 TP / 14b TTOC, NEC1b / 1c, MISC13a / 13b and
+    1099-K 1c / 1d.
     TY2025 uses the designated W-2 box14 amount or separate statement,
     otherwise box7 (with full tip records when the wage-base cap truncates it).
     Do not carry that fallback into TY2026 by default. Record the source and

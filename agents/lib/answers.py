@@ -60,7 +60,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field as _field
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -121,6 +121,7 @@ class _Inputs:
     workspace: Path
     profile: dict
     result: dict
+    ledger: dict = _field(default_factory=dict)
 
     @property
     def prior_year(self) -> dict:
@@ -184,8 +185,16 @@ def _ca_refund_worksheet_needed(inputs: _Inputs) -> bool:
             or _get_path(inputs.result, "form_1040.taxable_state_refund") is not None))
 
 
+def _ledger_has(inputs: _Inputs, category: str) -> bool:
+    """A parsed amount owes its review even when the intake flag says no."""
+    records = inputs.ledger.get("records") if isinstance(inputs.ledger, dict) else None
+    return any(isinstance(rec, dict) and isinstance(rec.get("key_boxes"), dict)
+               and _amount(rec["key_boxes"].get(category)) > 0 for rec in records or [])
+
+
 def _schedule1a_source_needed(inputs: _Inputs, provision: str, flag: str) -> bool:
-    return (inputs.flags.get(flag) is True or any(
+    category = "qualified_tips" if provision == "tips" else "qualified_overtime_premium"
+    return (inputs.flags.get(flag) is True or _ledger_has(inputs, category) or any(
         _amount(_get_path(inputs.result, f"schedule_1a.{provision}.{field}")) > 0
         for field in ("raw", "allowed", "disallowed_by_cap", "disallowed_by_phaseout")))
 
@@ -630,6 +639,7 @@ def _read_inputs(workspace: Path) -> _Inputs:
         workspace=workspace,
         profile=_read_json(workspace / "taxpayer_profile.json"),
         result=_read_json(workspace / "result.json"),
+        ledger=_read_json(workspace / "parse_ledger.json"),
     )
 
 

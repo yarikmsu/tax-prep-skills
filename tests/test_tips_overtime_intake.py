@@ -18,8 +18,8 @@ REFERENCE = SKILLS_DIR / 'tax-parse/references/tips-overtime.md'
 
 def source_fields():
     rows = [line.split('|')[1:-1] for line in REFERENCE.read_text().splitlines()
-            if line.startswith(('| W-2 |', '| 1099-NEC |', '| 1099-MISC |'))]
-    assert len(rows) == 3
+            if line.startswith(('| W-2 |', '| 1099-NEC |', '| 1099-MISC |', '| 1099-K |'))]
+    assert len(rows) == 4
     return {row[0].strip(): [cell.strip() for cell in row[1:]] for row in rows}
 
 
@@ -27,6 +27,8 @@ def source_fields():
     ('W-2', ['box 1', 'box 12 code TP', 'box 14b', 'box 12 code TT']),
     ('1099-NEC', ['box 1a', 'box 1b', 'box 1c', 'box 1d']),
     ('1099-MISC', ['box 3', 'box 13a', 'box 13b', 'box 14']),
+    # Rev12/2026 1099-K: box 1c cash tips are included in box 1a; 1d is the TTOC.
+    ('1099-K', ['box 1a', 'box 1c', 'box 1d', '—']),
 ])
 def test_published_2026_fields_are_in_the_linked_source_contract(form, expected):
     # IRS2026 W-2 and Rev12/2026 NEC/MISC distinguish income, cash tips,
@@ -126,6 +128,18 @@ def test_a_workpaper_source_review_cannot_disappear_with_a_false_intake_flag(pro
     inputs = A._Inputs(Path('.'), {'flags': {flag: False}},
                        {'schedule_1a': {provision: {field: 100}}})
     assert entry.when(inputs)
+
+
+@pytest.mark.parametrize('question,flag,category', [
+    ('tips_source_review', 'has_qualified_tips', 'qualified_tips'),
+    ('overtime_source_review', 'has_qualified_overtime', 'qualified_overtime_premium'),
+])
+def test_a_parsed_source_amount_owes_its_review_with_a_false_intake_flag(question, flag, category):
+    # The backlog's own case: intake said no, but the W-2 carries code TT.
+    entry = next(a for a in A.REQUIRED_ANSWERS if a.id == question)
+    ledger = {'records': [{'doc_id': 'w2', 'key_boxes': {category: 3000}}]}
+    assert entry.when(A._Inputs(Path('.'), {'flags': {flag: False}}, {}, ledger))
+    assert not entry.when(A._Inputs(Path('.'), {'flags': {flag: False}}, {}, {'records': []}))
 
 
 def test_overtime_only_run_does_not_owe_a_tip_occupation_answer(tmp_path):
