@@ -474,6 +474,8 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
                 "tax_fraction": None,
             },
             "estimated_tax_safe_harbor": {
+                # FTB 5805 Part II line 2 (90%), not line 113's 10% screen.
+                "current_year_share": None,
                 "prior_year_share": None, "prior_year_share_high_income": None,
                 "prior_agi_threshold": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},
                 "current_agi_override": {s: None for s in ("single", "mfj", "mfs", "hoh", "qss")},

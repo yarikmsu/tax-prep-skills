@@ -1586,6 +1586,8 @@ def california_differences(result: dict, derived: dict) -> list[str]:
         raise Blocked("Form 540 requires meta.limitations to be a list of disclosure strings")
     if derived and derived["line_113_note"] not in notes:
         fields.append("meta.limitations (Form 540 line 113)")
+    if derived and any(n.startswith("Form 540 line 113:") and n != derived["line_113_note"] for n in notes):
+        fields.append("meta.limitations (stale Form 540 line 113 disclosure)")
     if derived.get("ca_payment_note") and derived["ca_payment_note"] not in notes:
         fields.append("meta.limitations (CA payments)")
     if derived and any(n.startswith("CA payments:") and n != derived.get("ca_payment_note") for n in notes):

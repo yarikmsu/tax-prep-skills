@@ -14,8 +14,9 @@ def law():
     # deliberately synthetic. Source: FTB's 2025-5805-instructions.html.
     statuses = ('single', 'mfj', 'mfs', 'hoh', 'qss')
     return {'code': 'CA', 'underpayment_screen': {
-        'minimum_balance': dict.fromkeys(statuses, 50), 'tax_fraction': .9},
+        'minimum_balance': dict.fromkeys(statuses, 50), 'tax_fraction': .1},
         'estimated_tax_safe_harbor': {
+            'current_year_share': .9,
             'prior_year_share': 1, 'prior_year_share_high_income': 1.1,
             'prior_agi_threshold': dict.fromkeys(statuses, 10000),
             'current_agi_override': dict.fromkeys(statuses, 100000),
@@ -169,6 +170,8 @@ def test_unreviewed_or_ambiguous_cases_refuse(change):
     {'installment_shares': [.25, .25, .25, float('nan')]},
     {'installment_shares': [.3, .3, 0, .3]}, {'due_dates': []},
     {'penalty_end': '2025-04-15'}, {'early_filing_deadline': None},
+    # A cache that holds only line 113's 10% screen has no Part II line 2 share.
+    {'current_year_share': None},
 ])
 def test_unfetched_or_wrong_year_policy_refuses(change):
     data = copy.deepcopy(law()); data['estimated_tax_safe_harbor'].update(change)
@@ -180,7 +183,7 @@ def test_unfetched_or_wrong_year_policy_refuses(change):
 def test_exact_floor_is_not_the_below_floor_exemption(previous):
     # Synthetic floor50 and current share1 isolate strictness; .9 with950
     # withholding would independently prove zero and miss this boundary.
-    state = law(); state['underpayment_screen']['tax_fraction'] = 1
+    state = law(); state['estimated_tax_safe_harbor']['current_year_share'] = 1
     change = {'prior_withholding': 950} if previous else {'withholding': 950}
     assert compute_ca_5805(**inputs(state_law=state, **change))['total'] > 0
 

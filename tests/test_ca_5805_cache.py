@@ -104,4 +104,5 @@ def test_seed_contains_no_default_shares_thresholds_dates_or_rates():
     assert policy['installment_shares'] == policy['due_dates'] == []
     assert all(v is None for v in policy['prior_agi_threshold'].values())
     assert policy['prior_year_share_high_income'] is None
+    assert policy['current_year_share'] is None
     assert policy['early_filing_deadline'] is None

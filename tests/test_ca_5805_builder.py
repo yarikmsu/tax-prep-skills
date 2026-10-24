@@ -12,7 +12,7 @@ from tests.test_ca_payments import payment
 def priced():
     profile, result = case()
     state = law()
-    state['underpayment_screen']['tax_fraction'] = .9
+    state['estimated_tax_safe_harbor']['current_year_share'] = .9
     profile['ca_5805']['prior_return'].update(tax=10000, agi=5000)
     return profile, result, {'state': state}
 
@@ -42,6 +42,21 @@ def test_penalty_settles_before_amount_owed_and_rebuilds_idempotently():
     assert not B.california_differences(result, out)
     assert profile == original
     assert not tie_out._ca_5805_checks([], result, profile, cache)
+
+
+def test_the_required_payment_uses_part_ii_line_2_not_the_line_113_screen():
+    # Form 540 line 113's screen is 10% of line 48; FTB 5805 Part II line 2 is
+    # 90% of the tax. Each lives in its own fetched field.
+    profile, result, cache = priced()
+    assert cache['state']['underpayment_screen']['tax_fraction'] == .1
+    assert publish(profile, result, cache)['ftb_5805']['required_annual_payment'] == 3996
+
+
+def test_a_stale_line_113_disclosure_cannot_sit_beside_the_priced_one():
+    profile, result, cache = priced()
+    out = publish(profile, result, cache)
+    result['meta']['limitations'].append("Form 540 line 113: FTB billing explicitly elected")
+    assert 'meta.limitations (stale Form 540 line 113 disclosure)' in B.california_differences(result, out)
 
 
 @pytest.mark.parametrize('field', ['ftb_5805', 'line_113', 'line_114', 'ca_amount_owed', 'line_113_note'])

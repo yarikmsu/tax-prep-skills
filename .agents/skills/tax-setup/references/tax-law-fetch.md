@@ -180,8 +180,9 @@ a figure from a prior year.
   into `state.estimated_tax_safe_harbor`: prior-year shares (ordinary and high
   income), five-status prior-AGI thresholds and current-AGI override thresholds,
   four installment shares, legally rolled due dates, penalty end date and the
-  effective early-filing/full-payment deadline. Reuse `underpayment_screen`
-  for the minimum and current-year share; all figures remain fetched.
+  effective early-filing/full-payment deadline, and Part II line 2's current-year
+  share into `current_year_share` (the 90%, never line 113's 10% screen). Reuse
+  `underpayment_screen.minimum_balance` for the minimum; all figures remain fetched.
   When a penalty needs pricing, fetch every R&TC19521 half-year actually used
   into `state.underpayment_rates` (`effective_from` January1/July1,
   `annual_rate`), including the following year through the penalty end.

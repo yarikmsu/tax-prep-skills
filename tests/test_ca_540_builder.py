@@ -31,6 +31,7 @@ def law():
                 "phaseout_start": dict.fromkeys(STATUSES[:-1], 1000000)},
         "underpayment_screen": {"minimum_balance": dict.fromkeys(STATUSES, 500), "tax_fraction": .1},
         "estimated_tax_safe_harbor": {
+            "current_year_share": .9,
             "prior_year_share": 1, "prior_year_share_high_income": 1.1,
             "prior_agi_threshold": dict.fromkeys(STATUSES, 10000),
             "current_agi_override": dict.fromkeys(STATUSES, 1000000),

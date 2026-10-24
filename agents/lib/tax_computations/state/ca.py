@@ -408,7 +408,10 @@ def compute_ca_5805(*, tax_year: int, filing_status: str, state_law: dict,
     if not isinstance(screen, dict) or not isinstance(policy, dict):
         raise ValueError("fetch CA underpayment_screen and estimated_tax_safe_harbor")
     minimum = _ca_input((screen.get("minimum_balance") or {}).get(status), "CA minimum_balance")
-    fraction = _ca_input(screen.get("tax_fraction"), "CA tax_fraction", fraction=True)
+    # Part II line 2's share is its own fetched figure: underpayment_screen.
+    # tax_fraction is Form 540 line 113's 10% screen, and reusing it would
+    # price the required payment at a tenth of the tax.
+    fraction = _ca_input(policy.get("current_year_share"), "CA estimated_tax_safe_harbor.current_year_share", fraction=True)
     low = _ca_input(policy.get("prior_year_share"), "CA prior_year_share", fraction=True)
     high = _ca_5805_scalar(policy.get("prior_year_share_high_income"), "CA prior_year_share_high_income")
     threshold = _ca_input((policy.get("prior_agi_threshold") or {}).get(status), "CA prior_agi_threshold")
