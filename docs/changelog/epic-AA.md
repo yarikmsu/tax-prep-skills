@@ -3089,7 +3089,400 @@ case used, so the class contradicted itself; both older joint cases moved to
 the form's figure. Part III's credit limits, which start from line 35 after
 the exemption credits, remain AA72's.
 
-## AA43 — full-year NY/NC projected estimated payments
+## AA75 — the exemption credit phase-out runs on the return (#16)
+
+`/tax-compute`'s CA recipe priced Form 540 line 32 as the full count of boxes
+times the per-head amount and never ran the AGI Limitation Worksheet. The
+worksheet lived only in `planning.py`'s scenario repricer, and its inputs were
+an optional planning block that the freshness walker skipped for CA. Every CA
+return with federal AGI above the line 32 threshold ($252,203 single, $504,411
+joint on the 2025 form) therefore over-stated the exemption credit and
+under-stated CA tax, by up to the whole credit.
+
+`compute_ca_exemption_credit` now runs the worksheet as one engine function that
+the return recipe and the planner share: whole-dollar AGI rounded half up, $6
+per $2,500 step ($1,250 for a separate filer), and each credit group floored at
+zero on its own. Recipe step 7 calls it, counts seniors from
+`flags.age_65_plus_*` and records the worksheet in `answers.md`.
+`state.exemption_phaseout` is required in every CA cache: `validate_cache`
+reports an absent, partial or non-whole-dollar block, so `check_freshness` says
+INCOMPLETE, and `/tax-setup` fetches it for every CA return. That breaks one
+contract on purpose: an existing CA cache without the complete block reads
+INCOMPLETE until `/tax-setup` re-fetches it.
+
+## AA68 — the California situations the engine does not compute now block (#17)
+
+`capabilities.py` held no CA rule while telling a California filer that Form 540
+was computed in depth, so a return needing an uncomputed line finished looking
+complete: the blind exemption, most Schedule CA differences, non-ISO AMT,
+distribution and other taxes, credits and carryovers, non-W-2 payments, use tax
+or the coverage penalty. It mis-stated CA tax either way with every gate green,
+and an acknowledged prior-year CA AMT credit was dropped from the next year's
+profile because nothing wrote it.
+
+Sixteen CA rules now block them, scoped by a new `Rule.state` field rather than
+id prefixes; an unanswered CA blocking flag is a migration block, never a no.
+`ca_has_amt_credit` derives from a nonzero prior-year carryforward. The tie-out
+requires a worked FTB 3510, carrying forward the available credit less the
+allowable credit plus the new ISO credit, and refuses a prior credit in a
+current-AMT year. It also requires Schedule CA to subtract taxable Social
+Security and the federally taxable state refund, even with the CA section
+dropped. Lines 75-77's family credits, FTB 3506 and the renter's credit carry
+manual notes; the "in depth" claims are gone. `WHO-IT-FITS.md` sizes the new
+stops from the IRS's TY2023 Historic Table 2.
+
+## AA60 — CA and NY withholding from 1099s, W-2Gs and Forms 592-B and 593 (#18)
+
+Only NC's 1099 state withholding had a ledger category. A CA or NY amount on a
+1099 or W-2G, or a NYC or Yonkers local amount, was recorded as
+`unrouted_state_withholding`, which blocked the whole return, federal included,
+and the Forms 592-B and 593 withholding that Form 540 line 73 takes had no route
+at all. Meanwhile a CA, NY or NC amount filed under `other_state_withholding`
+passed as an advisory and left that state's return short.
+
+CA keeps W-2 box 17 in `ca_withholding_box17` and adds `ca_withholding_1099` for
+line 71 and `ca_withholding_592b_593` for line 73; the compute, extension and
+filing-package guidance include all three, each once. The NY State, NYC and
+Yonkers totals widen to 1099 and W-2G sources for IT-201 and IT-203. Every
+`other_state_withholding` record now carries a finite, state-coded breakdown
+that must sum to it and survives ledger assembly, and a payment there for a
+selected or computed state fails the tie-out, even with that state's result
+section dropped. Forms 592-B and 593 are classified by their titles, and
+Schedule A line 5a counts their CA tax withheld. The merge review added tests
+that isolate the breakdown's sign rule and the 592-B title rule.
+
+## AA69 — Form 540's arithmetic is derived and checked (#19)
+
+Most of Form 540 was typed by hand. Form 1040's arithmetic lines are derived by
+`return_builder` and re-asserted by `--check`, but no California line was, so a
+wrong subtraction, floor or settlement line reached the return with every gate
+green.
+
+`compute_ca_540` now derives Form 540's arithmetic lines from separately worked
+components: exemptions, AGI, taxable income, Tax Table or rate schedule, credit
+floors, Schedule P on every return, MHST, payments and the line 93-115
+settlement. `--check` refuses an edited derived line, running for CA even when
+the federal return is out of scope. The required CA law blocks (standard
+deduction, exemptions and phase-out, AMT, MHST, Tax Table rows and the line 113
+screen) refuse unfetched, even on a zero-income return.
+
+The merge review found more to fix: lines 75-77 each get one family-credit
+field, shared by the builder and the tie-out; line 18 requires the dependent
+worksheet for a filer someone can claim, never above standard, and refuses an
+itemized total below standard for any other filer outside MFS; and the blind
+screening flag must agree with the per-filer answers. Still open: the checked
+builder covers the reviewed TY2025 form only, and a claimable child's Schedule P
+line 22 exemption limit refuses rather than computing.
+
+## AA70 — California estimated payments and the line 98 credit forward (#20)
+
+Nothing recorded California estimated payments, the FTB 3519 extension payment,
+estimates paid on a K-1, last year's overpayment applied to this year or line
+98's overpayment applied forward, so AA68 blocked every such return. Lifting the
+block without a route would have over-stated the balance due by every payment
+and the cash refund by the forward election.
+
+`build_california` now derives line 72 from reviewed `estimated_payments.state`
+records, each with a payment id, state, credited year, date, kind, amount and
+owner, plus the `prior_year.ca_estimated_payments_applied` opening credit.
+Other states and years are left out with a disclosure, and a positive total
+needs `estimated_payments.ca_verified`. Line 98 is an explicit election that
+must agree with `ca_applies_overpayment_forward` to the cent and cannot exceed
+line 97. The rollover carries it only to the next CA tax year, asks on a
+filing-status change and resets `ca_verified`.
+
+The merge review found three gaps: `/tax-extend` now records an FTB 3519 payment
+where line 72 reads it, an archive written before `line_98` existed keeps a
+setup-typed opening credit instead of refusing the rollover, and the
+joint-return statement note fires only for spouse-account payments. Still open:
+a payment entered twice under two payment ids is guarded only by the
+reconciliation flag.
+
+## AA71 — the common Schedule CA adjustments are derived (#21)
+
+AA68 blocked a California return with US-obligation or non-California municipal
+interest, fund dividends or exempt-interest dividends, and the Social Security
+and state-refund subtractions were typed: the persona's commonest Schedule CA
+differences.
+
+`compute_ca_schedule_ca` derives Part I Section A line 2's columns B and C from
+per-record investment details: direct US-obligation interest, a qualifying
+fund's US share, non-California municipal interest and the nonexempt share of
+1099-DIV box 12. A fund qualifies by four quarter-end asset fractions or a
+provider's certification against the fetched `fund_asset_minimum`; an unknown
+RIC status or an unreconciled component refuses. Section A line 6 subtracts
+federally taxable Social Security and Section B line 1 the federally included
+state refund, never the gross amounts. The capability rules for US-obligation
+and non-California municipal income are gone; their screening flags must match
+the source components.
+
+The merge review found the HSA left out: Form 8889 line 13's deduction is added
+back on Section C line 13, the typed employer add-back must equal Form 8889 line
+9, and HSA earnings join line 2 column C. Still open: the section 17145(d)
+fund-of-funds exception is a documented review step, not a separate input, and
+the federally taxable state refund is not cross-checked against Schedule 1.
+
+## AA65 — Form 1099-G's unemployment and family leave benefits reach the return (#22)
+
+Form 1099-G's unemployment compensation and governmental paid family leave had
+no ledger category, so the tie-out could not see a dropped 1099-G, and nothing
+derived Schedule 1 line 7 or California's exclusion of unemployment and CA paid
+family leave.
+
+`government_benefits` records now carry the reviewed year and revision (TY2025
+box 1 with its family-leave share; TY2026 boxes 1 and 10), same-year
+unemployment repayments, the non-itemizer's contribution reduction and each
+family program's route. A checked Schedule 1 workpaper adds the net unemployment
+and family benefits to a confirmed non-benefit figure to give Form 1040 line 8.
+The builder and the tie-out share it, and the benefits check runs before any
+scope waiver. Schedule CA Section B line 7 column B subtracts the federally
+included unemployment and CA family leave, each once.
+
+The merge review found three gaps, now closed. The intake flag needs a record
+that carries a benefit, so a refund-only 1099-G no longer satisfies it; a
+refund-only workpaper that was never confirmed now follows later edits to line
+8 instead of reverting them; and an itemizer cannot net unemployment
+contributions on Schedule 1. Still open: prior-year unemployment repayments over
+$3,000 need their own worksheet.
+
+## AA67 — Form 1099-MISC's boxes mapped by the current form (#23)
+
+The parse table folded 1099-MISC boxes 3-7 into `self_employment_gross` by
+range, so box 4's federal withholding became Schedule C gross receipts,
+over-stating income and self-employment tax, while nonbusiness box 3 and box 8
+income had no checked destination.
+
+Every 1099-MISC now carries a reviewed `misc_income` inventory for its covered
+revision (04/2025 for TY2025, 12/2026 for TY2026). Box 4 goes to line 25b
+withholding, and box 7, the direct-sales checkbox, is a boolean. Boxes 5, 6 and
+11, and a reviewed business box 3, are Schedule C receipts; nonbusiness box 3
+and box 8 are Schedule 1 other income. A checked `schedule_1_other_income`
+workpaper adds tracked MISC income to a confirmed remainder for line 8, and the
+builder and the tie-out share it, ahead of any scope waiver.
+
+The merge review found boxes 1, 2, 9, 10 and 15 with no route, so the inventory
+requires them and they refuse when positive; box 15 also carries the section
+409A tax. Both Schedule 1 workpapers state the Schedule C net their typed
+remainder includes, which must equal `schedule_c.line_31_net` and survives
+rebuilds. AA73 later gave box 1's rents a route. Still open: boxes 2, 9, 10 and
+15 refuse until they have routes.
+
+## AA66 — Form W-2G's winnings and withholding have a route (#24)
+
+Form W-2G had no parse route. Its winnings and federal withholding had no ledger
+category, so the tie-out could not see a dropped W-2G, and nothing put its box 4
+withholding on Form 1040 line 25c.
+
+Every W-2G now carries a reviewed `w2g_income` record, on the 12/2023 revision
+or the continuous-use 01/2026 one for TY2025 and on 01/2026 for TY2026,
+splitting casual Schedule 1 income from trade-or-business receipts. Box 4 goes
+to line 25c, never 25b, through a checked other-forms withholding workpaper, and
+box 15 joins the state withholding routes. The casual winnings feed the checked
+Schedule 1 workpaper, so lines 8 and 25c are derived and re-checked ahead of any
+scope waiver. The Form 8959 recipe now puts line 24's Additional Medicare Tax
+withholding on line 25c as well.
+
+The merge review found two more amounts to route: box 7's additional winnings
+from identical wagers now count with box 1, and California State Lottery
+winnings (`ca_lottery_income`) are subtracted on Schedule CA Section B line 8b,
+column B. Still open: gambling losses stay a manual worksheet, and California
+lottery winnings not reported on a W-2G go through the manual Schedule CA path.
+
+## AA64 — the TY2026 tip and overtime fields are mapped (#25)
+
+The parse tables read the OBBBA tip and overtime amounts from TY2025 sources
+only: W-2 box 7, box 14 or a designated statement. The TY2026 forms' dedicated
+fields, such as W-2 box 12 code TT for qualified overtime, had no row, so the
+Schedule 1-A deduction inputs were missed.
+
+A covered-year source reference now maps the TY2026 fields: W-2 codes TP and TT
+and box 14b, 1099-NEC boxes 1b, 1c and 1d, 1099-MISC boxes 13a, 13b and 14, and
+1099-K boxes 1c and 1d. Each amount is already included in its form's income
+box, so nothing is added to income twice and code TT's premium is never divided
+again. The TY2025 sources stay separate, and qualification (occupation codes,
+FLSA, the self-employment caps and the overlap with Form 4137) is a recorded
+source review. `tips_source_review` and `overtime_source_review` are required
+answers, owed once the intake flags, the Schedule 1-A workpaper or a parsed
+`qualified_tips` or `qualified_overtime_premium` amount calls for them.
+
+The merge review added the 1099-K box 1c route, the parse-ledger trigger for the
+two reviews and a year-scoped note in the test invariants. Still open: the
+continuous-use December 2026 forms need re-reading at each season open for
+TY2027-2028.
+
+## AA52 and AA54 — the auditor export answers as the engine does, and a failed export cleans up (#26)
+
+The freshness auditor's export and the engine answered four questions
+differently: which state schema grades a block, the provenance a whole-state
+`set` leaves, how freshness is dated, and the pin key of a state with no
+resolvable code. A refetched figure could be dated from the stale entry it
+replaced, so the gate cried wolf on correct data, and a block with no resolvable
+code read UNPINNED however often it was refetched. Separately, a failed export
+left behind the `--dest` directory it had created (AA54).
+
+One canonical state selection now serves `set`, `validate_cache` and the export.
+A whole-block `set` clears the path provenance it supersedes, sub-pins date from
+their deepest ancestor, and a code that cannot be resolved pins as bare `state`.
+A failed export removes only the directories it created. The auditor's
+definition, digest-pinned to a passed acceptance, now describes the canonical
+selection, the optional retirement-conformity seed and CA's half-year rate pin.
+Its fresh-session acceptance, shared with AA76 and passed on 2026-10-20, is
+recorded with the definition and input digests, and the merged definition
+matches the accepted digest.
+
+## AA76 — FTB 5805's underpayment penalty is priced on line 113 (#26)
+
+Form 540 line 113's FTB 5805 penalty was never priced. The projection computed
+only the required annual payment, and California departs from the federal Form
+2210: its installments are weighted 30/40/0/30, withholding included, and its
+rate resets every January 1 and July 1 under R&TC §19521.
+
+`compute_ca_5805` now prices the regular method from the reviewed Part II tax,
+the withholding on lines 71 and 73 (deemed or by actual date) and the dated
+payments at 30/40/0/30. It applies the 90% and prior-year shares with the 110%
+step-up and the high-AGI override, and accrues at the fetched §19521 half-year
+rates, held under CA's half-year rate pin, which the auditor's definition now
+describes. The external-worksheet and FTB-billing routes stay disclosed. It
+landed with AA52 to share that item's fresh-session acceptance.
+
+The merge review found that Part II line 2's share must be its own fetched
+`current_year_share`, never line 113's 10% screen, and that a stale line 113
+disclosure must fail `--check`; both are fixed. Still open: only the regular
+method is priced, and annualized, farmer and waiver cases need their own
+worksheet.
+
+## AA62 — crypto lot selection is screened before FIFO prices a sale (#27)
+
+The crypto engine priced every disposal FIFO without asking whether the taxpayer
+had specifically identified units. Specific identification, whether by a
+standing order, HIFO or LIFO, including identifications in the taxpayer's own
+books under Notice 2025-7, changes basis in either direction, even where a
+noncovered 1099-DA reports no basis and the reconciliation shows no difference.
+
+`has_crypto_specific_identification` is now a required screening answer.
+Unanswered, it refuses before either FIFO matcher removes a lot, blocks the
+capability gate with no acknowledgement possible and fails the tie-out. A yes
+blocks until acknowledged and sends the selected lots to an external Form 8949.
+Form 1099-DA box 8 is evidence, not a selection method.
+
+The merge review found three things to fix. The question now asks about a broker
+that offers only one method, which Reg. §1.1012-1(j)(3)(ii) makes the standing
+order, and states Notice 2025-7's limits. The tie-out accepts an explicit
+answer, as it does for the option-exercise question, so an acknowledged yes can
+finish. The importer refuses a yes only when it would remove lots. Still open: a
+taxpayer who specifically identified lots prepares those lots and Form 8949
+externally.
+
+## AA58 — Form 2210 refuses a §6621 quarter the cache does not hold (#28)
+
+`compute_form_2210` accrues the penalty through April 15 of the year after the
+tax year. When the cached §6621 rates stopped before a quarter, it priced the
+rest at the last cached rate with only a note, so a return filed before the
+April 2027 rate publishes would have priced that quarter at a stale rate. Form
+1040 line 38 is neither advisory nor an under-statement, and the carried rate
+over-states the penalty whenever the next quarter's rate falls, so AGENTS.md §2
+does not allow that fallback.
+
+Each rate entry's `effective_from` must now be a §6621 quarter start. A quarter
+that an actual debt window accrues through needs its own entry, even when the
+next published rate is identical. Without one, the penalty is reported as
+applying but not computed, with a loud note, as the unfetched case already was.
+A debt paid before the missing quarter does not need that later rate.
+
+## AA57 — the automatic CI triggers work, and the docs now say so (#29)
+
+The backlog, README and CI guide still said CI ran only when dispatched by
+hand, with each merge scanned for PII locally and the weekly audit dispatched
+manually, though pull-request, push and scheduled runs had registered since
+PR #9.
+
+AA57 records the retained run evidence, read from GitHub's run records on
+2026-10-20: the first automatic PR run, on PR #9's head, whose workflow edit
+changed only a comment; that PR's merge push run; a later push run on `main`
+that scanned its range rather than taking the dispatch skip; and a successful
+scheduled audit of all three locks. The merge review re-checked each run by its
+event type. The interim manual-run instructions left the backlog status, the
+README and the ci-and-locks guide, which now says to confirm an actual event
+run, since a dispatched run skips the PII range scan. The workflow comment no
+longer promises a bounded schedule delay, and the trigger declarations,
+concurrency policy and scan needed no change. Still open: the cause of the
+dispatch-only period was never established.
+
+## AA72 — the California AMT credit and the owner's PTET credit are claimed (#30)
+
+AA68 blocked California's prior-year AMT credit and the electing-entity PTET
+credit, the two credits the rollover already carried and nothing claimed, and
+Schedule P's Part III limits were not computed.
+
+The checked Form 540 builder now derives FTB 3510 from the qualified opening
+balance, usable only against regular tax above the TMT and never in an AMT year,
+and FTB 3804-CR from reconciled K-1 credits and vintage carryovers, used oldest
+first within the fetched carryover period. Schedule P Part III orders the
+credits by section and code: 162 in A1, 188 last in A2, 187 in B3 and 242 in B4.
+The PTET credit can reduce regular tax below the TMT but never offsets AMT or
+the MHST, and is never a payment; lines 43-45 follow the booklet's claim rules.
+Both credits' carryforwards are written and rolled forward with their origin
+years, and `tmt_rate` and `phaseout_rate` are fetched figures.
+
+The merge review found more to fix: a current-year PTET credit needs Schedule
+CA's add-back of the entity's federally deducted PTE tax, `ca_has_amt_credit`
+refuses an absent or zero opening credit, freshness no longer flags an unfetched
+PTET carryover period, which only a credit holder needs and whose credit refuses
+without it, and the unfetched-`phaseout_rate` exemption is now federal only, so
+CA's AMT phase-out rate is flagged when missing. Still open: a disregarded
+single-member LLC owner's PTET credit refuses, its tax-difference limit needing
+separate reviewed support.
+
+## AA73 — reviewed residential rentals are computed (#31)
+
+Rental real estate blocked every return carrying it, 17% of California returns
+above $200,000: Schedule E, depreciation and the §469 passive-loss limits were
+not computed, federally or for California.
+
+A reviewed `residential_rental_v1` plan computes Schedule E Part I from property
+books, reconciling 1099-MISC box 1 rents as evidence, not extra cash. The
+building is depreciated GDS straight-line mid-month over the fetched recovery
+period, land excluded, and Form 8582 applies the fetched special allowance and
+phase-out, the MFS lived-apart and lived-together rules and suspended-loss
+carryforwards. California keeps its own basis, depreciation and FTB 3801 limits;
+Schedule CA Section B line 5 takes only the allowed-net difference. Line 8
+settles the rental net once through the Schedule 1 workpapers, and closing
+balances roll forward, checked by the rollover. Inside the reviewed scope (CA,
+WA and no-income-tax states) the capability rule becomes a manual note.
+
+The merge review found more: a CA rental refuses without the covered-year
+`state.rental` block, one `rental_in_computed_scope` test serves the gate and
+the tie-out, an acknowledged out-of-scope rental goes to external worksheets
+rather than refusing, and 1099-MISC box 1 maps to `rental_reported_rents`. Still
+open: only the reviewed `residential_rental_v1` scope is computed; vacation,
+commercial, royalty and disposition cases stay blocked. Its rental-law seed
+changed the auditor's replay input, so both reviewers were re-accepted in fresh
+sessions on 2026-10-21.
+
+## AA74 — reviewed California part-year returns are computed (#32)
+
+Part-year California residents, 3.7% of California returns, were blocked: Form
+540NR's ratio method, Schedule CA (540NR) allocations and prorated credits were
+not computed.
+
+A reviewed `state_filings.CA` plan now declares the resident period, never
+inferred from an address, and covers every other state of residence or source.
+Only a plan whose other states have no income tax and need no return clears the
+move and source blocks. `compute_ca_540nr` taxes total taxable income as a
+full-year resident on line 31 and applies line 36's CA ratio. It prorates the
+exemption credits by line 38 after the federal-AGI phase-out and the deduction
+by Schedule CA (540NR) Part IV, and runs Schedule P (540NR), line 35's MHST, the
+payments and the line 113 and 123 FTB 5805 route. The checked builder, tie-out
+and rollover take the 540NR variant; a dropped section or competing variant
+blocks, and the planners name the limit.
+
+The merge review found three cases: code 187 (Schedule S) refuses on this path,
+line 51 refuses for head of household, joint and QSS filers, and the recipe
+keeps `schedule_ca_itemized` while it carries the CA charitable ledger. Still
+open: it covers TY2025 only, and the renter's credit six-month residency test is
+not checked.
+
+## AA43 — full-year NY/NC projected estimated payments (#33)
 
 The mid-year projection can now price reviewed TY2025 full-year NY/NC
 households with their own deduction/modification engines and emit equal-quarter
@@ -3132,7 +3525,15 @@ departures, reach the forecast output. Regression tests were checked with
 deliberate reversals of the guards and arithmetic; each fault was rejected
 and the implementation restored before verification.
 
-## AA42 / AA53 — projected AMT and separate Medicare premium exposure
+The merge review found that IT-201 line 69a (the NYC school tax rate reduction
+credit) and line 70a (the NYC income tax elimination credit) are refundable, so
+they now reduce the NY base, which had been over-stated without them; the
+reference cites line 61 rather than line 60. The skill hook's registered timeout
+was raised, with ruling Q13's one cold-pass reading recorded in the merge
+commit. Still open: only the reviewed TY2025 form year is accepted, so TY2026
+mid-year runs refuse until that year is reviewed.
+
+## AA42 / AA53 — projected AMT and separate Medicare premium exposure (#34)
 
 Reviewed full-year Form 6251 inputs now feed federal projected tax, balance,
 the current-year safe-harbor prong, vouchers and W-4 guidance. The adapter
@@ -3161,3 +3562,12 @@ top is inclusive; an omitted
 last row cannot turn a lower tier into the top. Empty tables remain explicitly
 unmodeled. The input templates, skill interviews and cache contract name the
 same scope.
+
+The merge review found that from premium year 2028 the joint top tier may be a
+half-thousand (150% of the indexed, thousand-rounded figure), which the tier
+reader had refused; the projection docs stopped promising a premium figure
+mid-year, and the fetch recipe says five rows from 2019. The separate-return
+IRMAA seed changed the auditor's replay input, so both reviewers were
+re-accepted in fresh sessions on 2026-10-22. Still open: the IRMAA dollar figure
+needs the premium-year table, which CMS publishes the November before it
+applies, so a mid-year run normally reports MAGI only.
