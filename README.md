@@ -252,7 +252,7 @@ CI runs the same script against the pull request, inspecting **each commit indiv
 
 **CI (GitHub Actions):**
 - Runs pytest, PII file scan, and pip-audit on every PR to `main`
-- Not on this repository yet: since it was recreated on 2026-10-10, CI has run only when dispatched by hand, and a dispatched run skips the PII range scan. AA57 in the [backlog](docs/roadmap/BACKLOG.md) tracks why.
+- Scans commits pushed to `main` and audits all three dependency locks on the weekly schedule
 - Dependabot monitors dependencies weekly for known vulnerabilities
 
 ### Recommendations

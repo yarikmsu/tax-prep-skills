@@ -68,14 +68,10 @@ this file was collapsed to remove.
 are off and there are zero non-owner users. Every distribution item has been
 waiting on that since 2026-08-12.
 
-**CI passes, but runs only when dispatched.** Minutes returned 2026-10-01, and
-the first full matrix on `main`, at #189, passed: the 3.13 floor for the first
-time, 3.14, Windows, lint, the PII scan and the Dependency audit once AA27 moved
-urllib3. Everything merged on one local interpreter from #155 on is now covered
-by it. Since the repository was recreated on 2026-10-10, though, CI runs only
-when dispatched, and a dispatched run skips the PII range scan, so each merge is
-scanned locally and the weekly dependency audit is dispatched by hand until
-AA57 finds why.
+**CI runs automatically.** Pull requests and main-branch pushes register CI,
+including the per-trigger PII scan, and the weekly schedule audits the locks.
+Trigger and range behavior is documented in
+[`ci-and-locks.md`](../contributing/ci-and-locks.md).
 
 ---
 
@@ -85,7 +81,7 @@ AA57 finds why.
 |---|---|---|
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Now: California** | **AA75** — run line 32's exemption credit phase-out on the return. **AA68** — name every Form 540 situation the engine does not compute. **AA60** — route CA and NY 1099 state withholding. **AA69** — build Form 540 in the engine and check it. **AA70** — record CA estimated payments and next year's applied overpayment. **AA71** — compute the Schedule CA adjustments the persona meets. | The owner put California first on 2026-10-18, and that day's Form 540 audit found that the agent types most of the state return and nothing handles part of it. AA77 shipped first, ending an over-statement of an ISO exerciser's CA tax. AA75 is next. It is small, and it closes the one under-statement every high earner meets with the worksheet `planning.py` already holds. AA68 turns every remaining silent line into a named one. It is large, so if it threatens AA64, AA52 and AA58's January deadline, land its blocking rules first and its wording sweep after. AA60 comes next because a CA 1099 amount, a retiree's 1099-R among them, blocks the whole return today. AA69 puts the lines in a checked builder that AA70 and AA71 feed. AA70 fixes the balance due of anyone who paid CA estimates, and AA71 turns AA68's commonest refusals into computed lines. |
-| **Next: every filer's intake and the auditor, before TY2026 filing opens** | **AA65** — record Form 1099-G's unemployment and family leave benefits. **AA67** — map Form 1099-MISC's boxes by the current form. **AA66** — give Form W-2G a parse route. **AA64** — read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC. **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. **AA76** — price FTB 5805's underpayment penalty on line 113, landed with AA52 to share its auditor replay. **AA62** — ask about specific identification before FIFO prices a crypto sale. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA57** — find why CI's push, pull-request and scheduled runs never register. | A Californian files a federal return too, and these holes reach it. AA65 and AA66 close dropped-form holes open today: a 1099-G's unemployment compensation and a W-2G's winnings and federal withholding have no ledger category, so the gate cannot see them go missing. AA65 subtracts its amounts on Schedule CA through AA69, which lands before it, and blocks a CA return holding those amounts if it is taken out of order. AA67 errs the other way: a 1099-MISC's federal withholding, recorded as its row says, joins Schedule C gross receipts and over-states income and self-employment tax. AA64, AA52 and AA58 must land before TY2026 filing opens, and AA76 rides with AA52 because both edit the auditor's digest-pinned definition. The 2026 Form W-2 reports qualified overtime in box 12 code TT, where no `/tax-parse` row looks. Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, so the season-open sitting would leave the auditor a table short through the TY2026 season. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13, because its definition edit and the test change it forces cannot land apart. A return filed before the April 2027 rate publishes would price that quarter at the last cached rate. AA62 closes the last silent crypto gap. Until AA57 lands, scanning each merge to main for PII and auditing the locks weekly are steps someone has to remember. |
+| **Next: every filer's intake and the auditor, before TY2026 filing opens** | **AA65** — record Form 1099-G's unemployment and family leave benefits. **AA67** — map Form 1099-MISC's boxes by the current form. **AA66** — give Form W-2G a parse route. **AA64** — read the TY2026 tip and overtime boxes on the W-2, 1099-NEC and 1099-MISC. **AA52** with **AA54** — the export's remaining differences from the engine, and the `--dest` a failed export leaves behind. **AA76** — price FTB 5805's underpayment penalty on line 113, landed with AA52 to share its auditor replay. **AA62** — ask about specific identification before FIFO prices a crypto sale. **AA58** — stop Form 2210 pricing a quarter the cache does not hold. **AA57** — verify restored automatic CI triggers. | A Californian files a federal return too, and these holes reach it. AA65 and AA66 close dropped-form holes open today: a 1099-G's unemployment compensation and a W-2G's winnings and federal withholding have no ledger category, so the gate cannot see them go missing. AA65 subtracts its amounts on Schedule CA through AA69, which lands before it, and blocks a CA return holding those amounts if it is taken out of order. AA67 errs the other way: a 1099-MISC's federal withholding, recorded as its row says, joins Schedule C gross receipts and over-states income and self-employment tax. AA64, AA52 and AA58 must land before TY2026 filing opens, and AA76 rides with AA52 because both edit the auditor's digest-pinned definition. The 2026 Form W-2 reports qualified overtime in box 12 code TT, where no `/tax-parse` row looks. Two of AA52's `set` defects make the freshness gate cry wolf on a correct refetch, so the season-open sitting would leave the auditor a table short through the TY2026 season. AA52 lands whole, with a fresh-session replay of its own as AA51 had on 2026-10-13, because its definition edit and the test change it forces cannot land apart. A return filed before the April 2027 rate publishes would price that quarter at the last cached rate. AA62 closes the last silent crypto gap. AA57 records the recovered trigger paths and removes the obsolete manual workarounds. |
 | **As each publishes** | **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`, with the NY `table_bases`. | The quarters are the one item no gate catches: Form 2210 carries the last cached rate forward with only a note until AA58 lands, so this row is their reminder. The TY2026 Form 540 also re-keys AA69's line map. |
 | **Then: California's remaining blocks** | **AA72** — claim the CA AMT credit and the PTET credit. **AA73** — compute rental real estate on Schedule E and Schedule CA. **AA74** — prepare a part-year California return (Form 540NR). | AA72 recovers a credit the rollover already carries and nothing claims. Above $200,000, AA73 is the largest block for every persona: 17% of California returns there carry rental or royalty income. It needs scoping before it is sized. AA74's block, 3.7% of California returns, is smaller than the marketplace block (Form 8962: 6.0% of all California returns, 1.3% above $200,000), which has no item. |
 | **After** | **AA43**, then **AA42** with **AA53** — NY/NC estimated-payment schedules in the mid-year projection, then its AMT and IRMAA exposure. | Both are absent from the current engine. AA43 is the smaller and extends the CA schedule. AA42's IRMAA layer reuses the Roth premium computation, whose tier rule AA53 fixes, so that fix lands with it or before. |
@@ -222,25 +218,25 @@ AA57 finds why.
   means, such as the merge's side of that date. Found by the review that
   recorded Y2 as shipped.
 
-- **AA57 (P2, S): Find why CI's push, pull-request and scheduled runs never register.**
-  `ci.yml` declares `pull_request`, `push` to main and a weekly `schedule`, but
-  since the repository was recreated on 2026-10-10 none has registered a run:
-  every CI run on record, verified 2026-10-15, was dispatched by hand, the
-  merges of #6, #7 and #8 have none, and Monday 2026-10-12 passed with no
-  scheduled run. `scripts/ci-pii-range.sh` exits 3 for a dispatched run, so its
-  PII job passes without scanning, and the commit that lands on main is scanned
-  only if someone runs the push-event scan by hand. The weekly dependency audit,
-  the one run that catches a new advisory against an unchanged lock, has
-  stopped with it. Until the runs register, dispatch CI on the branch and bind
-  the poll to its head commit; after each merge, straight after
-  `git reset --hard origin/main` syncs main, run
-  `RANGE=$(EVENT_NAME=push PUSH_BEFORE_SHA=$(git rev-parse ORIG_HEAD) bash scripts/ci-pii-range.sh) && bash scripts/pre-commit-pii-scan.sh "$RANGE"`.
-  `ORIG_HEAD` is main's head before the sync, so a sync that brings in several
-  merges scans them all, where `HEAD~1` would scan only the newest. Dispatch
-  `gh workflow run ci.yml --ref main` weekly in place of the schedule. The
-  cause has not been investigated. Landing it removes the interim sentences in
-  this file's CI status paragraph, in `docs/contributing/ci-and-locks.md` and in
-  `README.md`'s CI section. Found by the review that recorded Y2 as shipped.
+- **AA57 (P2, S): Verify recovery of automatic CI triggers.**
+  Implementation: [PR #29](https://github.com/yarikmsu/tax-prep-skills/pull/29),
+  open; not merged. Depends on PR #28.
+  Verified 2026-10-20 from retained GitHub run records: the earliest automatic
+  [PR run](https://github.com/yarikmsu/tax-prep-skills/actions/runs/38818547702)
+  used PR #9's head, whose workflow edit changed only a comment; its
+  [merge push run](https://github.com/yarikmsu/tax-prep-skills/actions/runs/38831006834)
+  followed with the trigger declarations unchanged. The 2026-10-15 report of
+  dispatch-only CI became stale during the PR that filed this item. Recovery
+  coincided with that workflow-file touch; the historical cause was not
+  established, so this is evidence of recovery, not proof of a registration bug.
+  A later [main push](https://github.com/yarikmsu/tax-prep-skills/actions/runs/39210300945)
+  actually scanned one commit and two changed files, rather than taking the
+  dispatch skip. The [scheduled run](https://github.com/yarikmsu/tax-prep-skills/actions/runs/39260848091)
+  successfully audited runtime, test and dev locks. Actions and the CI workflow
+  are enabled, and no current trigger defect was reproduced. Remove the interim
+  manual-run instructions from the CI status, README and CI/locks guide, and
+  correct the workflow comment claiming a bounded schedule delay. The trigger
+  declarations, concurrency policy and scan implementation need no change.
 
 - **AA58 (P2, S): Stop Form 2210 pricing a quarter the cache does not hold.**
   Implementation: [PR #28](https://github.com/yarikmsu/tax-prep-skills/pull/28),

@@ -21,8 +21,8 @@ on:
     branches: [main]
   schedule:
     # Weekly, Monday morning UTC. Not midnight: GitHub's scheduler is busiest on
-    # the hour and delays a run by up to a quarter of an hour, and a run that
-    # lands whenever is a run whose absence nobody notices.
+    # the hour. Scheduled runs can be delayed or dropped under load; verify an
+    # actual schedule-event run rather than assuming a bounded delay.
     - cron: "17 6 * * 1"
   workflow_dispatch:
 
